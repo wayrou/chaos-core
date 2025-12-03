@@ -1,3 +1,11 @@
+# ------------------------------------
+# Node / Vite
+# ------------------------------------
+node_modules/
+dist/
+dist-ssr/
+*.local
+
 # Logs
 logs
 *.log
@@ -7,18 +15,43 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# ------------------------------------
+# Rust / Tauri
+# ------------------------------------
+/src-tauri/target/
+/src-tauri/Cargo.lock
 
-# Editor directories and files
+# Tauri build artifacts
+/src-tauri/gen/
+src-tauri/icons/icon.icns
+src-tauri/icons/icon.ico
+
+# Prevent bundling any release binaries
+/*.app
+/*.dmg
+/*.exe
+/*.msi
+
+# ------------------------------------
+# OS / Editor
+# ------------------------------------
+# macOS
+.DS_Store
+
+# VS Code
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+
+# IDE files
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# ------------------------------------
+# Optional: ignore environment files
+# ------------------------------------
+.env
+.env.*
