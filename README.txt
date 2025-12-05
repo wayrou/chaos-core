@@ -480,56 +480,21 @@ Random equipment rewards from battles
 
 shop nodes (buying equipment) in dungeon runs randomly between battles
 
-14. Add classes
-Add:
+14. The class update
 
-Squire
-Primary Weapon: Swords
-Role: Balanced frontline unit, adaptable in various situations.
-Branch Paths:
-Sentry — Uses swords, greatswords.
-Paladin — Uses swords, greatswords. Defensive focus with protection abilities.
-Watch Guard — Uses swords, bows. Hybrid of melee and ranged tactics.
+Implement classes and unlock conditions, changing class on unit management screen
 
-Ranger
-Primary Weapon: Bows
-Role: Long-range attacker, excels in mobility and ranged damage.
-Branch Paths:
-Hunter — Uses bows, guns. Precision ranged combat and critical hit focus.
-Bowmaster — Uses bows, greatbows. Specializes in high-power, high-accuracy long shots.
-Trapper — Uses bows, guns. Focuses on setting traps and controlling enemy movement.
+You can change a unit's class at anytime on the class management screen, unlock branch classes per unit similar to final fantasy tactics series. 
 
-Magician
-Primary Weapon: Staves
-Role: Magic-focused unit, capable of dealing damage and utility casting.
-Branch Paths:
-Cleric — Uses staves. Specializes in healing and buffs.
-Wizard — Uses staves, greatstaves. Offensive magic damage specialist.
-Chaosmancer — Uses staves, swords. Offensive chaos magic, blending melee with magic.
+Rolled instances of individual cards that you get from crafting, rewards or shops
 
-Thief
-Primary Weapon: Shortswords
-Role: High mobility, stealth, debuffs, and critical strikes.
-Branch Paths:
-Scout — Uses bows. High mobility ranged unit with recon abilities.
-Shadow — Uses shortswords, bows. Specializes in assassination and evasion.
-Trickster — Uses swords. Utility role with debuffs and disorienting skills.
+14a. Unit leveling
 
-Academic
-Primary Weapon: Bows, Shortswords
-Role: Tactical support, gathers enemy intel, boosts team performance.
-Very low attack power; focused on providing tactical information on enemies.
-(No branches — unique class that remains utility-focused.)
+Brainstorm how to approach unit leveling, xp in a way that's similar to final fantasy tactics
 
-Freelancer
-Primary Weapon: Any weapon type (with stat penalty for off-class weapons)
-Role: Jack-of-all-trades unit, can adapt to any role but without specialization bonuses.
+14b. The field update
 
-card proc-ing to add to roguelike feel
-
-mechanics to add to card / deckbuilding feel, something similar to opening packs of cards?
-
-
+Implement field system
 
 15. Refine ScrollLink UI & Screen Transitions
 
@@ -580,6 +545,8 @@ Hover highlights, movement range previews, target indicators.
 Damage numbers popping up, small screen shake on heavy hits.
 
 Tooltips for tiles, units, and cards.
+
+20. The story update
 
 
 
