@@ -1,6 +1,9 @@
 // src/ui/screens/ScrollLinkBoot.ts
 import { renderMainMenu } from "./MainMenuScreen";
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export function renderScrollLinkBoot() {
   const root = document.getElementById("app");
   if (!root) {

@@ -8,6 +8,11 @@ import { renderRosterScreen } from "./RosterScreen";
 import { renderWorkshopScreen } from "./WorkshopScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
 
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 export function renderBaseCampScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;

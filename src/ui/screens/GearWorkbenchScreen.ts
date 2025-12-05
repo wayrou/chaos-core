@@ -6,6 +6,12 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./Unitdetailscreen";
+
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 import {
   GearSlotData,
   CardLibrary,

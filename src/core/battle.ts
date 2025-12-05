@@ -4,6 +4,9 @@
 
 import { GameState, Unit, CardId, UnitId } from "./types";
 import { computeLoadPenaltyFlags, LoadPenaltyFlags } from "./inventory";
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 import {
   UnitLoadout,
   UnitClass,

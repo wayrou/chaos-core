@@ -448,7 +448,7 @@ Ensure empty slots are allowed
 
 Ensure card library persists properly
 }
------------------------IMPLEMENTED UP TO HERE-----------------------------
+
 
 12. Implement Save/Load via Rust Tauri Commands
 
@@ -465,6 +465,9 @@ Add a “Continue” button that loads the last save.
 autosave feature
 
 12b. Controller support
+12bz. Settings screen
+
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
 
 13. Add Simple Procedural Room Variants
 

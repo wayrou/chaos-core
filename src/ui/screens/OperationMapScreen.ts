@@ -6,6 +6,11 @@ import { renderBattleScreen } from "./BattleScreen";
 import { renderScrollLinkShell } from "./ScrollLinkShell";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 export function renderOperationMap(): void {
   const root = document.getElementById("app");
   if (!root) {

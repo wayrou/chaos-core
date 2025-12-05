@@ -1,5 +1,8 @@
 // src/core/inventory.ts
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 import {
   InventoryItem,
   InventoryState,

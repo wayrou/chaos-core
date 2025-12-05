@@ -4,6 +4,9 @@
 
 import { getStarterRecipeIds } from "./crafting";
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 import { 
   getStarterCardLibrary, 
   getDefaultGearSlots,

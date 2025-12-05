@@ -2,6 +2,12 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 import { 
   PAK_DATABASE, 
   openPAK, 

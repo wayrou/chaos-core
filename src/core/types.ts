@@ -4,6 +4,9 @@
 //  CORE BATTLE TYPES
 // ---------------------------------------------------------
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;

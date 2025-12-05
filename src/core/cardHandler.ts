@@ -7,6 +7,9 @@
 import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome } from "./battle";
 import { Card, CardEffect } from "./types";
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 /**
  * Process playing a card on a target
  * Returns the updated battle state, or null if the play was invalid

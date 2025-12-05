@@ -11,6 +11,11 @@ import { InventoryItem, InventoryState } from "../../core/types";
 import { renderScrollLinkShell } from "./ScrollLinkShell";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 

@@ -4,6 +4,8 @@
 // ============================================================================
 
 import { WeaponEquipment } from "./equipment";
+import { GameState } from "./types";
+import { getSettings } from "./settings";
 
 // ----------------------------------------------------------------------------
 // WEAPON NODE SYSTEM

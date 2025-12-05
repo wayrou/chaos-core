@@ -7,6 +7,12 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
+
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 import {
   Equipment,
   WeaponEquipment,
@@ -146,7 +152,7 @@ export function renderUnitDetailScreen(unitId: string): void {
                       data-unit-id="${unitId}" 
                       data-equipment-id="${equipId}"
                       title="Customize card slots for this gear">
-                🔧 CUSTOMIZE
+                ðŸ”§ CUSTOMIZE
               </button>
             ` : ""}
           </div>

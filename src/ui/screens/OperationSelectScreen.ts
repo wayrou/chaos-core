@@ -4,6 +4,12 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderOperationMap } from "./OperationMapScreen";
 
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
+
 export function renderOperationSelectScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;

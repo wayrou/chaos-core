@@ -5,6 +5,12 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMap } from "./OperationMapScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
+
+import { saveGame, loadGame } from "../../core/saveSystem";
+import { getSettings, updateSettings } from "../../core/settings";
+import { initControllerSupport } from "../../core/controllerSupport";
+import { getGameState, updateGameState } from "../../state/gameStore";
+
 import {
   BattleState,
   advanceTurn,

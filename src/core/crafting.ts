@@ -6,6 +6,9 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents";
 
 export interface ResourceCost {

@@ -7,6 +7,9 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export type CardRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 export type CardCategory = "attack" | "defense" | "utility" | "mobility" | "buff" | "debuff" | "steam" | "chaos";
 

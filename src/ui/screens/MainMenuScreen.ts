@@ -1,75 +1,107 @@
-// src/ui/screens/MainMenuScreen.ts
+// ============================================================================
+// CHAOS CORE - MAIN MENU SCREEN (Headline 12 - Standalone Version)
+// Works without save system files - add them later for full functionality
+// ============================================================================
+
 import { resetToNewGame } from "../../state/gameStore";
-import { renderScrollLinkShell } from "./ScrollLinkShell";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 
+// ----------------------------------------------------------------------------
+// RENDER
+// ----------------------------------------------------------------------------
 
-renderBaseCampScreen();
-
-
-export function renderMainMenu() {
+export function renderMainMenu(): void {
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element in index.html");
     return;
   }
 
-  root.innerHTML = `
+  root.innerHTML = /*html*/ `
     <div class="mainmenu-root">
+      <!-- Background effects -->
+      <div class="mainmenu-bg-effects">
+        <div class="mainmenu-scanline"></div>
+        <div class="mainmenu-vignette"></div>
+      </div>
+      
       <div class="mainmenu-card">
-        <div class="mainmenu-logo">CHAOS CORE</div>
+        <!-- Logo -->
+        <div class="mainmenu-logo-container">
+          <div class="mainmenu-logo">CHAOS CORE</div>
+          <div class="mainmenu-logo-glow"></div>
+        </div>
         <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
 
         <div class="mainmenu-divider"></div>
 
-        <button class="mainmenu-btn" data-action="new-op">
-          NEW OPERATION
-        </button>
+        <!-- Main Buttons -->
+        <div class="mainmenu-buttons">
+          <button class="mainmenu-btn mainmenu-btn-primary" data-action="new-op">
+            <span class="btn-icon">+</span>
+            <span class="btn-text">NEW OPERATION</span>
+          </button>
 
-        <button class="mainmenu-btn mainmenu-btn-secondary" data-action="continue-op" disabled>
-          CONTINUE (COMING SOON)
-        </button>
+          <button class="mainmenu-btn mainmenu-btn-secondary" data-action="continue" disabled>
+            <span class="btn-icon">▶</span>
+            <span class="btn-text">CONTINUE</span>
+            <span class="btn-subtitle">Coming Soon</span>
+          </button>
 
-        <button class="mainmenu-btn mainmenu-btn-secondary" data-action="exit">
-          EXIT
-        </button>
+          <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings" disabled>
+            <span class="btn-icon">⚙</span>
+            <span class="btn-text">SETTINGS</span>
+            <span class="btn-subtitle">Coming Soon</span>
+          </button>
+
+          <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
+            <span class="btn-icon">✕</span>
+            <span class="btn-text">EXIT</span>
+          </button>
+        </div>
 
         <div class="mainmenu-footer">
-          <span>SCROLLLINK OS BUILD 0.0.1</span>
+          <span>SCROLLINK OS BUILD 0.1.0</span>
+          <span class="mainmenu-separator">•</span>
           <span>ARDCYTECH PROTOTYPE</span>
         </div>
       </div>
     </div>
   `;
 
-  const newOpBtn = root.querySelector<HTMLButtonElement>(
-    'button[data-action="new-op"]'
-  );
-  const exitBtn = root.querySelector<HTMLButtonElement>(
-    'button[data-action="exit"]'
-  );
+  attachMenuListeners();
+}
 
+// ----------------------------------------------------------------------------
+// EVENT LISTENERS
+// ----------------------------------------------------------------------------
+
+function attachMenuListeners(): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+
+  // New Operation button
+  const newOpBtn = root.querySelector<HTMLButtonElement>('button[data-action="new-op"]');
   if (newOpBtn) {
     newOpBtn.addEventListener("click", () => {
-      // Start a fresh run and go to the shell
       resetToNewGame();
-		renderBaseCampScreen();
-
+      renderBaseCampScreen();
     });
   }
 
+  // Exit button
+  const exitBtn = root.querySelector<HTMLButtonElement>('button[data-action="exit"]');
   if (exitBtn) {
     exitBtn.addEventListener("click", () => {
-      // For now, just close the window via Tauri
-      // (it’s okay if this no-ops on web preview builds)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const anyWindow: any = window;
-      if (anyWindow.__TAURI__) {
+      const anyWindow = window as any;
+      if (anyWindow.__TAURI__?.window) {
         anyWindow.__TAURI__.window.getCurrent().close();
       } else {
-        // fallback in dev
-        console.log("Exit requested (no Tauri window context in this environment).");
+        console.log("Exit requested (no Tauri window context)");
       }
     });
   }
 }
+
+// Export for initial call
+export { renderMainMenu as default };

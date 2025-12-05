@@ -1,6 +1,9 @@
 // src/core/ops.ts
 import { GameState, Floor, OperationRun, RoomNode } from "./types";
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export function getCurrentOperation(state: GameState): OperationRun | null {
   return state.operation;
 }

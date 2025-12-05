@@ -5,6 +5,9 @@ import { getCurrentOperation } from "../../core/ops";
 import { renderOperationMap } from "./OperationMapScreen";
 import { renderInventoryScreen } from "./InventoryScreen";
 
+import { GameState } from "./types";
+import { getSettings } from "./settings";
+
 export function renderScrollLinkShell(): void {
   const root = document.getElementById("app");
   if (!root) return;
