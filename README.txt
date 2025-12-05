@@ -476,6 +476,8 @@ When entering a “battle” node, randomly choose from small curated sets so ru
 
 Event rooms with choices (“Sacrifice HP for a relic?”)
 
+Navigation from room to room on dungeon floor screen (3-5 floors per operation)
+
 Random equipment rewards from battles
 
 shop nodes (buying equipment) in dungeon runs randomly between battles
