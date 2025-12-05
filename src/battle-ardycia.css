@@ -1,0 +1,1139 @@
+/* ==========================================================================
+   CHAOS CORE - BATTLE SYSTEM STYLES
+   Ardycia Aesthetic: Utilitycore + ScrollLink Terminal + FFTA Tactical
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   CSS CUSTOM PROPERTIES - Ardycia Color Palette
+   -------------------------------------------------------------------------- */
+:root {
+  /* Base World Palette */
+  --ardycia-earth-dark: #1a1612;
+  --ardycia-earth-mid: #2d261f;
+  --ardycia-earth-light: #3d3428;
+  --ardycia-iron: #4a4843;
+  --ardycia-charcoal: #252321;
+  
+  /* Autumn Warmth */
+  --ardycia-rust: #8b4513;
+  --ardycia-oxide: #6b2f2f;
+  --ardycia-amber: #c4863a;
+  --ardycia-pumpkin: #b8612a;
+  
+  /* ScrollLink Tech Palette */
+  --slk-green: #35ff95;
+  --slk-green-dim: #1a7a48;
+  --slk-green-glow: rgba(53, 255, 149, 0.3);
+  --slk-teal: #8ce6ff;
+  --slk-amber: #ffcc6e;
+  --slk-violet: #c0b3ff;
+  --slk-red: #ff6b6b;
+  --slk-red-dim: #8b3a3a;
+  
+  /* Metallic Accents */
+  --bronze: #a87c45;
+  --bronze-dark: #6b4f2d;
+  --bronze-light: #c9a66b;
+  --steam-blue: #4fa2ff;
+  
+  /* UI Surfaces */
+  --surface-dark: rgba(20, 18, 15, 0.95);
+  --surface-mid: rgba(35, 30, 25, 0.9);
+  --surface-light: rgba(50, 43, 35, 0.85);
+  --surface-border: rgba(168, 124, 69, 0.3);
+  
+  /* Grid Colors - FFTA Inspired */
+  --tile-floor: #2a3328;
+  --tile-floor-highlight: #3d4a38;
+  --tile-move: rgba(53, 255, 149, 0.25);
+  --tile-move-border: rgba(53, 255, 149, 0.6);
+  --tile-attack: rgba(255, 107, 107, 0.25);
+  --tile-attack-border: rgba(255, 107, 107, 0.6);
+  --tile-selected: rgba(255, 204, 110, 0.3);
+  
+  /* Scanline Effect */
+  --scanline-opacity: 0.03;
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE ROOT CONTAINER
+   -------------------------------------------------------------------------- */
+.battle-root {
+  min-height: 100vh;
+  background: 
+    /* Subtle noise texture */
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E"),
+    /* Radial vignette */
+    radial-gradient(ellipse at center, var(--ardycia-earth-mid) 0%, var(--ardycia-earth-dark) 70%, #0d0b09 100%);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-family: 'Courier New', 'Consolas', monospace;
+  color: var(--bronze-light);
+  position: relative;
+  overflow: hidden;
+}
+
+/* CRT Scanline Overlay */
+.battle-root::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, var(--scanline-opacity)) 2px,
+    rgba(0, 0, 0, var(--scanline-opacity)) 4px
+  );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE CARD - Main Container
+   -------------------------------------------------------------------------- */
+.battle-card {
+  background: var(--surface-dark);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  box-shadow: 
+    0 0 20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(168, 124, 69, 0.1);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE HEADER
+   -------------------------------------------------------------------------- */
+.battle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(180deg, var(--ardycia-earth-mid) 0%, var(--ardycia-earth-dark) 100%);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.battle-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.battle-title {
+  font-size: 1rem;
+  font-weight: bold;
+  color: var(--slk-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 10px rgba(255, 204, 110, 0.3);
+}
+
+.battle-subtitle {
+  font-size: 0.7rem;
+  color: var(--bronze);
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.battle-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.battle-active-info {
+  text-align: right;
+}
+
+.battle-active-label {
+  font-size: 0.6rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.battle-active-value {
+  font-size: 0.9rem;
+  color: var(--slk-teal);
+  font-weight: bold;
+  text-shadow: 0 0 8px rgba(140, 230, 255, 0.4);
+}
+
+.battle-back-btn {
+  padding: 0.4rem 0.8rem;
+  background: var(--ardycia-earth-light);
+  border: 1px solid var(--bronze-dark);
+  color: var(--bronze-light);
+  font-family: inherit;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.battle-back-btn:hover {
+  background: var(--bronze-dark);
+  color: var(--slk-amber);
+  border-color: var(--bronze);
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE GRID - FFTA Tactical Style
+   -------------------------------------------------------------------------- */
+.battle-body {
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: 
+    radial-gradient(ellipse at center, rgba(45, 38, 31, 0.5) 0%, transparent 70%);
+  min-height: 300px;
+}
+
+.battle-grid-container {
+  position: relative;
+  /* Isometric-ish perspective hint */
+  transform: perspective(800px) rotateX(5deg);
+  transform-origin: center bottom;
+}
+
+.battle-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--battle-grid-cols, 8), 1fr);
+  grid-template-rows: repeat(var(--battle-grid-rows, 6), 1fr);
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 3px;
+  border: 2px solid var(--bronze-dark);
+  border-radius: 2px;
+  box-shadow: 
+    0 4px 20px rgba(0, 0, 0, 0.5),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE TILES - Tactical Grid Squares
+   -------------------------------------------------------------------------- */
+.battle-tile {
+  width: 64px;
+  height: 64px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  
+  /* Base tile appearance */
+  background: 
+    linear-gradient(135deg, var(--tile-floor) 0%, var(--tile-floor-highlight) 50%, var(--tile-floor) 100%);
+  border: 1px solid rgba(168, 124, 69, 0.15);
+  
+  /* Subtle inner shadow for depth */
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.battle-tile:hover {
+  border-color: rgba(168, 124, 69, 0.4);
+  background: 
+    linear-gradient(135deg, var(--tile-floor-highlight) 0%, #4a5a45 50%, var(--tile-floor-highlight) 100%);
+}
+
+/* Movement Option Tiles */
+.battle-tile--move-option {
+  background: 
+    linear-gradient(135deg, 
+      rgba(53, 255, 149, 0.15) 0%, 
+      rgba(53, 255, 149, 0.25) 50%, 
+      rgba(53, 255, 149, 0.15) 100%);
+  border-color: var(--tile-move-border);
+  animation: tile-pulse-move 1.5s ease-in-out infinite;
+}
+
+.battle-tile--move-option:hover {
+  background: 
+    linear-gradient(135deg, 
+      rgba(53, 255, 149, 0.25) 0%, 
+      rgba(53, 255, 149, 0.4) 50%, 
+      rgba(53, 255, 149, 0.25) 100%);
+  box-shadow: 
+    0 0 15px var(--slk-green-glow),
+    inset 0 0 10px var(--slk-green-glow);
+}
+
+/* Attack Option Tiles */
+.battle-tile--attack-option {
+  background: 
+    linear-gradient(135deg, 
+      rgba(255, 107, 107, 0.15) 0%, 
+      rgba(255, 107, 107, 0.25) 50%, 
+      rgba(255, 107, 107, 0.15) 100%);
+  border-color: var(--tile-attack-border);
+  animation: tile-pulse-attack 1s ease-in-out infinite;
+}
+
+.battle-tile--attack-option:hover {
+  background: 
+    linear-gradient(135deg, 
+      rgba(255, 107, 107, 0.3) 0%, 
+      rgba(255, 107, 107, 0.5) 50%, 
+      rgba(255, 107, 107, 0.3) 100%);
+  box-shadow: 
+    0 0 15px rgba(255, 107, 107, 0.4),
+    inset 0 0 10px rgba(255, 107, 107, 0.3);
+}
+
+@keyframes tile-pulse-move {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes tile-pulse-attack {
+  0%, 100% { opacity: 1; border-color: var(--tile-attack-border); }
+  50% { opacity: 0.8; border-color: var(--slk-red); }
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE UNITS - Character Tokens
+   -------------------------------------------------------------------------- */
+.battle-unit {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  padding: 2px;
+  transition: transform 0.3s ease-out;
+  z-index: 10;
+}
+
+/* Unit Facing Indicator - Arrow showing direction */
+.battle-unit::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid currentColor;
+  opacity: 0.8;
+  transition: transform 0.2s ease;
+}
+
+/* Facing directions */
+.battle-unit[data-facing="north"]::before { transform: translateX(-50%) rotate(0deg); top: -6px; }
+.battle-unit[data-facing="south"]::before { transform: translateX(-50%) rotate(180deg); top: auto; bottom: -6px; }
+.battle-unit[data-facing="east"]::before { transform: translateY(-50%) rotate(90deg); top: 50%; left: auto; right: -6px; }
+.battle-unit[data-facing="west"]::before { transform: translateY(-50%) rotate(-90deg); top: 50%; left: -6px; right: auto; }
+
+/* Ally Units */
+.battle-unit--ally {
+  background: 
+    linear-gradient(180deg, 
+      rgba(53, 255, 149, 0.2) 0%, 
+      rgba(26, 122, 72, 0.4) 100%);
+  border: 2px solid var(--slk-green);
+  color: var(--slk-green);
+  box-shadow: 
+    0 0 10px var(--slk-green-glow),
+    inset 0 0 15px rgba(53, 255, 149, 0.1);
+}
+
+.battle-unit--ally::before {
+  border-bottom-color: var(--slk-green);
+}
+
+/* Enemy Units */
+.battle-unit--enemy {
+  background: 
+    linear-gradient(180deg, 
+      rgba(255, 107, 107, 0.2) 0%, 
+      rgba(139, 58, 58, 0.4) 100%);
+  border: 2px solid var(--slk-red);
+  color: var(--slk-red);
+  box-shadow: 
+    0 0 10px rgba(255, 107, 107, 0.3),
+    inset 0 0 15px rgba(255, 107, 107, 0.1);
+}
+
+.battle-unit--enemy::before {
+  border-bottom-color: var(--slk-red);
+}
+
+/* Active Unit Highlight */
+.battle-unit--active {
+  animation: unit-active-pulse 1s ease-in-out infinite;
+  z-index: 20;
+}
+
+.battle-unit--ally.battle-unit--active {
+  border-color: var(--slk-amber);
+  box-shadow: 
+    0 0 20px rgba(255, 204, 110, 0.5),
+    inset 0 0 15px rgba(255, 204, 110, 0.2);
+}
+
+@keyframes unit-active-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+/* Unit Info Display */
+.battle-unit-indicator {
+  display: none; /* Hidden - using border colors instead */
+}
+
+.battle-unit-name {
+  font-size: 0.55rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-align: center;
+}
+
+.battle-unit-hp {
+  font-size: 0.5rem;
+  opacity: 0.9;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.battle-unit-strain {
+  font-size: 0.45rem;
+  opacity: 0.7;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* --------------------------------------------------------------------------
+   SCROLLINK CONSOLE - Terminal Log
+   -------------------------------------------------------------------------- */
+.scrollink-console {
+  background: var(--ardycia-earth-dark);
+  border-top: 1px solid var(--surface-border);
+  font-family: 'Courier New', monospace;
+}
+
+.scrollink-console-header {
+  padding: 0.4rem 0.75rem;
+  background: linear-gradient(90deg, var(--bronze-dark) 0%, transparent 100%);
+  font-size: 0.65rem;
+  color: var(--slk-amber);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.scrollink-console-body {
+  padding: 0.5rem 0.75rem;
+  max-height: 100px;
+  overflow-y: auto;
+  font-size: 0.65rem;
+  line-height: 1.4;
+}
+
+.scrollink-console-line {
+  color: var(--slk-green);
+  opacity: 0.9;
+  margin-bottom: 2px;
+  text-shadow: 0 0 5px var(--slk-green-glow);
+}
+
+.scrollink-console-line:last-child {
+  opacity: 1;
+}
+
+/* Custom scrollbar for console */
+.scrollink-console-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollink-console-body::-webkit-scrollbar-track {
+  background: var(--ardycia-earth-dark);
+}
+
+.scrollink-console-body::-webkit-scrollbar-thumb {
+  background: var(--bronze-dark);
+  border-radius: 3px;
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE BOTTOM PANEL - Unit Info + Hand
+   -------------------------------------------------------------------------- */
+.battle-bottom {
+  display: flex;
+  gap: 0.75rem;
+  max-height: 280px;
+}
+
+/* --------------------------------------------------------------------------
+   UNIT PANEL
+   -------------------------------------------------------------------------- */
+.battle-unit-panel {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface-dark);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+}
+
+.unit-panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+}
+
+.unit-panel-empty-text {
+  color: var(--bronze);
+  opacity: 0.5;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.unit-panel-header {
+  padding: 0.6rem 0.75rem;
+  background: linear-gradient(180deg, var(--ardycia-earth-mid) 0%, var(--ardycia-earth-dark) 100%);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.unit-panel-label {
+  font-size: 0.55rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 2px;
+}
+
+.unit-panel-name {
+  font-size: 0.95rem;
+  font-weight: bold;
+  color: var(--slk-teal);
+  text-shadow: 0 0 10px rgba(140, 230, 255, 0.3);
+}
+
+.unit-panel-stats {
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1;
+}
+
+.unit-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.unit-stat-row--inline {
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.unit-stat-label {
+  font-size: 0.6rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: 45px;
+  flex-shrink: 0;
+}
+
+.unit-stat-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.unit-stat-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--ardycia-earth-dark);
+  border: 1px solid var(--surface-border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.unit-stat-bar-track--danger {
+  border-color: var(--slk-red-dim);
+  animation: bar-danger-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes bar-danger-pulse {
+  0%, 100% { border-color: var(--slk-red-dim); }
+  50% { border-color: var(--slk-red); }
+}
+
+.unit-stat-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.unit-stat-bar-fill--hp {
+  background: linear-gradient(90deg, var(--slk-green-dim) 0%, var(--slk-green) 100%);
+  box-shadow: 0 0 5px var(--slk-green-glow);
+}
+
+.unit-stat-bar-fill--strain {
+  background: linear-gradient(90deg, var(--bronze-dark) 0%, var(--slk-amber) 100%);
+}
+
+.unit-stat-bar-fill--over {
+  background: linear-gradient(90deg, var(--slk-red-dim) 0%, var(--slk-red) 100%);
+  animation: fill-danger-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes fill-danger-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.unit-stat-bar-fill--move {
+  background: linear-gradient(90deg, var(--slk-teal) 0%, var(--steam-blue) 100%);
+}
+
+.unit-stat-value {
+  font-size: 0.6rem;
+  color: var(--bronze-light);
+  min-width: 35px;
+  text-align: right;
+}
+
+.unit-stat-value--danger {
+  color: var(--slk-red);
+  text-shadow: 0 0 5px rgba(255, 107, 107, 0.5);
+}
+
+.unit-stat-chip {
+  padding: 0.15rem 0.4rem;
+  background: var(--ardycia-earth-light);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  font-size: 0.55rem;
+  color: var(--bronze-light);
+}
+
+/* --------------------------------------------------------------------------
+   WEAPON WINDOW
+   -------------------------------------------------------------------------- */
+.unit-panel-weapon {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.weapon-window {
+  background: var(--ardycia-earth-mid);
+  border: 1px solid var(--bronze-dark);
+  border-radius: 2px;
+}
+
+.weapon-window--empty {
+  padding: 0.75rem;
+  text-align: center;
+  color: var(--bronze);
+  opacity: 0.5;
+  font-size: 0.7rem;
+}
+
+.weapon-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  background: linear-gradient(90deg, var(--bronze-dark) 0%, transparent 100%);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.weapon-window-title {
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: var(--slk-amber);
+  letter-spacing: 0.05em;
+}
+
+.weapon-window-status {
+  font-size: 0.55rem;
+  color: var(--slk-green);
+  text-transform: uppercase;
+}
+
+.weapon-window-status--active {
+  color: var(--slk-amber);
+  text-shadow: 0 0 5px rgba(255, 204, 110, 0.5);
+  animation: status-blink 1s ease-in-out infinite;
+}
+
+@keyframes status-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.weapon-window-body {
+  padding: 0.4rem 0.5rem;
+}
+
+.weapon-window-actions {
+  margin-top: 0.4rem;
+}
+
+.weapon-clutch-btn {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  background: var(--ardycia-earth-dark);
+  border: 1px solid var(--bronze-dark);
+  color: var(--bronze-light);
+  font-family: inherit;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.weapon-clutch-btn:hover {
+  background: var(--bronze-dark);
+  color: var(--slk-amber);
+}
+
+.weapon-clutch-btn--active {
+  background: var(--bronze-dark);
+  border-color: var(--slk-amber);
+  color: var(--slk-amber);
+  box-shadow: 0 0 10px rgba(255, 204, 110, 0.3);
+}
+
+.weapon-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.weapon-stat-label {
+  font-size: 0.55rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  width: 35px;
+}
+
+.weapon-stat-value--warn {
+  color: var(--slk-amber);
+}
+
+.weapon-stat-bar-fill--heat {
+  background: linear-gradient(90deg, var(--slk-amber) 0%, var(--slk-red) 100%);
+}
+
+/* --------------------------------------------------------------------------
+   HAND PANEL - Card Display
+   -------------------------------------------------------------------------- */
+.battle-hand {
+  flex: 1;
+  background: var(--surface-dark);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.battle-hand--strained {
+  border-color: var(--slk-red-dim);
+  box-shadow: inset 0 0 20px rgba(255, 107, 107, 0.1);
+}
+
+.hand-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: linear-gradient(180deg, var(--ardycia-earth-mid) 0%, var(--ardycia-earth-dark) 100%);
+  border-bottom: 1px solid var(--surface-border);
+  gap: 1rem;
+}
+
+.hand-info {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.hand-label {
+  font-size: 0.65rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.hand-count {
+  font-size: 0.8rem;
+  color: var(--slk-teal);
+  font-weight: bold;
+}
+
+.hand-meters {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.hand-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.hand-counter-label {
+  font-size: 0.55rem;
+  color: var(--bronze);
+}
+
+.hand-counter-value {
+  font-size: 0.65rem;
+  color: var(--bronze-light);
+}
+
+.hand-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.hand-actions button {
+  padding: 0.3rem 0.6rem;
+  background: var(--ardycia-earth-light);
+  border: 1px solid var(--bronze-dark);
+  color: var(--bronze-light);
+  font-family: inherit;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hand-actions button:hover:not(:disabled) {
+  background: var(--bronze-dark);
+  color: var(--slk-amber);
+  border-color: var(--bronze);
+}
+
+.hand-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.battle-endturn-btn {
+  background: var(--bronze-dark) !important;
+  border-color: var(--bronze) !important;
+  color: var(--slk-amber) !important;
+}
+
+.battle-debug-autowin-btn {
+  background: var(--slk-red-dim) !important;
+  border-color: var(--slk-red) !important;
+  color: var(--slk-red) !important;
+  font-size: 0.5rem !important;
+}
+
+/* --------------------------------------------------------------------------
+   CARD DISPLAY - Fan Layout
+   -------------------------------------------------------------------------- */
+.hand-cards-row {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem 1rem 1rem;
+  gap: 0;
+  position: relative;
+}
+
+.hand-empty {
+  color: var(--bronze);
+  opacity: 0.5;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.battle-card-slot {
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(var(--fan-translateY, 0px));
+  transition: transform 0.2s ease, z-index 0s;
+  margin-left: -30px;
+}
+
+.battle-card-slot:first-child {
+  margin-left: 0;
+}
+
+.battle-card-slot:hover {
+  transform: rotate(0deg) translateY(-20px) scale(1.08);
+  z-index: 100 !important;
+}
+
+.battle-cardui {
+  width: 110px;
+  height: 155px;
+  background: 
+    linear-gradient(180deg, 
+      var(--ardycia-earth-mid) 0%, 
+      var(--ardycia-earth-dark) 100%);
+  border: 2px solid var(--bronze-dark);
+  border-radius: 4px;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.battle-cardui:hover {
+  border-color: var(--bronze);
+  box-shadow: 
+    0 8px 20px rgba(0, 0, 0, 0.5),
+    0 0 15px rgba(168, 124, 69, 0.3);
+}
+
+.battle-cardui--selected {
+  border-color: var(--slk-amber);
+  box-shadow: 
+    0 0 20px rgba(255, 204, 110, 0.4),
+    inset 0 0 15px rgba(255, 204, 110, 0.1);
+  transform: translateY(-10px);
+}
+
+.battle-cardui--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.card-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+
+.card-icon {
+  font-size: 0.8rem;
+  color: var(--bronze-light);
+}
+
+.card-cost {
+  font-size: 0.5rem;
+  padding: 0.15rem 0.3rem;
+  background: var(--ardycia-earth-dark);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  color: var(--slk-amber);
+}
+
+.card-name {
+  font-size: 0.65rem;
+  font-weight: bold;
+  color: var(--slk-teal);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.2rem;
+  line-height: 1.2;
+}
+
+.card-tag {
+  font-size: 0.45rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+}
+
+.card-desc {
+  font-size: 0.5rem;
+  color: var(--bronze-light);
+  line-height: 1.3;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   BATTLE RESULT OVERLAY
+   -------------------------------------------------------------------------- */
+.battle-result-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 8, 6, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  animation: overlay-fade-in 0.5s ease;
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.battle-result-overlay--defeat {
+  background: rgba(40, 10, 10, 0.9);
+}
+
+.battle-result-card {
+  background: var(--surface-dark);
+  border: 2px solid var(--bronze);
+  border-radius: 4px;
+  padding: 2rem;
+  text-align: center;
+  min-width: 350px;
+  box-shadow: 
+    0 0 50px rgba(168, 124, 69, 0.3),
+    inset 0 0 30px rgba(0, 0, 0, 0.5);
+  animation: result-card-appear 0.5s ease;
+}
+
+@keyframes result-card-appear {
+  from { 
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  to { 
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.battle-result-title {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--slk-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  margin-bottom: 1.5rem;
+  text-shadow: 0 0 30px rgba(255, 204, 110, 0.5);
+}
+
+.battle-result-overlay--defeat .battle-result-title {
+  color: var(--slk-red);
+  text-shadow: 0 0 30px rgba(255, 107, 107, 0.5);
+}
+
+.battle-defeat-text {
+  color: var(--bronze-light);
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.battle-reward-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.battle-reward-item {
+  background: var(--ardycia-earth-mid);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  padding: 0.6rem;
+}
+
+.reward-label {
+  font-size: 0.55rem;
+  color: var(--bronze);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.reward-value {
+  font-size: 1rem;
+  font-weight: bold;
+  color: var(--slk-green);
+  text-shadow: 0 0 10px var(--slk-green-glow);
+}
+
+.battle-result-footer {
+  margin-top: 1rem;
+}
+
+.battle-result-btn {
+  padding: 0.75rem 2rem;
+  background: var(--bronze-dark);
+  border: 2px solid var(--bronze);
+  color: var(--slk-amber);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.battle-result-btn:hover {
+  background: var(--bronze);
+  color: var(--ardycia-earth-dark);
+  box-shadow: 0 0 20px rgba(168, 124, 69, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   RESPONSIVE ADJUSTMENTS
+   -------------------------------------------------------------------------- */
+@media (max-width: 1200px) {
+  .battle-tile {
+    width: 56px;
+    height: 56px;
+  }
+  
+  .battle-cardui {
+    width: 100px;
+    height: 140px;
+  }
+  
+  .battle-card-slot {
+    margin-left: -25px;
+  }
+}
+
+@media (max-width: 900px) {
+  .battle-bottom {
+    flex-direction: column;
+    max-height: none;
+  }
+  
+  .battle-unit-panel {
+    width: 100%;
+  }
+  
+  .battle-tile {
+    width: 48px;
+    height: 48px;
+  }
+}

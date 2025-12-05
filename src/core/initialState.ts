@@ -1,4 +1,15 @@
-// src/core/initialState.ts
+// ============================================================================
+// INITIAL STATE - Updated with Equipment System (11b/11c)
+// ============================================================================
+
+import { getStarterRecipeIds } from "./crafting";
+
+import { 
+  getStarterCardLibrary, 
+  getDefaultGearSlots,
+  GearSlotData 
+} from "./gearWorkbench";
+
 import {
   Card,
   CardEffect,
@@ -15,12 +26,159 @@ import {
   MuleWeightClass,
 } from "./types";
 
+import {
+  Equipment,
+  UnitLoadout,
+  UnitClass,
+  Module,
+  getAllStarterEquipment,
+  getAllModules,
+  getAllEquipmentCards,
+  EquipmentCard,
+  STARTER_WEAPONS,
+  STARTER_HELMETS,
+  STARTER_CHESTPIECES,
+  STARTER_ACCESSORIES,
+} from "./equipment";
 
 /**
- * Starter card pool for the prototype.
+ * Convert EquipmentCard to the game's Card format for battle compatibility
  */
-function createStarterCards(): Record<CardId, Card> {
-  const cards: Card[] = [
+function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
+  const desc = eqCard.description.toLowerCase();
+  
+  // Determine target type based on card properties
+  let targetType: "enemy" | "self" | "tile" | "ally" = "self";
+  
+  // Check for enemy-targeting indicators
+  const isOffensive = 
+    (eqCard.damage && eqCard.damage > 0) ||
+    desc.includes("deal") && desc.includes("damage") ||
+    desc.includes("attack") ||
+    desc.includes("hit") ||
+    desc.includes("strike") ||
+    desc.includes("shot") ||
+    desc.includes("slash") ||
+    desc.includes("stab") ||
+    desc.includes("push target") ||
+    desc.includes("pull target");
+  
+  // Check for ally-targeting
+  const isAllyTarget = 
+    desc.includes("ally") ||
+    desc.includes("restore") && desc.includes("ally") ||
+    desc.includes("heal ally");
+  
+  // Check for movement/tile targeting
+  const isTileTarget =
+    desc.includes("move") && desc.includes("tile") ||
+    desc.includes("reposition");
+  
+  if (isOffensive) {
+    targetType = "enemy";
+  } else if (isAllyTarget) {
+    targetType = "ally";
+  } else if (isTileTarget) {
+    targetType = "tile";
+  }
+  
+  // Parse range from string like "R(1-2)" or "R(1)" or "R(Self)"
+  let range = 1;
+  if (eqCard.range) {
+    if (eqCard.range.toLowerCase().includes("self")) {
+      range = 0;
+      targetType = "self";
+    } else {
+      const match = eqCard.range.match(/R\((\d+)(?:-(\d+))?\)/);
+      if (match) {
+        range = parseInt(match[2] || match[1], 10);
+      }
+    }
+  }
+  
+  // Build effects array with all detected effects
+  const effects: CardEffect[] = [];
+  
+  // Damage
+  if (eqCard.damage && eqCard.damage > 0) {
+    effects.push({ type: "damage", amount: eqCard.damage });
+  } else {
+    const dmgMatch = desc.match(/deal\s+(\d+)\s+damage/i);
+    if (dmgMatch) {
+      effects.push({ type: "damage", amount: parseInt(dmgMatch[1], 10) });
+    }
+  }
+  
+  // Healing
+  const healMatch = desc.match(/(?:restore|heal|recover)\s+(\d+)\s+hp/i);
+  if (healMatch) {
+    effects.push({ type: "heal", amount: parseInt(healMatch[1], 10) });
+  }
+  
+  // DEF buff
+  const defMatch = desc.match(/\+(\d+)\s+def/i) || desc.match(/gain\s+\+?(\d+)\s+def/i);
+  if (defMatch) {
+    effects.push({ type: "def_up", amount: parseInt(defMatch[1], 10), duration: 1 });
+  }
+  
+  // ATK buff  
+  const atkMatch = desc.match(/\+(\d+)\s+atk/i) || desc.match(/gain\s+\+?(\d+)\s+atk/i);
+  if (atkMatch) {
+    effects.push({ type: "atk_up", amount: parseInt(atkMatch[1], 10), duration: 1 });
+  }
+  
+  // AGI buff
+  const agiMatch = desc.match(/\+(\d+)\s+agi/i) || desc.match(/gain\s+\+?(\d+)\s+agi/i);
+  if (agiMatch) {
+    effects.push({ type: "agi_up", amount: parseInt(agiMatch[1], 10), duration: 1 });
+  }
+  
+  // ACC buff
+  const accMatch = desc.match(/\+(\d+)\s+acc/i) || desc.match(/gain\s+\+?(\d+)\s+acc/i);
+  if (accMatch) {
+    effects.push({ type: "acc_up", amount: parseInt(accMatch[1], 10), duration: 1 });
+  }
+  
+  // Stun
+  if (desc.includes("stun")) {
+    effects.push({ type: "stun", duration: 1 });
+  }
+  
+  // Burn
+  if (desc.includes("burn") || desc.includes("inflict burn")) {
+    effects.push({ type: "burn", duration: 2 });
+  }
+  
+  // Push
+  const pushMatch = desc.match(/push\s+(?:target\s+)?(?:back\s+)?(\d+)\s+tile/i);
+  if (pushMatch) {
+    effects.push({ type: "push", amount: parseInt(pushMatch[1], 10) });
+  }
+  
+  // End turn (for Wait card)
+  if (eqCard.id === "core_wait" || eqCard.name.toLowerCase() === "wait") {
+    effects.push({ type: "end_turn" });
+  }
+  
+  return {
+    id: eqCard.id,
+    name: eqCard.name,
+    description: eqCard.description,
+    strainCost: eqCard.strainCost,
+    targetType,
+    range,
+    effects,
+  };
+}
+
+/**
+ * Create all cards for the game - combines legacy cards with equipment cards
+ */
+function createAllCards(): Record<CardId, Card> {
+  const cards: Record<CardId, Card> = {};
+  
+  // Add legacy cards for backwards compatibility
+  const legacyCards: Card[] = [
     {
       id: "strike",
       name: "Strike",
@@ -28,9 +186,7 @@ function createStarterCards(): Record<CardId, Card> {
       strainCost: 2,
       targetType: "enemy",
       range: 1,
-      effects: [
-        { type: "damage", amount: 5 } as CardEffect,
-      ],
+      effects: [{ type: "damage", amount: 5 } as CardEffect],
     },
     {
       id: "lunge",
@@ -39,9 +195,7 @@ function createStarterCards(): Record<CardId, Card> {
       strainCost: 2,
       targetType: "enemy",
       range: 2,
-      effects: [
-        { type: "damage", amount: 4 } as CardEffect,
-      ],
+      effects: [{ type: "damage", amount: 4 } as CardEffect],
     },
     {
       id: "brace",
@@ -50,31 +204,44 @@ function createStarterCards(): Record<CardId, Card> {
       strainCost: 2,
       targetType: "self",
       range: 0,
-      effects: [], // we'll add real buffs later if you want
+      effects: [],
     },
   ];
-
-  return Object.fromEntries(cards.map((c) => [c.id, c]));
+  
+  for (const card of legacyCards) {
+    cards[card.id] = card;
+  }
+  
+  // Add all equipment-based cards
+  const equipmentCards = getAllEquipmentCards();
+  for (const [id, eqCard] of Object.entries(equipmentCards)) {
+    cards[id] = equipmentCardToGameCard(eqCard);
+  }
+  
+  return cards;
 }
 
+/**
+ * Extended Unit type with equipment loadout
+ */
+interface UnitWithEquipment extends Unit {
+  unitClass: UnitClass;
+  loadout: UnitLoadout;
+}
 
 /**
- * Starter units (Aeriss + a marksman) that use the starter cards.
+ * Starter units with equipment loadouts
  */
-function createStarterUnits(
-  cardsById: Record<CardId, Card>
-): Record<UnitId, Unit> {
-  // Simple shared deck; filter to make sure the IDs exist
-const baseDeck: CardId[] = ["strike", "strike", "lunge", "brace"].filter(
-  (id) => !!cardsById[id]
-);
+function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
+  // Legacy deck no longer used - decks are built from equipment
+  const baseDeck: CardId[] = [];
 
-
-  const units: Unit[] = [
+  const units: UnitWithEquipment[] = [
     {
       id: "unit_aeriss",
       name: "Aeriss",
       classId: "vanguard" as UnitClassId,
+      unitClass: "squire",
       stats: {
         maxHp: 30,
         atk: 7,
@@ -83,11 +250,19 @@ const baseDeck: CardId[] = ["strike", "strike", "lunge", "brace"].filter(
         acc: 90,
       },
       deck: baseDeck,
+      loadout: {
+        weapon: "weapon_iron_longsword",
+        helmet: "armor_ironguard_helm",
+        chestpiece: "armor_steelplate_cuirass",
+        accessory1: "accessory_steel_signet_ring",
+        accessory2: null,
+      },
     },
     {
       id: "unit_marksman_1",
       name: "Mistguard Marksman",
       classId: "marksman" as UnitClassId,
+      unitClass: "ranger",
       stats: {
         maxHp: 22,
         atk: 6,
@@ -96,10 +271,20 @@ const baseDeck: CardId[] = ["strike", "strike", "lunge", "brace"].filter(
         acc: 95,
       },
       deck: baseDeck,
+      loadout: {
+        weapon: "weapon_elm_recurve_bow",
+        helmet: "armor_rangers_hood",
+        chestpiece: "armor_leather_jerkin",
+        accessory1: "accessory_eagle_eye_lens",
+        accessory2: null,
+      },
     },
   ];
 
-  return Object.fromEntries(units.map((u) => [u.id, u]));
+  return Object.fromEntries(units.map((u) => [u.id, u])) as Record<
+    UnitId,
+    UnitWithEquipment
+  >;
 }
 
 function createOperationIronGate(): OperationRun {
@@ -136,7 +321,7 @@ function createOperationIronGate(): OperationRun {
 
   const floor: Floor = {
     id: "floor_iron_gate_1",
-    name: "Iron Gate – Approach",
+    name: "Iron Gate - Approach",
     nodes,
     startingNodeId: "room_start",
   };
@@ -144,6 +329,7 @@ function createOperationIronGate(): OperationRun {
   const operation: OperationRun = {
     id: "op_iron_gate",
     codename: "IRON GATE",
+    description: "Secure the Chaos Rift entrance.",
     currentFloorIndex: 0,
     floors: [floor],
     currentRoomId: "room_start",
@@ -156,18 +342,12 @@ function createDefaultProfile(rosterUnitIds: UnitId[]): PlayerProfile {
   return {
     callsign: "AERISS",
     squadName: "Company of Quills",
-    resources: {
-      credits: 100,
-      intel: 0,
-    },
     rosterUnitIds,
   };
 }
 
 function createInitialInventory(): InventoryState {
   const muleClass: MuleWeightClass = "E";
-
-  // Base caps for class E; tweak later as needed.
   const capacityMassKg = 100;
   const capacityBulkBu = 70;
   const capacityPowerW = 300;
@@ -182,25 +362,63 @@ function createInitialInventory(): InventoryState {
   };
 }
 
+/**
+ * Create the equipment pool (all available equipment IDs)
+ */
+function createEquipmentPool(): string[] {
+  const pool: string[] = [];
+
+  for (const w of STARTER_WEAPONS) {
+    pool.push(w.id);
+  }
+  for (const h of STARTER_HELMETS) {
+    pool.push(h.id);
+  }
+  for (const c of STARTER_CHESTPIECES) {
+    pool.push(c.id);
+  }
+  for (const a of STARTER_ACCESSORIES) {
+    pool.push(a.id);
+  }
+
+  return pool;
+}
+
+/**
+ * Extended GameState with equipment system
+ */
+export interface GameStateWithEquipment extends GameState {
+  equipmentById: Record<string, Equipment>;
+  modulesById: Record<string, Module>;
+  equipmentPool: string[];
+}
 
 /** Factory: create a brand new game state for a new run */
-export function createNewGameState(): GameState {
-  const cardsById = createStarterCards();
-  const unitsById = createStarterUnits(cardsById);
+export function createNewGameState(): GameStateWithEquipment {
+  const cardsById = createAllCards();
+  const unitsById = createStarterUnits();
 
   const rosterUnitIds = Object.keys(unitsById);
   const profile = createDefaultProfile(rosterUnitIds);
   const operation = createOperationIronGate();
 
-  const state: GameState = {
+  // Equipment system data
+  const equipmentById = getAllStarterEquipment();
+  const modulesById = getAllModules();
+  const equipmentPool = createEquipmentPool();
+  
+ 
+  
+
+
+  const state: GameStateWithEquipment = {
     phase: "shell",
     profile,
     operation,
-    unitsById,
+    unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
     partyUnitIds: ["unit_aeriss", "unit_marksman_1"],
 
-    // your meta-resources
     wad: 0,
     resources: {
       metalScrap: 0,
@@ -208,20 +426,34 @@ export function createNewGameState(): GameState {
       chaosShards: 0,
       steamComponents: 0,
     },
+	
+	 // Starter card library
+  cardLibrary: getStarterCardLibrary(),
+  
+  // Gear slots - will be populated as equipment is acquired
+  gearSlots: {},
+	
+	   // Crafting - starter recipes are known by default
+  knownRecipeIds: getStarterRecipeIds(),
+  
+  // Consumables pouch - starts empty
+consumables: {},
 
     currentBattle: null,
-	
-inventory: {
-  muleClass: "E",
-  capacityMassKg: 100,
-  capacityBulkBu: 70,
-  capacityPowerW: 300,
-  forwardLocker: [],
-  baseStorage: [],
-},
 
+    inventory: {
+      muleClass: "E",
+      capacityMassKg: 100,
+      capacityBulkBu: 70,
+      capacityPowerW: 300,
+      forwardLocker: [],
+      baseStorage: [],
+    },
 
-	
+    // 11b/11c Equipment system additions
+    equipmentById,
+    modulesById,
+    equipmentPool,
   };
 
   return state;

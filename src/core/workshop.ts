@@ -3,7 +3,7 @@
 // Crafting interface at Base Camp
 // ============================================================================
 
-import { getGameState, updateGameState } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import {
   Recipe,
@@ -16,7 +16,7 @@ import {
   getRecipesByCategory,
   craftItem,
   CONSUMABLE_DATABASE,
-} from "../../core/crafting";
+} from "../core/crafting";
 
 // ----------------------------------------------------------------------------
 // STATE

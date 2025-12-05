@@ -1,0 +1,331 @@
+Aesthetic Bible
+This includes definitions, core principles, visual examples, DO vs. DON'T rules, and pitfalls to avoid.
+0. PURPOSE
+Ardycia’s aesthetic is the foundation of Chaos Core, Elise is Alone, and all future connected works.
+ This guide defines:
+What Ardycia looks like
+
+
+What Ardycia feels like
+
+
+The visual logic behind cultures, tech, magic, OS systems, and character design
+
+
+DO/DON’T rules to ensure all artists produce cohesive work
+
+
+Think of this as the “visual grammar” of Ardycia.
+
+1. CORE AESTHETIC PILLARS
+Ardycia’s look emerges from six intersecting styles, all of which must coexist harmoniously:
+Utilitycore / Adventure Gothic / Gear Punk
+
+
+Steampunk Bronze vs. Industrial Futurism Decay
+
+
+Atomic Autumn
+
+
+Light Burton-Esque
+
+
+Light Militarypunk
+
+
+Retrofuture Noir
+
+
+ScrollLink OS (Retro-Terminal Tech)
+
+
+Each is broken down below with DO/DON’T rules.
+
+2. UTILITYCORE / ADVENTURE GOTHIC / GEAR PUNK
+“Everything has a use. Everything is weathered.”
+Key Traits
+Many straps, belts, loops, and modular attachments
+
+
+Uneven distribution of gear
+
+
+Leather, canvas, cloth, and weathered metal
+
+
+Heavy boots, patched gloves, utilitarian layers
+
+
+Medieval adventurer meets industrial mechanic
+
+
+
+DO
+✔ Give characters multiple locations to carry tools, weapons, or talismans
+ ✔ Use worn materials: cracked leather, faded dyes, patched fabrics
+ ✔ Let silhouettes feel asymmetrical and weight-bearing
+ ✔ Show history in every item (scratches, dents, repairs)
+DON’T
+✘ Make characters look sleek, clean, or symmetrical
+ ✘ Introduce modern tactical gear (plastic, hard polymers, SWAT-style vests)
+ ✘ Use bright sci-fi neon or glossy chrome here—save that for OS/terminal tech
+ ✘ Add straps or buckles purely for decoration — everything must function
+
+3. STEAMPUNK BRONZE VS. INDUSTRIAL FUTURISM DECAY
+“Two worlds: elegant new craft vs. haunted old machinery.”
+Ardycia is shaped by the contrast between:
+New World Tech: Brass, bronze, polished fittings, decorative rivets
+
+
+Old World Tech: Dying magnets, rusted steel, peeling labels, cracked screens
+
+
+Nature overgrows everything.
+
+DO
+✔ Pair new and old technology visibly (bronze gear on top of rusted machinery)
+ ✔ Use warm metallic palettes for new inventions
+ ✔ Show plants and moss claiming old industrial ruins
+ ✔ Lean into welded plates, exposed wiring, gears partially fused with mineral deposits
+DON’T
+✘ Make steampunk gadgets too clean or pristine
+ ✘ Depict old world tech as futuristic glossy sci-fi
+ ✘ Use plastic, LED-era tech, or polished aluminum
+ ✘ Overstuff scenes with gears—use selectively, not as decoration
+
+4. ATOMIC AUTUMN
+“Small-town warmth, industrial melancholy.”
+Inspired by The Iron Giant, rust-belt Americana, retro Midwest charm.
+Atmosphere
+Warm autumn palettes (rust, pumpkin, faded red paint)
+
+
+Mist, quiet streets, industrial hum
+
+
+Cozy meets ominous
+
+
+
+DO
+✔ Show nostalgia and melancholy—railroads, water towers, barns, mills
+ ✔ Use worn signage, cracked enamel, 50s-inspired design language
+ ✔ Build environments with “comfort that has seen tragedy”
+ ✔ Include falling leaves, fog, and golden-hour lighting
+DON’T
+✘ Make it whimsical or cartoony
+ ✘ Use bright modern plastics or 70s neon tones
+ ✘ Depict American patriotism (flags, logos) — this is Ardycia, not Earth
+ ✘ Overdo the autumn leaves — subtlety > saturation
+
+5. LIGHT BURTON-ESQUE
+“Curves that feel eerie, not goofy.”
+This influence should be very subtle.
+Traits
+Slightly crooked architecture
+
+
+Elongated proportions
+
+
+Whimsical imperfection
+
+
+Carved wood and wrought iron
+
+
+
+DO
+✔ Tilt silhouettes by 2–5 degrees—barely noticeable
+ ✔ Add curling patterns to lanterns, signposts, tree branches
+ ✔ Use high-contrast lighting and rim glow
+ ✔ Let environments feel storybook but grounded
+DON’T
+✘ Go full “Nightmare Before Christmas” exaggerated
+ ✘ Use bright cartoon colors or comedic proportions
+ ✘ Add googly eyes or comical Gothic tropes
+
+6. LIGHT MILITARYPUNK
+“Improvised paramilitary flavor, but still fantasy.”
+Traits
+Tactical straps and harnesses
+
+
+Surplus-style military gear integrated into medieval clothing
+
+
+Customized armor pieces
+
+
+Practicality over ceremony
+
+
+
+DO
+✔ Give characters unique personal gear layouts
+ ✔ Mix medieval armor plates with scavenged industrial parts
+ ✔ Use natural cloth colors: olive, khaki, charcoal
+ ✔ Emphasize field-readiness
+DON’T
+✘ Include modern firearms (unless ancient relics with unique designs)
+ ✘ Use full tactical vests, MOLLE systems, synthetic hard armor
+ ✘ Copy any real-world military fashion too closely
+ ✘ Add modern camouflage patterns
+
+7. RETROFUTURE NOIR
+“Light against shadow. Mystery in the rain.”
+Traits
+Sharp silhouettes
+
+
+High contrast
+
+
+Rain, fog, reflective puddles
+
+
+Backlit scenes
+
+
+A sense of secrecy
+
+
+
+DO
+✔ Use silhouettes heavily when showing powerful figures
+ ✔ Cast long shadows from machinery or terminals
+ ✔ Blend light rain with reflective surfaces
+ ✔ Keep palettes dark but not monotone
+DON’T
+✘ Make neon cities or Blade Runner knockoffs
+ ✘ Use bright neon pinks/purples except sparingly in OS glows
+ ✘ Go cyberpunk—this is noir, not neon dystopia
+
+8. SCROLLLINK OS — RETRO-TERMINAL TECH
+“A dying operating system with a soul.”
+This is Ardycia’s unique tech identity. It must feel:
+Retro
+
+
+Arcane
+
+
+Semi-sentient
+
+
+Military-grade
+
+
+Broken but magical
+
+
+Visual Language
+CRT glow, scanlines, phosphor smear
+
+
+Military BIOS aesthetics
+
+
+Glitching glyphs
+
+
+Ghost text
+
+
+Vector wireframes, tactical schematics
+
+
+Terminal prompts such as:
+ SLK> ENGAGE::NODE_04
+ SLK> MEMORY_FRAG::REBUILD
+
+
+UI is never modern. It's always analog-digital hybrid.
+
+DO
+✔ Use monochrome or duotone UI (teal, green, amber, violet)
+ ✔ Add micro-glitches, flicker, jitter, ghosting
+ ✔ Give UI shape language influenced by bronze-era design
+ ✔ Include ASCII maps, wireframes, arc diagrams
+ ✔ Treat OS logs like religious scripture or prophecy
+DON’T
+✘ Use modern flat UI, smartphone aesthetics, or web design motifs
+ ✘ Introduce complex color gradients
+ ✘ Overuse neon colors
+ ✘ Add touch interfaces or holograms
+
+9. ENVIRONMENTAL LANGUAGE
+DO
+✔ Mix nature and tech — vines through servers, moss on generators
+ ✔ Use handmade repairs (twine, hammered plates, welded patches)
+ ✔ Let light sources feel warm and analog (gas lamps, oil lanterns, CRT screens)
+ ✔ Keep worlds sparse, not cluttered
+DON’T
+✘ Build shiny utopian cities
+ ✘ Fill scenes with unnecessary props
+ ✘ Use plastic-looking materials
+
+10. CHARACTER DESIGN SUMMARY
+The Ardycian Adventurer Must Look Like:
+They’ve traveled far
+
+
+They can’t afford to waste anything
+
+
+They’re carrying their life on their back
+
+
+Their gear has been repaired more times than manufactured
+
+
+They’ve interacted with remnants of a technologically superior past
+
+
+
+11. COLOR PALETTE PHILOSOPHY
+Base palette (world):
+Earthy greens, browns, iron greys
+
+
+Autumn oranges, muted reds
+
+
+Mist whites, charcoal blacks
+
+
+Tech palette (ScrollLink OS / old world remnants):
+CRT green (#35ff95)
+
+
+Soft teal (#8ce6ff)
+
+
+Vintage amber (#ffcc6e)
+
+
+Ghost violet (#c0b3ff)
+
+
+Accents:
+Burnished bronze (#a87c45)
+
+
+Oxide red (#6b2f2f)
+
+
+Steam blue (#4fa2ff)
+
+
+
+12. CINEMATIC & COMPOSITION RULES
+DO
+✔ Use depth fog to imply scale and mystery
+ ✔ Frame characters against machinery or horizon lines
+ ✔ Add subtle chromatic aberration to OS elements
+ ✔ Use warm/cool contrast (autumn vs terminal glow)
+DON’T
+✘ Use modern lens flares
+ ✘ Add bloom-heavy anime lighting
+ ✘ Use oversaturated palettes

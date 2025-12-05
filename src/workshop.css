@@ -1,0 +1,564 @@
+/* ==========================================================================
+   CHAOS CORE - WORKSHOP SCREEN STYLES
+   Ardycia Aesthetic: Utilitycore + ScrollLink Terminal
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   WORKSHOP ROOT
+   -------------------------------------------------------------------------- */
+.workshop-root {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  background: 
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at center, #2d261f 0%, #1a1612 70%, #0d0b09 100%);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #c9a66b;
+}
+
+/* --------------------------------------------------------------------------
+   HEADER
+   -------------------------------------------------------------------------- */
+.workshop-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  background: linear-gradient(180deg, #2d261f 0%, #1a1612 100%);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.workshop-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #ffcc6e;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+  text-shadow: 0 0 10px rgba(255, 204, 110, 0.3);
+}
+
+.workshop-subtitle {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  letter-spacing: 0.05em;
+  margin-top: 0.15rem;
+}
+
+.workshop-back-btn {
+  padding: 0.4rem 0.8rem;
+  background: #3d3428;
+  border: 1px solid #6b4f2d;
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+}
+
+.workshop-back-btn:hover {
+  background: #6b4f2d;
+  color: #ffcc6e;
+  border-color: #a87c45;
+}
+
+/* --------------------------------------------------------------------------
+   MAIN LAYOUT
+   -------------------------------------------------------------------------- */
+.workshop-main {
+  flex: 1;
+  display: flex;
+  gap: 0.6rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   SIDEBAR - Resources & Categories
+   -------------------------------------------------------------------------- */
+.workshop-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.workshop-section-title {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #ffcc6e;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+  margin-bottom: 0.4rem;
+}
+
+/* Resources Panel */
+.workshop-resources {
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.6rem;
+}
+
+.resource-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.resource-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  background: #2d261f;
+  border-radius: 2px;
+}
+
+.resource-icon {
+  font-size: 0.75rem;
+  width: 20px;
+  text-align: center;
+}
+
+.resource-name {
+  flex: 1;
+  font-size: 0.6rem;
+  color: #a87c45;
+}
+
+.resource-value {
+  font-size: 0.7rem;
+  font-family: 'Consolas', monospace;
+  font-weight: 600;
+  color: #35ff95;
+  text-shadow: 0 0 5px rgba(53, 255, 149, 0.3);
+}
+
+/* Categories Panel */
+.workshop-categories {
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.6rem;
+}
+
+.category-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.category-tab {
+  padding: 0.45rem 0.6rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  color: #a87c45;
+  font-family: inherit;
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+}
+
+.category-tab:hover {
+  background: #3d3428;
+  color: #c9a66b;
+  border-color: rgba(168, 124, 69, 0.4);
+}
+
+.category-tab--active {
+  background: #6b4f2d;
+  color: #ffcc6e;
+  border-color: #a87c45;
+}
+
+/* Consumables Panel */
+.workshop-consumables {
+  flex: 1;
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.6rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.consumables-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.consumables-empty {
+  font-size: 0.6rem;
+  color: #6b4f2d;
+  font-style: italic;
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.consumable-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.4rem;
+  background: #2d261f;
+  border-radius: 2px;
+}
+
+.consumable-name {
+  font-size: 0.55rem;
+  color: #c9a66b;
+}
+
+.consumable-qty {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+}
+
+/* --------------------------------------------------------------------------
+   RECIPE LIST
+   -------------------------------------------------------------------------- */
+.workshop-recipes {
+  width: 280px;
+  flex-shrink: 0;
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.recipe-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.recipe-empty {
+  font-size: 0.65rem;
+  color: #6b4f2d;
+  font-style: italic;
+  text-align: center;
+  padding: 1rem;
+}
+
+.recipe-item {
+  padding: 0.5rem 0.6rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.15);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.recipe-item:hover {
+  background: #3d3428;
+  border-color: rgba(168, 124, 69, 0.4);
+}
+
+.recipe-item--selected {
+  background: #3d3428;
+  border-color: #a87c45;
+  box-shadow: 0 0 10px rgba(168, 124, 69, 0.2);
+}
+
+.recipe-item--disabled {
+  opacity: 0.6;
+}
+
+.recipe-item-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #c9a66b;
+  margin-bottom: 0.2rem;
+}
+
+.recipe-item--selected .recipe-item-name {
+  color: #ffcc6e;
+}
+
+.recipe-item-cost {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+}
+
+.recipe-item-warning {
+  font-size: 0.5rem;
+  color: #ff6b6b;
+  margin-top: 0.2rem;
+}
+
+/* --------------------------------------------------------------------------
+   DETAILS PANEL
+   -------------------------------------------------------------------------- */
+.workshop-details {
+  flex: 1;
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.6rem;
+  overflow-y: auto;
+}
+
+.detail-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-panel--empty {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.detail-empty-icon {
+  font-size: 2.5rem;
+  color: #6b4f2d;
+  margin-bottom: 0.75rem;
+  opacity: 0.5;
+}
+
+.detail-empty-text {
+  font-size: 0.75rem;
+  color: #6b4f2d;
+}
+
+.detail-header {
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+  margin-bottom: 0.6rem;
+}
+
+.detail-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #ffcc6e;
+  margin: 0 0 0.2rem 0;
+  text-shadow: 0 0 8px rgba(255, 204, 110, 0.3);
+}
+
+.detail-category {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+  letter-spacing: 0.08em;
+}
+
+.detail-description {
+  font-size: 0.7rem;
+  color: #c9a66b;
+  line-height: 1.5;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: #2d261f;
+  border-radius: 2px;
+}
+
+.detail-label {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.35rem;
+}
+
+.detail-requires {
+  margin-bottom: 0.75rem;
+}
+
+.detail-requires-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 2px;
+  font-size: 0.65rem;
+}
+
+.detail-requires-item--have {
+  color: #35ff95;
+  border-color: rgba(53, 255, 149, 0.3);
+}
+
+.detail-requires-item--missing {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.detail-costs {
+  margin-bottom: 0.75rem;
+}
+
+.cost-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0.5rem;
+  background: #2d261f;
+  border-radius: 2px;
+  margin-bottom: 0.2rem;
+  font-size: 0.6rem;
+}
+
+.cost-name {
+  color: #a87c45;
+}
+
+.cost-values {
+  font-family: 'Consolas', monospace;
+}
+
+.cost-line--ok .cost-values {
+  color: #35ff95;
+}
+
+.cost-line--short .cost-values {
+  color: #ff6b6b;
+}
+
+.detail-output {
+  margin-bottom: 1rem;
+}
+
+.output-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  background: linear-gradient(90deg, rgba(53, 255, 149, 0.1) 0%, transparent 100%);
+  border: 1px solid rgba(53, 255, 149, 0.3);
+  border-radius: 2px;
+}
+
+.output-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #35ff95;
+}
+
+.output-qty {
+  font-size: 0.7rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+}
+
+.detail-actions {
+  margin-top: auto;
+  padding-top: 0.75rem;
+}
+
+.craft-btn {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  background: linear-gradient(180deg, #6b4f2d 0%, #4a3520 100%);
+  border: 2px solid #a87c45;
+  color: #ffcc6e;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 3px;
+}
+
+.craft-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #a87c45 0%, #6b4f2d 100%);
+  box-shadow: 0 0 15px rgba(168, 124, 69, 0.4);
+}
+
+.craft-btn--disabled {
+  background: #2d261f;
+  border-color: #4a4843;
+  color: #6b4f2d;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   CONSOLE
+   -------------------------------------------------------------------------- */
+.workshop-console {
+  background: #1a1612;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.console-header {
+  padding: 0.3rem 0.6rem;
+  background: linear-gradient(90deg, #6b4f2d 0%, transparent 100%);
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #ffcc6e;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+}
+
+.console-body {
+  padding: 0.4rem 0.6rem;
+  max-height: 60px;
+  overflow-y: auto;
+  font-family: 'Consolas', monospace;
+  font-size: 0.55rem;
+  line-height: 1.4;
+}
+
+.console-line {
+  color: #35ff95;
+  margin-bottom: 1px;
+  text-shadow: 0 0 5px rgba(53, 255, 149, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   SCROLLBAR
+   -------------------------------------------------------------------------- */
+.workshop-root ::-webkit-scrollbar {
+  width: 5px;
+}
+
+.workshop-root ::-webkit-scrollbar-track {
+  background: #1a1612;
+}
+
+.workshop-root ::-webkit-scrollbar-thumb {
+  background: #6b4f2d;
+  border-radius: 2px;
+}
+
+.workshop-root ::-webkit-scrollbar-thumb:hover {
+  background: #a87c45;
+}

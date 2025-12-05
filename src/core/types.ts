@@ -8,6 +8,8 @@ export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
 
+import { getStarterRecipeIds } from "../core/crafting";
+
 export interface CardEffect {
   type: "damage" | "heal" | "move" | "buff";
   amount?: number;
@@ -35,6 +37,14 @@ export interface Unit {
   drawPile: CardId[];
   discardPile: CardId[];
   strain: number;
+  unitClass?: string;
+loadout?: {
+  weapon: string | null;
+  helmet: string | null;
+  chestpiece: string | null;
+  accessory1: string | null;
+  accessory2: string | null;
+};
   buffs?: Array<{
     id: string;
     type: "def_up" | "atk_up" | "agi_up" | string;
@@ -148,8 +158,21 @@ export interface GameState {
   unitsById: Record<UnitId, Unit>;
   cardsById: Record<CardId, Card>;
   partyUnitIds: UnitId[];
+  
+   // Card Library - all cards the player owns (Headline 11da)
+  cardLibrary: Record<string, number>;  // cardId -> count owned
+  
+  // Gear Slots - card configurations for each piece of equipment
+  gearSlots: Record<string, GearSlotData>;  // equipmentId -> slot config
+  
+  equipmentById?: Record<string, any>;
+modulesById?: Record<string, any>;
+equipmentPool?: string[];
 
   wad: number;
+
+ knownRecipeIds: string[];           // Recipe IDs the player knows
+  consumables: Record<string, number>; // Consumable ID -> quantity
 
   // Legacy numeric counters (kept for compatibility but not used in UI)
   resources: {
@@ -162,4 +185,10 @@ export interface GameState {
   inventory: InventoryState;
 
   currentBattle: BattleState | null;
+}
+
+interface GearSlotData {
+  lockedCards: string[];    // Permanent cards that come with gear
+  freeSlots: number;        // Number of customizable slots
+  slottedCards: string[];   // Player-chosen cards in free slots
 }

@@ -2,6 +2,8 @@
 import { GameState } from "../core/types";
 import { createNewGameState } from "../core/initialState";
 
+import { getStarterRecipeIds } from "../core/crafting";
+
 let _gameState: GameState | null = null;
 
 type Listener = (state: GameState) => void;

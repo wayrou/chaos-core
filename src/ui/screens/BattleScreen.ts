@@ -1,1032 +1,1228 @@
 // src/ui/screens/BattleScreen.ts
+// Battle screen with unit panel + weapon window alongside hand at bottom
+
 import { getGameState, updateGameState } from "../../state/gameStore";
+import { renderOperationMap } from "./OperationMapScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
-
-
+import { addCardsToLibrary } from "../../core/gearWorkbench";
 import {
-  getActiveUnit,
+  BattleState,
   advanceTurn,
-  applyStrain,
-  getStrainThreshold,
-  isOverStrainThreshold,
-  performEnemyTurn,
+  createTestBattleForCurrentParty,
   evaluateBattleOutcome,
+  moveUnit,
+  performEnemyTurn,
+  BASE_STRAIN_THRESHOLD,
+  BattleUnitState,
 } from "../../core/battle";
-import { renderScrollLinkShell } from "./ScrollLinkShell";
 
-let selectedCardId: string | null = null;
-
-// UI-only per-turn movement lock
-let lastActiveUnitId: string | null = null;
-let hasMovedThisTurn = false;
-let cachedMoveStart:
-  | { unitId: string; x: number; y: number }
-  | null = null;
-
-// Small helper for async enemy animation
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// Card type definition
+interface Card {
+  id: string;
+  name: string;
+  type: "core" | "class" | "equipment" | "gambit";
+  target: "enemy" | "ally" | "self" | "tile";
+  strainCost: number;
+  range: number;
+  description: string;
+  damage?: number;
+  healing?: number;
+  defBuff?: number;
+  atkBuff?: number;
 }
 
-export function renderBattleScreen(): void {
-  const root = document.getElementById("app");
-  if (!root) {
-    console.error("Missing #app element in index.html");
-    return;
-  }
+// CARD DATABASE - Based on GDD
+const CARD_DATABASE: Record<string, Card> = {
+  // CORE CARDS
+  "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 1, range: 0, description: "Move 2 extra tiles this turn." },
+  "core_basic_attack": { id: "core_basic_attack", name: "Basic Attack", type: "core", target: "enemy", strainCost: 0, range: 1, description: "Deal weapon damage to adjacent enemy.", damage: 0 },
+  "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 1, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
+  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 1, range: 0, description: "Attack enemy that enters range." },
+  "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 0, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
+  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 0, range: 0, description: "End turn. Reduce strain by 1." },
+  
+  // ELM RECURVE BOW (Range 3-6)
+  "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
+  "card_warning_shot": { id: "card_warning_shot", name: "Warning Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Target suffers -2 ACC for 1 turn.", damage: 1 },
+  "card_defensive_draw": { id: "card_defensive_draw", name: "Defensive Draw", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 ACC until next attack.", defBuff: 1 },
+  
+  // HUNTER'S COIF
+  "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 1, range: 5, description: "Deal 3 damage.", damage: 3 },
+  "card_tracking_shot": { id: "card_tracking_shot", name: "Tracking Shot", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Reveal target movement for 1 turn.", damage: 2 },
+  "card_predators_brace": { id: "card_predators_brace", name: "Predator's Brace", type: "equipment", target: "self", strainCost: 1, range: 0, description: "First attacker loses 1 DEF.", defBuff: 1 },
+  
+  // HUNTER'S VEST
+  "card_quiver_barrage": { id: "card_quiver_barrage", name: "Quiver Barrage", type: "equipment", target: "enemy", strainCost: 2, range: 4, description: "Three attacks, 2 damage each.", damage: 6 },
+  "card_camouflage": { id: "card_camouflage", name: "Camouflage", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+3 ACC on next ranged attack." },
+  "card_camouflage_guard": { id: "card_camouflage_guard", name: "Camouflage Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 DEF if attacked at range.", defBuff: 2 },
+  
+  // HUNTER'S TALISMAN
+  "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 1, range: 2, description: "Deal 4 damage if target moved this turn.", damage: 4 },
+  "card_scent_mark": { id: "card_scent_mark", name: "Scent Mark", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Reveal target location for 2 turns.", damage: 1 },
+  "card_trackers_guard": { id: "card_trackers_guard", name: "Tracker's Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Reveal first attacker on map.", defBuff: 1 },
+  
+  // EAGLE EYE LENS
+  "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Deal 4 damage; mark for +1 damage.", damage: 4 },
+  "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Allies deal +1 damage to target this turn.", damage: 1 },
+  "card_farsight_guard": { id: "card_farsight_guard", name: "Farsight Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Ignore overwatch this turn." },
+  
+  // FLEETFOOT ANKLET
+  "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 1, range: 2, description: "Deal 3 damage; pass through target tile.", damage: 3 },
+  "card_speed_burst": { id: "card_speed_burst", name: "Speed Burst", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 movement this turn." },
+  "card_swift_guard": { id: "card_swift_guard", name: "Swift Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 movement and +1 DEF this turn.", defBuff: 1 },
+  
+  // RANGER'S HOOD
+  "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Deal 3 damage with +1 ACC.", damage: 3 },
+  "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 1, range: 5, description: "Mark target; next ranged attack deals +2 damage.", damage: 1 },
+  "card_hide_in_shadows": { id: "card_hide_in_shadows", name: "Hide in Shadows", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 AGI, untargetable at range for 1 turn." },
+  
+  // LEATHER JERKIN
+  "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 1, range: 3, description: "Deal 2 damage; +1 AGI next turn.", damage: 2 },
+  "card_quick_roll": { id: "card_quick_roll", name: "Quick Roll", type: "equipment", target: "self", strainCost: 0, range: 0, description: "Move 1 tile as free action." },
+  "card_light_guard": { id: "card_light_guard", name: "Light Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 AGI until next turn.", defBuff: 1 },
+  
+  // SHADOW CLOAK
+  "card_ambush_slash": { id: "card_ambush_slash", name: "Ambush Slash", type: "equipment", target: "enemy", strainCost: 2, range: 1, description: "Deal 5 damage if undetected at turn start.", damage: 5 },
+  "card_fade": { id: "card_fade", name: "Fade", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Untargetable by ranged attacks until next turn." },
+  "card_shade_guard": { id: "card_shade_guard", name: "Shade Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Untargetable if you don't move this turn." },
+  
+  // CLASS - RANGER
+  "class_pinning_shot": { id: "class_pinning_shot", name: "Pinning Shot", type: "class", target: "enemy", strainCost: 2, range: 5, description: "Immobilize enemy for 1 turn.", damage: 2 },
+  "class_volley": { id: "class_volley", name: "Volley", type: "class", target: "enemy", strainCost: 3, range: 6, description: "Deal light damage to all enemies in range.", damage: 3 },
+  "class_scouts_mark": { id: "class_scouts_mark", name: "Scout's Mark", type: "class", target: "self", strainCost: 1, range: 0, description: "Reveal all enemies and traps in range." },
+  
+  // CLASS - SQUIRE
+  "class_power_slash": { id: "class_power_slash", name: "Power Slash", type: "class", target: "enemy", strainCost: 2, range: 1, description: "Deal heavy melee damage.", damage: 6 },
+  "class_shield_wall": { id: "class_shield_wall", name: "Shield Wall", type: "class", target: "self", strainCost: 3, range: 0, description: "All allies gain +2 DEF for 1 turn.", defBuff: 2 },
+  "class_rally_cry": { id: "class_rally_cry", name: "Rally Cry", type: "class", target: "self", strainCost: 2, range: 0, description: "All allies gain +2 ATK for 2 turns.", atkBuff: 2 },
+  
+  // IRON LONGSWORD
+  "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 3 damage to up to 3 adjacent enemies.", damage: 3 },
+  "card_parry_readiness": { id: "card_parry_readiness", name: "Parry Readiness", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Cancel next attack against you.", defBuff: 3 },
+  "card_guarded_stance": { id: "card_guarded_stance", name: "Guarded Stance", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 DEF until your next turn.", defBuff: 2 },
+  
+  // STEEL SIGNET RING
+  "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 2 damage and push target 1 tile.", damage: 2 },
+  "card_mark_of_command": { id: "card_mark_of_command", name: "Mark of Command", type: "equipment", target: "self", strainCost: 1, range: 0, description: "All allies gain +1 ACC next turn." },
+  "card_signet_shield": { id: "card_signet_shield", name: "Signet Shield", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 LUK until next turn.", defBuff: 1 },
+  
+  // IRONGUARD HELM
+  "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 2 damage and stun for 1 turn.", damage: 2 },
+  "card_shield_sight": { id: "card_shield_sight", name: "Shield Sight", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Ignore flanking penalties until next turn." },
+  "card_shield_headbutt": { id: "card_shield_headbutt", name: "Shield Headbutt", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Stun target for 1 turn.", damage: 1 },
+  
+  // STEELPLATE CUIRASS
+  "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 3 damage; push target 1 tile.", damage: 3 },
+  "card_fortify": { id: "card_fortify", name: "Fortify", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Immunity to knockback until next turn.", defBuff: 1 },
+  "card_fortress_form": { id: "card_fortress_form", name: "Fortress Form", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+3 DEF but -1 movement this turn.", defBuff: 3 },
+};
 
-  const state = getGameState();
-  const battle = state.currentBattle;
-
-
-// No active battle
-if (!battle) {
-  root.innerHTML = `
-    <div class="battle-root">
-      <div class="battle-card">
-        <div class="battle-header">
-          <div class="battle-header-left">
-            <div class="battle-title">NO ACTIVE ENGAGEMENT</div>
-            <div class="battle-subtitle">
-              Return to Scrollink Shell to initiate a node.
-            </div>
-          </div>
-          <div class="battle-header-right">
-            <button class="battle-back-btn">EXIT</button>
-          </div>
-        </div>
-
-        <div class="battle-body">
-          <div class="battle-grid"></div>
-        </div>
-
-        <div class="scrollink-console">
-          <div class="scrollink-console-header">
-            SCROLLINK OS // ENGAGEMENT_FEED
-          </div>
-          <div class="scrollink-console-body"></div>
-        </div>
-
-        <!-- DEBUG PANEL -->
-        <div class="battle-debug-panel">
-          <button class="battle-debug-autowin-btn">
-            DEBUG: AUTO WIN
-          </button>
-        </div>
-        <!-- /DEBUG PANEL -->
-      </div>
-
-      <div class="battle-hand"></div>
-    </div>
-  `;
-
-  const backBtn = root.querySelector<HTMLButtonElement>(".battle-back-btn");
-  if (backBtn) {
-    backBtn.addEventListener("click", () => {
- renderBaseCampScreen();
-
-    });
-  }
-
-  const debugAutoBtn =
-    root.querySelector<HTMLButtonElement>(".battle-debug-autowin-btn");
-  if (debugAutoBtn) {
-    debugAutoBtn.addEventListener("click", () => {
-      debugAutoWinBattle();
-    });
-  }
-
-  return;
+function getCardById(id: string): Card | null {
+  if (CARD_DATABASE[id]) return CARD_DATABASE[id];
+  const normalized = id.toLowerCase().replace(/-/g, "_");
+  if (CARD_DATABASE[normalized]) return CARD_DATABASE[normalized];
+  return null;
 }
 
-  // If the battle is over, show a result / reward screen
-  if (battle.phase === "victory" || battle.phase === "defeat") {
-    const rewards = battle.rewards ?? {
-      wad: 0,
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    };
+function fallbackGetCardById(id: string): Card {
+  const cleanId = id.replace(/^(core_|class_|equip_|card_|gambit_|equipment_)/, "").replace(/_/g, " ");
+  const name = cleanId.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  let type: Card["type"] = "equipment";
+  if (id.startsWith("core_")) type = "core";
+  if (id.startsWith("class_")) type = "class";
+  if (id.startsWith("gambit_")) type = "gambit";
+  let target: Card["target"] = "enemy";
+  let range = 5;
+  let damage: number | undefined = 3;
+  const lower = name.toLowerCase();
+  if (lower.includes("guard") || lower.includes("stance") || lower.includes("draw") || lower.includes("brace") || lower.includes("hide") || lower.includes("fade") || lower.includes("roll") || lower.includes("burst") || lower.includes("overwatch") || lower.includes("wait") || lower.includes("form")) {
+    target = "self";
+    range = 0;
+    damage = undefined;
+  } else if (lower.includes("aid") || lower.includes("heal")) {
+    target = "ally";
+    range = 2;
+    damage = undefined;
+  } else if (lower.includes("slash") || lower.includes("strike") || lower.includes("attack") || lower.includes("stab") || lower.includes("jab") || lower.includes("charge") || lower.includes("headbutt")) {
+    range = 1;
+  }
+  return { id, name, type, target, strainCost: 1, range, damage, description: `Use ${name}.` };
+}
 
-    const isVictory = battle.phase === "victory";
-
-    root.innerHTML = `
-      <div class="battle-root">
-        <div class="battle-card">
-          <div class="battle-header">
-            <div class="battle-header-left">
-              <div class="battle-title">
-                ${isVictory ? "ENGAGEMENT COMPLETE" : "LINK SEVERED"}
-              </div>
-              <div class="battle-subtitle">
-                NODE ${battle.roomId} • TURNS ${battle.turnCount}
-              </div>
-            </div>
+function renderWeaponWindow(unit: BattleUnitState | undefined): string {
+  if (!unit || !unit.equippedWeaponId) {
+    return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
+  }
+  
+  const weaponName = unit.equippedWeaponId.replace(/^weapon_/, "").replace(/_/g, " ").toUpperCase();
+  
+  // Check if it's a mechanical weapon (has heat)
+  const isMechanical = unit.equippedWeaponId.includes("repeater") || 
+                       unit.equippedWeaponId.includes("coilgun") ||
+                       unit.equippedWeaponId.includes("scattergun") ||
+                       unit.equippedWeaponId.includes("crossbow") ||
+                       unit.equippedWeaponId.includes("mortar") ||
+                       unit.equippedWeaponId.includes("cannon");
+  
+  const heat = unit.weaponHeat ?? 0;
+  const maxHeat = 6;
+  const wear = unit.weaponWear ?? 0;
+  
+  // Clutch toggle state
+  const clutchActive = unit.clutchActive ?? false;
+  
+  let statsHtml = '';
+  if (isMechanical) {
+    const heatPct = (heat / maxHeat) * 100;
+    statsHtml = `
+      <div class="weapon-stat-row">
+        <span class="weapon-stat-label">HEAT</span>
+        <div class="weapon-stat-bar">
+          <div class="weapon-stat-bar-track ${heat >= maxHeat - 1 ? 'weapon-stat-bar-track--danger' : ''}">
+            <div class="weapon-stat-bar-fill weapon-stat-bar-fill--heat" style="width:${heatPct}%"></div>
           </div>
-
-          <div class="battle-body battle-body--result">
-            <div class="battle-result-title">
-              ${isVictory ? "REWARD SUMMARY" : "SQUAD OFFLINE"}
-            </div>
-
-            ${
-              isVictory
-                ? `
-            <div class="battle-reward-grid">
-              <div class="battle-reward-item">
-                <div class="reward-label">WAD</div>
-                <div class="reward-value">+${rewards.wad}</div>
-              </div>
-              <div class="battle-reward-item">
-                <div class="reward-label">Metal Scrap</div>
-                <div class="reward-value">+${rewards.metalScrap}</div>
-              </div>
-              <div class="battle-reward-item">
-                <div class="reward-label">Wood</div>
-                <div class="reward-value">+${rewards.wood}</div>
-              </div>
-              <div class="battle-reward-item">
-                <div class="reward-label">Chaos Shards</div>
-                <div class="reward-value">+${rewards.chaosShards}</div>
-              </div>
-              <div class="battle-reward-item">
-                <div class="reward-label">Steam Components</div>
-                <div class="reward-value">+${rewards.steamComponents}</div>
-              </div>
-            </div>
-                `
-                : `
-            <div class="battle-defeat-text">
-              All allied signals lost.<br/>
-              Operation logged for after-action review.
-            </div>
-                `
-            }
-
-            <div class="battle-result-footer">
-              <button class="battle-back-btn battle-result-btn">
-                ${isVictory ? "RETURN TO SHELL" : "ACKNOWLEDGE"}
-              </button>
-            </div>
-          </div>
+          <span class="weapon-stat-value">${heat}/${maxHeat}</span>
         </div>
       </div>
     `;
-
-    const backBtn = root.querySelector<HTMLButtonElement>(".battle-result-btn");
-    if (backBtn) {
-      backBtn.addEventListener("click", () => {
-        updateGameState((prev) => {
-          // Always clear the finished battle
-          let next: typeof prev = {
-            ...prev,
-            currentBattle: null,
-          };
-
-          if (!isVictory) {
-            return next;
-          }
-
-          // --- WAD stays as currency ---
-          next = {
-            ...next,
-            wad: (prev.wad ?? 0) + (rewards.wad ?? 0),
-          };
-
-          // --- Inventory resources: go into BASE CAMP STORAGE as items ---
-          const inv = (next as any).inventory ?? {
-            forwardLocker: [],
-            baseStorage: [],
-          };
-
-          const baseStorage: any[] = Array.isArray(inv.baseStorage)
-            ? [...inv.baseStorage]
-            : [];
-
-          type ResourceKey =
-            | "metalScrap"
-            | "wood"
-            | "chaosShards"
-            | "steamComponents";
-
-          const resourceDefs: Record<
-            ResourceKey,
-            { id: string; name: string; massKg: number; bulkBu: number; powerW: number }
-          > = {
-            metalScrap: {
-              id: "res_metal_scrap",
-              name: "Metal Scrap",
-              massKg: 0.1,
-              bulkBu: 0.4,
-              powerW: 0,
-            },
-            wood: {
-              id: "res_wood",
-              name: "Wood Planks",
-              massKg: 0.2,
-              bulkBu: 0.6,
-              powerW: 0,
-            },
-            chaosShards: {
-              id: "res_chaos_shard",
-              name: "Chaos Shards",
-              massKg: 0.05,
-              bulkBu: 0.2,
-              powerW: 0.3,
-            },
-            steamComponents: {
-              id: "res_steam_components",
-              name: "Steam Components",
-              massKg: 0.15,
-              bulkBu: 0.3,
-              powerW: 0.5,
-            },
-          };
-
-          function addResourceItem(key: ResourceKey, amount: number) {
-            if (!amount || amount <= 0) return;
-
-            const def = resourceDefs[key];
-            let entry = baseStorage.find((e) => e.id === def.id);
-
-            if (!entry) {
-              entry = {
-                id: def.id,
-                name: def.name,
-                kind: "resource",
-                quantity: 0,
-                massKg: def.massKg,
-                bulkBu: def.bulkBu,
-                powerW: def.powerW,
-                stackable: true,
-              };
-              baseStorage.push(entry);
-            }
-
-            entry.quantity = (entry.quantity ?? 0) + amount;
-          }
-
-          addResourceItem("metalScrap", rewards.metalScrap ?? 0);
-          addResourceItem("wood", rewards.wood ?? 0);
-          addResourceItem("chaosShards", rewards.chaosShards ?? 0);
-          addResourceItem("steamComponents", rewards.steamComponents ?? 0);
-
-          next = {
-            ...next,
-            inventory: {
-              ...(inv as any),
-              baseStorage,
-            },
-            // keep numeric counters in sync for now (legacy)
-            resources: {
-              metalScrap:
-                (prev.resources?.metalScrap ?? 0) +
-                (rewards.metalScrap ?? 0),
-              wood: (prev.resources?.wood ?? 0) + (rewards.wood ?? 0),
-              chaosShards:
-                (prev.resources?.chaosShards ?? 0) +
-                (rewards.chaosShards ?? 0),
-              steamComponents:
-                (prev.resources?.steamComponents ?? 0) +
-                (rewards.steamComponents ?? 0),
-            },
-          };
-
-          return next;
-        });
-
-renderBaseCampScreen();
-
-      });
-    }
-
-
-    return;
   }
-
-
-  const activeUnit = getActiveUnit(battle);
-
-  // Reset per-turn move lock if the active unit changed
-  if (activeUnit?.id !== lastActiveUnitId) {
-    lastActiveUnitId = activeUnit ? activeUnit.id : null;
-    hasMovedThisTurn = false;
-    cachedMoveStart =
-      activeUnit && activeUnit.pos
-        ? { unitId: activeUnit.id, x: activeUnit.pos.x, y: activeUnit.pos.y }
-        : null;
-  }
-
-  // Main layout: grid + console + hand
-  root.innerHTML = `
-    <div class="battle-root">
-      <div class="battle-card">
-        <div class="battle-header">
-          <div class="battle-header-left">
-            <div class="battle-title">ENGAGEMENT – ${battle.roomId}</div>
-            <div class="battle-subtitle">
-              TURN ${battle.turnCount} • GRID ${battle.gridWidth}×${battle.gridHeight}
-            </div>
-          </div>
-          <div class="battle-header-right">
-            <div class="battle-active-label">ACTIVE UNIT</div>
-            <div class="battle-active-value">
-              ${activeUnit ? activeUnit.name : "—"}
-            </div>
-            <button class="battle-back-btn">EXIT BATTLE</button>
-          </div>
-        </div>
-
-        <div class="battle-body">
-          <div class="battle-grid"></div>
-        </div>
-
-        <div class="scrollink-console">
-          <div class="scrollink-console-header">
-            SCROLLINK OS // ENGAGEMENT_FEED
-          </div>
-          <div class="scrollink-console-body"></div>
-        </div>
+  
+  if (wear > 0) {
+    statsHtml += `
+      <div class="weapon-stat-row">
+        <span class="weapon-stat-label">WEAR</span>
+        <span class="weapon-stat-value weapon-stat-value--warn">${wear}</span>
       </div>
-
-      <div class="battle-hand"></div>
-    </div>
-  `;
-
-  const backBtn = root.querySelector<HTMLButtonElement>(".battle-back-btn");
-  if (backBtn) {
-    backBtn.addEventListener("click", () => {
-renderBaseCampScreen();
-
-    });
+    `;
   }
-
-  const gridEl = root.querySelector<HTMLDivElement>(".battle-grid");
-  const consoleBodyEl =
-    root.querySelector<HTMLDivElement>(".scrollink-console-body");
-
-  if (!gridEl || !consoleBodyEl) return;
-
-  // Configure CSS grid dimensions
-  gridEl.style.setProperty("--battle-grid-cols", String(battle.gridWidth));
-  gridEl.style.setProperty("--battle-grid-rows", String(battle.gridHeight));
-
-  const unitsArray = Object.values(battle.units);
-  const cardsById = state.cardsById;
-
-  // ----- RENDER GRID -----
-  for (let y = 0; y < battle.gridHeight; y++) {
-    for (let x = 0; x < battle.gridWidth; x++) {
-      const tile = battle.tiles.find(
-        (t) => t.pos.x === x && t.pos.y === y
-      );
-
-      const cell = document.createElement("div");
-      const terrainType = tile?.terrain ?? "floor";
-
-      let extraClasses = "";
-
-      const unitOnTile = unitsArray.find(
-        (u) => u.pos && u.pos.x === x && u.pos.y === y
-      );
-
-      if (activeUnit && activeUnit.pos && !activeUnit.isEnemy) {
-        const pos = { x, y };
-
-        // --- Card-based highlighting (attacks / self-cast) ---
-        if (selectedCardId) {
-          const card = cardsById[selectedCardId];
-          if (card) {
-            // Enemy-target cards: highlight enemies in card.range
-            if (
-              card.targetType === "enemy" &&
-              unitOnTile &&
-              unitOnTile.isEnemy &&
-              unitOnTile.pos &&
-              isWithinCardRange(activeUnit.pos, unitOnTile.pos, card.range ?? 1)
-            ) {
-              extraClasses += " battle-tile--attack-option";
-            }
-            // Self-target card (Brace): highlight the active unit's tile
-            else if (
-              card.targetType === "self" &&
-              unitOnTile &&
-              unitOnTile.id === activeUnit.id
-            ) {
-              extraClasses += " battle-tile--move-option";
-            }
-          }
-        } else {
-          // --- No card selected → movement highlights only (no basic attack) ---
-          if (
-            !hasMovedThisTurn &&
-            !unitOnTile &&
-            canUnitMoveToUI(battle, activeUnit, pos)
-          ) {
-            extraClasses += " battle-tile--move-option";
-          }
-        }
-      }
-
-      cell.className = `battle-tile battle-tile--${terrainType}${extraClasses}`;
-
-      // Render unit (if present)
-      if (unitOnTile) {
-        const unit = unitOnTile;
-        const isActive = activeUnit && unit.id === activeUnit.id;
-        const unitDiv = document.createElement("div");
-        unitDiv.className =
-          "battle-unit" +
-          (unit.isEnemy ? " battle-unit--enemy" : " battle-unit--ally") +
-          (isActive ? " battle-unit--active" : "");
-
-        const buffChips = (unit.buffs ?? [])
-          .map((b) => {
-            const label =
-              b.type === "def_up"
-                ? "DEF"
-                : b.type === "atk_up"
-                ? "ATK"
-                : b.type.toUpperCase();
-
-            return `
-              <span
-                style="
-                  margin-left: 4px;
-                  padding: 2px 4px;
-                  border-radius: 3px;
-                  border: 1px solid #6f8cff;
-                  background: rgba(111,140,255,0.3);
-                  font-size: 10px;
-                  white-space: nowrap;
-                "
-              >
-                ${label}+${b.amount}
-              </span>
-            `;
-          })
-          .join("");
-
-        unitDiv.innerHTML = `
-          <div class="battle-unit-symbol"></div>
-          <div class="battle-unit-name">
-            ${unit.name}
-            ${buffChips}
-          </div>
-          <div class="battle-unit-hp">HP: ${unit.hp}/${unit.maxHp}</div>
-          <div class="battle-unit-strain">
-            Strain: ${unit.strain}/${getStrainThreshold(unit)}
-          </div>
-        `;
-
-        cell.appendChild(unitDiv);
-      }
-
-      // Tile click handler
-      cell.addEventListener("click", () => {
-        handleTileClick(x, y);
-      });
-
-      gridEl.appendChild(cell);
-    }
-  }
-
-  // ----- RENDER SCROLLINK CONSOLE LOG -----
-  const logHtml = battle.log
-    .map((line) => `<div class="scrollink-log-line">${line}</div>`)
-    .join("");
-
-  consoleBodyEl.innerHTML = logHtml;
-  consoleBodyEl.scrollTop = consoleBodyEl.scrollHeight;
-
-  // ----- RENDER HAND -----
-  renderHandUI();
-}
-
-
-function handleTileClick(x: number, y: number): void {
-  updateGameState((prev) => {
-    const battle = prev.currentBattle;
-    if (!battle) return prev;
-
-    const active = getActiveUnit(battle);
-    if (!active || !active.pos || active.isEnemy) return prev;
-
-    const pos = { x, y };
-    const unitsArray = Object.values(battle.units);
-    const targetUnit = unitsArray.find(
-      (u) => u.pos && u.pos.x === x && u.pos.y === y
-    );
-
-    // We'll build changes onto this local copy
-    let b = battle;
-
-    // ==========================
-    //  CARD SELECTED
-    // ==========================
-    if (selectedCardId) {
-      const card = prev.cardsById[selectedCardId];
-      if (!card) return prev;
-
-      // Always re-read active from our local battle copy
-      const currentActive = b.units[active.id];
-      if (!currentActive || !currentActive.pos) return prev;
-
-      // ---------------------------------------
-      // 1) ENEMY-TARGET CARDS (Strike / Lunge / etc.)
-      // ---------------------------------------
-      if (
-        card.targetType === "enemy" &&
-        targetUnit &&
-        targetUnit.isEnemy &&
-        targetUnit.pos &&
-        isWithinCardRange(
-          currentActive.pos,
-          targetUnit.pos,
-          card.range ?? 1
-        )
-      ) {
-        const damageEffect = card.effects.find((e) => e.type === "damage");
-        const dmg = damageEffect?.amount ?? 0;
-
-        // start from the latest local battle
-        let newBattle: typeof b = { ...b };
-        const defenderBefore = newBattle.units[targetUnit.id];
-        if (!defenderBefore) return prev;
-
-        const newHp = defenderBefore.hp - dmg;
-
-        if (newHp <= 0) {
-          // lethal
-          const newUnits = { ...newBattle.units };
-          delete newUnits[targetUnit.id];
-
-          newBattle = {
-            ...newBattle,
-            units: newUnits,
-            turnOrder: newBattle.turnOrder.filter(
-              (id) => id !== targetUnit.id
-            ),
-            log: [
-              ...newBattle.log,
-              `SLK//HIT    :: ${currentActive.name} deletes ${targetUnit.name} for ${dmg} • TARGET OFFLINE.`,
-            ],
-          };
-        } else {
-          // non-lethal
-          newBattle = {
-            ...newBattle,
-            units: {
-              ...newBattle.units,
-              [targetUnit.id]: { ...defenderBefore, hp: newHp },
-            },
-            log: [
-              ...newBattle.log,
-              `SLK//HIT    :: ${currentActive.name} hits ${targetUnit.name} for ${dmg} (HP ${newHp}/${defenderBefore.maxHp}).`,
-            ],
-          };
-        }
-
-        // Evaluate victory/defeat from this hit
-        newBattle = evaluateBattleOutcome(newBattle);
-
-        // Apply strain to attacker
-        newBattle = applyStrain(newBattle, currentActive, card.strainCost);
-
-        // Re-read attacker after strain (in case we ever mutate stats there)
-        const attackerAfter = newBattle.units[currentActive.id];
-        if (attackerAfter) {
-          newBattle = {
-            ...newBattle,
-            units: {
-              ...newBattle.units,
-              [attackerAfter.id]: {
-                ...attackerAfter,
-                hand: attackerAfter.hand.filter(
-                  (id) => id !== selectedCardId
-                ),
-                discardPile: [
-                  ...attackerAfter.discardPile,
-                  selectedCardId!,
-                ],
-              },
-            },
-          };
-        }
-
-        selectedCardId = null;
-        return { ...prev, currentBattle: newBattle };
-      }
-
-      // ---------------------------------------
-      // 2) SELF-TARGET CARD (Brace / etc.)
-      // ---------------------------------------
-      if (
-        card.targetType === "self" &&
-        currentActive.pos &&
-        currentActive.pos.x === pos.x &&
-        currentActive.pos.y === pos.y
-      ) {
-        const existing = b.units[currentActive.id];
-        const existingBuffs = existing.buffs ?? [];
-
-        const newBuff = {
-          id: "brace_" + Date.now(),
-          type: "def_up" as const,
-          amount: 3,
-          duration: 1,
-        };
-
-        // Apply strain via helper so threshold logging works
-        let nextBattle = applyStrain(b, existing, card.strainCost);
-        const strained = nextBattle.units[existing.id];
-
-        const updatedUnit = {
-          ...strained,
-          buffs: [...existingBuffs, newBuff],
-          hand: strained.hand.filter((id) => id !== selectedCardId),
-          discardPile: [...strained.discardPile, selectedCardId!],
-        };
-
-        nextBattle = {
-          ...nextBattle,
-          units: {
-            ...nextBattle.units,
-            [updatedUnit.id]: updatedUnit,
-          },
-          log: [
-            ...nextBattle.log,
-            `SLK//UNIT   :: ${updatedUnit.name} braces [+3 DEF] • STRAIN +${card.strainCost}.`,
-          ],
-        };
-
-        selectedCardId = null;
-        return { ...prev, currentBattle: nextBattle };
-      }
-
-      // If we get here, click was not a valid target for that card
-      return prev;
-    }
-
-    // ==========================
-    //  NO CARD SELECTED → MOVE ONLY
-    // ==========================
-    if (
-      !targetUnit &&
-      !hasMovedThisTurn &&
-      canUnitMoveToUI(b, active, pos)
-    ) {
-      // Lock movement for this unit until undo or next turn
-      hasMovedThisTurn = true;
-
-      // Remember starting tile if not already cached
-      if (!cachedMoveStart && active.pos) {
-        cachedMoveStart = {
-          unitId: active.id,
-          x: active.pos.x,
-          y: active.pos.y,
-        };
-      }
-
-      const updatedUnit = {
-        ...active,
-        pos: { x: pos.x, y: pos.y },
-      };
-
-      const movedBattle = {
-        ...b,
-        units: {
-          ...b.units,
-          [active.id]: updatedUnit,
-        },
-        log: [
-          ...b.log,
-          `SLK//MOVE   :: ${active.name} repositions to (${pos.x}, ${pos.y}).`,
-        ],
-      };
-
-      return { ...prev, currentBattle: movedBattle };
-    }
-
-    // Clicking enemies without a card does nothing
-    return prev;
-  });
-
-  renderBattleScreen();
-}
-
-function debugAutoWinBattle(): void {
-  updateGameState((prev) => {
-    const battle = prev.currentBattle;
-    if (!battle) return prev;
-
-    // Remove all enemy units
-    const filteredUnits = Object.fromEntries(
-      Object.entries(battle.units).filter(
-        ([, u]) => !u.isEnemy
-      )
-    );
-
-    const clearedBattle = {
-      ...battle,
-      units: filteredUnits,
-    };
-
-    // Let core logic decide victory + rewards
-    const withOutcome = evaluateBattleOutcome(clearedBattle);
-
-    return {
-      ...prev,
-      currentBattle: withOutcome,
-    };
-  });
-
-  renderBattleScreen();
-}
-
-
-/**
- * Async enemy phase: enemies act one at a time with a small delay,
- * then control returns to the player.
- */
-async function endPlayerTurn(): Promise<void> {
-  // Step to the next unit (likely an enemy)
-  updateGameState((prev) => {
-    const battle = prev.currentBattle;
-    if (!battle) return prev;
-
-    const advanced = advanceTurn(battle);
-    return { ...prev, currentBattle: advanced };
-  });
-
-  // Reset UI turn state
-  hasMovedThisTurn = false;
-  cachedMoveStart = null;
-  selectedCardId = null;
-
-  renderBattleScreen();
-
-  // Now run enemy phase with per-enemy animation
-  while (true) {
-    const state = getGameState();
-    const battle = state.currentBattle;
-    if (!battle) break;
-
-    const active = getActiveUnit(battle);
-    if (!active || !active.isEnemy) break; // back to player or no units
-
-    // Small delay so movement/attacks are visible
-    await sleep(400);
-
-    updateGameState((prev) => {
-      const current = prev.currentBattle;
-      if (!current) return prev;
-      const afterEnemy = performEnemyTurn(current);
-      return { ...prev, currentBattle: afterEnemy };
-    });
-
-    renderBattleScreen();
-  }
-}
-
-/**
- * Undo the last move for the current active unit (if any), UI-only.
- */
-function handleUndoMoveClick(): void {
-  if (!cachedMoveStart || !hasMovedThisTurn) return;
-
-  updateGameState((prev) => {
-    const battle = prev.currentBattle;
-    if (!battle) return prev;
-
-    const active = getActiveUnit(battle);
-    if (!active || !active.pos || active.id !== cachedMoveStart!.unitId) {
-      return prev;
-    }
-
-    const reverted = {
-      ...battle,
-      units: {
-        ...battle.units,
-        [active.id]: {
-          ...active,
-          pos: { x: cachedMoveStart.x, y: cachedMoveStart.y },
-        },
-      },
-      log: [
-        ...battle.log,
-        `SLK//MOVE   :: ${active.name} resets to starting position.`,
-      ],
-    };
-
-    return { ...prev, currentBattle: reverted };
-  });
-
-  hasMovedThisTurn = false;
-  selectedCardId = null;
-  renderBattleScreen();
-}
-
-
-/**
- * Render the card hand
- */
-function renderHandUI(): void {
-  const state = getGameState();
-  const battle = state.currentBattle;
-  if (!battle) return;
-
-  const active = getActiveUnit(battle);
-  const handEl = document.querySelector<HTMLDivElement>(".battle-hand");
-  if (!handEl) return;
-
-  // Enemy or no unit → no hand
-  if (!active || active.isEnemy) {
-    handEl.innerHTML = "";
-    handEl.className = "battle-hand";
-    return;
-  }
-
-  const deckCount = active.drawPile.length;
-  const discardCount = active.discardPile.length;
-
-  const strained = isOverStrainThreshold(active);
-  handEl.className = strained
-    ? "battle-hand battle-hand--strained"
-    : "battle-hand";
-
-  handEl.innerHTML = `
-    <div class="hand-header">
-      <div class="hand-unit">
-        <span class="hand-unit-label">ACTIVE HAND</span>
-        <span class="hand-unit-name">${active.name}</span>
-        <span class="hand-unit-meta">
-          HP ${active.hp}/${active.maxHp} • STRAIN ${active.strain}/${getStrainThreshold(
-            active
-          )}
+  
+  return `
+    <div class="weapon-window">
+      <div class="weapon-window-header">
+        <span class="weapon-window-title">${weaponName}</span>
+        <span class="weapon-window-status ${clutchActive ? 'weapon-window-status--active' : ''}">
+          ${clutchActive ? 'CLUTCH ON' : 'READY'}
         </span>
       </div>
-      <div class="hand-meters">
-        <span class="hand-counter">Deck: ${deckCount}</span>
-        <span class="hand-counter">Discard: ${discardCount}</span>
-        <button class="battle-undo-btn">UNDO MOVE</button>
-        <button class="battle-endturn-btn">END TURN</button>
-        <button class="battle-debug-autowin-btn">DEBUG: AUTO WIN</button>
+      <div class="weapon-window-body">
+        ${statsHtml}
+        <div class="weapon-window-actions">
+          <button class="weapon-clutch-btn ${clutchActive ? 'weapon-clutch-btn--active' : ''}" id="clutchToggleBtn">
+            ${clutchActive ? '⚡ CLUTCH ON' : '◇ CLUTCH OFF'}
+          </button>
+        </div>
       </div>
     </div>
-    <div class="hand-cards-row"></div>
   `;
-
-  // --- buttons ---
-  const undoBtn = handEl.querySelector<HTMLButtonElement>(".battle-undo-btn");
-  if (undoBtn) {
-    undoBtn.addEventListener("click", () => {
-      handleUndoMoveClick();
-    });
-  }
-
-  const endTurnBtn = handEl.querySelector<HTMLButtonElement>(
-    ".battle-endturn-btn"
-  );
-  if (endTurnBtn) {
-    endTurnBtn.addEventListener("click", () => {
-      selectedCardId = null;
-      void endPlayerTurn();
-    });
-  }
-
-  const debugBtn = handEl.querySelector<HTMLButtonElement>(
-    ".battle-debug-autowin-btn"
-  );
-  if (debugBtn) {
-    debugBtn.addEventListener("click", () => {
-      debugAutoWinBattle();
-    });
-  }
-
-  const cardsRow = handEl.querySelector<HTMLDivElement>(".hand-cards-row");
-  if (!cardsRow) return;
-
-  const handSize = active.hand.length;
-  const mid = (handSize - 1) / 2;
-
-  active.hand.forEach((cardId, index) => {
-    const card = state.cardsById[cardId];
-    if (!card) return;
-
-    let rarityClass = "card-rarity-common";
-    if (card.id === "brace") {
-      rarityClass = "card-rarity-uncommon";
-    } else if (card.id === "lunge") {
-      rarityClass = "card-rarity-rare";
-    }
-
-    let icon = "⚔️";
-    if (card.targetType === "self") icon = "🛡️";
-    else if (card.targetType === "tile") icon = "⇄";
-
-    const offset = index - mid;
-    const angle = offset * 7;
-    const vertical = -Math.abs(offset) * 4;
-
-    const slot = document.createElement("div");
-    slot.className = "battle-card-slot";
-    slot.style.setProperty("--fan-rotate", `${angle}deg`);
-    slot.style.setProperty("--fan-translateY", `${vertical}px`);
-
-    const el = document.createElement("div");
-    el.className =
-      "battle-cardui " +
-      rarityClass +
-      (selectedCardId === cardId ? " battle-cardui--selected" : "");
-
-    el.innerHTML = `
-      <div class="card-top-row">
-        <div class="card-icon">${icon}</div>
-        <div class="card-cost">STR ${card.strainCost}</div>
-      </div>
-      <div class="card-name">${card.name}</div>
-      <div class="card-tag">
-        ${
-          card.targetType === "enemy"
-            ? "OFFENSE"
-            : card.targetType === "self"
-            ? "SELF"
-            : "MOBILITY"
-        }
-      </div>
-      <div class="card-desc">${card.description}</div>
-    `;
-
-    el.addEventListener("click", () => {
-      if (selectedCardId === cardId) {
-        selectedCardId = null;
-      } else {
-        selectedCardId = cardId;
-      }
-      renderBattleScreen();
-    });
-
-    slot.appendChild(el);
-    cardsRow.appendChild(slot);
-  });
 }
 
+// ============================================================================
+// STATE MANAGEMENT - Store movement in battle state itself
+// ============================================================================
 
-/**
- * Manhattan distance <= range?
- */
-function isWithinCardRange(
+let localBattleState: BattleState | null = null;
+let selectedCardIndex: number | null = null;
+let pendingMoveOrigin: { x: number; y: number } | null = null;
+
+// These are stored PER UNIT in an extended battle state
+interface TurnState {
+  hasMoved: boolean;
+  hasCommittedMove: boolean; // True after clicking a tile - hides green until undo
+  hasActed: boolean; // True after playing a card - ends the turn for this unit
+  movementRemaining: number;
+  originalPosition: { x: number; y: number } | null;
+}
+let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementRemaining: 0, originalPosition: null };
+
+function setBattleState(newState: BattleState) {
+  localBattleState = newState;
+}
+
+function resetTurnStateForUnit(unit: BattleUnitState | null) {
+  turnState = {
+    hasMoved: false,
+    hasCommittedMove: false,
+    hasActed: false,
+    movementRemaining: unit?.agi ?? 3,
+    originalPosition: null,
+  };
+}
+
+// Animation helper - moves unit visually along path
+function animateUnitMovement(
+  unitId: string,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  range: number
-): boolean {
-  const dx = Math.abs(from.x - to.x);
-  const dy = Math.abs(from.y - to.y);
-  return dx + dy <= range;
+  onComplete: () => void
+) {
+  // Find the unit element on the grid
+  const grid = document.querySelector('.battle-grid');
+  if (!grid) {
+    onComplete();
+    return;
+  }
+  
+  // Get all tiles to find dimensions
+  const tiles = grid.querySelectorAll('.battle-tile');
+  if (tiles.length === 0) {
+    onComplete();
+    return;
+  }
+  
+  const firstTile = tiles[0] as HTMLElement;
+  const tileW = firstTile.offsetWidth;
+  const tileH = firstTile.offsetHeight;
+  
+  // Find the source tile (where unit currently is visually)
+  const sourceTile = grid.querySelector(`[data-x="${from.x}"][data-y="${from.y}"]`);
+  const unitEl = sourceTile?.querySelector('.battle-unit') as HTMLElement;
+  
+  if (!unitEl) {
+    onComplete();
+    return;
+  }
+  
+  // Calculate pixel offset
+  const dx = (to.x - from.x) * tileW;
+  const dy = (to.y - from.y) * tileH;
+  
+  // Apply animation
+  unitEl.style.transition = 'transform 0.3s ease-out';
+  unitEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  unitEl.style.zIndex = '100';
+  
+  // After animation completes, call onComplete
+  setTimeout(() => {
+    onComplete();
+  }, 300);
 }
 
-/**
- * UI-side movement check:
- * - Within AGI range
- * - In bounds / not wall
- * - No other unit on tile
- */
-function canUnitMoveToUI(
-  state: any,
-  unit: any,
-  dest: { x: number; y: number }
-): boolean {
-  if (!unit.pos) return false;
+function getUnitsArray(battle: BattleState): BattleUnitState[] {
+  return Object.values(battle.units);
+}
 
-  const dx = Math.abs(unit.pos.x - dest.x);
-  const dy = Math.abs(unit.pos.y - dest.y);
-  const distance = dx + dy;
+function resolveCard(cardId: string | Card): Card {
+  if (typeof cardId !== "string") return cardId as Card;
+  return getCardById(cardId) ?? fallbackGetCardById(cardId);
+}
 
-  if (distance === 0 || distance > unit.agi) return false;
+function resolveHandCards(hand: (string | Card)[]): Card[] {
+  return hand.map(resolveCard);
+}
 
-  // In bounds
-  if (
-    dest.x < 0 ||
-    dest.y < 0 ||
-    dest.x >= state.gridWidth ||
-    dest.y >= state.gridHeight
-  ) {
-    return false;
+function getDistance(x1: number, y1: number, x2: number, y2: number): number {
+  return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+}
+
+// ============================================================================
+// CUSTOM playCard that uses our card database
+// ============================================================================
+
+function playCardFromScreen(
+  state: BattleState,
+  unitId: string,
+  cardIndex: number,
+  targetId: string
+): BattleState {
+  const unit = state.units[unitId];
+  const target = state.units[targetId];
+
+  if (!unit || !target) {
+    return { ...state, log: [...state.log, "SLK//ERROR :: Invalid unit or target."] };
   }
 
-  // Not a wall
-  const tile = state.tiles.find(
-    (t: any) => t.pos.x === dest.x && t.pos.y === dest.y
-  );
-  if (!tile || tile.terrain === "wall") return false;
+  const cardIdOrObj = unit.hand[cardIndex];
+  if (!cardIdOrObj) {
+    return { ...state, log: [...state.log, "SLK//ERROR :: No card at index " + cardIndex] };
+  }
 
-  // No other unit there
-  const occupied = Object.values(state.units).some(
-    (u: any) => u.pos && u.pos.x === dest.x && u.pos.y === dest.y
-  );
-  if (occupied) return false;
+  // Resolve card from our database
+  const card = resolveCard(cardIdOrObj);
 
-  return true;
+  // Create new hand without the played card
+  const newHand = [...unit.hand];
+  newHand.splice(cardIndex, 1);
+  
+  // Create new discard with the played card
+  const newDiscard = [...unit.discardPile, cardIdOrObj];
+
+  // Apply strain
+  const newStrain = unit.strain + card.strainCost;
+
+  // Start building the new unit
+  let updatedUnit: BattleUnitState = {
+    ...unit,
+    hand: newHand,
+    discardPile: newDiscard,
+    strain: newStrain,
+  };
+
+  // Start building updated target
+  let updatedTarget: BattleUnitState = targetId === unitId ? updatedUnit : { ...target };
+
+  // Log the card play
+  let newLog = [...state.log, `SLK//CARD :: ${unit.name} plays ${card.name} on ${target.name}.`];
+
+  // Process damage
+  if (card.damage !== undefined && card.damage > 0 && targetId !== unitId) {
+    const finalDamage = Math.max(1, card.damage + unit.atk - target.def);
+    const newHp = Math.max(0, target.hp - finalDamage);
+    updatedTarget = { ...updatedTarget, hp: newHp };
+    newLog.push(`SLK//DMG :: ${target.name} takes ${finalDamage} damage. (HP: ${newHp}/${target.maxHp})`);
+    if (newHp <= 0) {
+      newLog.push(`SLK//KILL :: ${target.name} has been eliminated!`);
+    }
+  } else if (card.damage === 0 && card.name.toLowerCase().includes("basic attack") && targetId !== unitId) {
+    // Basic attack uses weapon damage (unit ATK)
+    const finalDamage = Math.max(1, unit.atk - target.def);
+    const newHp = Math.max(0, target.hp - finalDamage);
+    updatedTarget = { ...updatedTarget, hp: newHp };
+    newLog.push(`SLK//DMG :: ${target.name} takes ${finalDamage} damage. (HP: ${newHp}/${target.maxHp})`);
+    if (newHp <= 0) {
+      newLog.push(`SLK//KILL :: ${target.name} has been eliminated!`);
+    }
+  }
+
+  // Process healing
+  if (card.healing && card.healing > 0) {
+    const oldHp = updatedTarget.hp;
+    const newHp = Math.min(updatedTarget.maxHp, oldHp + card.healing);
+    const actualHeal = newHp - oldHp;
+    if (actualHeal > 0) {
+      updatedTarget = { ...updatedTarget, hp: newHp };
+      newLog.push(`SLK//HEAL :: ${target.name} restores ${actualHeal} HP. (HP: ${newHp}/${target.maxHp})`);
+    }
+  }
+
+  // Process DEF buff
+  if (card.defBuff && card.defBuff > 0) {
+    const newBuffs = [...(updatedTarget.buffs || []), { stat: "def" as const, amount: card.defBuff, duration: 1 }];
+    updatedTarget = { ...updatedTarget, buffs: newBuffs };
+    newLog.push(`SLK//BUFF :: ${target.name} gains +${card.defBuff} DEF for 1 turn.`);
+  }
+
+  // Process ATK buff
+  if (card.atkBuff && card.atkBuff > 0) {
+    const newBuffs = [...(updatedTarget.buffs || []), { stat: "atk" as const, amount: card.atkBuff, duration: 1 }];
+    updatedTarget = { ...updatedTarget, buffs: newBuffs };
+    newLog.push(`SLK//BUFF :: ${target.name} gains +${card.atkBuff} ATK for 1 turn.`);
+  }
+
+  // Build new units Record
+  const newUnits = { ...state.units };
+  if (targetId === unitId) {
+    newUnits[unitId] = updatedTarget;
+  } else {
+    newUnits[unitId] = updatedUnit;
+    newUnits[targetId] = updatedTarget;
+  }
+
+  // Remove dead units from turn order
+  let newTurnOrder = [...state.turnOrder];
+  if (updatedTarget.hp <= 0 && targetId !== unitId) {
+    newTurnOrder = newTurnOrder.filter(id => id !== targetId);
+  }
+
+  // Build new state
+  let newState: BattleState = {
+    ...state,
+    units: newUnits,
+    turnOrder: newTurnOrder,
+    log: newLog,
+  };
+
+  // Check for battle outcome
+  newState = evaluateBattleOutcome(newState);
+
+  return newState;
+}
+
+// ============================================================================
+// MAIN RENDER
+// ============================================================================
+
+export function renderBattleScreen() {
+  const app = document.getElementById("app");
+  if (!app) return;
+  
+  const state = getGameState();
+  
+  // Initialize battle if needed
+  if (!localBattleState) {
+    const newBattle = createTestBattleForCurrentParty(state);
+    if (!newBattle) {
+      app.innerHTML = `<div class="battle-root"><div class="battle-card"><p>Error: No party members.</p><button id="backBtn">BACK</button></div></div>`;
+      document.getElementById("backBtn")?.addEventListener("click", () => renderOperationMap());
+      return;
+    }
+    localBattleState = newBattle;
+    // Initialize turn state for first unit
+    const firstUnit = newBattle.activeUnitId ? newBattle.units[newBattle.activeUnitId] : null;
+    resetTurnStateForUnit(firstUnit);
+  }
+  
+  const battle = localBattleState;
+  const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
+  const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
+  const roomLabel = state.operation?.currentRoomId ?? "ROOM_START";
+
+  app.innerHTML = `
+    <div class="battle-root">
+      <div class="battle-card">
+        <div class="battle-header">
+          <div class="battle-header-left">
+            <div class="battle-title">ENGAGEMENT – ${roomLabel}</div>
+            <div class="battle-subtitle">TURN ${battle.turnCount} • GRID ${battle.gridWidth}×${battle.gridHeight}</div>
+          </div>
+          <div class="battle-header-right">
+            <div class="battle-active-info">
+              <div class="battle-active-label">ACTIVE UNIT</div>
+              <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
+            </div>
+            <button class="battle-back-btn" id="exitBattleBtn">EXIT BATTLE</button>
+          </div>
+        </div>
+        <div class="battle-body battle-body--grid-only">
+          <div class="battle-grid-container">${renderBattleGrid(battle, selectedCardIndex, activeUnit)}</div>
+        </div>
+        <div class="scrollink-console">
+          <div class="scrollink-console-header">SCROLLINK OS // ENGAGEMENT_FEED</div>
+          <div class="scrollink-console-body" id="battleLog">${battle.log.slice(-8).map(l => `<div class="scrollink-console-line">${l}</div>`).join("")}</div>
+        </div>
+      </div>
+      <div class="battle-bottom">
+        <div class="battle-unit-panel">${renderUnitPanel(activeUnit)}</div>
+        <div class="battle-hand ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}">${renderHandPanel(activeUnit, isPlayerTurn)}</div>
+      </div>
+      ${renderBattleResultOverlay(battle)}
+    </div>
+  `;
+  
+  setTimeout(() => attachBattleListeners(), 0);
+}
+
+// ============================================================================
+// RENDER HELPERS
+// ============================================================================
+
+function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
+  if (!activeUnit || activeUnit.isEnemy) {
+    return `<div class="unit-panel-empty"><div class="unit-panel-empty-text">NO ACTIVE UNIT</div></div>`;
+  }
+  const hp = activeUnit.hp ?? 0;
+  const maxHp = activeUnit.maxHp ?? 1;
+  const strainPct = Math.min(100, (activeUnit.strain / BASE_STRAIN_THRESHOLD) * 100);
+  const isOver = activeUnit.strain > BASE_STRAIN_THRESHOLD;
+  const maxMove = activeUnit.agi || 1;
+  const movePct = (turnState.movementRemaining / maxMove) * 100;
+  
+  return `
+    <div class="unit-panel-header">
+      <div class="unit-panel-label">ACTIVE UNIT</div>
+      <div class="unit-panel-name">${activeUnit.name}</div>
+    </div>
+    <div class="unit-panel-stats">
+      <div class="unit-stat-row">
+        <span class="unit-stat-label">HP</span>
+        <div class="unit-stat-bar">
+          <div class="unit-stat-bar-track">
+            <div class="unit-stat-bar-fill unit-stat-bar-fill--hp" style="width:${(hp/maxHp)*100}%"></div>
+          </div>
+          <span class="unit-stat-value">${hp}/${maxHp}</span>
+        </div>
+      </div>
+      <div class="unit-stat-row">
+        <span class="unit-stat-label">STRAIN</span>
+        <div class="unit-stat-bar">
+          <div class="unit-stat-bar-track ${isOver ? "unit-stat-bar-track--danger" : ""}">
+            <div class="unit-stat-bar-fill unit-stat-bar-fill--strain ${isOver ? "unit-stat-bar-fill--over" : ""}" style="width:${strainPct}%"></div>
+          </div>
+          <span class="unit-stat-value ${isOver ? "unit-stat-value--danger" : ""}">${activeUnit.strain}/${BASE_STRAIN_THRESHOLD}</span>
+        </div>
+      </div>
+      <div class="unit-stat-row">
+        <span class="unit-stat-label">MOVE</span>
+        <div class="unit-stat-bar">
+          <div class="unit-stat-bar-track">
+            <div class="unit-stat-bar-fill unit-stat-bar-fill--move" style="width:${movePct}%"></div>
+          </div>
+          <span class="unit-stat-value">${turnState.movementRemaining}/${maxMove}</span>
+        </div>
+      </div>
+      <div class="unit-stat-row unit-stat-row--inline">
+        <span class="unit-stat-chip">ATK ${activeUnit.atk}</span>
+        <span class="unit-stat-chip">DEF ${activeUnit.def}</span>
+        <span class="unit-stat-chip">AGI ${activeUnit.agi}</span>
+        <span class="unit-stat-chip">ACC ${activeUnit.acc}</span>
+      </div>
+    </div>
+    <div class="unit-panel-weapon">${renderWeaponWindow(activeUnit)}</div>
+  `;
+}
+
+function renderHandPanel(activeUnit: BattleUnitState | undefined, isPlayerTurn: boolean | undefined): string {
+  const hand = resolveHandCards(activeUnit?.hand ?? []);
+  return `
+    <div class="hand-header">
+      <div class="hand-info">
+        <span class="hand-label">HAND</span>
+        <span class="hand-count">${hand.length} CARDS</span>
+      </div>
+      <div class="hand-meters">
+        <div class="hand-counter">
+          <span class="hand-counter-label">Deck:</span>
+          <span class="hand-counter-value">${activeUnit?.drawPile?.length ?? 0}</span>
+        </div>
+        <div class="hand-counter">
+          <span class="hand-counter-label">Discard:</span>
+          <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
+        </div>
+      </div>
+      <div class="hand-actions">
+        <button class="battle-undo-btn" id="undoMoveBtn" ${!turnState.hasCommittedMove ? "disabled" : ""}>UNDO MOVE</button>
+        <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn ? "disabled" : ""}>END TURN</button>
+        <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
+      </div>
+    </div>
+    <div class="hand-cards-row">${renderHandCards(hand, isPlayerTurn)}</div>
+  `;
+}
+
+function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined): string {
+  if (hand.length === 0) return `<div class="hand-empty">No cards in hand</div>`;
+  
+  const total = hand.length;
+  const maxAngle = Math.min(total * 4, 20);
+  
+  return hand.map((card, i) => {
+    const sel = selectedCardIndex === i;
+    const step = total > 1 ? maxAngle / (total - 1) : 0;
+    const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
+    const yOff = Math.abs(angle) * 0.5;
+    const icon = card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
+    
+    return `
+      <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i+1};" data-card-index="${i}">
+        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${!isPlayerTurn ? "battle-cardui--disabled" : ""}" data-card-index="${i}">
+          <div class="card-top-row">
+            <span class="card-icon">${icon}</span>
+            <span class="card-cost">STR ${card.strainCost}</span>
+          </div>
+          <div class="card-name">${card.name}</div>
+          <div class="card-tag">${card.target.toUpperCase()}${card.range > 0 ? ` R${card.range}` : ""}</div>
+          <div class="card-desc">${card.description}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// Calculate all reachable tiles using BFS flood fill
+function getReachableTiles(
+  startX: number,
+  startY: number,
+  movement: number,
+  gridWidth: number,
+  gridHeight: number,
+  units: BattleUnitState[]
+): Set<string> {
+  const reachable = new Set<string>();
+  const visited = new Map<string, number>(); // tile -> cost to reach
+  const queue: { x: number; y: number; cost: number }[] = [{ x: startX, y: startY, cost: 0 }];
+  visited.set(`${startX},${startY}`, 0);
+  
+  const dirs = [{x:0,y:-1}, {x:0,y:1}, {x:-1,y:0}, {x:1,y:0}];
+  
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    
+    for (const d of dirs) {
+      const nx = current.x + d.x;
+      const ny = current.y + d.y;
+      const newCost = current.cost + 1;
+      const key = `${nx},${ny}`;
+      
+      // Check bounds
+      if (nx < 0 || nx >= gridWidth || ny < 0 || ny >= gridHeight) continue;
+      
+      // Check if we can reach it with remaining movement
+      if (newCost > movement) continue;
+      
+      // Check if already visited with lower cost
+      if (visited.has(key) && visited.get(key)! <= newCost) continue;
+      
+      // Check if occupied by a unit
+      const occupied = units.some(u => u.pos?.x === nx && u.pos?.y === ny && u.hp > 0);
+      if (occupied) continue;
+      
+      // Valid tile to move to
+      visited.set(key, newCost);
+      reachable.add(key);
+      queue.push({ x: nx, y: ny, cost: newCost });
+    }
+  }
+  
+  return reachable;
+}
+
+function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined): string {
+  const { gridWidth, gridHeight } = battle;
+  const units = getUnitsArray(battle);
+  
+  let selectedCard: Card | null = null;
+  if (selectedCardIdx !== null && activeUnit?.hand[selectedCardIdx]) {
+    selectedCard = resolveCard(activeUnit.hand[selectedCardIdx]);
+  }
+  
+  const moveOpts = new Set<string>();
+  const atkOpts = new Set<string>();
+  
+  if (activeUnit && !activeUnit.isEnemy && activeUnit.pos) {
+    const ux = activeUnit.pos.x;
+    const uy = activeUnit.pos.y;
+    
+    if (selectedCard) {
+      const cardRange = selectedCard.range;
+      
+      if (selectedCard.target === "enemy") {
+        units.filter(u => u.isEnemy && u.hp > 0 && u.pos).forEach(e => {
+          const dist = getDistance(ux, uy, e.pos!.x, e.pos!.y);
+          if (dist <= cardRange) {
+            atkOpts.add(`${e.pos!.x},${e.pos!.y}`);
+          }
+        });
+      } else if (selectedCard.target === "ally") {
+        units.filter(u => !u.isEnemy && u.hp > 0 && u.pos).forEach(a => {
+          const dist = getDistance(ux, uy, a.pos!.x, a.pos!.y);
+          if (dist <= cardRange || cardRange === 0) {
+            atkOpts.add(`${a.pos!.x},${a.pos!.y}`);
+          }
+        });
+      } else if (selectedCard.target === "self") {
+        atkOpts.add(`${ux},${uy}`);
+      }
+    } else if (!turnState.hasCommittedMove && turnState.movementRemaining > 0) {
+      // Only show movement options if we haven't committed to a move yet
+      // Calculate all reachable tiles from ORIGINAL position (or current if not moved yet)
+      const originX = turnState.originalPosition?.x ?? ux;
+      const originY = turnState.originalPosition?.y ?? uy;
+      const maxMove = activeUnit.agi; // Always use full AGI from original position
+      const reachable = getReachableTiles(originX, originY, maxMove, gridWidth, gridHeight, units);
+      reachable.forEach(key => moveOpts.add(key));
+    }
+  }
+  
+  let tiles = "";
+  for (let y = 0; y < gridHeight; y++) {
+    for (let x = 0; x < gridWidth; x++) {
+      const k = `${x},${y}`;
+      const isMv = moveOpts.has(k);
+      const isAtk = atkOpts.has(k);
+      
+      let cls = "battle-tile battle-tile--floor";
+      if (isMv) cls += " battle-tile--move-option";
+      if (isAtk) cls += " battle-tile--attack-option";
+      
+      const u = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
+      let uHtml = "";
+      if (u) {
+        const side = u.isEnemy ? "battle-unit--enemy" : "battle-unit--ally";
+        const act = u.id === battle.activeUnitId ? "battle-unit--active" : "";
+        const truncName = u.name.length > 8 ? u.name.slice(0, 8) + "…" : u.name;
+        // Unit facing - default to east for allies, west for enemies
+        const facing = u.facing ?? (u.isEnemy ? "west" : "east");
+        uHtml = `
+          <div class="battle-unit ${side} ${act}" data-unit-id="${u.id}" data-facing="${facing}">
+            <div class="battle-unit-name">${truncName}</div>
+            <div class="battle-unit-hp">HP ${u.hp}/${u.maxHp}</div>
+            <div class="battle-unit-strain">STR ${u.strain}</div>
+          </div>
+        `;
+      }
+      tiles += `<div class="${cls}" data-x="${x}" data-y="${y}">${uHtml}</div>`;
+    }
+  }
+  
+  return `<div class="battle-grid" style="--battle-grid-cols:${gridWidth};--battle-grid-rows:${gridHeight};">${tiles}</div>`;
+}
+
+function renderBattleResultOverlay(battle: BattleState): string {
+  if (battle.phase === "victory") {
+    const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+    return `
+      <div class="battle-result-overlay">
+        <div class="battle-result-card">
+          <div class="battle-result-title">VICTORY</div>
+          <div class="battle-reward-grid">
+            <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
+            <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
+            <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
+            <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
+            <div class="battle-reward-item"><div class="reward-label">STEAM COMP</div><div class="reward-value">+${r.steamComponents}</div></div>
+          </div>
+          <div class="battle-result-footer">
+            <button class="battle-result-btn" id="claimRewardsBtn">CLAIM & CONTINUE</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  
+  if (battle.phase === "defeat") {
+    return `
+      <div class="battle-result-overlay battle-result-overlay--defeat">
+        <div class="battle-result-card">
+          <div class="battle-result-title">DEFEAT</div>
+          <div class="battle-defeat-text">Your squad has been wiped out.</div>
+          <div class="battle-result-footer">
+            <button class="battle-result-btn" id="defeatReturnBtn">RETURN TO BASE</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  
+  return "";
+}
+
+// ============================================================================
+// EVENT LISTENERS
+// ============================================================================
+
+function attachBattleListeners() {
+  if (!localBattleState) return;
+  
+  const battle = localBattleState;
+  const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
+  const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
+  const units = getUnitsArray(battle);
+
+  // Exit battle button
+  const exitBtn = document.getElementById("exitBattleBtn");
+  if (exitBtn) {
+    exitBtn.onclick = () => {
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      renderOperationMap();
+    };
+  }
+
+  // Card selection
+  document.querySelectorAll(".battle-cardui").forEach(el => {
+    (el as HTMLElement).onclick = (e) => {
+      e.stopPropagation();
+      if (!isPlayerTurn) return;
+      const i = parseInt((el as HTMLElement).dataset.cardIndex ?? "-1");
+      if (i >= 0) {
+        selectedCardIndex = selectedCardIndex === i ? null : i;
+        renderBattleScreen();
+      }
+    };
+  });
+
+  // Tile clicks (move or attack)
+  document.querySelectorAll(".battle-tile").forEach(el => {
+    (el as HTMLElement).onclick = () => {
+      if (!isPlayerTurn || !activeUnit || !localBattleState) return;
+      
+      const x = parseInt((el as HTMLElement).dataset.x ?? "-1");
+      const y = parseInt((el as HTMLElement).dataset.y ?? "-1");
+      
+      if (selectedCardIndex !== null) {
+        // Playing a card
+        const cardIdOrObj = activeUnit.hand[selectedCardIndex];
+        const card = resolveCard(cardIdOrObj);
+        
+        const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
+        const ux = activeUnit.pos?.x ?? 0;
+        const uy = activeUnit.pos?.y ?? 0;
+        const dist = getDistance(ux, uy, x, y);
+        
+        let shouldPlay = false;
+        let targetUnitId = "";
+        
+        if (card.target === "enemy" && tgt?.isEnemy && dist <= card.range) {
+          shouldPlay = true;
+          targetUnitId = tgt.id;
+        } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= card.range || card.range === 0)) {
+          shouldPlay = true;
+          targetUnitId = tgt.id;
+        } else if (card.target === "self" && x === ux && y === uy) {
+          shouldPlay = true;
+          targetUnitId = activeUnit.id;
+        }
+        
+        if (shouldPlay) {
+          // Calculate facing towards target
+          const targetUnit = units.find(u => u.id === targetUnitId);
+          let newFacing = activeUnit.facing ?? "east";
+          
+          if (targetUnit && targetUnit.pos && activeUnit.pos && targetUnitId !== activeUnit.id) {
+            const dx = targetUnit.pos.x - activeUnit.pos.x;
+            const dy = targetUnit.pos.y - activeUnit.pos.y;
+            
+            if (Math.abs(dx) >= Math.abs(dy)) {
+              newFacing = dx > 0 ? "east" : "west";
+            } else {
+              newFacing = dy > 0 ? "south" : "north";
+            }
+          }
+          
+          // Update facing before playing card
+          let stateWithFacing = localBattleState;
+          if (newFacing !== activeUnit.facing) {
+            const newUnits = { ...localBattleState.units };
+            newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+            stateWithFacing = { ...localBattleState, units: newUnits };
+          }
+          
+          let newState = playCardFromScreen(stateWithFacing, activeUnit.id, selectedCardIndex, targetUnitId);
+          selectedCardIndex = null;
+          
+          // Mark that the unit has acted - turn is now over for this unit
+          turnState.hasActed = true;
+          
+          // Auto-advance to next unit's turn
+          newState = advanceTurn(newState);
+          
+          // Run enemy turns with animation
+          runEnemyTurnsAnimated(newState);
+        }
+      } else {
+        // Movement - clicking any green tile commits the move
+        if (el.classList.contains("battle-tile--move-option")) {
+          // Save original position for undo (only on first move)
+          if (!turnState.hasMoved && activeUnit.pos) {
+            turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
+          }
+          
+          // Calculate movement cost from ORIGINAL position
+          const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
+          const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
+          const moveCost = getDistance(originX, originY, x, y);
+          
+          // Update movement remaining
+          turnState.movementRemaining = activeUnit.agi - moveCost;
+          
+          // Mark as moved - this will hide green tiles until undo
+          turnState.hasMoved = true;
+          turnState.hasCommittedMove = true;
+          
+          // Calculate facing based on movement direction
+          const currentX = activeUnit.pos?.x ?? 0;
+          const currentY = activeUnit.pos?.y ?? 0;
+          let newFacing: "north" | "south" | "east" | "west" = activeUnit.facing ?? "east";
+          
+          const dx = x - currentX;
+          const dy = y - currentY;
+          
+          // Determine primary direction of movement
+          if (Math.abs(dx) >= Math.abs(dy)) {
+            newFacing = dx > 0 ? "east" : "west";
+          } else {
+            newFacing = dy > 0 ? "south" : "north";
+          }
+          
+          // Animate the movement
+          animateUnitMovement(activeUnit.id, { x: originX, y: originY }, { x, y }, () => {
+            // After animation, update state and re-render
+            if (!localBattleState) return;
+            let newState = moveUnit(localBattleState, activeUnit.id, { x, y });
+            
+            // Update facing
+            const newUnits = { ...newState.units };
+            newUnits[activeUnit.id] = {
+              ...newUnits[activeUnit.id],
+              facing: newFacing
+            };
+            newState = { ...newState, units: newUnits };
+            
+            setBattleState(newState);
+            renderBattleScreen();
+          });
+        }
+      }
+    };
+  });
+
+  // Undo move button
+  const undoBtn = document.getElementById("undoMoveBtn");
+  if (undoBtn) {
+    undoBtn.onclick = () => {
+      if (turnState.hasCommittedMove && turnState.originalPosition && activeUnit && localBattleState) {
+        const newUnits = { ...localBattleState.units };
+        newUnits[activeUnit.id] = {
+          ...newUnits[activeUnit.id],
+          pos: { ...turnState.originalPosition }
+        };
+        const newLog = [...localBattleState.log, `SLK//UNDO :: ${activeUnit.name} returns to original position.`];
+        setBattleState({
+          ...localBattleState,
+          units: newUnits,
+          log: newLog
+        });
+        
+        // Reset movement tracking - this shows green tiles again
+        turnState.movementRemaining = activeUnit.agi;
+        turnState.hasMoved = false;
+        turnState.hasCommittedMove = false;
+        turnState.originalPosition = null;
+        
+        renderBattleScreen();
+      }
+    };
+  }
+
+  // End turn button
+  const endTurnBtn = document.getElementById("endTurnBtn");
+  if (endTurnBtn) {
+    endTurnBtn.onclick = () => {
+      if (!isPlayerTurn || !localBattleState) return;
+      
+      // Advance turn
+      let newState = advanceTurn(localBattleState);
+      selectedCardIndex = null;
+      
+      // Run enemy turns with animation
+      runEnemyTurnsAnimated(newState);
+    };
+  }
+
+  // Debug auto-win button
+  const autoWinBtn = document.getElementById("debugAutoWinBtn");
+  if (autoWinBtn) {
+    autoWinBtn.onclick = () => {
+      if (!localBattleState) return;
+      const newUnits = { ...localBattleState.units };
+      
+      // Kill all enemies
+      Object.keys(newUnits).forEach(id => {
+        if (newUnits[id].isEnemy) {
+          newUnits[id] = { ...newUnits[id], hp: 0 };
+        }
+      });
+      
+      // Remove dead enemies from turn order
+      const newTurnOrder = localBattleState.turnOrder.filter(id => {
+        const unit = newUnits[id];
+        return unit && (!unit.isEnemy || unit.hp > 0);
+      });
+      
+      const newLog = [...localBattleState.log, "SLK//DEBUG :: Auto-win triggered."];
+      let newState: BattleState = { 
+        ...localBattleState, 
+        units: newUnits, 
+        turnOrder: newTurnOrder,
+        log: newLog 
+      };
+      
+      // Force evaluate outcome
+      newState = evaluateBattleOutcome(newState);
+      
+      // If still not victory, force it
+      if (newState.phase !== "victory") {
+        newState = {
+          ...newState,
+          phase: "victory",
+          rewards: {
+            wad: 50,
+            metalScrap: 10,
+            wood: 5,
+            chaosShards: 2,
+            steamComponents: 2
+          }
+        };
+      }
+      
+      setBattleState(newState);
+      renderBattleScreen();
+    };
+  }
+
+  // Claim rewards button
+  const claimBtn = document.getElementById("claimRewardsBtn");
+  if (claimBtn) {
+    claimBtn.onclick = () => {
+      if (!localBattleState) return;
+      const r = localBattleState.rewards;
+      if (r) {
+        updateGameState(s => {
+          s.wad += r.wad;
+          s.resources.metalScrap += r.metalScrap;
+          s.resources.wood += r.wood;
+          s.resources.chaosShards += r.chaosShards;
+          s.resources.steamComponents += r.steamComponents;
+		  
+		  // Add cards to library
+  if (rewards.cards && rewards.cards.length > 0) {
+    draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, rewards.cards);
+  }
+        });
+      }
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      renderOperationMap();
+    };
+  }
+
+  // Defeat return button
+  const defeatBtn = document.getElementById("defeatReturnBtn");
+  if (defeatBtn) {
+    defeatBtn.onclick = () => {
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      renderBaseCampScreen();
+    };
+  }
+
+  // Scroll battle log to bottom
+  const log = document.getElementById("battleLog");
+  if (log) log.scrollTop = log.scrollHeight;
+  
+  // Clutch toggle button
+  const clutchBtn = document.getElementById("clutchToggleBtn");
+  if (clutchBtn && activeUnit && localBattleState) {
+    clutchBtn.onclick = () => {
+      const newUnits = { ...localBattleState!.units };
+      const currentClutch = newUnits[activeUnit.id].clutchActive ?? false;
+      newUnits[activeUnit.id] = {
+        ...newUnits[activeUnit.id],
+        clutchActive: !currentClutch
+      };
+      const action = !currentClutch ? "engages" : "disengages";
+      const newLog = [...localBattleState!.log, `SLK//CLUTCH :: ${activeUnit.name} ${action} weapon clutch.`];
+      setBattleState({
+        ...localBattleState!,
+        units: newUnits,
+        log: newLog
+      });
+      renderBattleScreen();
+    };
+  }
+}
+
+// ============================================================================
+// ENEMY TURN HELPER - Runs enemy turns with animation
+// ============================================================================
+
+let isAnimatingEnemyTurn = false;
+
+function runEnemyTurns(state: BattleState): BattleState {
+  if (state.phase !== "player_turn" && state.phase !== "enemy_turn") return state;
+  
+  let currentState = state;
+  let safety = 0;
+  
+  while (safety < 20) {
+    const active = currentState.activeUnitId ? currentState.units[currentState.activeUnitId] : null;
+    
+    if (!active || active.hp <= 0) {
+      currentState = advanceTurn(currentState);
+      safety++;
+      continue;
+    }
+    
+    if (!active.isEnemy) {
+      // Player's turn - reset their movement
+      resetTurnStateForUnit(active);
+      break;
+    }
+    
+    // For enemies, we need to capture position before and after for animation
+    const beforePos = active.pos ? { ...active.pos } : null;
+    currentState = performEnemyTurn(currentState);
+    const afterUnit = currentState.units[active.id];
+    const afterPos = afterUnit?.pos ? { ...afterUnit.pos } : null;
+    
+    // Queue animation if position changed (will be handled by re-render for now)
+    // The animation will happen on next render cycle
+    
+    if (currentState.phase === "victory" || currentState.phase === "defeat") break;
+    
+    safety++;
+  }
+  
+  return currentState;
+}
+
+// Animated enemy turn runner - processes one enemy at a time with delays
+function runEnemyTurnsAnimated(initialState: BattleState) {
+  if (isAnimatingEnemyTurn) return;
+  
+  function processNextEnemy(state: BattleState) {
+    if (state.phase !== "player_turn" && state.phase !== "enemy_turn") {
+      isAnimatingEnemyTurn = false;
+      setBattleState(state);
+      renderBattleScreen();
+      return;
+    }
+    
+    const active = state.activeUnitId ? state.units[state.activeUnitId] : null;
+    
+    if (!active || active.hp <= 0) {
+      const newState = advanceTurn(state);
+      processNextEnemy(newState);
+      return;
+    }
+    
+    if (!active.isEnemy) {
+      // Player's turn
+      isAnimatingEnemyTurn = false;
+      resetTurnStateForUnit(active);
+      setBattleState(state);
+      renderBattleScreen();
+      return;
+    }
+    
+    // Capture position before enemy acts
+    const beforePos = active.pos ? { x: active.pos.x, y: active.pos.y } : null;
+    
+    // Perform enemy turn
+    let newState = performEnemyTurn(state);
+    
+    // Check if position changed
+    const afterUnit = newState.units[active.id];
+    const afterPos = afterUnit?.pos;
+    
+    const didMove = beforePos && afterPos && 
+      (beforePos.x !== afterPos.x || beforePos.y !== afterPos.y);
+    
+    if (didMove && beforePos && afterPos) {
+      // Update state first so grid shows correct positions for other units
+      setBattleState(newState);
+      renderBattleScreen();
+      
+      // Then animate this enemy's movement
+      animateUnitMovement(active.id, beforePos, afterPos, () => {
+        // Check for victory/defeat
+        if (newState.phase === "victory" || newState.phase === "defeat") {
+          isAnimatingEnemyTurn = false;
+          setBattleState(newState);
+          renderBattleScreen();
+          return;
+        }
+        
+        // Process next enemy after animation
+        setTimeout(() => processNextEnemy(newState), 100);
+      });
+    } else {
+      // No movement, just update and continue
+      setBattleState(newState);
+      renderBattleScreen();
+      
+      if (newState.phase === "victory" || newState.phase === "defeat") {
+        isAnimatingEnemyTurn = false;
+        return;
+      }
+      
+      // Small delay between enemy actions
+      setTimeout(() => processNextEnemy(newState), 300);
+    }
+  }
+  
+  isAnimatingEnemyTurn = true;
+  processNextEnemy(initialState);
 }

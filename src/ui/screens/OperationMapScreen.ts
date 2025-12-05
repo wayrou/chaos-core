@@ -4,6 +4,7 @@ import { getCurrentOperation } from "../../core/ops";
 import { createTestBattleForCurrentParty } from "../../core/battle";
 import { renderBattleScreen } from "./BattleScreen";
 import { renderScrollLinkShell } from "./ScrollLinkShell";
+import { renderBaseCampScreen } from "./BaseCampScreen";
 
 export function renderOperationMap(): void {
   const root = document.getElementById("app");

@@ -184,52 +184,41 @@ Flashing Red = extreme overload or active power surge warning
 
 Bars update dynamically as items are added/removed.
 
-4. Item Display and Management UI
-Right Side: Three Vertical Bins
 
-From top to bottom:
+ 
 
-Equipment
+11a. Screen progression flow: "shell" screen (which will end up being base camp screen) -> start_op -> choose operation 
+(current operation in the story, or a second option to start a custom operation with fully customizable settings) -> room layout / map with battle nodes, etc. -> going into node
+Create the Base Camp Screen with different nodes: shop node, workshop node (add crafting in headline 11d), unit roster (unit customization added in 11b)
 
-Consumables
-
-Resources
-
-Each bin uses its own grid, but all contribute to the same capacity bars.
-
-Drag-and-Drop Behavior
-
-Drag any item between Forward Locker and Base Camp Storage
-
-When an equipped item is moved to Base Camp Storage:
-
-It is automatically unequipped from any unit deck
-
-Unit Decks
-
-Only draw equipment from Forward Locker
-
-Removing equipment from Forward Locker triggers automatic deck validation (shows missing gear slots, etc.)
-
-11a. Create the Base Camp Screen with different nodes: shop node, workshop node (add crafting in headline 11d), unit roster (unit customization added in 11b)
-
-
-11b. Unit customization
-unit roster, stats, and current decks.
-Let the player swap cards in/out of unit decks by changing equipment
-(equipment tied to cards, cards populate in unit decks based on / drawing from equipment they have)
-
-11c. Equipment
+11b. Equipment
 Decks, Equipment & Modules
 Five equip slots per unit: Weapon, Chestpiece, Helmet, two Accessories.
 Weapons are class-restricted; other gear is universal.
 Modules: Found/crafted/bought upgrades that can be affixed to weapons that add new equipment cards to unit decks.
 Decks can be modified at any time outside of a tactical battle encounter.
 
+11c. Unit customization
+unit roster, stats, and current decks.
+Let the player swap cards in/out of unit decks by changing equipment
+(equipment tied to cards, cards populate in unit decks based on / drawing from equipment they have)
+
+
+
+11cx. Introduce weapon mechanics
+
+
+11cy. (EXPERIMENTAL) Aesthetic overhaul to align with Ardycia aesthetic bible, less like a computer program and more like an actual game (while still retaining scrolllink terminal boot screen and flourish,
+and acknowleding limitations before any actual art / character portraits are implemented into the game), make the battle grid feel at-home with players of final fantasy tactics advance as much as possible
+with temp art / before real art is added.
+
+11cz. Introduce unit facing
+
+
 
 11d. Crafting
 Crafting at base camp
-Crafting provides players with a streamlined way to create and upgrade gear using resources obtained during dungeon runs, free-move zones, and operations. 
+Crafting provides players with a streamlined way to create and upgrade gear and cards using resources obtained during dungeon runs, free-move zones, and operations. 
 Access Point:
 Crafting is performed at the Workshop Node located in the Base Camp.
 Recipe Categories:
@@ -251,6 +240,215 @@ Recipes are required to craft something- recipes can be found or bought and are 
 
 
 
+11da. Gear Workbench & Card Slotting System
+
+{Objective
+
+Implement the Gear Workbench system that allows players to customize equipment by slotting cards from their Card Library into gear-specific free slots. This system enables true deckbuilding-style customization while keeping class + equipment identity intact. Includes new UI, new data structures, a compiling animation, .PAK pack card acquisition, and deck compilation functionality.
+
+11da.1 — Extend Equipment Data Model
+
+Modify all equipment definitions under equipmentData:
+
+Add:
+
+lockedCards: CardId[]    // Permanent, cannot be removed
+freeSlots: number        // Usually 2–3
+slottedCards: CardId[]   // Player-chosen cards
+
+
+Ensure freeSlots and slottedCards are persisted in save data.
+
+Validate that slottedCards.length <= freeSlots.
+
+11da.2 — Implement Card Library System
+
+Create a persistent, global cardLibrary state:
+
+cardLibrary: {
+   [cardId: string]: number;  // unlimited-use copies OK—count is cosmetic
+}
+
+
+Rules:
+
+Cards do NOT occupy inventory space.
+
+Cards may be collected from: packs, battle rewards, shops, crafting.
+
+Card Library UI appears inside the Gear Workbench panel.
+
+Player may search, filter by rarity/type, and drag cards from library into gear slots.
+
+11da.3 — Create Gear Workbench Screen
+
+Add GearWorkbenchScreen.ts with:
+
+Layout
+
+Left side:
+
+Selected gear 3D/2D panel
+
+Locked card icons
+
+Free slots as drag targets
+
+Right side:
+
+Scrollable Card Library list
+
+Filters (rarity, type, owned count)
+
+Hover tooltips for card data
+
+Bottom:
+
+COMPILE GEAR button
+
+BACK button to Base Camp or Loadout
+
+Interactive logic
+
+Drag card from library → drop into slot
+
+Click slot to remove card
+
+Slots visually highlight when a card is hovered
+
+Library greys out cards already slotted if needed (but unlimited-use is allowed)
+
+Live preview of resulting equipment card list
+
+11da.4 — Deck Compiler Implementation
+
+Add a helper function:
+
+compileDeck(unitEquipment: Equipment[]): CardId[]
+
+
+Rules:
+
+Add all lockedCards across all equipped gear
+
+Add all slottedCards across all equipped gear
+
+Deck is a pure sum of cards; no additional sorting required
+
+Returned deck is used during battle initialization for shuffle + draw
+
+Include UI preview in Gear Workbench and Loadout screens:
+
+GENERATED DECK:
+Strike ×2
+Lunge ×1
+Steam Burst ×1
+Overclock ×1
+
+11da.5 — Add Compiling Animation
+
+When COMPILE is pressed:
+
+Lock UI
+
+Show OS-like animation:
+
+[COMPILING...]
+→ Building Strike.exe
+→ Installing Overclock.dll
+→ Resolving Steam_Burst.pkg
+→ Linking runtime dependencies
+→ Compilation Successful ✔
+
+
+Glow/scanline effect
+
+Save changes to state
+
+Return player to Gear view
+
+11da.6 — Add .PAK Pack System for Card Acquisition
+
+Create .PAK files as special loot items only used to generate cards:
+
+.PAK types:
+
+CORE.PAK (common/uncommon)
+
+STEAM.PAK (mobility/steam tech)
+
+VOID.PAK (chaos/mixed rarity)
+
+TECH.PAK (offense/utility mix)
+
+BOSS.PAK (rare/epic-only)
+
+Opening .PAK:
+
+Show "DECOMPILING…" animation
+
+Reveal 3–5 cards
+
+Add them to cardLibrary
+
+Show rarity effect sparks
+
+Confirm screen “ADD TO LIBRARY”
+
+11da.7 — Battle Reward Updates
+
+Each battle reward screen now optionally includes:
+
+1 guaranteed common card
+
+Chance for one uncommon
+
+Low chance for rare or chaos card
+
+Cards immediately added to library
+
+Reward screen includes a new section:
+
+CARD ACQUIRED:
+ • Steam Burst (Common)
+
+11da.8 — Shop Integration
+
+Shop nodes gain:
+
+“Buy single card” menu
+
+“Buy .PAK file” menu
+
+Card prices scale with rarity
+
+Card preview tooltips appear on hover.
+
+11da.9 — Loadout Screen Integration
+
+Update Loadout screen to include:
+
+Button: OPEN GEAR WORKBENCH
+
+Hovering gear shows:
+
+Locked cards
+
+Slotted cards
+
+Number of free slots remaining
+
+Add generated deck preview under each unit.
+
+11da.10 — Validation & Error Handling
+
+Prevent COMPILE if slot count exceeded
+
+Ensure empty slots are allowed
+
+Ensure card library persists properly
+}
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
 
 12. Implement Save/Load via Rust Tauri Commands
 
@@ -263,6 +461,10 @@ In TS:
 
 Serialize GameState and call these commands.
 Add a “Continue” button that loads the last save.
+
+autosave feature
+
+12b. Controller support
 
 13. Add Simple Procedural Room Variants
 
@@ -325,21 +527,23 @@ Role: Jack-of-all-trades unit, can adapt to any role but without specialization 
 
 card proc-ing to add to roguelike feel
 
-14b. Introduce weapon mechanics
+mechanics to add to card / deckbuilding feel, something similar to opening packs of cards?
+
+
 
 15. Refine ScrollLink UI & Screen Transitions
 
 Polish the OS feel:
 
-Stylish transitions when switching between apps (Base Camp → Operation Map → Battle).
-
-Fake “windowed” look for the battle/grid view inside ScrollLink.
+Stylish transitions when switching between screens (Base Camp → Operation Map → Battle).
 
 Subtle animations (cursor blink, flicker, etc.).
 
+
+
 16. Establish Art Pipeline: Procreate → Game Sprites
 
-Define your 2D art flow:
+Define 2D art flow:
 
 Choose target sprite resolution (e.g., 32×32 or 48×48).
 
@@ -377,22 +581,5 @@ Damage numbers popping up, small screen shake on heavy hits.
 
 Tooltips for tiles, units, and cards.
 
-20. “Vertical Slice” Lock & Playtest Loop
 
-Define a temporary “done” state for the slice:
-
-One Operation with 1–2 floors, curated room graph.
-
-2–3 unit classes, small card pool.
-
-Save/load working.
-
-ScrollLink OS shell, base camp, map, battle all integrated.
-Then:
-
-Do a few focused playtest runs.
-
-Take notes on pacing, difficulty, and what’s confusing.
-
-Prioritize a short post-slice backlog (balance, UI clarity, more cards) before expanding scope.
 

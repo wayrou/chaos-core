@@ -1,0 +1,674 @@
+/* ==========================================================================
+   CHAOS CORE - GEAR WORKBENCH STYLES
+   Ardycia Aesthetic: Card Slotting & Deck Compilation UI
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   WORKBENCH ROOT
+   -------------------------------------------------------------------------- */
+.workbench-root {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  background: 
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at center, #2d261f 0%, #1a1612 70%, #0d0b09 100%);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #c9a66b;
+  position: relative;
+}
+
+.workbench-root--compiling {
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   HEADER
+   -------------------------------------------------------------------------- */
+.workbench-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  background: linear-gradient(180deg, #2d261f 0%, #1a1612 100%);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.workbench-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #ffcc6e;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+  text-shadow: 0 0 10px rgba(255, 204, 110, 0.3);
+}
+
+.workbench-subtitle {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  letter-spacing: 0.05em;
+  margin-top: 0.15rem;
+}
+
+.workbench-back-btn {
+  padding: 0.4rem 0.8rem;
+  background: #3d3428;
+  border: 1px solid #6b4f2d;
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+}
+
+.workbench-back-btn:hover {
+  background: #6b4f2d;
+  color: #ffcc6e;
+  border-color: #a87c45;
+}
+
+/* --------------------------------------------------------------------------
+   MAIN LAYOUT
+   -------------------------------------------------------------------------- */
+.workbench-main {
+  flex: 1;
+  display: flex;
+  gap: 0.75rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-section-title {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #ffcc6e;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+  margin-bottom: 0.5rem;
+}
+
+/* --------------------------------------------------------------------------
+   LEFT PANEL: GEAR EDITOR
+   -------------------------------------------------------------------------- */
+.workbench-gear-panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.gear-editor {
+  margin-bottom: 1rem;
+}
+
+.gear-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #8ce6ff;
+  margin-bottom: 0.25rem;
+  text-shadow: 0 0 8px rgba(140, 230, 255, 0.3);
+}
+
+.gear-slot-info {
+  font-size: 0.65rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  margin-bottom: 0.75rem;
+}
+
+.gear-section {
+  margin-bottom: 0.75rem;
+}
+
+.gear-section-label {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+/* Locked Cards */
+.locked-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.locked-card {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 2px;
+}
+
+.locked-card-icon {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.locked-card-name {
+  font-size: 0.65rem;
+  color: #c9a66b;
+}
+
+.no-cards {
+  font-size: 0.6rem;
+  color: #6b4f2d;
+  font-style: italic;
+  padding: 0.35rem;
+}
+
+/* Free Slots */
+.free-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.slot-card {
+  padding: 0.5rem 0.6rem;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+}
+
+.slot-card--filled {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(90deg, rgba(53, 255, 149, 0.15) 0%, transparent 100%);
+  border: 1px solid rgba(53, 255, 149, 0.4);
+}
+
+.slot-card-name {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #35ff95;
+}
+
+.slot-card-remove {
+  font-size: 0.7rem;
+  color: #ff6b6b;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.slot-card-remove:hover {
+  background: rgba(255, 107, 107, 0.2);
+}
+
+.slot-card--empty {
+  background: #2d261f;
+  border: 2px dashed rgba(168, 124, 69, 0.3);
+  text-align: center;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slot-card--dragover {
+  border-color: #35ff95;
+  background: rgba(53, 255, 149, 0.1);
+  box-shadow: 0 0 10px rgba(53, 255, 149, 0.3);
+}
+
+.slot-empty-text {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #6b4f2d;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* No Gear Selected */
+.no-gear-selected {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  flex: 1;
+}
+
+.no-gear-icon {
+  font-size: 2.5rem;
+  color: #6b4f2d;
+  margin-bottom: 0.75rem;
+  opacity: 0.5;
+}
+
+.no-gear-text {
+  font-size: 0.7rem;
+  color: #6b4f2d;
+  max-width: 200px;
+}
+
+/* --------------------------------------------------------------------------
+   DECK PREVIEW
+   -------------------------------------------------------------------------- */
+.deck-preview {
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 3px;
+  padding: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.deck-preview-stats {
+  margin-bottom: 0.5rem;
+}
+
+.deck-stat {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+}
+
+.deck-preview-list {
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.deck-preview-item {
+  font-size: 0.6rem;
+  color: #c9a66b;
+  padding: 0.2rem 0.3rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2px;
+}
+
+.deck-preview-empty {
+  font-size: 0.6rem;
+  color: #6b4f2d;
+  font-style: italic;
+}
+
+/* --------------------------------------------------------------------------
+   COMPILE BUTTON
+   -------------------------------------------------------------------------- */
+.workbench-actions {
+  margin-top: auto;
+  padding-top: 0.75rem;
+}
+
+.compile-btn {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(180deg, #1a7a48 0%, #0f4a2c 100%);
+  border: 2px solid #35ff95;
+  color: #35ff95;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 3px;
+  text-shadow: 0 0 8px rgba(53, 255, 149, 0.5);
+}
+
+.compile-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #35ff95 0%, #1a7a48 100%);
+  color: #0f4a2c;
+  box-shadow: 0 0 20px rgba(53, 255, 149, 0.4);
+}
+
+.compile-btn:disabled {
+  background: #2d261f;
+  border-color: #4a4843;
+  color: #6b4f2d;
+  cursor: not-allowed;
+  text-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   RIGHT PANEL: CARD LIBRARY
+   -------------------------------------------------------------------------- */
+.workbench-library-panel {
+  flex: 1;
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Filters */
+.library-filters {
+  margin-bottom: 0.6rem;
+  flex-shrink: 0;
+}
+
+.library-search {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 2px;
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.7rem;
+  margin-bottom: 0.4rem;
+}
+
+.library-search::placeholder {
+  color: #6b4f2d;
+}
+
+.library-search:focus {
+  outline: none;
+  border-color: #a87c45;
+}
+
+.filter-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.filter-select {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 2px;
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.6rem;
+  cursor: pointer;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: #a87c45;
+}
+
+/* Card List */
+.library-card-list {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+  align-content: start;
+}
+
+.library-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 2rem;
+  font-size: 0.7rem;
+  color: #6b4f2d;
+}
+
+/* Library Cards */
+.library-card {
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.5rem;
+  cursor: grab;
+  transition: all 0.2s ease;
+}
+
+.library-card:hover {
+  border-color: #a87c45;
+  box-shadow: 0 0 10px rgba(168, 124, 69, 0.2);
+  transform: translateY(-2px);
+}
+
+.library-card--dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+/* Rarity Colors */
+.library-card--common {
+  border-left: 3px solid #888;
+}
+.library-card--uncommon {
+  border-left: 3px solid #35ff95;
+}
+.library-card--rare {
+  border-left: 3px solid #8ce6ff;
+}
+.library-card--epic {
+  border-left: 3px solid #c0b3ff;
+}
+.library-card--legendary {
+  border-left: 3px solid #ffcc6e;
+}
+
+.library-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.library-card-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.library-card-cost {
+  font-size: 0.5rem;
+  font-family: 'Consolas', monospace;
+  padding: 0.1rem 0.3rem;
+  background: rgba(255, 204, 110, 0.15);
+  border: 1px solid rgba(255, 204, 110, 0.4);
+  border-radius: 2px;
+  color: #ffcc6e;
+}
+
+.library-card-meta {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.library-card-rarity {
+  font-size: 0.45rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.library-card-category {
+  font-size: 0.45rem;
+  font-family: 'Consolas', monospace;
+  color: #8ce6ff;
+  text-transform: uppercase;
+}
+
+.library-card-desc {
+  font-size: 0.55rem;
+  color: #c9a66b;
+  line-height: 1.3;
+  margin-bottom: 0.3rem;
+}
+
+.library-card-count {
+  font-size: 0.5rem;
+  font-family: 'Consolas', monospace;
+  color: #6b4f2d;
+}
+
+/* --------------------------------------------------------------------------
+   COMPILE OVERLAY
+   -------------------------------------------------------------------------- */
+.compile-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 8, 6, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: compile-fade-in 0.3s ease;
+}
+
+@keyframes compile-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.compile-window {
+  background: #1a1612;
+  border: 2px solid #35ff95;
+  border-radius: 4px;
+  padding: 1.5rem 2rem;
+  min-width: 400px;
+  box-shadow: 
+    0 0 50px rgba(53, 255, 149, 0.3),
+    inset 0 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.compile-header {
+  font-size: 1rem;
+  font-family: 'Consolas', monospace;
+  color: #35ff95;
+  text-align: center;
+  margin-bottom: 1rem;
+  text-shadow: 0 0 10px rgba(53, 255, 149, 0.5);
+  animation: compile-blink 0.5s ease-in-out infinite;
+}
+
+@keyframes compile-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.compile-messages {
+  font-family: 'Consolas', monospace;
+  font-size: 0.7rem;
+  color: #35ff95;
+  margin-bottom: 1rem;
+  min-height: 200px;
+}
+
+.compile-line {
+  margin-bottom: 0.3rem;
+  opacity: 0;
+  animation: compile-line-appear 0.3s ease forwards;
+}
+
+@keyframes compile-line-appear {
+  from { 
+    opacity: 0; 
+    transform: translateX(-10px);
+  }
+  to { 
+    opacity: 1; 
+    transform: translateX(0);
+  }
+}
+
+.compile-progress {
+  height: 6px;
+  background: #2d261f;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.compile-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #35ff95 0%, #8ce6ff 100%);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(53, 255, 149, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   CONSOLE
+   -------------------------------------------------------------------------- */
+.workbench-console {
+  background: #1a1612;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.workbench-console .console-header {
+  padding: 0.3rem 0.6rem;
+  background: linear-gradient(90deg, #6b4f2d 0%, transparent 100%);
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #ffcc6e;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+}
+
+.workbench-console .console-body {
+  padding: 0.4rem 0.6rem;
+  max-height: 60px;
+  overflow-y: auto;
+  font-family: 'Consolas', monospace;
+  font-size: 0.55rem;
+  line-height: 1.4;
+}
+
+.workbench-console .console-line {
+  color: #35ff95;
+  margin-bottom: 1px;
+  text-shadow: 0 0 5px rgba(53, 255, 149, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   SCROLLBAR
+   -------------------------------------------------------------------------- */
+.workbench-root ::-webkit-scrollbar {
+  width: 5px;
+}
+
+.workbench-root ::-webkit-scrollbar-track {
+  background: #1a1612;
+}
+
+.workbench-root ::-webkit-scrollbar-thumb {
+  background: #6b4f2d;
+  border-radius: 2px;
+}
+
+.workbench-root ::-webkit-scrollbar-thumb:hover {
+  background: #a87c45;
+}
