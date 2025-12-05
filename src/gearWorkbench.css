@@ -102,6 +102,72 @@
 }
 
 /* --------------------------------------------------------------------------
+   GEAR SELECTOR
+   -------------------------------------------------------------------------- */
+.gear-selector {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 3px;
+}
+
+.gear-selector--empty {
+  text-align: center;
+  padding: 1rem;
+}
+
+.gear-selector-label {
+  font-size: 0.5rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+
+.gear-selector-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.gear-selector-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.6rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gear-selector-option:hover {
+  background: #3d3428;
+  border-color: #a87c45;
+}
+
+.gear-selector-option--selected {
+  background: linear-gradient(180deg, rgba(140, 230, 255, 0.15) 0%, rgba(140, 230, 255, 0.05) 100%);
+  border-color: #8ce6ff;
+  color: #8ce6ff;
+  box-shadow: 0 0 8px rgba(140, 230, 255, 0.2);
+}
+
+.gear-option-icon {
+  font-size: 0.8rem;
+}
+
+.gear-option-name {
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
    LEFT PANEL: GEAR EDITOR
    -------------------------------------------------------------------------- */
 .workbench-gear-panel {
@@ -232,10 +298,16 @@
   justify-content: center;
 }
 
+.slot-card--highlight {
+  border-color: rgba(53, 255, 149, 0.5);
+  background: rgba(53, 255, 149, 0.05);
+}
+
 .slot-card--dragover {
   border-color: #35ff95;
-  background: rgba(53, 255, 149, 0.1);
-  box-shadow: 0 0 10px rgba(53, 255, 149, 0.3);
+  border-style: solid;
+  background: rgba(53, 255, 149, 0.15);
+  box-shadow: 0 0 15px rgba(53, 255, 149, 0.4);
 }
 
 .slot-empty-text {
@@ -382,6 +454,7 @@
   font-family: inherit;
   font-size: 0.7rem;
   margin-bottom: 0.4rem;
+  box-sizing: border-box;
 }
 
 .library-search::placeholder {
@@ -420,9 +493,10 @@
   flex: 1;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.6rem;
   align-content: start;
+  padding: 0.25rem;
 }
 
 .library-empty {
@@ -433,99 +507,213 @@
   color: #6b4f2d;
 }
 
-/* Library Cards */
+/* ==========================================================================
+   LIBRARY CARDS - ACTUAL CARD DESIGN
+   ========================================================================== */
 .library-card {
-  background: #2d261f;
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
-  padding: 0.5rem;
   cursor: grab;
   transition: all 0.2s ease;
+  user-select: none;
 }
 
 .library-card:hover {
-  border-color: #a87c45;
-  box-shadow: 0 0 10px rgba(168, 124, 69, 0.2);
-  transform: translateY(-2px);
+  transform: translateY(-4px) scale(1.02);
+  z-index: 10;
+}
+
+.library-card:active {
+  cursor: grabbing;
 }
 
 .library-card--dragging {
   opacity: 0.5;
-  cursor: grabbing;
+  transform: scale(0.95);
 }
 
-/* Rarity Colors */
-.library-card--common {
-  border-left: 3px solid #888;
-}
-.library-card--uncommon {
-  border-left: 3px solid #35ff95;
-}
-.library-card--rare {
-  border-left: 3px solid #8ce6ff;
-}
-.library-card--epic {
-  border-left: 3px solid #c0b3ff;
-}
-.library-card--legendary {
-  border-left: 3px solid #ffcc6e;
+/* Card Frame */
+.card-frame {
+  background: linear-gradient(180deg, #3d3428 0%, #2d261f 40%, #1a1612 100%);
+  border: 2px solid #6b4f2d;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.library-card-header {
+.library-card:hover .card-frame {
+  border-color: #a87c45;
+  box-shadow: 
+    0 4px 16px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(168, 124, 69, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Rarity Border Colors */
+.library-card--common .card-frame {
+  border-color: #666;
+}
+.library-card--common:hover .card-frame {
+  border-color: #888;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 15px rgba(136, 136, 136, 0.3);
+}
+
+.library-card--uncommon .card-frame {
+  border-color: #35ff95;
+}
+.library-card--uncommon:hover .card-frame {
+  border-color: #5fffaf;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(53, 255, 149, 0.4);
+}
+
+.library-card--rare .card-frame {
+  border-color: #8ce6ff;
+}
+.library-card--rare:hover .card-frame {
+  border-color: #b0eeff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(140, 230, 255, 0.4);
+}
+
+.library-card--epic .card-frame {
+  border-color: #c0b3ff;
+}
+.library-card--epic:hover .card-frame {
+  border-color: #d8cfff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(192, 179, 255, 0.4);
+}
+
+.library-card--legendary .card-frame {
+  border-color: #ffcc6e;
+  background: linear-gradient(180deg, #4d3d28 0%, #3d2d18 40%, #2a1a08 100%);
+}
+.library-card--legendary:hover .card-frame {
+  border-color: #ffd88a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 25px rgba(255, 204, 110, 0.5);
+}
+
+/* Card Header */
+.card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0%, transparent 100%);
+  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
 }
 
-.library-card-name {
+.card-name {
   font-size: 0.7rem;
   font-weight: 600;
   color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  margin-right: 0.3rem;
 }
 
-.library-card-cost {
-  font-size: 0.5rem;
-  font-family: 'Consolas', monospace;
-  padding: 0.1rem 0.3rem;
-  background: rgba(255, 204, 110, 0.15);
-  border: 1px solid rgba(255, 204, 110, 0.4);
-  border-radius: 2px;
-  color: #ffcc6e;
-}
-
-.library-card-meta {
+.card-strain {
   display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.3rem;
+  flex-direction: column;
+  align-items: center;
+  background: linear-gradient(180deg, #4a3d2d 0%, #2d261f 100%);
+  border: 1px solid rgba(255, 204, 110, 0.4);
+  border-radius: 3px;
+  padding: 0.15rem 0.3rem;
+  min-width: 28px;
 }
 
-.library-card-rarity {
-  font-size: 0.45rem;
+.strain-value {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ffcc6e;
+  line-height: 1;
+}
+
+.strain-label {
+  font-size: 0.4rem;
   font-family: 'Consolas', monospace;
   color: #a87c45;
-  text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.library-card-category {
+/* Card Art Area */
+.card-art {
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: 
+    linear-gradient(180deg, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0.1) 50%, rgba(0, 0, 0, 0.3) 100%),
+    radial-gradient(ellipse at center, rgba(168, 124, 69, 0.1) 0%, transparent 70%);
+  border-bottom: 1px solid rgba(168, 124, 69, 0.15);
+}
+
+.card-art-icon {
+  font-size: 1.8rem;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+/* Card Type Bar */
+.card-type-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.2rem 0.5rem;
+  background: rgba(0, 0, 0, 0.4);
+  border-bottom: 1px solid rgba(168, 124, 69, 0.15);
+}
+
+.card-category {
   font-size: 0.45rem;
   font-family: 'Consolas', monospace;
   color: #8ce6ff;
-  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.library-card-desc {
+.card-rarity {
+  font-size: 0.45rem;
+  font-family: 'Consolas', monospace;
+  letter-spacing: 0.05em;
+}
+
+/* Rarity text colors */
+.library-card--common .card-rarity { color: #888; }
+.library-card--uncommon .card-rarity { color: #35ff95; }
+.library-card--rare .card-rarity { color: #8ce6ff; }
+.library-card--epic .card-rarity { color: #c0b3ff; }
+.library-card--legendary .card-rarity { color: #ffcc6e; }
+
+/* Card Text */
+.card-text {
+  padding: 0.4rem 0.5rem;
+  min-height: 36px;
+}
+
+.card-description {
   font-size: 0.55rem;
   color: #c9a66b;
-  line-height: 1.3;
-  margin-bottom: 0.3rem;
+  line-height: 1.35;
+  margin: 0;
 }
 
-.library-card-count {
-  font-size: 0.5rem;
+/* Card Footer */
+.card-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(168, 124, 69, 0.1);
+}
+
+.card-owned {
+  font-size: 0.55rem;
   font-family: 'Consolas', monospace;
   color: #6b4f2d;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.1rem 0.3rem;
+  border-radius: 2px;
 }
 
 /* --------------------------------------------------------------------------

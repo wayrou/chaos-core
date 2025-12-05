@@ -490,7 +490,11 @@ Rolled instances of individual cards that you get from crafting, rewards or shop
 
 14a. Unit leveling
 
-Brainstorm how to approach unit leveling, xp in a way that's similar to final fantasy tactics
+Implement unit performance system
+
+14az. Unit recruitment
+
+Implement unit recruitment system
 
 14b. The field update
 
@@ -547,6 +551,11 @@ Damage numbers popping up, small screen shake on heavy hits.
 Tooltips for tiles, units, and cards.
 
 20. The story update
+
+Implement all 5 operations fully
+
+20a. Minigame update
+
 
 
 

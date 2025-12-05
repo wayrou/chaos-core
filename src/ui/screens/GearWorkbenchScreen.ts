@@ -5,6 +5,7 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderUnitDetailScreen } from "./Unitdetailscreen";
 import {
   GearSlotData,
   CardLibrary,
@@ -28,6 +29,8 @@ import {
 // STATE
 // ----------------------------------------------------------------------------
 
+type ReturnDestination = "basecamp" | "unitdetail";
+
 interface WorkbenchState {
   selectedEquipmentId: string | null;
   selectedUnitId: string | null;
@@ -37,6 +40,7 @@ interface WorkbenchState {
   categoryFilter: CardCategory | null;
   isCompiling: boolean;
   compileMessages: string[];
+  returnDestination: ReturnDestination;
 }
 
 let workbenchState: WorkbenchState = {
@@ -48,13 +52,18 @@ let workbenchState: WorkbenchState = {
   categoryFilter: null,
   isCompiling: false,
   compileMessages: [],
+  returnDestination: "basecamp",
 };
 
 // ----------------------------------------------------------------------------
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string): void {
+export function renderGearWorkbenchScreen(
+  unitId?: string, 
+  equipmentId?: string,
+  returnTo?: ReturnDestination
+): void {
   const app = document.getElementById("app");
   if (!app) return;
 
@@ -63,6 +72,7 @@ export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string)
   // Initialize workbench state
   if (unitId) workbenchState.selectedUnitId = unitId;
   if (equipmentId) workbenchState.selectedEquipmentId = equipmentId;
+  if (returnTo) workbenchState.returnDestination = returnTo;
   
   // Get card library (ensure it exists)
   const cardLibrary: CardLibrary = (state as any).cardLibrary ?? getStarterCardLibrary();
@@ -81,11 +91,18 @@ export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string)
     search: workbenchState.searchFilter || undefined,
   });
   
-  // Get unit's equipped gear for deck preview
+  // Get unit's equipped gear for deck preview and gear selector
   const unitEquipment = getUnitEquippedGear(state, workbenchState.selectedUnitId);
   const unitGearSlots = unitEquipment.map(eqId => gearSlots[eqId] ?? getDefaultGearSlots(eqId));
   const compiledDeck = compileDeck(unitGearSlots);
   const deckPreview = getDeckPreview(compiledDeck);
+
+  // Get equipment data for names
+  const equipmentById = (state as any).equipmentById ?? {};
+
+  const backBtnText = workbenchState.returnDestination === "unitdetail" 
+    ? "← UNIT ROSTER" 
+    : "← BASE CAMP";
 
   app.innerHTML = /*html*/ `
     <div class="workbench-root ${workbenchState.isCompiling ? 'workbench-root--compiling' : ''}">
@@ -99,7 +116,7 @@ export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string)
           <div class="workbench-subtitle">SLK://CARD_SLOT_INTERFACE • DECK COMPILER v2.3</div>
         </div>
         <div class="workbench-header-right">
-          <button class="workbench-back-btn" id="backBtn">← BASE CAMP</button>
+          <button class="workbench-back-btn" id="backBtn">${backBtnText}</button>
         </div>
       </div>
       
@@ -108,6 +125,9 @@ export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string)
         <!-- Left Panel: Selected Gear -->
         <div class="workbench-gear-panel">
           <div class="panel-section-title">SELECTED GEAR</div>
+          
+          <!-- Gear Selector -->
+          ${renderGearSelector(unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
           
           ${selectedGear ? renderGearEditor(selectedGear, workbenchState.selectedEquipmentId!) : renderNoGearSelected()}
           
@@ -195,6 +215,55 @@ export function renderGearWorkbenchScreen(unitId?: string, equipmentId?: string)
 // RENDER HELPERS
 // ----------------------------------------------------------------------------
 
+function renderGearSelector(
+  unitEquipment: string[], 
+  equipmentById: Record<string, any>,
+  selectedId: string | null
+): string {
+  if (unitEquipment.length === 0) {
+    return `
+      <div class="gear-selector gear-selector--empty">
+        <div class="gear-selector-label">No equipment to customize</div>
+      </div>
+    `;
+  }
+
+  const options = unitEquipment.map(eqId => {
+    const eq = equipmentById[eqId];
+    const name = eq?.name ?? formatEquipmentName(eqId);
+    const isSelected = eqId === selectedId;
+    return `
+      <button class="gear-selector-option ${isSelected ? 'gear-selector-option--selected' : ''}"
+              data-equipment-id="${eqId}">
+        <span class="gear-option-icon">${getEquipmentIcon(eqId)}</span>
+        <span class="gear-option-name">${name}</span>
+      </button>
+    `;
+  }).join('');
+
+  return `
+    <div class="gear-selector">
+      <div class="gear-selector-label">SELECT GEAR TO CUSTOMIZE</div>
+      <div class="gear-selector-options">
+        ${options}
+      </div>
+    </div>
+  `;
+}
+
+function getEquipmentIcon(equipmentId: string): string {
+  if (equipmentId.includes('weapon') || equipmentId.includes('sword') || equipmentId.includes('bow') || equipmentId.includes('staff')) {
+    return '⚔';
+  }
+  if (equipmentId.includes('helm') || equipmentId.includes('hood')) {
+    return '🪖';
+  }
+  if (equipmentId.includes('chest') || equipmentId.includes('armor') || equipmentId.includes('jerkin')) {
+    return '🛡';
+  }
+  return '💎';
+}
+
 function renderGearEditor(gear: GearSlotData, equipmentId: string): string {
   const equipmentName = formatEquipmentName(equipmentId);
   const slotsUsed = gear.slottedCards.length;
@@ -266,29 +335,67 @@ function renderLockedCard(cardId: string): string {
 
 function renderLibraryCard(card: LibraryCard, count: number): string {
   const rarityClass = `library-card--${card.rarity}`;
+  const categoryIcon = getCategoryIcon(card.category);
+  
   return `
     <div class="library-card ${rarityClass}" 
          draggable="true" 
          data-card-id="${card.id}">
-      <div class="library-card-header">
-        <span class="library-card-name">${card.name}</span>
-        <span class="library-card-cost">STR ${card.strainCost}</span>
+      <!-- Card Frame -->
+      <div class="card-frame">
+        <!-- Card Header -->
+        <div class="card-header">
+          <span class="card-name">${card.name}</span>
+          <span class="card-strain">
+            <span class="strain-value">${card.strainCost}</span>
+            <span class="strain-label">STR</span>
+          </span>
+        </div>
+        
+        <!-- Card Art Area -->
+        <div class="card-art">
+          <span class="card-art-icon">${categoryIcon}</span>
+        </div>
+        
+        <!-- Card Type Bar -->
+        <div class="card-type-bar">
+          <span class="card-category">${card.category.toUpperCase()}</span>
+          <span class="card-rarity">${card.rarity.toUpperCase()}</span>
+        </div>
+        
+        <!-- Card Text -->
+        <div class="card-text">
+          <p class="card-description">${card.description}</p>
+        </div>
+        
+        <!-- Card Footer -->
+        <div class="card-footer">
+          <span class="card-owned">×${count}</span>
+        </div>
       </div>
-      <div class="library-card-meta">
-        <span class="library-card-rarity">${card.rarity.toUpperCase()}</span>
-        <span class="library-card-category">${card.category}</span>
-      </div>
-      <div class="library-card-desc">${card.description}</div>
-      <div class="library-card-count">Owned: ×${count}</div>
     </div>
   `;
+}
+
+function getCategoryIcon(category: CardCategory): string {
+  const icons: Record<CardCategory, string> = {
+    attack: '⚔',
+    defense: '🛡',
+    utility: '🔧',
+    mobility: '💨',
+    buff: '✨',
+    debuff: '💀',
+    steam: '♨',
+    chaos: '🌀',
+  };
+  return icons[category] ?? '📜';
 }
 
 function renderNoGearSelected(): string {
   return `
     <div class="no-gear-selected">
       <div class="no-gear-icon">⚙</div>
-      <div class="no-gear-text">Select equipment from the Loadout screen to customize its card slots.</div>
+      <div class="no-gear-text">Select equipment above to customize its card slots.</div>
     </div>
   `;
 }
@@ -348,6 +455,10 @@ function attachWorkbenchListeners(
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
+      const unitId = workbenchState.selectedUnitId;
+      const returnTo = workbenchState.returnDestination;
+      
+      // Reset state
       workbenchState = {
         selectedEquipmentId: null,
         selectedUnitId: null,
@@ -357,10 +468,29 @@ function attachWorkbenchListeners(
         categoryFilter: null,
         isCompiling: false,
         compileMessages: [],
+        returnDestination: "basecamp",
       };
-      renderBaseCampScreen();
+      
+      // Navigate back
+      if (returnTo === "unitdetail" && unitId) {
+        renderUnitDetailScreen(unitId);
+      } else {
+        renderBaseCampScreen();
+      }
     };
   }
+  
+  // Gear selector buttons
+  document.querySelectorAll(".gear-selector-option").forEach(btn => {
+    const el = btn as HTMLElement;
+    el.onclick = () => {
+      const equipmentId = el.getAttribute("data-equipment-id");
+      if (equipmentId) {
+        workbenchState.selectedEquipmentId = equipmentId;
+        renderGearWorkbenchScreen();
+      }
+    };
+  });
   
   // Search filter
   const searchInput = document.getElementById("cardSearch") as HTMLInputElement;
@@ -393,35 +523,54 @@ function attachWorkbenchListeners(
   document.querySelectorAll(".library-card").forEach(card => {
     const el = card as HTMLElement;
     
-    el.ondragstart = (e) => {
+    el.addEventListener("dragstart", (e: DragEvent) => {
       const cardId = el.getAttribute("data-card-id");
       if (cardId && e.dataTransfer) {
         workbenchState.draggedCardId = cardId;
+        e.dataTransfer.effectAllowed = "copy";
         e.dataTransfer.setData("text/plain", cardId);
         el.classList.add("library-card--dragging");
+        
+        // Add visual feedback to drop targets
+        document.querySelectorAll(".slot-card--empty").forEach(slot => {
+          slot.classList.add("slot-card--highlight");
+        });
       }
-    };
+    });
     
-    el.ondragend = () => {
+    el.addEventListener("dragend", () => {
       workbenchState.draggedCardId = null;
       el.classList.remove("library-card--dragging");
-    };
+      
+      // Remove visual feedback from drop targets
+      document.querySelectorAll(".slot-card--empty").forEach(slot => {
+        slot.classList.remove("slot-card--highlight");
+        slot.classList.remove("slot-card--dragover");
+      });
+    });
   });
   
   // Drop targets (empty slots)
   document.querySelectorAll(".slot-card--empty").forEach(slot => {
     const el = slot as HTMLElement;
     
-    el.ondragover = (e) => {
+    el.addEventListener("dragover", (e: DragEvent) => {
       e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = "copy";
+      }
       el.classList.add("slot-card--dragover");
-    };
+    });
     
-    el.ondragleave = () => {
-      el.classList.remove("slot-card--dragover");
-    };
+    el.addEventListener("dragleave", (e: DragEvent) => {
+      // Only remove if actually leaving the element
+      const relatedTarget = e.relatedTarget as HTMLElement;
+      if (!el.contains(relatedTarget)) {
+        el.classList.remove("slot-card--dragover");
+      }
+    });
     
-    el.ondrop = (e) => {
+    el.addEventListener("drop", (e: DragEvent) => {
       e.preventDefault();
       el.classList.remove("slot-card--dragover");
       
@@ -441,7 +590,7 @@ function attachWorkbenchListeners(
           addWorkbenchLog(`SLK//ERROR :: No free slots available.`);
         }
       }
-    };
+    });
   });
   
   // Remove card from slot
@@ -505,7 +654,7 @@ function runCompileAnimation(): void {
     "→ Linking runtime dependencies...",
     "→ Optimizing combat protocols...",
     "→ Validating deck integrity...",
-    "→ Compilation Successful ✔",
+    "→ Compilation Successful ✓",
   ];
   
   let currentIndex = 0;
@@ -548,8 +697,13 @@ function runCompileAnimation(): void {
 // EXPORTS FOR OTHER SCREENS
 // ----------------------------------------------------------------------------
 
-export function openWorkbenchForEquipment(unitId: string, equipmentId: string): void {
+export function openWorkbenchForEquipment(
+  unitId: string, 
+  equipmentId: string, 
+  returnTo: ReturnDestination = "basecamp"
+): void {
   workbenchState.selectedUnitId = unitId;
   workbenchState.selectedEquipmentId = equipmentId;
+  workbenchState.returnDestination = returnTo;
   renderGearWorkbenchScreen();
 }

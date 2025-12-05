@@ -241,12 +241,9 @@ export function renderUnitDetailScreen(unitId: string): void {
 
           <div class="unitdetail-right">
             <div class="unitdetail-section">
-              <div class="unitdetail-section-title">DECK (${deck.length} CARDS)</div>
-              <div class="unitdetail-deck-info">
-                Cards are determined by class + equipped gear
-              </div>
-              <div class="deck-cards-grid">
-                ${deckCardsHtml}
+              <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
+              <div class="deck-grid">
+                ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
               </div>
             </div>
           </div>
@@ -294,7 +291,7 @@ export function renderUnitDetailScreen(unitId: string): void {
     });
   });
 
-  // CUSTOMIZE buttons - Opens Gear Workbench
+  // CUSTOMIZE buttons - Opens Gear Workbench with correct return destination
   root.querySelectorAll(".equip-customize-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -302,7 +299,8 @@ export function renderUnitDetailScreen(unitId: string): void {
       const targetUnitId = el.getAttribute("data-unit-id");
       const equipmentId = el.getAttribute("data-equipment-id");
       if (targetUnitId && equipmentId) {
-        renderGearWorkbenchScreen(targetUnitId, equipmentId);
+        // Pass "unitdetail" as the return destination so back button returns here
+        renderGearWorkbenchScreen(targetUnitId, equipmentId, "unitdetail");
       }
     });
   });
