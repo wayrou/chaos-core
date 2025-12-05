@@ -1,5 +1,6 @@
 // ============================================================================
 // CHAOS CORE - CONTROLLER SUPPORT (Headline 12b)
+// src/core/controllerSupport.ts
 // Gamepad input handling for full controller support
 // ============================================================================
 
@@ -25,18 +26,18 @@ export interface ButtonState {
 
 // Standard gamepad button indices
 export const BUTTON = {
-  A: 0,           // Bottom face button (confirm)
-  B: 1,           // Right face button (cancel/back)
-  X: 2,           // Left face button
-  Y: 3,           // Top face button
-  LB: 4,          // Left bumper
-  RB: 5,          // Right bumper
-  LT: 6,          // Left trigger
-  RT: 7,          // Right trigger
-  SELECT: 8,      // Select/Back
-  START: 9,       // Start/Menu
-  L3: 10,         // Left stick press
-  R3: 11,         // Right stick press
+  A: 0,
+  B: 1,
+  X: 2,
+  Y: 3,
+  LB: 4,
+  RB: 5,
+  LT: 6,
+  RT: 7,
+  SELECT: 8,
+  START: 9,
+  L3: 10,
+  R3: 11,
   DPAD_UP: 12,
   DPAD_DOWN: 13,
   DPAD_LEFT: 14,
@@ -51,7 +52,7 @@ export const AXIS = {
   RIGHT_Y: 3,
 } as const;
 
-// Input actions that can be bound
+// Input actions
 export type GameAction =
   | "confirm"
   | "cancel"
@@ -92,19 +93,14 @@ let isEnabled = true;
 let deadzone = 0.15;
 let vibrationEnabled = true;
 let currentBindings = { ...DEFAULT_BINDINGS };
-
-// Previous frame's button states (for edge detection)
 let prevButtonStates: boolean[] = new Array(16).fill(false);
 
-// Action listeners
 type ActionListener = (action: GameAction) => void;
 const actionListeners = new Set<ActionListener>();
 
-// Navigation state for UI
 let navCooldown = 0;
-const NAV_COOLDOWN_MS = 150; // Prevent too-fast navigation
+const NAV_COOLDOWN_MS = 150;
 
-// Focused element tracking for UI navigation
 let focusableElements: HTMLElement[] = [];
 let currentFocusIndex = 0;
 
@@ -114,30 +110,34 @@ let currentFocusIndex = 0;
 
 let animationFrameId: number | null = null;
 let lastFrameTime = 0;
+let initialized = false;
 
 /**
  * Initialize controller support
  */
 export function initControllerSupport(): void {
-  // Load settings
-  const settings = getSettings();
-  isEnabled = settings.controllerEnabled;
-  vibrationEnabled = settings.controllerVibration;
-  deadzone = settings.controllerDeadzone / 100;
+  if (initialized) return;
   
-  // Subscribe to settings changes
+  try {
+    const settings = getSettings();
+    isEnabled = settings.controllerEnabled;
+    vibrationEnabled = settings.controllerVibration;
+    deadzone = settings.controllerDeadzone / 100;
+  } catch {
+    // Settings not initialized yet, use defaults
+  }
+  
   subscribeToSettings((newSettings) => {
     isEnabled = newSettings.controllerEnabled;
     vibrationEnabled = newSettings.controllerVibration;
     deadzone = newSettings.controllerDeadzone / 100;
   });
   
-  // Listen for gamepad connect/disconnect
   window.addEventListener("gamepadconnected", onGamepadConnected);
   window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
   
-  // Start polling loop
   startPolling();
+  initialized = true;
   
   console.log("[CONTROLLER] Initialized");
 }
@@ -149,6 +149,7 @@ export function shutdownControllerSupport(): void {
   stopPolling();
   window.removeEventListener("gamepadconnected", onGamepadConnected);
   window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
+  initialized = false;
 }
 
 // ----------------------------------------------------------------------------
@@ -157,7 +158,6 @@ export function shutdownControllerSupport(): void {
 
 function startPolling(): void {
   if (animationFrameId !== null) return;
-  
   lastFrameTime = performance.now();
   pollLoop();
 }
@@ -178,12 +178,10 @@ function pollLoop(): void {
   const deltaTime = now - lastFrameTime;
   lastFrameTime = now;
   
-  // Update navigation cooldown
   if (navCooldown > 0) {
     navCooldown = Math.max(0, navCooldown - deltaTime);
   }
   
-  // Get gamepads
   const gamepads = navigator.getGamepads();
   
   for (const gamepad of gamepads) {
@@ -198,14 +196,12 @@ function pollLoop(): void {
 // ----------------------------------------------------------------------------
 
 function processGamepad(gamepad: Gamepad): void {
-  // Process buttons
   const buttons = gamepad.buttons;
   
   for (let i = 0; i < buttons.length; i++) {
     const pressed = buttons[i].pressed;
     const wasPressed = prevButtonStates[i];
     
-    // Detect just pressed
     if (pressed && !wasPressed) {
       handleButtonPress(i);
     }
@@ -213,12 +209,10 @@ function processGamepad(gamepad: Gamepad): void {
     prevButtonStates[i] = pressed;
   }
   
-  // Process axes for navigation
   processAxesNavigation(gamepad.axes);
 }
 
 function handleButtonPress(buttonIndex: number): void {
-  // Find which action this button is bound to
   for (const [action, buttons] of Object.entries(currentBindings)) {
     if (buttons.includes(buttonIndex)) {
       triggerAction(action as GameAction);
@@ -232,11 +226,9 @@ function processAxesNavigation(axes: readonly number[]): void {
   const leftX = axes[AXIS.LEFT_X] ?? 0;
   const leftY = axes[AXIS.LEFT_Y] ?? 0;
   
-  // Apply deadzone
   const processedX = Math.abs(leftX) > deadzone ? leftX : 0;
   const processedY = Math.abs(leftY) > deadzone ? leftY : 0;
   
-  // Determine direction
   if (Math.abs(processedX) > Math.abs(processedY)) {
     if (processedX > 0.5) {
       triggerAction("moveRight");
@@ -263,12 +255,10 @@ function processAxesNavigation(axes: readonly number[]): void {
 function triggerAction(action: GameAction): void {
   console.log(`[CONTROLLER] Action: ${action}`);
   
-  // Handle UI navigation actions
   if (handleUIAction(action)) {
     return;
   }
   
-  // Notify listeners
   for (const listener of actionListeners) {
     listener(action);
   }
@@ -277,23 +267,14 @@ function triggerAction(action: GameAction): void {
 function handleUIAction(action: GameAction): boolean {
   switch (action) {
     case "moveUp":
-      navigateFocus(-1, "vertical");
+      navigateFocus(-1);
       return true;
     case "moveDown":
-      navigateFocus(1, "vertical");
-      return true;
-    case "moveLeft":
-      navigateFocus(-1, "horizontal");
-      return true;
-    case "moveRight":
-      navigateFocus(1, "horizontal");
+      navigateFocus(1);
       return true;
     case "confirm":
       activateFocusedElement();
       return true;
-    case "cancel":
-      // Let the listener handle cancel
-      return false;
     default:
       return false;
   }
@@ -304,7 +285,7 @@ function handleUIAction(action: GameAction): boolean {
 // ----------------------------------------------------------------------------
 
 /**
- * Update the list of focusable elements (call when screen changes)
+ * Update the list of focusable elements
  */
 export function updateFocusableElements(): void {
   focusableElements = Array.from(
@@ -313,44 +294,37 @@ export function updateFocusableElements(): void {
     )
   );
   
-  // Add controller-focusable class to all
   focusableElements.forEach((el, index) => {
     el.classList.add("controller-focusable");
     el.dataset.focusIndex = String(index);
   });
   
-  // Focus first element if nothing focused
   if (focusableElements.length > 0 && !document.activeElement?.classList.contains("controller-focusable")) {
     currentFocusIndex = 0;
     setFocus(0);
   }
 }
 
-function navigateFocus(delta: number, direction: "vertical" | "horizontal"): void {
+function navigateFocus(delta: number): void {
   if (focusableElements.length === 0) {
     updateFocusableElements();
   }
   
   if (focusableElements.length === 0) return;
   
-  // Simple linear navigation for now
   const newIndex = (currentFocusIndex + delta + focusableElements.length) % focusableElements.length;
   setFocus(newIndex);
 }
 
 function setFocus(index: number): void {
-  // Remove previous focus indicator
   focusableElements.forEach(el => el.classList.remove("controller-focused"));
   
-  // Set new focus
   currentFocusIndex = index;
   const element = focusableElements[index];
   
   if (element) {
     element.classList.add("controller-focused");
     element.focus();
-    
-    // Scroll into view if needed
     element.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
@@ -359,10 +333,7 @@ function activateFocusedElement(): void {
   const element = focusableElements[currentFocusIndex];
   
   if (element) {
-    // Trigger click
     element.click();
-    
-    // Provide haptic feedback
     vibrate(50);
   }
 }
@@ -386,15 +357,13 @@ export function vibrate(durationMs: number, intensity: number = 1.0): void {
         duration: durationMs,
         weakMagnitude: intensity * 0.5,
         strongMagnitude: intensity,
-      }).catch(() => {
-        // Vibration not supported, ignore
-      });
+      }).catch(() => {});
     }
   }
 }
 
 /**
- * Vibration patterns for different events
+ * Vibration patterns
  */
 export const VIBRATION_PATTERNS = {
   confirm: () => vibrate(50, 0.3),
@@ -402,11 +371,6 @@ export const VIBRATION_PATTERNS = {
   hit: () => vibrate(100, 0.7),
   criticalHit: () => vibrate(200, 1.0),
   damage: () => vibrate(150, 0.8),
-  levelUp: () => {
-    vibrate(100, 0.5);
-    setTimeout(() => vibrate(100, 0.5), 150);
-    setTimeout(() => vibrate(200, 0.8), 300);
-  },
   error: () => {
     vibrate(50, 0.5);
     setTimeout(() => vibrate(50, 0.5), 100);
@@ -419,18 +383,12 @@ export const VIBRATION_PATTERNS = {
 
 function onGamepadConnected(event: GamepadEvent): void {
   console.log(`[CONTROLLER] Connected: ${event.gamepad.id}`);
-  
-  // Update focusable elements when controller connects
   updateFocusableElements();
-  
-  // Vibrate to confirm connection
   vibrate(100, 0.5);
 }
 
 function onGamepadDisconnected(event: GamepadEvent): void {
   console.log(`[CONTROLLER] Disconnected: ${event.gamepad.id}`);
-  
-  // Remove controller focus indicators
   document.querySelectorAll(".controller-focused").forEach(el => {
     el.classList.remove("controller-focused");
   });
@@ -457,7 +415,7 @@ export function isControllerConnected(): boolean {
 }
 
 /**
- * Get information about connected controllers
+ * Get connected controllers
  */
 export function getConnectedControllers(): ControllerState[] {
   const gamepads = navigator.getGamepads();
@@ -483,28 +441,14 @@ export function getConnectedControllers(): ControllerState[] {
 }
 
 /**
- * Update button bindings
- */
-export function setButtonBinding(action: GameAction, buttons: number[]): void {
-  currentBindings[action] = buttons;
-}
-
-/**
- * Get current button bindings
+ * Get button bindings
  */
 export function getButtonBindings(): Record<GameAction, number[]> {
   return { ...currentBindings };
 }
 
 /**
- * Reset bindings to defaults
- */
-export function resetBindings(): void {
-  currentBindings = { ...DEFAULT_BINDINGS };
-}
-
-/**
- * Get button name for display
+ * Get button name
  */
 export function getButtonName(buttonIndex: number): string {
   const names: Record<number, string> = {
@@ -520,17 +464,16 @@ export function getButtonName(buttonIndex: number): string {
     [BUTTON.START]: "Start",
     [BUTTON.L3]: "L3",
     [BUTTON.R3]: "R3",
-    [BUTTON.DPAD_UP]: "D-Pad Up",
-    [BUTTON.DPAD_DOWN]: "D-Pad Down",
-    [BUTTON.DPAD_LEFT]: "D-Pad Left",
-    [BUTTON.DPAD_RIGHT]: "D-Pad Right",
+    [BUTTON.DPAD_UP]: "D-Up",
+    [BUTTON.DPAD_DOWN]: "D-Down",
+    [BUTTON.DPAD_LEFT]: "D-Left",
+    [BUTTON.DPAD_RIGHT]: "D-Right",
   };
-  
   return names[buttonIndex] ?? `Button ${buttonIndex}`;
 }
 
 /**
- * Get action display name
+ * Get action name
  */
 export function getActionName(action: GameAction): string {
   const names: Record<GameAction, string> = {
@@ -548,6 +491,5 @@ export function getActionName(action: GameAction): string {
     openMap: "Map",
     pause: "Pause",
   };
-  
   return names[action] ?? action;
 }

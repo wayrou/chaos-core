@@ -467,6 +467,8 @@ autosave feature
 12b. Controller support
 12bz. Settings screen
 
+12bza. Implement logo on title screen, "back to title screen" button on basecampscreen
+
 -----------------------IMPLEMENTED UP TO HERE-----------------------------
 
 13. Add Simple Procedural Room Variants
@@ -560,6 +562,8 @@ Tooltips for tiles, units, and cards.
 Implement all 5 operations fully
 
 20a. Minigame update
+
+21. Multiplayer update
 
 
 

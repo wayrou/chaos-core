@@ -1,6 +1,7 @@
 // ============================================================================
-// CHAOS CORE - GAME STORE (Headline 12 Compatible)
-// Centralized state management - works standalone or with save system
+// CHAOS CORE - GAME STORE (Headline 12)
+// src/state/gameStore.ts
+// Centralized state management
 // ============================================================================
 
 import { GameState } from "../core/types";
@@ -83,14 +84,14 @@ function notifyListeners(): void {
 // ----------------------------------------------------------------------------
 
 /**
- * Check if game state exists (has been initialized)
+ * Check if game state exists
  */
 export function hasGameState(): boolean {
   return _gameState !== null;
 }
 
 /**
- * Get a specific part of the state (for optimized renders)
+ * Get a specific part of the state
  */
 export function selectState<T>(selector: (state: GameState) => T): T {
   return selector(getGameState());
@@ -113,7 +114,6 @@ export function createSelector<T>(
     }
   };
   
-  // Initialize with current value
   previousValue = selector(getGameState());
   
   return subscribe(listener);
@@ -123,9 +123,6 @@ export function createSelector<T>(
 // PHASE MANAGEMENT
 // ----------------------------------------------------------------------------
 
-/**
- * Set the current game phase
- */
 export function setPhase(phase: GameState["phase"]): void {
   updateGameState(state => ({
     ...state,
@@ -133,9 +130,6 @@ export function setPhase(phase: GameState["phase"]): void {
   }));
 }
 
-/**
- * Get the current game phase
- */
 export function getPhase(): GameState["phase"] {
   return getGameState().phase;
 }
@@ -144,9 +138,6 @@ export function getPhase(): GameState["phase"] {
 // RESOURCE HELPERS
 // ----------------------------------------------------------------------------
 
-/**
- * Add resources to the game state
- */
 export function addResources(resources: Partial<GameState["resources"]>): void {
   updateGameState(state => ({
     ...state,
@@ -159,9 +150,6 @@ export function addResources(resources: Partial<GameState["resources"]>): void {
   }));
 }
 
-/**
- * Add WAD (currency) to the game state
- */
 export function addWad(amount: number): void {
   updateGameState(state => ({
     ...state,
@@ -169,9 +157,6 @@ export function addWad(amount: number): void {
   }));
 }
 
-/**
- * Spend WAD if available
- */
 export function spendWad(amount: number): boolean {
   const state = getGameState();
   if (state.wad < amount) {
@@ -190,24 +175,15 @@ export function spendWad(amount: number): boolean {
 // UNIT HELPERS
 // ----------------------------------------------------------------------------
 
-/**
- * Get a unit by ID
- */
 export function getUnit(unitId: string) {
   return getGameState().unitsById[unitId];
 }
 
-/**
- * Get all party units
- */
 export function getPartyUnits() {
   const state = getGameState();
   return state.partyUnitIds.map(id => state.unitsById[id]).filter(Boolean);
 }
 
-/**
- * Update a specific unit
- */
 export function updateUnit(unitId: string, updates: Partial<GameState["unitsById"][string]>): void {
   updateGameState(state => ({
     ...state,
@@ -225,9 +201,6 @@ export function updateUnit(unitId: string, updates: Partial<GameState["unitsById
 // BATTLE STATE HELPERS
 // ----------------------------------------------------------------------------
 
-/**
- * Set the current battle state
- */
 export function setBattleState(battle: GameState["currentBattle"]): void {
   updateGameState(state => ({
     ...state,
@@ -236,9 +209,6 @@ export function setBattleState(battle: GameState["currentBattle"]): void {
   }));
 }
 
-/**
- * Clear the current battle
- */
 export function clearBattle(): void {
   updateGameState(state => ({
     ...state,
@@ -247,9 +217,6 @@ export function clearBattle(): void {
   }));
 }
 
-/**
- * Get current battle state
- */
 export function getBattleState(): GameState["currentBattle"] {
   return getGameState().currentBattle;
 }
@@ -258,9 +225,6 @@ export function getBattleState(): GameState["currentBattle"] {
 // OPERATION HELPERS
 // ----------------------------------------------------------------------------
 
-/**
- * Update operation state
- */
 export function updateOperation(updates: Partial<GameState["operation"]>): void {
   updateGameState(state => ({
     ...state,
@@ -271,9 +235,6 @@ export function updateOperation(updates: Partial<GameState["operation"]>): void 
   }));
 }
 
-/**
- * Set current room in operation
- */
 export function setCurrentRoom(roomId: string): void {
   updateOperation({ currentRoomId: roomId });
 }

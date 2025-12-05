@@ -1,16 +1,11 @@
 // ============================================================================
 // CHAOS CORE - SETTINGS SCREEN (Headline 12bz)
+// src/ui/screens/SettingsScreen.ts
 // UI for game settings and controller configuration
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
-
 import {
   getSettings,
   updateSettings,
@@ -63,18 +58,16 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
   
   app.innerHTML = /*html*/ `
     <div class="settings-root">
-      <!-- Header -->
       <div class="settings-header">
         <div class="settings-header-left">
           <h1 class="settings-title">SETTINGS</h1>
-          <div class="settings-subtitle">SLK://SYSTEM_CONFIG • v1.0</div>
+          <div class="settings-subtitle">SLK://SYSTEM_CONFIG</div>
         </div>
         <div class="settings-header-right">
           <button class="settings-back-btn" id="backBtn">← BACK</button>
         </div>
       </div>
       
-      <!-- Tabs -->
       <div class="settings-tabs">
         <button class="settings-tab ${currentTab === 'general' ? 'settings-tab--active' : ''}" 
                 data-tab="general">
@@ -90,24 +83,20 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
         </button>
       </div>
       
-      <!-- Content -->
       <div class="settings-content">
         ${currentTab === 'general' ? renderGeneralTab(settings, categories) : ''}
         ${currentTab === 'controls' ? renderControlsTab(settings) : ''}
         ${currentTab === 'saves' ? renderSavesTab() : ''}
       </div>
       
-      <!-- Footer -->
       <div class="settings-footer">
         <button class="settings-reset-btn" id="resetBtn">RESET TO DEFAULTS</button>
-        <div class="settings-version">SCROLLINK OS BUILD 0.0.1</div>
+        <div class="settings-version">SCROLLINK OS BUILD 0.1.0</div>
       </div>
     </div>
   `;
   
   attachSettingsListeners(settings);
-  
-  // Update controller focusable elements
   updateFocusableElements();
 }
 
@@ -200,9 +189,10 @@ function renderControlsTab(settings: GameSettings): string {
   const controllers = getConnectedControllers();
   const bindings = getButtonBindings();
   
+  const controlSettings = SETTING_DESCRIPTORS.filter(d => d.category === 'controls');
+  
   return /*html*/ `
     <div class="settings-controls">
-      <!-- Controller Status -->
       <div class="settings-category">
         <div class="settings-category-header">CONTROLLER STATUS</div>
         <div class="controller-status">
@@ -212,9 +202,7 @@ function renderControlsTab(settings: GameSettings): string {
               <span class="status-text">Controller Connected</span>
             </div>
             ${controllers.map(ctrl => `
-              <div class="controller-info">
-                <span class="controller-name">${ctrl.id}</span>
-              </div>
+              <div class="controller-info">${ctrl.id}</div>
             `).join('')}
           ` : `
             <div class="controller-disconnected">
@@ -226,26 +214,13 @@ function renderControlsTab(settings: GameSettings): string {
         </div>
       </div>
       
-      <!-- Controller Settings -->
       <div class="settings-category">
         <div class="settings-category-header">CONTROLLER SETTINGS</div>
         <div class="settings-category-items">
-          ${renderSettingItem(
-            SETTING_DESCRIPTORS.find(d => d.key === 'controllerEnabled')!,
-            settings
-          )}
-          ${renderSettingItem(
-            SETTING_DESCRIPTORS.find(d => d.key === 'controllerVibration')!,
-            settings
-          )}
-          ${renderSettingItem(
-            SETTING_DESCRIPTORS.find(d => d.key === 'controllerDeadzone')!,
-            settings
-          )}
+          ${controlSettings.map(desc => renderSettingItem(desc, settings)).join('')}
         </div>
       </div>
       
-      <!-- Button Bindings -->
       <div class="settings-category">
         <div class="settings-category-header">BUTTON BINDINGS</div>
         <div class="bindings-list">
@@ -258,12 +233,8 @@ function renderControlsTab(settings: GameSettings): string {
             </div>
           `).join('')}
         </div>
-        <div class="bindings-note">
-          Button rebinding coming in a future update
-        </div>
       </div>
       
-      <!-- Keyboard Reference -->
       <div class="settings-category">
         <div class="settings-category-header">KEYBOARD CONTROLS</div>
         <div class="keyboard-bindings">
@@ -294,7 +265,6 @@ function renderControlsTab(settings: GameSettings): string {
 }
 
 function renderSavesTab(): string {
-  // Note: This will be populated async
   return /*html*/ `
     <div class="settings-saves">
       <div class="settings-category">
@@ -310,9 +280,7 @@ function renderSavesTab(): string {
           <button class="data-action-btn data-action-btn--danger" id="clearAllSavesBtn">
             🗑 DELETE ALL SAVES
           </button>
-          <div class="data-action-warning">
-            This action cannot be undone
-          </div>
+          <div class="data-action-warning">This action cannot be undone</div>
         </div>
       </div>
     </div>
@@ -341,7 +309,6 @@ async function loadAndRenderSaves(): Promise<void> {
   
   savesList.innerHTML = saves.map(save => renderSaveItem(save)).join('');
   
-  // Attach delete listeners
   savesList.querySelectorAll(".save-delete-btn").forEach(btn => {
     btn.addEventListener("click", async (e) => {
       const slot = (e.target as HTMLElement).dataset.slot as SaveSlot;
@@ -432,7 +399,7 @@ function attachSettingsListeners(settings: GameSettings): void {
     };
   }
   
-  // Setting controls - toggles
+  // Toggles
   app.querySelectorAll('input[type="checkbox"][data-setting]').forEach(input => {
     input.addEventListener("change", async (e) => {
       const checkbox = e.target as HTMLInputElement;
@@ -441,7 +408,7 @@ function attachSettingsListeners(settings: GameSettings): void {
     });
   });
   
-  // Setting controls - sliders
+  // Sliders
   app.querySelectorAll('input[type="range"][data-setting]').forEach(input => {
     input.addEventListener("input", (e) => {
       const slider = e.target as HTMLInputElement;
@@ -459,7 +426,7 @@ function attachSettingsListeners(settings: GameSettings): void {
     });
   });
   
-  // Setting controls - selects
+  // Selects
   app.querySelectorAll('select[data-setting]').forEach(select => {
     select.addEventListener("change", async (e) => {
       const sel = e.target as HTMLSelectElement;

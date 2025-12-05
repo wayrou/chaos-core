@@ -1,5 +1,6 @@
 // ============================================================================
 // CHAOS CORE - SETTINGS SYSTEM (Headline 12bz)
+// src/core/settings.ts
 // Game settings management with persistence
 // ============================================================================
 
@@ -7,14 +8,11 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
-
 export interface GameSettings {
   // Audio
-  masterVolume: number;      // 0-100
-  musicVolume: number;       // 0-100
-  sfxVolume: number;         // 0-100
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
   
   // Display
   screenShake: boolean;
@@ -24,14 +22,13 @@ export interface GameSettings {
   
   // Gameplay
   autosaveEnabled: boolean;
-  autosaveInterval: number;  // seconds
   confirmEndTurn: boolean;
   showTutorialHints: boolean;
   
   // Controls
   controllerEnabled: boolean;
   controllerVibration: boolean;
-  controllerDeadzone: number; // 0-50 (percentage)
+  controllerDeadzone: number;
   
   // Accessibility
   highContrastMode: boolean;
@@ -41,29 +38,23 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
-  // Audio
   masterVolume: 80,
   musicVolume: 70,
   sfxVolume: 100,
   
-  // Display
   screenShake: true,
   showDamageNumbers: true,
   showGridCoordinates: false,
   animationSpeed: "normal",
   
-  // Gameplay
   autosaveEnabled: true,
-  autosaveInterval: 60,
   confirmEndTurn: false,
   showTutorialHints: true,
   
-  // Controls
   controllerEnabled: true,
   controllerVibration: true,
   controllerDeadzone: 15,
   
-  // Accessibility
   highContrastMode: false,
   largeText: false,
   reducedMotion: false,
@@ -109,7 +100,12 @@ async function saveSettingsToDisk(): Promise<void> {
   
   if (isTauriAvailable()) {
     const invoke = getTauriInvoke()!;
-    await invoke("save_settings", { json });
+    try {
+      await invoke("save_settings", { json });
+    } catch (e) {
+      console.warn("[SETTINGS] Tauri save failed, using localStorage", e);
+      localStorage.setItem(SETTINGS_STORAGE_KEY, json);
+    }
   } else {
     localStorage.setItem(SETTINGS_STORAGE_KEY, json);
   }
@@ -121,7 +117,12 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
     
     if (isTauriAvailable()) {
       const invoke = getTauriInvoke()!;
-      json = (await invoke("load_settings")) as string;
+      try {
+        json = (await invoke("load_settings")) as string;
+      } catch {
+        // Fall back to localStorage
+        json = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      }
     } else {
       json = localStorage.getItem(SETTINGS_STORAGE_KEY);
     }
@@ -141,13 +142,12 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
 // ----------------------------------------------------------------------------
 
 /**
- * Initialize settings system - load from disk or use defaults
+ * Initialize settings system
  */
 export async function initializeSettings(): Promise<void> {
   const loaded = await loadSettingsFromDisk();
   
   if (loaded) {
-    // Merge with defaults to handle new settings added in updates
     currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
   } else {
     currentSettings = { ...DEFAULT_SETTINGS };
@@ -203,7 +203,6 @@ function notifyListeners(): void {
 // ----------------------------------------------------------------------------
 
 function applySettings(settings: GameSettings): void {
-  // Apply CSS custom properties for accessibility
   const root = document.documentElement;
   
   // Large text
@@ -236,11 +235,7 @@ function applySettings(settings: GameSettings): void {
   }
   
   // Animation speed
-  const animSpeeds = {
-    slow: "1.5",
-    normal: "1",
-    fast: "0.5",
-  };
+  const animSpeeds = { slow: "1.5", normal: "1", fast: "0.5" };
   root.style.setProperty("--animation-speed", animSpeeds[settings.animationSpeed]);
 }
 

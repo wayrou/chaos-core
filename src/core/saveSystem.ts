@@ -1,85 +1,52 @@
 // ============================================================================
-// CHAOS CORE - SETTINGS SYSTEM (Headline 12bz)
-// Game settings management with persistence
+// CHAOS CORE - SAVE SYSTEM (Headline 12)
+// src/core/saveSystem.ts
+// Save/load with Tauri integration and localStorage fallback
 // ============================================================================
+
+import { GameState } from "./types";
 
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
-
-export interface GameSettings {
-  // Audio
-  masterVolume: number;      // 0-100
-  musicVolume: number;       // 0-100
-  sfxVolume: number;         // 0-100
-  
-  // Display
-  screenShake: boolean;
-  showDamageNumbers: boolean;
-  showGridCoordinates: boolean;
-  animationSpeed: "slow" | "normal" | "fast";
-  
-  // Gameplay
-  autosaveEnabled: boolean;
-  autosaveInterval: number;  // seconds
-  confirmEndTurn: boolean;
-  showTutorialHints: boolean;
-  
-  // Controls
-  controllerEnabled: boolean;
-  controllerVibration: boolean;
-  controllerDeadzone: number; // 0-50 (percentage)
-  
-  // Accessibility
-  highContrastMode: boolean;
-  largeText: boolean;
-  reducedMotion: boolean;
-  colorblindMode: "none" | "protanopia" | "deuteranopia" | "tritanopia";
+export interface SaveInfo {
+  slot: string;
+  timestamp: number;
+  preview?: SavePreview;
 }
 
-export const DEFAULT_SETTINGS: GameSettings = {
-  // Audio
-  masterVolume: 80,
-  musicVolume: 70,
-  sfxVolume: 100,
-  
-  // Display
-  screenShake: true,
-  showDamageNumbers: true,
-  showGridCoordinates: false,
-  animationSpeed: "normal",
-  
-  // Gameplay
-  autosaveEnabled: true,
-  autosaveInterval: 60,
-  confirmEndTurn: false,
-  showTutorialHints: true,
-  
-  // Controls
-  controllerEnabled: true,
-  controllerVibration: true,
-  controllerDeadzone: 15,
-  
-  // Accessibility
-  highContrastMode: false,
-  largeText: false,
-  reducedMotion: false,
-  colorblindMode: "none",
-};
+export interface SavePreview {
+  callsign: string;
+  squadName: string;
+  operationName: string;
+  wad: number;
+  partyCount: number;
+}
+
+export interface SaveResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface LoadResult {
+  success: boolean;
+  state?: GameState;
+  error?: string;
+}
+
+// Save slot constants
+export const SAVE_SLOTS = {
+  AUTOSAVE: "autosave",
+  MANUAL_1: "save_1",
+  MANUAL_2: "save_2",
+  MANUAL_3: "save_3",
+} as const;
+
+export type SaveSlot = typeof SAVE_SLOTS[keyof typeof SAVE_SLOTS];
 
 // ----------------------------------------------------------------------------
-// STATE
-// ----------------------------------------------------------------------------
-
-let currentSettings: GameSettings = { ...DEFAULT_SETTINGS };
-type SettingsListener = (settings: GameSettings) => void;
-const settingsListeners = new Set<SettingsListener>();
-
-// ----------------------------------------------------------------------------
-// TAURI INTEGRATION
+// TAURI DETECTION
 // ----------------------------------------------------------------------------
 
 interface TauriInvoke {
@@ -99,41 +66,109 @@ function isTauriAvailable(): boolean {
 }
 
 // ----------------------------------------------------------------------------
-// PERSISTENCE
+// TAURI COMMANDS
 // ----------------------------------------------------------------------------
 
-const SETTINGS_STORAGE_KEY = "chaoscore_settings";
-
-async function saveSettingsToDisk(): Promise<void> {
-  const json = JSON.stringify(currentSettings);
-  
-  if (isTauriAvailable()) {
-    const invoke = getTauriInvoke()!;
-    await invoke("save_settings", { json });
-  } else {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, json);
-  }
+async function tauriSaveGame(slot: string, json: string): Promise<void> {
+  const invoke = getTauriInvoke();
+  if (!invoke) throw new Error("Tauri not available");
+  await invoke("save_game", { slot, json });
 }
 
-async function loadSettingsFromDisk(): Promise<GameSettings | null> {
-  try {
-    let json: string | null = null;
-    
-    if (isTauriAvailable()) {
-      const invoke = getTauriInvoke()!;
-      json = (await invoke("load_settings")) as string;
-    } else {
-      json = localStorage.getItem(SETTINGS_STORAGE_KEY);
+async function tauriLoadGame(slot: string): Promise<string> {
+  const invoke = getTauriInvoke();
+  if (!invoke) throw new Error("Tauri not available");
+  return (await invoke("load_game", { slot })) as string;
+}
+
+async function tauriHasSave(slot: string): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) throw new Error("Tauri not available");
+  return (await invoke("has_save", { slot })) as boolean;
+}
+
+async function tauriDeleteSave(slot: string): Promise<void> {
+  const invoke = getTauriInvoke();
+  if (!invoke) throw new Error("Tauri not available");
+  await invoke("delete_save", { slot });
+}
+
+async function tauriListSaves(): Promise<SaveInfo[]> {
+  const invoke = getTauriInvoke();
+  if (!invoke) throw new Error("Tauri not available");
+  return (await invoke("list_saves")) as SaveInfo[];
+}
+
+// ----------------------------------------------------------------------------
+// LOCALSTORAGE FALLBACK
+// ----------------------------------------------------------------------------
+
+const STORAGE_PREFIX = "chaoscore_save_";
+const STORAGE_META_PREFIX = "chaoscore_meta_";
+
+function localStorageSaveGame(slot: string, json: string): void {
+  localStorage.setItem(STORAGE_PREFIX + slot, json);
+  localStorage.setItem(STORAGE_META_PREFIX + slot, JSON.stringify({
+    timestamp: Date.now(),
+  }));
+}
+
+function localStorageLoadGame(slot: string): string | null {
+  return localStorage.getItem(STORAGE_PREFIX + slot);
+}
+
+function localStorageHasSave(slot: string): boolean {
+  return localStorage.getItem(STORAGE_PREFIX + slot) !== null;
+}
+
+function localStorageDeleteSave(slot: string): void {
+  localStorage.removeItem(STORAGE_PREFIX + slot);
+  localStorage.removeItem(STORAGE_META_PREFIX + slot);
+}
+
+function localStorageListSaves(): SaveInfo[] {
+  const saves: SaveInfo[] = [];
+  const slots = Object.values(SAVE_SLOTS);
+  
+  for (const slot of slots) {
+    if (localStorageHasSave(slot)) {
+      const metaStr = localStorage.getItem(STORAGE_META_PREFIX + slot);
+      const meta = metaStr ? JSON.parse(metaStr) : { timestamp: 0 };
+      
+      let preview: SavePreview | undefined;
+      try {
+        const saveStr = localStorage.getItem(STORAGE_PREFIX + slot);
+        if (saveStr) {
+          const state = JSON.parse(saveStr) as GameState;
+          preview = extractSavePreview(state);
+        }
+      } catch {
+        // Ignore parse errors
+      }
+      
+      saves.push({
+        slot,
+        timestamp: meta.timestamp,
+        preview,
+      });
     }
-    
-    if (json) {
-      return JSON.parse(json) as GameSettings;
-    }
-  } catch (error) {
-    console.warn("[SETTINGS] Failed to load settings:", error);
   }
   
-  return null;
+  return saves.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+// ----------------------------------------------------------------------------
+// PREVIEW EXTRACTION
+// ----------------------------------------------------------------------------
+
+function extractSavePreview(state: GameState): SavePreview {
+  return {
+    callsign: state.profile?.callsign ?? "Unknown",
+    squadName: state.profile?.squadName ?? "Unknown Squad",
+    operationName: state.operation?.codename ?? "Unknown Operation",
+    wad: state.wad ?? 0,
+    partyCount: state.partyUnitIds?.length ?? 0,
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -141,308 +176,271 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
 // ----------------------------------------------------------------------------
 
 /**
- * Initialize settings system - load from disk or use defaults
+ * Save the game state to a slot
  */
-export async function initializeSettings(): Promise<void> {
-  const loaded = await loadSettingsFromDisk();
+export async function saveGame(slot: SaveSlot, state: GameState): Promise<SaveResult> {
+  try {
+    const saveData = {
+      ...state,
+      _saveMetadata: {
+        version: 1,
+        timestamp: Date.now(),
+        slot,
+      },
+    };
+    
+    const json = JSON.stringify(saveData);
+    
+    if (isTauriAvailable()) {
+      await tauriSaveGame(slot, json);
+    } else {
+      localStorageSaveGame(slot, json);
+    }
+    
+    console.log(`[SAVE] Game saved to slot: ${slot}`);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[SAVE] Failed to save game:`, error);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Load the game state from a slot
+ */
+export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
+  try {
+    let json: string | null;
+    
+    if (isTauriAvailable()) {
+      json = await tauriLoadGame(slot);
+    } else {
+      json = localStorageLoadGame(slot);
+    }
+    
+    if (!json) {
+      return { success: false, error: "No save file found" };
+    }
+    
+    const state = JSON.parse(json) as GameState;
+    delete (state as any)._saveMetadata;
+    
+    console.log(`[LOAD] Game loaded from slot: ${slot}`);
+    return { success: true, state };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[LOAD] Failed to load game:`, error);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Check if a save exists in a slot
+ */
+export async function hasSave(slot: SaveSlot): Promise<boolean> {
+  try {
+    if (isTauriAvailable()) {
+      return await tauriHasSave(slot);
+    } else {
+      return localStorageHasSave(slot);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete a save from a slot
+ */
+export async function deleteSave(slot: SaveSlot): Promise<SaveResult> {
+  try {
+    if (isTauriAvailable()) {
+      await tauriDeleteSave(slot);
+    } else {
+      localStorageDeleteSave(slot);
+    }
+    
+    console.log(`[DELETE] Save deleted: ${slot}`);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[DELETE] Failed to delete save:`, error);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * List all available saves with their info
+ */
+export async function listSaves(): Promise<SaveInfo[]> {
+  try {
+    let saves: SaveInfo[];
+    
+    if (isTauriAvailable()) {
+      saves = await tauriListSaves();
+      for (const save of saves) {
+        const result = await loadGame(save.slot as SaveSlot);
+        if (result.success && result.state) {
+          save.preview = extractSavePreview(result.state);
+        }
+      }
+    } else {
+      saves = localStorageListSaves();
+    }
+    
+    return saves;
+  } catch (error) {
+    console.error(`[LIST] Failed to list saves:`, error);
+    return [];
+  }
+}
+
+/**
+ * Quick check if continue is available (any save exists)
+ */
+export async function canContinue(): Promise<boolean> {
+  const saves = await listSaves();
+  return saves.length > 0;
+}
+
+/**
+ * Load the most recent save
+ */
+export async function loadMostRecent(): Promise<LoadResult> {
+  const saves = await listSaves();
   
-  if (loaded) {
-    // Merge with defaults to handle new settings added in updates
-    currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
-  } else {
-    currentSettings = { ...DEFAULT_SETTINGS };
+  if (saves.length === 0) {
+    return { success: false, error: "No saves found" };
   }
   
-  applySettings(currentSettings);
-  console.log("[SETTINGS] Initialized:", currentSettings);
-}
-
-/**
- * Get current settings
- */
-export function getSettings(): GameSettings {
-  return { ...currentSettings };
-}
-
-/**
- * Update one or more settings
- */
-export async function updateSettings(updates: Partial<GameSettings>): Promise<void> {
-  currentSettings = { ...currentSettings, ...updates };
-  await saveSettingsToDisk();
-  applySettings(currentSettings);
-  notifyListeners();
-}
-
-/**
- * Reset all settings to defaults
- */
-export async function resetSettings(): Promise<void> {
-  currentSettings = { ...DEFAULT_SETTINGS };
-  await saveSettingsToDisk();
-  applySettings(currentSettings);
-  notifyListeners();
-}
-
-/**
- * Subscribe to settings changes
- */
-export function subscribeToSettings(listener: SettingsListener): () => void {
-  settingsListeners.add(listener);
-  return () => settingsListeners.delete(listener);
-}
-
-function notifyListeners(): void {
-  for (const listener of settingsListeners) {
-    listener(currentSettings);
+  // Autosave takes priority if it exists
+  const autosave = saves.find(s => s.slot === SAVE_SLOTS.AUTOSAVE);
+  if (autosave) {
+    return await loadGame(SAVE_SLOTS.AUTOSAVE);
   }
+  
+  // Otherwise load most recent
+  return await loadGame(saves[0].slot as SaveSlot);
 }
 
 // ----------------------------------------------------------------------------
-// APPLY SETTINGS
+// AUTOSAVE SYSTEM
 // ----------------------------------------------------------------------------
 
-function applySettings(settings: GameSettings): void {
-  // Apply CSS custom properties for accessibility
-  const root = document.documentElement;
-  
-  // Large text
-  if (settings.largeText) {
-    root.style.setProperty("--base-font-size", "18px");
-    root.classList.add("large-text");
-  } else {
-    root.style.setProperty("--base-font-size", "14px");
-    root.classList.remove("large-text");
-  }
-  
-  // High contrast
-  if (settings.highContrastMode) {
-    root.classList.add("high-contrast");
-  } else {
-    root.classList.remove("high-contrast");
-  }
-  
-  // Reduced motion
-  if (settings.reducedMotion) {
-    root.classList.add("reduced-motion");
-  } else {
-    root.classList.remove("reduced-motion");
-  }
-  
-  // Colorblind modes
-  root.classList.remove("colorblind-protanopia", "colorblind-deuteranopia", "colorblind-tritanopia");
-  if (settings.colorblindMode !== "none") {
-    root.classList.add(`colorblind-${settings.colorblindMode}`);
-  }
-  
-  // Animation speed
-  const animSpeeds = {
-    slow: "1.5",
-    normal: "1",
-    fast: "0.5",
-  };
-  root.style.setProperty("--animation-speed", animSpeeds[settings.animationSpeed]);
-}
-
-// ----------------------------------------------------------------------------
-// SETTING DESCRIPTORS (for UI generation)
-// ----------------------------------------------------------------------------
-
-export interface SettingDescriptor {
-  key: keyof GameSettings;
-  label: string;
-  description: string;
-  type: "toggle" | "slider" | "select";
-  category: "audio" | "display" | "gameplay" | "controls" | "accessibility";
-  options?: { value: string; label: string }[];
-  min?: number;
-  max?: number;
-  step?: number;
-}
-
-export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
-  // Audio
-  {
-    key: "masterVolume",
-    label: "Master Volume",
-    description: "Overall volume level",
-    type: "slider",
-    category: "audio",
-    min: 0,
-    max: 100,
-    step: 5,
-  },
-  {
-    key: "musicVolume",
-    label: "Music Volume",
-    description: "Background music volume",
-    type: "slider",
-    category: "audio",
-    min: 0,
-    max: 100,
-    step: 5,
-  },
-  {
-    key: "sfxVolume",
-    label: "Sound Effects",
-    description: "Sound effects volume",
-    type: "slider",
-    category: "audio",
-    min: 0,
-    max: 100,
-    step: 5,
-  },
-  
-  // Display
-  {
-    key: "screenShake",
-    label: "Screen Shake",
-    description: "Enable screen shake effects during combat",
-    type: "toggle",
-    category: "display",
-  },
-  {
-    key: "showDamageNumbers",
-    label: "Damage Numbers",
-    description: "Show floating damage numbers in battle",
-    type: "toggle",
-    category: "display",
-  },
-  {
-    key: "showGridCoordinates",
-    label: "Grid Coordinates",
-    description: "Display tile coordinates on battle grid",
-    type: "toggle",
-    category: "display",
-  },
-  {
-    key: "animationSpeed",
-    label: "Animation Speed",
-    description: "Speed of battle animations",
-    type: "select",
-    category: "display",
-    options: [
-      { value: "slow", label: "Slow" },
-      { value: "normal", label: "Normal" },
-      { value: "fast", label: "Fast" },
-    ],
-  },
-  
-  // Gameplay
-  {
-    key: "autosaveEnabled",
-    label: "Autosave",
-    description: "Automatically save progress periodically",
-    type: "toggle",
-    category: "gameplay",
-  },
-  {
-    key: "confirmEndTurn",
-    label: "Confirm End Turn",
-    description: "Ask for confirmation before ending turn",
-    type: "toggle",
-    category: "gameplay",
-  },
-  {
-    key: "showTutorialHints",
-    label: "Tutorial Hints",
-    description: "Show helpful hints and tips",
-    type: "toggle",
-    category: "gameplay",
-  },
-  
-  // Controls
-  {
-    key: "controllerEnabled",
-    label: "Controller Support",
-    description: "Enable gamepad/controller input",
-    type: "toggle",
-    category: "controls",
-  },
-  {
-    key: "controllerVibration",
-    label: "Controller Vibration",
-    description: "Enable haptic feedback on compatible controllers",
-    type: "toggle",
-    category: "controls",
-  },
-  {
-    key: "controllerDeadzone",
-    label: "Stick Deadzone",
-    description: "Analog stick deadzone percentage",
-    type: "slider",
-    category: "controls",
-    min: 0,
-    max: 50,
-    step: 5,
-  },
-  
-  // Accessibility
-  {
-    key: "highContrastMode",
-    label: "High Contrast",
-    description: "Increase visual contrast for better visibility",
-    type: "toggle",
-    category: "accessibility",
-  },
-  {
-    key: "largeText",
-    label: "Large Text",
-    description: "Increase text size throughout the game",
-    type: "toggle",
-    category: "accessibility",
-  },
-  {
-    key: "reducedMotion",
-    label: "Reduced Motion",
-    description: "Minimize animations and movement",
-    type: "toggle",
-    category: "accessibility",
-  },
-  {
-    key: "colorblindMode",
-    label: "Colorblind Mode",
-    description: "Adjust colors for colorblind players",
-    type: "select",
-    category: "accessibility",
-    options: [
-      { value: "none", label: "Off" },
-      { value: "protanopia", label: "Protanopia (Red-Weak)" },
-      { value: "deuteranopia", label: "Deuteranopia (Green-Weak)" },
-      { value: "tritanopia", label: "Tritanopia (Blue-Weak)" },
-    ],
-  },
-];
+let autosaveTimer: number | null = null;
+let autosaveEnabled = true;
+let autosaveStateGetter: (() => GameState) | null = null;
+const AUTOSAVE_INTERVAL = 60000; // 1 minute
 
 /**
- * Get settings grouped by category
+ * Enable autosave with the given state getter
  */
-export function getSettingsByCategory(): Record<string, SettingDescriptor[]> {
-  const grouped: Record<string, SettingDescriptor[]> = {
-    audio: [],
-    display: [],
-    gameplay: [],
-    controls: [],
-    accessibility: [],
-  };
+export function enableAutosave(getState: () => GameState): void {
+  autosaveEnabled = true;
+  autosaveStateGetter = getState;
   
-  for (const desc of SETTING_DESCRIPTORS) {
-    grouped[desc.category].push(desc);
+  if (autosaveTimer !== null) {
+    clearInterval(autosaveTimer);
   }
   
-  return grouped;
+  autosaveTimer = window.setInterval(async () => {
+    if (autosaveEnabled && autosaveStateGetter) {
+      const state = autosaveStateGetter();
+      if (state.phase !== "battle") {
+        await saveGame(SAVE_SLOTS.AUTOSAVE, state);
+      }
+    }
+  }, AUTOSAVE_INTERVAL);
+  
+  console.log("[AUTOSAVE] Enabled with interval:", AUTOSAVE_INTERVAL);
 }
 
 /**
- * Get human-readable category name
+ * Disable autosave
  */
-export function getCategoryLabel(category: string): string {
-  const labels: Record<string, string> = {
-    audio: "Audio",
-    display: "Display",
-    gameplay: "Gameplay",
-    controls: "Controls",
-    accessibility: "Accessibility",
-  };
-  return labels[category] ?? category;
+export function disableAutosave(): void {
+  autosaveEnabled = false;
+  
+  if (autosaveTimer !== null) {
+    clearInterval(autosaveTimer);
+    autosaveTimer = null;
+  }
+  
+  console.log("[AUTOSAVE] Disabled");
+}
+
+/**
+ * Trigger an immediate autosave
+ */
+export async function triggerAutosave(state: GameState): Promise<SaveResult> {
+  if (!autosaveEnabled) {
+    return { success: false, error: "Autosave is disabled" };
+  }
+  
+  return await saveGame(SAVE_SLOTS.AUTOSAVE, state);
+}
+
+/**
+ * Set autosave enabled/disabled
+ */
+export function setAutosaveEnabled(enabled: boolean): void {
+  autosaveEnabled = enabled;
+}
+
+/**
+ * Check if autosave is currently enabled
+ */
+export function isAutosaveEnabled(): boolean {
+  return autosaveEnabled;
+}
+
+// ----------------------------------------------------------------------------
+// HELPERS
+// ----------------------------------------------------------------------------
+
+/**
+ * Format a timestamp as a readable date string
+ */
+export function formatSaveTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  
+  if (diff < 60000) {
+    return "Just now";
+  }
+  
+  if (diff < 3600000) {
+    const mins = Math.floor(diff / 60000);
+    return `${mins} minute${mins > 1 ? 's' : ''} ago`;
+  }
+  
+  if (diff < 86400000) {
+    const hours = Math.floor(diff / 3600000);
+    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  }
+  
+  return date.toLocaleDateString() + " " + date.toLocaleTimeString([], { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
+}
+
+/**
+ * Get a friendly name for a save slot
+ */
+export function getSaveSlotName(slot: SaveSlot): string {
+  switch (slot) {
+    case SAVE_SLOTS.AUTOSAVE:
+      return "Autosave";
+    case SAVE_SLOTS.MANUAL_1:
+      return "Save Slot 1";
+    case SAVE_SLOTS.MANUAL_2:
+      return "Save Slot 2";
+    case SAVE_SLOTS.MANUAL_3:
+      return "Save Slot 3";
+    default:
+      return slot;
+  }
 }

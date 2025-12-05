@@ -1,6 +1,7 @@
 // ============================================================================
 // CHAOS CORE - TAURI MAIN.RS
-// Complete drop-in replacement with save/load/settings commands
+// src-tauri/src/main.rs
+// Save/load/settings commands for Tauri backend
 // ============================================================================
 
 #![cfg_attr(
@@ -18,7 +19,6 @@ use serde::{Deserialize, Serialize};
 // SAVE DIRECTORY MANAGEMENT
 // ----------------------------------------------------------------------------
 
-/// Get the save directory path, creating it if it doesn't exist
 fn get_save_dir() -> Result<PathBuf, String> {
     let proj_dirs = ProjectDirs::from("com", "ardcytech", "chaoscore")
         .ok_or("Could not determine project directories")?;
@@ -33,13 +33,11 @@ fn get_save_dir() -> Result<PathBuf, String> {
     Ok(save_dir)
 }
 
-/// Get path to a specific save file
 fn get_save_path(slot: &str) -> Result<PathBuf, String> {
     let save_dir = get_save_dir()?;
     Ok(save_dir.join(format!("{}.json", slot)))
 }
 
-/// Get settings file path
 fn get_settings_path() -> Result<PathBuf, String> {
     let proj_dirs = ProjectDirs::from("com", "ardcytech", "chaoscore")
         .ok_or("Could not determine project directories")?;
@@ -68,7 +66,6 @@ pub struct SaveInfo {
 // SAVE/LOAD COMMANDS
 // ----------------------------------------------------------------------------
 
-/// Save game state to a specific slot
 #[command]
 fn save_game(slot: String, json: String) -> Result<(), String> {
     let save_path = get_save_path(&slot)?;
@@ -80,7 +77,6 @@ fn save_game(slot: String, json: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Load game state from a specific slot
 #[command]
 fn load_game(slot: String) -> Result<String, String> {
     let save_path = get_save_path(&slot)?;
@@ -96,14 +92,12 @@ fn load_game(slot: String) -> Result<String, String> {
     Ok(json)
 }
 
-/// Check if a save exists for a given slot
 #[command]
 fn has_save(slot: String) -> Result<bool, String> {
     let save_path = get_save_path(&slot)?;
     Ok(save_path.exists())
 }
 
-/// Delete a save file
 #[command]
 fn delete_save(slot: String) -> Result<(), String> {
     let save_path = get_save_path(&slot)?;
@@ -117,7 +111,6 @@ fn delete_save(slot: String) -> Result<(), String> {
     Ok(())
 }
 
-/// List all available save slots
 #[command]
 fn list_saves() -> Result<Vec<SaveInfo>, String> {
     let save_dir = get_save_dir()?;
@@ -144,13 +137,11 @@ fn list_saves() -> Result<Vec<SaveInfo>, String> {
         }
     }
     
-    // Sort by timestamp descending (newest first)
     saves.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     
     Ok(saves)
 }
 
-/// Get save file metadata
 #[command]
 fn get_save_info(slot: String) -> Result<SaveInfo, String> {
     let save_path = get_save_path(&slot)?;
@@ -179,7 +170,6 @@ fn get_save_info(slot: String) -> Result<SaveInfo, String> {
 // SETTINGS COMMANDS
 // ----------------------------------------------------------------------------
 
-/// Save settings to disk
 #[command]
 fn save_settings(json: String) -> Result<(), String> {
     let settings_path = get_settings_path()?;
@@ -191,7 +181,6 @@ fn save_settings(json: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Load settings from disk
 #[command]
 fn load_settings() -> Result<String, String> {
     let settings_path = get_settings_path()?;
