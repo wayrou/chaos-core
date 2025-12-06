@@ -645,14 +645,16 @@ button {
 
 .battle-root {
   min-height: 100vh;
+  height: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding: 20px 16px;
+  padding: 20px 16px 40px;
   gap: 12px;
   background: radial-gradient(circle at top, #141432 0, #050512 50%, #000 100%);
   color: #e0e4ff;
+  overflow-y: auto;
 }
 
 .battle-card {
@@ -3696,6 +3698,9 @@ button {
   display: flex;
   gap: 12px;
   flex-shrink: 0;
+  width: 720px;
+  max-width: 95vw;
+  margin-bottom: 20px;
 }
 
 /* ----- UNIT PANEL (left side) ----- */
@@ -4629,6 +4634,9 @@ button {
   display: flex;
   gap: 12px;
   flex-shrink: 0;
+  width: 720px;
+  max-width: 95vw;
+  margin-bottom: 20px;
 }
 
 /* ----- UNIT PANEL (left side) ----- */

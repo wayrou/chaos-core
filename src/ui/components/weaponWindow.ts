@@ -59,6 +59,7 @@ export function renderWeaponWindow(
 
       <div class="weapon-window-body">
         <!-- Stats and Controls -->
+        <div class="weapon-stats-panel-wrapper">
         <div class="weapon-stats-panel">
           ${weapon.isMechanical && weapon.heatCapacity ? `
             <div class="weapon-stat-row">
@@ -140,6 +141,10 @@ export function renderWeaponWindow(
             ` : ''}
           </div>
         </div>
+        </div>
+
+        <!-- Node Diagram -->
+        ${weapon.isMechanical ? renderNodeDiagram(weaponState) : ''}
       </div>
 
       ${isDestroyed ? `

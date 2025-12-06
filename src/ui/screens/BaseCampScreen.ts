@@ -44,6 +44,7 @@ export function renderBaseCampScreen(): void {
           <span class="btn-icon">🔧</span>
           <span class="btn-label">GEAR WORKBENCH</span>
         </button>
+        <button class="bc-btn bc-exit-to-menu" id="exitToMenuBtn">← BACK TO TITLE SCREEN</button>
       </div>
 
       <div class="basecamp-terminal-body">
@@ -81,7 +82,7 @@ export function renderBaseCampScreen(): void {
   root.querySelector("#gearWorkbenchBtn")?.addEventListener("click", () => {
     const currentState = getGameState();
     const firstUnitId = currentState.partyUnitIds?.[0] ?? null;
-    
+
     if (firstUnitId) {
       const unit = currentState.unitsById[firstUnitId];
       const weaponId = (unit as any)?.loadout?.weapon ?? null;
@@ -89,6 +90,14 @@ export function renderBaseCampScreen(): void {
     } else {
       // No party units - just open without selection
       renderGearWorkbenchScreen();
+    }
+  });
+
+  // Exit to Title Screen
+  root.querySelector("#exitToMenuBtn")?.addEventListener("click", async () => {
+    if (confirm("Return to title screen? Make sure your game is saved!")) {
+      const { renderMainMenu } = await import("./MainMenuScreen");
+      renderMainMenu();
     }
   });
 }

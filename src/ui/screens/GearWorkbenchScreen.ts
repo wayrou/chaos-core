@@ -85,9 +85,17 @@ export function renderGearWorkbenchScreen(
   
   // Get gear slots for selected equipment
   const gearSlots: Record<string, GearSlotData> = (state as any).gearSlots ?? {};
-  const selectedGear = workbenchState.selectedEquipmentId 
+  let selectedGear = workbenchState.selectedEquipmentId
     ? gearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId)
     : null;
+
+  // Ensure we have the latest gear data from state
+  if (workbenchState.selectedEquipmentId && selectedGear) {
+    const currentGearFromState = (state as any).gearSlots?.[workbenchState.selectedEquipmentId];
+    if (currentGearFromState) {
+      selectedGear = currentGearFromState;
+    }
+  }
   
   // Get filtered library cards
   const allLibraryCards = getLibraryCards(cardLibrary);
@@ -579,17 +587,22 @@ function attachWorkbenchListeners(
     el.addEventListener("drop", (e: DragEvent) => {
       e.preventDefault();
       el.classList.remove("slot-card--dragover");
-      
+
       const cardId = e.dataTransfer?.getData("text/plain");
-      if (cardId && workbenchState.selectedEquipmentId && selectedGear) {
+      if (cardId && workbenchState.selectedEquipmentId) {
+        // Get fresh gear state
+        const currentState = getGameState();
+        const currentGearSlots = (currentState as any).gearSlots ?? {};
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+
         // Slot the card
-        const newGear = slotCard(selectedGear, cardId);
+        const newGear = slotCard(currentGear, cardId);
         if (newGear) {
           updateGameState(draft => {
             if (!(draft as any).gearSlots) (draft as any).gearSlots = {};
             (draft as any).gearSlots[workbenchState.selectedEquipmentId!] = newGear;
           });
-          
+
           addWorkbenchLog(`SLK//SLOT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} installed.`);
           renderGearWorkbenchScreen();
         } else {
@@ -605,16 +618,22 @@ function attachWorkbenchListeners(
     el.onclick = (e) => {
       e.stopPropagation();
       const indexStr = el.getAttribute("data-remove-index");
-      if (indexStr !== null && workbenchState.selectedEquipmentId && selectedGear) {
+      if (indexStr !== null && workbenchState.selectedEquipmentId) {
         const index = parseInt(indexStr);
-        const removedCardId = selectedGear.slottedCards[index];
-        const newGear = unslotCard(selectedGear, index);
-        
+
+        // Get fresh gear state
+        const currentState = getGameState();
+        const currentGearSlots = (currentState as any).gearSlots ?? {};
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+
+        const removedCardId = currentGear.slottedCards[index];
+        const newGear = unslotCard(currentGear, index);
+
         updateGameState(draft => {
           if (!(draft as any).gearSlots) (draft as any).gearSlots = {};
           (draft as any).gearSlots[workbenchState.selectedEquipmentId!] = newGear;
         });
-        
+
         addWorkbenchLog(`SLK//UNSLOT :: ${LIBRARY_CARD_DATABASE[removedCardId]?.name ?? removedCardId} removed.`);
         renderGearWorkbenchScreen();
       }

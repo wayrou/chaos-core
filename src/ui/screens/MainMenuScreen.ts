@@ -205,12 +205,13 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   // Exit button
   const exitBtn = root.querySelector<HTMLButtonElement>('button[data-action="exit"]');
   if (exitBtn) {
-    exitBtn.addEventListener("click", () => {
-      const anyWindow = window as any;
-      if (anyWindow.__TAURI__?.window) {
-        anyWindow.__TAURI__.window.getCurrent().close();
-      } else {
-        console.log("Exit requested (no Tauri context)");
+    exitBtn.addEventListener("click", async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      } catch (err) {
+        console.log("Exit requested (no Tauri context):", err);
+        window.close();
       }
     });
   }
