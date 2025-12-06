@@ -7,11 +7,6 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./Unitdetailscreen";
 
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
-
 import {
   GearSlotData,
   CardLibrary,
@@ -92,8 +87,12 @@ export function renderGearWorkbenchScreen(
   // Ensure we have the latest gear data from state
   if (workbenchState.selectedEquipmentId && selectedGear) {
     const currentGearFromState = (state as any).gearSlots?.[workbenchState.selectedEquipmentId];
+    console.log("[RENDER] selectedEquipmentId:", workbenchState.selectedEquipmentId);
+    console.log("[RENDER] currentGearFromState:", currentGearFromState);
+    console.log("[RENDER] selectedGear before:", selectedGear);
     if (currentGearFromState) {
       selectedGear = currentGearFromState;
+      console.log("[RENDER] selectedGear updated to:", selectedGear);
     }
   }
   
@@ -501,7 +500,11 @@ function attachWorkbenchListeners(
       const equipmentId = el.getAttribute("data-equipment-id");
       if (equipmentId) {
         workbenchState.selectedEquipmentId = equipmentId;
-        renderGearWorkbenchScreen();
+        renderGearWorkbenchScreen(
+          workbenchState.selectedUnitId ?? undefined,
+          equipmentId,
+          workbenchState.returnDestination
+        );
       }
     };
   });
@@ -511,7 +514,11 @@ function attachWorkbenchListeners(
   if (searchInput) {
     searchInput.oninput = () => {
       workbenchState.searchFilter = searchInput.value;
-      renderGearWorkbenchScreen();
+      renderGearWorkbenchScreen(
+        workbenchState.selectedUnitId ?? undefined,
+        workbenchState.selectedEquipmentId ?? undefined,
+        workbenchState.returnDestination
+      );
     };
   }
   
@@ -520,42 +527,94 @@ function attachWorkbenchListeners(
   if (raritySelect) {
     raritySelect.onchange = () => {
       workbenchState.rarityFilter = raritySelect.value as CardRarity || null;
-      renderGearWorkbenchScreen();
+      renderGearWorkbenchScreen(
+        workbenchState.selectedUnitId ?? undefined,
+        workbenchState.selectedEquipmentId ?? undefined,
+        workbenchState.returnDestination
+      );
     };
   }
-  
+
   // Category filter
   const categorySelect = document.getElementById("categoryFilter") as HTMLSelectElement;
   if (categorySelect) {
     categorySelect.onchange = () => {
       workbenchState.categoryFilter = categorySelect.value as CardCategory || null;
-      renderGearWorkbenchScreen();
+      renderGearWorkbenchScreen(
+        workbenchState.selectedUnitId ?? undefined,
+        workbenchState.selectedEquipmentId ?? undefined,
+        workbenchState.returnDestination
+      );
     };
   }
   
   // Drag and drop for library cards
   document.querySelectorAll(".library-card").forEach(card => {
     const el = card as HTMLElement;
-    
+
+    // FALLBACK: Click to select card
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const cardId = el.getAttribute("data-card-id");
+      console.log("[CLICK] Library card clicked:", cardId);
+      if (cardId) {
+        // Toggle selection
+        if (workbenchState.draggedCardId === cardId) {
+          // Deselect
+          console.log("[CLICK] Deselecting card:", cardId);
+          workbenchState.draggedCardId = null;
+          el.classList.remove("library-card--selected");
+          document.querySelectorAll(".slot-card--empty").forEach(slot => {
+            slot.classList.remove("slot-card--highlight");
+          });
+        } else {
+          // Clear previous selection
+          console.log("[CLICK] Selecting card:", cardId);
+          document.querySelectorAll(".library-card").forEach(c => {
+            c.classList.remove("library-card--selected");
+          });
+
+          // Select this card
+          workbenchState.draggedCardId = cardId;
+          el.classList.add("library-card--selected");
+          console.log("[CLICK] workbenchState.draggedCardId set to:", workbenchState.draggedCardId);
+
+          // Highlight empty slots
+          const emptySlots = document.querySelectorAll(".slot-card--empty");
+          console.log("[CLICK] Found empty slots:", emptySlots.length);
+          emptySlots.forEach(slot => {
+            slot.classList.add("slot-card--highlight");
+          });
+
+          addWorkbenchLog(`SLK//SELECT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} selected. Click an empty slot to install.`);
+        }
+      }
+    });
+
     el.addEventListener("dragstart", (e: DragEvent) => {
       const cardId = el.getAttribute("data-card-id");
+      console.log("[DRAG] Drag started for card:", cardId);
       if (cardId && e.dataTransfer) {
         workbenchState.draggedCardId = cardId;
         e.dataTransfer.effectAllowed = "copy";
         e.dataTransfer.setData("text/plain", cardId);
         el.classList.add("library-card--dragging");
-        
+        console.log("[DRAG] dataTransfer set, draggedCardId:", workbenchState.draggedCardId);
+
         // Add visual feedback to drop targets
-        document.querySelectorAll(".slot-card--empty").forEach(slot => {
+        const emptySlots = document.querySelectorAll(".slot-card--empty");
+        console.log("[DRAG] Highlighting", emptySlots.length, "empty slots");
+        emptySlots.forEach(slot => {
           slot.classList.add("slot-card--highlight");
         });
       }
     });
-    
+
     el.addEventListener("dragend", () => {
       workbenchState.draggedCardId = null;
       el.classList.remove("library-card--dragging");
-      
+
       // Remove visual feedback from drop targets
       document.querySelectorAll(".slot-card--empty").forEach(slot => {
         slot.classList.remove("slot-card--highlight");
@@ -567,7 +626,72 @@ function attachWorkbenchListeners(
   // Drop targets (empty slots)
   document.querySelectorAll(".slot-card--empty").forEach(slot => {
     const el = slot as HTMLElement;
-    
+
+    // FALLBACK: Click to slot selected card
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log("[SLOT CLICK] Empty slot clicked");
+      const cardId = workbenchState.draggedCardId;
+      console.log("[SLOT CLICK] draggedCardId:", cardId);
+      console.log("[SLOT CLICK] selectedEquipmentId:", workbenchState.selectedEquipmentId);
+
+      if (cardId && workbenchState.selectedEquipmentId) {
+        console.log("[SLOT CLICK] Attempting to slot card:", cardId);
+        // Get fresh gear state
+        const currentState = getGameState();
+        const currentGearSlots = (currentState as any).gearSlots ?? {};
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+
+        console.log("[SLOT CLICK] Current gear:", currentGear);
+        console.log("[SLOT CLICK] Slotted cards:", currentGear.slottedCards);
+        console.log("[SLOT CLICK] Free slots:", currentGear.freeSlots);
+
+        // Slot the card
+        const newGear = slotCard(currentGear, cardId);
+        console.log("[SLOT CLICK] slotCard returned:", newGear);
+
+        if (newGear) {
+          console.log("[SLOT CLICK] SUCCESS - Updating game state");
+          updateGameState(prev => {
+            const gearSlots = (prev as any).gearSlots || {};
+            const updatedState = {
+              ...prev,
+              gearSlots: {
+                ...gearSlots,
+                [workbenchState.selectedEquipmentId!]: newGear
+              }
+            };
+            console.log("[SLOT CLICK] Returning updated state with gearSlots:", updatedState.gearSlots);
+            return updatedState as GameState;
+          });
+
+          // Clear selection
+          workbenchState.draggedCardId = null;
+          document.querySelectorAll(".library-card").forEach(c => {
+            c.classList.remove("library-card--selected");
+          });
+
+          addWorkbenchLog(`SLK//SLOT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} installed.`);
+
+          // Verify state before re-render
+          const verifyState = getGameState();
+          console.log("[SLOT CLICK] About to re-render. Verify gearSlots:", (verifyState as any).gearSlots);
+
+          renderGearWorkbenchScreen(
+            workbenchState.selectedUnitId ?? undefined,
+            workbenchState.selectedEquipmentId ?? undefined,
+            workbenchState.returnDestination
+          );
+        } else {
+          console.log("[SLOT CLICK] FAILED - No free slots");
+          addWorkbenchLog(`SLK//ERROR :: No free slots available.`);
+        }
+      } else {
+        console.log("[SLOT CLICK] Missing cardId or equipmentId - no action taken");
+      }
+    });
+
     el.addEventListener("dragover", (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer) {
@@ -575,7 +699,7 @@ function attachWorkbenchListeners(
       }
       el.classList.add("slot-card--dragover");
     });
-    
+
     el.addEventListener("dragleave", (e: DragEvent) => {
       // Only remove if actually leaving the element
       const relatedTarget = e.relatedTarget as HTMLElement;
@@ -583,31 +707,54 @@ function attachWorkbenchListeners(
         el.classList.remove("slot-card--dragover");
       }
     });
-    
+
     el.addEventListener("drop", (e: DragEvent) => {
       e.preventDefault();
       el.classList.remove("slot-card--dragover");
+      console.log("[DROP] Drop event fired");
 
       const cardId = e.dataTransfer?.getData("text/plain");
+      console.log("[DROP] Card ID from dataTransfer:", cardId);
+      console.log("[DROP] selectedEquipmentId:", workbenchState.selectedEquipmentId);
+
       if (cardId && workbenchState.selectedEquipmentId) {
+        console.log("[DROP] Attempting to slot card:", cardId);
         // Get fresh gear state
         const currentState = getGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
         const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
 
+        console.log("[DROP] Current gear:", currentGear);
+
         // Slot the card
         const newGear = slotCard(currentGear, cardId);
+        console.log("[DROP] slotCard returned:", newGear);
+
         if (newGear) {
-          updateGameState(draft => {
-            if (!(draft as any).gearSlots) (draft as any).gearSlots = {};
-            (draft as any).gearSlots[workbenchState.selectedEquipmentId!] = newGear;
+          console.log("[DROP] SUCCESS - Updating game state");
+          updateGameState(prev => {
+            const gearSlots = (prev as any).gearSlots || {};
+            return {
+              ...prev,
+              gearSlots: {
+                ...gearSlots,
+                [workbenchState.selectedEquipmentId!]: newGear
+              }
+            } as GameState;
           });
 
           addWorkbenchLog(`SLK//SLOT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} installed.`);
-          renderGearWorkbenchScreen();
+          renderGearWorkbenchScreen(
+            workbenchState.selectedUnitId ?? undefined,
+            workbenchState.selectedEquipmentId ?? undefined,
+            workbenchState.returnDestination
+          );
         } else {
+          console.log("[DROP] FAILED - No free slots");
           addWorkbenchLog(`SLK//ERROR :: No free slots available.`);
         }
+      } else {
+        console.log("[DROP] Missing cardId or equipmentId");
       }
     });
   });
@@ -629,13 +776,23 @@ function attachWorkbenchListeners(
         const removedCardId = currentGear.slottedCards[index];
         const newGear = unslotCard(currentGear, index);
 
-        updateGameState(draft => {
-          if (!(draft as any).gearSlots) (draft as any).gearSlots = {};
-          (draft as any).gearSlots[workbenchState.selectedEquipmentId!] = newGear;
+        updateGameState(prev => {
+          const gearSlots = (prev as any).gearSlots || {};
+          return {
+            ...prev,
+            gearSlots: {
+              ...gearSlots,
+              [workbenchState.selectedEquipmentId!]: newGear
+            }
+          } as GameState;
         });
 
         addWorkbenchLog(`SLK//UNSLOT :: ${LIBRARY_CARD_DATABASE[removedCardId]?.name ?? removedCardId} removed.`);
-        renderGearWorkbenchScreen();
+        renderGearWorkbenchScreen(
+          workbenchState.selectedUnitId ?? undefined,
+          workbenchState.selectedEquipmentId ?? undefined,
+          workbenchState.returnDestination
+        );
       }
     };
   });
@@ -669,7 +826,11 @@ function addWorkbenchLog(message: string): void {
 function runCompileAnimation(): void {
   workbenchState.isCompiling = true;
   workbenchState.compileMessages = [];
-  renderGearWorkbenchScreen();
+  renderGearWorkbenchScreen(
+    workbenchState.selectedUnitId ?? undefined,
+    workbenchState.selectedEquipmentId ?? undefined,
+    workbenchState.returnDestination
+  );
   
   const messages = [
     "→ Initializing card matrix...",
@@ -712,7 +873,11 @@ function runCompileAnimation(): void {
       setTimeout(() => {
         workbenchState.isCompiling = false;
         addWorkbenchLog("SLK//COMPILE :: Gear configuration saved.");
-        renderGearWorkbenchScreen();
+        renderGearWorkbenchScreen(
+          workbenchState.selectedUnitId ?? undefined,
+          workbenchState.selectedEquipmentId ?? undefined,
+          workbenchState.returnDestination
+        );
       }, 800);
     }
   }, 400);

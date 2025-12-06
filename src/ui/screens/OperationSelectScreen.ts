@@ -1,71 +1,130 @@
-// src/ui/screens/OperationSelectScreen.ts
+// ============================================================================
+// OPERATION SELECT SCREEN - Updated for Headline 13
+// Choose and start procedurally generated operations
+// ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
-import { renderOperationMap } from "./OperationMapScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
-
+import { renderOperationMapScreen } from "./OperationMapScreen";
+import { generateOperation } from "../../core/procedural";
+import { GameState } from "../../core/types";
 
 export function renderOperationSelectScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   const state = getGameState();
-  const op = state.operation;
+
+  // List of available operations
+  const operations = [
+    {
+      codename: "IRON GATE",
+      description: "Secure the Chaos Rift entrance and clear the corrupted garrison.",
+      difficulty: "Normal",
+      floors: 3,
+    },
+    {
+      codename: "EMBER VAULT",
+      description: "Infiltrate the abandoned research facility. Recover lost artifacts.",
+      difficulty: "Hard",
+      floors: 4,
+    },
+    {
+      codename: "SHADOW NEXUS",
+      description: "Investigate the dimensional anomaly deep within enemy territory.",
+      difficulty: "Very Hard",
+      floors: 5,
+    },
+  ];
 
   root.innerHTML = `
     <div class="opselect-root">
-
-      <div class="opselect-header">
-        <div class="opselect-title">SELECT OPERATION</div>
-      </div>
-
-      <div class="opselect-section">
-
-        <div class="op-card">
-          <div class="op-card-title">MAIN STORY OPERATION</div>
-          <div class="op-card-desc">${op.description}</div>
-          <button class="opstart-story-btn">BEGIN STORY OPERATION</button>
+      <div class="opselect-card">
+        <div class="opselect-header">
+          <div class="opselect-title">SELECT OPERATION</div>
+          <button class="opselect-back-btn">← BACK TO BASE CAMP</button>
         </div>
 
-        <div class="op-card">
-          <div class="op-card-title">CUSTOM OPERATION</div>
-          <div class="op-card-desc">
-            Create a custom layout, difficulty, and rewards.<br/>
-            (Full customization coming in 11c/11d)
+        <div class="opselect-body">
+          <div class="opselect-info">
+            Choose an operation to deploy. Each run features procedurally generated encounters.
           </div>
-          <button class="opstart-custom-btn">BEGIN CUSTOM OP (placeholder)</button>
+
+          <div class="opselect-operations">
+            ${operations.map((op, index) => `
+              <div class="opselect-op-card" data-op-index="${index}">
+                <div class="opselect-op-header">
+                  <div class="opselect-op-codename">${op.codename}</div>
+                  <div class="opselect-op-difficulty ${getDifficultyClass(op.difficulty)}">
+                    ${op.difficulty.toUpperCase()}
+                  </div>
+                </div>
+
+                <div class="opselect-op-description">
+                  ${op.description}
+                </div>
+
+                <div class="opselect-op-details">
+                  <div class="opselect-op-detail">
+                    <span class="opselect-op-detail-label">Floors:</span>
+                    <span class="opselect-op-detail-value">${op.floors}</span>
+                  </div>
+                  <div class="opselect-op-detail">
+                    <span class="opselect-op-detail-label">Type:</span>
+                    <span class="opselect-op-detail-value">Procedural</span>
+                  </div>
+                </div>
+
+                <button class="opselect-deploy-btn" data-op-index="${index}">
+                  DEPLOY →
+                </button>
+              </div>
+            `).join('')}
+          </div>
         </div>
-
       </div>
-
-      <button class="opselect-back-btn">BACK TO BASE CAMP</button>
     </div>
   `;
 
-  // Story OP
-  root.querySelector(".opstart-story-btn")?.addEventListener("click", () => {
-    updateGameState((prev) => ({
-      ...prev,
-      phase: "map",
-    }));
-    renderOperationMap();
-  });
-
-  // Custom OP – placeholder: just load the same operation for now
-  root.querySelector(".opstart-custom-btn")?.addEventListener("click", () => {
-    updateGameState((prev) => ({
-      ...prev,
-      phase: "map",
-    }));
-    renderOperationMap();
-  });
-
+  // Event listeners
   root.querySelector(".opselect-back-btn")?.addEventListener("click", () => {
     renderBaseCampScreen();
   });
+
+  root.querySelectorAll(".opselect-deploy-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const index = parseInt((e.target as HTMLElement).getAttribute("data-op-index") || "0");
+      const operation = operations[index];
+      if (operation) {
+        startOperation(operation.codename, operation.description, operation.floors);
+      }
+    });
+  });
+}
+
+function getDifficultyClass(difficulty: string): string {
+  switch (difficulty.toLowerCase()) {
+    case "easy": return "difficulty-easy";
+    case "normal": return "difficulty-normal";
+    case "hard": return "difficulty-hard";
+    case "very hard": return "difficulty-veryhard";
+    default: return "difficulty-normal";
+  }
+}
+
+function startOperation(codename: string, description: string, floors: number): void {
+  console.log("[OPSELECT] Generating operation:", codename, floors, "floors");
+
+  // Generate procedural operation
+  const operation = generateOperation(codename, description, floors);
+
+  // Store in game state
+  updateGameState(prev => ({
+    ...prev,
+    operation: operation as any,
+    phase: "operation",
+  }));
+
+  // Navigate to operation map
+  renderOperationMapScreen();
 }

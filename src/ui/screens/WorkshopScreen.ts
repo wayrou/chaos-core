@@ -6,11 +6,6 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
-
 import {
   Recipe,
   RECIPE_DATABASE,
@@ -65,10 +60,10 @@ export function renderWorkshopScreen(): void {
       <div class="workshop-header">
         <div class="workshop-header-left">
           <h1 class="workshop-title">WORKSHOP</h1>
-          <div class="workshop-subtitle">SLK://CRAFT_NODE โ€ข FABRICATION TERMINAL</div>
+          <div class="workshop-subtitle">SLK://CRAFT_NODE • FABRICATION TERMINAL</div>
         </div>
         <div class="workshop-header-right">
-          <button class="workshop-back-btn" id="backBtn">โ�� BASE CAMP</button>
+          <button class="workshop-back-btn" id="backBtn">← BASE CAMP</button>
         </div>
       </div>
       
@@ -81,22 +76,22 @@ export function renderWorkshopScreen(): void {
             <div class="workshop-section-title">MATERIALS</div>
             <div class="resource-grid">
               <div class="resource-item">
-                <span class="resource-icon">โ��</span>
+                <span class="resource-icon">⚙</span>
                 <span class="resource-name">Metal Scrap</span>
                 <span class="resource-value">${resources.metalScrap}</span>
               </div>
               <div class="resource-item">
-                <span class="resource-icon">๐�ชต</span>
+                <span class="resource-icon">🪵</span>
                 <span class="resource-name">Wood</span>
                 <span class="resource-value">${resources.wood}</span>
               </div>
               <div class="resource-item">
-                <span class="resource-icon">๐�’�</span>
+                <span class="resource-icon">💎</span>
                 <span class="resource-name">Chaos Shards</span>
                 <span class="resource-value">${resources.chaosShards}</span>
               </div>
               <div class="resource-item">
-                <span class="resource-icon">โ�ก</span>
+                <span class="resource-icon">⚡</span>
                 <span class="resource-name">Steam Comp.</span>
                 <span class="resource-value">${resources.steamComponents}</span>
               </div>
@@ -108,16 +103,16 @@ export function renderWorkshopScreen(): void {
             <div class="workshop-section-title">CATEGORIES</div>
             <div class="category-tabs">
               <button class="category-tab ${selectedCategory === 'weapon' ? 'category-tab--active' : ''}" data-category="weapon">
-                โ�” Weapons
+                ⚔ Weapons
               </button>
               <button class="category-tab ${selectedCategory === 'armor' ? 'category-tab--active' : ''}" data-category="armor">
-                ๐��ก Armor
+                🛡 Armor
               </button>
               <button class="category-tab ${selectedCategory === 'consumable' ? 'category-tab--active' : ''}" data-category="consumable">
-                ๐�งช Consumables
+                🧪 Consumables
               </button>
               <button class="category-tab ${selectedCategory === 'upgrade' ? 'category-tab--active' : ''}" data-category="upgrade">
-                โฌ� Upgrades
+                ⬆ Upgrades
               </button>
             </div>
           </div>
@@ -196,8 +191,8 @@ function renderRecipeItem(
          data-recipe-id="${recipe.id}">
       <div class="recipe-item-name">${recipe.name}</div>
       <div class="recipe-item-cost">${getRecipeCostString(recipe)}</div>
-      ${!canAfford ? '<div class="recipe-item-warning">โ�� Need resources</div>' : ''}
-      ${recipe.requiresItemId && !hasItem ? '<div class="recipe-item-warning">โ�� Need base item</div>' : ''}
+      ${!canAfford ? '<div class="recipe-item-warning">⚠ Need resources</div>' : ''}
+      ${recipe.requiresItemId && !hasItem ? '<div class="recipe-item-warning">⚠ Need base item</div>' : ''}
     </div>
   `;
 }
@@ -228,7 +223,7 @@ function renderRecipeDetails(
           <div class="detail-label">REQUIRES BASE ITEM:</div>
           <div class="detail-requires-item ${hasRequiredItem(recipe, inventoryItemIds) ? 'detail-requires-item--have' : 'detail-requires-item--missing'}">
             ${formatItemName(recipe.requiresItemId)}
-            ${hasRequiredItem(recipe, inventoryItemIds) ? 'โ�“' : 'โ�—'}
+            ${hasRequiredItem(recipe, inventoryItemIds) ? '✓' : '✗'}
           </div>
         </div>
       ` : ''}
@@ -252,10 +247,10 @@ function renderRecipeDetails(
       </div>
       
       <div class="detail-actions">
-        <button class="craft-btn ${canCraft ? '' : 'craft-btn--disabled'}" 
-                id="craftBtn" 
+        <button class="craft-btn ${canCraft ? '' : 'craft-btn--disabled'}"
+                id="craftBtn"
                 ${canCraft ? '' : 'disabled'}>
-          ${canCraft ? 'โ�’ CRAFT ITEM' : 'โ�� CANNOT CRAFT'}
+          ${canCraft ? '⚒ CRAFT ITEM' : '⛔ CANNOT CRAFT'}
         </button>
       </div>
     </div>
@@ -265,7 +260,7 @@ function renderRecipeDetails(
 function renderNoSelection(): string {
   return `
     <div class="detail-panel detail-panel--empty">
-      <div class="detail-empty-icon">โ�’</div>
+      <div class="detail-empty-icon">⚙</div>
       <div class="detail-empty-text">Select a recipe to view details</div>
     </div>
   `;

@@ -139,6 +139,13 @@ export interface EquipmentStats {
   hp: number;
 }
 
+export interface HeatZone {
+  min: number;
+  max: number;
+  name: string;
+  effect: string | null;
+}
+
 export interface WeaponEquipment {
   id: string;
   name: string;
@@ -147,6 +154,8 @@ export interface WeaponEquipment {
   isMechanical: boolean;
   stats: EquipmentStats;
   heatCapacity?: number;
+  heatZones?: HeatZone[];
+  passiveHeatDecay?: number;
   ammoMax?: number;
   quickReloadStrain?: number;
   fullReloadStrain?: number;
@@ -472,9 +481,35 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     attachedModules: [],
     clutchToggle: "Piercing Volley: Ignore DEF for next attack",
     heatCapacity: 8,
+    heatZones: [
+      { min: 0, max: 3, name: "Stable", effect: null },
+      { min: 4, max: 6, name: "Barrel Glow", effect: "ACC -1" },
+      { min: 7, max: 8, name: "Critical", effect: "Next shot overheats" }
+    ],
+    passiveHeatDecay: 2,
     ammoMax: 6,
     quickReloadStrain: 1,
     fullReloadStrain: 0,
+    wear: 0,
+  },
+  {
+    id: "weapon_blazefang_saber",
+    name: "Blazefang Saber",
+    slot: "weapon",
+    weaponType: "sword",
+    isMechanical: true,
+    stats: { atk: 3, def: 1, agi: 0, acc: 1, hp: 0 },
+    cardsGranted: ["card_searing_slash", "card_molten_mark", "card_heat_parry"],
+    moduleSlots: 2,
+    attachedModules: [],
+    clutchToggle: "Searing Slash: Inflict Burn status",
+    heatCapacity: 5,
+    heatZones: [
+      { min: 0, max: 2, name: "Stable", effect: null },
+      { min: 3, max: 4, name: "Blade Sear", effect: "+1 damage" },
+      { min: 5, max: 5, name: "Blade Warp", effect: "Damage -2 until repaired" }
+    ],
+    passiveHeatDecay: 1,
     wear: 0,
   },
 ];
@@ -707,6 +742,35 @@ export const EQUIPMENT_CARDS: EquipmentCard[] = [
     description: "Remove 2 heat and gain +1 DEF until next turn.",
     range: "R(Self)",
     sourceEquipmentId: "weapon_emberclaw_repeater",
+  },
+  // Blazefang Saber cards
+  {
+    id: "card_searing_slash",
+    name: "Searing Slash",
+    type: "equipment",
+    strainCost: 2,
+    description: "Inflict Burn status. Gain +1 heat.",
+    range: "R(1)",
+    damage: 4,
+    sourceEquipmentId: "weapon_blazefang_saber",
+  },
+  {
+    id: "card_molten_mark",
+    name: "Molten Mark",
+    type: "equipment",
+    strainCost: 1,
+    description: "Mark target; next attack from any ally deals +2 damage. Gain +1 heat.",
+    range: "R(1)",
+    sourceEquipmentId: "weapon_blazefang_saber",
+  },
+  {
+    id: "card_heat_parry",
+    name: "Heat Parry",
+    type: "equipment",
+    strainCost: 0,
+    description: "Remove 1 heat; block the next melee attack.",
+    range: "R(Self)",
+    sourceEquipmentId: "weapon_blazefang_saber",
   },
   // Helmet cards
   {

@@ -146,13 +146,20 @@ export function renderUnitDetailScreen(unitId: string): void {
             <button class="equip-change-btn" data-slot="${slot}">
               ${equip ? "CHANGE" : "EQUIP"}
             </button>
+            ${equipId && slot === "weapon" ? `
+              <button class="equip-view-weapon-btn"
+                      data-weapon-id="${equipId}"
+                      title="View weapon details and diagrams">
+                📊 VIEW
+              </button>
+            ` : ""}
             ${equipId ? `
-              <button class="equip-customize-btn" 
-                      data-slot="${slot}" 
-                      data-unit-id="${unitId}" 
+              <button class="equip-customize-btn"
+                      data-slot="${slot}"
+                      data-unit-id="${unitId}"
                       data-equipment-id="${equipId}"
                       title="Customize card slots for this gear">
-                ðŸ”§ CUSTOMIZE
+                🔧 CUSTOMIZE
               </button>
             ` : ""}
           </div>
@@ -266,6 +273,17 @@ export function renderUnitDetailScreen(unitId: string): void {
           </div>
         </div>
       </div>
+
+      <div class="weapon-detail-modal" id="weaponDetailModal" style="display: none;">
+        <div class="weapon-detail-modal-content">
+          <div class="weapon-detail-modal-header">
+            <span class="weapon-detail-modal-title">WEAPON DETAILS</span>
+            <button class="weapon-detail-modal-close">&times;</button>
+          </div>
+          <div class="weapon-detail-modal-body" id="weaponDetailModalBody">
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -297,6 +315,18 @@ export function renderUnitDetailScreen(unitId: string): void {
     });
   });
 
+  // VIEW WEAPON buttons - Opens weapon detail modal
+  root.querySelectorAll(".equip-view-weapon-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const el = e.currentTarget as HTMLElement;
+      const weaponId = el.getAttribute("data-weapon-id");
+      if (weaponId) {
+        openWeaponDetailModal(weaponId);
+      }
+    });
+  });
+
   // CUSTOMIZE buttons - Opens Gear Workbench with correct return destination
   root.querySelectorAll(".equip-customize-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -320,6 +350,18 @@ export function renderUnitDetailScreen(unitId: string): void {
   root.querySelector(".equip-modal")?.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("equip-modal")) {
       closeEquipModal();
+    }
+  });
+
+  // Weapon detail modal close button
+  root.querySelector(".weapon-detail-modal-close")?.addEventListener("click", () => {
+    closeWeaponDetailModal();
+  });
+
+  // Weapon detail modal backdrop click
+  root.querySelector(".weapon-detail-modal")?.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).classList.contains("weapon-detail-modal")) {
+      closeWeaponDetailModal();
     }
   });
 }
@@ -419,6 +461,143 @@ function openEquipModal(
 
 function closeEquipModal(): void {
   const modal = document.getElementById("equipModal");
+  if (modal) {
+    modal.style.display = "none";
+  }
+}
+
+function openWeaponDetailModal(weaponId: string): void {
+  const state = getGameState();
+  const equipmentById = (state as any).equipmentById || {};
+  const weapon = equipmentById[weaponId] as WeaponEquipment;
+
+  if (!weapon) return;
+
+  const modal = document.getElementById("weaponDetailModal");
+  const body = document.getElementById("weaponDetailModalBody");
+
+  if (!modal || !body) return;
+
+  // Render weapon details
+  let html = `
+    <div class="weapon-detail-content">
+      <div class="weapon-detail-header-section">
+        <div class="weapon-detail-name">${weapon.name}</div>
+        <div class="weapon-detail-type">${weapon.weaponType.toUpperCase()} ${weapon.isMechanical ? "• MECHANICAL" : ""}</div>
+      </div>
+
+      <div class="weapon-detail-stats">
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">ATK:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.atk >= 0 ? '+' : ''}${weapon.stats.atk}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">DEF:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.def >= 0 ? '+' : ''}${weapon.stats.def}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">AGI:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.agi >= 0 ? '+' : ''}${weapon.stats.agi}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">ACC:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.acc >= 0 ? '+' : ''}${weapon.stats.acc}</span>
+        </div>
+        ${weapon.stats.hp !== 0 ? `
+          <div class="weapon-detail-stat-row">
+            <span class="weapon-detail-stat-label">HP:</span>
+            <span class="weapon-detail-stat-value">${weapon.stats.hp >= 0 ? '+' : ''}${weapon.stats.hp}</span>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="weapon-detail-section">
+        <div class="weapon-detail-section-title">CARDS GRANTED (${weapon.cardsGranted.length})</div>
+        <div class="weapon-detail-cards">
+          ${weapon.cardsGranted.map(cardId => `<div class="weapon-detail-card-name">• ${cardId}</div>`).join('')}
+        </div>
+      </div>
+
+      ${weapon.clutchToggle ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">CLUTCH TOGGLE</div>
+          <div class="weapon-detail-clutch">${weapon.clutchToggle}</div>
+        </div>
+      ` : ''}
+
+      ${weapon.isMechanical && weapon.heatCapacity ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">HEAT SYSTEM</div>
+          <div class="weapon-detail-heat-info">
+            <div class="weapon-detail-heat-row">
+              <span>Heat Capacity:</span>
+              <span>${weapon.heatCapacity}</span>
+            </div>
+            ${weapon.passiveHeatDecay ? `
+              <div class="weapon-detail-heat-row">
+                <span>Passive Decay:</span>
+                <span>${weapon.passiveHeatDecay}/turn</span>
+              </div>
+            ` : ''}
+          </div>
+          ${weapon.heatZones && weapon.heatZones.length > 0 ? `
+            <div class="weapon-detail-heat-zones">
+              <div class="weapon-detail-section-subtitle">HEAT ZONES</div>
+              ${weapon.heatZones.map(zone => `
+                <div class="weapon-detail-heat-zone">
+                  <div class="weapon-detail-heat-zone-header">
+                    <span class="weapon-detail-heat-zone-range">${zone.min}-${zone.max}</span>
+                    <span class="weapon-detail-heat-zone-name">${zone.name}</span>
+                  </div>
+                  ${zone.effect ? `
+                    <div class="weapon-detail-heat-zone-effect">${zone.effect}</div>
+                  ` : `
+                    <div class="weapon-detail-heat-zone-effect weapon-detail-heat-zone-effect--ok">No penalties</div>
+                  `}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      ${weapon.ammoMax ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">AMMO SYSTEM</div>
+          <div class="weapon-detail-ammo-info">
+            <div class="weapon-detail-heat-row">
+              <span>Max Ammo:</span>
+              <span>${weapon.ammoMax}</span>
+            </div>
+            ${weapon.quickReloadStrain !== undefined ? `
+              <div class="weapon-detail-heat-row">
+                <span>Quick Reload Strain:</span>
+                <span>${weapon.quickReloadStrain}</span>
+              </div>
+            ` : ''}
+            ${weapon.fullReloadStrain !== undefined ? `
+              <div class="weapon-detail-heat-row">
+                <span>Full Reload Strain:</span>
+                <span>${weapon.fullReloadStrain}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="weapon-detail-section">
+        <div class="weapon-detail-section-title">MODULE SLOTS</div>
+        <div class="weapon-detail-modules">${weapon.moduleSlots} available slots</div>
+      </div>
+    </div>
+  `;
+
+  body.innerHTML = html;
+  modal.style.display = "flex";
+}
+
+function closeWeaponDetailModal(): void {
+  const modal = document.getElementById("weaponDetailModal");
   if (modal) {
     modal.style.display = "none";
   }

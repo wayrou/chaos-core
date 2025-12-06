@@ -39,11 +39,26 @@ export function renderBaseCampScreen(): void {
       </div>
 
       <div class="basecamp-buttons">
-        <button class="bc-btn bc-startop">START OPERATION</button>
-        <button class="bc-btn bc-loadout">LOADOUT</button>
-        <button class="bc-btn bc-shop">SHOP</button>
-        <button class="bc-btn bc-roster">UNIT ROSTER</button>
-        <button class="bc-btn bc-workshop">WORKSHOP</button>
+        <button class="bc-btn bc-startop">
+          <span class="btn-icon">🎯</span>
+          <span class="btn-label">START OPERATION</span>
+        </button>
+        <button class="bc-btn bc-loadout">
+          <span class="btn-icon">🎒</span>
+          <span class="btn-label">LOADOUT</span>
+        </button>
+        <button class="bc-btn bc-shop">
+          <span class="btn-icon">🛒</span>
+          <span class="btn-label">SHOP</span>
+        </button>
+        <button class="bc-btn bc-roster">
+          <span class="btn-icon">👥</span>
+          <span class="btn-label">UNIT ROSTER</span>
+        </button>
+        <button class="bc-btn bc-workshop">
+          <span class="btn-icon">🔨</span>
+          <span class="btn-label">WORKSHOP</span>
+        </button>
         <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
           <span class="btn-icon">&#128295;</span>
           <span class="btn-label">GEAR WORKBENCH</span>

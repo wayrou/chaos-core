@@ -3,14 +3,9 @@
 // Headline 11b: Unit customization, roster, stats, and current decks
 // ============================================================================
 
-import { getGameState } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
 
 import {
   UnitLoadout,
@@ -19,6 +14,7 @@ import {
   getAllModules,
   buildDeckFromLoadout,
   UnitClass,
+  CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
 
 function formatClassName(cls: UnitClass): string {
@@ -176,6 +172,9 @@ export function renderRosterScreen(): void {
               Reserve
             </span>
           </div>
+          <div class="roster-debug">
+            <button class="roster-debug-btn" id="debugEquipBtn">🔧 DEBUG: Give All Equipment</button>
+          </div>
         </div>
       </div>
     </div>
@@ -202,5 +201,81 @@ export function renderRosterScreen(): void {
         renderUnitDetailScreen(unitId);
       }
     });
+  });
+
+  // Debug button to give all equipment to all units
+  root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {
+    if (confirm("Give all starter equipment to all units for testing?")) {
+      updateGameState(draft => {
+        // Give resources
+        draft.wad = 9999;
+        if (!draft.resources) {
+          draft.resources = { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+        }
+        draft.resources.metalScrap = 99;
+        draft.resources.wood = 99;
+        draft.resources.chaosShards = 99;
+        draft.resources.steamComponents = 99;
+
+        // Get all starter equipment
+        const allEquipment = getAllStarterEquipment();
+
+        // Add all equipment to equipmentById
+        if (!draft.equipmentById) draft.equipmentById = {};
+        Object.assign(draft.equipmentById, allEquipment);
+
+        // Equip all units with compatible gear
+        Object.keys(draft.unitsById).forEach(unitId => {
+          const unit = draft.unitsById[unitId];
+          const unitClass: UnitClass = (unit as any).unitClass || "squire";
+
+          if (!unit.loadout) {
+            (unit as any).loadout = {
+              weapon: null,
+              helmet: null,
+              chestpiece: null,
+              accessory1: null,
+              accessory2: null,
+            };
+          }
+
+          // Find a compatible weapon for this class
+          const weapons = Object.values(allEquipment).filter(eq => eq.slot === "weapon");
+          const compatibleWeapon = weapons.find(w => {
+            const weaponType = (w as any).weaponType;
+            const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+            return allowed?.includes(weaponType);
+          });
+
+          if (compatibleWeapon) {
+            (unit as any).loadout.weapon = compatibleWeapon.id;
+          }
+
+          // Equip first helmet
+          const helmet = Object.values(allEquipment).find(eq => eq.slot === "helmet");
+          if (helmet) {
+            (unit as any).loadout.helmet = helmet.id;
+          }
+
+          // Equip first chestpiece
+          const chestpiece = Object.values(allEquipment).find(eq => eq.slot === "chestpiece");
+          if (chestpiece) {
+            (unit as any).loadout.chestpiece = chestpiece.id;
+          }
+
+          // Equip first two accessories
+          const accessories = Object.values(allEquipment).filter(eq => eq.slot === "accessory");
+          if (accessories.length > 0) {
+            (unit as any).loadout.accessory1 = accessories[0].id;
+          }
+          if (accessories.length > 1) {
+            (unit as any).loadout.accessory2 = accessories[1].id;
+          }
+        });
+      });
+
+      // Re-render to show updated equipment
+      renderRosterScreen();
+    }
   });
 }
