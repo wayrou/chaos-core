@@ -1,7 +1,7 @@
 // ============================================================================
-// CHAOS CORE - MAIN MENU SCREEN (Headline 12 Complete)
+// CHAOS CORE - MAIN MENU SCREEN (Headline 12bza)
 // src/ui/screens/MainMenuScreen.ts
-// Full save/load, settings, and controller support
+// Logo positioned above card, larger size
 // ============================================================================
 
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
@@ -65,53 +65,64 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-vignette"></div>
       </div>
       
-      <div class="mainmenu-card">
+      <!-- Main content wrapper - centers everything vertically -->
+      <div class="mainmenu-content">
+        
+        <!-- Logo ABOVE the card -->
         <div class="mainmenu-logo-container">
-          <div class="mainmenu-logo">CHAOS CORE</div>
+          <img 
+            id="logoImage"
+            alt="Chaos Core" 
+            class="mainmenu-logo-image"
+          />
+          <!-- Fallback text logo if image fails to load -->
+          <div id="logoFallback" class="mainmenu-logo mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
           <div class="mainmenu-logo-glow"></div>
         </div>
+        
         <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
+      
+        <!-- Card with buttons only -->
+        <div class="mainmenu-card">
+          <div class="mainmenu-buttons">
+            ${hasContinue ? `
+              <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">CONTINUE</span>
+                ${mostRecentSave ? `
+                  <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
+                ` : ''}
+              </button>
+            ` : ''}
 
-        <div class="mainmenu-divider"></div>
-
-        <div class="mainmenu-buttons">
-          ${hasContinue ? `
-            <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
-              <span class="btn-icon">▶</span>
-              <span class="btn-text">CONTINUE</span>
-              ${mostRecentSave ? `
-                <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
-              ` : ''}
+            <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
+              <span class="btn-icon">+</span>
+              <span class="btn-text">NEW OPERATION</span>
             </button>
-          ` : ''}
 
-          <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
-            <span class="btn-icon">+</span>
-            <span class="btn-text">NEW OPERATION</span>
-          </button>
+            ${saves.length > 0 ? `
+              <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
+                <span class="btn-icon">📂</span>
+                <span class="btn-text">LOAD GAME</span>
+              </button>
+            ` : ''}
 
-          ${saves.length > 0 ? `
-            <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
-              <span class="btn-icon">📂</span>
-              <span class="btn-text">LOAD GAME</span>
+            <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
+              <span class="btn-icon">⚙</span>
+              <span class="btn-text">SETTINGS</span>
             </button>
-          ` : ''}
 
-          <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
-            <span class="btn-icon">⚙</span>
-            <span class="btn-text">SETTINGS</span>
-          </button>
+            <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
+              <span class="btn-icon">✕</span>
+              <span class="btn-text">EXIT</span>
+            </button>
+          </div>
 
-          <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
-            <span class="btn-icon">✕</span>
-            <span class="btn-text">EXIT</span>
-          </button>
-        </div>
-
-        <div class="mainmenu-footer">
-          <span>SCROLLINK OS BUILD 0.1.0</span>
-          <span class="mainmenu-separator">•</span>
-          <span>ARDCYTECH PROTOTYPE</span>
+          <div class="mainmenu-footer">
+            <span>SCROLLINK OS BUILD 0.1.0</span>
+            <span class="mainmenu-separator">•</span>
+            <span>ARDCYTECH PROTOTYPE</span>
+          </div>
         </div>
       </div>
       
@@ -137,8 +148,63 @@ export async function renderMainMenu(): Promise<void> {
     </div>
   `;
 
+  // Try to load the logo with multiple path attempts
+  tryLoadLogo();
+  
   attachMenuListeners(saves);
   updateFocusableElements();
+}
+
+// ----------------------------------------------------------------------------
+// LOGO LOADING WITH FALLBACKS
+// ----------------------------------------------------------------------------
+
+function tryLoadLogo(): void {
+  const logoImg = document.getElementById("logoImage") as HTMLImageElement;
+  const logoFallback = document.getElementById("logoFallback");
+  
+  if (!logoImg || !logoFallback) return;
+  
+  // List of paths to try (in order)
+  const pathsToTry = [
+    "/assets/cc_logo.png",
+    "/assets/CC_logo.png",
+    "./assets/cc_logo.png",
+    "./assets/CC_logo.png",
+    "assets/cc_logo.png",
+    "assets/CC_logo.png",
+    "/cc_logo.png",
+    "/CC_logo.png",
+  ];
+  
+  let currentPathIndex = 0;
+  
+  const tryNextPath = () => {
+    if (currentPathIndex >= pathsToTry.length) {
+      console.error("[LOGO] All paths failed. Tried:", pathsToTry);
+      logoImg.style.display = "none";
+      logoFallback.style.display = "block";
+      return;
+    }
+    
+    const path = pathsToTry[currentPathIndex];
+    console.log(`[LOGO] Trying path ${currentPathIndex + 1}/${pathsToTry.length}: ${path}`);
+    logoImg.src = path;
+    currentPathIndex++;
+  };
+  
+  logoImg.onload = () => {
+    console.log(`[LOGO] ✓ Successfully loaded from: ${logoImg.src}`);
+    logoImg.style.display = "block";
+    logoFallback.style.display = "none";
+  };
+  
+  logoImg.onerror = () => {
+    console.warn(`[LOGO] ✗ Failed to load from: ${logoImg.src}`);
+    tryNextPath();
+  };
+  
+  tryNextPath();
 }
 
 // ----------------------------------------------------------------------------
