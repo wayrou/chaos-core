@@ -8,14 +8,8 @@ import {
   upgradeMuleClass,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
-import { renderScrollLinkShell } from "./ScrollLinkShell";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
 
 
 type InventoryBin = "forwardLocker" | "baseStorage";
@@ -43,24 +37,35 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
     power: inv.capacityPowerW,
   };
 
-  function renderBar(label: string, pct: number, text: string): string {
-    let color = "#52a0ff"; // normal
-    if (pct >= 0.8 && pct < 1) color = "#e4d96f"; // warning
-    if (pct >= 1 && pct < 1.2) color = "#ff5c5c"; // overloaded
-    if (pct >= 1.2) color = "#ff3030"; // heavily overloaded / flashing
+  function renderBar(label: string, current: number, cap: number, unit: string): string {
+    const pct = current / cap;
+    let color = "#52a0ff"; // White/Blue = normal
+    let isFlashing = false;
+    
+    if (pct >= 0.8 && pct < 1) {
+      color = "#e4d96f"; // Yellow = nearing capacity (≥ 80%)
+    } else if (pct >= 1 && pct < 1.2) {
+      color = "#ff5c5c"; // Red = overloaded (>100%)
+    } else if (pct >= 1.2) {
+      color = "#ff3030"; // Flashing Red = extreme overload
+      isFlashing = true;
+    }
+
+    const fillWidth = Math.min(pct * 100, 150);
+    const displayText = `${current.toFixed(0)} / ${cap} ${unit}`;
 
     return `
       <div class="loadout-bar">
-        <div class="loadout-bar-label">${label} — ${text}</div>
+        <div class="loadout-bar-label">${label}</div>
         <div class="loadout-bar-track">
-          <div class="loadout-bar-fill"
+          <div class="loadout-bar-fill ${isFlashing ? 'loadout-bar-fill--flashing' : ''}"
                style="
-                 width:${Math.min(pct * 100, 150)}%;
+                 width:${fillWidth}%;
                  background:${color};
-                 ${pct >= 1.2 ? "animation:pulseRed 1s infinite;" : ""}
                ">
           </div>
         </div>
+        <div class="loadout-bar-value">${displayText}</div>
       </div>
     `;
   }
@@ -92,36 +97,31 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
         <div class="inventory-header">
           <div class="inventory-header-left">
             <div class="inventory-title">LOADOUT</div>
-            <div class="inventory-subtitle">
-              Forward Locker (carried into runs) + Base Camp Storage (safe).
-            </div>
+            <div class="inventory-subtitle">SCROLLINK OS // FORWARD_LOCKER • BASE_STORAGE</div>
           </div>
           <div class="inventory-header-right">
-            <button class="inventory-back-btn" data-return-to="${returnTo}">${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO SHELL"}</button>
+            <button class="inventory-back-btn" id="backBtn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
           </div>
         </div>
 
         <div class="loadout-body">
           <div class="loadout-left">
-            ${renderBar(
-              "MASS",
-              penalties.massPct,
-              `${load.mass.toFixed(1)} / ${caps.mass} kg`
-            )}
-            ${renderBar(
-              "BULK",
-              penalties.bulkPct,
-              `${load.bulk.toFixed(1)} / ${caps.bulk} bu`
-            )}
-            ${renderBar(
-              "POWER",
-              penalties.powerPct,
-              `${load.power.toFixed(1)} / ${caps.power} w`
-            )}
+            <div class="loadout-capacity-section">
+              <div class="loadout-section-title">CAPACITY METERS</div>
+              ${renderBar("MASS", load.mass, caps.mass, "kg")}
+              ${renderBar("BULK", load.bulk, caps.bulk, "bu")}
+              ${renderBar("POWER", load.power, caps.power, "w")}
+            </div>
 
             <div class="mule-upgrade">
-              <div>MULE CLASS: ${inv.muleClass}</div>
-              <button class="mule-upgrade-btn">UPGRADE MULE (placeholder)</button>
+              <div class="mule-class-display">
+                <div class="mule-class-label">MULE SYSTEM</div>
+                <div class="mule-class-value">CLASS ${inv.muleClass}</div>
+              </div>
+              <button class="mule-upgrade-btn">UPGRADE MULE</button>
             </div>
           </div>
 
@@ -168,8 +168,8 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
     </div>
   `;
 
-  // --- BUTTON: BACK TO SHELL ---
-  const backBtn = root.querySelector<HTMLButtonElement>(".inventory-back-btn");
+  // --- BUTTON: BACK ---
+  const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
       const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;

@@ -8,7 +8,7 @@ import { PlayerAvatar, FieldMap } from "./types";
 // MOVEMENT & COLLISION
 // ============================================================================
 
-const PLAYER_SPEED = 120; // pixels per second
+const PLAYER_SPEED = 240; // pixels per second (doubled from 120)
 const PLAYER_WIDTH = 32;
 const PLAYER_HEIGHT = 32;
 

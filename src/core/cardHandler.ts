@@ -6,6 +6,13 @@
 
 import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome } from "./battle";
 import { Card, CardEffect } from "./types";
+import {
+  trackRangedSkillInBattle,
+  trackMagicSpellInBattle,
+  trackSupportActionInBattle,
+  trackMobilityActionInBattle,
+  detectCardAffinityType,
+} from "./affinityBattle";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
@@ -602,6 +609,22 @@ export function handleCardPlay(
     // Log
     b = appendBattleLog(b, `SLK//HIT    :: ${user.name} ${logMessages.join("; ")}.`);
     
+    // Track affinity based on card type
+    if (!user.isEnemy) {
+      const affinityType = detectCardAffinityType(card.name, card.description);
+      if (affinityType === "ranged") {
+        trackRangedSkillInBattle(user.id, b);
+      } else if (affinityType === "magic") {
+        trackMagicSpellInBattle(user.id, b);
+      } else if (affinityType === "support") {
+        trackSupportActionInBattle(user.id, b);
+      } else if (affinityType === "mobility") {
+        trackMobilityActionInBattle(user.id, b);
+      } else if (affinityType === "melee") {
+        // Melee attacks are tracked separately in attackUnit
+      }
+    }
+    
     // Check victory/defeat
     b = evaluateBattleOutcome(b);
     
@@ -646,6 +669,11 @@ export function handleCardPlay(
     
     const logText = logMessages.length > 0 ? logMessages.join(", ") : `uses ${card.name}`;
     b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} ${logText} • STRAIN +${card.strainCost}.`);
+    
+    // Track mobility affinity for movement cards
+    if (!user.isEnemy && card.targetType === "tile") {
+      trackMobilityActionInBattle(user.id, b);
+    }
     
     return b;
   }

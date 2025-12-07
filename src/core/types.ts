@@ -4,9 +4,6 @@
 //  CORE BATTLE TYPES
 // ---------------------------------------------------------
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
-
 export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
@@ -72,6 +69,9 @@ loadout?: {
     amount: number;
     duration: number;
   }>;
+  // Unit Performance System (Headline 14a)
+  pwr?: number; // Personnel Warfare Rating
+  affinities?: UnitAffinities; // Long-term affinity tracking
 }
 
 export interface BattleTile {
@@ -141,6 +141,53 @@ export interface PlayerProfile {
   squadName: string;
   rosterUnitIds: UnitId[];
 }
+
+// ============================================================================
+// UNIT RECRUITMENT & PERFORMANCE SYSTEM (Headline 14a/14az)
+// ============================================================================
+
+/**
+ * Affinity values for a unit (0-100 scale)
+ * Tracks long-term combat preferences and specializations
+ */
+export interface UnitAffinities {
+  melee: number;      // Melee attacks performed
+  ranged: number;     // Ranged skills used
+  magic: number;      // Spells cast
+  support: number;    // Buffs/heals/shields applied
+  mobility: number;   // Movement/mobility skills used
+  survival: number;   // Damage taken and survived / operations completed
+}
+
+/**
+ * Recruitment candidate unit (before hiring)
+ */
+export interface RecruitmentCandidate {
+  id: string; // Temporary candidate ID
+  name: string;
+  portraitSeed?: string; // For appearance generation
+  baseClass: string;
+  currentClass: string;
+  pwr: number;
+  affinities: UnitAffinities;
+  contractCost: number; // WAD cost for Standard Contract
+  traits?: string[]; // 1-2 trait tags for display
+  stats: {
+    maxHp: number;
+    atk: number;
+    def: number;
+    agi: number;
+    acc: number;
+  };
+}
+
+/**
+ * Guild roster limits
+ */
+export const GUILD_ROSTER_LIMITS = {
+  MAX_ACTIVE_PARTY: 10,
+  MAX_TOTAL_MEMBERS: 30,
+} as const;
 
 // ---------------------------------------------------------
 //  INVENTORY
@@ -218,6 +265,12 @@ equipmentPool?: string[];
   inventory: InventoryState;
 
   currentBattle: BattleState | null;
+
+  // Quest System
+  quests?: import("../quests/types").QuestState;
+
+  // Unit Recruitment System (Headline 14az)
+  recruitmentCandidates?: RecruitmentCandidate[]; // Current pool of candidates at active recruitment hub
 }
 
 interface GearSlotData {

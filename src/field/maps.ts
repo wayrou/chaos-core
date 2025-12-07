@@ -80,6 +80,26 @@ function createBaseCampMap(): FieldMap {
       sprite: "ops_terminal",
       metadata: { name: "Ops Terminal" },
     },
+    {
+      id: "quest_board",
+      x: 3,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "quest_board",
+      metadata: { name: "Quest Board" },
+    },
+    {
+      id: "tavern_station",
+      x: 7,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "tavern",
+      metadata: { name: "Tavern" },
+    },
   ];
   
   // Interaction zones (in front of each station)
@@ -128,6 +148,24 @@ function createBaseCampMap(): FieldMap {
       height: 1,
       action: "ops_terminal",
       label: "OPS TERMINAL",
+    },
+    {
+      id: "interact_quest_board",
+      x: 3,
+      y: 12,
+      width: 2,
+      height: 1,
+      action: "quest_board",
+      label: "QUEST BOARD",
+    },
+    {
+      id: "interact_tavern",
+      x: 7,
+      y: 12,
+      width: 2,
+      height: 1,
+      action: "tavern",
+      label: "TAVERN",
     },
     {
       id: "enter_free_zone",

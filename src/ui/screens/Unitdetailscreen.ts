@@ -28,6 +28,7 @@ import {
   EquipmentCard,
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
+import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -207,6 +208,11 @@ export function renderUnitDetailScreen(unitId: string): void {
             <div class="unitdetail-header-text">
               <div class="unitdetail-name">${unit.name}</div>
               <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+              <div class="unitdetail-pwr" style="color: ${pwrColor}">
+                <span class="unitdetail-pwr-label">PWR:</span>
+                <span class="unitdetail-pwr-value">${pwr}</span>
+                <span class="unitdetail-pwr-band">(${pwrBand})</span>
+              </div>
             </div>
           </div>
           <div class="unitdetail-header-right">

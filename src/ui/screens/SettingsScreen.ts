@@ -16,6 +16,7 @@ import {
   getCategoryLabel,
   SettingDescriptor,
 } from "../../core/settings";
+import { getAllThemes, getTheme } from "../../core/themes";
 import {
   isControllerConnected,
   getConnectedControllers,
@@ -160,15 +161,34 @@ function renderSettingItem(desc: SettingDescriptor, settings: GameSettings): str
       break;
       
     case 'select':
-      control = /*html*/ `
-        <select class="setting-select" data-setting="${desc.key}">
-          ${desc.options?.map(opt => `
-            <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
-              ${opt.label}
-            </option>
-          `).join('')}
-        </select>
-      `;
+      // Special handling for theme selector with descriptions
+      if (desc.key === "uiTheme") {
+        const themes = getAllThemes();
+        control = /*html*/ `
+          <div class="setting-theme-container">
+            <select class="setting-select" data-setting="${desc.key}">
+              ${themes.map(theme => `
+                <option value="${theme.id}" ${value === theme.id ? 'selected' : ''}>
+                  ${theme.name}
+                </option>
+              `).join('')}
+            </select>
+            <div class="setting-theme-description">
+              ${getTheme(value as any)?.description || ''}
+            </div>
+          </div>
+        `;
+      } else {
+        control = /*html*/ `
+          <select class="setting-select" data-setting="${desc.key}">
+            ${desc.options?.map(opt => `
+              <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
+                ${opt.label}
+              </option>
+            `).join('')}
+          </select>
+        `;
+      }
       break;
   }
   
@@ -432,7 +452,25 @@ function attachSettingsListeners(settings: GameSettings): void {
       const sel = e.target as HTMLSelectElement;
       const key = sel.dataset.setting as keyof GameSettings;
       await updateSettings({ [key]: sel.value });
+      
+      // Update theme description if this is the theme selector
+      if (key === "uiTheme") {
+        const themeDesc = select.parentElement?.querySelector(".setting-theme-description");
+        if (themeDesc) {
+          const theme = getTheme(sel.value as any);
+          themeDesc.textContent = theme?.description || "";
+        }
+      }
     });
+    
+    // Update theme description on initial load
+    if (select.dataset.setting === "uiTheme") {
+      const themeDesc = select.parentElement?.querySelector(".setting-theme-description");
+      if (themeDesc) {
+        const theme = getTheme(select.value as any);
+        themeDesc.textContent = theme?.description || "";
+      }
+    }
   });
   
   // Load saves if on saves tab

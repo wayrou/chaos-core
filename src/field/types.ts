@@ -38,7 +38,7 @@ export interface InteractionZone {
   y: number;
   width: number;
   height: number;
-  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "free_zone_entry" | "custom";
+  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "free_zone_entry" | "base_camp_entry" | "custom";
   label: string;
   metadata?: Record<string, any>;
 }

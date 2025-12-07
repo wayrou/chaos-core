@@ -299,19 +299,30 @@ function renderShopItem(item: ShopItem, state: any): string {
 // EVENT HANDLERS
 // ----------------------------------------------------------------------------
 
-function attachShopListeners(): void {
+function attachShopListeners(returnTo: "basecamp" | "field" = "basecamp"): void {
   // Back button
-  document.getElementById("backBtn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
-  });
+  const backBtn = document.getElementById("backBtn");
+  if (backBtn) {
+    // Get return destination from button's data attribute or parameter
+    const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
+    backBtn.onclick = () => {
+      if (returnDestination === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderBaseCampScreen();
+      }
+    };
+  }
   
-  // Tab buttons
+  // Tab buttons - preserve return destination when switching tabs
   document.querySelectorAll(".shop-tab").forEach(tab => {
     tab.addEventListener("click", (e) => {
       const tabName = (e.currentTarget as HTMLElement).getAttribute("data-tab");
       if (tabName) {
         currentTab = tabName as "paks" | "equipment" | "consumables";
-        renderShopScreen();
+        // Get current return destination from button
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderShopScreen(currentReturnTo as "basecamp" | "field");
       }
     });
   });

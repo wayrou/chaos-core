@@ -31,7 +31,7 @@ let selectedRecipeId: string | null = null;
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderWorkshopScreen(): void {
+export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
 
@@ -159,7 +159,7 @@ export function renderWorkshopScreen(): void {
   `;
 
   // Attach event listeners
-  attachWorkshopListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds);
+  attachWorkshopListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds, returnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -329,7 +329,8 @@ function attachWorkshopListeners(
   knownRecipeIds: string[],
   resources: any,
   consumables: Record<string, number>,
-  inventoryItemIds: string[]
+  inventoryItemIds: string[],
+  returnTo: "basecamp" | "field" = "basecamp"
 ): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
@@ -352,7 +353,9 @@ function attachWorkshopListeners(
       if (category) {
         selectedCategory = category;
         selectedRecipeId = null;
-        renderWorkshopScreen();
+        // Get current return destination from button
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -363,7 +366,9 @@ function attachWorkshopListeners(
       const recipeId = item.getAttribute("data-recipe-id");
       if (recipeId) {
         selectedRecipeId = recipeId;
-        renderWorkshopScreen();
+        // Get current return destination from button
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -413,7 +418,7 @@ function attachWorkshopListeners(
         addWorkshopLog(`SLK//OUTPUT :: +${result.quantity} ${formatItemName(result.itemId!)}`);
         
         // Re-render
-        renderWorkshopScreen();
+        renderWorkshopScreen(returnTo);
       } else {
         addWorkshopLog(`SLK//ERROR :: Crafting failed - ${result.error}`);
       }

@@ -9,6 +9,8 @@ import { renderWorkshopScreen } from "./WorkshopScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
 import { renderSettingsScreen } from "./SettingsScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderRecruitmentScreen } from "./RecruitmentScreen";
+import { renderQuestBoardScreen } from "./QuestBoardScreen";
 
 // Check if we're in field mode (base camp modal should be shown as overlay)
 function isInFieldMode(): boolean {
@@ -76,9 +78,17 @@ export function renderBaseCampScreen(): void {
           <span class="btn-icon">🔨</span>
           <span class="btn-label">WORKSHOP</span>
         </button>
+        <button class="bc-btn bc-tavern" id="tavernBtn">
+          <span class="btn-icon">🍺</span>
+          <span class="btn-label">TAVERN</span>
+        </button>
         <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
           <span class="btn-icon">&#128295;</span>
           <span class="btn-label">GEAR WORKBENCH</span>
+        </button>
+        <button class="bc-btn bc-quest-board" id="questBoardBtn">
+          <span class="btn-icon">📋</span>
+          <span class="btn-label">QUEST BOARD</span>
         </button>
         <button class="bc-btn bc-settings" id="settingsBtn">
           <span class="btn-icon">⚙</span>
@@ -122,6 +132,10 @@ export function renderBaseCampScreen(): void {
     renderWorkshopScreen();
   });
 
+  root.querySelector("#tavernBtn")?.addEventListener("click", () => {
+    renderRecruitmentScreen();
+  });
+
   // Gear Workbench - Opens with first party unit's weapon selected
   root.querySelector("#gearWorkbenchBtn")?.addEventListener("click", () => {
     const currentState = getGameState();
@@ -136,6 +150,17 @@ export function renderBaseCampScreen(): void {
       renderGearWorkbenchScreen();
     }
   });
+
+  // Quest Board button
+  const questBoardBtn = root.querySelector("#questBoardBtn");
+  if (questBoardBtn) {
+    questBoardBtn.addEventListener("click", () => {
+      console.log("[BASE CAMP] Quest Board button clicked");
+      renderQuestBoardScreen("basecamp");
+    });
+  } else {
+    console.warn("[BASE CAMP] Quest Board button not found");
+  }
 
   // Settings button
   root.querySelector("#settingsBtn")?.addEventListener("click", () => {
@@ -217,6 +242,10 @@ export function showBaseCampModal(): void {
             <span class="btn-icon">&#128295;</span>
             <span class="btn-label">GEAR WORKBENCH</span>
           </button>
+          <button class="bc-btn bc-quest-board" id="questBoardBtn">
+            <span class="btn-icon">📋</span>
+            <span class="btn-label">QUEST BOARD</span>
+          </button>
           <button class="bc-btn bc-settings" id="settingsBtn">
             <span class="btn-icon">⚙</span>
             <span class="btn-label">SETTINGS</span>
@@ -249,7 +278,7 @@ export function showBaseCampModal(): void {
   // Attach all the same event listeners as the full screen version
   attachBaseCampListeners(modal);
   
-  // Show modal
+  // Show modal - ensure it's visible
   modal.style.display = "flex";
 }
 
@@ -288,6 +317,11 @@ function attachBaseCampListeners(container: HTMLElement): void {
     renderWorkshopScreen();
   });
 
+  container.querySelector("#tavernBtn")?.addEventListener("click", () => {
+    hideBaseCampModal();
+    renderRecruitmentScreen();
+  });
+
   // Gear Workbench
   container.querySelector("#gearWorkbenchBtn")?.addEventListener("click", () => {
     const currentState = getGameState();
@@ -303,6 +337,18 @@ function attachBaseCampListeners(container: HTMLElement): void {
       renderGearWorkbenchScreen();
     }
   });
+
+  // Quest Board button
+  const questBoardBtn = container.querySelector("#questBoardBtn");
+  if (questBoardBtn) {
+    questBoardBtn.addEventListener("click", () => {
+      console.log("[BASE CAMP MODAL] Quest Board button clicked");
+      hideBaseCampModal();
+      renderQuestBoardScreen("basecamp");
+    });
+  } else {
+    console.warn("[BASE CAMP MODAL] Quest Board button not found");
+  }
 
   // Settings button
   container.querySelector("#settingsBtn")?.addEventListener("click", () => {

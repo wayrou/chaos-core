@@ -8,7 +8,7 @@ import { renderWorkshopScreen } from "../ui/screens/WorkshopScreen";
 import { renderRosterScreen } from "../ui/screens/RosterScreen";
 import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
 import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
-import { renderFieldScreen } from "./FieldScreen";
+import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
@@ -16,7 +16,7 @@ import { renderFieldScreen } from "./FieldScreen";
  */
 export function handleInteraction(
   zone: InteractionZone,
-  map: FieldMap,
+  _map: FieldMap,
   onResume: () => void
 ): void {
   console.log(`[FIELD] Handling interaction: ${zone.action} (${zone.label})`);
@@ -43,12 +43,27 @@ export function handleInteraction(
       renderOperationSelectScreen("field");
       break;
       
+    case "quest_board":
+      console.log("[FIELD] Quest Board interaction triggered");
+      try {
+        renderQuestBoardScreen("field");
+      } catch (error) {
+        console.error("[FIELD] Error rendering quest board:", error);
+        onResume();
+      }
+      break;
+      
+    case "tavern":
+      renderRecruitmentScreen("field");
+      break;
+      
     case "free_zone_entry":
       // Switch to different map
-      if (zone.metadata?.targetMap) {
+      const targetMap = zone.metadata?.targetMap;
+      if (targetMap) {
         // Import dynamically to avoid circular dependency
         import("./FieldScreen").then(({ renderFieldScreen }) => {
-          renderFieldScreen(zone.metadata.targetMap as "base_camp" | "free_zone_1");
+          renderFieldScreen(targetMap as "base_camp" | "free_zone_1");
         });
       } else {
         // Default: switch to base camp

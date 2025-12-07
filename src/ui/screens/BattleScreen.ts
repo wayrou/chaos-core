@@ -5,11 +5,9 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMap } from "./OperationMapScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
-
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
 
 import {
   BattleState,
@@ -631,7 +629,11 @@ export function renderBattleScreen() {
       <div class="battle-bottom-overlay">
         <div class="battle-unit-panel">${renderUnitPanel(activeUnit)}</div>
         <div class="battle-weapon-panel">${renderWeaponWindow(activeUnit)}</div>
-        <div class="battle-hand ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}">${renderHandPanel(activeUnit, isPlayerTurn)}</div>
+      </div>
+      
+      <!-- Floating hand overlay (independent of bottom panel) -->
+      <div class="battle-hand-floating ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}">
+        ${renderHandPanel(activeUnit, isPlayerTurn)}
       </div>
       
       ${renderBattleResultOverlay(battle)}
@@ -708,7 +710,7 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
 function renderHandPanel(activeUnit: BattleUnitState | undefined, isPlayerTurn: boolean | undefined): string {
   const hand = resolveHandCards(activeUnit?.hand ?? []);
   return `
-    <div class="hand-header">
+    <div class="hand-header-floating">
       <div class="hand-info">
         <span class="hand-label">HAND</span>
         <span class="hand-count">${hand.length} CARDS</span>
@@ -729,7 +731,7 @@ function renderHandPanel(activeUnit: BattleUnitState | undefined, isPlayerTurn: 
         <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
       </div>
     </div>
-    <div class="hand-cards-row">${renderHandCards(hand, isPlayerTurn)}</div>
+    <div class="hand-cards-row-floating">${renderHandCards(hand, isPlayerTurn)}</div>
   `;
 }
 
@@ -1228,6 +1230,23 @@ renderBattleScreen();
               : s.cardLibrary,
           };
         });
+
+        // Update quest progress for battle completion
+        const { updateQuestProgress } = require("../../quests/questManager");
+        // Count enemies defeated (estimate from rewards or battle state)
+        const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
+        updateQuestProgress("kill_enemies", enemyCount, enemyCount);
+        updateQuestProgress("complete_battle", "any", 1);
+        
+        // Update resource collection quests
+        if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
+        if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
+        if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
+        if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
+        
+        // Track survival affinity for all units that survived
+        const { trackBattleSurvival } = require("../../core/affinityBattle");
+        trackBattleSurvival(localBattleState, true);
       }
       
       localBattleState = null;
