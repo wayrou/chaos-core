@@ -4,6 +4,8 @@
 // Game settings management with persistence
 // ============================================================================
 
+import { applyTheme, ThemeId } from "./themes";
+
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
@@ -19,6 +21,7 @@ export interface GameSettings {
   showDamageNumbers: boolean;
   showGridCoordinates: boolean;
   animationSpeed: "slow" | "normal" | "fast";
+  uiTheme: "ardycia" | "cyberpunk" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
   
   // Gameplay
   autosaveEnabled: boolean;
@@ -46,6 +49,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showDamageNumbers: true,
   showGridCoordinates: false,
   animationSpeed: "normal",
+  uiTheme: "ardycia",
   
   autosaveEnabled: true,
   confirmEndTurn: false,
@@ -237,6 +241,9 @@ function applySettings(settings: GameSettings): void {
   // Animation speed
   const animSpeeds = { slow: "1.5", normal: "1", fast: "0.5" };
   root.style.setProperty("--animation-speed", animSpeeds[settings.animationSpeed]);
+  
+  // UI Theme
+  applyTheme(settings.uiTheme as ThemeId);
 }
 
 // ----------------------------------------------------------------------------
@@ -320,6 +327,25 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
       { value: "slow", label: "Slow" },
       { value: "normal", label: "Normal" },
       { value: "fast", label: "Fast" },
+    ],
+  },
+  {
+    key: "uiTheme",
+    label: "UI Theme",
+    description: "Color theme for the game interface",
+    type: "select",
+    category: "display",
+    options: [
+      { value: "ardycia", label: "Ardycia (Default)" },
+      { value: "cyberpunk", label: "Cyberpunk" },
+      { value: "monochrome", label: "Monochrome" },
+      { value: "warm", label: "Warm" },
+      { value: "cool", label: "Cool" },
+      { value: "neon", label: "Neon" },
+      { value: "forest", label: "Forest" },
+      { value: "sunset", label: "Sunset" },
+      { value: "ocean", label: "Ocean" },
+      { value: "void", label: "Void" },
     ],
   },
   

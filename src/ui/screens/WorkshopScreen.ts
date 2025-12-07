@@ -5,6 +5,7 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 import {
   Recipe,
@@ -30,7 +31,7 @@ let selectedRecipeId: string | null = null;
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderWorkshopScreen(): void {
+export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
 
@@ -63,7 +64,7 @@ export function renderWorkshopScreen(): void {
           <div class="workshop-subtitle">SLK://CRAFT_NODE • FABRICATION TERMINAL</div>
         </div>
         <div class="workshop-header-right">
-          <button class="workshop-back-btn" id="backBtn">← BASE CAMP</button>
+          <button class="workshop-back-btn" id="backBtn" data-return-to="${returnTo}">← ${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</button>
         </div>
       </div>
       
@@ -158,7 +159,7 @@ export function renderWorkshopScreen(): void {
   `;
 
   // Attach event listeners
-  attachWorkshopListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds);
+  attachWorkshopListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds, returnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -328,14 +329,20 @@ function attachWorkshopListeners(
   knownRecipeIds: string[],
   resources: any,
   consumables: Record<string, number>,
-  inventoryItemIds: string[]
+  inventoryItemIds: string[],
+  returnTo: "basecamp" | "field" = "basecamp"
 ): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
       selectedRecipeId = null;
-      renderBaseCampScreen();
+      const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
+      if (returnDestination === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderBaseCampScreen();
+      }
     };
   }
   
@@ -346,7 +353,9 @@ function attachWorkshopListeners(
       if (category) {
         selectedCategory = category;
         selectedRecipeId = null;
-        renderWorkshopScreen();
+        // Get current return destination from button
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -357,7 +366,9 @@ function attachWorkshopListeners(
       const recipeId = item.getAttribute("data-recipe-id");
       if (recipeId) {
         selectedRecipeId = recipeId;
-        renderWorkshopScreen();
+        // Get current return destination from button
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -407,7 +418,7 @@ function attachWorkshopListeners(
         addWorkshopLog(`SLK//OUTPUT :: +${result.quantity} ${formatItemName(result.itemId!)}`);
         
         // Re-render
-        renderWorkshopScreen();
+        renderWorkshopScreen(returnTo);
       } else {
         addWorkshopLog(`SLK//ERROR :: Crafting failed - ${result.error}`);
       }

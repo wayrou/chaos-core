@@ -6,6 +6,8 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
+import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 import {
   UnitLoadout,
@@ -16,6 +18,7 @@ import {
   UnitClass,
   CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -47,7 +50,7 @@ function formatStatDiff(diff: number): string {
   return "";
 }
 
-export function renderRosterScreen(): void {
+export function renderRosterScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -88,12 +91,28 @@ export function renderRosterScreen(): void {
       const totalAgi = baseStats.agi + equipStats.agi;
       const totalAcc = baseStats.acc + equipStats.acc;
       const totalHp = baseStats.maxHp + equipStats.hp;
+      const portraitPath = getUnitPortraitPath(unitId);
+      
+      // PWR display
+      const pwr = (unit as any).pwr || 0;
+      const pwrBand = getPWRBand(pwr);
+      const pwrColor = getPWRBandColor(pwr);
 
       return `
         <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" data-unit-id="${unitId}">
           <div class="roster-unit-header">
-            <div class="roster-unit-name">${unit.name}</div>
-            <div class="roster-unit-class">${formatClassName(unitClass)}</div>
+            <div class="roster-unit-portrait">
+              <img src="${portraitPath}" alt="${unit.name}" class="roster-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+            </div>
+            <div class="roster-unit-header-text">
+              <div class="roster-unit-name">${unit.name}</div>
+              <div class="roster-unit-class">${formatClassName(unitClass)}</div>
+              <div class="roster-unit-pwr" style="color: ${pwrColor}">
+                <span class="roster-pwr-label">PWR:</span>
+                <span class="roster-pwr-value">${pwr}</span>
+                <span class="roster-pwr-band">(${pwrBand})</span>
+              </div>
+            </div>
           </div>
           <div class="roster-unit-body">
             <div class="roster-unit-stats">
@@ -136,7 +155,7 @@ export function renderRosterScreen(): void {
           </div>
           <div class="roster-unit-footer">
             ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
-            <button class="roster-detail-btn" data-unit-id="${unitId}">MANAGE</button>
+            <button class="roster-detail-btn" data-unit-id="${unitId}" type="button">MANAGE</button>
           </div>
         </div>
       `;
@@ -153,7 +172,7 @@ export function renderRosterScreen(): void {
           </div>
           <div class="roster-header-right">
             <div class="roster-count">${unitIds.length} UNITS / ${partyUnitIds.length} IN PARTY</div>
-            <button class="roster-back-btn">BACK TO BASE CAMP</button>
+            <button class="roster-back-btn" data-return-to="${returnTo}">${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO BASE CAMP"}</button>
           </div>
         </div>
         <div class="roster-body">
@@ -180,28 +199,129 @@ export function renderRosterScreen(): void {
     </div>
   `;
 
-  root.querySelector(".roster-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
-  });
+  // Attach event listeners
+  attachRosterListeners(root, returnTo);
+}
 
-  root.querySelectorAll(".roster-detail-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const unitId = (e.target as HTMLElement).getAttribute("data-unit-id");
-      if (unitId) {
-        renderUnitDetailScreen(unitId);
-      }
-    });
-  });
+function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"): void {
+  // Use setTimeout to ensure DOM is fully rendered
+  setTimeout(() => {
+    // Back button
+    const backBtn = root.querySelector(".roster-back-btn");
+    if (backBtn) {
+      (backBtn as HTMLElement).onclick = () => {
+        const btn = backBtn as HTMLElement;
+        const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+        console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
+        if (returnDestination === "field") {
+          renderFieldScreen("base_camp");
+        } else {
+          renderBaseCampScreen();
+        }
+      };
+    } else {
+      console.warn("[ROSTER] Back button not found");
+    }
 
-  root.querySelectorAll(".roster-unit-card").forEach((card) => {
-    card.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).classList.contains("roster-detail-btn")) return;
-      const unitId = (card as HTMLElement).getAttribute("data-unit-id");
-      if (unitId) {
-        renderUnitDetailScreen(unitId);
+    // Manage buttons - use both onclick and addEventListener for maximum compatibility
+    const manageButtons = root.querySelectorAll(".roster-detail-btn");
+    console.log(`[ROSTER] Found ${manageButtons.length} manage buttons`);
+    
+    if (manageButtons.length === 0) {
+      console.error("[ROSTER] No manage buttons found in DOM!");
+    }
+    
+    manageButtons.forEach((btn, index) => {
+      const button = btn as HTMLElement;
+      const unitId = button.getAttribute("data-unit-id");
+      
+      if (!unitId) {
+        console.warn(`[ROSTER] Button ${index} has no data-unit-id attribute`);
       }
+      
+      // Clear any existing handlers
+      button.onclick = null;
+      
+      // Use onclick as primary handler (more reliable)
+      button.onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log(`[ROSTER] Manage button ${index} clicked (onclick), unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+            alert(`Error opening unit detail: ${error}`);
+          }
+        } else {
+          console.error(`[ROSTER] Button ${index} has no unit-id!`);
+          alert("Error: Unit ID not found on button");
+        }
+      };
+      
+      // Also add event listener as backup
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log(`[ROSTER] Manage button ${index} clicked (addEventListener), unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      }, { once: false, passive: false });
+      
+      // Ensure button is clickable
+      button.style.pointerEvents = "auto";
+      button.style.cursor = "pointer";
+      button.style.zIndex = "10";
     });
-  });
+
+    // Unit cards - click anywhere on card to open detail
+    const unitCards = root.querySelectorAll(".roster-unit-card");
+    console.log(`[ROSTER] Found ${unitCards.length} unit cards`);
+    
+    unitCards.forEach((card, index) => {
+      const cardEl = card as HTMLElement;
+      const unitId = cardEl.getAttribute("data-unit-id");
+      
+      // Use onclick for reliability
+      cardEl.onclick = (e) => {
+        const target = e.target as HTMLElement;
+        // Don't open if clicking on the button
+        if (target.closest(".roster-detail-btn")) {
+          return;
+        }
+        console.log(`[ROSTER] Unit card ${index} clicked, unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      };
+      
+      // Also add event listener
+      card.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest(".roster-detail-btn")) {
+          return;
+        }
+        const unitId = cardEl.getAttribute("data-unit-id");
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      });
+    });
+  }, 0);
 
   // Debug button to give all equipment to all units
   root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {

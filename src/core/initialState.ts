@@ -43,6 +43,8 @@ import {
   STARTER_CHESTPIECES,
   STARTER_ACCESSORIES,
 } from "./equipment";
+import { calculatePWR } from "./pwr";
+import { createDefaultAffinities } from "./affinity";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -239,6 +241,9 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   // Legacy deck no longer used - decks are built from equipment
   const baseDeck: CardId[] = [];
 
+  const equipmentById = getAllStarterEquipment();
+  const modulesById = getAllModules();
+
   const units: UnitWithEquipment[] = [
     {
       id: "unit_aeriss",
@@ -260,6 +265,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         accessory1: "accessory_steel_signet_ring",
         accessory2: null,
       },
+      affinities: createDefaultAffinities(),
     },
     {
       id: "unit_marksman_1",
@@ -281,10 +287,21 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         accessory1: "accessory_eagle_eye_lens",
         accessory2: null,
       },
+      affinities: createDefaultAffinities(),
     },
   ];
 
-  return Object.fromEntries(units.map((u) => [u.id, u])) as Record<
+  // Calculate PWR for each unit
+  const unitsWithPWR = units.map((u) => {
+    const pwr = calculatePWR({
+      unit: u,
+      equipmentById,
+      modulesById,
+    });
+    return { ...u, pwr };
+  });
+
+  return Object.fromEntries(unitsWithPWR.map((u) => [u.id, u])) as Record<
     UnitId,
     UnitWithEquipment
   >;
@@ -457,6 +474,18 @@ consumables: {},
     equipmentById,
     modulesById,
     equipmentPool,
+
+    // Quest System
+    quests: {
+      availableQuests: [],
+      activeQuests: [],
+      completedQuests: [],
+      failedQuests: [],
+      maxActiveQuests: 5,
+    },
+
+    // Unit Recruitment System (Headline 14az)
+    recruitmentCandidates: undefined, // Will be generated when Tavern is opened
   };
 
   return state;
