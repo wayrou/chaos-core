@@ -5,8 +5,6 @@ import { getCurrentOperation } from "../../core/ops";
 import { renderOperationMap } from "./OperationMapScreen";
 import { renderInventoryScreen } from "./InventoryScreen";
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
 
 export function renderScrollLinkShell(): void {
   const root = document.getElementById("app");
@@ -41,7 +39,10 @@ export function renderScrollLinkShell(): void {
           </div>
         </div>
 
-        <button class="shell-loadout-btn">LOADOUT</button>
+        <div class="scrolllink-topbar-right">
+          <div class="scrolllink-tagline">SOLARIS (DEFUNCT) — "WORKING FOR YOU"</div>
+          <button class="shell-loadout-btn">LOADOUT</button>
+        </div>
       </div>
 
       <div class="scrolllink-main">
@@ -65,6 +66,11 @@ export function renderScrollLinkShell(): void {
             </div>
 
             <div class="terminal-line">--------------------------------------</div>
+
+            <div class="terminal-line">
+              <span class="terminal-prompt">SLK&gt;</span>
+              <span class="terminal-text">Legacy Solaris Systems — "Working for you."</span>
+            </div>
 
             <div class="terminal-line terminal-line--commands">
               <button class="terminal-command-btn" data-action="start-op">
