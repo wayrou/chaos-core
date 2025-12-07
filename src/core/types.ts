@@ -185,7 +185,7 @@ export interface LoadPenaltyFlags {
 // ---------------------------------------------------------
 
 export interface GameState {
-  phase: "shell" | "battle" | "map";
+  phase: "shell" | "battle" | "map" | "field";
   profile: PlayerProfile;
   operation: OperationRun;
   unitsById: Record<UnitId, Unit>;

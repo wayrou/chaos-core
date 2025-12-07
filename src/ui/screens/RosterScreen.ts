@@ -6,6 +6,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 import {
   UnitLoadout,
@@ -16,6 +17,7 @@ import {
   UnitClass,
   CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -47,7 +49,7 @@ function formatStatDiff(diff: number): string {
   return "";
 }
 
-export function renderRosterScreen(): void {
+export function renderRosterScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -88,12 +90,18 @@ export function renderRosterScreen(): void {
       const totalAgi = baseStats.agi + equipStats.agi;
       const totalAcc = baseStats.acc + equipStats.acc;
       const totalHp = baseStats.maxHp + equipStats.hp;
+      const portraitPath = getUnitPortraitPath(unitId);
 
       return `
         <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" data-unit-id="${unitId}">
           <div class="roster-unit-header">
-            <div class="roster-unit-name">${unit.name}</div>
-            <div class="roster-unit-class">${formatClassName(unitClass)}</div>
+            <div class="roster-unit-portrait">
+              <img src="${portraitPath}" alt="${unit.name}" class="roster-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+            </div>
+            <div class="roster-unit-header-text">
+              <div class="roster-unit-name">${unit.name}</div>
+              <div class="roster-unit-class">${formatClassName(unitClass)}</div>
+            </div>
           </div>
           <div class="roster-unit-body">
             <div class="roster-unit-stats">
@@ -153,7 +161,7 @@ export function renderRosterScreen(): void {
           </div>
           <div class="roster-header-right">
             <div class="roster-count">${unitIds.length} UNITS / ${partyUnitIds.length} IN PARTY</div>
-            <button class="roster-back-btn">BACK TO BASE CAMP</button>
+            <button class="roster-back-btn" data-return-to="${returnTo}">${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO BASE CAMP"}</button>
           </div>
         </div>
         <div class="roster-body">
@@ -181,7 +189,13 @@ export function renderRosterScreen(): void {
   `;
 
   root.querySelector(".roster-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
+    const btn = root.querySelector(".roster-back-btn") as HTMLElement;
+    const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+    if (returnDestination === "field") {
+      renderFieldScreen("base_camp");
+    } else {
+      renderBaseCampScreen();
+    }
   });
 
   root.querySelectorAll(".roster-detail-btn").forEach((btn) => {

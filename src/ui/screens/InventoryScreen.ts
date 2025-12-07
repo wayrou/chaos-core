@@ -10,6 +10,7 @@ import {
 import { InventoryItem, InventoryState } from "../../core/types";
 import { renderScrollLinkShell } from "./ScrollLinkShell";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
@@ -19,7 +20,7 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
-export function renderInventoryScreen(): void {
+export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element in index.html");
@@ -96,7 +97,7 @@ export function renderInventoryScreen(): void {
             </div>
           </div>
           <div class="inventory-header-right">
-            <button class="inventory-back-btn">BACK TO SHELL</button>
+            <button class="inventory-back-btn" data-return-to="${returnTo}">${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO SHELL"}</button>
           </div>
         </div>
 
@@ -171,8 +172,12 @@ export function renderInventoryScreen(): void {
   const backBtn = root.querySelector<HTMLButtonElement>(".inventory-back-btn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
-renderBaseCampScreen();
-
+      const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;
+      if (returnDestination === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderBaseCampScreen();
+      }
     });
   }
 

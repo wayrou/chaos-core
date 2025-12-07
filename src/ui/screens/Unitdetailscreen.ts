@@ -27,6 +27,7 @@ import {
   canEquipWeapon,
   EquipmentCard,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -193,13 +194,20 @@ export function renderUnitDetailScreen(unitId: string): void {
     })
     .join("");
 
+  const portraitPath = getUnitPortraitPath(unitId);
+
   root.innerHTML = `
     <div class="unitdetail-root">
       <div class="unitdetail-card">
         <div class="unitdetail-header">
           <div class="unitdetail-header-left">
-            <div class="unitdetail-name">${unit.name}</div>
-            <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+            <div class="unitdetail-portrait">
+              <img src="${portraitPath}" alt="${unit.name}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+            </div>
+            <div class="unitdetail-header-text">
+              <div class="unitdetail-name">${unit.name}</div>
+              <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+            </div>
           </div>
           <div class="unitdetail-header-right">
             <button class="unitdetail-class-btn" id="changeClassBtn">

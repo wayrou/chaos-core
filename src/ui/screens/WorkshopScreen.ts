@@ -5,6 +5,7 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 import {
   Recipe,
@@ -63,7 +64,7 @@ export function renderWorkshopScreen(): void {
           <div class="workshop-subtitle">SLK://CRAFT_NODE • FABRICATION TERMINAL</div>
         </div>
         <div class="workshop-header-right">
-          <button class="workshop-back-btn" id="backBtn">← BASE CAMP</button>
+          <button class="workshop-back-btn" id="backBtn" data-return-to="${returnTo}">← ${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</button>
         </div>
       </div>
       
@@ -335,7 +336,12 @@ function attachWorkshopListeners(
   if (backBtn) {
     backBtn.onclick = () => {
       selectedRecipeId = null;
-      renderBaseCampScreen();
+      const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
+      if (returnDestination === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderBaseCampScreen();
+      }
     };
   }
   

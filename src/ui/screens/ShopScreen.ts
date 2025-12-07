@@ -5,6 +5,7 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 import { 
   PAK_DATABASE, 
   openPAK, 
@@ -145,11 +146,12 @@ const EQUIPMENT_ITEMS: ShopItem[] = [
 
 let currentTab: "paks" | "equipment" | "consumables" = "paks";
 
-export function renderShopScreen(): void {
+export function renderShopScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
   
   const state = getGameState();
+  const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
   
   app.innerHTML = `
     <div class="shop-root">
@@ -164,9 +166,9 @@ export function renderShopScreen(): void {
             <span class="wallet-label">AVAILABLE WAD</span>
             <span class="wallet-value">${state.wad.toLocaleString()}</span>
           </div>
-          <button class="shop-back-btn" id="backBtn">
+          <button class="shop-back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
-            <span class="btn-text">BASE CAMP</span>
+            <span class="btn-text">${backButtonText}</span>
           </button>
         </div>
       </div>
@@ -220,7 +222,7 @@ export function renderShopScreen(): void {
     </div>
   `;
   
-  attachShopListeners();
+  attachShopListeners(returnTo);
 }
 
 function renderShopContent(state: any): string {

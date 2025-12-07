@@ -21,6 +21,7 @@ import {
   BASE_STRAIN_THRESHOLD,
   BattleUnitState,
 } from "../../core/battle";
+import { getBattleUnitPortraitPath } from "../../core/portraits";
 
 // Card type definition
 interface Card {
@@ -297,53 +298,136 @@ function resetTurnStateForUnit(unit: BattleUnitState | null) {
   };
 }
 
-// Animation helper - moves unit visually along path
+// Animation helper - moves unit visually along path with smooth animation
+// Made more defensive and fail-proof
 function animateUnitMovement(
   unitId: string,
   from: { x: number; y: number },
   to: { x: number; y: number },
   onComplete: () => void
 ) {
-  // Find the unit element on the grid
+  console.log(`[ANIMATION] Starting animation for unit ${unitId} from (${from.x}, ${from.y}) to (${to.x}, ${to.y})`);
+  
+  // Find the unit element on the grid - it should be in the source tile
   const grid = document.querySelector('.battle-grid');
   if (!grid) {
+    console.warn('[ANIMATION] Grid not found');
     onComplete();
     return;
   }
   
-  // Get all tiles to find dimensions
-  const tiles = grid.querySelectorAll('.battle-tile');
-  if (tiles.length === 0) {
+  // Find the unit element in the source tile (where it currently is)
+  const sourceTile = grid.querySelector(`[data-x="${from.x}"][data-y="${from.y}"]`) as HTMLElement;
+  if (!sourceTile) {
+    console.warn(`[ANIMATION] Source tile not found at (${from.x}, ${from.y})`);
     onComplete();
     return;
   }
   
-  const firstTile = tiles[0] as HTMLElement;
-  const tileW = firstTile.offsetWidth;
-  const tileH = firstTile.offsetHeight;
-  
-  // Find the source tile (where unit currently is visually)
-  const sourceTile = grid.querySelector(`[data-x="${from.x}"][data-y="${from.y}"]`);
-  const unitEl = sourceTile?.querySelector('.battle-unit') as HTMLElement;
-  
+  const unitEl = sourceTile.querySelector(`[data-unit-id="${unitId}"]`) as HTMLElement;
   if (!unitEl) {
+    console.warn(`[ANIMATION] Unit ${unitId} not found in source tile`);
     onComplete();
     return;
   }
   
-  // Calculate pixel offset
-  const dx = (to.x - from.x) * tileW;
-  const dy = (to.y - from.y) * tileH;
+  // Get destination tile
+  const destTile = grid.querySelector(`[data-x="${to.x}"][data-y="${to.y}"]`) as HTMLElement;
+  if (!destTile) {
+    console.warn(`[ANIMATION] Destination tile not found at (${to.x}, ${to.y})`);
+    onComplete();
+    return;
+  }
   
-  // Apply animation
-  unitEl.style.transition = 'transform 0.3s ease-out';
-  unitEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  // Store original styles to restore if needed
+  const originalTransition = unitEl.style.transition;
+  const originalTransform = unitEl.style.transform;
+  const originalZIndex = unitEl.style.zIndex;
+  const originalFilter = unitEl.style.filter;
+  
+  // Calculate the actual pixel offset from source to destination using getBoundingClientRect
+  // Do this BEFORE moving the element
+  const sourceRect = sourceTile.getBoundingClientRect();
+  const destRect = destTile.getBoundingClientRect();
+  
+  // Calculate the actual pixel offset from source center to destination center
+  const actualDx = (destRect.left + destRect.width / 2) - (sourceRect.left + sourceRect.width / 2);
+  const actualDy = (destRect.top + destRect.height / 2) - (sourceRect.top + sourceRect.height / 2);
+  
+  console.log(`[ANIMATION] Pixel offset: dx=${actualDx}, dy=${actualDy}`);
+  
+  // Calculate distance for animation duration (longer distance = longer animation, but capped)
+  const distance = Math.sqrt(actualDx * actualDx + actualDy * actualDy);
+  const baseDuration = 400; // Base duration in ms
+  const duration = Math.min(baseDuration + (distance * 0.3), 800); // Scale with distance, max 800ms
+  
+  console.log(`[ANIMATION] Animation duration: ${duration}ms`);
+  
+  // Move the unit element to destination tile DOM-wise (but keep it visually at source)
+  destTile.appendChild(unitEl);
+  
+  // Move the unit element to destination tile DOM-wise (but keep it visually at source)
+  destTile.appendChild(unitEl);
+  
+  // Set initial position (unit is now in dest tile but visually offset to source position)
+  // Use simpler transform calculation - avoid calc() which can be unreliable
+  unitEl.style.transition = 'none';
+  // Calculate transform values directly
+  const translateX = -actualDx;
+  const translateY = -actualDy;
+  unitEl.style.transform = `translate(calc(-50% + ${translateX}px), calc(-50% + ${translateY}px))`;
   unitEl.style.zIndex = '100';
   
-  // After animation completes, call onComplete
-  setTimeout(() => {
-    onComplete();
-  }, 300);
+  // Force a reflow to ensure the initial position is applied - use multiple methods for reliability
+  void unitEl.offsetHeight;
+  void unitEl.offsetWidth;
+  void unitEl.getBoundingClientRect();
+  
+  // Use triple requestAnimationFrame for maximum reliability
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // Verify element still exists and is in the DOM
+        if (!unitEl.parentElement || !document.body.contains(unitEl)) {
+          console.warn('[ANIMATION] Unit element removed from DOM during animation setup');
+          onComplete();
+          return;
+        }
+        
+        // Verify the initial transform was applied by checking computed style
+        const computedTransform = window.getComputedStyle(unitEl).transform;
+        console.log(`[ANIMATION] Initial transform applied: ${computedTransform}`);
+        
+        // Use smooth cubic-bezier easing for more natural movement
+        unitEl.style.transition = `transform ${duration}ms cubic-bezier(0.4, 0.0, 0.2, 1), filter ${duration}ms ease-out`;
+        unitEl.style.transform = 'translate(-50%, -50%)';
+        unitEl.style.filter = 'brightness(1.15) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4))';
+        
+        console.log(`[ANIMATION] Animation started, will complete in ${duration}ms`);
+        
+        // After animation completes, call onComplete and reset
+        const timeoutId = setTimeout(() => {
+          // Verify element still exists before modifying
+          if (!unitEl.parentElement || !document.body.contains(unitEl)) {
+            console.warn('[ANIMATION] Unit element removed from DOM during animation');
+            onComplete();
+            return;
+          }
+          
+          unitEl.style.filter = '';
+          unitEl.style.zIndex = '';
+          // Ensure transform is reset to centered position
+          unitEl.style.transform = 'translate(-50%, -50%)';
+          unitEl.style.transition = '';
+          console.log(`[ANIMATION] Animation completed for unit ${unitId}`);
+          onComplete();
+        }, duration);
+        
+        // Store timeout ID on element for potential cleanup
+        (unitEl as any).__animationTimeout = timeoutId;
+      });
+    });
+  });
 }
 
 function getUnitsArray(battle: BattleState): BattleUnitState[] {
@@ -517,32 +601,39 @@ export function renderBattleScreen() {
 
   app.innerHTML = `
     <div class="battle-root">
-      <div class="battle-card">
-        <div class="battle-header">
-          <div class="battle-header-left">
-            <div class="battle-title">ENGAGEMENT – ${roomLabel}</div>
-            <div class="battle-subtitle">TURN ${battle.turnCount} • GRID ${battle.gridWidth}×${battle.gridHeight}</div>
-          </div>
-          <div class="battle-header-right">
-            <div class="battle-active-info">
-              <div class="battle-active-label">ACTIVE UNIT</div>
-              <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
-            </div>
-            <button class="battle-back-btn" id="exitBattleBtn">EXIT BATTLE</button>
-          </div>
+      <!-- Battle grid as full-screen background -->
+      <div class="battle-grid-background">
+        ${renderBattleGrid(battle, selectedCardIndex, activeUnit)}
+      </div>
+      
+      <!-- Header overlay at top -->
+      <div class="battle-header-overlay">
+        <div class="battle-header-left">
+          <div class="battle-title">ENGAGEMENT – ${roomLabel}</div>
+          <div class="battle-subtitle">TURN ${battle.turnCount} • GRID ${battle.gridWidth}×${battle.gridHeight}</div>
         </div>
-        <div class="battle-body battle-body--grid-only">
-          <div class="battle-grid-container">${renderBattleGrid(battle, selectedCardIndex, activeUnit)}</div>
-        </div>
-        <div class="scrollink-console">
-          <div class="scrollink-console-header">SCROLLINK OS // ENGAGEMENT_FEED</div>
-          <div class="scrollink-console-body" id="battleLog">${battle.log.slice(-8).map(l => `<div class="scrollink-console-line">${l}</div>`).join("")}</div>
+        <div class="battle-header-right">
+          <div class="battle-active-info">
+            <div class="battle-active-label">ACTIVE UNIT</div>
+            <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
+          </div>
+          <button class="battle-back-btn" id="exitBattleBtn">EXIT BATTLE</button>
         </div>
       </div>
-      <div class="battle-bottom">
+      
+      <!-- Console overlay -->
+      <div class="scrollink-console-overlay">
+        <div class="scrollink-console-header">SCROLLINK OS // ENGAGEMENT_FEED</div>
+        <div class="scrollink-console-body" id="battleLog">${battle.log.slice(-8).map(l => `<div class="scrollink-console-line">${l}</div>`).join("")}</div>
+      </div>
+      
+      <!-- Bottom UI panels overlay -->
+      <div class="battle-bottom-overlay">
         <div class="battle-unit-panel">${renderUnitPanel(activeUnit)}</div>
+        <div class="battle-weapon-panel">${renderWeaponWindow(activeUnit)}</div>
         <div class="battle-hand ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}">${renderHandPanel(activeUnit, isPlayerTurn)}</div>
       </div>
+      
       ${renderBattleResultOverlay(battle)}
     </div>
   `;
@@ -564,11 +655,17 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
   const isOver = activeUnit.strain > BASE_STRAIN_THRESHOLD;
   const maxMove = activeUnit.agi || 1;
   const movePct = (turnState.movementRemaining / maxMove) * 100;
+  const portraitPath = getBattleUnitPortraitPath(activeUnit.id, activeUnit.baseUnitId);
   
   return `
     <div class="unit-panel-header">
-      <div class="unit-panel-label">ACTIVE UNIT</div>
-      <div class="unit-panel-name">${activeUnit.name}</div>
+      <div class="unit-panel-portrait">
+        <img src="${portraitPath}" alt="${activeUnit.name}" class="unit-panel-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+      </div>
+      <div class="unit-panel-header-text">
+        <div class="unit-panel-label">ACTIVE UNIT</div>
+        <div class="unit-panel-name">${activeUnit.name}</div>
+      </div>
     </div>
     <div class="unit-panel-stats">
       <div class="unit-stat-row">
@@ -605,7 +702,6 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
         <span class="unit-stat-chip">ACC ${activeUnit.acc}</span>
       </div>
     </div>
-    <div class="unit-panel-weapon">${renderWeaponWindow(activeUnit)}</div>
   `;
 }
 
@@ -780,19 +876,27 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
         const truncName = u.name.length > 8 ? u.name.slice(0, 8) + "…" : u.name;
         // Unit facing - default to east for allies, west for enemies
         const facing = u.facing ?? (u.isEnemy ? "west" : "east");
+        const portraitPath = getBattleUnitPortraitPath(u.id, u.baseUnitId);
         uHtml = `
           <div class="battle-unit ${side} ${act}" data-unit-id="${u.id}" data-facing="${facing}">
-            <div class="battle-unit-name">${truncName}</div>
-            <div class="battle-unit-hp">HP ${u.hp}/${u.maxHp}</div>
-            <div class="battle-unit-strain">STR ${u.strain}</div>
+            <div class="battle-unit-portrait-wrapper">
+              <div class="battle-unit-portrait">
+                <img src="${portraitPath}" alt="${u.name}" class="battle-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+              </div>
+              <div class="battle-unit-info-overlay">
+                <div class="battle-unit-name">${truncName}</div>
+                <div class="battle-unit-hp">HP ${u.hp}/${u.maxHp}</div>
+              </div>
+            </div>
           </div>
         `;
       }
+      // Make tiles easily clickable - ensure the tile itself is the click target
       tiles += `<div class="${cls}" data-x="${x}" data-y="${y}">${uHtml}</div>`;
     }
   }
   
-  return `<div class="battle-grid" style="--battle-grid-cols:${gridWidth};--battle-grid-rows:${gridHeight};">${tiles}</div>`;
+  return `<div class="battle-grid-container"><div class="battle-grid" style="--battle-grid-cols:${gridWidth};--battle-grid-rows:${gridHeight};">${tiles}</div></div>`;
 }
 
 function renderBattleResultOverlay(battle: BattleState): string {
@@ -857,6 +961,7 @@ function attachBattleListeners() {
     };
   }
 
+
   // Card selection
   document.querySelectorAll(".battle-cardui").forEach(el => {
     (el as HTMLElement).onclick = (e) => {
@@ -870,9 +975,13 @@ function attachBattleListeners() {
     };
   });
 
-  // Tile clicks (move or attack)
+  // Tile clicks (move or attack) - use event delegation for better click handling
   document.querySelectorAll(".battle-tile").forEach(el => {
-    (el as HTMLElement).onclick = () => {
+    // Make sure the tile itself handles clicks, not just children
+    (el as HTMLElement).style.pointerEvents = 'auto';
+    (el as HTMLElement).onclick = (e) => {
+      // Stop propagation to ensure tile click is handled
+      e.stopPropagation();
       if (!isPlayerTurn || !activeUnit || !localBattleState) return;
       
       const x = parseInt((el as HTMLElement).dataset.x ?? "-1");
@@ -974,9 +1083,12 @@ renderBattleScreen();
             newFacing = dy > 0 ? "south" : "north";
           }
           
-          // Animate the movement
-          animateUnitMovement(activeUnit.id, { x: originX, y: originY }, { x, y }, () => {
-            // After animation, update state and re-render
+          // DON'T update state yet - animate first, then update
+          // This ensures the animation can find the unit in its current position
+          // Use CURRENT position (already declared above), not original position, for animation
+          console.log(`[PLAYER ANIMATION] Animating unit ${activeUnit.id} from (${currentX}, ${currentY}) to (${x}, ${y})`);
+          animateUnitMovement(activeUnit.id, { x: currentX, y: currentY }, { x, y }, () => {
+            // After animation completes, update state and re-render
             if (!localBattleState) return;
             let newState = moveUnit(localBattleState, activeUnit.id, { x, y });
             
@@ -987,8 +1099,9 @@ renderBattleScreen();
               facing: newFacing
             };
             newState = { ...newState, units: newUnits };
-            
             setBattleState(newState);
+            
+            // Re-render to finalize the position
             renderBattleScreen();
           });
         }
@@ -1248,23 +1361,26 @@ function runEnemyTurnsAnimated(initialState: BattleState) {
       (beforePos.x !== afterPos.x || beforePos.y !== afterPos.y);
     
     if (didMove && beforePos && afterPos) {
-      // Update state first so grid shows correct positions for other units
-      setBattleState(newState);
-      renderBattleScreen();
-      
-      // Then animate this enemy's movement
+      // Animate enemy movement first, then update state
+      console.log(`[ENEMY ANIMATION] Animating enemy ${active.id} from (${beforePos.x}, ${beforePos.y}) to (${afterPos.x}, ${afterPos.y})`);
       animateUnitMovement(active.id, beforePos, afterPos, () => {
+        // After animation, update state
+        setBattleState(newState);
+        
         // Check for victory/defeat
         if (newState.phase === "victory" || newState.phase === "defeat") {
           isAnimatingEnemyTurn = false;
-          setBattleState(newState);
           renderBattleScreen();
           return;
         }
         
+        // Re-render to finalize position
+        renderBattleScreen();
+        
         // Process next enemy after animation
         setTimeout(() => processNextEnemy(newState), 100);
       });
+      return; // Wait for animation to complete
     } else {
       // No movement, just update and continue
       setBattleState(newState);
