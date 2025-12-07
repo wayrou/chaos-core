@@ -5,8 +5,8 @@
 // ============================================================================
 
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderSettingsScreen } from "./SettingsScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 import {
   canContinue,
   loadMostRecent,
@@ -248,7 +248,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       
       resetToNewGame();
       enableAutosave(() => getGameState());
-      renderBaseCampScreen();
+      renderFieldScreen("base_camp");
     });
   }
   

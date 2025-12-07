@@ -27,6 +27,8 @@ import {
   canEquipWeapon,
   EquipmentCard,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
+import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -193,15 +195,30 @@ export function renderUnitDetailScreen(unitId: string): void {
     })
     .join("");
 
+  const portraitPath = getUnitPortraitPath(unitId);
+
   root.innerHTML = `
     <div class="unitdetail-root">
       <div class="unitdetail-card">
         <div class="unitdetail-header">
           <div class="unitdetail-header-left">
-            <div class="unitdetail-name">${unit.name}</div>
-            <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+            <div class="unitdetail-portrait">
+              <img src="${portraitPath}" alt="${unit.name}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+            </div>
+            <div class="unitdetail-header-text">
+              <div class="unitdetail-name">${unit.name}</div>
+              <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+              <div class="unitdetail-pwr" style="color: ${pwrColor}">
+                <span class="unitdetail-pwr-label">PWR:</span>
+                <span class="unitdetail-pwr-value">${pwr}</span>
+                <span class="unitdetail-pwr-band">(${pwrBand})</span>
+              </div>
+            </div>
           </div>
           <div class="unitdetail-header-right">
+            <button class="unitdetail-class-btn" id="changeClassBtn">
+              🎭 CHANGE CLASS
+            </button>
             <button class="unitdetail-back-btn">BACK TO ROSTER</button>
           </div>
         </div>
@@ -292,6 +309,14 @@ export function renderUnitDetailScreen(unitId: string): void {
   // Back to roster
   root.querySelector(".unitdetail-back-btn")?.addEventListener("click", () => {
     renderRosterScreen();
+  });
+
+  // Change Class button
+  root.querySelector("#changeClassBtn")?.addEventListener("click", () => {
+    // Import dynamically to avoid circular dependencies
+    import("./ClassChangeScreen").then(({ renderClassChangeScreen }) => {
+      renderClassChangeScreen(unitId);
+    });
   });
 
   // Change/Equip buttons

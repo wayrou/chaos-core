@@ -5,11 +5,12 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 import { generateOperation } from "../../core/procedural";
 import { GameState } from "../../core/types";
 
-export function renderOperationSelectScreen(): void {
+export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -42,7 +43,7 @@ export function renderOperationSelectScreen(): void {
       <div class="opselect-card">
         <div class="opselect-header">
           <div class="opselect-title">SELECT OPERATION</div>
-          <button class="opselect-back-btn">← BACK TO BASE CAMP</button>
+          <button class="opselect-back-btn" data-return-to="${returnTo}">← ${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO BASE CAMP"}</button>
         </div>
 
         <div class="opselect-body">
@@ -88,7 +89,13 @@ export function renderOperationSelectScreen(): void {
 
   // Event listeners
   root.querySelector(".opselect-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
+    const btn = root.querySelector(".opselect-back-btn") as HTMLElement;
+    const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+    if (returnDestination === "field") {
+      renderFieldScreen("base_camp");
+    } else {
+      renderBaseCampScreen();
+    }
   });
 
   root.querySelectorAll(".opselect-deploy-btn").forEach(btn => {

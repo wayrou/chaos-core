@@ -733,6 +733,12 @@ export function attackUnit(
     );
   }
 
+  // Track affinity for melee attack (if attacker is player unit)
+  if (!attacker.isEnemy) {
+    const { trackMeleeAttackInBattle } = require("./affinityBattle");
+    trackMeleeAttackInBattle(attackerId, next);
+  }
+
   next = evaluateBattleOutcome(next);
   return next;
 }
