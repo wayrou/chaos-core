@@ -15357,3 +15357,419 @@ html, body {
   transform: scale(0.98);
 }
 
+
+
+/* ===========================
+   CLASS CHANGE SCREEN (Headline 14)
+   =========================== */
+
+.class-change-root {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #0f121e 0%, #1a1f35 100%);
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.class-change-card {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  background: linear-gradient(145deg, rgba(15, 18, 45, 0.95), rgba(25, 30, 65, 0.95));
+  border: 2px solid var(--ard-gold);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+}
+
+.class-change-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid var(--ard-gold);
+  background: rgba(25, 30, 70, 0.6);
+}
+
+.class-change-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ard-gold);
+  margin-bottom: 0.5rem;
+}
+
+.class-change-subtitle {
+  font-size: 13px;
+  opacity: 0.8;
+  letter-spacing: 0.08em;
+}
+
+.class-change-back-btn {
+  padding: 0.6rem 1.25rem;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: rgba(128, 109, 78, 0.3);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: 6px;
+  color: var(--ard-white);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.class-change-back-btn:hover {
+  background: rgba(128, 109, 78, 0.5);
+  border-color: var(--ard-gold);
+}
+
+.class-change-body {
+  padding: 2rem;
+}
+
+.class-change-info {
+  display: flex;
+  gap: 3rem;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  margin-bottom: 2rem;
+}
+
+.class-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.class-info-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.class-info-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ard-gold);
+}
+
+.class-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.class-tier {
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(140, 160, 255, 0.2);
+  border-radius: 10px;
+  padding: 1.5rem;
+}
+
+.class-tier-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--ard-gold);
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid rgba(243, 163, 16, 0.3);
+}
+
+.class-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.class-card {
+  padding: 1.25rem;
+  background: linear-gradient(135deg, rgba(30, 35, 60, 0.8), rgba(20, 25, 45, 0.8));
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: 8px;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.class-card:hover {
+  border-color: var(--ard-gold);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(243, 163, 16, 0.2);
+}
+
+.class-card--current {
+  border-color: #4ade80;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(20, 25, 45, 0.8));
+  box-shadow: 0 0 20px rgba(74, 222, 128, 0.3);
+}
+
+.class-card--locked {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.class-card--locked:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.class-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(243, 163, 16, 0.2);
+}
+
+.class-card-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ard-gold);
+  letter-spacing: 0.08em;
+}
+
+.class-card-current-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0.35rem 0.75rem;
+  background: rgba(74, 222, 128, 0.2);
+  border: 1px solid #4ade80;
+  border-radius: 4px;
+  color: #4ade80;
+  letter-spacing: 0.1em;
+}
+
+.class-card-locked-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0.35rem 0.75rem;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  border-radius: 4px;
+  color: #ef4444;
+  letter-spacing: 0.1em;
+}
+
+.class-card-description {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.9;
+  min-height: 3rem;
+}
+
+.class-card-stats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.class-stat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.class-stat-label {
+  font-size: 10px;
+  opacity: 0.7;
+  letter-spacing: 0.08em;
+}
+
+.class-stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ard-gold);
+}
+
+.class-card-weapons {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+}
+
+.class-weapons-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+
+.class-weapons-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.class-weapon-tag {
+  padding: 0.25rem 0.6rem;
+  font-size: 11px;
+  background: rgba(59, 130, 246, 0.2);
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  color: #60a5fa;
+  letter-spacing: 0.05em;
+}
+
+.class-card-ability {
+  padding: 0.75rem;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(99, 102, 241, 0.15));
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 6px;
+}
+
+.class-ability-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #c4b5fd;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+
+.class-ability-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #e9d5ff;
+}
+
+.class-card-requirements {
+  padding: 0.75rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+}
+
+.class-req-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #fca5a5;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+
+.class-req-item {
+  font-size: 12px;
+  color: #fecaca;
+  margin-bottom: 0.25rem;
+}
+
+.class-card-level {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0.5rem;
+  background: rgba(243, 163, 16, 0.1);
+  border-radius: 6px;
+  color: var(--ard-gold);
+  letter-spacing: 0.1em;
+}
+
+.class-change-btn {
+  width: 100%;
+  padding: 0.75rem 1.5rem;
+  margin-top: auto;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: linear-gradient(135deg, var(--ard-gold), #c98910);
+  border: none;
+  border-radius: 6px;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.class-change-btn:hover {
+  background: linear-gradient(135deg, #ffb833, var(--ard-gold));
+  transform: scale(1.02);
+  box-shadow: 0 4px 15px rgba(243, 163, 16, 0.4);
+}
+
+.class-change-btn:active {
+  transform: scale(0.98);
+}
+
+/* Mystery / Undiscovered Class Cards */
+.class-card--mystery {
+  background: linear-gradient(135deg, rgba(37, 36, 36, 0.8), rgba(45, 44, 44, 0.8));
+  border: 2px dashed rgba(243, 163, 16, 0.3);
+  opacity: 0.5;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: not-allowed;
+}
+
+.class-card--mystery:hover {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.class-card--mystery .class-card-name {
+  font-size: 32px;
+  letter-spacing: 0.3em;
+  color: rgba(243, 163, 16, 0.5);
+  text-shadow: 0 0 20px rgba(243, 163, 16, 0.3);
+}
+
+.class-card--mystery .class-card-locked-badge {
+  background: linear-gradient(135deg, rgba(88, 81, 80, 0.6), rgba(77, 63, 52, 0.6));
+  color: rgba(243, 163, 16, 0.7);
+}
+
+.class-mystery-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+  margin: 1rem 0;
+}
+
+.class-card-hint {
+  padding: 0.75rem 1rem;
+  background: rgba(243, 163, 16, 0.1);
+  border: 1px solid rgba(243, 163, 16, 0.2);
+  border-radius: 6px;
+  color: rgba(243, 163, 16, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-top: 1rem;
+}
+
+.unitdetail-class-btn {
+  padding: 0.6rem 1.25rem;
+  margin-right: 1rem;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.unitdetail-class-btn:hover {
+  background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+.unitdetail-class-btn:active {
+  transform: scale(0.98);
+}
+

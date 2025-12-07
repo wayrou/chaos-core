@@ -11,6 +11,24 @@ export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
 
+export type WeaponType =
+  | "sword"
+  | "greatsword"
+  | "shortsword"
+  | "bow"
+  | "greatbow"
+  | "gun"
+  | "staff"
+  | "greatstaff"
+  | "dagger"
+  | "knife"
+  | "fist"
+  | "rod"
+  | "katana"
+  | "shuriken"
+  | "spear"
+  | "instrument";
+
 import { getStarterRecipeIds } from "../core/crafting";
 
 export interface CardEffect {
