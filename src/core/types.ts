@@ -88,17 +88,29 @@ export interface BattleState {
 //  OPERATION / WORLD
 // ---------------------------------------------------------
 
+export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss";
+
 export interface RoomNode {
   id: RoomId;
   label: string;
+  type?: RoomType;
+  position?: { x: number; y: number };
+  connections?: RoomId[];
+  battleTemplate?: string; // ID of battle template from procedural.ts
+  eventTemplate?: string;  // ID of event template from procedural.ts
+  shopInventory?: string[]; // Equipment IDs available in shop
+  visited?: boolean;
 }
 
 export interface Floor {
+  id?: string;
   name: string;
-  rooms: RoomNode[];
+  nodes?: RoomNode[];  // New name for rooms
+  rooms?: RoomNode[];  // Keep for backwards compatibility
 }
 
 export interface OperationRun {
+  id?: string;
   codename: string;
   description: string;
   floors: Floor[];

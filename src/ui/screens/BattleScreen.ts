@@ -162,7 +162,7 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
   
   const weaponName = unit.equippedWeaponId.replace(/^weapon_/, "").replace(/_/g, " ").toUpperCase();
   
-  // Check if it's a mechanical weapon (has heat)
+  // Check if mechanical weapon
   const isMechanical = unit.equippedWeaponId.includes("repeater") || 
                        unit.equippedWeaponId.includes("coilgun") ||
                        unit.equippedWeaponId.includes("scattergun") ||
@@ -173,19 +173,32 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
   const heat = unit.weaponHeat ?? 0;
   const maxHeat = 6;
   const wear = unit.weaponWear ?? 0;
-  
-  // Clutch toggle state
   const clutchActive = unit.clutchActive ?? false;
   
+  // Node status (default all OK)
+  const nodes: Record<number, string> = (unit as any).weaponNodes ?? {
+    1: "ok", 2: "ok", 3: "ok", 4: "ok", 5: "ok", 6: "ok"
+  };
+  
+  const nodeNames: Record<number, string> = {
+    1: "BARREL", 2: "TRIGGER", 3: "STOCK", 4: "SCOPE", 5: "COOLING", 6: "CORE"
+  };
+  
+  // Build stats HTML
   let statsHtml = '';
   if (isMechanical) {
     const heatPct = (heat / maxHeat) * 100;
-    statsHtml = `
+    let heatColor = "#84c1e6";
+    if (heatPct > 80) heatColor = "#c3132c";
+    else if (heatPct > 60) heatColor = "#f06b58";
+    else if (heatPct > 40) heatColor = "#f3a310";
+    
+    statsHtml += `
       <div class="weapon-stat-row">
         <span class="weapon-stat-label">HEAT</span>
         <div class="weapon-stat-bar">
-          <div class="weapon-stat-bar-track ${heat >= maxHeat - 1 ? 'weapon-stat-bar-track--danger' : ''}">
-            <div class="weapon-stat-bar-fill weapon-stat-bar-fill--heat" style="width:${heatPct}%"></div>
+          <div class="weapon-stat-bar-track">
+            <div class="weapon-stat-bar-fill" style="width:${heatPct}%; background:${heatColor}"></div>
           </div>
           <span class="weapon-stat-value">${heat}/${maxHeat}</span>
         </div>
@@ -197,26 +210,56 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
     statsHtml += `
       <div class="weapon-stat-row">
         <span class="weapon-stat-label">WEAR</span>
-        <span class="weapon-stat-value weapon-stat-value--warn">${wear}</span>
+        <div class="weapon-wear-pips">
+          ${[0,1,2,3,4].map(i => `<div class="weapon-wear-pip ${i < wear ? 'weapon-wear-pip--filled' : ''}"></div>`).join('')}
+        </div>
+        <span class="weapon-stat-value">${wear}/5</span>
       </div>
     `;
   }
+  
+  // Build node diagram
+  const nodeDiagramHtml = `
+    <div class="weapon-node-diagram">
+      <div class="weapon-node-title">SYSTEM STATUS</div>
+      <div class="weapon-node-grid">
+        ${[1,2,3,4,5,6].map(id => {
+          const status = nodes[id] ?? "ok";
+          return `
+            <div class="weapon-node weapon-node--${status}" data-node="${id}">
+              <div class="weapon-node-id">${id}</div>
+              <div class="weapon-node-name">${nodeNames[id]}</div>
+              <div class="weapon-node-status">${status.toUpperCase()}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
   
   return `
     <div class="weapon-window">
       <div class="weapon-window-header">
         <span class="weapon-window-title">${weaponName}</span>
-        <span class="weapon-window-status ${clutchActive ? 'weapon-window-status--active' : ''}">
-          ${clutchActive ? 'CLUTCH ON' : 'READY'}
-        </span>
+        <span class="weapon-window-type">${isMechanical ? 'MECHANICAL' : 'STANDARD'}</span>
       </div>
       <div class="weapon-window-body">
-        ${statsHtml}
-        <div class="weapon-window-actions">
+        <div class="weapon-stats-panel">${statsHtml}</div>
+        
+        <div class="weapon-clutch-section">
           <button class="weapon-clutch-btn ${clutchActive ? 'weapon-clutch-btn--active' : ''}" id="clutchToggleBtn">
-            ${clutchActive ? '⚡ CLUTCH ON' : '◇ CLUTCH OFF'}
+            <span class="clutch-dot ${clutchActive ? 'clutch-dot--active' : ''}"></span>
+            <span class="clutch-label">CLUTCH ${clutchActive ? '[ENGAGED]' : '[OFF]'}</span>
           </button>
         </div>
+        
+        ${nodeDiagramHtml}
+        
+        ${isMechanical ? `
+          <div class="weapon-actions">
+            <button class="weapon-action-btn weapon-action-btn--vent" id="ventBtn">VENT (10% HP)</button>
+          </div>
+        ` : ''}
       </div>
     </div>
   `;
@@ -884,16 +927,17 @@ function attachBattleListeners() {
           }
           
           let newState = playCardFromScreen(stateWithFacing, activeUnit.id, selectedCardIndex, targetUnitId);
-          selectedCardIndex = null;
-          
-          // Mark that the unit has acted - turn is now over for this unit
-          turnState.hasActed = true;
-          
-          // Auto-advance to next unit's turn
-          newState = advanceTurn(newState);
-          
-          // Run enemy turns with animation
-          runEnemyTurnsAnimated(newState);
+selectedCardIndex = null;
+
+// Do NOT auto-advance turn - players can play multiple cards per turn
+// Strain accumulates but turn only ends when End Turn is clicked
+
+// Check for victory/defeat after card play
+newState = evaluateBattleOutcome(newState);
+
+// Update state and re-render (stay on same unit's turn)
+setBattleState(newState);
+renderBattleScreen();
         }
       } else {
         // Movement - clicking any green tile commits the move
@@ -1046,26 +1090,33 @@ function attachBattleListeners() {
     };
   }
 
-  // Claim rewards button
+ // Claim rewards button
   const claimBtn = document.getElementById("claimRewardsBtn");
   if (claimBtn) {
-    claimBtn.onclick = () => {
+      claimBtn.onclick = () => {
       if (!localBattleState) return;
       const r = localBattleState.rewards;
       if (r) {
-        updateGameState(s => {
-          s.wad += r.wad;
-          s.resources.metalScrap += r.metalScrap;
-          s.resources.wood += r.wood;
-          s.resources.chaosShards += r.chaosShards;
-          s.resources.steamComponents += r.steamComponents;
-		  
-		  // Add cards to library
-  if (rewards.cards && rewards.cards.length > 0) {
-    draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, rewards.cards);
-  }
+        console.log("[CLAIM] Claiming rewards:", r);
+        
+       updateGameState(s => {
+          // MUST create a new object and RETURN it!
+          return {
+            ...s,
+            wad: (s.wad ?? 0) + (r.wad ?? 0),
+            resources: {
+              metalScrap: (s.resources?.metalScrap ?? 0) + (r.metalScrap ?? 0),
+              wood: (s.resources?.wood ?? 0) + (r.wood ?? 0),
+              chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
+              steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
+            },
+            cardLibrary: r.cards && r.cards.length > 0 
+              ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
+              : s.cardLibrary,
+          };
         });
       }
+      
       localBattleState = null;
       selectedCardIndex = null;
       resetTurnStateForUnit(null);

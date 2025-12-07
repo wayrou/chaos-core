@@ -1,9 +1,6 @@
 // src/ui/screens/ScrollLinkBoot.ts
 import { renderMainMenu } from "./MainMenuScreen";
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
-
 export function renderScrollLinkBoot() {
   const root = document.getElementById("app");
   if (!root) {
@@ -16,6 +13,7 @@ export function renderScrollLinkBoot() {
       <div class="boot-inner">
         <div class="boot-logo">SCROLLLINK OS</div>
         <div class="boot-subtitle">ARDCYTECH TERMINAL INTERFACE</div>
+        <div class="boot-tagline">Legacy Solaris Systems — "Working for you."</div>
         <div class="boot-log"></div>
         <div class="boot-progress">
           <div class="boot-progress-bar"></div>
@@ -38,6 +36,7 @@ export function renderScrollLinkBoot() {
     "[OK] Linking ScrollLink nodes...",
     "[OK] Verifying rift containment seals...",
     "[OK] Preparing OPS profile: AERISS.QW",
+    "[OK] Legacy handoff from Solaris (defunct) — \"Working for you.\"",
     "[OK] Handshake with MISTGUARD relay...",
     "[OK] All systems nominal.",
     ">> Launching MAIN MENU..."
