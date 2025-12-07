@@ -8,11 +8,6 @@ import { renderRosterScreen } from "./RosterScreen";
 import { renderWorkshopScreen } from "./WorkshopScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
 
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
-
 export function renderBaseCampScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -20,18 +15,26 @@ export function renderBaseCampScreen(): void {
   const state = getGameState();
   const profile = state.profile;
   const wad = state.wad ?? 0;
+  const res = state.resources ?? { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
 
   root.innerHTML = `
     <div class="basecamp-root">
 
       <div class="basecamp-header">
-        <div class="basecamp-title">BASE CAMP — SCROLLINK OS</div>
+        <div class="basecamp-title">BASE CAMP - SCROLLINK OS</div>
 
         <div class="basecamp-ident">
           <div>CALLSIGN: ${profile.callsign}</div>
           <div>SQUAD: ${profile.squadName}</div>
-          <div>WAD: ${wad}</div>
+          <div class="basecamp-wad">WAD: ${wad}</div>
         </div>
+      </div>
+
+      <div class="basecamp-resources">
+        <div class="resource-item"><span class="resource-label">METAL</span><span class="resource-value">${res.metalScrap}</span></div>
+        <div class="resource-item"><span class="resource-label">WOOD</span><span class="resource-value">${res.wood}</span></div>
+        <div class="resource-item"><span class="resource-label">SHARDS</span><span class="resource-value">${res.chaosShards}</span></div>
+        <div class="resource-item"><span class="resource-label">STEAM</span><span class="resource-value">${res.steamComponents}</span></div>
       </div>
 
       <div class="basecamp-buttons">
@@ -41,7 +44,7 @@ export function renderBaseCampScreen(): void {
         <button class="bc-btn bc-roster">UNIT ROSTER</button>
         <button class="bc-btn bc-workshop">WORKSHOP</button>
         <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
-          <span class="btn-icon">🔧</span>
+          <span class="btn-icon">&#128295;</span>
           <span class="btn-label">GEAR WORKBENCH</span>
         </button>
       </div>

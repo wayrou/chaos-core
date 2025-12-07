@@ -467,9 +467,16 @@ autosave feature
 12b. Controller support
 12bz. Settings screen
 
-12bza. Implement logo on title screen, "back to title screen" button on basecampscreen
+12bza. Implement logo on title screen, "back to title screen" button on basecampscreen, settings screen button on basecampscreen 
 
------------------------IMPLEMENTED UP TO HERE-----------------------------
+12bzb. Unifying colors across all UI and menu systems (prioritizing ardycia colors) Make sure that everything fits in the window and is never cut off regardless of window size (as best as possible), and make sure that weapon windows
+have clutch toggles and part diagrams. Make sure victory screen "claim and continue" button works. 
+
+12x. Improve shop screen
+
+
+
+
 
 13. Add Simple Procedural Room Variants
 
@@ -486,6 +493,10 @@ Navigation from room to room on dungeon floor screen (3-5 floors per operation)
 Random equipment rewards from battles
 
 shop nodes (buying equipment) in dungeon runs randomly between battles
+
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
+
+13a. Add solaris scroll-link flavor text 
 
 14. The class update
 

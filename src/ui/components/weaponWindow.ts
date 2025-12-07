@@ -70,6 +70,9 @@ export function renderWeaponWindow(
                 <div class="weapon-stat-value">${weaponState.currentHeat}/${maxHeat}</div>
               </div>
               ${weaponState.isJammed ? '<div class="weapon-jammed-badge">JAMMED</div>' : ''}
+			  
+			          ${renderNodeDiagram(weaponState)}
+			  
             </div>
           ` : ''}
 
