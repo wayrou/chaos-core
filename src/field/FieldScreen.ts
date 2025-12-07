@@ -8,6 +8,7 @@ import { getFieldMap } from "./maps";
 import { createPlayerAvatar, updatePlayerMovement, getOverlappingInteractionZone, MovementInput } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState } from "../state/gameStore";
+import { renderBaseCampScreen } from "../ui/screens/BaseCampScreen";
 
 // ============================================================================
 // STATE
@@ -87,11 +88,9 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     };
   }
   
-  // Setup input handlers (only once, or re-setup if needed)
-  if (!inputHandlersSetup) {
-    setupInputHandlers();
-    inputHandlersSetup = true;
-  }
+  // Setup input handlers - always re-setup to ensure they're attached
+  setupInputHandlers();
+  inputHandlersSetup = true;
   
   // Always restart game loop when rendering (in case it was stopped)
   if (animationFrameId !== null) {
@@ -251,38 +250,24 @@ function centerViewportOnPlayer(): void {
 // ============================================================================
 
 function setupInputHandlers(): void {
-  console.log("[FIELD] Setting up input handlers");
-  // Remove existing listeners first to prevent duplicates
+  // Remove existing listeners to prevent duplicates
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keyup", handleKeyUp);
-  document.removeEventListener("keydown", handleKeyDown);
-  document.removeEventListener("keyup", handleKeyUp);
   
-  // Add listeners to both window and document for maximum coverage
-  window.addEventListener("keydown", handleKeyDown, true); // Use capture phase
-  window.addEventListener("keyup", handleKeyUp, true);
-  document.addEventListener("keydown", handleKeyDown, true);
-  document.addEventListener("keyup", handleKeyUp, true);
-  
-  console.log("[FIELD] Input handlers attached");
+  // Add listeners to window
+  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("keyup", handleKeyUp);
 }
 
 function handleKeyDown(e: KeyboardEvent): void {
   // M key handler - check FIRST before any other checks
-  // This must work even if field mode is paused or in transition
-  const isMKey = e.key === "m" || e.key === "M" || e.code === "KeyM" || e.keyCode === 77;
-  if (isMKey) {
-    // Only process if we're actually in field mode
+  const key = e.key?.toLowerCase?.() ?? "";
+  
+  if (key === "m") {
     const fieldRoot = document.querySelector(".field-root");
     if (fieldRoot) {
       e.preventDefault();
-      e.stopPropagation();
-      console.log("[FIELD] M key pressed, toggling base camp panel");
-      try {
-        toggleBaseCampPanel();
-      } catch (error) {
-        console.error("[FIELD] Error toggling base camp panel:", error);
-      }
+      toggleBaseCampPanel();
       return;
     }
   }
@@ -787,8 +772,11 @@ function handleBaseCampPanelAction(action: string | null): void {
 
 function exitFieldMode(): void {
   stopGameLoop();
+  
+  // Remove keyboard listeners
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keyup", handleKeyUp);
+  
   inputHandlersSetup = false;
   
   // Remove click handler from app root
@@ -798,7 +786,6 @@ function exitFieldMode(): void {
   }
   
   // Return to Base Camp screen (full screen version)
-  const { renderBaseCampScreen } = require("../ui/screens/BaseCampScreen");
   renderBaseCampScreen();
 }
 
