@@ -184,3 +184,5 @@ pnpm tauri dev
 6. Add map transition animations
 7. Expand Free Zone with more content
 
+
+

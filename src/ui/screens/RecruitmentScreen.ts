@@ -279,3 +279,5 @@ function showNotification(message: string, type: "success" | "error" | "info" = 
     // Could use a toast library here
   }
 }
+
+
