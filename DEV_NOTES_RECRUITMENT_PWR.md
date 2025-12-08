@@ -203,3 +203,5 @@ src/
    - Add unit tests for affinity tracking
    - Refine affinity detection for card types
    - Add more candidate name variations
+
+

@@ -352,3 +352,5 @@ export function getRosterSize(state: any): number {
 export function isRosterFull(state: any): boolean {
   return getRosterSize(state) >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS;
 }
+
+

@@ -469,7 +469,7 @@ autosave feature
 
 12bza. Implement logo on title screen, "back to title screen" button on basecampscreen
 
------------------------IMPLEMENTED UP TO HERE-----------------------------
+
 
 13. Add Simple Procedural Room Variants
 
@@ -495,6 +495,8 @@ You can change a unit's class at anytime on the class management screen, unlock 
 
 Rolled instances of individual cards that you get from crafting, rewards or shops
 
+
+
 14a. Unit leveling
 
 Implement unit performance system
@@ -507,32 +509,37 @@ Implement unit recruitment system
 
 Implement field system
 
-15. Refine ScrollLink UI & Screen Transitions
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
 
-Polish the OS feel:
+14c. Dungeon floor update
 
-Stylish transitions when switching between screens (Base Camp → Operation Map → Battle).
+Improve flow of dungeon floors, ensuring that the ops terminal is on the right side of the basecamp map, the loadout screen is opened after choosing an operation but before starting a floor, that the floor
+list locks players into only accessing the next available room (not able to choose any room at a time), and that the unit management screen can be accessed from the floor screen. Revise the dungeon floor screen to
+look like other roguelike dungeon map screens rather than a list of buttons, helping the player feel like they're navigating through the floor of a dungeon rather than clicking through a menu. Ensure that equipment attached
+to units in party auto-populates on the forward locker of the loadout screen, as equipment brought with on dungeon floor runs should take up forward locker space (the three stats). 
 
-Subtle animations (cursor blink, flicker, etc.).
+
+
+14d. The mystery dungeon update
+Add "field node" rooms to floors- randomly generated "mystery dungeon"-inspired rooms containing light enemies that can be dispatched with 2-3 hits (add an attack, using the space bar to swing a sword), chests 
+to open and resources on the ground (appearing as sparkles on the map) to collect. Each field node room contains an exit that the player must reach in order to complete the roomm and progress on the dungeon floor screen. 
 
 
 
-16. Establish Art Pipeline: Procreate → Game Sprites
+14e. The Sable update
 
-Define 2D art flow:
+Implement sable, a dog companion that excitedly runs around and follows you on the base camp screen and field node screens, collecting resources from field maps and attacking light enemies.
 
-Choose target sprite resolution (e.g., 32×32 or 48×48).
+14f. The NPC update
 
-In Procreate: set up a sprite sheet template with grid.
+Implement NPCs that walk around the base camp screen and that you can talk to, opening placeholder dialogue that the player can advance through.
 
-Export as PNGs; in the app, load them and replace colored squares with character sprites.
-Test one animated idle/walk cycle for Aeriss on the grid.
+15. The Quest update
+Implement a lightweight system for endless randomly generated quests
 
 16b. Character portraits + dialogue 
 
 17. Implement Basic Animation System for Units
-
-Add:
 
 State machine for units: idle, moving, attacking, hit, dead.
 
@@ -559,9 +566,11 @@ Tooltips for tiles, units, and cards.
 
 20. The story update
 
-Implement all 5 operations fully
+Implement all 5 operations fully, custom operation option
 
 20a. Minigame update
+
+20b. The Echo Run - Draft Mode update
 
 21. Multiplayer update
 

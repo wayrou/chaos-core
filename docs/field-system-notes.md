@@ -155,3 +155,5 @@ renderFieldScreen("base_camp"); // or current map ID
 4. Test interactions: Walk to stations, press E
 5. Test exit: ESC key
 
+
+

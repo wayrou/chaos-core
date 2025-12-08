@@ -9,6 +9,7 @@ import { renderRosterScreen } from "../ui/screens/RosterScreen";
 import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
 import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
 import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
+import { renderRecruitmentScreen } from "../ui/screens/RecruitmentScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
