@@ -400,9 +400,9 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-label">SETTINGS</span>
           </button>
           <div class="all-nodes-divider"></div>
-          <button class="all-nodes-btn all-nodes-btn--debug" data-action="test-field-node">
-            <span class="btn-icon">🧪</span>
-            <span class="btn-label">TEST FIELD NODE</span>
+          <button class="all-nodes-btn all-nodes-btn--debug" data-action="endless-field-nodes">
+            <span class="btn-icon">∞</span>
+            <span class="btn-label">ENDLESS FIELD NODES</span>
           </button>
         </div>
       </div>
@@ -712,12 +712,12 @@ function handleNodeAction(action: string): void {
         renderSettingsScreen("basecamp");
       });
       break;
-    case "test-field-node":
-      // Debug: Test field node room directly (Headline 14d)
+    case "endless-field-nodes":
+      // Endless field nodes mode - continuous rooms until ESC pressed
       import("../ui/screens/FieldNodeRoomScreen").then(({ renderFieldNodeRoomScreen }) => {
-        const testSeed = Math.floor(Math.random() * 1000000);
-        console.log("[DEBUG] Testing field node room with seed:", testSeed);
-        renderFieldNodeRoomScreen("test_room_debug", testSeed);
+        const initialSeed = Math.floor(Math.random() * 1000000);
+        console.log("[ENDLESS] Starting endless field nodes mode with seed:", initialSeed);
+        renderFieldNodeRoomScreen("endless_room_0", initialSeed, true);
       });
       break;
   }

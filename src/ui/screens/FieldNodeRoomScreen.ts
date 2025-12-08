@@ -33,6 +33,10 @@ interface FieldNodeEnemy {
   facing: "north" | "south" | "east" | "west";
   lastMoveTime: number;
   deathAnimTime?: number; // For death animation
+  // Knockback velocity
+  vx: number;
+  vy: number;
+  knockbackTime: number; // Time remaining for knockback in ms
 }
 
 interface FieldNodeChest {
@@ -73,6 +77,13 @@ interface FieldNodePlayer {
   isAttacking: boolean;
   attackCooldown: number;
   attackAnimTime: number;
+  // Health system (Field Nodes only)
+  hp: number;
+  maxHp: number;
+  invulnerabilityTime: number; // i-frames in ms
+  // Knockback velocity
+  vx: number;
+  vy: number;
 }
 
 interface FieldNodeRoomState {
@@ -104,6 +115,9 @@ interface FieldNodeRoomState {
 let roomState: FieldNodeRoomState | null = null;
 let animationFrameId: number | null = null;
 let lastFrameTime = 0;
+let isEndlessMode = false;
+let endlessRoomCount = 0;
+let isPausedForExit = false;
 let movementInput = {
   up: false,
   down: false,
@@ -123,109 +137,318 @@ const ATTACK_RANGE = 70; // pixels
 const ATTACK_DAMAGE = 2;
 const ENEMY_HP = 3;
 
+// Player health constants
+const PLAYER_MAX_HP = 100;
+const PLAYER_DAMAGE_ON_CONTACT = 10; // Damage when enemy touches player
+const INVULNERABILITY_DURATION = 1000; // ms of i-frames after taking damage
+
+// Knockback constants
+const ENEMY_KNOCKBACK_FORCE = 600; // pixels per second (2x increased)
+const ENEMY_KNOCKBACK_DURATION = 300; // ms
+const PLAYER_KNOCKBACK_FORCE = 400; // pixels per second (2x increased, smaller than enemy)
+const PLAYER_KNOCKBACK_DURATION = 200; // ms
+const KNOCKBACK_DAMPING = 0.85; // Velocity damping per frame
+
 // ============================================================================
-// ROOM GENERATION
+// ROOM GENERATION - Multi-Room Dungeon (Pokemon Mystery Dungeon Style)
 // ============================================================================
+
+interface RoomRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  id: number;
+}
+
+interface Corridor {
+  from: number;
+  to: number;
+  path: { x: number; y: number }[];
+}
 
 function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState {
   // Use seed for deterministic generation
   const rng = createSeededRandom(seed);
   
-  // Larger rooms matching base camp scale (18-24 wide, 14-18 tall)
-  const width = 18 + Math.floor(rng() * 7); // 18-24 tiles wide
-  const height = 14 + Math.floor(rng() * 5); // 14-18 tiles tall
+  // Generate 3-5 rooms
+  const roomCount = 3 + Math.floor(rng() * 3); // 3-5 rooms
   
-  // Create tiles
+  // Create room layout (2x2 or 2x3 grid)
+  const gridCols = 2;
+  const gridRows = Math.ceil(roomCount / gridCols);
+  
+  // Room dimensions (smaller individual rooms, but more of them)
+  const roomMinWidth = 10;
+  const roomMaxWidth = 14;
+  const roomMinHeight = 8;
+  const roomMaxHeight = 12;
+  
+  // Spacing between rooms (for corridors) - increased for better corridor visibility
+  const roomSpacing = 4;
+  
+  // Generate room rectangles
+  const rooms: RoomRect[] = [];
+  const roomGrid: (number | null)[][] = [];
+  
+  // Initialize grid
+  for (let ry = 0; ry < gridRows; ry++) {
+    roomGrid[ry] = [];
+    for (let rx = 0; rx < gridCols; rx++) {
+      roomGrid[ry][rx] = null;
+    }
+  }
+  
+  // Place rooms in grid
+  let roomIdCounter = 0;
+  for (let ry = 0; ry < gridRows && roomIdCounter < roomCount; ry++) {
+    for (let rx = 0; rx < gridCols && roomIdCounter < roomCount; rx++) {
+      const roomWidth = roomMinWidth + Math.floor(rng() * (roomMaxWidth - roomMinWidth + 1));
+      const roomHeight = roomMinHeight + Math.floor(rng() * (roomMaxHeight - roomMinHeight + 1));
+      
+      // Calculate position accounting for previous rooms and spacing
+      // Add some randomness to room positions for more organic feel
+      const baseX = rx * (roomMaxWidth + roomSpacing) + Math.floor(rng() * 2);
+      const baseY = ry * (roomMaxHeight + roomSpacing) + Math.floor(rng() * 2);
+      
+      rooms.push({
+        id: roomIdCounter,
+        x: baseX,
+        y: baseY,
+        width: roomWidth,
+        height: roomHeight,
+      });
+      
+      roomGrid[ry][rx] = roomIdCounter;
+      roomIdCounter++;
+    }
+  }
+  
+  // Calculate total map dimensions
+  const totalWidth = Math.max(...rooms.map(r => r.x + r.width)) + 2; // +2 for outer walls
+  const totalHeight = Math.max(...rooms.map(r => r.y + r.height)) + 2;
+  
+  // Create tiles grid (all walls initially)
   const tiles: FieldNodeTile[][] = [];
-  for (let y = 0; y < height; y++) {
+  for (let y = 0; y < totalHeight; y++) {
     tiles[y] = [];
-    for (let x = 0; x < width; x++) {
-      const isWall = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+    for (let x = 0; x < totalWidth; x++) {
       tiles[y][x] = {
         x,
         y,
-        walkable: !isWall,
-        type: isWall ? "wall" : "floor",
+        walkable: false,
+        type: "wall",
       };
     }
   }
   
-  // Add some random interior walls/obstacles for variety (more for larger rooms)
-  const interiorWalls = 5 + Math.floor(rng() * 8);
-  for (let i = 0; i < interiorWalls; i++) {
-    const wx = 3 + Math.floor(rng() * (width - 6));
-    const wy = 3 + Math.floor(rng() * (height - 6));
-    // Don't block spawn or exit areas
-    if (wx > 4 && wy > 4 && wx < width - 4 && wy < height - 4) {
-      tiles[wy][wx].walkable = false;
-      tiles[wy][wx].type = "wall";
-      // Occasionally add 2x2 wall clusters
-      if (rng() > 0.6 && wx < width - 5 && wy < height - 5) {
-        tiles[wy][wx + 1].walkable = false;
-        tiles[wy][wx + 1].type = "wall";
-        tiles[wy + 1][wx].walkable = false;
-        tiles[wy + 1][wx].type = "wall";
+  // Carve out rooms
+  for (const room of rooms) {
+    // Room interior (leave 1-tile border for walls)
+    for (let ry = 1; ry < room.height - 1; ry++) {
+      for (let rx = 1; rx < room.width - 1; rx++) {
+        const tx = room.x + rx + 1; // +1 for outer wall
+        const ty = room.y + ry + 1;
+        if (tx < totalWidth && ty < totalHeight) {
+          tiles[ty][tx] = {
+            x: tx,
+            y: ty,
+            walkable: true,
+            type: "floor",
+          };
+        }
       }
     }
   }
   
-  // Place exit on the far side
-  const exitX = width - 2;
-  const exitY = Math.floor(height / 2);
-  tiles[exitY][exitX].type = "exit";
-  tiles[exitY][exitX].walkable = true;
+  // Generate corridors connecting rooms (minimum spanning tree approach)
+  const corridors: Corridor[] = [];
+  const connected: Set<number> = new Set([0]); // Start with first room
+  const unconnected = new Set(rooms.slice(1).map(r => r.id));
   
-  // Player starts on the left side
-  const playerX = 2 * TILE_SIZE + TILE_SIZE / 2;
-  const playerY = Math.floor(height / 2) * TILE_SIZE + TILE_SIZE / 2;
-  
-  // Generate enemies (4-8 for larger rooms)
-  const enemyCount = 4 + Math.floor(rng() * 5);
-  const enemies: FieldNodeEnemy[] = [];
-  for (let i = 0; i < enemyCount; i++) {
-    let ex, ey;
-    let attempts = 0;
-    do {
-      ex = 5 + Math.floor(rng() * (width - 8));
-      ey = 3 + Math.floor(rng() * (height - 6));
-      attempts++;
-    } while ((!tiles[ey][ex].walkable || tiles[ey][ex].type === "exit") && attempts < 30);
+  while (unconnected.size > 0) {
+    // Find closest unconnected room to any connected room
+    let bestFrom = -1;
+    let bestTo = -1;
+    let bestDist = Infinity;
+    let bestPath: { x: number; y: number }[] = [];
     
-    if (attempts < 20) {
-      enemies.push({
-        id: `enemy_${i}`,
-        x: ex * TILE_SIZE + TILE_SIZE / 2,
-        y: ey * TILE_SIZE + TILE_SIZE / 2,
-        width: ENEMY_SIZE,
-        height: ENEMY_SIZE,
-        hp: ENEMY_HP,
-        maxHp: ENEMY_HP,
-        speed: 40 + rng() * 30,
-        facing: "south",
-        lastMoveTime: 0,
-      });
+    for (const fromId of connected) {
+      const fromRoom = rooms[fromId];
+      // Use room center for connection point
+      const fromCenterX = fromRoom.x + Math.floor(fromRoom.width / 2);
+      const fromCenterY = fromRoom.y + Math.floor(fromRoom.height / 2);
+      
+      for (const toId of unconnected) {
+        const toRoom = rooms[toId];
+        // Use room center for connection point
+        const toCenterX = toRoom.x + Math.floor(toRoom.width / 2);
+        const toCenterY = toRoom.y + Math.floor(toRoom.height / 2);
+        
+        const dist = Math.abs(fromCenterX - toCenterX) + Math.abs(fromCenterY - toCenterY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestFrom = fromId;
+          bestTo = toId;
+          
+          // Create L-shaped corridor path (horizontal first, then vertical)
+          const path: { x: number; y: number }[] = [];
+          const startX = fromCenterX + 1; // +1 for outer wall offset
+          const startY = fromCenterY + 1;
+          const endX = toCenterX + 1;
+          const endY = toCenterY + 1;
+          
+          // Horizontal segment (from room center to target X)
+          const stepX = endX > startX ? 1 : -1;
+          for (let x = startX; (stepX > 0 ? x <= endX : x >= endX); x += stepX) {
+            path.push({ x, y: startY });
+          }
+          
+          // Vertical segment (from horizontal end to target Y)
+          const stepY = endY > startY ? 1 : -1;
+          const midX = endX;
+          for (let y = startY; (stepY > 0 ? y <= endY : y >= endY); y += stepY) {
+            path.push({ x: midX, y });
+          }
+          
+          bestPath = path;
+        }
+      }
+    }
+    
+    if (bestFrom >= 0 && bestTo >= 0) {
+      // Carve corridor (2 tiles wide for easier navigation)
+      for (let i = 0; i < bestPath.length; i++) {
+        const point = bestPath[i];
+        if (point.x >= 0 && point.x < totalWidth && point.y >= 0 && point.y < totalHeight) {
+          tiles[point.y][point.x].walkable = true;
+          tiles[point.y][point.x].type = "floor";
+          
+          // Determine if this is a horizontal or vertical segment
+          const isHorizontal = i === 0 || (i < bestPath.length - 1 && 
+            Math.abs(bestPath[i + 1].x - point.x) > Math.abs(bestPath[i + 1].y - point.y));
+          
+          // Make corridor 2 tiles wide
+          if (isHorizontal) {
+            // Expand vertically for horizontal corridors
+            if (point.y > 0) {
+              tiles[point.y - 1][point.x].walkable = true;
+              tiles[point.y - 1][point.x].type = "floor";
+            }
+            if (point.y < totalHeight - 1) {
+              tiles[point.y + 1][point.x].walkable = true;
+              tiles[point.y + 1][point.x].type = "floor";
+            }
+          } else {
+            // Expand horizontally for vertical corridors
+            if (point.x > 0) {
+              tiles[point.y][point.x - 1].walkable = true;
+              tiles[point.y][point.x - 1].type = "floor";
+            }
+            if (point.x < totalWidth - 1) {
+              tiles[point.y][point.x + 1].walkable = true;
+              tiles[point.y][point.x + 1].type = "floor";
+            }
+          }
+        }
+      }
+      
+      corridors.push({ from: bestFrom, to: bestTo, path: bestPath });
+      connected.add(bestTo);
+      unconnected.delete(bestTo);
+    } else {
+      break; // Safety break
     }
   }
   
-  // Generate chests (2-4 for larger rooms)
-  const chestCount = 2 + Math.floor(rng() * 3);
-  const chests: FieldNodeChest[] = [];
-  for (let i = 0; i < chestCount; i++) {
-    let cx, cy;
-    let attempts = 0;
-    do {
-      cx = 4 + Math.floor(rng() * (width - 8));
-      cy = 3 + Math.floor(rng() * (height - 6));
-      attempts++;
-    } while ((!tiles[cy][cx].walkable || tiles[cy][cx].type === "exit") && attempts < 30);
-    
-    if (attempts < 20) {
-      const rewardType = rng() > 0.3 ? "resource" : "wad";
-      const resourceTypes: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
-        ["metalScrap", "wood", "chaosShards", "steamComponents"];
+  // Add some random interior walls/obstacles in rooms (fewer per room since rooms are smaller)
+  for (const room of rooms) {
+    const interiorWalls = 1 + Math.floor(rng() * 3); // 1-3 per room
+    for (let i = 0; i < interiorWalls; i++) {
+      const wx = room.x + 2 + Math.floor(rng() * (room.width - 4));
+      const wy = room.y + 2 + Math.floor(rng() * (room.height - 4));
       
+      if (wx >= 0 && wx < totalWidth && wy >= 0 && wy < totalHeight) {
+        // Don't block corridors, room centers, or room edges (where corridors connect)
+        const isNearCenter = Math.abs(wx - (room.x + room.width / 2)) < 3 &&
+                           Math.abs(wy - (room.y + room.height / 2)) < 3;
+        const isNearEdge = wx <= room.x + 2 || wx >= room.x + room.width - 2 ||
+                          wy <= room.y + 2 || wy >= room.y + room.height - 2;
+        if (!isNearCenter && !isNearEdge && tiles[wy] && tiles[wy][wx] && tiles[wy][wx].walkable) {
+          tiles[wy][wx].walkable = false;
+          tiles[wy][wx].type = "wall";
+        }
+      }
+    }
+  }
+  
+  // Place exit in last room (far side)
+  const exitRoom = rooms[rooms.length - 1];
+  const exitX = exitRoom.x + exitRoom.width - 3;
+  const exitY = exitRoom.y + Math.floor(exitRoom.height / 2);
+  if (exitX >= 0 && exitX < totalWidth && exitY >= 0 && exitY < totalHeight && tiles[exitY] && tiles[exitY][exitX]) {
+    tiles[exitY][exitX].type = "exit";
+    tiles[exitY][exitX].walkable = true;
+  }
+  
+  // Player starts in first room (left side)
+  const startRoom = rooms[0];
+  const playerX = (startRoom.x + 2) * TILE_SIZE + TILE_SIZE / 2;
+  const playerY = (startRoom.y + Math.floor(startRoom.height / 2)) * TILE_SIZE + TILE_SIZE / 2;
+  
+  // Generate enemies distributed across all rooms (2-3 per room)
+  const enemies: FieldNodeEnemy[] = [];
+  let enemyIdCounter = 0;
+  for (const room of rooms) {
+    const enemiesInRoom = 2 + Math.floor(rng() * 2); // 2-3 per room
+    for (let i = 0; i < enemiesInRoom; i++) {
+      let attempts = 0;
+      let ex, ey;
+      do {
+        ex = room.x + 2 + Math.floor(rng() * (room.width - 4));
+        ey = room.y + 2 + Math.floor(rng() * (room.height - 4));
+        attempts++;
+      } while (attempts < 50 && (!tiles[ey] || !tiles[ey][ex] || !tiles[ey][ex].walkable || tiles[ey][ex].type === "exit"));
+      
+      if (attempts < 50 && tiles[ey] && tiles[ey][ex] && tiles[ey][ex].walkable && tiles[ey][ex].type !== "exit") {
+        enemies.push({
+          id: `enemy_${enemyIdCounter++}`,
+          x: ex * TILE_SIZE + TILE_SIZE / 2,
+          y: ey * TILE_SIZE + TILE_SIZE / 2,
+          width: ENEMY_SIZE,
+          height: ENEMY_SIZE,
+          hp: ENEMY_HP,
+          maxHp: ENEMY_HP,
+          speed: 40 + rng() * 30,
+          facing: "south",
+          lastMoveTime: 0,
+          vx: 0,
+          vy: 0,
+          knockbackTime: 0,
+        });
+      }
+    }
+  }
+  
+  // Generate chests distributed across rooms (1 per room, except first)
+  const chests: FieldNodeChest[] = [];
+  const resourceTypes: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
+    ["metalScrap", "wood", "chaosShards", "steamComponents"];
+  
+  for (let i = 1; i < rooms.length; i++) { // Skip first room
+    const room = rooms[i];
+    let attempts = 0;
+    let cx, cy;
+    do {
+      cx = room.x + 2 + Math.floor(rng() * (room.width - 4));
+      cy = room.y + 2 + Math.floor(rng() * (room.height - 4));
+      attempts++;
+    } while (attempts < 50 && (!tiles[cy] || !tiles[cy][cx] || !tiles[cy][cx].walkable || tiles[cy][cx].type === "exit"));
+    
+    if (attempts < 50 && tiles[cy] && tiles[cy][cx] && tiles[cy][cx].walkable && tiles[cy][cx].type !== "exit") {
+      const rewardType = rng() > 0.3 ? "resource" : "wad";
       chests.push({
-        id: `chest_${i}`,
+        id: `chest_${i - 1}`,
         x: cx * TILE_SIZE + TILE_SIZE / 2,
         y: cy * TILE_SIZE + TILE_SIZE / 2,
         opened: false,
@@ -238,30 +461,29 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
     }
   }
   
-  // Generate sparkles (6-12 for larger rooms)
-  const sparkleCount = 6 + Math.floor(rng() * 7);
+  // Generate sparkles distributed across all rooms (2-4 per room)
   const sparkles: FieldNodeSparkle[] = [];
-  const resourceTypes: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
-    ["metalScrap", "wood", "chaosShards", "steamComponents"];
-  
-  for (let i = 0; i < sparkleCount; i++) {
-    let sx, sy;
-    let attempts = 0;
-    do {
-      sx = 3 + Math.floor(rng() * (width - 6));
-      sy = 3 + Math.floor(rng() * (height - 6));
-      attempts++;
-    } while ((!tiles[sy][sx].walkable || tiles[sy][sx].type === "exit") && attempts < 30);
-    
-    if (attempts < 20) {
-      sparkles.push({
-        id: `sparkle_${i}`,
-        x: sx * TILE_SIZE + TILE_SIZE / 2,
-        y: sy * TILE_SIZE + TILE_SIZE / 2,
-        resourceType: resourceTypes[Math.floor(rng() * resourceTypes.length)],
-        amount: 1 + Math.floor(rng() * 3),
-        collected: false,
-      });
+  for (const room of rooms) {
+    const sparklesInRoom = 2 + Math.floor(rng() * 3); // 2-4 per room
+    for (let i = 0; i < sparklesInRoom; i++) {
+      let attempts = 0;
+      let sx, sy;
+      do {
+        sx = room.x + 2 + Math.floor(rng() * (room.width - 4));
+        sy = room.y + 2 + Math.floor(rng() * (room.height - 4));
+        attempts++;
+      } while (attempts < 50 && (!tiles[sy] || !tiles[sy][sx] || !tiles[sy][sx].walkable || tiles[sy][sx].type === "exit"));
+      
+      if (attempts < 50 && tiles[sy] && tiles[sy][sx] && tiles[sy][sx].walkable && tiles[sy][sx].type !== "exit") {
+        sparkles.push({
+          id: `sparkle_${sparkles.length}`,
+          x: sx * TILE_SIZE + TILE_SIZE / 2,
+          y: sy * TILE_SIZE + TILE_SIZE / 2,
+          resourceType: resourceTypes[Math.floor(rng() * resourceTypes.length)],
+          amount: 1 + Math.floor(rng() * 3),
+          collected: false,
+        });
+      }
     }
   }
   
@@ -270,8 +492,8 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
   
   return {
     roomId,
-    width,
-    height,
+    width: totalWidth,
+    height: totalHeight,
     tiles,
     player: {
       x: playerX,
@@ -283,6 +505,11 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       isAttacking: false,
       attackCooldown: 0,
       attackAnimTime: 0,
+      hp: PLAYER_MAX_HP,
+      maxHp: PLAYER_MAX_HP,
+      invulnerabilityTime: 0,
+      vx: 0,
+      vy: 0,
     },
     enemies,
     chests,
@@ -314,9 +541,16 @@ function createSeededRandom(seed: number): () => number {
 // MAIN RENDER
 // ============================================================================
 
-export function renderFieldNodeRoomScreen(roomId: string, seed?: number): void {
+export function renderFieldNodeRoomScreen(roomId: string, seed?: number, endless: boolean = false): void {
   const root = document.getElementById("app");
   if (!root) return;
+  
+  // Set endless mode flag
+  isEndlessMode = endless;
+  if (endless) {
+    endlessRoomCount = 0;
+    isPausedForExit = false;
+  }
   
   // Generate room if needed
   const actualSeed = seed ?? Math.floor(Math.random() * 1000000);
@@ -370,13 +604,25 @@ function render(): void {
       <div class="field-node-header-bar">
         <div class="field-node-header-title">
           <span class="header-icon">🗺️</span>
-          <span class="header-text">EXPLORATION ZONE</span>
+          <span class="header-text">${isEndlessMode ? `ENDLESS MODE — ROOM ${endlessRoomCount + 1}` : 'EXPLORATION ZONE'}</span>
         </div>
         <div class="field-node-header-controls">
           <span class="key-hint">WASD</span> Move
           <span class="key-hint">SPACE</span> Attack
           <span class="key-hint">E</span> Interact
           <span class="key-hint">SHIFT</span> Dash
+          ${isEndlessMode ? '<span class="key-hint">ESC</span> Exit' : ''}
+        </div>
+      </div>
+      
+      ${isPausedForExit ? renderEndlessExitOverlay() : ''}
+      
+      <!-- Player Health Bar (Field Nodes only) -->
+      <div class="field-node-health-bar">
+        <div class="health-bar-label">HP</div>
+        <div class="health-bar-container">
+          <div class="health-bar-fill" style="width: ${(player.hp / player.maxHp) * 100}%; ${player.invulnerabilityTime > 0 ? 'opacity: 0.6;' : ''}"></div>
+          <div class="health-bar-text">${player.hp}/${player.maxHp}</div>
         </div>
       </div>
       
@@ -510,17 +756,22 @@ function renderEnemies(enemies: FieldNodeEnemy[]): string {
 }
 
 function renderPlayer(player: FieldNodePlayer): string {
-  // Match base camp player style
+  const attackClass = player.isAttacking ? "player-attacking" : "";
+  const invulnerableClass = player.invulnerabilityTime > 0 ? "player-invulnerable" : "";
+  const invulnerableStyle = player.invulnerabilityTime > 0 
+    ? `opacity: ${Math.floor((player.invulnerabilityTime / INVULNERABILITY_DURATION) * 5) % 2 === 0 ? 0.5 : 1};` 
+    : "";
   return `
-    <div class="field-player field-node-player-combat ${player.isAttacking ? 'player-attacking' : ''}" 
+    <div class="field-player field-node-player-combat ${attackClass} ${invulnerableClass}" 
          style="
            left: ${player.x - player.width / 2}px;
            top: ${player.y - player.height / 2}px;
            width: ${player.width}px;
            height: ${player.height}px;
+           ${invulnerableStyle}
          "
          data-facing="${player.facing}">
-      <div class="field-player-sprite">A</div>
+      <div class="field-player-sprite">⚔</div>
     </div>
   `;
 }
@@ -608,7 +859,7 @@ function stopGameLoop(): void {
 }
 
 function gameLoop(currentTime: number): void {
-  if (!roomState || roomState.isPaused || roomState.isCompleted) {
+  if (!roomState || roomState.isPaused || roomState.isCompleted || isPausedForExit) {
     animationFrameId = requestAnimationFrame(gameLoop);
     return;
   }
@@ -640,6 +891,40 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
   
   const player = roomState.player;
   
+  // Update invulnerability timer
+  if (player.invulnerabilityTime > 0) {
+    player.invulnerabilityTime -= deltaTime;
+    if (player.invulnerabilityTime < 0) {
+      player.invulnerabilityTime = 0;
+    }
+  }
+  
+  // Update knockback velocity (dampen over time)
+  if (player.vx !== 0 || player.vy !== 0) {
+    player.vx *= Math.pow(KNOCKBACK_DAMPING, deltaTime / 16); // Normalize to 16ms frame
+    player.vy *= Math.pow(KNOCKBACK_DAMPING, deltaTime / 16);
+    
+    // Apply knockback movement
+    const knockbackX = player.vx * (deltaTime / 1000);
+    const knockbackY = player.vy * (deltaTime / 1000);
+    
+    if (canMoveTo(player.x + knockbackX, player.y, player.width, player.height)) {
+      player.x += knockbackX;
+    } else {
+      player.vx = 0; // Stop horizontal knockback on collision
+    }
+    
+    if (canMoveTo(player.x, player.y + knockbackY, player.width, player.height)) {
+      player.y += knockbackY;
+    } else {
+      player.vy = 0; // Stop vertical knockback on collision
+    }
+    
+    // Stop very small velocities
+    if (Math.abs(player.vx) < 1) player.vx = 0;
+    if (Math.abs(player.vy) < 1) player.vy = 0;
+  }
+  
   // Update attack cooldown
   if (player.attackCooldown > 0) {
     player.attackCooldown -= deltaTime;
@@ -662,37 +947,48 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
     movementInput.attack = false; // Consume the input
   }
   
-  // Movement
-  const dashMultiplier = movementInput.dash ? 2.0 : 1.0;
-  const moveDistance = player.speed * dashMultiplier * (deltaTime / 1000);
+  // Movement (only if not in heavy knockback)
+  const knockbackMagnitude = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+  const canMove = knockbackMagnitude < 50; // Allow movement if knockback is small
   
-  let newX = player.x;
-  let newY = player.y;
+  if (canMove) {
+    const dashMultiplier = movementInput.dash ? 2.0 : 1.0;
+    const moveDistance = player.speed * dashMultiplier * (deltaTime / 1000);
+    
+    let newX = player.x;
+    let newY = player.y;
+    
+    if (movementInput.up) {
+      newY -= moveDistance;
+      player.facing = "north";
+    }
+    if (movementInput.down) {
+      newY += moveDistance;
+      player.facing = "south";
+    }
+    if (movementInput.left) {
+      newX -= moveDistance;
+      player.facing = "west";
+    }
+    if (movementInput.right) {
+      newX += moveDistance;
+      player.facing = "east";
+    }
+    
+    // Collision check
+    if (canMoveTo(newX, player.y, player.width, player.height)) {
+      player.x = newX;
+    }
+    if (canMoveTo(player.x, newY, player.width, player.height)) {
+      player.y = newY;
+    }
+  }
   
-  if (movementInput.up) {
-    newY -= moveDistance;
-    player.facing = "north";
-  }
-  if (movementInput.down) {
-    newY += moveDistance;
-    player.facing = "south";
-  }
-  if (movementInput.left) {
-    newX -= moveDistance;
-    player.facing = "west";
-  }
-  if (movementInput.right) {
-    newX += moveDistance;
-    player.facing = "east";
-  }
-  
-  // Collision check
-  if (canMoveTo(newX, player.y, player.width, player.height)) {
-    player.x = newX;
-  }
-  if (canMoveTo(player.x, newY, player.width, player.height)) {
-    player.y = newY;
-  }
+  // Clamp player position to room bounds
+  const roomWidth = roomState.width * TILE_SIZE;
+  const roomHeight = roomState.height * TILE_SIZE;
+  player.x = Math.max(player.width / 2, Math.min(roomWidth - player.width / 2, player.x));
+  player.y = Math.max(player.height / 2, Math.min(roomHeight - player.height / 2, player.y));
 }
 
 function canMoveTo(x: number, y: number, width: number, height: number): boolean {
@@ -755,6 +1051,20 @@ function performAttack(): void {
       enemy.hp -= ATTACK_DAMAGE;
       console.log(`[FIELD_NODE] Hit enemy ${enemy.id}, HP: ${enemy.hp}/${enemy.maxHp}`);
       
+      // Apply knockback to enemy (away from player)
+      const dx = enemy.x - player.x;
+      const dy = enemy.y - player.y;
+      const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distToPlayer > 0) {
+        // Normalize direction and apply knockback force
+        const knockbackDirX = dx / distToPlayer;
+        const knockbackDirY = dy / distToPlayer;
+        enemy.vx = knockbackDirX * ENEMY_KNOCKBACK_FORCE;
+        enemy.vy = knockbackDirY * ENEMY_KNOCKBACK_FORCE;
+        enemy.knockbackTime = ENEMY_KNOCKBACK_DURATION;
+      }
+      
       if (enemy.hp <= 0) {
         enemy.deathAnimTime = performance.now();
         console.log(`[FIELD_NODE] Enemy ${enemy.id} defeated!`);
@@ -792,34 +1102,76 @@ function updateEnemies(deltaTime: number, currentTime: number): void {
   for (const enemy of roomState.enemies) {
     if (enemy.hp <= 0) continue;
     
-    // Simple AI: move toward player occasionally
-    if (currentTime - enemy.lastMoveTime > 1000 + Math.random() * 1000) {
-      enemy.lastMoveTime = currentTime;
+    // Update knockback
+    if (enemy.knockbackTime > 0) {
+      enemy.knockbackTime -= deltaTime;
       
-      const dx = roomState.player.x - enemy.x;
-      const dy = roomState.player.y - enemy.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Apply knockback velocity
+      const knockbackX = enemy.vx * (deltaTime / 1000);
+      const knockbackY = enemy.vy * (deltaTime / 1000);
       
-      if (dist > 100) {
-        // Move toward player
-        const moveX = (dx / dist) * enemy.speed * (deltaTime / 1000) * 5;
-        const moveY = (dy / dist) * enemy.speed * (deltaTime / 1000) * 5;
+      const newX = enemy.x + knockbackX;
+      const newY = enemy.y + knockbackY;
+      
+      // Check collision and clamp to room bounds
+      if (canMoveTo(newX, enemy.y, enemy.width, enemy.height)) {
+        enemy.x = newX;
+      } else {
+        enemy.vx = 0; // Stop horizontal knockback on collision
+      }
+      
+      if (canMoveTo(enemy.x, newY, enemy.width, enemy.height)) {
+        enemy.y = newY;
+      } else {
+        enemy.vy = 0; // Stop vertical knockback on collision
+      }
+      
+      // Dampen knockback velocity
+      enemy.vx *= Math.pow(KNOCKBACK_DAMPING, deltaTime / 16);
+      enemy.vy *= Math.pow(KNOCKBACK_DAMPING, deltaTime / 16);
+      
+      // Stop very small velocities
+      if (Math.abs(enemy.vx) < 1) enemy.vx = 0;
+      if (Math.abs(enemy.vy) < 1) enemy.vy = 0;
+      
+      // Clamp enemy position to room bounds
+      const roomWidth = roomState.width * TILE_SIZE;
+      const roomHeight = roomState.height * TILE_SIZE;
+      enemy.x = Math.max(enemy.width / 2, Math.min(roomWidth - enemy.width / 2, enemy.x));
+      enemy.y = Math.max(enemy.height / 2, Math.min(roomHeight - enemy.height / 2, enemy.y));
+    }
+    
+    // Only move toward player if not in knockback
+    if (enemy.knockbackTime <= 0) {
+      // Simple AI: move toward player occasionally
+      if (currentTime - enemy.lastMoveTime > 1000 + Math.random() * 1000) {
+        enemy.lastMoveTime = currentTime;
         
-        const newX = enemy.x + moveX;
-        const newY = enemy.y + moveY;
+        const dx = roomState.player.x - enemy.x;
+        const dy = roomState.player.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
         
-        if (canMoveTo(newX, enemy.y, enemy.width, enemy.height)) {
-          enemy.x = newX;
-        }
-        if (canMoveTo(enemy.x, newY, enemy.width, enemy.height)) {
-          enemy.y = newY;
-        }
-        
-        // Update facing
-        if (Math.abs(dx) > Math.abs(dy)) {
-          enemy.facing = dx > 0 ? "east" : "west";
-        } else {
-          enemy.facing = dy > 0 ? "south" : "north";
+        if (dist > 100) {
+          // Move toward player
+          const moveX = (dx / dist) * enemy.speed * (deltaTime / 1000) * 5;
+          const moveY = (dy / dist) * enemy.speed * (deltaTime / 1000) * 5;
+          
+          const newX = enemy.x + moveX;
+          const newY = enemy.y + moveY;
+          
+          if (canMoveTo(newX, enemy.y, enemy.width, enemy.height)) {
+            enemy.x = newX;
+          }
+          if (canMoveTo(enemy.x, newY, enemy.width, enemy.height)) {
+            enemy.y = newY;
+          }
+          
+          // Update facing
+          if (Math.abs(dx) > Math.abs(dy)) {
+            enemy.facing = dx > 0 ? "east" : "west";
+          } else {
+            enemy.facing = dy > 0 ? "south" : "north";
+          }
         }
       }
     }
@@ -949,8 +1301,144 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
 // ============================================================================
 
 function checkCollisions(): void {
-  // Currently no player damage from enemies (as per spec: light enemies)
-  // Could add knockback here if desired
+  if (!roomState) return;
+  
+  const { player, enemies } = roomState;
+  
+  // Check player-enemy collisions for damage and knockback
+  for (const enemy of enemies) {
+    if (enemy.hp <= 0) continue;
+    
+    // AABB collision detection
+    const playerLeft = player.x - player.width / 2;
+    const playerRight = player.x + player.width / 2;
+    const playerTop = player.y - player.height / 2;
+    const playerBottom = player.y + player.height / 2;
+    
+    const enemyLeft = enemy.x - enemy.width / 2;
+    const enemyRight = enemy.x + enemy.width / 2;
+    const enemyTop = enemy.y - enemy.height / 2;
+    const enemyBottom = enemy.y + enemy.height / 2;
+    
+    const isColliding = 
+      playerRight > enemyLeft &&
+      playerLeft < enemyRight &&
+      playerBottom > enemyTop &&
+      playerTop < enemyBottom;
+    
+    if (isColliding) {
+      // Damage player if not invulnerable
+      if (player.invulnerabilityTime <= 0 && player.hp > 0) {
+        player.hp -= PLAYER_DAMAGE_ON_CONTACT;
+        player.invulnerabilityTime = INVULNERABILITY_DURATION;
+        console.log(`[FIELD_NODE] Player took damage! HP: ${player.hp}/${player.maxHp}`);
+        
+        // Apply knockback to player (away from enemy)
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > 0) {
+          const knockbackDirX = dx / dist;
+          const knockbackDirY = dy / dist;
+          player.vx = knockbackDirX * PLAYER_KNOCKBACK_FORCE;
+          player.vy = knockbackDirY * PLAYER_KNOCKBACK_FORCE;
+        }
+        
+        // Check for death
+        if (player.hp <= 0) {
+          player.hp = 0;
+          handlePlayerDeath();
+          return; // Exit early on death
+        }
+      }
+      
+      // Apply small knockback to enemy (away from player) - prevents sticking
+      if (enemy.knockbackTime <= 0) {
+        const dx = enemy.x - player.x;
+        const dy = enemy.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > 0) {
+          const knockbackDirX = dx / dist;
+          const knockbackDirY = dy / dist;
+          enemy.vx = knockbackDirX * (ENEMY_KNOCKBACK_FORCE * 0.3); // Smaller push
+          enemy.vy = knockbackDirY * (ENEMY_KNOCKBACK_FORCE * 0.3);
+          enemy.knockbackTime = ENEMY_KNOCKBACK_DURATION * 0.5; // Shorter duration
+        }
+      }
+    }
+  }
+}
+
+function handlePlayerDeath(): void {
+  if (!roomState) return;
+  
+  console.log("[FIELD_NODE] Player died! Exiting room...");
+  
+  // Stop the game loop
+  stopGameLoop();
+  
+  // Exit the room and return to operation map
+  // TODO: Handle death cutscenes or penalties later
+  cleanup();
+  
+  // Return to operation map (or base camp if test room or endless mode)
+  const isTestRoom = roomState.roomId.startsWith("test_") || roomState.roomId.startsWith("endless_");
+  if (isTestRoom || isEndlessMode) {
+    import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+      renderFieldScreen("base_camp");
+    });
+  } else {
+    renderOperationMapScreen();
+  }
+}
+
+function handleEndlessModeExit(): void {
+  if (!isEndlessMode) return;
+  
+  console.log(`[ENDLESS] Exiting endless mode after ${endlessRoomCount} rooms`);
+  
+  // Pause the game
+  isPausedForExit = true;
+  if (roomState) {
+    roomState.isPaused = true;
+  }
+  
+  // Render exit overlay
+  render();
+  
+  // Attach button handler
+  setTimeout(() => {
+    const exitBtn = document.getElementById("endlessExitBtn");
+    if (exitBtn) {
+      exitBtn.onclick = () => {
+        cleanup();
+        isEndlessMode = false;
+        endlessRoomCount = 0;
+        isPausedForExit = false;
+        
+        import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+          renderFieldScreen("base_camp");
+        });
+      };
+    }
+  }, 100);
+}
+
+function renderEndlessExitOverlay(): string {
+  return `
+    <div class="field-node-endless-exit-overlay">
+      <div class="field-node-endless-exit-card">
+        <div class="endless-exit-title">ENDLESS MODE PAUSED</div>
+        <div class="endless-exit-stats">
+          <div class="endless-stat">Rooms Completed: <span class="endless-stat-value">${endlessRoomCount}</span></div>
+        </div>
+        <div class="endless-exit-message">Return to Base Camp?</div>
+        <button class="endless-exit-btn" id="endlessExitBtn">RETURN TO BASE CAMP</button>
+      </div>
+    </div>
+  `;
 }
 
 function checkSparklePickups(): void {
@@ -1119,6 +1607,16 @@ function handleKeyDown(e: KeyboardEvent): void {
   
   const key = e.key?.toLowerCase() ?? "";
   
+  // Handle ESC key for endless mode exit
+  if (key === "escape" || e.key === "Escape") {
+    if (isEndlessMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEndlessModeExit();
+      return;
+    }
+  }
+  
   if (e.shiftKey) {
     movementInput.dash = true;
   }
@@ -1153,8 +1651,10 @@ function handleKeyDown(e: KeyboardEvent): void {
       e.preventDefault();
       break;
     case "escape":
-      // Pause or show menu
-      e.preventDefault();
+      // Pause or show menu (only if not endless mode)
+      if (!isEndlessMode) {
+        e.preventDefault();
+      }
       break;
   }
 }

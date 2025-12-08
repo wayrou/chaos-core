@@ -29,49 +29,56 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.6rem 0.9rem;
-  background: linear-gradient(180deg, #2d261f 0%, #1a1612 100%);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  background: var(--ard-brown-dark);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
+  box-shadow: none;
 }
 
 .workshop-title {
   font-size: 1.1rem;
-  font-weight: 600;
-  color: #ffcc6e;
+  font-weight: 700;
+  color: var(--ard-gold);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin: 0;
-  text-shadow: 0 0 10px rgba(255, 204, 110, 0.3);
+  text-shadow: none;
 }
 
 .workshop-subtitle {
   font-size: 0.6rem;
   font-family: 'Consolas', monospace;
-  color: #a87c45;
+  color: var(--ard-cool-gray);
   letter-spacing: 0.05em;
   margin-top: 0.15rem;
 }
 
 .workshop-back-btn {
   padding: 0.4rem 0.8rem;
-  background: #3d3428;
-  border: 1px solid #6b4f2d;
-  color: #c9a66b;
+  background: var(--ard-dark);
+  border: 1px solid var(--ard-brown-mid);
+  color: var(--ard-sage);
   font-family: inherit;
   font-size: 0.65rem;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 2px;
+  transition: all 0.15s ease;
+  border-radius: var(--radius-md);
+  box-shadow: none;
 }
 
 .workshop-back-btn:hover {
-  background: #6b4f2d;
-  color: #ffcc6e;
-  border-color: #a87c45;
+  background: var(--ard-brown-dark);
+  color: var(--ard-off-white);
+  border-color: var(--ard-rust);
+  transform: translateY(-1px);
+}
+
+.workshop-back-btn:active {
+  transform: translateY(0);
 }
 
 /* --------------------------------------------------------------------------
@@ -99,20 +106,21 @@
 .workshop-section-title {
   font-size: 0.6rem;
   font-family: 'Consolas', monospace;
-  color: #ffcc6e;
+  color: var(--ard-gold);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
-  margin-bottom: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(128, 109, 78, 0.2);
+  margin-bottom: 0.5rem;
 }
 
 /* Resources Panel */
 .workshop-resources {
   background: rgba(20, 18, 15, 0.95);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   padding: 0.6rem;
+  box-shadow: none;
 }
 
 .resource-grid {
@@ -126,8 +134,9 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.4rem;
-  background: #2d261f;
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(128, 109, 78, 0.1);
 }
 
 .resource-icon {
@@ -139,23 +148,24 @@
 .resource-name {
   flex: 1;
   font-size: 0.6rem;
-  color: #a87c45;
+  color: var(--ard-cool-gray);
 }
 
 .resource-value {
   font-size: 0.7rem;
   font-family: 'Consolas', monospace;
   font-weight: 600;
-  color: #35ff95;
-  text-shadow: 0 0 5px rgba(53, 255, 149, 0.3);
+  color: var(--ard-emerald);
+  text-shadow: none;
 }
 
 /* Categories Panel */
 .workshop-categories {
   background: rgba(20, 18, 15, 0.95);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   padding: 0.6rem;
+  box-shadow: none;
 }
 
 .category-tabs {
@@ -166,40 +176,43 @@
 
 .category-tab {
   padding: 0.45rem 0.6rem;
-  background: #2d261f;
-  border: 1px solid rgba(168, 124, 69, 0.2);
-  color: #a87c45;
+  background: var(--ard-dark);
+  border: 1px solid var(--ard-charcoal);
+  color: var(--ard-cool-gray);
   font-family: inherit;
   font-size: 0.6rem;
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 2px;
+  transition: all 0.15s ease;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
 }
 
 .category-tab:hover {
-  background: #3d3428;
-  color: #c9a66b;
-  border-color: rgba(168, 124, 69, 0.4);
+  background: var(--ard-charcoal);
+  color: var(--ard-sage);
+  border-color: var(--ard-brown-mid);
 }
 
 .category-tab--active {
-  background: #6b4f2d;
-  color: #ffcc6e;
-  border-color: #a87c45;
+  background: var(--ard-brown-dark);
+  color: var(--ard-gold);
+  border-color: var(--ard-rust);
+  font-weight: 700;
 }
 
 /* Consumables Panel */
 .workshop-consumables {
   flex: 1;
   background: rgba(20, 18, 15, 0.95);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   padding: 0.6rem;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-shadow: none;
 }
 
 .consumables-list {
@@ -212,7 +225,7 @@
 
 .consumables-empty {
   font-size: 0.6rem;
-  color: #6b4f2d;
+  color: var(--ard-cool-gray);
   font-style: italic;
   text-align: center;
   padding: 0.5rem;
@@ -223,13 +236,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.25rem 0.4rem;
-  background: #2d261f;
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(128, 109, 78, 0.1);
 }
 
 .consumable-name {
   font-size: 0.55rem;
-  color: #c9a66b;
+  color: var(--ard-sage);
 }
 
 .consumable-qty {
@@ -245,12 +259,13 @@
   width: 280px;
   flex-shrink: 0;
   background: rgba(20, 18, 15, 0.95);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   padding: 0.6rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: none;
 }
 
 .recipe-list {
@@ -263,7 +278,7 @@
 
 .recipe-empty {
   font-size: 0.65rem;
-  color: #6b4f2d;
+  color: var(--ard-cool-gray);
   font-style: italic;
   text-align: center;
   padding: 1rem;
@@ -271,22 +286,23 @@
 
 .recipe-item {
   padding: 0.5rem 0.6rem;
-  background: #2d261f;
-  border: 1px solid rgba(168, 124, 69, 0.15);
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border: 1px solid var(--ard-charcoal);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+  box-shadow: none;
 }
 
 .recipe-item:hover {
-  background: #3d3428;
-  border-color: rgba(168, 124, 69, 0.4);
+  background: var(--ard-charcoal);
+  border-color: var(--ard-brown-mid);
 }
 
 .recipe-item--selected {
-  background: #3d3428;
-  border-color: #a87c45;
-  box-shadow: 0 0 10px rgba(168, 124, 69, 0.2);
+  background: var(--ard-brown-dark);
+  border-color: var(--ard-rust);
+  box-shadow: var(--shadow-sm);
 }
 
 .recipe-item--disabled {
@@ -296,23 +312,24 @@
 .recipe-item-name {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #c9a66b;
+  color: var(--ard-sage);
   margin-bottom: 0.2rem;
 }
 
 .recipe-item--selected .recipe-item-name {
-  color: #ffcc6e;
+  color: var(--ard-gold);
+  font-weight: 700;
 }
 
 .recipe-item-cost {
   font-size: 0.55rem;
   font-family: 'Consolas', monospace;
-  color: #8ce6ff;
+  color: var(--ard-sky);
 }
 
 .recipe-item-warning {
   font-size: 0.5rem;
-  color: #ff6b6b;
+  color: var(--ard-coral);
   margin-top: 0.2rem;
 }
 
@@ -322,10 +339,11 @@
 .workshop-details {
   flex: 1;
   background: rgba(20, 18, 15, 0.95);
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   padding: 0.6rem;
   overflow-y: auto;
+  box-shadow: none;
 }
 
 .detail-panel {
@@ -342,14 +360,14 @@
 
 .detail-empty-icon {
   font-size: 2.5rem;
-  color: #6b4f2d;
+  color: var(--ard-cool-gray);
   margin-bottom: 0.75rem;
   opacity: 0.5;
 }
 
 .detail-empty-text {
   font-size: 0.75rem;
-  color: #6b4f2d;
+  color: var(--ard-cool-gray);
 }
 
 .detail-header {
@@ -360,33 +378,34 @@
 
 .detail-title {
   font-size: 1rem;
-  font-weight: 600;
-  color: #ffcc6e;
+  font-weight: 700;
+  color: var(--ard-gold);
   margin: 0 0 0.2rem 0;
-  text-shadow: 0 0 8px rgba(255, 204, 110, 0.3);
+  text-shadow: none;
 }
 
 .detail-category {
   font-size: 0.55rem;
   font-family: 'Consolas', monospace;
-  color: #8ce6ff;
+  color: var(--ard-sky);
   letter-spacing: 0.08em;
 }
 
 .detail-description {
   font-size: 0.7rem;
-  color: #c9a66b;
+  color: var(--ard-sage);
   line-height: 1.5;
   margin-bottom: 1rem;
   padding: 0.5rem;
-  background: #2d261f;
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(128, 109, 78, 0.1);
 }
 
 .detail-label {
   font-size: 0.55rem;
   font-family: 'Consolas', monospace;
-  color: #a87c45;
+  color: var(--ard-cool-gray);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-bottom: 0.35rem;
@@ -401,20 +420,20 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.6rem;
-  background: #2d261f;
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
   font-size: 0.65rem;
 }
 
 .detail-requires-item--have {
-  color: #35ff95;
-  border-color: rgba(53, 255, 149, 0.3);
+  color: var(--ard-emerald);
+  border-color: var(--ard-emerald);
 }
 
 .detail-requires-item--missing {
-  color: #ff6b6b;
-  border-color: rgba(255, 107, 107, 0.3);
+  color: var(--ard-coral);
+  border-color: var(--ard-crimson);
 }
 
 .detail-costs {
@@ -426,14 +445,15 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.3rem 0.5rem;
-  background: #2d261f;
-  border-radius: 2px;
+  background: var(--ard-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(128, 109, 78, 0.1);
   margin-bottom: 0.2rem;
   font-size: 0.6rem;
 }
 
 .cost-name {
-  color: #a87c45;
+  color: var(--ard-cool-gray);
 }
 
 .cost-values {
@@ -441,11 +461,11 @@
 }
 
 .cost-line--ok .cost-values {
-  color: #35ff95;
+  color: var(--ard-emerald);
 }
 
 .cost-line--short .cost-values {
-  color: #ff6b6b;
+  color: var(--ard-coral);
 }
 
 .detail-output {
@@ -457,21 +477,21 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem 0.6rem;
-  background: linear-gradient(90deg, rgba(53, 255, 149, 0.1) 0%, transparent 100%);
-  border: 1px solid rgba(53, 255, 149, 0.3);
-  border-radius: 2px;
+  background: rgba(37, 150, 122, 0.1);
+  border: 1px solid var(--ard-emerald);
+  border-radius: var(--radius-sm);
 }
 
 .output-name {
   font-size: 0.7rem;
-  font-weight: 600;
-  color: #35ff95;
+  font-weight: 700;
+  color: var(--ard-emerald);
 }
 
 .output-qty {
   font-size: 0.7rem;
   font-family: 'Consolas', monospace;
-  color: #8ce6ff;
+  color: var(--ard-sky);
 }
 
 .detail-actions {
@@ -482,50 +502,60 @@
 .craft-btn {
   width: 100%;
   padding: 0.7rem 1rem;
-  background: linear-gradient(180deg, #6b4f2d 0%, #4a3520 100%);
-  border: 2px solid #a87c45;
-  color: #ffcc6e;
+  background: var(--ard-rust);
+  border: 2px solid var(--ard-gold);
+  color: var(--ard-off-white);
   font-family: inherit;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 3px;
+  transition: all 0.15s ease;
+  border-radius: var(--radius-md);
+  box-shadow: none;
 }
 
 .craft-btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #a87c45 0%, #6b4f2d 100%);
-  box-shadow: 0 0 15px rgba(168, 124, 69, 0.4);
+  background: var(--ard-amber);
+  border-color: var(--ard-gold);
+  color: var(--ard-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.craft-btn:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .craft-btn--disabled {
-  background: #2d261f;
-  border-color: #4a4843;
-  color: #6b4f2d;
+  background: var(--ard-charcoal);
+  border-color: var(--ard-cool-gray);
+  color: var(--ard-cool-gray);
   cursor: not-allowed;
+  opacity: 0.4;
 }
 
 /* --------------------------------------------------------------------------
    CONSOLE
    -------------------------------------------------------------------------- */
 .workshop-console {
-  background: #1a1612;
-  border: 1px solid rgba(168, 124, 69, 0.3);
-  border-radius: 3px;
+  background: var(--ard-dark);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
+  box-shadow: none;
 }
 
 .console-header {
   padding: 0.3rem 0.6rem;
-  background: linear-gradient(90deg, #6b4f2d 0%, transparent 100%);
+  background: var(--ard-brown-dark);
   font-size: 0.55rem;
   font-family: 'Consolas', monospace;
-  color: #ffcc6e;
+  color: var(--ard-gold);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+  border-bottom: 1px solid var(--ard-brown-mid);
 }
 
 .console-body {
@@ -538,9 +568,9 @@
 }
 
 .console-line {
-  color: #35ff95;
+  color: var(--ard-emerald);
   margin-bottom: 1px;
-  text-shadow: 0 0 5px rgba(53, 255, 149, 0.3);
+  text-shadow: none;
 }
 
 /* --------------------------------------------------------------------------
