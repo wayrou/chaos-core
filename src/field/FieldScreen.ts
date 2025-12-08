@@ -173,11 +173,18 @@ function render(): void {
     : "";
 
   // Get field-root container or create it
-  let fieldRoot = root.querySelector(".field-root");
+  let fieldRoot = root.querySelector(".field-root") as HTMLElement | null;
   if (!fieldRoot) {
+    // Clear any existing content (like main menu) before creating field screen
+    // But preserve the all-nodes panel if it exists
+    const existingPanel = root.querySelector("#allNodesPanel");
+    root.innerHTML = "";
+    if (existingPanel) {
+      root.appendChild(existingPanel);
+    }
+    
     fieldRoot = document.createElement("div");
     fieldRoot.className = "field-root";
-    // Insert at beginning so panel stays on top
     root.insertBefore(fieldRoot, root.firstChild);
   }
 

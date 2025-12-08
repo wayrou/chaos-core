@@ -7,11 +7,9 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
-
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
 
 import {
   Equipment,
@@ -28,7 +26,7 @@ import {
   EquipmentCard,
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
-import { getPWRBand, getPWRBandColor } from "../../core/pwr";
+import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -196,6 +194,15 @@ export function renderUnitDetailScreen(unitId: string): void {
     .join("");
 
   const portraitPath = getUnitPortraitPath(unitId);
+
+  // Calculate PWR for the unit
+  const pwr = (unit as any).pwr ?? calculatePWR({
+    unit,
+    equipmentById,
+    modulesById,
+  });
+  const pwrBand = getPWRBand(pwr);
+  const pwrColor = getPWRBandColor(pwr);
 
   root.innerHTML = `
     <div class="unitdetail-root">

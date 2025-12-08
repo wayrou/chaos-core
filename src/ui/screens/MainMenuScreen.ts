@@ -7,6 +7,7 @@
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
 import { renderSettingsScreen } from "./SettingsScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderBaseCampScreen } from "./BaseCampScreen";
 import {
   canContinue,
   loadMostRecent,
