@@ -40,7 +40,7 @@ export function renderEventRoomScreen(eventTemplateId: string): void {
 
           <div class="event-room-choices">
             <div class="event-room-choices-title">CHOOSE YOUR ACTION:</div>
-            ${eventTemplate.choices.map(choice => renderChoice(choice, state)).join('')}
+            ${eventTemplate.choices.map((choice, index) => renderChoice(choice, state, index)).join('')}
           </div>
         </div>
       </div>
@@ -56,12 +56,12 @@ export function renderEventRoomScreen(eventTemplateId: string): void {
   });
 }
 
-function renderChoice(choice: EventChoice, state: GameState): string {
+function renderChoice(choice: EventChoice, state: GameState, index: number): string {
   const canAfford = checkCanAffordChoice(choice, state);
 
   return `
     <button class="event-choice-btn ${!canAfford ? 'event-choice-btn--disabled' : ''}"
-            id="choice-${choice.id}"
+            id="choice-${index}"
             ${!canAfford ? 'disabled' : ''}>
       <div class="event-choice-label">${choice.label}</div>
       <div class="event-choice-description">${choice.description}</div>
@@ -79,8 +79,9 @@ function checkCanAffordChoice(choice: EventChoice, state: GameState): boolean {
 
   // HP cost check - make sure at least one unit would survive
   if (outcome.hpCost) {
+    const hpCost = outcome.hpCost; // Capture for type safety
     const partyUnits = state.partyUnitIds.map(id => state.unitsById[id]);
-    const wouldAllDie = partyUnits.every(u => u.hp <= outcome.hpCost);
+    const wouldAllDie = partyUnits.every(u => u.hp <= hpCost);
     if (wouldAllDie) {
       return false;
     }
@@ -89,7 +90,7 @@ function checkCanAffordChoice(choice: EventChoice, state: GameState): boolean {
   return true;
 }
 
-function handleChoice(choice: EventChoice, event: EventRoom): void {
+function handleChoice(choice: EventChoice, _event: EventRoom): void {
   const outcome = choice.outcome;
 
   updateGameState(prev => {
@@ -97,12 +98,13 @@ function handleChoice(choice: EventChoice, event: EventRoom): void {
 
     // Apply HP cost
     if (outcome.hpCost) {
+      const hpCost = outcome.hpCost; // Capture for type safety
       prev.partyUnitIds.forEach(unitId => {
         const unit = updated.unitsById[unitId];
         if (unit) {
           updated.unitsById[unitId] = {
             ...unit,
-            hp: Math.max(1, unit.hp - outcome.hpCost),
+            hp: Math.max(1, unit.hp - hpCost),
           };
         }
       });

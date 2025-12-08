@@ -10,9 +10,11 @@ import {
   getAvailableQuests, 
   getActiveQuests, 
   acceptQuest,
-  initializeQuestState 
+  initializeQuestState,
+  abandonQuest,
+  getTotalQuestsCompleted,
 } from "../../quests/questManager";
-import { Quest, QuestDifficultyTier } from "../../quests/types";
+import { Quest } from "../../quests/types";
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -39,6 +41,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
 
   const state = getGameState();
   const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
+  const totalCompleted = getTotalQuestsCompleted();
   
   let availableQuests: Quest[];
   let activeQuests: Quest[];
@@ -62,9 +65,15 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
           <div class="quest-board-subtitle">SCROLLINK OPERATIONS TERMINAL</div>
         </div>
         <div class="quest-board-header-right">
-          <div class="quest-board-stats">
-            <span class="stats-label">ACTIVE QUESTS</span>
-            <span class="stats-value">${activeQuests.length} / 5</span>
+          <div class="quest-board-stats-group">
+            <div class="quest-board-stats">
+              <span class="stats-label">ACTIVE</span>
+              <span class="stats-value">${activeQuests.length} / 5</span>
+            </div>
+            <div class="quest-board-stats quest-board-stats--completed">
+              <span class="stats-label">COMPLETED</span>
+              <span class="stats-value">${totalCompleted}</span>
+            </div>
           </div>
           <button class="quest-board-back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
@@ -123,14 +132,32 @@ function renderActiveQuests(quests: Quest[]): string {
       <div class="quest-board-empty">
         <div class="empty-icon">📋</div>
         <div class="empty-title">NO ACTIVE QUESTS</div>
-        <div class="empty-text">Accept quests from the Available tab to get started.</div>
+        <div class="empty-text">Quests are automatically generated. Check back soon!</div>
       </div>
     `;
   }
 
+  // Separate generated quests from static quests
+  const generatedQuests = quests.filter(q => q.metadata?.isGenerated);
+  const staticQuests = quests.filter(q => !q.metadata?.isGenerated);
+
   return `
     <div class="quest-list">
-      ${quests.map(quest => renderQuestCard(quest, "active")).join("")}
+      ${staticQuests.length > 0 ? `
+        <div class="quest-list-section">
+          <div class="quest-section-header">STORY QUESTS</div>
+          ${staticQuests.map(quest => renderQuestCard(quest, "active")).join("")}
+        </div>
+      ` : ''}
+      ${generatedQuests.length > 0 ? `
+        <div class="quest-list-section">
+          <div class="quest-section-header">
+            <span>ENDLESS QUESTS</span>
+            <span class="quest-section-hint">Auto-generated · Complete for rewards</span>
+          </div>
+          ${generatedQuests.map(quest => renderQuestCard(quest, "active")).join("")}
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -186,7 +213,14 @@ function renderQuestCard(quest: Quest, mode: "available" | "active"): string {
       <div class="quest-card-footer">
         ${mode === "available" 
           ? `<button class="quest-accept-btn" data-quest-id="${quest.id}">ACCEPT QUEST</button>`
-          : `<div class="quest-status-badge quest-status-badge--active">IN PROGRESS</div>`}
+          : `
+            <div class="quest-footer-row">
+              <div class="quest-status-badge quest-status-badge--active">IN PROGRESS</div>
+              ${quest.metadata?.isGenerated ? `
+                <button class="quest-abandon-btn" data-quest-id="${quest.id}" title="Abandon this quest">✕</button>
+              ` : ''}
+            </div>
+          `}
       </div>
     </div>
   `;
@@ -277,6 +311,26 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
           renderQuestBoardScreen(returnTo);
         } else {
           alert("Failed to accept quest. You may have reached the maximum number of active quests.");
+        }
+      }
+    });
+  });
+
+  // Abandon quest buttons (for generated quests only)
+  document.querySelectorAll(".quest-abandon-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = e.currentTarget as HTMLElement;
+      const questId = target.getAttribute("data-quest-id");
+      if (questId) {
+        if (confirm("Abandon this quest? A new quest will be generated to replace it.")) {
+          const success = abandonQuest(questId);
+          if (success) {
+            // Small delay to let replenishment happen
+            setTimeout(() => {
+              renderQuestBoardScreen(returnTo);
+            }, 150);
+          }
         }
       }
     });

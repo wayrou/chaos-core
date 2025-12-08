@@ -1,5 +1,5 @@
 // src/ui/screens/ScrollLinkBoot.ts
-import { renderMainMenu } from "./MainMenuScreen";
+import { renderExpositionScreen } from "./ExpositionScreen";
 
 export function renderScrollLinkBoot() {
   const root = document.getElementById("app");
@@ -61,7 +61,7 @@ export function renderScrollLinkBoot() {
     if (index >= total) {
       clearInterval(interval);
       setTimeout(() => {
-        renderMainMenu();
+        renderExpositionScreen();
       }, 700);
     }
   }, 400);

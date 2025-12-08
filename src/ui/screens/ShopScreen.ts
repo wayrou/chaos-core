@@ -6,6 +6,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderOperationMapScreen } from "./OperationMapScreen";
 import { 
   PAK_DATABASE, 
   openPAK, 
@@ -146,12 +147,12 @@ const EQUIPMENT_ITEMS: ShopItem[] = [
 
 let currentTab: "paks" | "equipment" | "consumables" = "paks";
 
-export function renderShopScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
   
   const state = getGameState();
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
+  const backButtonText = returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "DUNGEON MAP" : "BASE CAMP";
   
   app.innerHTML = `
     <div class="shop-root">
@@ -299,7 +300,7 @@ function renderShopItem(item: ShopItem, state: any): string {
 // EVENT HANDLERS
 // ----------------------------------------------------------------------------
 
-function attachShopListeners(returnTo: "basecamp" | "field" = "basecamp"): void {
+function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
@@ -308,6 +309,10 @@ function attachShopListeners(returnTo: "basecamp" | "field" = "basecamp"): void 
     backBtn.onclick = () => {
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
+      } else if (returnDestination === "operation") {
+        // Mark the current room as visited when leaving the shop
+        markCurrentRoomVisited();
+        renderOperationMapScreen();
       } else {
         renderBaseCampScreen();
       }
@@ -322,7 +327,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" = "basecamp"): void 
         currentTab = tabName as "paks" | "equipment" | "consumables";
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as "basecamp" | "field");
+        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
       }
     });
   });
@@ -476,6 +481,30 @@ function showPurchaseModal(itemName: string, items: string[], subtitle: string):
       modal.classList.remove("shop-modal--visible");
       setTimeout(() => modal.remove(), 300);
     }
+  });
+}
+
+// Mark current room as visited (for operation shops)
+function markCurrentRoomVisited(): void {
+  updateGameState(prev => {
+    if (!prev.operation) return prev;
+    
+    const operation = { ...prev.operation };
+    const floor = operation.floors[operation.currentFloorIndex];
+    const roomId = operation.currentRoomId;
+
+    if (floor && roomId && (floor.nodes || floor.rooms)) {
+      const nodes = floor.nodes || floor.rooms || [];
+      const room = nodes.find(n => n.id === roomId);
+      if (room) {
+        room.visited = true;
+      }
+    }
+
+    return {
+      ...prev,
+      operation,
+    };
   });
 }
 

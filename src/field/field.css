@@ -191,6 +191,106 @@
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
+/* ==========================================================================
+   COMPANION (SABLE) - Headline 15a
+   ========================================================================== */
+
+.field-companion {
+  position: absolute;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s linear;
+  pointer-events: none;
+}
+
+.field-companion-sprite {
+  width: 100%;
+  height: 100%;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+  animation: companionBounce 1.5s ease-in-out infinite;
+}
+
+.field-companion[data-state="attack"] .field-companion-sprite {
+  animation: companionDash 0.3s ease-out;
+}
+
+.field-companion[data-state="fetch"] .field-companion-sprite {
+  animation: companionFetch 0.5s ease-in-out infinite;
+}
+
+@keyframes companionBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes companionDash {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+@keyframes companionFetch {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-10deg); }
+  75% { transform: rotate(10deg); }
+}
+
+/* ==========================================================================
+   NPCs - Headline 15b
+   ========================================================================== */
+
+.field-npc {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s linear;
+  pointer-events: none;
+}
+
+.field-npc-sprite {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(139, 69, 19, 0.8), rgba(101, 67, 33, 0.9));
+  border: 2px solid rgba(139, 69, 19, 1);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: white;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px rgba(139, 69, 19, 0.4);
+}
+
+.field-npc-name {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.field-npc:hover .field-npc-name {
+  opacity: 1;
+}
+
 /* Interaction Prompt */
 .field-interaction-prompt {
   position: absolute;

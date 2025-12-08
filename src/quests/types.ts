@@ -57,7 +57,11 @@ export interface Quest {
   status: QuestStatus;
   acceptedAt?: number; // Timestamp when accepted
   completedAt?: number; // Timestamp when completed
-  metadata?: Record<string, any>; // Additional quest data
+  metadata?: {
+    isGenerated?: boolean; // True if this is a randomly generated quest (Headline 15)
+    templateId?: string;   // Template ID used to generate the quest
+    [key: string]: any;    // Additional quest data
+  };
 }
 
 export interface QuestState {
@@ -66,6 +70,9 @@ export interface QuestState {
   completedQuests: QuestId[];
   failedQuests: QuestId[];
   maxActiveQuests: number;
+  // Headline 15: Endless quest system tracking
+  totalQuestsCompleted?: number;  // Lifetime counter for completed quests
+  generatedQuestCount?: number;   // How many generated quests have been created
 }
 
 

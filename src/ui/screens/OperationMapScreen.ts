@@ -1,17 +1,146 @@
 // ============================================================================
-// OPERATION MAP SCREEN - Updated for Headline 13
-// Shows dungeon floors, procedural rooms, navigation
+// OPERATION MAP SCREEN - Updated for Headline 14c
+// Shows dungeon floors as a roguelike node-based map
+// Features: Linear progression, locked rooms, unit management access, WASD pan
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { getCurrentOperation, getCurrentFloor, getCurrentRoom } from "../../core/ops";
+import { getCurrentOperation, getCurrentFloor } from "../../core/ops";
 import { createTestBattleForCurrentParty } from "../../core/battle";
 import { renderBattleScreen } from "./BattleScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
 import { renderShopScreen } from "./ShopScreen";
+import { renderRosterScreen } from "./RosterScreen";
+import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
 import { canAdvanceToNextFloor, advanceToNextFloor, getBattleTemplate } from "../../core/procedural";
+import { updateQuestProgress } from "../../quests/questManager";
+
+// ============================================================================
+// PAN STATE & CONTROLS
+// ============================================================================
+
+interface PanState {
+  x: number;
+  y: number;
+  keysPressed: Set<string>;
+}
+
+let panState: PanState = {
+  x: 0,
+  y: 0,
+  keysPressed: new Set(),
+};
+
+let panAnimationFrame: number | null = null;
+let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+let keyupHandler: ((e: KeyboardEvent) => void) | null = null;
+
+const PAN_SPEED = 12;
+const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
+
+function cleanupPanHandlers(): void {
+  if (keydownHandler) {
+    window.removeEventListener("keydown", keydownHandler);
+    keydownHandler = null;
+  }
+  if (keyupHandler) {
+    window.removeEventListener("keyup", keyupHandler);
+    keyupHandler = null;
+  }
+  if (panAnimationFrame) {
+    cancelAnimationFrame(panAnimationFrame);
+    panAnimationFrame = null;
+  }
+  panState.keysPressed.clear();
+}
+
+function setupPanHandlers(): void {
+  cleanupPanHandlers();
+  
+  // Reset pan position
+  panState = { x: 0, y: 0, keysPressed: new Set() };
+
+  keydownHandler = (e: KeyboardEvent) => {
+    if (!PAN_KEYS.has(e.key)) return;
+    
+    // Don't pan if typing in an input
+    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+      return;
+    }
+    
+    e.preventDefault();
+    panState.keysPressed.add(e.key.toLowerCase());
+    
+    if (!panAnimationFrame) {
+      startPanLoop();
+    }
+  };
+
+  keyupHandler = (e: KeyboardEvent) => {
+    panState.keysPressed.delete(e.key.toLowerCase());
+    
+    // Also handle arrow keys
+    const arrowToWasd: Record<string, string> = {
+      "arrowup": "w",
+      "arrowleft": "a", 
+      "arrowdown": "s",
+      "arrowright": "d",
+    };
+    const mapped = arrowToWasd[e.key.toLowerCase()];
+    if (mapped) {
+      panState.keysPressed.delete(mapped);
+    }
+  };
+
+  window.addEventListener("keydown", keydownHandler);
+  window.addEventListener("keyup", keyupHandler);
+}
+
+function startPanLoop(): void {
+  const update = () => {
+    let dx = 0;
+    let dy = 0;
+
+    if (panState.keysPressed.has("w") || panState.keysPressed.has("arrowup")) dy += PAN_SPEED;
+    if (panState.keysPressed.has("s") || panState.keysPressed.has("arrowdown")) dy -= PAN_SPEED;
+    if (panState.keysPressed.has("a") || panState.keysPressed.has("arrowleft")) dx += PAN_SPEED;
+    if (panState.keysPressed.has("d") || panState.keysPressed.has("arrowright")) dx -= PAN_SPEED;
+
+    if (dx !== 0 || dy !== 0) {
+      panState.x += dx;
+      panState.y += dy;
+      
+      // Apply transform to map
+      const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
+      if (mapContainer) {
+        mapContainer.style.transform = `translate(${panState.x}px, ${panState.y}px)`;
+      }
+    }
+
+    if (panState.keysPressed.size > 0) {
+      panAnimationFrame = requestAnimationFrame(update);
+    } else {
+      panAnimationFrame = null;
+    }
+  };
+
+  panAnimationFrame = requestAnimationFrame(update);
+}
+
+function resetPan(): void {
+  panState.x = 0;
+  panState.y = 0;
+  const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
+  if (mapContainer) {
+    mapContainer.style.transform = `translate(0px, 0px)`;
+  }
+}
+
+// ============================================================================
+// MAIN RENDER
+// ============================================================================
 
 export function renderOperationMapScreen(): void {
   const root = document.getElementById("app");
@@ -52,67 +181,169 @@ export function renderOperationMapScreen(): void {
   }
 
   const nodes = floor.nodes || floor.rooms || [];
-  const currentRoom = getCurrentRoom(operation);
+  
+  // Determine current room index for progression tracking
+  const currentRoomIndex = getCurrentRoomIndex(nodes, operation.currentRoomId);
+  const canAdvance = canAdvanceToNextFloor(operation);
 
   root.innerHTML = `
-    <div class="opmap-root">
-      <div class="opmap-card">
-        <div class="opmap-header">
-          <div>
-            <div class="opmap-title">OPERATION: ${operation.codename}</div>
-            <div class="opmap-subtitle">
-              FLOOR ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}
-            </div>
-          </div>
-          <div class="opmap-header-actions">
-            <button class="opmap-back-btn">← BACK TO BASE CAMP</button>
+    <div class="opmap-root opmap-root--fullscreen">
+      <!-- Full-screen floor map background -->
+      <div class="opmap-floor-background">
+        <div class="opmap-floor-map-full">
+          ${renderRoguelikeMap(nodes, currentRoomIndex)}
+        </div>
+      </div>
+
+      <!-- Floating control panel -->
+      <div class="opmap-control-panel">
+        <div class="opmap-panel-header">
+          <div class="opmap-panel-title">${operation.codename}</div>
+          <div class="opmap-panel-subtitle">
+            FLOOR ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}
           </div>
         </div>
 
-        <div class="opmap-body">
-          <div class="opmap-description">
-            ${operation.description}
-          </div>
-
-          ${renderFloorProgress(nodes, operation.currentRoomId)}
-
-          <div class="opmap-rooms">
-            ${nodes.map(node => renderRoomNode(node, operation.currentRoomId)).join('')}
-          </div>
-
-          ${canAdvanceToNextFloor(operation) ? `
-            <div class="opmap-floor-advance">
-              <div class="opmap-floor-advance-text">
-                ✓ Floor ${operation.currentFloorIndex + 1} Complete!
-              </div>
-              ${operation.currentFloorIndex < operation.floors.length - 1 ? `
-                <button class="opmap-advance-btn" id="advanceFloorBtn">
-                  PROCEED TO FLOOR ${operation.currentFloorIndex + 2} →
-                </button>
-              ` : `
-                <button class="opmap-complete-btn" id="completeOpBtn">
-                  🎉 COMPLETE OPERATION
-                </button>
-              `}
-            </div>
-          ` : ''}
+        <div class="opmap-panel-description">
+          ${operation.description}
         </div>
+
+        ${renderFloorProgress(nodes, currentRoomIndex)}
+
+        <div class="opmap-panel-actions">
+          <button class="opmap-units-btn" id="unitsBtn">
+            👥 UNIT MANAGEMENT
+          </button>
+          <button class="opmap-abandon-btn" id="abandonBtn">
+            ✕ ABANDON
+          </button>
+        </div>
+
+        ${canAdvance ? `
+          <div class="opmap-panel-advance">
+            <div class="opmap-advance-text">
+              ✓ Floor ${operation.currentFloorIndex + 1} Complete!
+            </div>
+            ${operation.currentFloorIndex < operation.floors.length - 1 ? `
+              <button class="opmap-advance-btn" id="advanceFloorBtn">
+                PROCEED TO FLOOR ${operation.currentFloorIndex + 2} →
+              </button>
+            ` : `
+              <button class="opmap-complete-btn" id="completeOpBtn">
+                🎉 COMPLETE OPERATION
+              </button>
+            `}
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- Floor indicator on the map -->
+      <div class="opmap-floor-indicator">
+        <span class="opmap-floor-label">FLOOR</span>
+        <span class="opmap-floor-number">${operation.currentFloorIndex + 1}</span>
+        <span class="opmap-floor-total">/ ${operation.floors.length}</span>
+      </div>
+
+      <!-- Pan controls hint -->
+      <div class="opmap-pan-controls">
+        <div class="opmap-pan-hint">
+          <span class="opmap-pan-keys">WASD</span> or <span class="opmap-pan-keys">↑←↓→</span> to pan
+        </div>
+        <button class="opmap-pan-reset" id="resetPanBtn">⟲ CENTER</button>
       </div>
     </div>
   `;
 
-  // Attach event listeners
-  attachEventListeners(nodes);
+  // Setup pan handlers and attach event listeners
+  setupPanHandlers();
+  attachEventListeners(nodes, currentRoomIndex);
 }
 
-function renderFloorProgress(nodes: RoomNode[], currentRoomId: string | null): string {
+// ============================================================================
+// ROOM INDEX TRACKING
+// ============================================================================
+
+function getCurrentRoomIndex(nodes: RoomNode[], currentRoomId: string | null): number {
+  if (!currentRoomId) return -1;
+  return nodes.findIndex(n => n.id === currentRoomId);
+}
+
+function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
+  // Find the first unvisited room
+  for (let i = 0; i < nodes.length; i++) {
+    if (!nodes[i].visited) {
+      return i;
+    }
+  }
+  return nodes.length; // All rooms visited
+}
+
+// ============================================================================
+// ROGUELIKE MAP RENDERING
+// ============================================================================
+
+function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string {
+  const nextAvailableIndex = getNextAvailableRoomIndex(nodes);
+  
+  let mapHtml = '<div class="opmap-nodes-container">';
+  
+  nodes.forEach((node, index) => {
+    const isVisited = node.visited === true;
+    const isCurrent = index === currentRoomIndex;
+    const isNext = index === nextAvailableIndex;
+    const isLocked = !isVisited && !isNext;
+    
+    const icon = getRoomIcon(node.type);
+    const typeLabel = getRoomTypeLabel(node.type);
+    
+    // Status classes
+    let statusClass = '';
+    if (isVisited) statusClass = 'opmap-node--visited';
+    else if (isCurrent) statusClass = 'opmap-node--current';
+    else if (isNext) statusClass = 'opmap-node--next';
+    else statusClass = 'opmap-node--locked';
+    
+    // Room type class
+    const typeClass = `opmap-node--${node.type || 'unknown'}`;
+    
+    mapHtml += `
+      <div class="opmap-node-wrapper">
+        ${index > 0 ? '<div class="opmap-node-connector"></div>' : ''}
+        <div class="opmap-node ${statusClass} ${typeClass}" 
+             data-room-id="${node.id}" 
+             data-room-index="${index}"
+             data-is-locked="${isLocked}">
+          <div class="opmap-node-icon">${icon}</div>
+          <div class="opmap-node-info">
+            <div class="opmap-node-label">${node.label}</div>
+            <div class="opmap-node-type">${typeLabel}</div>
+            ${isVisited ? '<div class="opmap-node-badge opmap-node-badge--cleared">✓ CLEARED</div>' : ''}
+            ${isCurrent ? '<div class="opmap-node-badge opmap-node-badge--current">● CURRENT</div>' : ''}
+            ${isNext ? '<div class="opmap-node-badge opmap-node-badge--next">→ NEXT</div>' : ''}
+            ${isLocked ? '<div class="opmap-node-badge opmap-node-badge--locked">🔒 LOCKED</div>' : ''}
+          </div>
+          ${isNext && !isVisited ? `
+            <button class="opmap-node-enter" data-room-id="${node.id}">
+              ENTER →
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  });
+  
+  mapHtml += '</div>';
+  return mapHtml;
+}
+
+function renderFloorProgress(nodes: RoomNode[], _currentRoomIndex: number): string {
   const totalRooms = nodes.length;
-  const visitedRooms = nodes.filter(n => n.visited || n.id === currentRoomId).length;
+  const visitedRooms = nodes.filter(n => n.visited).length;
   const progressPercent = (visitedRooms / totalRooms) * 100;
 
   return `
     <div class="opmap-progress">
-      <div class="opmap-progress-label">Floor Progress: ${visitedRooms}/${totalRooms} rooms</div>
+      <div class="opmap-progress-label">Floor Progress: ${visitedRooms}/${totalRooms} rooms cleared</div>
       <div class="opmap-progress-bar">
         <div class="opmap-progress-fill" style="width: ${progressPercent}%"></div>
       </div>
@@ -120,41 +351,9 @@ function renderFloorProgress(nodes: RoomNode[], currentRoomId: string | null): s
   `;
 }
 
-function renderRoomNode(node: RoomNode, currentRoomId: string | null): string {
-  const isCurrent = node.id === currentRoomId;
-  const isVisited = node.visited;
-  const isAvailable = canEnterRoom(node, currentRoomId);
-
-  const icon = getRoomIcon(node.type);
-  const typeLabel = getRoomTypeLabel(node.type);
-
-  return `
-    <div class="opmap-room ${isCurrent ? 'opmap-room--current' : ''} ${isVisited ? 'opmap-room--visited' : ''} ${isAvailable ? 'opmap-room--available' : 'opmap-room--locked'}"
-         data-room-id="${node.id}">
-      <div class="opmap-room-icon">${icon}</div>
-      <div class="opmap-room-content">
-        <div class="opmap-room-label">${node.label}</div>
-        <div class="opmap-room-type">${typeLabel}</div>
-        ${isCurrent ? '<div class="opmap-room-current-badge">● CURRENT</div>' : ''}
-        ${isVisited && !isCurrent ? '<div class="opmap-room-visited-badge">✓ Cleared</div>' : ''}
-      </div>
-      ${isAvailable && !isCurrent && !isVisited ? `
-        <button class="opmap-room-enter-btn" data-room-id="${node.id}">
-          ENTER →
-        </button>
-      ` : ''}
-    </div>
-  `;
-}
-
-function canEnterRoom(node: RoomNode, currentRoomId: string | null): boolean {
-  // First room is always available
-  if (!currentRoomId) return true;
-
-  // Can only enter rooms connected to current room
-  // For now, linear progression - can enter next room if current room is visited
-  return node.visited === false || node.visited === undefined;
-}
+// ============================================================================
+// ROOM ICONS & LABELS
+// ============================================================================
 
 function getRoomIcon(type?: RoomType): string {
   switch (type) {
@@ -164,6 +363,7 @@ function getRoomIcon(type?: RoomType): string {
     case "shop": return "🛒";
     case "rest": return "🛏️";
     case "boss": return "👹";
+    case "field_node": return "🗺️";
     default: return "●";
   }
 }
@@ -176,23 +376,60 @@ function getRoomTypeLabel(type?: RoomType): string {
     case "shop": return "Shop";
     case "rest": return "Rest Site";
     case "boss": return "BOSS FIGHT";
+    case "field_node": return "Exploration";
     default: return "Unknown";
   }
 }
 
-function attachEventListeners(nodes: RoomNode[]): void {
+// ============================================================================
+// EVENT LISTENERS
+// ============================================================================
+
+function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  // Back button
-  root.querySelector(".opmap-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
+  // Reset pan button
+  root.querySelector("#resetPanBtn")?.addEventListener("click", () => {
+    resetPan();
   });
 
-  // Enter room buttons
-  root.querySelectorAll(".opmap-room-enter-btn").forEach(btn => {
+  // Abandon button
+  root.querySelector("#abandonBtn")?.addEventListener("click", () => {
+    if (confirm("Abandon this operation? Progress will be lost.")) {
+      cleanupPanHandlers();
+      updateGameState(prev => ({
+        ...prev,
+        operation: null,
+        phase: "shell",
+      }));
+      renderBaseCampScreen();
+    }
+  });
+
+  // Unit Management button
+  root.querySelector("#unitsBtn")?.addEventListener("click", () => {
+    cleanupPanHandlers();
+    // Store current operation state and go to roster
+    // The roster will return to operation map
+    renderRosterScreen("operation" as any);
+  });
+
+  // Enter room buttons (only on next available room)
+  root.querySelectorAll(".opmap-node-enter").forEach(btn => {
     btn.addEventListener("click", (e) => {
+      e.stopPropagation();
       const roomId = (e.target as HTMLElement).getAttribute("data-room-id");
+      if (roomId) {
+        enterRoom(roomId);
+      }
+    });
+  });
+
+  // Clicking on the node itself (for next available room)
+  root.querySelectorAll(".opmap-node--next").forEach(node => {
+    node.addEventListener("click", (e) => {
+      const roomId = (e.target as HTMLElement).closest(".opmap-node")?.getAttribute("data-room-id");
       if (roomId) {
         enterRoom(roomId);
       }
@@ -203,7 +440,11 @@ function attachEventListeners(nodes: RoomNode[]): void {
   root.querySelector("#advanceFloorBtn")?.addEventListener("click", () => {
     const state = getGameState();
     if (state.operation) {
+      cleanupPanHandlers();
       const { currentFloorIndex, currentRoomId } = advanceToNextFloor(state.operation);
+
+      // Update quest progress for floor completion (Headline 15)
+      updateQuestProgress("clear_node", "floor", 1);
 
       updateGameState(prev => ({
         ...prev,
@@ -224,6 +465,10 @@ function attachEventListeners(nodes: RoomNode[]): void {
   });
 }
 
+// ============================================================================
+// ROOM ENTRY
+// ============================================================================
+
 function enterRoom(roomId: string): void {
   const state = getGameState();
   const operation = getCurrentOperation(state);
@@ -235,6 +480,18 @@ function enterRoom(roomId: string): void {
   const nodes = floor.nodes || floor.rooms || [];
   const room = nodes.find(n => n.id === roomId);
   if (!room) return;
+
+  // Check if this room is actually the next available one
+  const nextIndex = getNextAvailableRoomIndex(nodes);
+  const roomIndex = nodes.findIndex(n => n.id === roomId);
+  
+  if (roomIndex !== nextIndex) {
+    console.warn("[OPMAP] Attempted to enter locked room:", roomId);
+    return;
+  }
+
+  // Cleanup pan handlers before leaving screen
+  cleanupPanHandlers();
 
   // Update current room
   updateGameState(prev => ({
@@ -257,12 +514,13 @@ function enterRoom(roomId: string): void {
         renderEventRoomScreen(room.eventTemplate);
       } else {
         console.error("[OPMAP] Event room missing eventTemplate");
+        markRoomVisited(roomId);
         renderOperationMapScreen();
       }
       break;
 
     case "shop":
-      renderShopScreen();
+      renderShopScreen("operation" as any);
       break;
 
     case "rest":
@@ -275,8 +533,14 @@ function enterRoom(roomId: string): void {
       renderOperationMapScreen();
       break;
 
+    case "field_node":
+      // Mystery dungeon-style exploration room (Headline 14d)
+      renderFieldNodeRoomScreen(roomId, room.fieldNodeSeed);
+      break;
+
     default:
       console.warn("[OPMAP] Unknown room type:", room.type);
+      markRoomVisited(roomId);
       renderOperationMapScreen();
   }
 }
@@ -307,7 +571,6 @@ function enterBattleRoom(room: RoomNode): void {
 
 function createBattleFromTemplate(state: GameState, template: any): any {
   // TODO: Use template to create enemies
-  // For now, use test battle
   console.log("[BATTLE] Would create battle from template:", template.name);
   return createTestBattleForCurrentParty(state);
 }
@@ -354,9 +617,11 @@ function enterRestRoom(room: RoomNode): void {
   }
 }
 
-function markRoomVisited(roomId: string): void {
+export function markRoomVisited(roomId: string): void {
   updateGameState(prev => {
-    const operation = { ...prev.operation! };
+    if (!prev.operation) return prev;
+    
+    const operation = { ...prev.operation };
     const floor = operation.floors[operation.currentFloorIndex];
 
     if (floor && (floor.nodes || floor.rooms)) {
@@ -372,6 +637,14 @@ function markRoomVisited(roomId: string): void {
       operation,
     } as GameState;
   });
+}
+
+// Helper to mark the current room as visited (uses currentRoomId from state)
+export function markCurrentRoomVisited(): void {
+  const state = getGameState();
+  if (state.operation?.currentRoomId) {
+    markRoomVisited(state.operation.currentRoomId);
+  }
 }
 
 function showOperationComplete(): void {

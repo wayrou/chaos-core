@@ -509,7 +509,7 @@ Implement unit recruitment system
 
 Implement field system
 
------------------------IMPLEMENTED UP TO HERE-----------------------------
+
 
 14c. Dungeon floor update
 
@@ -518,26 +518,26 @@ list locks players into only accessing the next available room (not able to choo
 look like other roguelike dungeon map screens rather than a list of buttons, helping the player feel like they're navigating through the floor of a dungeon rather than clicking through a menu. Ensure that equipment attached
 to units in party auto-populates on the forward locker of the loadout screen, as equipment brought with on dungeon floor runs should take up forward locker space (the three stats). 
 
-
-
 14d. The mystery dungeon update
-Add "field node" rooms to floors- randomly generated "mystery dungeon"-inspired rooms containing light enemies that can be dispatched with 2-3 hits (add an attack, using the space bar to swing a sword), chests 
+Add "field node" rooms to floors- randomly generated "mystery dungeon"-inspired rooms that use movement logic from the field base camp map but containing light enemies that can be dispatched with 2-3 hits (add an attack, using the space bar to swing a sword), chests 
 to open and resources on the ground (appearing as sparkles on the map) to collect. Each field node room contains an exit that the player must reach in order to complete the roomm and progress on the dungeon floor screen. 
 
+15. The Quest update
+Implement a lightweight system for endless randomly generated quests. Quests are auto-generated with randomized targets and rewards. When a quest is completed, a new one is generated to replace it, ensuring endless content.
 
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
 
-14e. The Sable update
+15a. The Sable update
 
 Implement sable, a dog companion that excitedly runs around and follows you on the base camp screen and field node screens, collecting resources from field maps and attacking light enemies.
 
-14f. The NPC update
+15b. The NPC update
 
 Implement NPCs that walk around the base camp screen and that you can talk to, opening placeholder dialogue that the player can advance through.
 
-15. The Quest update
-Implement a lightweight system for endless randomly generated quests
 
-16b. Character portraits + dialogue 
+
+16b. Character portraits + sprites
 
 17. Implement Basic Animation System for Units
 

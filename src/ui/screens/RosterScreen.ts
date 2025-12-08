@@ -7,6 +7,8 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderLoadoutScreen } from "./LoadoutScreen";
+import { renderOperationMapScreen } from "./OperationMapScreen";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 import {
@@ -50,7 +52,7 @@ function formatStatDiff(diff: number): string {
   return "";
 }
 
-export function renderRosterScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | "operation" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -203,7 +205,7 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" = "basecamp"):
   attachRosterListeners(root, returnTo);
 }
 
-function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"): void {
+function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
   // Use setTimeout to ensure DOM is fully rendered
   setTimeout(() => {
     // Back button
@@ -215,6 +217,10 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
         console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
         if (returnDestination === "field") {
           renderFieldScreen("base_camp");
+        } else if (returnDestination === "loadout") {
+          renderLoadoutScreen();
+        } else if (returnDestination === "operation") {
+          renderOperationMapScreen();
         } else {
           renderBaseCampScreen();
         }

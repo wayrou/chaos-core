@@ -1,17 +1,21 @@
 // ============================================================================
 // QUEST SYSTEM - QUEST MANAGER
+// Updated for Headline 15: Endless randomly generated quests
 // ============================================================================
 
-import { Quest, QuestId, QuestState, QuestObjective, ObjectiveType } from "./types";
+import { Quest, QuestId, QuestState, ObjectiveType } from "./types";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { getQuestById, cloneQuest, getAvailableQuests as getAvailableQuestsFromData } from "./questData";
 import { grantQuestRewards } from "./questRewards";
+import { generateRandomQuest, generateRandomQuests } from "./questGenerator";
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 const MAX_ACTIVE_QUESTS = 5; // Maximum number of active quests
+const INITIAL_GENERATED_QUESTS = 3; // How many random quests to start with
+const AUTO_REPLENISH = true; // Whether to auto-generate new quests when one is completed
 
 // ============================================================================
 // QUEST STATE MANAGEMENT
@@ -35,20 +39,59 @@ function createEmptyQuestState(): QuestState {
     completedQuests: [],
     failedQuests: [],
     maxActiveQuests: MAX_ACTIVE_QUESTS,
+    totalQuestsCompleted: 0,
+    generatedQuestCount: 0,
   };
 }
 
 /**
  * Initialize quest state in game state
+ * If no quests exist, generates initial random quests
  */
 export function initializeQuestState(): void {
   const state = getGameState();
   if (!state.quests) {
+    // Create initial state with generated quests
+    const initialQuests = generateRandomQuests(INITIAL_GENERATED_QUESTS);
+    
     updateGameState(s => ({
       ...s,
-      quests: createEmptyQuestState(),
+      quests: {
+        ...createEmptyQuestState(),
+        activeQuests: initialQuests,
+        generatedQuestCount: initialQuests.length,
+      },
     }));
+    
+    console.log(`[QUEST] Initialized quest state with ${initialQuests.length} generated quests`);
+  } else if (state.quests.activeQuests.length === 0 && AUTO_REPLENISH) {
+    // If no active quests, generate some
+    replenishQuests();
   }
+}
+
+/**
+ * Replenish quests to maintain INITIAL_GENERATED_QUESTS active
+ */
+export function replenishQuests(): void {
+  const questState = getQuestState();
+  const currentCount = questState.activeQuests.length;
+  const needed = INITIAL_GENERATED_QUESTS - currentCount;
+  
+  if (needed <= 0) return;
+  
+  const newQuests = generateRandomQuests(needed);
+  
+  updateGameState(s => ({
+    ...s,
+    quests: {
+      ...s.quests!,
+      activeQuests: [...s.quests!.activeQuests, ...newQuests],
+      generatedQuestCount: (s.quests!.generatedQuestCount || 0) + newQuests.length,
+    },
+  }));
+  
+  console.log(`[QUEST] Replenished ${newQuests.length} quest(s). Total active: ${currentCount + newQuests.length}`);
 }
 
 // ============================================================================
@@ -162,6 +205,7 @@ export function updateQuestProgress(
 
 /**
  * Complete a quest and grant rewards
+ * For endless quest system: auto-generates replacement quest
  */
 function completeQuest(questId: QuestId): void {
   const questState = getQuestState();
@@ -175,17 +219,64 @@ function completeQuest(questId: QuestId): void {
   // Grant rewards
   grantQuestRewards(quest);
 
-  // Move to completed
+  // Move to completed and increment counter
   updateGameState(state => ({
     ...state,
     quests: {
       ...state.quests!,
       activeQuests: state.quests!.activeQuests.filter(q => q.id !== questId),
       completedQuests: [...state.quests!.completedQuests, questId],
+      totalQuestsCompleted: (state.quests!.totalQuestsCompleted || 0) + 1,
     },
   }));
 
-  console.log(`[QUEST] Completed quest: ${quest.title}`);
+  console.log(`[QUEST] ✓ Completed quest: ${quest.title}`);
+  
+  // Show notification
+  showQuestCompletionNotification(quest);
+  
+  // Auto-replenish if enabled (for endless quest system)
+  if (AUTO_REPLENISH) {
+    // Small delay to let the completion feel meaningful
+    setTimeout(() => {
+      replenishQuests();
+    }, 500);
+  }
+}
+
+/**
+ * Show a notification when a quest is completed
+ */
+function showQuestCompletionNotification(quest: Quest): void {
+  // Create notification element
+  const notification = document.createElement("div");
+  notification.className = "quest-completion-notification";
+  notification.innerHTML = `
+    <div class="quest-notification-icon">✓</div>
+    <div class="quest-notification-content">
+      <div class="quest-notification-title">QUEST COMPLETE</div>
+      <div class="quest-notification-name">${quest.title}</div>
+      <div class="quest-notification-rewards">
+        ${quest.rewards.wad ? `<span>💰 ${quest.rewards.wad} WAD</span>` : ''}
+        ${quest.rewards.xp ? `<span>⭐ ${quest.rewards.xp} XP</span>` : ''}
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(notification);
+  
+  // Trigger animation
+  requestAnimationFrame(() => {
+    notification.classList.add("quest-notification--visible");
+  });
+  
+  // Remove after animation
+  setTimeout(() => {
+    notification.classList.remove("quest-notification--visible");
+    setTimeout(() => {
+      notification.remove();
+    }, 300);
+  }, 3000);
 }
 
 /**
@@ -245,5 +336,63 @@ export function getActiveQuest(questId: QuestId): Quest | null {
  */
 export function isQuestCompleted(questId: QuestId): boolean {
   return getQuestState().completedQuests.includes(questId);
+}
+
+/**
+ * Get total quests completed (lifetime)
+ */
+export function getTotalQuestsCompleted(): number {
+  return getQuestState().totalQuestsCompleted || 0;
+}
+
+/**
+ * Force generate a new quest immediately
+ */
+export function generateNewQuest(): Quest {
+  const newQuest = generateRandomQuest();
+  
+  updateGameState(s => ({
+    ...s,
+    quests: {
+      ...s.quests!,
+      activeQuests: [...s.quests!.activeQuests, newQuest],
+      generatedQuestCount: (s.quests!.generatedQuestCount || 0) + 1,
+    },
+  }));
+  
+  console.log(`[QUEST] Generated new quest: ${newQuest.title}`);
+  return newQuest;
+}
+
+/**
+ * Abandon a quest (remove without completing)
+ */
+export function abandonQuest(questId: QuestId): boolean {
+  const questState = getQuestState();
+  const quest = questState.activeQuests.find(q => q.id === questId);
+  
+  if (!quest) {
+    console.warn(`[QUEST] Cannot abandon quest: ${questId} (not found)`);
+    return false;
+  }
+  
+  updateGameState(s => ({
+    ...s,
+    quests: {
+      ...s.quests!,
+      activeQuests: s.quests!.activeQuests.filter(q => q.id !== questId),
+    },
+  }));
+  
+  console.log(`[QUEST] Abandoned quest: ${quest.title}`);
+  
+  // Replenish to keep quest count up
+  if (AUTO_REPLENISH) {
+    setTimeout(() => {
+      replenishQuests();
+    }, 100);
+  }
+  
+  return true;
 }
 

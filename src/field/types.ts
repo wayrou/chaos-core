@@ -38,7 +38,7 @@ export interface InteractionZone {
   y: number;
   width: number;
   height: number;
-  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "free_zone_entry" | "base_camp_entry" | "custom";
+  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "free_zone_entry" | "base_camp_entry" | "custom";
   label: string;
   metadata?: Record<string, any>;
 }
@@ -52,10 +52,28 @@ export interface PlayerAvatar {
   facing: "north" | "south" | "east" | "west";
 }
 
+export interface FieldNpc {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  state: "idle" | "walk";
+  direction: "north" | "south" | "east" | "west";
+  path?: { x: number; y: number }[]; // Patrol path
+  currentPathIndex?: number;
+  dialogueId?: string;
+  lastMoveTime: number;
+  moveCooldown: number;
+}
+
 export interface FieldState {
   currentMap: FieldMapId;
   player: PlayerAvatar;
   isPaused: boolean;
   activeInteraction: string | null; // ID of active interaction zone
+  companion?: import("./companion").Companion; // Sable companion (Headline 15a)
+  npcs?: FieldNpc[]; // NPCs for Base Camp (Headline 15b)
 }
 

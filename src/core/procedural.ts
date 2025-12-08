@@ -10,7 +10,7 @@ import { getAllStarterEquipment } from "./equipment";
 // TYPES
 // ============================================================================
 
-export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss";
+export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss" | "field_node";
 
 export interface BattleTemplate {
   id: string;
@@ -375,8 +375,8 @@ export function generateFloor(
     else {
       const roll = Math.random();
 
-      if (roll < 0.5) {
-        // 50% battle
+      if (roll < 0.35) {
+        // 35% battle
         roomType = "battle";
         battleTemplate = randomChoice(BATTLE_TEMPLATES).id;
         label = randomChoice([
@@ -386,8 +386,18 @@ export function generateFloor(
           "Ambush Point",
           "Defensive Line",
         ]);
-      } else if (roll < 0.7) {
-        // 20% event
+      } else if (roll < 0.55) {
+        // 20% field_node (Mystery Dungeon rooms - Headline 14d)
+        roomType = "field_node";
+        label = randomChoice([
+          "Exploration Zone",
+          "Abandoned Sector",
+          "Resource Cache",
+          "Scavenger Grounds",
+          "Hidden Passage",
+        ]);
+      } else if (roll < 0.70) {
+        // 15% event
         roomType = "event";
         eventTemplate = randomChoice(EVENT_TEMPLATES).id;
         label = "???";
@@ -403,6 +413,11 @@ export function generateFloor(
     }
 
     const roomId = `floor${floorNumber}_room${i}` as RoomId;
+    
+    // Generate seed for field_node rooms
+    const fieldNodeSeed = roomType === "field_node" 
+      ? Math.floor(Math.random() * 1000000) 
+      : undefined;
 
     nodes.push({
       id: roomId,
@@ -412,6 +427,7 @@ export function generateFloor(
       connections: [],
       battleTemplate,
       eventTemplate,
+      fieldNodeSeed,
     });
 
     // Connect to previous room

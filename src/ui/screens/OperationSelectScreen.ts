@@ -1,20 +1,18 @@
 // ============================================================================
-// OPERATION SELECT SCREEN - Updated for Headline 13
+// OPERATION SELECT SCREEN - Updated for Headline 13 & 14c
 // Choose and start procedurally generated operations
+// Flow: Select Operation → Loadout Screen → Floor Screen
 // ============================================================================
 
-import { getGameState, updateGameState } from "../../state/gameStore";
+import { updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderLoadoutScreen } from "./LoadoutScreen";
 import { generateOperation } from "../../core/procedural";
-import { GameState } from "../../core/types";
 
 export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
-
-  const state = getGameState();
 
   // List of available operations
   const operations = [
@@ -125,13 +123,13 @@ function startOperation(codename: string, description: string, floors: number): 
   // Generate procedural operation
   const operation = generateOperation(codename, description, floors);
 
-  // Store in game state
+  // Store in game state (but don't set phase to "operation" yet - loadout first)
   updateGameState(prev => ({
     ...prev,
     operation: operation as any,
-    phase: "operation",
+    phase: "loadout", // New phase for pre-operation loadout
   }));
 
-  // Navigate to operation map
-  renderOperationMapScreen();
+  // Navigate to loadout screen (which will then proceed to operation map)
+  renderLoadoutScreen();
 }

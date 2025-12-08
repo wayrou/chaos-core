@@ -72,7 +72,7 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "ops_terminal",
-      x: 9,
+      x: 16,
       y: 10,
       width: 2,
       height: 2,
@@ -142,7 +142,7 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "interact_ops",
-      x: 9,
+      x: 16,
       y: 12,
       width: 2,
       height: 1,

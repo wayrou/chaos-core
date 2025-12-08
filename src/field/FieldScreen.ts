@@ -13,6 +13,9 @@ import {
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState } from "../state/gameStore";
 import { renderBaseCampScreen } from "../ui/screens/BaseCampScreen";
+import { createCompanion, updateCompanion } from "./companion";
+import { createNpc, updateNpc, getNpcInRange, NPC_DIALOGUE } from "./npcs";
+import { showDialogue } from "../ui/screens/DialogueScreen";
 
 // ============================================================================
 // STATE
@@ -65,6 +68,8 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   }
 
   if (isResuming && fieldState && fieldState.player) {
+    // Preserve companion if it exists
+    const companion = fieldState.companion || createCompanion(playerX - 40, playerY - 40);
     fieldState = {
       ...fieldState,
       currentMap: mapId,
@@ -75,13 +80,32 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       },
       isPaused: false,
       activeInteraction: null,
+      companion,
     };
   } else {
+    // Initialize Sable near player
+    const companion = createCompanion(playerX - 40, playerY - 40);
+    
+    // Initialize NPCs for Base Camp (Headline 15b)
+    const npcs: import("./types").FieldNpc[] = [];
+    if (mapId === "base_camp") {
+      const tileSize = 64;
+      // Add a few NPCs at different locations
+      npcs.push(
+        createNpc("npc_medic", "Medic", 5 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_medic"),
+        createNpc("npc_quartermaster", "Quartermaster", 12 * tileSize + tileSize / 2, 6 * tileSize + tileSize / 2, "npc_quartermaster"),
+        createNpc("npc_scout", "Scout", 8 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_scout"),
+        createNpc("npc_engineer", "Engineer", 14 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_engineer")
+      );
+    }
+    
     fieldState = {
       currentMap: mapId,
       player: createPlayerAvatar(playerX, playerY),
       isPaused: false,
       activeInteraction: null,
+      companion,
+      npcs,
     };
   }
 
@@ -167,6 +191,27 @@ function render(): void {
     </div>
   `;
 
+  // Sable companion (Headline 15a)
+  const companionHtml = fieldState.companion ? `
+    <div class="field-companion field-companion-sable" 
+         style="left: ${fieldState.companion.x - fieldState.companion.width / 2}px; top: ${
+    fieldState.companion.y - fieldState.companion.height / 2
+  }px; width: ${fieldState.companion.width}px; height: ${fieldState.companion.height}px;"
+         data-facing="${fieldState.companion.facing}" data-state="${fieldState.companion.state}">
+      <div class="field-companion-sprite">🐕</div>
+    </div>
+  ` : "";
+
+  // NPCs (Headline 15b)
+  const npcsHtml = fieldState.npcs ? fieldState.npcs.map(npc => `
+    <div class="field-npc" 
+         style="left: ${npc.x - npc.width / 2}px; top: ${npc.y - npc.height / 2}px; width: ${npc.width}px; height: ${npc.height}px;"
+         data-facing="${npc.direction}" data-state="${npc.state}">
+      <div class="field-npc-sprite">👤</div>
+      <div class="field-npc-name">${npc.name}</div>
+    </div>
+  `).join("") : "";
+
   // Interaction prompt
   const promptHtml = activeInteractionPrompt
     ? `<div class="field-interaction-prompt">E — ${activeInteractionPrompt}</div>`
@@ -201,7 +246,9 @@ function render(): void {
       <div class="field-map" style="width: ${mapPixelWidth}px; height: ${mapPixelHeight}px;">
         ${tilesHtml}
         ${objectsHtml}
+        ${npcsHtml}
         ${playerHtml}
+        ${companionHtml}
       </div>
     </div>
     
@@ -351,6 +398,11 @@ function updateAllNodesPanelContent(): void {
           <button class="all-nodes-btn" data-action="settings">
             <span class="btn-icon">⚙</span>
             <span class="btn-label">SETTINGS</span>
+          </button>
+          <div class="all-nodes-divider"></div>
+          <button class="all-nodes-btn all-nodes-btn--debug" data-action="test-field-node">
+            <span class="btn-icon">🧪</span>
+            <span class="btn-label">TEST FIELD NODE</span>
           </button>
         </div>
       </div>
@@ -542,6 +594,29 @@ function handleFieldObjectClick(e: MouseEvent): void {
 function handleInteractKey(): void {
   if (!fieldState || !currentMap || fieldState.isPaused) return;
 
+  // Check for NPC interaction first (Headline 15b)
+  if (fieldState.npcs) {
+    const nearbyNpc = getNpcInRange(fieldState.player, fieldState.npcs);
+    if (nearbyNpc && nearbyNpc.dialogueId) {
+      const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId] || [
+        "Hello there!",
+        "This is placeholder dialogue.",
+      ];
+      
+      // Pause field movement while in dialogue
+      fieldState.isPaused = true;
+      
+      showDialogue(nearbyNpc.name, dialogueLines, () => {
+        // Resume field movement after dialogue
+        if (fieldState) {
+          fieldState.isPaused = false;
+        }
+      });
+      
+      return;
+    }
+  }
+
   const zoneId = getOverlappingInteractionZone(fieldState.player, currentMap);
   if (!zoneId) return;
 
@@ -637,6 +712,14 @@ function handleNodeAction(action: string): void {
         renderSettingsScreen("basecamp");
       });
       break;
+    case "test-field-node":
+      // Debug: Test field node room directly (Headline 14d)
+      import("../ui/screens/FieldNodeRoomScreen").then(({ renderFieldNodeRoomScreen }) => {
+        const testSeed = Math.floor(Math.random() * 1000000);
+        console.log("[DEBUG] Testing field node room with seed:", testSeed);
+        renderFieldNodeRoomScreen("test_room_debug", testSeed);
+      });
+      break;
   }
 }
 
@@ -662,6 +745,24 @@ function gameLoop(currentTime: number): void {
       currentMap,
       deltaTime,
     );
+
+    // Update Sable companion (Headline 15a)
+    if (fieldState.companion && currentMap) {
+      fieldState.companion = updateCompanion(fieldState.companion, {
+        player: fieldState.player,
+        map: currentMap,
+        deltaTime,
+        currentTime,
+      });
+    }
+
+    // Update NPCs (Headline 15b)
+    if (fieldState.npcs && currentMap) {
+      const map = currentMap; // Type narrowing
+      fieldState.npcs = fieldState.npcs.map(npc => 
+        updateNpc(npc, map, deltaTime, currentTime)
+      );
+    }
 
     const overlappingZone = getOverlappingInteractionZone(fieldState.player, currentMap);
     if (overlappingZone) {

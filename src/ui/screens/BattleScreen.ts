@@ -2,7 +2,7 @@
 // Battle screen with unit panel + weapon window alongside hand at bottom
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMap } from "./OperationMapScreen";
+import { renderOperationMap, markCurrentRoomVisited } from "./OperationMapScreen";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { saveGame, loadGame } from "../../core/saveSystem";
@@ -20,6 +20,8 @@ import {
   BattleUnitState,
 } from "../../core/battle";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
+import { updateQuestProgress } from "../../quests/questManager";
+import { trackBattleSurvival } from "../../core/affinityBattle";
 
 // Card type definition
 interface Card {
@@ -282,6 +284,162 @@ interface TurnState {
 }
 let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementRemaining: 0, originalPosition: null };
 
+// ============================================================================
+// PAN STATE & CONTROLS (for WASD grid panning)
+// ============================================================================
+
+interface BattlePanState {
+  x: number;
+  y: number;
+  keysPressed: Set<string>;
+}
+
+let battlePanState: BattlePanState = {
+  x: 0,
+  y: 0,
+  keysPressed: new Set(),
+};
+
+let battlePanAnimationFrame: number | null = null;
+let battleKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
+let battleKeyupHandler: ((e: KeyboardEvent) => void) | null = null;
+
+// UI panel visibility state
+let uiPanelsMinimized = false;
+
+const BATTLE_PAN_SPEED = 15;
+const BATTLE_PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
+
+function cleanupBattlePanHandlers(): void {
+  if (battleKeydownHandler) {
+    window.removeEventListener("keydown", battleKeydownHandler);
+    battleKeydownHandler = null;
+  }
+  if (battleKeyupHandler) {
+    window.removeEventListener("keyup", battleKeyupHandler);
+    battleKeyupHandler = null;
+  }
+  if (battlePanAnimationFrame) {
+    cancelAnimationFrame(battlePanAnimationFrame);
+    battlePanAnimationFrame = null;
+  }
+  battlePanState.keysPressed.clear();
+}
+
+function setupBattlePanHandlers(): void {
+  cleanupBattlePanHandlers();
+  
+  // Reset pan position
+  battlePanState = { x: 0, y: 0, keysPressed: new Set() };
+
+  battleKeydownHandler = (e: KeyboardEvent) => {
+    if (!BATTLE_PAN_KEYS.has(e.key)) return;
+    
+    // Don't pan if typing in an input
+    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+      return;
+    }
+    
+    e.preventDefault();
+    battlePanState.keysPressed.add(e.key.toLowerCase());
+    
+    if (!battlePanAnimationFrame) {
+      startBattlePanLoop();
+    }
+  };
+
+  battleKeyupHandler = (e: KeyboardEvent) => {
+    battlePanState.keysPressed.delete(e.key.toLowerCase());
+    
+    // Also handle arrow keys
+    const arrowToWasd: Record<string, string> = {
+      "arrowup": "w",
+      "arrowleft": "a", 
+      "arrowdown": "s",
+      "arrowright": "d",
+    };
+    const mapped = arrowToWasd[e.key.toLowerCase()];
+    if (mapped) {
+      battlePanState.keysPressed.delete(mapped);
+    }
+  };
+
+  window.addEventListener("keydown", battleKeydownHandler);
+  window.addEventListener("keyup", battleKeyupHandler);
+}
+
+function startBattlePanLoop(): void {
+  const update = () => {
+    let dx = 0;
+    let dy = 0;
+
+    if (battlePanState.keysPressed.has("w") || battlePanState.keysPressed.has("arrowup")) dy += BATTLE_PAN_SPEED;
+    if (battlePanState.keysPressed.has("s") || battlePanState.keysPressed.has("arrowdown")) dy -= BATTLE_PAN_SPEED;
+    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx += BATTLE_PAN_SPEED;
+    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx -= BATTLE_PAN_SPEED;
+
+    if (dx !== 0 || dy !== 0) {
+      battlePanState.x += dx;
+      battlePanState.y += dy;
+      
+      // Apply transform to battle grid pan wrapper
+      const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
+      if (panWrapper) {
+        panWrapper.style.transform = `translate(${battlePanState.x}px, ${battlePanState.y}px)`;
+      }
+    }
+
+    if (battlePanState.keysPressed.size > 0) {
+      battlePanAnimationFrame = requestAnimationFrame(update);
+    } else {
+      battlePanAnimationFrame = null;
+    }
+  };
+
+  battlePanAnimationFrame = requestAnimationFrame(update);
+}
+
+function resetBattlePan(): void {
+  battlePanState.x = 0;
+  battlePanState.y = 0;
+  const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
+  if (panWrapper) {
+    panWrapper.style.transform = `translate(0px, 0px)`;
+  }
+}
+
+function toggleUiPanels(): void {
+  uiPanelsMinimized = !uiPanelsMinimized;
+  
+  const bottomOverlay = document.querySelector(".battle-bottom-overlay") as HTMLElement;
+  const handFloating = document.querySelector(".battle-hand-floating") as HTMLElement;
+  const consoleOverlay = document.querySelector(".scrollink-console-overlay") as HTMLElement;
+  const toggleBtn = document.getElementById("toggleUiBtn");
+  
+  if (bottomOverlay) {
+    bottomOverlay.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
+    bottomOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
+    bottomOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+  }
+  
+  if (handFloating) {
+    handFloating.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
+    handFloating.style.opacity = uiPanelsMinimized ? "0" : "1";
+    handFloating.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+  }
+  
+  if (consoleOverlay) {
+    consoleOverlay.style.transform = uiPanelsMinimized ? "translateX(-100%)" : "translateX(0)";
+    consoleOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
+    consoleOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+  }
+  
+  if (toggleBtn) {
+    toggleBtn.textContent = uiPanelsMinimized ? "👁 SHOW UI" : "👁 HIDE UI";
+    toggleBtn.classList.toggle("battle-toggle-btn--active", uiPanelsMinimized);
+  }
+}
+
 function setBattleState(newState: BattleState) {
   localBattleState = newState;
 }
@@ -297,7 +455,7 @@ function resetTurnStateForUnit(unit: BattleUnitState | null) {
 }
 
 // Animation helper - moves unit visually along path with smooth animation
-// Made more defensive and fail-proof
+// Works with units positioned using inset (not transform-based centering)
 function animateUnitMovement(
   unitId: string,
   from: { x: number; y: number },
@@ -337,93 +495,76 @@ function animateUnitMovement(
     return;
   }
   
-  // Store original styles to restore if needed
-  const originalTransition = unitEl.style.transition;
-  const originalTransform = unitEl.style.transform;
-  const originalZIndex = unitEl.style.zIndex;
-  const originalFilter = unitEl.style.filter;
+  // Store original transform (units use inset for positioning, so transform is usually empty)
+  const originalTransform = unitEl.style.transform || '';
   
   // Calculate the actual pixel offset from source to destination using getBoundingClientRect
   // Do this BEFORE moving the element
   const sourceRect = sourceTile.getBoundingClientRect();
   const destRect = destTile.getBoundingClientRect();
   
-  // Calculate the actual pixel offset from source center to destination center
-  const actualDx = (destRect.left + destRect.width / 2) - (sourceRect.left + sourceRect.width / 2);
-  const actualDy = (destRect.top + destRect.height / 2) - (sourceRect.top + sourceRect.height / 2);
+  // Calculate the pixel offset (negative because we're offsetting FROM destination BACK TO source)
+  const offsetX = sourceRect.left - destRect.left;
+  const offsetY = sourceRect.top - destRect.top;
   
-  console.log(`[ANIMATION] Pixel offset: dx=${actualDx}, dy=${actualDy}`);
+  console.log(`[ANIMATION] Pixel offset: x=${offsetX}, y=${offsetY}`);
   
   // Calculate distance for animation duration (longer distance = longer animation, but capped)
-  const distance = Math.sqrt(actualDx * actualDx + actualDy * actualDy);
-  const baseDuration = 400; // Base duration in ms
-  const duration = Math.min(baseDuration + (distance * 0.3), 800); // Scale with distance, max 800ms
+  const distance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+  const baseDuration = 300; // Base duration in ms
+  const duration = Math.min(baseDuration + (distance * 0.5), 600); // Scale with distance, max 600ms
   
   console.log(`[ANIMATION] Animation duration: ${duration}ms`);
   
   // Move the unit element to destination tile DOM-wise (but keep it visually at source)
   destTile.appendChild(unitEl);
   
-  // Move the unit element to destination tile DOM-wise (but keep it visually at source)
-  destTile.appendChild(unitEl);
-  
-  // Set initial position (unit is now in dest tile but visually offset to source position)
-  // Use simpler transform calculation - avoid calc() which can be unreliable
+  // Set initial position: unit is now in dest tile DOM but offset visually to source position
   unitEl.style.transition = 'none';
-  // Calculate transform values directly
-  const translateX = -actualDx;
-  const translateY = -actualDy;
-  unitEl.style.transform = `translate(calc(-50% + ${translateX}px), calc(-50% + ${translateY}px))`;
+  unitEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
   unitEl.style.zIndex = '100';
   
-  // Force a reflow to ensure the initial position is applied - use multiple methods for reliability
+  // Force a reflow to ensure the initial position is applied
   void unitEl.offsetHeight;
-  void unitEl.offsetWidth;
-  void unitEl.getBoundingClientRect();
   
-  // Use triple requestAnimationFrame for maximum reliability
+  // Use double requestAnimationFrame for reliability
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        // Verify element still exists and is in the DOM
+      // Verify element still exists and is in the DOM
+      if (!unitEl.parentElement || !document.body.contains(unitEl)) {
+        console.warn('[ANIMATION] Unit element removed from DOM during animation setup');
+        onComplete();
+        return;
+      }
+      
+      // Animate to final position (no transform offset = unit at its natural position in dest tile)
+      unitEl.style.transition = `transform ${duration}ms cubic-bezier(0.25, 0.1, 0.25, 1), filter ${duration}ms ease-out`;
+      unitEl.style.transform = originalTransform || 'translate(0, 0)';
+      unitEl.style.filter = 'brightness(1.2) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5))';
+      
+      console.log(`[ANIMATION] Animation started, will complete in ${duration}ms`);
+      
+      // After animation completes, call onComplete and reset styles
+      const timeoutId = setTimeout(() => {
+        // Verify element still exists before modifying
         if (!unitEl.parentElement || !document.body.contains(unitEl)) {
-          console.warn('[ANIMATION] Unit element removed from DOM during animation setup');
+          console.warn('[ANIMATION] Unit element removed from DOM during animation');
           onComplete();
           return;
         }
         
-        // Verify the initial transform was applied by checking computed style
-        const computedTransform = window.getComputedStyle(unitEl).transform;
-        console.log(`[ANIMATION] Initial transform applied: ${computedTransform}`);
+        // Reset to original state
+        unitEl.style.filter = '';
+        unitEl.style.zIndex = '';
+        unitEl.style.transform = originalTransform;
+        unitEl.style.transition = '';
         
-        // Use smooth cubic-bezier easing for more natural movement
-        unitEl.style.transition = `transform ${duration}ms cubic-bezier(0.4, 0.0, 0.2, 1), filter ${duration}ms ease-out`;
-        unitEl.style.transform = 'translate(-50%, -50%)';
-        unitEl.style.filter = 'brightness(1.15) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4))';
-        
-        console.log(`[ANIMATION] Animation started, will complete in ${duration}ms`);
-        
-        // After animation completes, call onComplete and reset
-        const timeoutId = setTimeout(() => {
-          // Verify element still exists before modifying
-          if (!unitEl.parentElement || !document.body.contains(unitEl)) {
-            console.warn('[ANIMATION] Unit element removed from DOM during animation');
-            onComplete();
-            return;
-          }
-          
-          unitEl.style.filter = '';
-          unitEl.style.zIndex = '';
-          // Ensure transform is reset to centered position
-          unitEl.style.transform = 'translate(-50%, -50%)';
-          unitEl.style.transition = '';
-          console.log(`[ANIMATION] Animation completed for unit ${unitId}`);
-          onComplete();
-        }, duration);
-        
-        // Store timeout ID on element for potential cleanup
-        (unitEl as any).__animationTimeout = timeoutId;
-      });
+        console.log(`[ANIMATION] Animation completed for unit ${unitId}`);
+        onComplete();
+      }, duration);
+      
+      // Store timeout ID on element for potential cleanup
+      (unitEl as any).__animationTimeout = timeoutId;
     });
   });
 }
@@ -615,8 +756,19 @@ export function renderBattleScreen() {
             <div class="battle-active-label">ACTIVE UNIT</div>
             <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
           </div>
+          <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
+            ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
+          </button>
           <button class="battle-back-btn" id="exitBattleBtn">EXIT BATTLE</button>
         </div>
+      </div>
+      
+      <!-- Pan controls hint -->
+      <div class="battle-pan-controls">
+        <div class="battle-pan-hint">
+          <span class="battle-pan-keys">WASD</span> or <span class="battle-pan-keys">↑←↓→</span> to pan
+        </div>
+        <button class="battle-pan-reset" id="resetBattlePanBtn">⟲ CENTER</button>
       </div>
       
       <!-- Console overlay -->
@@ -640,7 +792,14 @@ export function renderBattleScreen() {
     </div>
   `;
   
-  setTimeout(() => attachBattleListeners(), 0);
+  // Setup pan handlers and attach event listeners
+  setupBattlePanHandlers();
+  // Use requestAnimationFrame to ensure DOM is fully ready, especially for victory overlay
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      attachBattleListeners();
+    });
+  });
 }
 
 // ============================================================================
@@ -898,7 +1057,7 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
     }
   }
   
-  return `<div class="battle-grid-container"><div class="battle-grid" style="--battle-grid-cols:${gridWidth};--battle-grid-rows:${gridHeight};">${tiles}</div></div>`;
+  return `<div class="battle-grid-pan-wrapper"><div class="battle-grid-container"><div class="battle-grid" style="--battle-grid-cols:${gridWidth};--battle-grid-rows:${gridHeight};">${tiles}</div></div></div>`;
 }
 
 function renderBattleResultOverlay(battle: BattleState): string {
@@ -956,10 +1115,28 @@ function attachBattleListeners() {
   const exitBtn = document.getElementById("exitBattleBtn");
   if (exitBtn) {
     exitBtn.onclick = () => {
+      cleanupBattlePanHandlers();
       localBattleState = null;
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
+      uiPanelsMinimized = false; // Reset UI visibility
       renderOperationMap();
+    };
+  }
+  
+  // Toggle UI panels button
+  const toggleUiBtn = document.getElementById("toggleUiBtn");
+  if (toggleUiBtn) {
+    toggleUiBtn.onclick = () => {
+      toggleUiPanels();
+    };
+  }
+  
+  // Reset pan button
+  const resetPanBtn = document.getElementById("resetBattlePanBtn");
+  if (resetPanBtn) {
+    resetPanBtn.onclick = () => {
+      resetBattlePan();
     };
   }
 
@@ -1205,16 +1382,35 @@ renderBattleScreen();
     };
   }
 
- // Claim rewards button
+  // Claim rewards button - use both onclick and addEventListener for maximum reliability
   const claimBtn = document.getElementById("claimRewardsBtn");
   if (claimBtn) {
-      claimBtn.onclick = () => {
-      if (!localBattleState) return;
+    console.log("[BATTLE] Found claim rewards button, attaching handlers");
+    
+    // Clear any existing handlers
+    claimBtn.onclick = null;
+    
+    // Use onclick as primary handler (more reliable)
+    claimBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log("[BATTLE] Claim rewards button clicked (onclick)");
+      
+      if (!localBattleState) {
+        console.warn("[BATTLE] No battle state when claiming rewards");
+        return;
+      }
+      
       const r = localBattleState.rewards;
-      if (r) {
-        console.log("[CLAIM] Claiming rewards:", r);
-        
-       updateGameState(s => {
+      if (!r) {
+        console.warn("[BATTLE] No rewards to claim");
+        return;
+      }
+      
+      console.log("[BATTLE] Claiming rewards:", r);
+      
+      try {
+        updateGameState(s => {
           // MUST create a new object and RETURN it!
           return {
             ...s,
@@ -1232,7 +1428,6 @@ renderBattleScreen();
         });
 
         // Update quest progress for battle completion
-        const { updateQuestProgress } = require("../../quests/questManager");
         // Count enemies defeated (estimate from rewards or battle state)
         const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
         updateQuestProgress("kill_enemies", enemyCount, enemyCount);
@@ -1245,24 +1440,91 @@ renderBattleScreen();
         if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
         
         // Track survival affinity for all units that survived
-        const { trackBattleSurvival } = require("../../core/affinityBattle");
         trackBattleSurvival(localBattleState, true);
+        
+        // Mark the current battle room as visited/completed
+        markCurrentRoomVisited();
+        
+        console.log("[BATTLE] Rewards claimed successfully");
+      } catch (error) {
+        console.error("[BATTLE] Error claiming rewards:", error);
+        alert(`Error claiming rewards: ${error}`);
+        return;
       }
       
+      cleanupBattlePanHandlers();
       localBattleState = null;
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
+      uiPanelsMinimized = false;
       renderOperationMap();
     };
+    
+    // Also add event listener as backup
+    claimBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log("[BATTLE] Claim rewards button clicked (addEventListener)");
+      
+      if (!localBattleState) return;
+      const r = localBattleState.rewards;
+      if (r) {
+        // Same logic as onclick handler
+        updateGameState(s => ({
+          ...s,
+          wad: (s.wad ?? 0) + (r.wad ?? 0),
+          resources: {
+            metalScrap: (s.resources?.metalScrap ?? 0) + (r.metalScrap ?? 0),
+            wood: (s.resources?.wood ?? 0) + (r.wood ?? 0),
+            chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
+            steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
+          },
+          cardLibrary: r.cards && r.cards.length > 0 
+            ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
+            : s.cardLibrary,
+        }));
+        
+        // Update quest progress for battle completion
+        const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10));
+        updateQuestProgress("kill_enemies", enemyCount, enemyCount);
+        updateQuestProgress("complete_battle", "any", 1);
+        if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
+        if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
+        if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
+        if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
+        
+        // Track survival affinity for all units that survived
+        trackBattleSurvival(localBattleState, true);
+        
+        // Mark the current battle room as visited/completed
+        markCurrentRoomVisited();
+      }
+      
+      cleanupBattlePanHandlers();
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      uiPanelsMinimized = false;
+      renderOperationMap();
+    }, { once: false, passive: false });
+    
+    // Ensure button is clickable
+    claimBtn.style.pointerEvents = "auto";
+    claimBtn.style.cursor = "pointer";
+    claimBtn.style.zIndex = "1001";
+  } else {
+    console.warn("[BATTLE] Claim rewards button not found in DOM");
   }
 
   // Defeat return button
   const defeatBtn = document.getElementById("defeatReturnBtn");
   if (defeatBtn) {
     defeatBtn.onclick = () => {
+      cleanupBattlePanHandlers();
       localBattleState = null;
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
+      uiPanelsMinimized = false;
       renderBaseCampScreen();
     };
   }
@@ -1309,7 +1571,13 @@ function runEnemyTurns(state: BattleState): BattleState {
     const active = currentState.activeUnitId ? currentState.units[currentState.activeUnitId] : null;
     
     if (!active || active.hp <= 0) {
+      // Unit is dead, remove it and check for victory
       currentState = advanceTurn(currentState);
+      // Explicitly check for victory after removing dead unit
+      currentState = evaluateBattleOutcome(currentState);
+      if (currentState.phase === "victory" || currentState.phase === "defeat") {
+        break;
+      }
       safety++;
       continue;
     }
@@ -1323,13 +1591,19 @@ function runEnemyTurns(state: BattleState): BattleState {
     // For enemies, we need to capture position before and after for animation
     const beforePos = active.pos ? { ...active.pos } : null;
     currentState = performEnemyTurn(currentState);
+    // CRITICAL: Explicitly check for victory/defeat after enemy turn
+    // This ensures victory is detected even if evaluateBattleOutcome wasn't called
+    currentState = evaluateBattleOutcome(currentState);
     const afterUnit = currentState.units[active.id];
     const afterPos = afterUnit?.pos ? { ...afterUnit.pos } : null;
     
     // Queue animation if position changed (will be handled by re-render for now)
     // The animation will happen on next render cycle
     
-    if (currentState.phase === "victory" || currentState.phase === "defeat") break;
+    if (currentState.phase === "victory" || currentState.phase === "defeat") {
+      console.log(`[BATTLE] Battle ended during enemy turn: ${currentState.phase}`);
+      break;
+    }
     
     safety++;
   }
@@ -1352,7 +1626,17 @@ function runEnemyTurnsAnimated(initialState: BattleState) {
     const active = state.activeUnitId ? state.units[state.activeUnitId] : null;
     
     if (!active || active.hp <= 0) {
-      const newState = advanceTurn(state);
+      // Unit is dead, remove it and check for victory
+      let newState = advanceTurn(state);
+      // Explicitly check for victory after removing dead unit
+      newState = evaluateBattleOutcome(newState);
+      if (newState.phase === "victory" || newState.phase === "defeat") {
+        console.log(`[BATTLE] Battle ended during turn advance: ${newState.phase}`);
+        isAnimatingEnemyTurn = false;
+        setBattleState(newState);
+        renderBattleScreen();
+        return;
+      }
       processNextEnemy(newState);
       return;
     }
@@ -1372,6 +1656,10 @@ function runEnemyTurnsAnimated(initialState: BattleState) {
     // Perform enemy turn
     let newState = performEnemyTurn(state);
     
+    // CRITICAL: Explicitly check for victory/defeat after enemy turn
+    // This ensures victory is detected even if evaluateBattleOutcome wasn't called
+    newState = evaluateBattleOutcome(newState);
+    
     // Check if position changed
     const afterUnit = newState.units[active.id];
     const afterPos = afterUnit?.pos;
@@ -1386,8 +1674,9 @@ function runEnemyTurnsAnimated(initialState: BattleState) {
         // After animation, update state
         setBattleState(newState);
         
-        // Check for victory/defeat
+        // Check for victory/defeat (double-check after animation)
         if (newState.phase === "victory" || newState.phase === "defeat") {
+          console.log(`[BATTLE] Battle ended: ${newState.phase}`);
           isAnimatingEnemyTurn = false;
           renderBattleScreen();
           return;
@@ -1403,12 +1692,16 @@ function runEnemyTurnsAnimated(initialState: BattleState) {
     } else {
       // No movement, just update and continue
       setBattleState(newState);
-      renderBattleScreen();
       
+      // Check for victory/defeat immediately
       if (newState.phase === "victory" || newState.phase === "defeat") {
+        console.log(`[BATTLE] Battle ended: ${newState.phase}`);
         isAnimatingEnemyTurn = false;
+        renderBattleScreen();
         return;
       }
+      
+      renderBattleScreen();
       
       // Small delay between enemy actions
       setTimeout(() => processNextEnemy(newState), 300);

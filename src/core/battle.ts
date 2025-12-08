@@ -853,7 +853,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
     };
   }
 
- if (!anyEnemies) {
+  if (!anyEnemies) {
     const rewards = generateBattleRewards(state);
     
     // STEP 7: Build card reward log

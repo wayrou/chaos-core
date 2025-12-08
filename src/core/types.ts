@@ -106,7 +106,7 @@ export interface BattleState {
 //  OPERATION / WORLD
 // ---------------------------------------------------------
 
-export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss";
+export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss" | "field_node";
 
 export interface RoomNode {
   id: RoomId;
@@ -117,6 +117,7 @@ export interface RoomNode {
   battleTemplate?: string; // ID of battle template from procedural.ts
   eventTemplate?: string;  // ID of event template from procedural.ts
   shopInventory?: string[]; // Equipment IDs available in shop
+  fieldNodeSeed?: number;  // Seed for field_node room generation (Headline 14d)
   visited?: boolean;
 }
 
@@ -232,9 +233,9 @@ export interface LoadPenaltyFlags {
 // ---------------------------------------------------------
 
 export interface GameState {
-  phase: "shell" | "battle" | "map" | "field";
+  phase: "shell" | "battle" | "map" | "field" | "loadout" | "operation";
   profile: PlayerProfile;
-  operation: OperationRun;
+  operation: OperationRun | null;
   unitsById: Record<UnitId, Unit>;
   cardsById: Record<CardId, Card>;
   partyUnitIds: UnitId[];
