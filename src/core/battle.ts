@@ -92,7 +92,7 @@ export interface BattleState {
   units: Record<UnitId, BattleUnitState>;
   turnOrder: UnitId[];
   activeUnitId: UnitId | null;
-  phase: "player_turn" | "enemy_turn" | "victory" | "defeat";
+  phase: "placement" | "player_turn" | "enemy_turn" | "victory" | "defeat";
   turnCount: number;
   log: string[];
   rewards?: {
@@ -104,6 +104,12 @@ export interface BattleState {
     cards?: string[];  // NEW: Card IDs won
   };
   loadPenalties?: LoadPenaltyFlags;
+  // Placement phase state
+  placementState?: {
+    placedUnitIds: UnitId[]; // Array instead of Set for serialization
+    selectedUnitId: UnitId | null;
+    maxUnitsPerSide: number;
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -341,24 +347,43 @@ export function advanceTurn(state: BattleState): BattleState {
     return state;
   }
 
-  const currentIndex = state.activeUnitId
-    ? state.turnOrder.indexOf(state.activeUnitId)
+  // --- DISCARD CURRENT UNIT'S HAND (if player unit) ---
+  let newState = state;
+  if (state.activeUnitId && state.units[state.activeUnitId]) {
+    const currentUnit = state.units[state.activeUnitId];
+    if (!currentUnit.isEnemy && currentUnit.hand.length > 0) {
+      // Move all cards from hand to discard pile
+      const newUnits = { ...state.units };
+      newUnits[state.activeUnitId] = {
+        ...currentUnit,
+        discardPile: [...currentUnit.discardPile, ...currentUnit.hand],
+        hand: [], // Clear hand
+      };
+      newState = {
+        ...state,
+        units: newUnits,
+      };
+    }
+  }
+
+  const currentIndex = newState.activeUnitId
+    ? newState.turnOrder.indexOf(newState.activeUnitId)
     : -1;
 
   const nextIndex =
-    currentIndex === -1 || currentIndex === state.turnOrder.length - 1
+    currentIndex === -1 || currentIndex === newState.turnOrder.length - 1
       ? 0
       : currentIndex + 1;
 
-  const nextActiveId = state.turnOrder[nextIndex];
+  const nextActiveId = newState.turnOrder[nextIndex];
 
-  let newState: BattleState = {
-    ...state,
+  newState = {
+    ...newState,
     activeUnitId: nextActiveId,
     turnCount:
       currentIndex === -1
         ? 1
-        : state.turnCount + (nextIndex === 0 ? 1 : 0),
+        : newState.turnCount + (nextIndex === 0 ? 1 : 0),
   };
 
   // --- STRAIN COOLDOWN ON NEW ACTIVE UNIT ---
@@ -459,10 +484,23 @@ export function advanceTurn(state: BattleState): BattleState {
     }
   }
 
-  // --- DRAW CARDS FOR PLAYER UNIT ---
+  // --- DRAW CARDS FOR NEXT UNIT (player or enemy) ---
   const nextUnit = nextActiveId ? newState.units[nextActiveId] : null;
   if (nextUnit && !nextUnit.isEnemy) {
-    newState = drawCardsForTurn(newState, nextUnit);
+    // Clear hand first, then draw new hand
+    const clearedUnit = {
+      ...nextUnit,
+      hand: [],
+    };
+    newState = {
+      ...newState,
+      units: {
+        ...newState.units,
+        [nextActiveId]: clearedUnit,
+      },
+    };
+    // Now draw fresh hand
+    newState = drawCardsForTurn(newState, newState.units[nextActiveId]);
   }
 
   return newState;
@@ -944,6 +982,15 @@ export function drawCardsForTurn(
 // TEST BATTLE CREATION - WITH EQUIPMENT INTEGRATION
 // ----------------------------------------------------------------------------
 
+/**
+ * Calculate maximum units allowed per side based on grid area
+ */
+export function calculateMaxUnitsPerSide(gridWidth: number, gridHeight: number): number {
+  const gridArea = gridWidth * gridHeight;
+  const rawMax = Math.floor(gridArea * 0.25);
+  return Math.max(3, Math.min(rawMax, 10));
+}
+
 export function createTestBattleForCurrentParty(
   state: GameState
 ): BattleState | null {
@@ -954,6 +1001,7 @@ export function createTestBattleForCurrentParty(
   const gridWidth = 8;
   const gridHeight = 6;
   const tiles = createGrid(gridWidth, gridHeight);
+  const maxUnitsPerSide = calculateMaxUnitsPerSide(gridWidth, gridHeight);
 
   // Get equipment data from state (or use defaults)
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
@@ -961,19 +1009,17 @@ export function createTestBattleForCurrentParty(
 
   const units: Record<UnitId, BattleUnitState> = {};
 
-  // Place player units on the left
-  partyIds.forEach((id, index) => {
+  // Create player units WITHOUT positions initially (placement phase)
+  partyIds.forEach((id) => {
     const base = state.unitsById[id];
     if (!base) return;
 
-    // Pass equipment data to createBattleUnitState
-    // Spread units vertically with spacing
-    const yPos = Math.min(index * 2, gridHeight - 1);
+    // Create unit without position - will be placed during placement phase
     units[id] = createBattleUnitState(
       base,
       {
         isEnemy: false,
-        pos: { x: 0, y: yPos },
+        pos: null, // Start with no position - placement phase
         gearSlots: (state as any).gearSlots ?? {},  // NEW: Pass gear slots
       },
       equipmentById,
@@ -981,34 +1027,10 @@ export function createTestBattleForCurrentParty(
     );
   });
 
-  // Dummy enemies (use simple stats, not player equipment)
-  const first = state.unitsById[partyIds[0]];
-  if (first) {
-    const enemyBase = {
-      ...first,
-      id: "enemy_grunt_1",
-      name: "Gate Sentry",
-      deck: ["core_basic_attack", "core_basic_attack", "core_guard"],
-      stats: { maxHp: 15, atk: 4, def: 2, agi: 3, acc: 75 },
-    };
-
-    units["enemy_grunt_1"] = createBattleUnitState(
-      enemyBase as any,
-      { isEnemy: true, pos: { x: gridWidth - 1, y: 1 } },
-      equipmentById,
-      modulesById
-    );
-
-    units["enemy_grunt_2"] = createBattleUnitState(
-      { ...enemyBase, id: "enemy_grunt_2", name: "Gate Sentry" } as any,
-      { isEnemy: true, pos: { x: gridWidth - 1, y: 4 } },
-      equipmentById,
-      modulesById
-    );
-  }
-
-  const turnOrder = computeTurnOrder(units);
-  const activeUnitId = turnOrder[0] ?? null;
+  // Don't compute turn order yet - wait until placement is confirmed
+  // Enemies will be placed automatically on the right edge
+  const turnOrder: UnitId[] = [];
+  const activeUnitId: UnitId | null = null;
 
   let battle: BattleState = {
     id: "battle_test_1",
@@ -1022,12 +1044,18 @@ export function createTestBattleForCurrentParty(
     units,
     turnOrder,
     activeUnitId,
-    phase: "player_turn",
-    turnCount: 1,
+    phase: "placement", // Start in placement phase
+    turnCount: 0,
     log: [
       `SLK//ENGAGE :: Engagement feed online.`,
       `SLK//ROOM   :: Linked to node ${state.operation?.currentRoomId}.`,
+      `SLK//PLACE  :: Unit placement phase - position your squad on the left edge.`,
     ],
+    placementState: {
+      placedUnitIds: [], // Array instead of Set
+      selectedUnitId: null,
+      maxUnitsPerSide,
+    },
   };
 
   // Attach 10za load penalties based on current inventory
@@ -1059,28 +1087,34 @@ export function createTestBattleForCurrentParty(
     }
   }
 
-  // Ensure we start on a player-controlled unit
-  let guard = 0;
-  while (
-    battle.activeUnitId &&
-    battle.units[battle.activeUnitId].isEnemy &&
-    guard < 20
-  ) {
-    battle = advanceTurn(battle);
-    guard++;
+  // Place enemies automatically on the right edge
+  const enemyCount = Math.min(2, maxUnitsPerSide); // Limit enemy count
+  const first = state.unitsById[partyIds[0]];
+  if (first) {
+    const enemyBase = {
+      ...first,
+      id: "enemy_grunt_1",
+      name: "Gate Sentry",
+      deck: ["core_basic_attack", "core_basic_attack", "core_guard"],
+      stats: { maxHp: 15, atk: 4, def: 2, agi: 3, acc: 75 },
+    };
+
+    for (let i = 0; i < enemyCount; i++) {
+      const enemyId = `enemy_grunt_${i + 1}`;
+      units[enemyId] = createBattleUnitState(
+        { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
+        { 
+          isEnemy: true, 
+          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) } 
+        },
+        equipmentById,
+        modulesById
+      );
+    }
   }
 
-  // Starting player unit draws an opening hand
-  const firstActive =
-    battle.activeUnitId != null ? battle.units[battle.activeUnitId] : null;
-
-  if (firstActive && !firstActive.isEnemy) {
-    battle = drawCardsForTurn(battle, firstActive);
-    battle = appendBattleLog(
-      battle,
-      `SLK//UNIT   :: ${firstActive.name} draws opening hand.`
-    );
-  }
+  // Update battle with enemy units
+  battle.units = units;
 
   return battle;
 }
@@ -1238,4 +1272,143 @@ export function drawCards(
   count: number = 5
 ): BattleState {
   return drawCardsForTurn(state, unit);
+}
+
+// ----------------------------------------------------------------------------
+// PLACEMENT PHASE FUNCTIONS
+// ----------------------------------------------------------------------------
+
+/**
+ * Place a unit at a specific position during placement phase
+ */
+export function placeUnit(
+  state: BattleState,
+  unitId: UnitId,
+  pos: Vec2
+): BattleState {
+  if (state.phase !== "placement") return state;
+  
+  const unit = state.units[unitId];
+  if (!unit || unit.isEnemy) return state; // Can only place friendly units
+  
+  // Check if position is valid (left edge: x === 0)
+  if (pos.x !== 0 || pos.y < 0 || pos.y >= state.gridHeight) {
+    return appendBattleLog(state, `SLK//PLACE  :: Invalid placement position. Units must be placed on the left edge (x=0).`);
+  }
+  
+  // Check if tile is already occupied
+  const occupied = Object.values(state.units).some(
+    u => u.pos && u.pos.x === pos.x && u.pos.y === pos.y && u.hp > 0
+  );
+  if (occupied) {
+    return appendBattleLog(state, `SLK//PLACE  :: Tile (${pos.x}, ${pos.y}) is already occupied.`);
+  }
+  
+  // Check max units limit
+  const placementState = state.placementState;
+  if (!placementState) return state;
+  
+  const placedCount = placementState.placedUnitIds.length;
+  if (placedCount >= placementState.maxUnitsPerSide) {
+    return appendBattleLog(state, `SLK//PLACE  :: Maximum units per side (${placementState.maxUnitsPerSide}) reached.`);
+  }
+  
+  // Check if already placed
+  if (placementState.placedUnitIds.includes(unitId)) {
+    return appendBattleLog(state, `SLK//PLACE  :: ${unit.name} is already placed.`);
+  }
+  
+  // Place the unit
+  const newUnits = { ...state.units };
+  newUnits[unitId] = { ...unit, pos };
+  
+  const newPlacedIds = [...placementState.placedUnitIds, unitId];
+  
+  return {
+    ...state,
+    units: newUnits,
+    placementState: {
+      ...placementState,
+      placedUnitIds: newPlacedIds,
+    },
+    log: [...state.log, `SLK//PLACE  :: ${unit.name} placed at (${pos.x}, ${pos.y}).`],
+  };
+}
+
+/**
+ * Quick place all unplaced friendly units automatically
+ */
+export function quickPlaceUnits(state: BattleState): BattleState {
+  if (state.phase !== "placement") return state;
+  
+  const placementState = state.placementState;
+  if (!placementState) return state;
+  
+  const friendlyUnits = Object.values(state.units).filter(u => !u.isEnemy);
+  const unplacedUnits = friendlyUnits.filter(
+    u => !placementState.placedUnitIds.includes(u.id) && !u.pos
+  );
+  
+  let newState = state;
+  let placedCount = placementState.placedUnitIds.length;
+  
+  // Place units from top to bottom along left edge
+  for (let i = 0; i < unplacedUnits.length && placedCount < placementState.maxUnitsPerSide; i++) {
+    const unit = unplacedUnits[i];
+    const yPos = Math.min(i, newState.gridHeight - 1);
+    newState = placeUnit(newState, unit.id, { x: 0, y: yPos });
+    placedCount++;
+  }
+  
+  return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedCount - state.placementState!.placedUnitIds.length} units.`);
+}
+
+/**
+ * Confirm placement and start battle
+ */
+export function confirmPlacement(state: BattleState): BattleState {
+  if (state.phase !== "placement") return state;
+  
+  const placementState = state.placementState;
+  if (!placementState) return state;
+  
+  const friendlyUnits = Object.values(state.units).filter(u => !u.isEnemy);
+  const placedCount = placementState.placedUnitIds.length;
+  
+  // Check if all units are placed or max reached
+  if (placedCount === 0) {
+    return appendBattleLog(state, `SLK//PLACE  :: Please place at least one unit before confirming.`);
+  }
+  
+  // Compute turn order now that all units are placed
+  const turnOrder = computeTurnOrder(state.units);
+  const activeUnitId = turnOrder[0] ?? null;
+  
+  // Switch to inProgress phase
+  let newState: BattleState = {
+    ...state,
+    phase: activeUnitId && state.units[activeUnitId]?.isEnemy ? "enemy_turn" : "player_turn",
+    turnOrder,
+    activeUnitId,
+    turnCount: 1,
+    placementState: undefined, // Clear placement state
+    log: [
+      ...state.log,
+      `SLK//ENGAGE :: Placement confirmed. Battle begins.`,
+    ],
+  };
+  
+  // Draw hand for first active unit if it's a player unit
+  if (activeUnitId) {
+    const firstActive = newState.units[activeUnitId];
+    if (firstActive && !firstActive.isEnemy) {
+      newState = drawCardsForTurn(newState, firstActive);
+      newState = appendBattleLog(
+        newState,
+        `SLK//UNIT   :: ${firstActive.name} draws opening hand.`
+      );
+    }
+  }
+  
+  return newState;
 }
