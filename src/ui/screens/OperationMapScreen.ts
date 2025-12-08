@@ -256,7 +256,44 @@ export function renderOperationMapScreen(): void {
 
   // Setup pan handlers and attach event listeners
   setupPanHandlers();
-  attachEventListeners(nodes, currentRoomIndex);
+  
+  // Setup document-level click handler for abandon button (event delegation fallback)
+  setupAbandonButtonHandler();
+  
+  // Use requestAnimationFrame to ensure DOM is fully ready
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      attachEventListeners(nodes, currentRoomIndex);
+    });
+  });
+}
+
+// Global abandon button handler using event delegation
+let abandonHandlerAttached = false;
+function setupAbandonButtonHandler(): void {
+  if (abandonHandlerAttached) return;
+  abandonHandlerAttached = true;
+  
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    // Check if click was on abandon button or its children
+    const abandonBtn = target.closest("#abandonBtn");
+    if (abandonBtn && document.querySelector(".opmap-root")) {
+      e.stopPropagation();
+      e.preventDefault();
+      console.log("[OPMAP] Abandon button clicked (document delegation)!");
+      
+      if (confirm("Abandon this operation? Progress will be lost.")) {
+        cleanupPanHandlers();
+        updateGameState(prev => ({
+          ...prev,
+          operation: null,
+          phase: "shell",
+        }));
+        renderBaseCampScreen();
+      }
+    }
+  }, true); // Use capture phase
 }
 
 // ============================================================================
@@ -387,15 +424,50 @@ function getRoomTypeLabel(type?: RoomType): string {
 
 function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): void {
   const root = document.getElementById("app");
-  if (!root) return;
+  if (!root) {
+    console.error("[OPMAP] Root element not found!");
+    return;
+  }
+
+  console.log("[OPMAP] Attaching event listeners...");
 
   // Reset pan button
   root.querySelector("#resetPanBtn")?.addEventListener("click", () => {
     resetPan();
   });
 
-  // Abandon button
-  root.querySelector("#abandonBtn")?.addEventListener("click", () => {
+  // Abandon button - use multiple approaches to ensure it works
+  const abandonBtn = root.querySelector("#abandonBtn") as HTMLButtonElement | null;
+  console.log("[OPMAP] Looking for abandon button, found:", abandonBtn);
+  
+  if (abandonBtn) {
+    console.log("[OPMAP] Attaching click handlers to abandon button");
+    
+    // Approach 1: Direct onclick
+    abandonBtn.onclick = function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      console.log("[OPMAP] Abandon button clicked (onclick)!");
+      handleAbandon();
+    };
+    
+    // Approach 2: addEventListener
+    abandonBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      console.log("[OPMAP] Abandon button clicked (addEventListener)!");
+      handleAbandon();
+    });
+    
+    // Approach 3: mousedown as fallback
+    abandonBtn.addEventListener("mousedown", function(e) {
+      console.log("[OPMAP] Abandon button mousedown detected!");
+    });
+  } else {
+    console.warn("[OPMAP] Abandon button NOT found in DOM!");
+  }
+  
+  function handleAbandon() {
     if (confirm("Abandon this operation? Progress will be lost.")) {
       cleanupPanHandlers();
       updateGameState(prev => ({
@@ -405,7 +477,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
       }));
       renderBaseCampScreen();
     }
-  });
+  }
 
   // Unit Management button
   root.querySelector("#unitsBtn")?.addEventListener("click", () => {
@@ -416,12 +488,20 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   });
 
   // Enter room buttons (only on next available room)
-  root.querySelectorAll(".opmap-node-enter").forEach(btn => {
+  const enterBtns = root.querySelectorAll(".opmap-node-enter");
+  console.log("[OPMAP] Found", enterBtns.length, "enter buttons");
+  enterBtns.forEach((btn, index) => {
+    console.log("[OPMAP] Attaching click handler to enter button", index);
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const roomId = (e.target as HTMLElement).getAttribute("data-room-id");
+      e.preventDefault();
+      const button = e.currentTarget as HTMLElement;
+      const roomId = button.getAttribute("data-room-id");
+      console.log("[OPMAP] Enter button clicked, roomId:", roomId);
       if (roomId) {
         enterRoom(roomId);
+      } else {
+        console.warn("[OPMAP] Enter button clicked but no roomId found");
       }
     });
   });
@@ -429,7 +509,10 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   // Clicking on the node itself (for next available room)
   root.querySelectorAll(".opmap-node--next").forEach(node => {
     node.addEventListener("click", (e) => {
-      const roomId = (e.target as HTMLElement).closest(".opmap-node")?.getAttribute("data-room-id");
+      e.stopPropagation();
+      e.preventDefault();
+      const clickedNode = (e.currentTarget as HTMLElement).closest(".opmap-node") || e.currentTarget as HTMLElement;
+      const roomId = clickedNode.getAttribute("data-room-id");
       if (roomId) {
         enterRoom(roomId);
       }
@@ -546,27 +629,38 @@ function enterRoom(roomId: string): void {
 }
 
 function enterBattleRoom(room: RoomNode): void {
-  const state = getGameState();
+  try {
+    const state = getGameState();
 
-  // Get battle template if specified
-  let battleTemplate = null;
-  if (room.battleTemplate) {
-    battleTemplate = getBattleTemplate(room.battleTemplate);
+    // Get battle template if specified
+    let battleTemplate = null;
+    if (room.battleTemplate) {
+      battleTemplate = getBattleTemplate(room.battleTemplate);
+    }
+
+    // Create battle (using template or fallback)
+    const battle = battleTemplate
+      ? createBattleFromTemplate(state, battleTemplate)
+      : createTestBattleForCurrentParty(state);
+
+    if (!battle) {
+      console.error("[OPMAP] Failed to create battle");
+      return;
+    }
+
+    // Store battle in state
+    updateGameState(prev => ({
+      ...prev,
+      currentBattle: battle,
+      phase: "battle",
+    }));
+
+    renderBattleScreen();
+  } catch (error) {
+    console.error("[OPMAP] Error entering battle room:", error);
+    // Return to operation map on error
+    renderOperationMapScreen();
   }
-
-  // Create battle (using template or fallback)
-  const battle = battleTemplate
-    ? createBattleFromTemplate(state, battleTemplate)
-    : createTestBattleForCurrentParty(state);
-
-  // Store battle in state
-  updateGameState(prev => ({
-    ...prev,
-    currentBattle: battle,
-    phase: "battle",
-  }));
-
-  renderBattleScreen();
 }
 
 function createBattleFromTemplate(state: GameState, template: any): any {

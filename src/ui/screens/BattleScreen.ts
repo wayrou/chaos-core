@@ -740,6 +740,7 @@ export function renderBattleScreen() {
   const battle = localBattleState;
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
+  const isPlacementPhase = battle.phase === "placement";
   const roomLabel = state.operation?.currentRoomId ?? "ROOM_START";
 
   app.innerHTML = `
@@ -1041,7 +1042,7 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
     if (placementState) {
       const friendlyUnits = Object.values(battle.units).filter(u => !u.isEnemy);
       const unplacedUnits = friendlyUnits.filter(
-        u => !placementState.placedUnitIds.has(u.id) && !u.pos
+        u => !placementState.placedUnitIds.includes(u.id) && !u.pos
       );
       
       // Show all left edge tiles as valid placement options
@@ -1298,21 +1299,33 @@ function attachBattleListeners() {
 
   // Placement phase handlers
   if (isPlacementPhase) {
+    console.log("[BATTLE] Setting up placement phase handlers");
+    
     // Quick Place button
     const quickPlaceBtn = document.getElementById("quickPlaceBtn");
     if (quickPlaceBtn) {
-      quickPlaceBtn.onclick = () => {
+      console.log("[BATTLE] Quick Place button found, attaching handler");
+      quickPlaceBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log("[BATTLE] Quick Place button clicked");
         if (!localBattleState) return;
         let newState = quickPlaceUnits(localBattleState);
         setBattleState(newState);
         renderBattleScreen();
-      };
+      });
+    } else {
+      console.warn("[BATTLE] Quick Place button NOT found");
     }
     
     // Confirm button
     const confirmBtn = document.getElementById("confirmPlacementBtn");
     if (confirmBtn) {
-      confirmBtn.onclick = () => {
+      console.log("[BATTLE] Confirm button found, attaching handler");
+      confirmBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log("[BATTLE] Confirm button clicked");
         if (!localBattleState) return;
         let newState = confirmPlacement(localBattleState);
         setBattleState(newState);
@@ -1333,7 +1346,9 @@ function attachBattleListeners() {
             }
           }
         });
-      };
+      });
+    } else {
+      console.warn("[BATTLE] Confirm button NOT found");
     }
     
     // Tile clicks for placement
