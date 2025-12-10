@@ -259,7 +259,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       },
       deck: baseDeck,
       loadout: {
-        weapon: "weapon_iron_longsword",
+        weapon: "weapon_emberclaw_repeater", // Mechanical weapon for testing
         helmet: "armor_ironguard_helm",
         chestpiece: "armor_steelplate_cuirass",
         accessory1: "accessory_steel_signet_ring",
@@ -298,7 +298,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       equipmentById,
       modulesById,
     });
-    return { ...u, pwr };
+    return { ...u, pwr, controller: "P1" as const }; // Default all units to P1
   });
 
   return Object.fromEntries(unitsWithPWR.map((u) => [u.id, u])) as Record<
@@ -486,7 +486,36 @@ consumables: {},
 
     // Unit Recruitment System (Headline 14az)
     recruitmentCandidates: undefined, // Will be generated when Tavern is opened
+
+    // Local Co-op System - Initialize players
+    players: {
+      P1: {
+        id: "P1",
+        active: true,
+        color: "#ff8a00", // Orange for P1
+        inputSource: "keyboard1",
+        avatar: null, // Will be set when entering field mode
+        controlledUnitIds: [], // Will be populated when entering battle
+      },
+      P2: {
+        id: "P2",
+        active: false,
+        color: "#6849c2", // Purple for P2
+        inputSource: "none",
+        avatar: null,
+        controlledUnitIds: [],
+      },
+    },
   };
+
+  // Initialize unit controllers to P1 by default
+  for (const unitId of state.partyUnitIds) {
+    const unit = state.unitsById[unitId];
+    if (unit && !unit.isEnemy) {
+      unit.controller = "P1";
+      state.players.P1.controlledUnitIds.push(unitId);
+    }
+  }
 
   return state;
 }

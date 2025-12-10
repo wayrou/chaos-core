@@ -64,8 +64,8 @@ export interface FieldNpc {
   path?: { x: number; y: number }[]; // Patrol path
   currentPathIndex?: number;
   dialogueId?: string;
-  lastMoveTime: number;
-  moveCooldown: number;
+  stateStartTime: number; // When current state (idle/walk) started
+  stateDuration: number; // How long to stay in current state
 }
 
 export interface FieldState {

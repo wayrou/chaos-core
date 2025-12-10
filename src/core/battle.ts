@@ -3,9 +3,9 @@
 // ============================================================================
 
 import { GameState, Unit, CardId, UnitId } from "./types";
-import { computeLoadPenaltyFlags, LoadPenaltyFlags } from "./inventory";
-import { GameState } from "./types";
+import { computeLoadPenaltyFlags } from "./inventory";
 import { getSettings } from "./settings";
+import { generateElevationMap } from "./isometric";
 
 import {
   UnitLoadout,
@@ -46,6 +46,7 @@ export interface Vec2 {
 export interface Tile {
   pos: Vec2;
   terrain: TerrainType;
+  elevation?: number; // Height level for isometric rendering (0 = ground, 1+ = raised)
 }
 
 export interface BattleUnitState {
@@ -80,6 +81,8 @@ export interface BattleUnitState {
   clutchActive?: boolean;
   weaponHeat?: number;
   weaponWear?: number;
+  // Local Co-op: Which player controls this unit
+  controller?: "P1" | "P2";
 }
 
 export interface BattleState {
@@ -135,14 +138,16 @@ export function getLoadPenalties(state: BattleState): LoadPenaltyFlags | null {
 // GRID CREATION
 // ----------------------------------------------------------------------------
 
-export function createGrid(width: number, height: number): Tile[] {
+export function createGrid(width: number, height: number, elevationMap?: number[][]): Tile[] {
   const tiles: Tile[] = [];
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const terrain: TerrainType = "floor";
+      const elevation = elevationMap ? (elevationMap[x]?.[y] ?? 0) : 0;
       tiles.push({
         pos: { x, y },
         terrain,
+        elevation,
       });
     }
   }
@@ -268,6 +273,7 @@ export function createBattleUnitState(
     clutchActive: false,
     weaponHeat: 0,
     weaponWear: 0,
+    controller: base.controller || "P1", // Copy controller from base unit
   };
 }
 
@@ -997,10 +1003,17 @@ export function createTestBattleForCurrentParty(
   const partyIds = state.partyUnitIds;
   if (partyIds.length === 0) return null;
 
-  // Grid sized to fit in battle window while allowing AGI-based movement
-  const gridWidth = 8;
-  const gridHeight = 6;
-  const tiles = createGrid(gridWidth, gridHeight);
+  // Random battlefield size (isometric-friendly dimensions)
+  const minSize = 6;
+  const maxSize = 12;
+  const gridWidth = Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize;
+  const gridHeight = Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize;
+  
+  // Generate random elevation map
+  const maxElevation = 3;
+  const elevationMap = generateElevationMap(gridWidth, gridHeight, maxElevation);
+  
+  const tiles = createGrid(gridWidth, gridHeight, elevationMap);
   const maxUnitsPerSide = calculateMaxUnitsPerSide(gridWidth, gridHeight);
 
   // Get equipment data from state (or use defaults)

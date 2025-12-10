@@ -39,6 +39,7 @@ let keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
+const ADVANCE_KEYS = new Set([" ", "Enter"]); // Space and Enter to advance
 
 function cleanupPanHandlers(): void {
   if (keydownHandler) {
@@ -63,12 +64,20 @@ function setupPanHandlers(): void {
   panState = { x: 0, y: 0, keysPressed: new Set() };
 
   keydownHandler = (e: KeyboardEvent) => {
-    if (!PAN_KEYS.has(e.key)) return;
-    
-    // Don't pan if typing in an input
+    // Don't handle keys if typing in an input
     if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
       return;
     }
+    
+    // Handle SPACE and ENTER to advance to next room
+    if (ADVANCE_KEYS.has(e.key)) {
+      e.preventDefault();
+      advanceToNextRoom();
+      return;
+    }
+    
+    // Handle pan keys
+    if (!PAN_KEYS.has(e.key)) return;
     
     e.preventDefault();
     panState.keysPressed.add(e.key.toLowerCase());
@@ -135,6 +144,28 @@ function resetPan(): void {
   const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
   if (mapContainer) {
     mapContainer.style.transform = `translate(0px, 0px)`;
+  }
+}
+
+// Advance to the next available room via keyboard
+function advanceToNextRoom(): void {
+  const state = getGameState();
+  const operation = getCurrentOperation(state);
+  if (!operation) return;
+
+  const floor = getCurrentFloor(operation);
+  if (!floor) return;
+
+  const nodes = floor.nodes || floor.rooms || [];
+  const nextIndex = getNextAvailableRoomIndex(nodes);
+  
+  // Check if there's a next room to enter
+  if (nextIndex >= 0 && nextIndex < nodes.length) {
+    const nextRoom = nodes[nextIndex];
+    if (nextRoom && !nextRoom.visited) {
+      console.log("[OPMAP] Advancing to next room via keyboard:", nextRoom.id);
+      enterRoom(nextRoom.id);
+    }
   }
 }
 
@@ -248,6 +279,7 @@ export function renderOperationMapScreen(): void {
       <div class="opmap-pan-controls">
         <div class="opmap-pan-hint">
           <span class="opmap-pan-keys">WASD</span> or <span class="opmap-pan-keys">↑←↓→</span> to pan
+          · <span class="opmap-pan-keys">SPACE</span> or <span class="opmap-pan-keys">ENTER</span> to advance
         </div>
         <button class="opmap-pan-reset" id="resetPanBtn">⟲ CENTER</button>
       </div>

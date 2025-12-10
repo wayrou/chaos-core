@@ -9,10 +9,13 @@ import { FieldNpc, FieldMap, PlayerAvatar } from "./types";
 // CONSTANTS
 // ============================================================================
 
-const NPC_SPEED = 60; // pixels per second (slow walk)
+const NPC_SPEED = 40; // pixels per second (slow walk)
 const NPC_WIDTH = 32;
 const NPC_HEIGHT = 32;
-const NPC_MOVE_COOLDOWN = 2000; // ms between movement decisions
+const NPC_WALK_DURATION_MIN = 2000; // ms - minimum time to walk
+const NPC_WALK_DURATION_MAX = 4000; // ms - maximum time to walk
+const NPC_IDLE_DURATION_MIN = 3000; // ms - minimum time to idle
+const NPC_IDLE_DURATION_MAX = 6000; // ms - maximum time to idle
 const NPC_INTERACTION_RANGE = 50; // pixels
 
 // ============================================================================
@@ -26,6 +29,7 @@ export function createNpc(
   y: number,
   dialogueId?: string
 ): FieldNpc {
+  const idleDuration = NPC_IDLE_DURATION_MIN + Math.random() * (NPC_IDLE_DURATION_MAX - NPC_IDLE_DURATION_MIN);
   return {
     id,
     name,
@@ -36,8 +40,8 @@ export function createNpc(
     state: "idle",
     direction: "south",
     dialogueId,
-    lastMoveTime: 0,
-    moveCooldown: NPC_MOVE_COOLDOWN,
+    stateStartTime: 0, // Will be set when NPC is first updated
+    stateDuration: idleDuration,
   };
 }
 
@@ -51,22 +55,32 @@ export function updateNpc(
   deltaTime: number,
   currentTime: number
 ): FieldNpc {
-  // Check if it's time to move
-  if (currentTime - npc.lastMoveTime < npc.moveCooldown) {
-    return npc;
+  // Initialize stateStartTime if not set
+  if (npc.stateStartTime === 0) {
+    npc.stateStartTime = currentTime;
   }
   
-  // Simple random walk pattern
-  if (npc.state === "idle") {
-    // Occasionally start walking
-    if (Math.random() < 0.3) {
+  const timeInState = currentTime - npc.stateStartTime;
+  
+  // Check if state duration has expired
+  if (timeInState >= npc.stateDuration) {
+    // Switch state
+    if (npc.state === "idle") {
+      // Start walking
       npc.state = "walk";
       npc.direction = ["north", "south", "east", "west"][Math.floor(Math.random() * 4)] as FieldNpc["direction"];
-      npc.lastMoveTime = currentTime;
-      npc.moveCooldown = 1000 + Math.random() * 2000; // Walk for 1-3 seconds
+      npc.stateStartTime = currentTime;
+      npc.stateDuration = NPC_WALK_DURATION_MIN + Math.random() * (NPC_WALK_DURATION_MAX - NPC_WALK_DURATION_MIN);
+    } else {
+      // Stop walking, go idle
+      npc.state = "idle";
+      npc.stateStartTime = currentTime;
+      npc.stateDuration = NPC_IDLE_DURATION_MIN + Math.random() * (NPC_IDLE_DURATION_MAX - NPC_IDLE_DURATION_MIN);
     }
-  } else if (npc.state === "walk") {
-    // Move in current direction
+  }
+  
+  // If walking, move in current direction
+  if (npc.state === "walk") {
     const moveDistance = NPC_SPEED * (deltaTime / 1000);
     let newX = npc.x;
     let newY = npc.y;
@@ -94,26 +108,17 @@ export function updateNpc(
     if (
       tileX >= 0 && tileX < map.width &&
       tileY >= 0 && tileY < map.height &&
-      map.tiles[tileY][tileX]?.walkable
+      map.tiles[tileY] && map.tiles[tileY][tileX]?.walkable
     ) {
       npc.x = newX;
       npc.y = newY;
     } else {
-      // Hit a wall, change direction or stop
-      if (Math.random() < 0.5) {
-        npc.direction = ["north", "south", "east", "west"][Math.floor(Math.random() * 4)] as FieldNpc["direction"];
-      } else {
-        npc.state = "idle";
-        npc.lastMoveTime = currentTime;
-        npc.moveCooldown = 2000 + Math.random() * 3000; // Idle for 2-5 seconds
-      }
-    }
-    
-    // Check if walk duration expired
-    if (currentTime - npc.lastMoveTime > npc.moveCooldown) {
-      npc.state = "idle";
-      npc.lastMoveTime = currentTime;
-      npc.moveCooldown = 2000 + Math.random() * 3000;
+      // Hit a wall, change direction
+      const directions: FieldNpc["direction"][] = ["north", "south", "east", "west"];
+      const currentIndex = directions.indexOf(npc.direction);
+      // Try opposite direction first, then random
+      const oppositeIndex = (currentIndex + 2) % 4;
+      npc.direction = directions[oppositeIndex];
     }
   }
   

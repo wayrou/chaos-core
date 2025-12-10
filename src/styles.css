@@ -3894,19 +3894,15 @@ button {
 .opselect-root,
 .shop-root,
 .roster-root,
-.workshop-root {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at top, #141432 0, #050512 50%, #000 100%);
-  color: #e0e4ff;
+/* Crafting screen styles are in workshop.css (now crafting.css) */
+.crafting-root {
+  /* Styles defined in workshop.css */
 }
 
 .opselect-root > div,
 .shop-root > div,
 .roster-root > div,
-.workshop-root > div {
+.crafting-root > div {
   /* if your TS creates inner cards, this is optional */
 }
 
@@ -3956,7 +3952,7 @@ button {
 .opstart-story-btn,
 .opstart-custom-btn,
 .roster-back-btn,
-.workshop-back-btn {
+.crafting-back-btn {
   font-size: 11px;
   padding: 6px 12px;
   border-radius: var(--radius-md);
@@ -3975,18 +3971,18 @@ button {
 .opstart-story-btn:hover,
 .opstart-custom-btn:hover,
 .roster-back-btn:hover,
-.workshop-back-btn:hover {
+.crafting-back-btn:hover {
   background: var(--ard-brown-dark);
   border-color: var(--ard-rust);
   color: var(--ard-off-white);
   transform: translateY(-1px);
 }
 
-/* Simple center cards for shop/roster/workshop */
+/* Simple center cards for shop/roster/crafting */
 
 .shop-root > .shop-title,
 .roster-root > .roster-title,
-.workshop-root > .workshop-title {
+.crafting-root > .crafting-title {
   /* in case you render differently, safe to ignore */
 }
 
@@ -4340,7 +4336,9 @@ button {
 
 .battle-unit {
   position: absolute;
-  inset: 3px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   border-radius: 5px;
   padding: 4px 5px;
   font-size: 10px;
@@ -4349,6 +4347,9 @@ button {
   gap: 2px;
   box-sizing: border-box;
   pointer-events: none;
+  will-change: transform;
+  z-index: 2;
+  /* width/height auto to allow proper centering */
 }
 
 .battle-unit-symbol {
@@ -7032,12 +7033,79 @@ button {
   justify-content: center;
   width: fit-content;
   height: fit-content;
-  /* Isometric perspective - diagonal view */
-  transform: perspective(800px) rotateX(5deg);
-  transform-origin: center bottom;
-  transform-style: preserve-3d;
-  /* Ensure container provides positioning context for animated units */
-  isolation: isolate;
+}
+
+/* Isometric grid container - uses absolute positioning for tiles */
+.battle-grid-container--iso {
+  position: relative;
+  overflow: visible;
+  isolation: isolate; /* Ensure container provides positioning context for animated units */
+  margin: 0 auto; /* Center the container */
+  background: radial-gradient(circle at center, rgba(10, 15, 30, 0.3), rgba(5, 8, 20, 0.5));
+  /* No transform - tiles are positioned absolutely using isometric projection */
+}
+
+/* Layered structure inside the grid */
+.battle-grid-tiles,
+.battle-grid-units,
+.battle-grid-overlays {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.battle-grid-tiles {
+  z-index: 1;
+}
+
+.battle-grid-units {
+  z-index: 2;
+}
+
+.battle-grid-overlays {
+  z-index: 3;
+}
+
+/* Zoom viewport and controls */
+.battle-grid-zoom-viewport {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.battle-grid-zoom-inner {
+  transition: transform 0.15s ease;
+  transform-origin: center center;
+}
+
+.battle-zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.battle-zoom-level {
+  color: var(--ard-off-white);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.btn-zoom {
+  padding: 2px 8px;
+  min-width: 32px;
+  line-height: 1.4;
 }
 
 /* Battle grid */
@@ -7182,14 +7250,25 @@ button {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 215, 0, 0.6);
 }
 
-/* Ensure active units maintain proper positioning */
-.battle-unit--active {
+/* Ensure active units maintain proper positioning - styling applied to portrait */
+/* BUT: Do NOT override positioning for isometric units - they use isoProject positioning */
+.battle-unit--active:not(.iso-unit) {
   position: absolute !important;
   top: 50% !important;
   left: 50% !important;
-  transform: translate(-50%, -50%) !important; /* Force centered position - never override */
-  /* Gold border styling for active unit */
-  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.8), 0 0 15px rgba(255, 215, 0, 0.5);
+  transform: translate(-50%, -50%); /* Default centering - inline styles override during animation */
+}
+
+/* For isometric units, only apply visual styling, not positioning overrides */
+.battle-unit--active.iso-unit {
+  /* Position comes from inline styles via isoProject - do not override */
+}
+
+/* When a unit is both active AND animating, transform comes from inline style */
+
+/* When animating, elevate z-index - transition is set via inline style for precise control */
+.battle-unit--animating {
+  z-index: 100 !important;
 }
 
 .battle-unit-name {
@@ -8038,17 +8117,24 @@ button {
   background: rgba(239, 68, 68, 0.25);
 }
 
-/* Units on tiles */
+/* Units on tiles - ensure proper positioning is always applied */
 .battle-unit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   padding: 4px;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   border-radius: 4px;
+  pointer-events: none;
+  will-change: transform;
+  z-index: 2;
 }
 
 .battle-unit--ally {
@@ -8994,17 +9080,24 @@ button {
   background: rgba(239, 68, 68, 0.25);
 }
 
-/* Units on tiles */
+/* Units on tiles - ensure proper positioning is always applied */
 .battle-unit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   padding: 4px;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   border-radius: 4px;
+  pointer-events: none;
+  will-change: transform;
+  z-index: 2;
 }
 
 .battle-unit--ally {
@@ -14703,16 +14796,16 @@ html, body {
    WORKSHOP SCREEN - ARDYCIA COLORS
    ========================================================================== */
 
-.workshop-root {
+.crafting-root {
   background: var(--gradient-primary) !important;
 }
 
-.workshop-card {
+.crafting-card {
   background: var(--bg-surface) !important;
   border-color: var(--border-primary) !important;
 }
 
-.workshop-title {
+.crafting-title {
   color: var(--ard-gold) !important;
 }
 
@@ -14982,7 +15075,7 @@ html, body {
 .basecamp-root,
 .roster-root,
 .shop-root,
-.workshop-root,
+.crafting-root,
 .inventory-root,
 .opselect-root,
 .opmap-root,
@@ -15001,7 +15094,7 @@ html, body {
 .basecamp-root:not([style*="background"]),
 .roster-root:not([style*="background"]),
 .shop-root:not([style*="background"]),
-.workshop-root:not([style*="background"]),
+.crafting-root:not([style*="background"]),
 .inventory-root:not([style*="background"]),
 .opselect-root:not([style*="background"]),
 .opmap-root:not([style*="background"]),
@@ -15016,7 +15109,7 @@ html, body {
 .basecamp-card,
 .roster-card,
 .shop-card,
-.workshop-card,
+.crafting-card,
 .inventory-card,
 .unitdetail-card,
 .settings-card {
@@ -18803,8 +18896,9 @@ html, body {
 }
 
 .opmap-node--next:hover {
-  transform: translateY(-6px) scale(1.02);
-  box-shadow: 0 12px 40px rgba(140, 160, 255, 0.5), 0 0 60px rgba(140, 160, 255, 0.3);
+  /* Removed translateY to prevent awkward movement - only scale for subtle feedback */
+  transform: scale(1.03);
+  box-shadow: 0 8px 40px rgba(140, 160, 255, 0.5), 0 0 60px rgba(140, 160, 255, 0.3);
   border-color: rgba(200, 220, 255, 1);
 }
 
@@ -19689,3 +19783,381 @@ html, body {
   color: #ffcc88 !important;
 }
 
+/* ==========================================================================
+   LOCAL CO-OP SYSTEM - Visual Indicators
+   ========================================================================== */
+
+/* Co-op message overlay */
+.coop-message {
+  animation: coopMessageFadeIn 0.3s ease;
+}
+
+@keyframes coopMessageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes coopMessageFadeOut {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
+
+/* Field player indicators */
+.field-player-indicator {
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.field-player-p1 {
+  border: 2px solid #ff8a00;
+}
+
+.field-player-p2 {
+  border: 2px solid #6849c2;
+}
+
+/* Battle active player indicator */
+.battle-active-player {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Battle unit controller indicator */
+.battle-unit-controller-indicator {
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  z-index: 100;
+}
+
+/* ==========================================================================
+   FIELD NODE WEAPON WINDOW
+   ========================================================================== */
+
+.field-node-weapon-window {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  background: rgba(20, 15, 10, 0.95);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: 8px;
+  padding: 12px 16px;
+  min-width: 180px;
+  z-index: 1000;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-display);
+}
+
+.weapon-window-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.weapon-window-type {
+  font-size: 10px;
+  color: var(--ard-brown-light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.weapon-window-mode {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(100, 100, 100, 0.3);
+  color: var(--ard-sage);
+}
+
+.weapon-window-mode--melee {
+  background: rgba(255, 120, 150, 0.2);
+  color: #ff7896;
+  border: 1px solid rgba(255, 120, 150, 0.4);
+}
+
+.weapon-window-mode--ranged {
+  background: rgba(124, 255, 156, 0.2);
+  color: #7cff9c;
+  border: 1px solid rgba(124, 255, 156, 0.4);
+}
+
+.weapon-window-energy {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(128, 109, 78, 0.3);
+}
+
+.weapon-window-energy-label {
+  font-size: 9px;
+  color: var(--ard-cool-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.weapon-window-energy-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+  border: 1px solid rgba(128, 109, 78, 0.3);
+}
+
+.weapon-window-energy-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--ard-emerald) 0%, var(--ard-sage) 100%);
+  transition: width 0.2s ease;
+  box-shadow: 0 0 8px rgba(37, 150, 122, 0.5);
+}
+
+.weapon-window-energy-value {
+  font-size: 10px;
+  color: var(--ard-sage);
+  text-align: center;
+  font-weight: 600;
+}
+
+.weapon-window-warning {
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: rgba(195, 19, 44, 0.2);
+  border: 1px solid rgba(195, 19, 44, 0.5);
+  border-radius: 4px;
+  font-size: 9px;
+  color: var(--ard-coral);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.weapon-window-hint {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(128, 109, 78, 0.3);
+  font-size: 9px;
+  color: var(--ard-cool-gray);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.weapon-window-hint .key-hint {
+  background: rgba(128, 109, 78, 0.3);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-weight: 600;
+  color: var(--ard-gold);
+  font-family: var(--font-mono);
+}
+
+/* Field Node Projectiles */
+.field-node-projectile {
+  position: absolute;
+  background: var(--ard-gold);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(243, 163, 16, 0.8);
+  z-index: 500;
+  pointer-events: none;
+}
+
+/* Clutch Description */
+.clutch-description {
+  font-size: 10px;
+  color: var(--ard-brown-light);
+  margin-top: 4px;
+  text-align: center;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* ============================================================================
+   ISOMETRIC BATTLE GRID - Final Fantasy Tactics Advance Style
+   ============================================================================ */
+
+/* Isometric tile container - positioned using isometric projection */
+.iso-tile {
+  position: absolute;
+  width: 64px;
+  height: 32px;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  transition: filter 0.15s ease-out;
+  /* Tiles live inside .battle-grid-tiles (z=1); no higher z-index here */
+}
+
+/* Top face of isometric tile - diamond/lozenge shape (FFTA style) */
+/* Using clip-path to create diamond shape without CSS transforms */
+.iso-tile-top {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 64px;
+  height: 32px;
+  margin-left: -32px;
+  margin-top: -16px;
+  /* Create diamond shape using clip-path */
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  background: linear-gradient(135deg, 
+    rgba(70, 85, 120, 1) 0%,
+    rgba(50, 60, 90, 1) 30%,
+    rgba(35, 45, 75, 1) 60%,
+    rgba(25, 35, 60, 1) 100%
+  );
+  border: 3px solid rgba(150, 170, 220, 1);
+  box-shadow: 
+    inset 0 4px 12px rgba(0, 0, 0, 0.8),
+    0 4px 12px rgba(0, 0, 0, 0.7),
+    inset 0 -4px 8px rgba(255, 255, 255, 0.25);
+  z-index: 1;
+  opacity: 1;
+  pointer-events: none; /* Allow clicks to pass through to parent .iso-tile */
+}
+
+/* Floor tile styling */
+.iso-tile--floor .iso-tile-top {
+  background: linear-gradient(135deg, 
+    rgba(50, 60, 85, 1) 0%,
+    rgba(35, 45, 70, 1) 50%,
+    rgba(25, 35, 55, 1) 100%
+  );
+  border-color: rgba(100, 120, 170, 1);
+}
+
+/* Move option highlight */
+.iso-tile--move-option .iso-tile-top {
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.3), rgba(34, 197, 94, 0.3));
+  border-color: rgba(74, 222, 128, 0.8);
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.2),
+    0 0 8px rgba(74, 222, 128, 0.4);
+}
+
+/* Attack option highlight */
+.iso-tile--attack-option .iso-tile-top {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(220, 38, 38, 0.3));
+  border-color: rgba(239, 68, 68, 0.8);
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.2),
+    0 0 8px rgba(239, 68, 68, 0.4);
+}
+
+/* Placement option highlight */
+.iso-tile--placement-option .iso-tile-top {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(37, 99, 235, 0.3));
+  border-color: rgba(59, 130, 246, 0.8);
+  box-shadow: 
+    inset 0 2px 4px rgba(0, 0, 0, 0.2),
+    0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* Hover effect */
+.iso-tile:hover .iso-tile-top {
+  filter: brightness(1.2);
+  border-color: rgba(150, 170, 220, 0.8);
+}
+
+/* Elevation levels - slight color variation */
+.iso-tile--elevation-1 .iso-tile-top {
+  background: linear-gradient(135deg, rgba(40, 50, 80, 0.9), rgba(30, 35, 60, 0.9));
+}
+
+.iso-tile--elevation-2 .iso-tile-top {
+  background: linear-gradient(135deg, rgba(50, 60, 90, 0.9), rgba(40, 45, 70, 0.9));
+}
+
+.iso-tile--elevation-3 .iso-tile-top {
+  background: linear-gradient(135deg, rgba(60, 70, 100, 0.9), rgba(50, 55, 80, 0.9));
+}
+
+/* Side walls for elevation - positioned below the tile */
+.iso-wall {
+  position: absolute;
+  background: linear-gradient(to bottom, rgba(25, 30, 45, 0.95), rgba(18, 22, 35, 0.95));
+  border: 2px solid rgba(50, 60, 80, 0.8);
+  box-shadow: inset -3px 0 8px rgba(0, 0, 0, 0.5);
+  z-index: 0; /* walls below tile top, above base */
+  pointer-events: none; /* Walls should not block clicks */
+}
+
+/* Left wall (west side) - parallelogram shape */
+.iso-wall--left {
+  left: 0;
+  top: 16px;
+  width: 32px;
+  transform: skewY(-26.565deg);
+  transform-origin: left center;
+  border-right: 3px solid rgba(70, 80, 100, 0.9);
+}
+
+/* Right wall (south side) - parallelogram shape */
+.iso-wall--right {
+  right: 0;
+  top: 16px;
+  width: 32px;
+  transform: skewY(26.565deg);
+  transform-origin: right center;
+  border-left: 3px solid rgba(70, 80, 100, 0.9);
+}
+
+/* Units on isometric tiles */
+.iso-unit {
+  position: absolute;
+  /* Remove centering transform - units are positioned directly via left/top from isoProject */
+  transform: translate(-50%, -50%); /* Keep this for centering the sprite on the position point */
+  pointer-events: none;
+  z-index: 2; /* Above tiles/walls */
+  /* Units should be sized to their sprite, not tile size */
+  width: auto;
+  height: auto;
+  background: none; /* Remove any background that might create squares */
+  border: none;
+  padding: 0;
+}
+
+/* Ensure units appear above tiles */
+.iso-unit .battle-unit-portrait {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+/* Override battle-unit styles when used as iso-unit to prevent large squares */
+.iso-unit.battle-unit {
+  background: none !important; /* Remove background gradients that create squares */
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}

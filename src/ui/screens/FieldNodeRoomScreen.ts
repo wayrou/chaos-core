@@ -4,7 +4,7 @@
 // Uses field movement system with SPACE BAR attack
 // ============================================================================
 
-import { updateGameState } from "../../state/gameStore";
+import { updateGameState, getGameState } from "../../state/gameStore";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 import { updateQuestProgress } from "../../quests/questManager";
 import {
@@ -16,6 +16,8 @@ import {
   checkCompanionReachedTarget,
   type Companion,
 } from "../../field/companion";
+import { handleKeyDown as handlePlayerInputKeyDown } from "../../core/playerInput";
+import { tryJoinAsP2, dropOutP2 } from "../../core/coop";
 
 // ============================================================================
 // TYPES
@@ -84,6 +86,22 @@ interface FieldNodePlayer {
   // Knockback velocity
   vx: number;
   vy: number;
+  // Ranged attack mode
+  isRangedMode: boolean;
+  // Energy cells for ranged attacks (charged by melee attacks)
+  energyCells: number;
+  maxEnergyCells: number;
+}
+
+interface Projectile {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  lifetime: number;
+  maxLifetime: number;
 }
 
 interface FieldNodeRoomState {
@@ -106,6 +124,7 @@ interface FieldNodeRoomState {
     steamComponents: number;
     wad: number;
   };
+  projectiles: Projectile[];
 }
 
 // ============================================================================
@@ -125,6 +144,7 @@ let movementInput = {
   right: false,
   dash: false,
   attack: false,
+  toggleRanged: false,
 };
 
 // Match base camp field screen sizing
@@ -133,8 +153,12 @@ const PLAYER_SIZE = 48;
 const ENEMY_SIZE = 40;
 const ATTACK_COOLDOWN = 400; // ms
 const ATTACK_DURATION = 200; // ms
-const ATTACK_RANGE = 70; // pixels
+const ATTACK_RANGE = 70; // pixels (melee)
+const RANGED_ATTACK_RANGE = 400; // pixels (max range for ranged attacks)
 const ATTACK_DAMAGE = 2;
+const RANGED_ATTACK_DAMAGE = 5; // Ranged does significantly more damage than melee
+const PROJECTILE_SPEED = 500; // pixels per second
+const PROJECTILE_LIFETIME = 2000; // ms
 const ENEMY_HP = 3;
 
 // Player health constants
@@ -510,6 +534,9 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       invulnerabilityTime: 0,
       vx: 0,
       vy: 0,
+      isRangedMode: false,
+      energyCells: 0,
+      maxEnergyCells: 5, // Maximum energy cells that can be stored
     },
     enemies,
     chests,
@@ -525,6 +552,7 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       steamComponents: 0,
       wad: 0,
     },
+    projectiles: [],
   };
 }
 
@@ -564,6 +592,7 @@ export function renderFieldNodeRoomScreen(roomId: string, seed?: number, endless
     right: false,
     dash: false,
     attack: false,
+    toggleRanged: false,
   };
   
   // Setup input handlers
@@ -612,6 +641,7 @@ function render(): void {
           <span class="key-hint">E</span> Interact
           <span class="key-hint">SHIFT</span> Dash
           ${isEndlessMode ? '<span class="key-hint">ESC</span> Exit' : ''}
+          <span class="key-hint">TAB</span> ${roomState?.player.isRangedMode ? 'Ranged' : 'Melee'}
         </div>
       </div>
       
@@ -625,6 +655,9 @@ function render(): void {
           <div class="health-bar-text">${player.hp}/${player.maxHp}</div>
         </div>
       </div>
+      
+      <!-- Weapon Display Window -->
+      ${renderWeaponWindow()}
       
       <!-- Map viewport matching base camp -->
       <div class="field-viewport field-node-viewport" style="width: ${viewportWidth}px; height: ${viewportHeight}px;">
@@ -640,6 +673,8 @@ function render(): void {
           ${renderPlayer(player)}
           ${renderCompanion(companion)}
           ${renderAttackEffect(player)}
+          ${renderCoopAvatars()}
+          ${renderProjectiles(roomState.projectiles)}
         </div>
       </div>
       
@@ -756,22 +791,70 @@ function renderEnemies(enemies: FieldNodeEnemy[]): string {
 }
 
 function renderPlayer(player: FieldNodePlayer): string {
+  // FieldNodeRoomScreen uses its own player system (not game state players)
+  // For now, render as P1 (can be extended later to support P2 in field nodes)
   const attackClass = player.isAttacking ? "player-attacking" : "";
   const invulnerableClass = player.invulnerabilityTime > 0 ? "player-invulnerable" : "";
   const invulnerableStyle = player.invulnerabilityTime > 0 
     ? `opacity: ${Math.floor((player.invulnerabilityTime / INVULNERABILITY_DURATION) * 5) % 2 === 0 ? 0.5 : 1};` 
     : "";
   return `
-    <div class="field-player field-node-player-combat ${attackClass} ${invulnerableClass}" 
+    <div class="field-player field-node-player-combat field-player-p1 ${attackClass} ${invulnerableClass}" 
          style="
            left: ${player.x - player.width / 2}px;
            top: ${player.y - player.height / 2}px;
            width: ${player.width}px;
            height: ${player.height}px;
+           border: 2px solid #ff8a00;
            ${invulnerableStyle}
          "
          data-facing="${player.facing}">
       <div class="field-player-sprite">⚔</div>
+      <div class="field-player-indicator" style="background: #ff8a00; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P1</div>
+    </div>
+  `;
+}
+
+function renderCoopAvatars(): string {
+  // Field nodes use their own player system, so for now just return empty
+  // This can be extended later if we want P2 in field nodes
+  return "";
+}
+
+function renderProjectiles(projectiles: Projectile[]): string {
+  if (!projectiles || projectiles.length === 0) return "";
+  
+  return projectiles.map(proj => `
+    <div class="field-node-projectile" 
+         style="left: ${proj.x - 4}px; top: ${proj.y - 4}px; width: 8px; height: 8px;">
+    </div>
+  `).join("");
+}
+
+function renderWeaponWindow(): string {
+  if (!roomState) return "";
+  
+  const { player } = roomState;
+  const modeText = player.isRangedMode ? "RANGED" : "MELEE";
+  const canUseRanged = player.energyCells > 0;
+  
+  return `
+    <div class="field-node-weapon-window">
+      <div class="weapon-window-title">BOWBLADE</div>
+      <div class="weapon-window-mode ${player.isRangedMode ? 'weapon-window-mode--ranged' : 'weapon-window-mode--melee'}">${modeText}</div>
+      <div class="weapon-window-energy">
+        <div class="weapon-window-energy-label">ENERGY CELLS</div>
+        <div class="weapon-window-energy-bar">
+          <div class="weapon-window-energy-fill" style="width: ${(player.energyCells / player.maxEnergyCells) * 100}%"></div>
+        </div>
+        <div class="weapon-window-energy-value">${player.energyCells} / ${player.maxEnergyCells}</div>
+      </div>
+      ${player.isRangedMode && !canUseRanged ? `
+        <div class="weapon-window-warning">NO ENERGY - USE MELEE TO CHARGE</div>
+      ` : ''}
+      <div class="weapon-window-hint">
+        <span class="key-hint">TAB</span> Switch Mode
+      </div>
     </div>
   `;
 }
@@ -938,14 +1021,34 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
     }
   }
   
+  // Handle ranged mode toggle
+  if (movementInput.toggleRanged) {
+    player.isRangedMode = !player.isRangedMode;
+    movementInput.toggleRanged = false;
+    render(); // Update UI to show mode change
+  }
+  
   // Handle attack input
   if (movementInput.attack && player.attackCooldown <= 0 && !player.isAttacking) {
-    performAttack();
+    if (player.isRangedMode) {
+      // Ranged attacks require energy cells
+      if (player.energyCells > 0) {
+        performRangedAttack();
+      } else {
+        // Show feedback that ranged attack is blocked
+        showToast("NO ENERGY CELLS - USE MELEE TO CHARGE");
+      }
+    } else {
+      performAttack();
+    }
     player.attackCooldown = ATTACK_COOLDOWN;
     player.isAttacking = true;
     player.attackAnimTime = ATTACK_DURATION;
     movementInput.attack = false; // Consume the input
   }
+  
+  // Update projectiles
+  updateProjectiles(deltaTime);
   
   // Movement (only if not in heavy knockback)
   const knockbackMagnitude = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
@@ -1051,6 +1154,12 @@ function performAttack(): void {
       enemy.hp -= ATTACK_DAMAGE;
       console.log(`[FIELD_NODE] Hit enemy ${enemy.id}, HP: ${enemy.hp}/${enemy.maxHp}`);
       
+      // Charge energy cell on successful melee hit
+      if (player.energyCells < player.maxEnergyCells) {
+        player.energyCells += 1;
+        console.log(`[FIELD_NODE] Energy cell charged: ${player.energyCells}/${player.maxEnergyCells}`);
+      }
+      
       // Apply knockback to enemy (away from player)
       const dx = enemy.x - player.x;
       const dy = enemy.y - player.y;
@@ -1090,6 +1199,157 @@ function performAttack(): void {
       roomState.enemies = roomState.enemies.filter(e => e.hp > 0 || (e.deathAnimTime && performance.now() - e.deathAnimTime < 500));
     }
   }, 500);
+}
+
+function performRangedAttack(): void {
+  if (!roomState) return;
+  
+  const { player, enemies } = roomState;
+  
+  // Consume one energy cell for ranged attack
+  if (player.energyCells <= 0) {
+    console.log(`[FIELD_NODE] Cannot perform ranged attack - no energy cells`);
+    return;
+  }
+  
+  player.energyCells -= 1;
+  console.log(`[FIELD_NODE] Energy cell consumed: ${player.energyCells}/${player.maxEnergyCells} remaining`);
+  
+  // Find nearest enemy to aim at
+  let nearestEnemy: FieldNodeEnemy | null = null;
+  let nearestDist = RANGED_ATTACK_RANGE;
+  
+  for (const enemy of enemies) {
+    if (enemy.hp <= 0) continue;
+    
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestEnemy = enemy;
+    }
+  }
+  
+  if (!nearestEnemy) {
+    // No enemy in range, fire in facing direction
+    const direction = {
+      north: { x: 0, y: -1 },
+      south: { x: 0, y: 1 },
+      east: { x: 1, y: 0 },
+      west: { x: -1, y: 0 },
+    };
+    const dir = direction[player.facing];
+    
+    const projectile: Projectile = {
+      id: `proj_${Date.now()}_${Math.random()}`,
+      x: player.x,
+      y: player.y,
+      vx: dir.x * PROJECTILE_SPEED,
+      vy: dir.y * PROJECTILE_SPEED,
+      damage: RANGED_ATTACK_DAMAGE,
+      lifetime: 0,
+      maxLifetime: PROJECTILE_LIFETIME,
+    };
+    
+    roomState.projectiles.push(projectile);
+    return;
+  }
+  
+  // Fire projectile toward nearest enemy
+  const dx = nearestEnemy.x - player.x;
+  const dy = nearestEnemy.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const dirX = dx / dist;
+    const dirY = dy / dist;
+    
+    const projectile: Projectile = {
+      id: `proj_${Date.now()}_${Math.random()}`,
+      x: player.x,
+      y: player.y,
+      vx: dirX * PROJECTILE_SPEED,
+      vy: dirY * PROJECTILE_SPEED,
+      damage: RANGED_ATTACK_DAMAGE,
+      lifetime: 0,
+      maxLifetime: PROJECTILE_LIFETIME,
+    };
+    
+    roomState.projectiles.push(projectile);
+  }
+}
+
+function updateProjectiles(deltaTime: number): void {
+  if (!roomState) return;
+  
+  const { projectiles, enemies } = roomState;
+  const roomWidth = roomState.width * TILE_SIZE;
+  const roomHeight = roomState.height * TILE_SIZE;
+  
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const proj = projectiles[i];
+    
+    // Update lifetime
+    proj.lifetime += deltaTime;
+    if (proj.lifetime >= proj.maxLifetime) {
+      projectiles.splice(i, 1);
+      continue;
+    }
+    
+    // Update position
+    proj.x += proj.vx * (deltaTime / 1000);
+    proj.y += proj.vy * (deltaTime / 1000);
+    
+    // Check bounds
+    if (proj.x < 0 || proj.x > roomWidth || proj.y < 0 || proj.y > roomHeight) {
+      projectiles.splice(i, 1);
+      continue;
+    }
+    
+    // Check collision with enemies
+    for (const enemy of enemies) {
+      if (enemy.hp <= 0) continue;
+      
+      const dx = enemy.x - proj.x;
+      const dy = enemy.y - proj.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < ENEMY_SIZE / 2) {
+        // Hit enemy
+        enemy.hp -= proj.damage;
+        console.log(`[FIELD_NODE] Ranged hit enemy ${enemy.id}, HP: ${enemy.hp}/${enemy.maxHp}`);
+        
+        // Apply knockback
+        if (dist > 0) {
+          const knockbackDirX = dx / dist;
+          const knockbackDirY = dy / dist;
+          enemy.vx = knockbackDirX * ENEMY_KNOCKBACK_FORCE * 0.5; // Less knockback for ranged
+          enemy.vy = knockbackDirY * ENEMY_KNOCKBACK_FORCE * 0.5;
+          enemy.knockbackTime = ENEMY_KNOCKBACK_DURATION;
+        }
+        
+        if (enemy.hp <= 0) {
+          enemy.deathAnimTime = performance.now();
+          console.log(`[FIELD_NODE] Enemy ${enemy.id} defeated!`);
+          updateQuestProgress("kill_enemies", 1, 1);
+          
+          if (Math.random() < 0.3) {
+            const types: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
+              ["metalScrap", "wood", "chaosShards", "steamComponents"];
+            const type = types[Math.floor(Math.random() * types.length)];
+            roomState.collectedResources[type] += 1;
+            showToast(`+1 ${formatResourceName(type)}`);
+          }
+        }
+        
+        // Remove projectile
+        projectiles.splice(i, 1);
+        break;
+      }
+    }
+  }
 }
 
 // ============================================================================
@@ -1220,7 +1480,12 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
       companion.state = "follow";
       companion.target = undefined;
     } else {
-      // Update attack behavior
+      // Update attack cooldown first
+      if (companion.attackCooldown > 0) {
+        companion.attackCooldown -= deltaTime;
+      }
+      
+      // Update attack behavior (movement toward enemy)
       roomState.companion = updateCompanionAttack(
         companion,
         player,
@@ -1229,19 +1494,54 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
         { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any
       );
       
-      // Check if reached enemy
-      if (checkCompanionReachedTarget(companion, targetEnemy.id, 30)) {
-        // Deal damage (enough to kill)
-        targetEnemy.hp = 0;
-        targetEnemy.deathAnimTime = performance.now();
-        console.log(`[SABLE] Defeated enemy ${targetEnemy.id}!`);
+      // Get updated companion reference
+      const updatedCompanion = roomState.companion;
+      
+      // Check if reached enemy and can attack (similar to player attack range)
+      const dx = targetEnemy.x - updatedCompanion.x;
+      const dy = targetEnemy.y - updatedCompanion.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Attack if within range (similar to player ATTACK_RANGE) and cooldown is ready
+      if (distance < ATTACK_RANGE && updatedCompanion.attackCooldown <= 0) {
+        // Deal damage (same as player attack)
+        targetEnemy.hp -= ATTACK_DAMAGE;
+        console.log(`[SABLE] Hit enemy ${targetEnemy.id}, HP: ${targetEnemy.hp}/${targetEnemy.maxHp}`);
         
-        // Update quest progress
-        updateQuestProgress("kill_enemies", 1, 1);
+        // Apply knockback to enemy (away from Sable, same as player attack)
+        if (distance > 0) {
+          const knockbackDirX = dx / distance;
+          const knockbackDirY = dy / distance;
+          targetEnemy.vx = knockbackDirX * ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.vy = knockbackDirY * ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.knockbackTime = ENEMY_KNOCKBACK_DURATION;
+        }
         
-        // Return to follow
-        companion.state = "follow";
-        companion.target = undefined;
+        // Set attack cooldown (same as player)
+        updatedCompanion.attackCooldown = ATTACK_COOLDOWN;
+        
+        // Check if enemy died
+        if (targetEnemy.hp <= 0) {
+          targetEnemy.hp = 0;
+          targetEnemy.deathAnimTime = performance.now();
+          console.log(`[SABLE] Defeated enemy ${targetEnemy.id}!`);
+          
+          // Update quest progress
+          updateQuestProgress("kill_enemies", 1, 1);
+          
+          // Small chance to drop resources (same as player kills)
+          if (Math.random() < 0.3) {
+            const types: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
+              ["metalScrap", "wood", "chaosShards", "steamComponents"];
+            const type = types[Math.floor(Math.random() * types.length)];
+            roomState.collectedResources[type] += 1;
+            showToast(`Sable found +1 ${formatResourceName(type)}`);
+          }
+          
+          // Return to follow
+          updatedCompanion.state = "follow";
+          updatedCompanion.target = undefined;
+        }
       }
     }
   } else if (companion.state === "fetch" && companion.target) {
@@ -1572,6 +1872,20 @@ function completeRoom(): void {
     const continueBtn = document.getElementById("continueBtn");
     if (continueBtn) {
       continueBtn.addEventListener("click", () => {
+        // If in endless mode, continue to next room instead of exiting
+        if (isEndlessMode) {
+          endlessRoomCount++;
+          const nextSeed = Math.floor(Math.random() * 1000000);
+          console.log(`[ENDLESS] Continuing to room ${endlessRoomCount + 1} with seed:`, nextSeed);
+          
+          // Cleanup current room state
+          cleanup();
+          
+          // Start next room
+          renderFieldNodeRoomScreen(`endless_room_${endlessRoomCount}`, nextSeed, true);
+          return;
+        }
+        
         cleanup();
         
         // If this was a test room, go back to field screen
@@ -1617,6 +1931,30 @@ function handleKeyDown(e: KeyboardEvent): void {
     }
   }
   
+  // Co-op drop-in/drop-out (only outside battle, but field nodes don't have battles)
+  const state = getGameState();
+  if (state.phase !== "battle" && state.currentBattle === null) {
+    // J key: Join as P2
+    if (key === "j" || key === "J") {
+      e.preventDefault();
+      e.stopPropagation();
+      tryJoinAsP2();
+      return;
+    }
+    
+    // K key: Drop out P2
+    if (key === "k" || key === "K") {
+      e.preventDefault();
+      e.stopPropagation();
+      dropOutP2();
+      return;
+    }
+  }
+  
+  // Update player input system
+  handlePlayerInputKeyDown(e);
+  
+  // Legacy movementInput for FieldNodeRoomScreen (P1 only for now)
   if (e.shiftKey) {
     movementInput.dash = true;
   }
@@ -1644,6 +1982,10 @@ function handleKeyDown(e: KeyboardEvent): void {
       break;
     case " ": // SPACE - Attack
       movementInput.attack = true;
+      e.preventDefault();
+      break;
+    case "tab": // TAB - Toggle ranged mode
+      movementInput.toggleRanged = true;
       e.preventDefault();
       break;
     case "e": // Interact with chests

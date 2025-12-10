@@ -7,6 +7,7 @@
 export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
+export type PlayerId = "P1" | "P2";
 
 export type WeaponType =
   | "sword"
@@ -72,6 +73,8 @@ loadout?: {
   // Unit Performance System (Headline 14a)
   pwr?: number; // Personnel Warfare Rating
   affinities?: UnitAffinities; // Long-term affinity tracking
+  // Local Co-op: Which player controls this unit
+  controller?: "P1" | "P2";
 }
 
 export interface BattleTile {
@@ -141,6 +144,21 @@ export interface PlayerProfile {
   callsign: string;
   squadName: string;
   rosterUnitIds: UnitId[];
+}
+
+export interface FieldAvatar {
+  x: number;
+  y: number;
+  facing: "north" | "south" | "east" | "west";
+}
+
+export interface Player {
+  id: PlayerId;
+  active: boolean;
+  color: string;
+  inputSource: "keyboard1" | "keyboard2" | "gamepad1" | "gamepad2" | "none";
+  avatar: FieldAvatar | null;
+  controlledUnitIds: UnitId[];
 }
 
 // ============================================================================
@@ -272,6 +290,12 @@ equipmentPool?: string[];
 
   // Unit Recruitment System (Headline 14az)
   recruitmentCandidates?: RecruitmentCandidate[]; // Current pool of candidates at active recruitment hub
+
+  // Local Co-op System
+  players: {
+    P1: Player;
+    P2: Player;
+  };
 }
 
 interface GearSlotData {

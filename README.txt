@@ -525,7 +525,7 @@ to open and resources on the ground (appearing as sparkles on the map) to collec
 15. The Quest update
 Implement a lightweight system for endless randomly generated quests. Quests are auto-generated with randomized targets and rewards. When a quest is completed, a new one is generated to replace it, ensuring endless content.
 
------------------------IMPLEMENTED UP TO HERE-----------------------------
+
 
 15a. The Sable update
 
@@ -535,7 +535,7 @@ Implement sable, a dog companion that excitedly runs around and follows you on t
 
 Implement NPCs that walk around the base camp screen and that you can talk to, opening placeholder dialogue that the player can advance through.
 
-
+-----------------------IMPLEMENTED UP TO HERE-----------------------------
 
 16b. Character portraits + sprites
 

@@ -11,11 +11,14 @@ import {
   getOverlappingInteractionZone,
 } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
-import { getGameState } from "../state/gameStore";
+import { getGameState, updateGameState } from "../state/gameStore";
 import { renderBaseCampScreen } from "../ui/screens/BaseCampScreen";
 import { createCompanion, updateCompanion } from "./companion";
 import { createNpc, updateNpc, getNpcInRange, NPC_DIALOGUE } from "./npcs";
 import { showDialogue } from "../ui/screens/DialogueScreen";
+import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
+import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
+import { PlayerId } from "../core/types";
 
 // ============================================================================
 // STATE
@@ -25,6 +28,7 @@ let fieldState: FieldState | null = null;
 let currentMap: FieldMap | null = null;
 let animationFrameId: number | null = null;
 let lastFrameTime = 0;
+// Legacy movementInput kept for backward compatibility, but we'll use getPlayerInput instead
 let movementInput = {
   up: false,
   down: false,
@@ -52,7 +56,8 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   // Load map
   currentMap = getFieldMap(mapId);
 
-  // Preserve player position if resuming, otherwise initialize at center
+  // Initialize or restore player avatars from game state
+  const state = getGameState();
   const tileSize = 64;
   let playerX: number;
   let playerY: number;
@@ -60,11 +65,55 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   const isResuming = fieldState && fieldState.currentMap === mapId;
 
   if (isResuming) {
+    // Restore from fieldState if available, otherwise from game state
     playerX = fieldState!.player.x;
     playerY = fieldState!.player.y;
   } else {
     playerX = (currentMap.width * tileSize) / 2;
     playerY = (currentMap.height * tileSize) / 2;
+  }
+
+  // Initialize P1 avatar in game state if not present
+  // Ensure players object exists (for backward compatibility with old saves)
+  if (!state.players || !state.players.P1 || !state.players.P1.avatar) {
+    updateGameState(s => {
+      // Initialize players if they don't exist
+      const players = s.players || {
+        P1: {
+          id: "P1",
+          active: true,
+          color: "#ff8a00",
+          inputSource: "keyboard1" as const,
+          avatar: null,
+          controlledUnitIds: [],
+        },
+        P2: {
+          id: "P2",
+          active: false,
+          color: "#6849c2",
+          inputSource: "none" as const,
+          avatar: null,
+          controlledUnitIds: [],
+        },
+      };
+      
+      return {
+        ...s,
+        players: {
+          ...players,
+          P1: {
+            ...players.P1,
+            active: true,
+            avatar: players.P1.avatar || {
+              x: playerX,
+              y: playerY,
+              facing: "south",
+              spriteId: "aeriss_p1",
+            },
+          },
+        },
+      };
+    });
   }
 
   if (isResuming && fieldState && fieldState.player) {
@@ -180,16 +229,41 @@ function render(): void {
     `;
   }
 
-  // Player avatar
-  const playerHtml = `
-    <div class="field-player" 
-         style="left: ${fieldState.player.x - fieldState.player.width / 2}px; top: ${
-    fieldState.player.y - fieldState.player.height / 2
-  }px; width: ${fieldState.player.width}px; height: ${fieldState.player.height}px;"
-         data-facing="${fieldState.player.facing}">
-      <div class="field-player-sprite">A</div>
-    </div>
-  `;
+  // Player avatars (P1 and P2)
+  const state = getGameState();
+  // Ensure players object exists (backward compatibility)
+  const players = state.players || {
+    P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
+    P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
+  };
+  const p1Avatar = players.P1.avatar;
+  const p2Avatar = players.P2.active ? players.P2.avatar : null;
+  
+  let playerHtml = "";
+  
+  // P1 Avatar (always present)
+  if (p1Avatar) {
+    playerHtml += `
+      <div class="field-player field-player-p1" 
+           style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px; border: 2px solid ${state.players.P1.color};"
+           data-facing="${p1Avatar.facing}">
+        <div class="field-player-sprite">A</div>
+        <div class="field-player-indicator" style="background: ${state.players.P1.color}; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P1</div>
+      </div>
+    `;
+  }
+  
+  // P2 Avatar (if active)
+  if (p2Avatar) {
+    playerHtml += `
+      <div class="field-player field-player-p2" 
+           style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px; border: 2px solid ${state.players.P2.color};"
+           data-facing="${p2Avatar.facing}">
+        <div class="field-player-sprite">A</div>
+        <div class="field-player-indicator" style="background: ${players.P2.color}; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P2</div>
+      </div>
+    `;
+  }
 
   // Sable companion (Headline 15a)
   const companionHtml = fieldState.companion ? `
@@ -283,9 +357,30 @@ function centerViewportOnPlayer(): void {
 
   const viewportRect = viewport.getBoundingClientRect();
   const mapElement = map as HTMLElement;
+  
+  const state = getGameState();
+  const p1Avatar = state.players.P1.avatar;
+  const p2Avatar = state.players.P2.active ? state.players.P2.avatar : null;
+  
+  let centerX: number;
+  let centerY: number;
+  
+  if (p2Avatar && p1Avatar) {
+    // Center between both avatars
+    centerX = (p1Avatar.x + p2Avatar.x) / 2;
+    centerY = (p1Avatar.y + p2Avatar.y) / 2;
+  } else if (p1Avatar) {
+    // Center on P1 only
+    centerX = p1Avatar.x;
+    centerY = p1Avatar.y;
+  } else {
+    // Fallback to fieldState.player (legacy)
+    centerX = fieldState.player.x;
+    centerY = fieldState.player.y;
+  }
 
-  const offsetX = fieldState.player.x - viewportRect.width / 2;
-  const offsetY = fieldState.player.y - viewportRect.height / 2;
+  const offsetX = centerX - viewportRect.width / 2;
+  const offsetY = centerY - viewportRect.height / 2;
 
   mapElement.style.transform = `translate(${-offsetX}px, ${-offsetY}px)`;
 }
@@ -404,6 +499,10 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-icon">∞</span>
             <span class="btn-label">ENDLESS FIELD NODES</span>
           </button>
+          <button class="all-nodes-btn all-nodes-btn--debug" data-action="endless-battles">
+            <span class="btn-icon">⚔</span>
+            <span class="btn-label">ENDLESS BATTLES</span>
+          </button>
         </div>
       </div>
     </div>
@@ -502,9 +601,33 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
+  // Co-op drop-in/drop-out keys (only outside battle)
+  const state = getGameState();
+  if (state.phase !== "battle" && state.currentBattle === null) {
+    // J key: Join as P2
+    if (key === "j" || key === "J") {
+      e.preventDefault();
+      e.stopPropagation();
+      tryJoinAsP2();
+      return;
+    }
+    
+    // K key: Drop out P2
+    if (key === "k" || key === "K") {
+      e.preventDefault();
+      e.stopPropagation();
+      dropOutP2();
+      return;
+    }
+  }
+
+  // Update player input system
+  handlePlayerInputKeyDown(e);
+
   // Don't process movement if paused
   if (fieldState?.isPaused) return;
 
+  // Legacy movementInput for backward compatibility (P1 only)
   // Dash modifier
   if (e.shiftKey) {
     movementInput.dash = true;
@@ -528,8 +651,11 @@ function handleKeyDown(e: KeyboardEvent): void {
       e.preventDefault();
       break;
     case "e":
-      handleInteractKey();
-      e.preventDefault();
+      const p1Input = getPlayerInput("P1");
+      if (p1Input.interact) {
+        handleInteractKey();
+        e.preventDefault();
+      }
       break;
   }
 }
@@ -537,8 +663,12 @@ function handleKeyDown(e: KeyboardEvent): void {
 function handleKeyUp(e: KeyboardEvent): void {
   if (!document.querySelector(".field-root")) return;
 
+  // Update player input system
+  handlePlayerInputKeyUp(e);
+
   const key = e.key?.toLowerCase() ?? "";
 
+  // Legacy movementInput for backward compatibility
   if (!e.shiftKey) {
     movementInput.dash = false;
   }
@@ -665,8 +795,8 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "workshop":
-      import("../ui/screens/WorkshopScreen").then(({ renderWorkshopScreen }) => {
-        renderWorkshopScreen("basecamp");
+      import("../ui/screens/WorkshopScreen").then(({ renderCraftingScreen }) => {
+        renderCraftingScreen("basecamp");
       });
       break;
     case "roster":
@@ -720,6 +850,13 @@ function handleNodeAction(action: string): void {
         renderFieldNodeRoomScreen("endless_room_0", initialSeed, true);
       });
       break;
+    case "endless-battles":
+      // Endless battles mode - continuous battles until exit
+      import("../ui/screens/BattleScreen").then(({ startEndlessBattleMode }) => {
+        console.log("[ENDLESS] Starting endless battles mode");
+        startEndlessBattleMode();
+      });
+      break;
   }
 }
 
@@ -739,17 +876,153 @@ function gameLoop(currentTime: number): void {
   lastFrameTime = currentTime;
 
   if (!fieldState.isPaused) {
-    fieldState.player = updatePlayerMovement(
-      fieldState.player,
-      movementInput,
-      currentMap,
-      deltaTime,
-    );
+    const state = getGameState();
+    // Ensure players object exists (backward compatibility)
+    const players = state.players || {
+      P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
+      P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
+    };
+    const p1 = players.P1;
+    const p2 = players.P2;
+    
+    // Update P1 avatar movement
+    if (p1.active && p1.avatar) {
+      const p1Input = getPlayerInput("P1");
+      const p1MovementInput = {
+        up: p1Input.up,
+        down: p1Input.down,
+        left: p1Input.left,
+        right: p1Input.right,
+        dash: p1Input.special1,
+      };
+      
+      // Convert FieldAvatar to PlayerAvatar for movement function
+      const p1PlayerAvatar = {
+        x: p1.avatar.x,
+        y: p1.avatar.y,
+        width: 32,
+        height: 32,
+        speed: 240,
+        facing: p1.avatar.facing,
+      };
+      
+      let newP1Avatar = updatePlayerMovement(
+        p1PlayerAvatar,
+        p1MovementInput,
+        currentMap,
+        deltaTime,
+      );
+      
+      // Apply tether constraint if P2 is active
+      if (p2.active && p2.avatar) {
+        const constrained = applyTetherConstraint(
+          { x: newP1Avatar.x, y: newP1Avatar.y },
+          { x: newP1Avatar.x, y: newP1Avatar.y },
+          p2.avatar
+        );
+        newP1Avatar.x = constrained.x;
+        newP1Avatar.y = constrained.y;
+      }
+      
+      // Update P1 avatar in game state
+      updateGameState(s => ({
+        ...s,
+        players: {
+          ...s.players,
+          P1: {
+            ...s.players.P1,
+            avatar: {
+              x: newP1Avatar.x,
+              y: newP1Avatar.y,
+              facing: newP1Avatar.facing,
+              spriteId: s.players.P1.avatar?.spriteId || "aeriss_p1",
+            },
+          },
+        },
+      }));
+    }
+    
+    // Update P2 avatar movement
+    if (p2.active && p2.avatar) {
+      const p2Input = getPlayerInput("P2");
+      const p2MovementInput = {
+        up: p2Input.up,
+        down: p2Input.down,
+        left: p2Input.left,
+        right: p2Input.right,
+        dash: p2Input.special1,
+      };
+      
+      // Convert FieldAvatar to PlayerAvatar for movement function
+      const p2PlayerAvatar = {
+        x: p2.avatar.x,
+        y: p2.avatar.y,
+        width: 32,
+        height: 32,
+        speed: 240,
+        facing: p2.avatar.facing,
+      };
+      
+      let newP2Avatar = updatePlayerMovement(
+        p2PlayerAvatar,
+        p2MovementInput,
+        currentMap,
+        deltaTime,
+      );
+      
+      // Apply tether constraint (P2 constrained by P1)
+      if (p1.active && p1.avatar) {
+        const constrained = applyTetherConstraint(
+          { x: newP2Avatar.x, y: newP2Avatar.y },
+          { x: newP2Avatar.x, y: newP2Avatar.y },
+          p1.avatar
+        );
+        newP2Avatar.x = constrained.x;
+        newP2Avatar.y = constrained.y;
+      }
+      
+      // Update P2 avatar in game state
+      updateGameState(s => ({
+        ...s,
+        players: {
+          ...s.players,
+          P2: {
+            ...s.players.P2,
+            avatar: {
+              x: newP2Avatar.x,
+              y: newP2Avatar.y,
+              facing: newP2Avatar.facing,
+              spriteId: s.players.P2.avatar?.spriteId || "aeriss_p2",
+            },
+          },
+        },
+      }));
+    }
+    
+    // Update legacy fieldState.player for backward compatibility (use P1 position)
+    const updatedState = getGameState();
+    if (updatedState.players.P1.avatar) {
+      fieldState.player = {
+        ...fieldState.player,
+        x: updatedState.players.P1.avatar.x,
+        y: updatedState.players.P1.avatar.y,
+        facing: updatedState.players.P1.avatar.facing as any,
+      };
+    }
 
-    // Update Sable companion (Headline 15a)
-    if (fieldState.companion && currentMap) {
+    // Update Sable companion (Headline 15a) - follows P1
+    if (fieldState.companion && currentMap && updatedState.players.P1.avatar) {
+      const p1Avatar = updatedState.players.P1.avatar;
+      const p1PlayerAvatar = {
+        x: p1Avatar.x,
+        y: p1Avatar.y,
+        width: 32,
+        height: 32,
+        speed: 240,
+        facing: p1Avatar.facing as any,
+      };
       fieldState.companion = updateCompanion(fieldState.companion, {
-        player: fieldState.player,
+        player: p1PlayerAvatar,
         map: currentMap,
         deltaTime,
         currentTime,
@@ -764,12 +1037,28 @@ function gameLoop(currentTime: number): void {
       );
     }
 
-    const overlappingZone = getOverlappingInteractionZone(fieldState.player, currentMap);
-    if (overlappingZone) {
-      const zone = getInteractionZone(currentMap, overlappingZone);
-      activeInteractionPrompt = zone?.label || null;
-    } else {
-      activeInteractionPrompt = null;
+    // Check interaction zones (use P1 for now, could check both)
+    const updatedPlayers = updatedState.players || {
+      P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
+      P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
+    };
+    const p1Avatar = updatedPlayers.P1.avatar;
+    if (p1Avatar) {
+      const p1PlayerAvatar = {
+        x: p1Avatar.x,
+        y: p1Avatar.y,
+        width: 32,
+        height: 32,
+        speed: 240,
+        facing: p1Avatar.facing as any,
+      };
+      const overlappingZone = getOverlappingInteractionZone(p1PlayerAvatar, currentMap);
+      if (overlappingZone) {
+        const zone = getInteractionZone(currentMap, overlappingZone);
+        activeInteractionPrompt = zone?.label || null;
+      } else {
+        activeInteractionPrompt = null;
+      }
     }
 
     render();

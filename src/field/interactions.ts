@@ -4,7 +4,7 @@
 
 import { InteractionZone, FieldMap } from "./types";
 import { renderShopScreen } from "../ui/screens/ShopScreen";
-import { renderWorkshopScreen } from "../ui/screens/WorkshopScreen";
+import { renderCraftingScreen } from "../ui/screens/WorkshopScreen";
 import { renderRosterScreen } from "../ui/screens/RosterScreen";
 import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
 import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
@@ -29,7 +29,7 @@ export function handleInteraction(
       break;
       
     case "workshop":
-      renderWorkshopScreen("field");
+      renderCraftingScreen("field");
       break;
       
     case "roster":

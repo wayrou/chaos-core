@@ -17,6 +17,7 @@ export interface Companion {
   target?: { x: number; y: number; id?: string }; // For fetch/attack targets
   behaviorCooldownMs: number;
   lastBehaviorTime: number;
+  attackCooldown: number; // Time remaining until next attack (ms)
   facing: "north" | "south" | "east" | "west";
 }
 
@@ -24,8 +25,8 @@ export interface Companion {
 // CONSTANTS
 // ============================================================================
 
-const COMPANION_SPEED = 200; // pixels per second (slightly slower than player)
-const COMPANION_ATTACK_SPEED = 400; // pixels per second when attacking
+const COMPANION_SPEED = 300; // pixels per second (faster than player for more active companion)
+const COMPANION_ATTACK_SPEED = 500; // pixels per second when attacking
 const COMPANION_WIDTH = 28;
 const COMPANION_HEIGHT = 28;
 const FOLLOW_RADIUS = 120; // Distance to maintain from player
@@ -50,6 +51,7 @@ export function createCompanion(startX: number, startY: number): Companion {
     state: "follow",
     behaviorCooldownMs: BEHAVIOR_COOLDOWN,
     lastBehaviorTime: 0,
+    attackCooldown: 0,
     facing: "south",
   };
 }

@@ -1,5 +1,5 @@
 // ============================================================================
-// CHAOS CORE - WORKSHOP SCREEN (Headline 11d)
+// CHAOS CORE - CRAFTING SCREEN (Headline 11d)
 // Crafting interface at Base Camp
 // ============================================================================
 
@@ -31,7 +31,7 @@ let selectedRecipeId: string | null = null;
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
 
@@ -56,25 +56,25 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
     : false;
 
   app.innerHTML = /*html*/ `
-    <div class="workshop-root">
+    <div class="crafting-root">
       <!-- Header -->
-      <div class="workshop-header">
-        <div class="workshop-header-left">
-          <h1 class="workshop-title">WORKSHOP</h1>
-          <div class="workshop-subtitle">SLK://CRAFT_NODE • FABRICATION TERMINAL</div>
+      <div class="crafting-header">
+        <div class="crafting-header-left">
+          <h1 class="crafting-title">CRAFTING</h1>
+          <div class="crafting-subtitle">SLK://CRAFT_NODE • FABRICATION TERMINAL</div>
         </div>
-        <div class="workshop-header-right">
-          <button class="workshop-back-btn" id="backBtn" data-return-to="${returnTo}">← ${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</button>
+        <div class="crafting-header-right">
+          <button class="crafting-back-btn" id="backBtn" data-return-to="${returnTo}">← ${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</button>
         </div>
       </div>
       
       <!-- Main Content -->
-      <div class="workshop-main">
+      <div class="crafting-main">
         <!-- Left Panel: Resources & Categories -->
-        <div class="workshop-sidebar">
+        <div class="crafting-sidebar">
           <!-- Resources Display -->
-          <div class="workshop-resources">
-            <div class="workshop-section-title">MATERIALS</div>
+          <div class="crafting-resources">
+            <div class="panel-section-title">MATERIALS</div>
             <div class="resource-grid">
               <div class="resource-item">
                 <span class="resource-icon">⚙</span>
@@ -100,8 +100,8 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
           </div>
           
           <!-- Category Tabs -->
-          <div class="workshop-categories">
-            <div class="workshop-section-title">CATEGORIES</div>
+          <div class="crafting-categories">
+            <div class="panel-section-title">CATEGORIES</div>
             <div class="category-tabs">
               <button class="category-tab ${selectedCategory === 'weapon' ? 'category-tab--active' : ''}" data-category="weapon">
                 ⚔ Weapons
@@ -119,8 +119,8 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
           </div>
           
           <!-- Consumables Inventory -->
-          <div class="workshop-consumables">
-            <div class="workshop-section-title">CONSUMABLES POUCH</div>
+          <div class="crafting-consumables">
+            <div class="panel-section-title">CONSUMABLES POUCH</div>
             <div class="consumables-list">
               ${renderConsumablesList(consumables)}
             </div>
@@ -128,8 +128,8 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
         </div>
         
         <!-- Center Panel: Recipe List -->
-        <div class="workshop-recipes">
-          <div class="workshop-section-title">${getCategoryTitle(selectedCategory)}</div>
+        <div class="crafting-recipes">
+          <div class="panel-section-title">${getCategoryTitle(selectedCategory)}</div>
           <div class="recipe-list">
             ${categoryRecipes.length === 0 
               ? '<div class="recipe-empty">No recipes known in this category.</div>'
@@ -139,7 +139,7 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
         </div>
         
         <!-- Right Panel: Recipe Details -->
-        <div class="workshop-details">
+        <div class="crafting-details">
           ${selectedRecipe 
             ? renderRecipeDetails(selectedRecipe, resources, inventoryItemIds, canCraft)
             : renderNoSelection()
@@ -148,10 +148,10 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
       </div>
       
       <!-- ScrollLink Console -->
-      <div class="workshop-console">
-        <div class="console-header">SCROLLINK OS // WORKSHOP_LOG</div>
-        <div class="console-body" id="workshopLog">
-          <div class="console-line">SLK//WORKSHOP :: Fabrication terminal online.</div>
+      <div class="crafting-console">
+        <div class="console-header">SCROLLINK OS // CRAFTING_LOG</div>
+        <div class="console-body" id="craftingLog">
+          <div class="console-line">SLK//CRAFTING :: Fabrication terminal online.</div>
           <div class="console-line">SLK//READY :: Select a recipe to begin crafting.</div>
         </div>
       </div>
@@ -159,7 +159,7 @@ export function renderWorkshopScreen(returnTo: "basecamp" | "field" = "basecamp"
   `;
 
   // Attach event listeners
-  attachWorkshopListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds, returnTo);
+  attachCraftingListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds, returnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -324,7 +324,7 @@ function getInventoryItemIds(state: any): string[] {
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachWorkshopListeners(
+function attachCraftingListeners(
   state: any,
   knownRecipeIds: string[],
   resources: any,
@@ -355,7 +355,7 @@ function attachWorkshopListeners(
         selectedRecipeId = null;
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
+        renderCraftingScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -368,7 +368,7 @@ function attachWorkshopListeners(
         selectedRecipeId = recipeId;
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderWorkshopScreen(currentReturnTo as "basecamp" | "field");
+        renderCraftingScreen(currentReturnTo as "basecamp" | "field");
       }
     };
   });
@@ -414,20 +414,20 @@ function attachWorkshopListeners(
         });
         
         // Log success
-        addWorkshopLog(`SLK//CRAFT :: ${recipe.name} fabricated successfully.`);
-        addWorkshopLog(`SLK//OUTPUT :: +${result.quantity} ${formatItemName(result.itemId!)}`);
+        addCraftingLog(`SLK//CRAFT :: ${recipe.name} fabricated successfully.`);
+        addCraftingLog(`SLK//OUTPUT :: +${result.quantity} ${formatItemName(result.itemId!)}`);
         
         // Re-render
-        renderWorkshopScreen(returnTo);
+        renderCraftingScreen(returnTo);
       } else {
-        addWorkshopLog(`SLK//ERROR :: Crafting failed - ${result.error}`);
+        addCraftingLog(`SLK//ERROR :: Crafting failed - ${result.error}`);
       }
     };
   }
 }
 
-function addWorkshopLog(message: string): void {
-  const logEl = document.getElementById("workshopLog");
+function addCraftingLog(message: string): void {
+  const logEl = document.getElementById("craftingLog");
   if (logEl) {
     const line = document.createElement("div");
     line.className = "console-line";

@@ -5,7 +5,7 @@ import { renderInventoryScreen } from "./InventoryScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderShopScreen } from "./ShopScreen";
 import { renderRosterScreen } from "./RosterScreen";
-import { renderWorkshopScreen } from "./WorkshopScreen";
+import { renderCraftingScreen } from "./WorkshopScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
 import { renderSettingsScreen } from "./SettingsScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
@@ -76,7 +76,7 @@ export function renderBaseCampScreen(): void {
         </button>
         <button class="bc-btn bc-workshop">
           <span class="btn-icon">🔨</span>
-          <span class="btn-label">WORKSHOP</span>
+          <span class="btn-label">CRAFTING</span>
         </button>
         <button class="bc-btn bc-tavern" id="tavernBtn">
           <span class="btn-icon">🍺</span>
@@ -129,7 +129,7 @@ export function renderBaseCampScreen(): void {
   });
 
   root.querySelector(".bc-workshop")?.addEventListener("click", () => {
-    renderWorkshopScreen();
+    renderCraftingScreen();
   });
 
   root.querySelector("#tavernBtn")?.addEventListener("click", () => {
@@ -314,7 +314,7 @@ function attachBaseCampListeners(container: HTMLElement): void {
 
   container.querySelector(".bc-workshop")?.addEventListener("click", () => {
     hideBaseCampModal();
-    renderWorkshopScreen();
+    renderCraftingScreen();
   });
 
   container.querySelector("#tavernBtn")?.addEventListener("click", () => {
