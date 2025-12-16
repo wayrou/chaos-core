@@ -481,3 +481,9 @@ export function isGeneratedQuest(quest: Quest): boolean {
   return quest.id.startsWith(GENERATED_QUEST_PREFIX) || quest.metadata?.isGenerated === true;
 }
 
+
+
+
+
+
+

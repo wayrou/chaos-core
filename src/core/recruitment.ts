@@ -191,9 +191,8 @@ function generateCandidateName(baseClass: ClassId, index: number): string {
 
   const prefixes = namePrefixes[baseClass] || ["Recruit"];
   const prefix = prefixes[index % prefixes.length];
-  const suffix = Math.floor(Math.random() * 100);
   
-  return `${prefix} ${suffix}`;
+  return prefix;
 }
 
 /**

@@ -1,6 +1,6 @@
 // src/ui/screens/BaseCampScreen.ts
 
-import { getGameState } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderInventoryScreen } from "./InventoryScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderShopScreen } from "./ShopScreen";
@@ -11,13 +11,14 @@ import { renderSettingsScreen } from "./SettingsScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderRecruitmentScreen } from "./RecruitmentScreen";
 import { renderQuestBoardScreen } from "./QuestBoardScreen";
+import { renderPortScreen } from "./PortScreen";
 
 // Check if we're in field mode (base camp modal should be shown as overlay)
 function isInFieldMode(): boolean {
   return document.querySelector(".field-root") !== null;
 }
 
-export function renderBaseCampScreen(): void {
+export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp"): void {
   // If we're in field mode, show as modal overlay
   if (isInFieldMode()) {
     showBaseCampModal();
@@ -90,6 +91,10 @@ export function renderBaseCampScreen(): void {
           <span class="btn-icon">📋</span>
           <span class="btn-label">QUEST BOARD</span>
         </button>
+        <button class="bc-btn bc-port" id="portBtn">
+          <span class="btn-icon">⚓</span>
+          <span class="btn-label">PORT</span>
+        </button>
         <button class="bc-btn bc-settings" id="settingsBtn">
           <span class="btn-icon">⚙</span>
           <span class="btn-label">SETTINGS</span>
@@ -106,6 +111,9 @@ export function renderBaseCampScreen(): void {
     </div>
   `;
 
+  // Determine returnTo context: if from menu, use "basecamp", otherwise preserve the parameter
+  const returnContext: "basecamp" | "field" = returnTo === "menu" ? "basecamp" : returnTo;
+
   // --- EVENT LISTENERS ---
 
   root.querySelector("#fieldModeBtn")?.addEventListener("click", () => {
@@ -113,27 +121,27 @@ export function renderBaseCampScreen(): void {
   });
 
   root.querySelector(".bc-startop")?.addEventListener("click", () => {
-    renderOperationSelectScreen();
+    renderOperationSelectScreen(returnContext);
   });
 
   root.querySelector(".bc-loadout")?.addEventListener("click", () => {
-    renderInventoryScreen();
+    renderInventoryScreen(returnContext);
   });
 
   root.querySelector(".bc-shop")?.addEventListener("click", () => {
-    renderShopScreen();
+    renderShopScreen(returnContext);
   });
 
   root.querySelector(".bc-roster")?.addEventListener("click", () => {
-    renderRosterScreen();
+    renderRosterScreen(returnContext);
   });
 
   root.querySelector(".bc-workshop")?.addEventListener("click", () => {
-    renderCraftingScreen();
+    renderCraftingScreen(returnContext);
   });
 
   root.querySelector("#tavernBtn")?.addEventListener("click", () => {
-    renderRecruitmentScreen();
+    renderRecruitmentScreen(returnContext);
   });
 
   // Gear Workbench - Opens with first party unit's weapon selected
@@ -144,10 +152,10 @@ export function renderBaseCampScreen(): void {
     if (firstUnitId) {
       const unit = currentState.unitsById[firstUnitId];
       const weaponId = (unit as any)?.loadout?.weapon ?? null;
-      renderGearWorkbenchScreen(firstUnitId, weaponId);
+      renderGearWorkbenchScreen(firstUnitId, weaponId, returnContext);
     } else {
       // No party units - just open without selection
-      renderGearWorkbenchScreen();
+      renderGearWorkbenchScreen(undefined, undefined, returnContext);
     }
   });
 
@@ -156,15 +164,20 @@ export function renderBaseCampScreen(): void {
   if (questBoardBtn) {
     questBoardBtn.addEventListener("click", () => {
       console.log("[BASE CAMP] Quest Board button clicked");
-      renderQuestBoardScreen("basecamp");
+      renderQuestBoardScreen(returnContext);
     });
   } else {
     console.warn("[BASE CAMP] Quest Board button not found");
   }
 
+  // Port button
+  root.querySelector("#portBtn")?.addEventListener("click", () => {
+    renderPortScreen("basecamp");
+  });
+
   // Settings button
   root.querySelector("#settingsBtn")?.addEventListener("click", () => {
-    renderSettingsScreen("basecamp");
+    renderSettingsScreen(returnContext === "basecamp" ? "basecamp" : "menu");
   });
 
   // Exit to Title Screen
@@ -178,6 +191,12 @@ export function renderBaseCampScreen(): void {
 
 // Show base camp as modal overlay in field mode
 export function showBaseCampModal(): void {
+  // Increment base camp visit index (for Port manifest refresh)
+  updateGameState(s => ({
+    ...s,
+    baseCampVisitIndex: (s.baseCampVisitIndex ?? 0) + 1,
+  }));
+  
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -238,6 +257,10 @@ export function showBaseCampModal(): void {
             <span class="btn-icon">🔨</span>
             <span class="btn-label">WORKSHOP</span>
           </button>
+          <button class="bc-btn bc-tavern" id="tavernBtn">
+            <span class="btn-icon">🍺</span>
+            <span class="btn-label">TAVERN</span>
+          </button>
           <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
             <span class="btn-icon">&#128295;</span>
             <span class="btn-label">GEAR WORKBENCH</span>
@@ -245,6 +268,10 @@ export function showBaseCampModal(): void {
           <button class="bc-btn bc-quest-board" id="questBoardBtn">
             <span class="btn-icon">📋</span>
             <span class="btn-label">QUEST BOARD</span>
+          </button>
+          <button class="bc-btn bc-port" id="portBtn">
+            <span class="btn-icon">⚓</span>
+            <span class="btn-label">PORT</span>
           </button>
           <button class="bc-btn bc-settings" id="settingsBtn">
             <span class="btn-icon">⚙</span>
@@ -263,20 +290,31 @@ export function showBaseCampModal(): void {
     </div>
   `;
 
-  // Close button
+  // Close button - return to field mode
   modal.querySelector("#basecampModalClose")?.addEventListener("click", () => {
     hideBaseCampModal();
+    // Return to field mode - get current map from field state
+    import("../../field/FieldScreen").then(({ renderFieldScreen, getCurrentFieldMap }) => {
+      const currentMap = getCurrentFieldMap() || "base_camp";
+      renderFieldScreen(currentMap);
+    });
   });
 
-  // Close on backdrop click
+  // Close on backdrop click - return to field mode
   modal.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("basecamp-modal-overlay")) {
       hideBaseCampModal();
+      // Return to field mode - get current map from field state
+      import("../../field/FieldScreen").then(({ renderFieldScreen, getCurrentFieldMap }) => {
+        const currentMap = getCurrentFieldMap() || "base_camp";
+        renderFieldScreen(currentMap);
+      });
     }
   });
 
   // Attach all the same event listeners as the full screen version
-  attachBaseCampListeners(modal);
+  // Pass "field" as returnTo since modal is always shown from field mode
+  attachBaseCampListeners(modal, "field");
   
   // Show modal - ensure it's visible
   modal.style.display = "flex";
@@ -291,35 +329,37 @@ export function hideBaseCampModal(): void {
 }
 
 // Attach event listeners for base camp buttons
-function attachBaseCampListeners(container: HTMLElement): void {
+function attachBaseCampListeners(container: HTMLElement, returnTo: "basecamp" | "field" = "basecamp"): void {
+  const isModal = container.id === "basecamp-modal";
+  
   container.querySelector(".bc-startop")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderOperationSelectScreen();
+    if (isModal) hideBaseCampModal();
+    renderOperationSelectScreen(returnTo);
   });
 
   container.querySelector(".bc-loadout")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderInventoryScreen();
+    if (isModal) hideBaseCampModal();
+    renderInventoryScreen(returnTo);
   });
 
   container.querySelector(".bc-shop")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderShopScreen();
+    if (isModal) hideBaseCampModal();
+    renderShopScreen(returnTo);
   });
 
   container.querySelector(".bc-roster")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderRosterScreen();
+    if (isModal) hideBaseCampModal();
+    renderRosterScreen(returnTo);
   });
 
   container.querySelector(".bc-workshop")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderCraftingScreen();
+    if (isModal) hideBaseCampModal();
+    renderCraftingScreen(returnTo);
   });
 
   container.querySelector("#tavernBtn")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderRecruitmentScreen();
+    if (isModal) hideBaseCampModal();
+    renderRecruitmentScreen(returnTo);
   });
 
   // Gear Workbench
@@ -327,14 +367,13 @@ function attachBaseCampListeners(container: HTMLElement): void {
     const currentState = getGameState();
     const firstUnitId = currentState.partyUnitIds?.[0] ?? null;
 
+    if (isModal) hideBaseCampModal();
     if (firstUnitId) {
       const unit = currentState.unitsById[firstUnitId];
       const weaponId = (unit as any)?.loadout?.weapon ?? null;
-      hideBaseCampModal();
-      renderGearWorkbenchScreen(firstUnitId, weaponId);
+      renderGearWorkbenchScreen(firstUnitId, weaponId, returnTo);
     } else {
-      hideBaseCampModal();
-      renderGearWorkbenchScreen();
+      renderGearWorkbenchScreen(undefined, undefined, returnTo);
     }
   });
 
@@ -343,17 +382,23 @@ function attachBaseCampListeners(container: HTMLElement): void {
   if (questBoardBtn) {
     questBoardBtn.addEventListener("click", () => {
       console.log("[BASE CAMP MODAL] Quest Board button clicked");
-      hideBaseCampModal();
-      renderQuestBoardScreen("basecamp");
+      if (isModal) hideBaseCampModal();
+      renderQuestBoardScreen(returnTo);
     });
   } else {
     console.warn("[BASE CAMP MODAL] Quest Board button not found");
   }
 
+  // Port button
+  container.querySelector("#portBtn")?.addEventListener("click", () => {
+    if (isModal) hideBaseCampModal();
+    renderPortScreen(returnTo);
+  });
+
   // Settings button
   container.querySelector("#settingsBtn")?.addEventListener("click", () => {
-    hideBaseCampModal();
-    renderSettingsScreen("basecamp");
+    if (isModal) hideBaseCampModal();
+    renderSettingsScreen(returnTo === "field" ? "basecamp" : "menu");
   });
 
   // Exit to Title Screen

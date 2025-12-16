@@ -46,6 +46,17 @@ let isPanelOpen = false;
 let globalListenersAttached = false;
 
 // ============================================================================
+// GETTERS
+// ============================================================================
+
+/**
+ * Get the current map ID from field state
+ */
+export function getCurrentFieldMap(): FieldMap["id"] | null {
+  return fieldState?.currentMap || null;
+}
+
+// ============================================================================
 // RENDER
 // ============================================================================
 
@@ -337,14 +348,29 @@ function render(): void {
 
   centerViewportOnPlayer();
   
-  // Attach button listener (needs to be done each render since innerHTML replaces it)
-  const allNodesBtn = document.getElementById("fieldAllNodesBtn");
-  if (allNodesBtn) {
-    allNodesBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleAllNodesPanel();
+  // Attach button listener using event delegation on field-root
+  // This way we don't need to reattach on every render
+  if (fieldRoot) {
+    // Remove any existing listener first (by cloning)
+    const existingListener = (fieldRoot as any).__allNodesBtnListener;
+    if (existingListener) {
+      fieldRoot.removeEventListener("click", existingListener);
+    }
+    
+    // Create new listener
+    const allNodesBtnHandler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.id === "fieldAllNodesBtn" || target.closest("#fieldAllNodesBtn")) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log("[FIELD] All Nodes button clicked");
+        toggleAllNodesPanel();
+      }
     };
+    
+    // Store reference and attach
+    (fieldRoot as any).__allNodesBtnListener = allNodesBtnHandler;
+    fieldRoot.addEventListener("click", allNodesBtnHandler);
   }
 }
 
@@ -427,6 +453,9 @@ function updateAllNodesPanelContent(): void {
     steamComponents: 0,
   };
 
+  // Check if we're currently in field mode
+  const isInFieldMode = document.querySelector(".field-root") !== null;
+
   panel.innerHTML = `
     <div class="all-nodes-panel-content">
       <div class="all-nodes-panel-header">
@@ -434,6 +463,20 @@ function updateAllNodesPanelContent(): void {
         <button class="all-nodes-panel-close" id="allNodesPanelClose">×</button>
       </div>
       <div class="all-nodes-panel-body">
+        <div class="all-nodes-mode-toggle">
+          <div class="all-nodes-mode-toggle-label">MODE</div>
+          <div class="all-nodes-mode-toggle-switch">
+            <button class="all-nodes-mode-btn ${!isInFieldMode ? 'all-nodes-mode-btn--active' : ''}" data-mode="basecamp">
+              <span class="mode-icon">🏠</span>
+              <span class="mode-label">BASE CAMP</span>
+            </button>
+            <button class="all-nodes-mode-btn ${isInFieldMode ? 'all-nodes-mode-btn--active' : ''}" data-mode="field">
+              <span class="mode-icon">🌍</span>
+              <span class="mode-label">FIELD</span>
+            </button>
+          </div>
+        </div>
+        
         <div class="all-nodes-panel-resources">
           <div class="all-nodes-resource-item">
             <span class="all-nodes-resource-label">WAD</span>
@@ -490,6 +533,10 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-icon">🔧</span>
             <span class="btn-label">GEAR WORKBENCH</span>
           </button>
+          <button class="all-nodes-btn" data-action="port">
+            <span class="btn-icon">⚓</span>
+            <span class="btn-label">PORT</span>
+          </button>
           <button class="all-nodes-btn" data-action="settings">
             <span class="btn-icon">⚙</span>
             <span class="btn-label">SETTINGS</span>
@@ -517,6 +564,25 @@ function updateAllNodesPanelContent(): void {
       toggleAllNodesPanel();
     });
   }
+
+  // Attach mode toggle listeners
+  const modeButtons = panel.querySelectorAll(".all-nodes-mode-btn");
+  modeButtons.forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mode = (btn as HTMLElement).dataset.mode;
+      if (mode === "basecamp") {
+        toggleAllNodesPanel();
+        renderBaseCampScreen();
+      } else if (mode === "field") {
+        toggleAllNodesPanel();
+        // Use current map if in field mode, otherwise default to base_camp
+        const currentMapName = fieldState?.currentMap ?? "base_camp";
+        renderFieldScreen(currentMapName);
+      }
+    });
+  });
 
   // Attach button listeners via delegation
   panel.addEventListener("click", handlePanelClick);
@@ -548,6 +614,12 @@ function updatePanelVisibility(): void {
 }
 
 function toggleAllNodesPanel(): void {
+  // Ensure panel exists
+  const panel = document.getElementById("allNodesPanel");
+  if (!panel) {
+    createAllNodesPanel();
+  }
+  
   isPanelOpen = !isPanelOpen;
   
   // Refresh content when opening
@@ -837,6 +909,11 @@ function handleNodeAction(action: string): void {
         }
       });
       break;
+    case "port":
+      import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
+        renderPortScreen("basecamp");
+      });
+      break;
     case "settings":
       import("../ui/screens/SettingsScreen").then(({ renderSettingsScreen }) => {
         renderSettingsScreen("basecamp");
@@ -935,7 +1012,6 @@ function gameLoop(currentTime: number): void {
               x: newP1Avatar.x,
               y: newP1Avatar.y,
               facing: newP1Avatar.facing,
-              spriteId: s.players.P1.avatar?.spriteId || "aeriss_p1",
             },
           },
         },
@@ -992,7 +1068,6 @@ function gameLoop(currentTime: number): void {
               x: newP2Avatar.x,
               y: newP2Avatar.y,
               facing: newP2Avatar.facing,
-              spriteId: s.players.P2.avatar?.spriteId || "aeriss_p2",
             },
           },
         },

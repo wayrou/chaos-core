@@ -86,7 +86,6 @@ export function tryJoinAsP2(): boolean {
         x: s.players.P1.avatar.x + 64, // 1 tile offset
         y: s.players.P1.avatar.y,
         facing: s.players.P1.avatar.facing,
-        spriteId: "aeriss_p2",
       };
     } else {
       // If P1 has no avatar, create one at default position
@@ -98,14 +97,12 @@ export function tryJoinAsP2(): boolean {
         x: defaultX,
         y: defaultY,
         facing: "south",
-        spriteId: "aeriss_p1",
       };
-      
+
       newP2.avatar = {
         x: defaultX + 64,
         y: defaultY,
         facing: "south",
-        spriteId: "aeriss_p2",
       };
     }
     
@@ -260,3 +257,9 @@ export function applyTetherConstraint(
   
   return { x: clampedX, y: clampedY };
 }
+
+
+
+
+
+

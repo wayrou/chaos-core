@@ -880,24 +880,27 @@ function renderCompanion(companion?: Companion): string {
 function renderAttackEffect(player: FieldNodePlayer): string {
   if (!player.isAttacking) return '';
   
-  // Larger attack offset to match bigger tiles
+  // Calculate slash position and rotation based on facing direction
   const attackOffset = {
-    north: { x: 0, y: -45 },
-    south: { x: 0, y: 45 },
-    east: { x: 45, y: 0 },
-    west: { x: -45, y: 0 },
+    north: { x: 0, y: -35, rotation: -45 },
+    south: { x: 0, y: 35, rotation: 135 },
+    east: { x: 35, y: 0, rotation: 45 },
+    west: { x: -35, y: 0, rotation: -135 },
   };
   
   const offset = attackOffset[player.facing];
   
   return `
-    <div class="field-node-attack-effect" style="
-      left: ${player.x + offset.x - 30}px;
-      top: ${player.y + offset.y - 30}px;
-      width: 60px;
-      height: 60px;
+    <div class="field-node-attack-effect field-node-sword-slash" 
+         data-facing="${player.facing}"
+         style="
+      left: ${player.x + offset.x - 40}px;
+      top: ${player.y + offset.y - 40}px;
+      width: 80px;
+      height: 80px;
+      transform-origin: center center;
     ">
-      💥
+      <div class="sword-slash-line"></div>
     </div>
   `;
 }
@@ -1154,11 +1157,10 @@ function performAttack(): void {
       enemy.hp -= ATTACK_DAMAGE;
       console.log(`[FIELD_NODE] Hit enemy ${enemy.id}, HP: ${enemy.hp}/${enemy.maxHp}`);
       
-      // Charge energy cell on successful melee hit
-      if (player.energyCells < player.maxEnergyCells) {
-        player.energyCells += 1;
-        console.log(`[FIELD_NODE] Energy cell charged: ${player.energyCells}/${player.maxEnergyCells}`);
-      }
+      // Charge energy cells on successful melee hit (2 cells per hit for better ranged availability)
+      const chargeAmount = 2;
+      player.energyCells = Math.min(player.maxEnergyCells, player.energyCells + chargeAmount);
+      console.log(`[FIELD_NODE] Energy cells charged: ${player.energyCells}/${player.maxEnergyCells}`);
       
       // Apply knockback to enemy (away from player)
       const dx = enemy.x - player.x;

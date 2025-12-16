@@ -16,6 +16,18 @@ import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
 import { canAdvanceToNextFloor, advanceToNextFloor, getBattleTemplate } from "../../core/procedural";
 import { updateQuestProgress } from "../../quests/questManager";
+import { syncCampaignToGameState, getCurrentNodeFromCampaign, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
+import { 
+  moveToNode, 
+  clearNode, 
+  prepareBattleForNode, 
+  recordBattleVictory,
+  advanceToNextFloor as campaignAdvanceFloor,
+  completeOperationRun,
+  abandonRun,
+  getActiveRun,
+} from "../../core/campaignManager";
+import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 
 // ============================================================================
 // PAN STATE & CONTROLS
@@ -180,6 +192,9 @@ export function renderOperationMapScreen(): void {
     return;
   }
 
+  // Sync campaign state to game state
+  syncCampaignToGameState();
+
   const state = getGameState();
   const operation = getCurrentOperation(state);
 
@@ -317,12 +332,9 @@ function setupAbandonButtonHandler(): void {
       
       if (confirm("Abandon this operation? Progress will be lost.")) {
         cleanupPanHandlers();
-        updateGameState(prev => ({
-          ...prev,
-          operation: null,
-          phase: "shell",
-        }));
-        renderBaseCampScreen();
+        abandonRun();
+        syncCampaignToGameState();
+        renderOperationSelectScreen();
       }
     }
   }, true); // Use capture phase
@@ -338,7 +350,28 @@ function getCurrentRoomIndex(nodes: RoomNode[], currentRoomId: string | null): n
 }
 
 function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
-  // Find the first unvisited room
+  // First, try to use campaign system to find accessible nodes
+  try {
+    const availableNodeIds = getAvailableNodes();
+    if (availableNodeIds.length > 0) {
+      // Find the first available node that isn't visited
+      for (let i = 0; i < nodes.length; i++) {
+        if (!nodes[i].visited && availableNodeIds.includes(nodes[i].id)) {
+          return i;
+        }
+      }
+      // If all available nodes are visited, still return first available for fallback
+      for (let i = 0; i < nodes.length; i++) {
+        if (availableNodeIds.includes(nodes[i].id)) {
+          return i;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("[OPMAP] Error getting available nodes from campaign system:", error);
+  }
+  
+  // Fallback: Find the first unvisited room by index
   for (let i = 0; i < nodes.length; i++) {
     if (!nodes[i].visited) {
       return i;
@@ -520,23 +553,23 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   });
 
   // Enter room buttons (only on next available room)
-  const enterBtns = root.querySelectorAll(".opmap-node-enter");
-  console.log("[OPMAP] Found", enterBtns.length, "enter buttons");
-  enterBtns.forEach((btn, index) => {
-    console.log("[OPMAP] Attaching click handler to enter button", index);
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const button = e.currentTarget as HTMLElement;
-      const roomId = button.getAttribute("data-room-id");
-      console.log("[OPMAP] Enter button clicked, roomId:", roomId);
-      if (roomId) {
-        enterRoom(roomId);
-      } else {
-        console.warn("[OPMAP] Enter button clicked but no roomId found");
-      }
-    });
-  });
+  // Use event delegation for reliability - attach once to root
+  root.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const enterBtn = target.closest(".opmap-node-enter") as HTMLElement;
+    if (!enterBtn) return;
+    
+    e.stopPropagation();
+    e.preventDefault();
+    
+    const roomId = enterBtn.getAttribute("data-room-id");
+    console.log("[OPMAP] Enter button clicked (delegation), roomId:", roomId);
+    if (roomId) {
+      enterRoom(roomId);
+    } else {
+      console.warn("[OPMAP] Enter button clicked but no roomId found");
+    }
+  }, true); // Use capture phase for reliability
 
   // Clicking on the node itself (for next available room)
   root.querySelectorAll(".opmap-node--next").forEach(node => {
@@ -552,31 +585,26 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   });
 
   // Advance floor button
-  root.querySelector("#advanceFloorBtn")?.addEventListener("click", () => {
-    const state = getGameState();
-    if (state.operation) {
-      cleanupPanHandlers();
-      const { currentFloorIndex, currentRoomId } = advanceToNextFloor(state.operation);
-
-      // Update quest progress for floor completion (Headline 15)
-      updateQuestProgress("clear_node", "floor", 1);
-
-      updateGameState(prev => ({
-        ...prev,
-        operation: {
-          ...prev.operation!,
-          currentFloorIndex,
-          currentRoomId,
-        },
-      }));
-
-      renderOperationMapScreen();
-    }
-  });
+  // Advance floor button is handled above in the new handler
 
   // Complete operation button
   root.querySelector("#completeOpBtn")?.addEventListener("click", () => {
-    showOperationComplete();
+    // Complete operation via campaign manager
+    completeOperationRun();
+    syncCampaignToGameState();
+    // Show operation clear screen
+    import("./OperationClearScreen").then(m => m.renderOperationClearScreen());
+  });
+  
+  root.querySelector("#advanceFloorBtn")?.addEventListener("click", () => {
+    try {
+      campaignAdvanceFloor();
+      syncCampaignToGameState();
+      renderOperationMapScreen();
+    } catch (error) {
+      console.error("[OPMAP] Failed to advance floor:", error);
+      alert(`Failed to advance floor: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
   });
 }
 
@@ -587,35 +615,49 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 function enterRoom(roomId: string): void {
   const state = getGameState();
   const operation = getCurrentOperation(state);
-  if (!operation) return;
+  if (!operation) {
+    console.warn("[OPMAP] No active operation when trying to enter room:", roomId);
+    return;
+  }
 
   const floor = getCurrentFloor(operation);
-  if (!floor) return;
+  if (!floor) {
+    console.warn("[OPMAP] No current floor when trying to enter room:", roomId);
+    return;
+  }
 
   const nodes = floor.nodes || floor.rooms || [];
   const room = nodes.find(n => n.id === roomId);
-  if (!room) return;
+  if (!room) {
+    console.warn("[OPMAP] Room not found:", roomId);
+    return;
+  }
 
-  // Check if this room is actually the next available one
+  // Check if node is accessible (campaign system) OR if it's the next available room
   const nextIndex = getNextAvailableRoomIndex(nodes);
-  const roomIndex = nodes.findIndex(n => n.id === roomId);
+  const isNextRoom = nextIndex >= 0 && nextIndex < nodes.length && nodes[nextIndex].id === roomId;
   
-  if (roomIndex !== nextIndex) {
-    console.warn("[OPMAP] Attempted to enter locked room:", roomId);
+  if (!isNodeAccessible(roomId) && !isNextRoom) {
+    console.warn("[OPMAP] Attempted to enter inaccessible room:", roomId, {
+      isAccessible: isNodeAccessible(roomId),
+      isNextRoom,
+      nextIndex,
+      nextRoomId: nextIndex >= 0 && nextIndex < nodes.length ? nodes[nextIndex].id : null
+    });
     return;
   }
 
   // Cleanup pan handlers before leaving screen
   cleanupPanHandlers();
 
-  // Update current room
-  updateGameState(prev => ({
-    ...prev,
-    operation: {
-      ...prev.operation!,
-      currentRoomId: roomId,
-    },
-  }));
+  // Move to node in campaign system
+  try {
+    moveToNode(roomId);
+    syncCampaignToGameState();
+  } catch (error) {
+    console.error("[OPMAP] Failed to move to node:", error);
+    return;
+  }
 
   // Route to appropriate screen based on room type
   switch (room.type) {
@@ -663,20 +705,34 @@ function enterRoom(roomId: string): void {
 function enterBattleRoom(room: RoomNode): void {
   try {
     const state = getGameState();
-
-    // Get battle template if specified
-    let battleTemplate = null;
-    if (room.battleTemplate) {
-      battleTemplate = getBattleTemplate(room.battleTemplate);
+    const activeRun = getActiveRun();
+    
+    if (!activeRun) {
+      console.error("[OPMAP] No active run for battle");
+      return;
     }
 
-    // Create battle (using template or fallback)
-    const battle = battleTemplate
-      ? createBattleFromTemplate(state, battleTemplate)
-      : createTestBattleForCurrentParty(state);
+    // Set campaign flag for battle screen
+    (window as any).__isCampaignRun = true;
+
+    // Prepare battle for this node (generates encounter)
+    prepareBattleForNode(room.id);
+    syncCampaignToGameState();
+    
+    // Get the pending battle encounter
+    const updatedRun = getActiveRun();
+    if (!updatedRun || !updatedRun.pendingBattle) {
+      console.error("[OPMAP] Failed to prepare battle");
+      return;
+    }
+    
+    const encounter = updatedRun.pendingBattle.encounterDefinition;
+    
+    // Create battle from encounter
+    const battle = createBattleFromEncounter(state, encounter);
 
     if (!battle) {
-      console.error("[OPMAP] Failed to create battle");
+      console.error("[OPMAP] Failed to create battle from encounter");
       return;
     }
 
@@ -763,6 +819,14 @@ export function markRoomVisited(roomId: string): void {
       operation,
     } as GameState;
   });
+
+  // Persist to campaign progress so cleared nodes unlock next connections
+  try {
+    clearNode(roomId);
+    syncCampaignToGameState();
+  } catch (error) {
+    console.warn("[OPMAP] Failed to persist cleared node to campaign:", error);
+  }
 }
 
 // Helper to mark the current room as visited (uses currentRoomId from state)
@@ -771,35 +835,6 @@ export function markCurrentRoomVisited(): void {
   if (state.operation?.currentRoomId) {
     markRoomVisited(state.operation.currentRoomId);
   }
-}
-
-function showOperationComplete(): void {
-  const root = document.getElementById("app");
-  if (!root) return;
-
-  root.innerHTML = `
-    <div class="event-result-overlay">
-      <div class="event-result-card">
-        <div class="event-result-title">🎉 OPERATION COMPLETE!</div>
-        <div class="event-result-message">
-          You have successfully completed the operation.<br>
-          Returning to Base Camp...
-        </div>
-        <button class="event-result-continue" id="returnBtn">RETURN TO BASE CAMP</button>
-      </div>
-    </div>
-  `;
-
-  root.querySelector("#returnBtn")?.addEventListener("click", () => {
-    // Clear operation
-    updateGameState(prev => ({
-      ...prev,
-      operation: null,
-      phase: "shell",
-    }));
-
-    renderBaseCampScreen();
-  });
 }
 
 // Export alias for backwards compatibility

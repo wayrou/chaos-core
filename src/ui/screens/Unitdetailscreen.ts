@@ -24,6 +24,7 @@ import {
   buildDeckFromLoadout,
   canEquipWeapon,
   EquipmentCard,
+  CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
 import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
@@ -168,6 +169,13 @@ export function renderUnitDetailScreen(unitId: string): void {
     })
     .join("");
 
+  // Auto-equip button (15d)
+  const autoEquipButton = `
+    <div class="auto-equip-section">
+      <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
+    </div>
+  `;
+
   const cardCounts: Record<string, number> = {};
   for (const cardId of deck) {
     cardCounts[cardId] = (cardCounts[cardId] || 0) + 1;
@@ -270,6 +278,9 @@ export function renderUnitDetailScreen(unitId: string): void {
 
             <div class="unitdetail-section">
               <div class="unitdetail-section-title">EQUIPMENT (5 SLOTS)</div>
+              <div class="auto-equip-section">
+                <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
+              </div>
               <div class="equip-slots-grid">
                 ${equipSlotsHtml}
               </div>
@@ -396,6 +407,14 @@ export function renderUnitDetailScreen(unitId: string): void {
       closeWeaponDetailModal();
     }
   });
+
+  // Auto-equip button (15d)
+  const autoEquipBtn = root.querySelector("#autoEquipBtn");
+  if (autoEquipBtn) {
+    autoEquipBtn.addEventListener("click", () => {
+      autoEquipUnit(unitId, unitClass, equipmentById, equipmentPool);
+    });
+  }
 }
 
 function openEquipModal(
@@ -655,6 +674,87 @@ function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
 
     const updatedUnit = {
       ...unit,
+      loadout: newLoadout,
+    };
+
+    return {
+      ...prev,
+      unitsById: {
+        ...prev.unitsById,
+        [unitId]: updatedUnit,
+      },
+    };
+  });
+
+  renderUnitDetailScreen(unitId);
+}
+
+/**
+ * Auto-equip best gear for a unit (15d)
+ * Scores gear by: ATK*3 + DEF*2 + AGI*1 + ACC*1
+ */
+function autoEquipUnit(
+  unitId: string,
+  unitClass: UnitClass,
+  equipmentById: Record<string, Equipment>,
+  equipmentPool: string[]
+): void {
+  const state = getGameState();
+  const unit = state.unitsById[unitId];
+  if (!unit) return;
+
+  // Score function for equipment
+  const scoreGear = (equip: Equipment): number => {
+    const s = equip.stats;
+    return (s.atk || 0) * 3 + (s.def || 0) * 2 + (s.agi || 0) * 1 + (s.acc || 0) * 1;
+  };
+
+  // Get available equipment
+  const availableEquipment = equipmentPool
+    .map(id => equipmentById[id])
+    .filter(eq => eq !== undefined);
+
+  // Get weapon restrictions for this class
+  const allowedWeaponTypes = CLASS_WEAPON_RESTRICTIONS[unitClass] || [];
+
+  // Find best weapon
+  const bestWeapon = availableEquipment
+    .filter(eq => eq.slot === "weapon")
+    .filter(eq => {
+      const weaponType = (eq as WeaponEquipment).weaponType;
+      return allowedWeaponTypes.includes(weaponType);
+    })
+    .sort((a, b) => scoreGear(b) - scoreGear(a))[0];
+
+  // Find best helmet
+  const bestHelmet = availableEquipment
+    .filter(eq => eq.slot === "helmet")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))[0];
+
+  // Find best chestpiece
+  const bestChestpiece = availableEquipment
+    .filter(eq => eq.slot === "chestpiece")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))[0];
+
+  // Find best accessories (top 2)
+  const bestAccessories = availableEquipment
+    .filter(eq => eq.slot === "accessory")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))
+    .slice(0, 2);
+
+  // Build new loadout
+  const newLoadout: UnitLoadout = {
+    weapon: bestWeapon?.id || null,
+    helmet: bestHelmet?.id || null,
+    chestpiece: bestChestpiece?.id || null,
+    accessory1: bestAccessories[0]?.id || null,
+    accessory2: bestAccessories[1]?.id || null,
+  };
+
+  // Update state
+  updateGameState((prev) => {
+    const updatedUnit = {
+      ...prev.unitsById[unitId],
       loadout: newLoadout,
     };
 

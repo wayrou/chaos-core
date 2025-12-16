@@ -6,6 +6,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderUnitDetailScreen } from "./Unitdetailscreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 import {
   GearSlotData,
@@ -30,7 +31,7 @@ import {
 // STATE
 // ----------------------------------------------------------------------------
 
-type ReturnDestination = "basecamp" | "unitdetail";
+type ReturnDestination = "basecamp" | "unitdetail" | "field";
 
 interface WorkbenchState {
   selectedEquipmentId: string | null;
@@ -115,6 +116,8 @@ export function renderGearWorkbenchScreen(
 
   const backBtnText = workbenchState.returnDestination === "unitdetail" 
     ? "← UNIT ROSTER" 
+    : workbenchState.returnDestination === "field"
+    ? "← FIELD MODE"
     : "← BASE CAMP";
 
   app.innerHTML = /*html*/ `
@@ -487,6 +490,8 @@ function attachWorkbenchListeners(
       // Navigate back
       if (returnTo === "unitdetail" && unitId) {
         renderUnitDetailScreen(unitId);
+      } else if (returnTo === "field") {
+        renderFieldScreen("base_camp");
       } else {
         renderBaseCampScreen();
       }

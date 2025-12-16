@@ -2,9 +2,11 @@
 // BATTLE SYSTEM - Updated with Equipment-Based Decks (11b/11c integration)
 // ============================================================================
 
-import { GameState, Unit, CardId, UnitId } from "./types";
+// Debug flag for battle system (15a-15e)
+const DEBUG_BATTLE = false;
+
+import { GameState, Unit, CardId, UnitId, LoadPenaltyFlags } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
-import { getSettings } from "./settings";
 import { generateElevationMap } from "./isometric";
 
 import {
@@ -25,12 +27,15 @@ import {
 } from "./weaponSystem";
 
 // STEP 6 & 7: Import gear workbench functions
-import { 
+import {
   GearSlotData,
   getDefaultGearSlots,
   generateBattleRewardCards,
   LIBRARY_CARD_DATABASE,
 } from "./gearWorkbench";
+
+// Import affinity tracking
+import { trackMeleeAttackInBattle } from "./affinityBattle";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -83,6 +88,8 @@ export interface BattleUnitState {
   weaponWear?: number;
   // Local Co-op: Which player controls this unit
   controller?: "P1" | "P2";
+  // Auto-battle toggle (15a)
+  autoBattle?: boolean;
 }
 
 export interface BattleState {
@@ -190,9 +197,9 @@ export function createBattleUnitState(
   let deckCards: CardId[];
 
   if (opts.isEnemy) {
-    // Enemies still use their base deck (or a simple default)
-    deckCards = base.deck && base.deck.length > 0
-      ? [...base.deck]
+    // Enemies use their drawPile (or a simple default)
+    deckCards = base.drawPile && base.drawPile.length > 0
+      ? [...base.drawPile]
       : ["core_basic_attack", "core_basic_attack", "core_guard", "core_wait"];
   } else {
     // STEP 6: Player units - build deck from equipment + slotted cards
@@ -230,11 +237,17 @@ export function createBattleUnitState(
   const equipStats = calculateEquipmentStats(loadout, equipment, modules);
 
   // Base stats + equipment bonuses
-  const finalAtk = base.stats.atk + (opts.isEnemy ? 0 : equipStats.atk);
-  const finalDef = base.stats.def + (opts.isEnemy ? 0 : equipStats.def);
-  const finalAgi = base.stats.agi + (opts.isEnemy ? 0 : equipStats.agi);
-  const finalAcc = base.stats.acc + (opts.isEnemy ? 0 : equipStats.acc);
-  const finalMaxHp = base.stats.maxHp + (opts.isEnemy ? 0 : equipStats.hp);
+  const baseAtk = (base as any).stats?.atk ?? 10;
+  const baseDef = (base as any).stats?.def ?? 5;
+  const baseAgi = base.agi ?? 5;
+  const baseAcc = (base as any).stats?.acc ?? 80;
+  const baseMaxHp = base.maxHp ?? 100;
+
+  const finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
+  const finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
+  const finalAgi = baseAgi + (opts.isEnemy ? 0 : equipStats.agi);
+  const finalAcc = baseAcc + (opts.isEnemy ? 0 : equipStats.acc);
+  const finalMaxHp = baseMaxHp + (opts.isEnemy ? 0 : equipStats.hp);
 
   // Initialize weapon state (14b)
   let equippedWeaponId: string | null = null;
@@ -252,7 +265,7 @@ export function createBattleUnitState(
     id: base.id,
     baseUnitId: base.id,
     name: base.name,
-    classId: base.classId,
+    classId: base.unitClass ?? "squire",
     isEnemy: opts.isEnemy,
     pos: opts.pos,
     facing: opts.isEnemy ? "west" : "east", // Enemies face left, allies face right
@@ -631,6 +644,95 @@ export function canUnitMoveTo(
   return isWalkableTile(state, dest);
 }
 
+/**
+ * Compute a step-by-step path from start to destination using BFS
+ * Returns an array of grid positions including start and end
+ */
+export function getMovePath(
+  state: BattleState,
+  start: Vec2,
+  dest: Vec2,
+  maxCost: number
+): Vec2[] {
+  // If start equals dest, return single-tile path
+  if (start.x === dest.x && start.y === dest.y) {
+    return [{ x: start.x, y: start.y }];
+  }
+
+  // BFS to find shortest path
+  const visited = new Map<string, { x: number; y: number; cost: number; parent: string | null }>();
+  const queue: Array<{ x: number; y: number; cost: number; parent: string | null }> = [
+    { x: start.x, y: start.y, cost: 0, parent: null }
+  ];
+  visited.set(`${start.x},${start.y}`, queue[0]);
+
+  const dirs = [
+    { x: 0, y: -1 }, // north
+    { x: 0, y: 1 },  // south
+    { x: -1, y: 0 }, // west
+    { x: 1, y: 0 }   // east
+  ];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+
+    // Check if we reached destination
+    if (current.x === dest.x && current.y === dest.y) {
+      // Reconstruct path
+      const path: Vec2[] = [];
+      let node: { x: number; y: number; cost: number; parent: string | null } | undefined = current;
+      
+      while (node) {
+        path.unshift({ x: node.x, y: node.y });
+        if (node.parent) {
+          node = visited.get(node.parent);
+        } else {
+          node = undefined;
+        }
+      }
+      
+      return path;
+    }
+
+    // Explore neighbors
+    for (const d of dirs) {
+      const nx = current.x + d.x;
+      const ny = current.y + d.y;
+      const newCost = current.cost + 1;
+      const key = `${nx},${ny}`;
+
+      // Check bounds
+      if (nx < 0 || nx >= state.gridWidth || ny < 0 || ny >= state.gridHeight) continue;
+
+      // Check cost limit
+      if (newCost > maxCost) continue;
+
+      // Check if already visited with lower cost
+      const existing = visited.get(key);
+      if (existing && existing.cost <= newCost) continue;
+
+      // Check if tile is walkable
+      if (!isWalkableTile(state, { x: nx, y: ny })) continue;
+
+      // Check if occupied by a unit (except destination and start)
+      if (!(nx === dest.x && ny === dest.y) && !(nx === start.x && ny === start.y)) {
+        const occupied = Object.values(state.units).some(
+          u => u.pos && u.pos.x === nx && u.pos.y === ny && u.hp > 0
+        );
+        if (occupied) continue;
+      }
+
+      // Add to queue
+      const newNode = { x: nx, y: ny, cost: newCost, parent: `${current.x},${current.y}` };
+      visited.set(key, newNode);
+      queue.push(newNode);
+    }
+  }
+
+  // No path found - return direct path (fallback)
+  return [{ x: start.x, y: start.y }, { x: dest.x, y: dest.y }];
+}
+
 export function moveUnit(
   state: BattleState,
   unitId: UnitId,
@@ -779,7 +881,6 @@ export function attackUnit(
 
   // Track affinity for melee attack (if attacker is player unit)
   if (!attacker.isEnemy) {
-    const { trackMeleeAttackInBattle } = require("./affinityBattle");
     trackMeleeAttackInBattle(attackerId, next);
   }
 
@@ -873,6 +974,153 @@ export function performEnemyTurn(state: BattleState): BattleState {
 }
 
 // ----------------------------------------------------------------------------
+// AUTO-BATTLE LOGIC (15a)
+// ----------------------------------------------------------------------------
+
+/**
+ * Perform auto-battle turn for a friendly unit (15a)
+ * Deterministic policy: play best card targeting best enemy, or move toward nearest enemy, or wait
+ */
+export function performAutoBattleTurn(state: BattleState, unitId: UnitId): BattleState {
+  const unit = state.units[unitId];
+  if (!unit || unit.isEnemy || !unit.pos) {
+    return state;
+  }
+
+  if (DEBUG_BATTLE) {
+    console.log(`[AUTO_BATTLE] Starting auto turn for ${unit.name}`);
+  }
+
+  // Get all enemies
+  const enemies = Object.values(state.units).filter(u => u.isEnemy && u.hp > 0 && u.pos);
+  if (enemies.length === 0) {
+    // No enemies, end turn
+    return advanceTurn(state);
+  }
+
+  // Find nearest enemy
+  let nearestEnemy = enemies[0];
+  let nearestDist = Infinity;
+  for (const enemy of enemies) {
+    if (!enemy.pos) continue;
+    const dist = Math.abs(unit.pos.x - enemy.pos.x) + Math.abs(unit.pos.y - enemy.pos.y);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestEnemy = enemy;
+    }
+  }
+
+  // Score and find best playable card
+  // Use card resolution from BattleScreen (we'll need to import or duplicate logic)
+  const playableCards: Array<{ cardId: CardId; index: number; score: number; cardName: string }> = [];
+  
+  for (let i = 0; i < unit.hand.length; i++) {
+    const cardId = unit.hand[i];
+    // Simple scoring: prefer attack cards, avoid wait cards
+    let score = 0;
+    const cardName = cardId.toLowerCase();
+    
+    // Check if it's a wait/end turn card
+    if (cardName.includes("wait") || cardName === "core_wait") {
+      score = -100;
+    } else {
+      // Base score for playable cards
+      score = 50;
+      
+      // Check if it targets enemies
+      if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot")) {
+        score += 50; // Prefer attack cards
+        // Estimate damage (simplified)
+        if (cardName.includes("power") || cardName.includes("execute")) {
+          score += 10; // High damage cards
+        } else {
+          score += 5; // Standard damage
+        }
+      }
+      
+      // Check for debuffs
+      if (cardName.includes("debuff") || cardName.includes("stun")) {
+        score += 10;
+      }
+    }
+    
+    playableCards.push({ cardId, index: i, score, cardName });
+  }
+
+  // Sort by score (highest first)
+  playableCards.sort((a, b) => b.score - a.score);
+
+  // Try to play the best card
+  for (const { cardId, index, cardName } of playableCards) {
+    if (playableCards[0].score <= 0) break; // Don't play negative score cards
+    
+    // Find best target for this card
+    // For enemy-targeting cards, use nearest enemy
+    if (nearestEnemy.pos) {
+      const distance = Math.abs(unit.pos.x - nearestEnemy.pos.x) + Math.abs(unit.pos.y - nearestEnemy.pos.y);
+      
+      // Try to play card on nearest enemy
+      // Use playCard function which handles card resolution
+      if (cardName.includes("wait") || cardName === "core_wait") {
+        // Wait card - play on self
+        return playCard(state, unitId, index, unitId);
+      } else if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot") || 
+                 cardName.includes("headbutt") || cardName.includes("charge")) {
+        // Attack card - check range and play
+        // Assume range 1-6 for most attack cards
+        if (distance <= 6) {
+          return playCard(state, unitId, index, nearestEnemy.id);
+        }
+      } else if (cardName.includes("guard") || cardName.includes("form") || cardName.includes("draw")) {
+        // Self-target card
+        return playCard(state, unitId, index, unitId);
+      }
+    }
+  }
+
+  // If no playable card or all cards scored poorly, try to move toward nearest enemy
+  if (playableCards.length === 0 || playableCards[0].score <= 0) {
+    if (nearestEnemy.pos && unit.agi > 0) {
+      const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
+      const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
+      
+      const candidate1 = { x: unit.pos.x + dx, y: unit.pos.y };
+      const candidate2 = { x: unit.pos.x, y: unit.pos.y + dy };
+      
+      if (dx !== 0 && canUnitMoveTo(state, unit, candidate1)) {
+        return moveUnit(state, unitId, candidate1);
+      } else if (dy !== 0 && canUnitMoveTo(state, unit, candidate2)) {
+        return moveUnit(state, unitId, candidate2);
+      }
+    }
+    
+    // Can't move, end turn
+    return advanceTurn(state);
+  }
+
+  // If we have a good card but couldn't play it (range/other issues), move toward target
+  if (nearestEnemy.pos) {
+    const distance = Math.abs(unit.pos.x - nearestEnemy.pos.x) + Math.abs(unit.pos.y - nearestEnemy.pos.y);
+    if (distance > 1 && unit.agi > 0) {
+      const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
+      const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
+      
+      const candidate1 = { x: unit.pos.x + dx, y: unit.pos.y };
+      const candidate2 = { x: unit.pos.x, y: unit.pos.y + dy };
+      
+      if (dx !== 0 && canUnitMoveTo(state, unit, candidate1)) {
+        return moveUnit(state, unitId, candidate1);
+      } else if (dy !== 0 && canUnitMoveTo(state, unit, candidate2)) {
+        return moveUnit(state, unitId, candidate2);
+      }
+    }
+  }
+
+  // Default: end turn
+  return advanceTurn(state);
+}
+
+// ----------------------------------------------------------------------------
 // BATTLE OUTCOME
 // ----------------------------------------------------------------------------
 
@@ -946,6 +1194,10 @@ function generateBattleRewards(state: BattleState) {
 // CARD DRAW
 // ----------------------------------------------------------------------------
 
+/**
+ * Draw cards for turn with automatic reshuffle (15c)
+ * Reshuffles discard into deck if deck.length < handSize before drawing
+ */
 export function drawCardsForTurn(
   state: BattleState,
   unit: BattleUnitState,
@@ -953,13 +1205,17 @@ export function drawCardsForTurn(
 ): BattleState {
   let u = unit;
 
-  // If deck is empty, reshuffle discard
-  if (u.drawPile.length === 0 && u.discardPile.length > 0) {
+  // 15c: Reshuffle if deck has fewer than handSize cards remaining
+  if (u.drawPile.length < handSize && u.discardPile.length > 0) {
+    const reshuffled = shuffleArray([...u.discardPile]);
     u = {
       ...u,
-      drawPile: shuffleArray([...u.discardPile]),
+      drawPile: [...u.drawPile, ...reshuffled],
       discardPile: [],
     };
+    if (DEBUG_BATTLE) {
+      console.log(`[BATTLE] RESHUFFLE discard->deck (${reshuffled.length} cards) for ${u.name}`);
+    }
   }
 
   const newHand: CardId[] = [...u.hand];
@@ -991,6 +1247,10 @@ export function drawCardsForTurn(
 /**
  * Calculate maximum units allowed per side based on grid area
  */
+/**
+ * Calculate maximum units allowed per side based on grid area (15b)
+ * Formula: clamp(floor(gridArea * 0.25), 3, 10)
+ */
 export function calculateMaxUnitsPerSide(gridWidth: number, gridHeight: number): number {
   const gridArea = gridWidth * gridHeight;
   const rawMax = Math.floor(gridArea * 0.25);
@@ -1003,11 +1263,10 @@ export function createTestBattleForCurrentParty(
   const partyIds = state.partyUnitIds;
   if (partyIds.length === 0) return null;
 
-  // Random battlefield size (isometric-friendly dimensions)
-  const minSize = 6;
-  const maxSize = 12;
-  const gridWidth = Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize;
-  const gridHeight = Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize;
+  // Grid size selection (15b): Random within bounds 4x3 to 8x6
+  // Width: 4-8, Height: 3-6
+  const gridWidth = Math.floor(Math.random() * (8 - 4 + 1)) + 4;
+  const gridHeight = Math.floor(Math.random() * (6 - 3 + 1)) + 3;
   
   // Generate random elevation map
   const maxElevation = 3;
@@ -1153,22 +1412,22 @@ export function playCard(
     return appendBattleLog(state, "SLK//ERROR :: Invalid unit or target for card play.");
   }
 
-  const card = unit.hand[cardIndex];
-  if (!card) {
+  const cardId = unit.hand[cardIndex];
+  if (!cardId) {
     return appendBattleLog(state, "SLK//ERROR :: No card at index " + cardIndex);
   }
 
-  // Get card info (card might be string ID or object)
-  const cardName = typeof card === "string" ? card.replace(/^(core_|class_|card_|equip_)/, "").replace(/_/g, " ") : card.name;
-  const cardDesc = typeof card === "string" ? "" : (card.description || "").toLowerCase();
-  const strainCost = typeof card === "string" ? 1 : (card.strainCost || 1);
+  // Get card info (cards are always string IDs in hand)
+  const cardName = cardId.replace(/^(core_|class_|card_|equip_)/, "").replace(/_/g, " ");
+  const cardDesc = "";
+  const strainCost = 1;
 
   // Create new hand without the played card
   const newHand = [...unit.hand];
   newHand.splice(cardIndex, 1);
-  
+
   // Create new discard with the played card
-  const newDiscard = [...unit.discardPile, card];
+  const newDiscard = [...unit.discardPile, cardId];
 
   // Apply strain
   const newStrain = unit.strain + strainCost;
@@ -1232,7 +1491,7 @@ export function playCard(
   const defBuffMatch = cardDesc.match(/\+(\d+)\s+def/i) || cardDesc.match(/gain\s+(\d+)\s+def/i);
   if (defBuffMatch) {
     const buffAmount = parseInt(defBuffMatch[1], 10);
-    const newBuffs = [...(updatedTarget.buffs || []), { stat: "def" as const, amount: buffAmount, duration: 1 }];
+    const newBuffs = [...(updatedTarget.buffs || []), { id: "def_buff", type: "def_up", amount: buffAmount, duration: 1 }];
     updatedTarget = { ...updatedTarget, buffs: newBuffs };
     newLog.push(`SLK//BUFF :: ${target.name} gains +${buffAmount} DEF for 1 turn.`);
   }
@@ -1241,7 +1500,7 @@ export function playCard(
   const atkBuffMatch = cardDesc.match(/\+(\d+)\s+atk/i) || cardDesc.match(/gain\s+(\d+)\s+atk/i);
   if (atkBuffMatch) {
     const buffAmount = parseInt(atkBuffMatch[1], 10);
-    const newBuffs = [...(updatedTarget.buffs || []), { stat: "atk" as const, amount: buffAmount, duration: 1 }];
+    const newBuffs = [...(updatedTarget.buffs || []), { id: "atk_buff", type: "atk_up", amount: buffAmount, duration: 1 }];
     updatedTarget = { ...updatedTarget, buffs: newBuffs };
     newLog.push(`SLK//BUFF :: ${target.name} gains +${buffAmount} ATK for 1 turn.`);
   }
@@ -1374,6 +1633,54 @@ export function quickPlaceUnits(state: BattleState): BattleState {
   }
   
   return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedCount - state.placementState!.placedUnitIds.length} units.`);
+}
+
+/**
+ * Remove a placed unit (15b) - allows unplacing units
+ */
+export function removePlacedUnit(state: BattleState, unitId: UnitId): BattleState {
+  if (state.phase !== "placement") return state;
+  
+  const unit = state.units[unitId];
+  if (!unit || unit.isEnemy) return state;
+  
+  const placementState = state.placementState;
+  if (!placementState) return state;
+  
+  if (!placementState.placedUnitIds.includes(unitId)) return state;
+  
+  // Remove position and from placed list
+  const newUnits = { ...state.units };
+  newUnits[unitId] = { ...unit, pos: null };
+  
+  const newPlacedIds = placementState.placedUnitIds.filter(id => id !== unitId);
+  
+  return {
+    ...state,
+    units: newUnits,
+    placementState: {
+      ...placementState,
+      placedUnitIds: newPlacedIds,
+      selectedUnitId: placementState.selectedUnitId === unitId ? null : placementState.selectedUnitId,
+    },
+  };
+}
+
+/**
+ * Set selected unit for placement (15b)
+ */
+export function setPlacementSelectedUnit(state: BattleState, unitId: UnitId | null): BattleState {
+  if (state.phase !== "placement") return state;
+  const placementState = state.placementState;
+  if (!placementState) return state;
+  
+  return {
+    ...state,
+    placementState: {
+      ...placementState,
+      selectedUnitId: unitId,
+    },
+  };
 }
 
 /**

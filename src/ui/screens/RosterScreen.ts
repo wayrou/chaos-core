@@ -64,105 +64,121 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
 
-  const unitCardsHtml = unitIds
-    .map((unitId) => {
-      const unit = units[unitId];
-      if (!unit) return "";
+  // Separate units into party and reserve
+  const partyUnits = unitIds.filter(id => partyUnitIds.includes(id));
+  const reserveUnits = unitIds.filter(id => !partyUnitIds.includes(id));
 
-      const isInParty = partyUnitIds.includes(unitId);
-      const loadout: UnitLoadout = (unit as any).loadout || {
-        weapon: null,
-        helmet: null,
-        chestpiece: null,
-        accessory1: null,
-        accessory2: null,
-      };
+  // Function to render a unit card
+  const renderUnitCard = (unitId: string, isInParty: boolean): string => {
+    const unit = units[unitId];
+    if (!unit) return "";
 
-      const weaponId = loadout.weapon;
-      const weapon = weaponId ? equipmentById[weaponId] : null;
-      const weaponName = weapon ? weapon.name : "None";
+    const loadout: UnitLoadout = (unit as any).loadout || {
+      weapon: null,
+      helmet: null,
+      chestpiece: null,
+      accessory1: null,
+      accessory2: null,
+    };
 
-      const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
-      const unitClass: UnitClass = (unit as any).unitClass || "squire";
-      const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
-      const deckSize = deck.length;
+    const weaponId = loadout.weapon;
+    const weapon = weaponId ? equipmentById[weaponId] : null;
+    const weaponName = weapon ? weapon.name : "None";
 
-      const baseStats = unit.stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
-      const totalAtk = baseStats.atk + equipStats.atk;
-      const totalDef = baseStats.def + equipStats.def;
-      const totalAgi = baseStats.agi + equipStats.agi;
-      const totalAcc = baseStats.acc + equipStats.acc;
-      const totalHp = baseStats.maxHp + equipStats.hp;
-      const portraitPath = getUnitPortraitPath(unitId);
-      
-      // PWR display
-      const pwr = (unit as any).pwr || 0;
-      const pwrBand = getPWRBand(pwr);
-      const pwrColor = getPWRBandColor(pwr);
+    const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
+    const unitClass: UnitClass = (unit as any).unitClass || "squire";
+    const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
+    const deckSize = deck.length;
 
-      return `
-        <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" data-unit-id="${unitId}">
-          <div class="roster-unit-header">
-            <div class="roster-unit-portrait">
-              <img src="${portraitPath}" alt="${unit.name}" class="roster-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
-            </div>
-            <div class="roster-unit-header-text">
-              <div class="roster-unit-name">${unit.name}</div>
-              <div class="roster-unit-class">${formatClassName(unitClass)}</div>
-              <div class="roster-unit-pwr" style="color: ${pwrColor}">
-                <span class="roster-pwr-label">PWR:</span>
-                <span class="roster-pwr-value">${pwr}</span>
-                <span class="roster-pwr-band">(${pwrBand})</span>
-              </div>
+    const baseStats = unit.stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
+    const totalAtk = baseStats.atk + equipStats.atk;
+    const totalDef = baseStats.def + equipStats.def;
+    const totalAgi = baseStats.agi + equipStats.agi;
+    const totalAcc = baseStats.acc + equipStats.acc;
+    const totalHp = baseStats.maxHp + equipStats.hp;
+    const portraitPath = getUnitPortraitPath(unitId);
+    
+    // PWR display
+    const pwr = (unit as any).pwr || 0;
+    const pwrBand = getPWRBand(pwr);
+    const pwrColor = getPWRBandColor(pwr);
+
+    return `
+      <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" 
+           data-unit-id="${unitId}" 
+           data-section="${isInParty ? 'party' : 'reserve'}">
+        <div class="roster-unit-header">
+          <div class="roster-unit-portrait">
+            <img src="${portraitPath}" alt="${unit.name}" class="roster-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+          </div>
+          <div class="roster-unit-header-text">
+            <div class="roster-unit-name">${unit.name}</div>
+            <div class="roster-unit-class">${formatClassName(unitClass)}</div>
+            <div class="roster-unit-pwr" style="color: ${pwrColor}">
+              <span class="roster-pwr-label">PWR:</span>
+              <span class="roster-pwr-value">${pwr}</span>
+              <span class="roster-pwr-band">(${pwrBand})</span>
             </div>
           </div>
-          <div class="roster-unit-body">
-            <div class="roster-unit-stats">
-              <div class="roster-stat">
-                <span class="roster-stat-label">HP</span>
-                <span class="roster-stat-value">${totalHp}</span>
-                ${formatStatDiff(equipStats.hp)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">ATK</span>
-                <span class="roster-stat-value">${totalAtk}</span>
-                ${formatStatDiff(equipStats.atk)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">DEF</span>
-                <span class="roster-stat-value">${totalDef}</span>
-                ${formatStatDiff(equipStats.def)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">AGI</span>
-                <span class="roster-stat-value">${totalAgi}</span>
-                ${formatStatDiff(equipStats.agi)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">ACC</span>
-                <span class="roster-stat-value">${totalAcc}</span>
-                ${formatStatDiff(equipStats.acc)}
-              </div>
+        </div>
+        <div class="roster-unit-body">
+          <div class="roster-unit-stats">
+            <div class="roster-stat">
+              <span class="roster-stat-label">HP</span>
+              <span class="roster-stat-value">${totalHp}</span>
+              ${formatStatDiff(equipStats.hp)}
             </div>
-            <div class="roster-unit-equip">
-              <div class="roster-equip-row">
-                <span class="roster-equip-label">WEAPON</span>
-                <span class="roster-equip-value">${weaponName}</span>
-              </div>
-              <div class="roster-equip-row">
-                <span class="roster-equip-label">DECK</span>
-                <span class="roster-equip-value">${deckSize} cards</span>
-              </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">ATK</span>
+              <span class="roster-stat-value">${totalAtk}</span>
+              ${formatStatDiff(equipStats.atk)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">DEF</span>
+              <span class="roster-stat-value">${totalDef}</span>
+              ${formatStatDiff(equipStats.def)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">AGI</span>
+              <span class="roster-stat-value">${totalAgi}</span>
+              ${formatStatDiff(equipStats.agi)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">ACC</span>
+              <span class="roster-stat-value">${totalAcc}</span>
+              ${formatStatDiff(equipStats.acc)}
             </div>
           </div>
-          <div class="roster-unit-footer">
-            ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
+          <div class="roster-unit-equip">
+            <div class="roster-equip-row">
+              <span class="roster-equip-label">WEAPON</span>
+              <span class="roster-equip-value">${weaponName}</span>
+            </div>
+            <div class="roster-equip-row">
+              <span class="roster-equip-label">DECK</span>
+              <span class="roster-equip-value">${deckSize} cards</span>
+            </div>
+          </div>
+        </div>
+        <div class="roster-unit-footer">
+          ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
+          <div class="roster-unit-actions">
+            <button class="roster-toggle-party-btn ${isInParty ? 'roster-toggle-party-btn--remove' : 'roster-toggle-party-btn--add'}" 
+                    data-unit-id="${unitId}" 
+                    data-action="${isInParty ? 'remove' : 'add'}"
+                    type="button"
+                    title="${isInParty ? 'Remove from party' : 'Add to party'}">
+              ${isInParty ? '− REMOVE' : '+ ADD TO PARTY'}
+            </button>
             <button class="roster-detail-btn" data-unit-id="${unitId}" type="button">MANAGE</button>
           </div>
         </div>
-      `;
-    })
-    .join("");
+      </div>
+    `;
+  };
+
+  const partyCardsHtml = partyUnits.map(id => renderUnitCard(id, true)).join("");
+  const reserveCardsHtml = reserveUnits.map(id => renderUnitCard(id, false)).join("");
 
   root.innerHTML = `
     <div class="roster-root">
@@ -178,8 +194,27 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
           </div>
         </div>
         <div class="roster-body">
-          <div class="roster-grid">
-            ${unitCardsHtml}
+          <div class="roster-sections">
+            <div class="roster-section roster-section--party">
+              <div class="roster-section-header">
+                <div class="roster-section-title">PARTY (${partyUnitIds.length})</div>
+                <div class="roster-section-subtitle">Units that will participate in battles</div>
+              </div>
+              <div class="roster-section-grid roster-section-grid--party" 
+                   data-section="party">
+                ${partyCardsHtml || '<div class="roster-section-empty">Click "ADD TO PARTY" on reserve units to add them here</div>'}
+              </div>
+            </div>
+            <div class="roster-section roster-section--reserve">
+              <div class="roster-section-header">
+                <div class="roster-section-title">RESERVE (${reserveUnits.length})</div>
+                <div class="roster-section-subtitle">Units not currently in party</div>
+              </div>
+              <div class="roster-section-grid roster-section-grid--reserve" 
+                   data-section="reserve">
+                ${reserveCardsHtml || '<div class="roster-section-empty">No reserve units</div>'}
+              </div>
+            </div>
           </div>
         </div>
         <div class="roster-footer">
@@ -205,9 +240,55 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
   attachRosterListeners(root, returnTo);
 }
 
+// Functions to manage party membership
+function addUnitToParty(unitId: string): void {
+  updateGameState((prev) => {
+    const partyUnitIds = prev.partyUnitIds || [];
+    if (!partyUnitIds.includes(unitId)) {
+      return {
+        ...prev,
+        partyUnitIds: [...partyUnitIds, unitId],
+      };
+    }
+    return prev;
+  });
+}
+
+function removeUnitFromParty(unitId: string): void {
+  updateGameState((prev) => {
+    const partyUnitIds = prev.partyUnitIds || [];
+    return {
+      ...prev,
+      partyUnitIds: partyUnitIds.filter(id => id !== unitId),
+    };
+  });
+}
+
 function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
   // Use setTimeout to ensure DOM is fully rendered
   setTimeout(() => {
+    // Toggle party buttons - click to add/remove from party
+    root.querySelectorAll(".roster-toggle-party-btn").forEach((btn) => {
+      const button = btn as HTMLElement;
+      const unitId = button.getAttribute("data-unit-id");
+      const action = button.getAttribute("data-action");
+
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        
+        if (!unitId) return;
+
+        if (action === "add") {
+          addUnitToParty(unitId);
+        } else if (action === "remove") {
+          removeUnitFromParty(unitId);
+        }
+        
+        // Re-render to show updated sections
+        renderRosterScreen(returnTo);
+      });
+    });
     // Back button
     const backBtn = root.querySelector(".roster-back-btn");
     if (backBtn) {
@@ -286,7 +367,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       button.style.zIndex = "10";
     });
 
-    // Unit cards - click anywhere on card to open detail
+    // Unit cards - click anywhere on card to open detail (but not on buttons)
     const unitCards = root.querySelectorAll(".roster-unit-card");
     console.log(`[ROSTER] Found ${unitCards.length} unit cards`);
     
@@ -297,8 +378,8 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       // Use onclick for reliability
       cardEl.onclick = (e) => {
         const target = e.target as HTMLElement;
-        // Don't open if clicking on the button
-        if (target.closest(".roster-detail-btn")) {
+        // Don't open if clicking on buttons
+        if (target.closest(".roster-detail-btn") || target.closest(".roster-toggle-party-btn")) {
           return;
         }
         console.log(`[ROSTER] Unit card ${index} clicked, unitId: ${unitId}`);
@@ -314,7 +395,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       // Also add event listener
       card.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
-        if (target.closest(".roster-detail-btn")) {
+        if (target.closest(".roster-detail-btn") || target.closest(".roster-toggle-party-btn")) {
           return;
         }
         const unitId = cardEl.getAttribute("data-unit-id");

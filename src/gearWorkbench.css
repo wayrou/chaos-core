@@ -265,27 +265,79 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: linear-gradient(90deg, rgba(53, 255, 149, 0.15) 0%, transparent 100%);
-  border: 1px solid rgba(53, 255, 149, 0.4);
+  /* Paper aesthetic for slotted cards */
+  background: 
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 1px,
+      rgba(220, 210, 195, 0.15) 1px,
+      rgba(220, 210, 195, 0.15) 2px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 1px,
+      rgba(220, 210, 195, 0.1) 1px,
+      rgba(220, 210, 195, 0.1) 2px
+    ),
+    linear-gradient(
+      145deg,
+      #f5f0e8 0%,
+      #ede8e0 50%,
+      #f5f0e8 100%
+    ),
+    linear-gradient(90deg, rgba(53, 255, 149, 0.15) 0%, transparent 100%);
+  border: 2px solid rgba(53, 255, 149, 0.5);
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  position: relative;
+}
+
+.slot-card--filled::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: 
+    linear-gradient(to bottom, rgba(200, 190, 175, 0.1) 0%, transparent 3%),
+    linear-gradient(to top, rgba(200, 190, 175, 0.1) 0%, transparent 3%),
+    linear-gradient(to right, rgba(200, 190, 175, 0.1) 0%, transparent 3%),
+    linear-gradient(to left, rgba(200, 190, 175, 0.1) 0%, transparent 3%);
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 .slot-card-name {
   font-size: 0.7rem;
   font-weight: 500;
-  color: #35ff95;
+  color: #1a7a48;
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);
 }
 
 .slot-card-remove {
   font-size: 0.7rem;
-  color: #ff6b6b;
+  color: #c3132c;
   cursor: pointer;
   padding: 0.2rem 0.4rem;
   border-radius: 2px;
   transition: all 0.2s ease;
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(195, 19, 44, 0.3);
 }
 
 .slot-card-remove:hover {
-  background: rgba(255, 107, 107, 0.2);
+  background: rgba(195, 19, 44, 0.2);
+  border-color: rgba(195, 19, 44, 0.5);
 }
 
 .slot-card--empty {
@@ -530,66 +582,146 @@
   transform: scale(0.95);
 }
 
-/* Card Frame */
+/* Card Frame - Physical Paper Card Aesthetic */
 .card-frame {
-  background: linear-gradient(180deg, #3d3428 0%, #2d261f 40%, #1a1612 100%);
-  border: 2px solid #6b4f2d;
+  /* Warm ivory/parchment paper color with texture */
+  background: 
+    /* Subtle noise texture for paper grain */
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E"),
+    /* Paper fiber texture - subtle vertical lines */
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(200, 190, 175, 0.12) 2px,
+      rgba(200, 190, 175, 0.12) 3px
+    ),
+    /* Paper fiber texture - subtle horizontal lines */
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 2px,
+      rgba(200, 190, 175, 0.08) 2px,
+      rgba(200, 190, 175, 0.08) 3px
+    ),
+    /* Subtle vignette toward edges */
+    radial-gradient(
+      ellipse at center,
+      transparent 0%,
+      transparent 60%,
+      rgba(180, 170, 155, 0.15) 100%
+    ),
+    /* Warm ivory/parchment base - warmer, more yellow-brown */
+    linear-gradient(
+      145deg,
+      #f0e8d8 0%,
+      #e8dcc8 30%,
+      #f0e8d8 60%,
+      #e8dcc8 100%
+    );
+  border: 2px solid rgba(160, 145, 130, 0.7);
   border-radius: 6px;
   overflow: hidden;
   position: relative;
+  /* Physical card shadow - soft, downward offset, implies thickness */
   box-shadow: 
-    0 2px 8px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 6px 20px rgba(0, 0, 0, 0.4),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    /* Inner border/inset shadow for cut edges */
+    inset 0 0 0 1px rgba(140, 125, 110, 0.4),
+    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Paper edge definition - darker edges for cut/tangible feel */
+.card-frame::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 6px;
+  background: 
+    /* Edge darkening - more pronounced for physical feel */
+    linear-gradient(to bottom, rgba(150, 135, 120, 0.2) 0%, transparent 4%),
+    linear-gradient(to top, rgba(150, 135, 120, 0.2) 0%, transparent 4%),
+    linear-gradient(to right, rgba(150, 135, 120, 0.2) 0%, transparent 4%),
+    linear-gradient(to left, rgba(150, 135, 120, 0.2) 0%, transparent 4%);
+  pointer-events: none;
+  opacity: 0.8;
+  z-index: 1;
 }
 
 .library-card:hover .card-frame {
-  border-color: #a87c45;
+  border-color: rgba(140, 125, 110, 0.9);
+  /* Enhanced shadow on hover - card lifts off surface */
   box-shadow: 
-    0 4px 16px rgba(0, 0, 0, 0.5),
-    0 0 20px rgba(168, 124, 69, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 8px 24px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(140, 125, 110, 0.5),
+    inset 0 1px 3px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
 }
 
-/* Rarity Border Colors */
+/* Rarity Border Colors - Override paper background while keeping paper aesthetic */
 .library-card--common .card-frame {
-  border-color: #666;
+  border-color: rgba(100, 100, 100, 0.6);
 }
 .library-card--common:hover .card-frame {
-  border-color: #888;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 15px rgba(136, 136, 136, 0.3);
+  border-color: rgba(136, 136, 136, 0.8);
+  box-shadow: 
+    0 0 0 2px rgba(136, 136, 136, 0.4),
+    0 6px 18px rgba(136, 136, 136, 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 .library-card--uncommon .card-frame {
-  border-color: #35ff95;
+  border-color: rgba(53, 255, 149, 0.6);
 }
 .library-card--uncommon:hover .card-frame {
-  border-color: #5fffaf;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(53, 255, 149, 0.4);
+  border-color: rgba(95, 255, 175, 0.8);
+  box-shadow: 
+    0 0 0 2px rgba(53, 255, 149, 0.4),
+    0 6px 18px rgba(53, 255, 149, 0.4),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 .library-card--rare .card-frame {
-  border-color: #8ce6ff;
+  border-color: rgba(140, 230, 255, 0.6);
 }
 .library-card--rare:hover .card-frame {
-  border-color: #b0eeff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(140, 230, 255, 0.4);
+  border-color: rgba(176, 238, 255, 0.8);
+  box-shadow: 
+    0 0 0 2px rgba(140, 230, 255, 0.4),
+    0 6px 18px rgba(140, 230, 255, 0.4),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 .library-card--epic .card-frame {
-  border-color: #c0b3ff;
+  border-color: rgba(192, 179, 255, 0.6);
 }
 .library-card--epic:hover .card-frame {
-  border-color: #d8cfff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(192, 179, 255, 0.4);
+  border-color: rgba(216, 207, 255, 0.8);
+  box-shadow: 
+    0 0 0 2px rgba(192, 179, 255, 0.4),
+    0 6px 18px rgba(192, 179, 255, 0.4),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 .library-card--legendary .card-frame {
-  border-color: #ffcc6e;
-  background: linear-gradient(180deg, #4d3d28 0%, #3d2d18 40%, #2a1a08 100%);
+  border-color: rgba(255, 204, 110, 0.6);
 }
 .library-card--legendary:hover .card-frame {
-  border-color: #ffd88a;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 25px rgba(255, 204, 110, 0.5);
+  border-color: rgba(255, 216, 138, 0.8);
+  box-shadow: 
+    0 0 0 2px rgba(255, 204, 110, 0.5),
+    0 6px 18px rgba(255, 204, 110, 0.5),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 /* Card Header */
@@ -598,44 +730,54 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.4rem 0.5rem;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0%, transparent 100%);
-  border-bottom: 1px solid rgba(168, 124, 69, 0.2);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.15) 0%, transparent 100%);
+  border-bottom: 1px solid rgba(150, 140, 125, 0.3);
+  position: relative;
+  z-index: 2;
 }
 
 .card-name {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: #1a1612; /* Near-black ink color - printed into paper */
+  text-shadow: 
+    0 0.5px 1px rgba(255, 255, 255, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.15);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
   margin-right: 0.3rem;
+  position: relative;
+  z-index: 2;
 }
 
 .card-strain {
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: linear-gradient(180deg, #4a3d2d 0%, #2d261f 100%);
-  border: 1px solid rgba(255, 204, 110, 0.4);
+  background: linear-gradient(180deg, rgba(200, 190, 175, 0.5) 0%, rgba(180, 170, 155, 0.4) 100%);
+  border: 1px solid rgba(140, 125, 110, 0.7);
   border-radius: 3px;
   padding: 0.15rem 0.3rem;
   min-width: 28px;
+  position: relative;
+  z-index: 2;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 .strain-value {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #ffcc6e;
+  color: #1a1612; /* Dark ink */
   line-height: 1;
+  text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.2);
 }
 
 .strain-label {
   font-size: 0.4rem;
   font-family: 'Consolas', monospace;
-  color: #a87c45;
+  color: #3a3028; /* Dark brown ink */
   letter-spacing: 0.05em;
 }
 
@@ -646,9 +788,11 @@
   align-items: center;
   justify-content: center;
   background: 
-    linear-gradient(180deg, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0.1) 50%, rgba(0, 0, 0, 0.3) 100%),
-    radial-gradient(ellipse at center, rgba(168, 124, 69, 0.1) 0%, transparent 70%);
-  border-bottom: 1px solid rgba(168, 124, 69, 0.15);
+    linear-gradient(180deg, rgba(0, 0, 0, 0.1) 0%, rgba(0, 0, 0, 0.05) 50%, rgba(0, 0, 0, 0.1) 100%),
+    radial-gradient(ellipse at center, rgba(150, 140, 125, 0.15) 0%, transparent 70%);
+  border-bottom: 1px solid rgba(150, 140, 125, 0.25);
+  position: relative;
+  z-index: 2;
 }
 
 .card-art-icon {
@@ -661,15 +805,18 @@
   display: flex;
   justify-content: space-between;
   padding: 0.2rem 0.5rem;
-  background: rgba(0, 0, 0, 0.4);
-  border-bottom: 1px solid rgba(168, 124, 69, 0.15);
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(150, 140, 125, 0.25);
+  position: relative;
+  z-index: 2;
 }
 
 .card-category {
   font-size: 0.45rem;
   font-family: 'Consolas', monospace;
-  color: #8ce6ff;
+  color: #2a4a6b; /* Darker, more muted blue - printed ink, not neon */
   letter-spacing: 0.05em;
+  text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.15);
 }
 
 .card-rarity {
@@ -693,9 +840,14 @@
 
 .card-description {
   font-size: 0.55rem;
-  color: #c9a66b;
+  color: #2a2520; /* Dark brown ink - printed into paper, not floating */
   line-height: 1.35;
   margin: 0;
+  position: relative;
+  z-index: 2;
+  text-shadow: 
+    0 0.5px 1px rgba(255, 255, 255, 0.15),
+    0 1px 1px rgba(0, 0, 0, 0.1);
 }
 
 /* Card Footer */
@@ -703,17 +855,21 @@
   display: flex;
   justify-content: flex-end;
   padding: 0.25rem 0.5rem;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(168, 124, 69, 0.1);
+  background: rgba(0, 0, 0, 0.1);
+  border-top: 1px solid rgba(150, 140, 125, 0.2);
+  position: relative;
+  z-index: 2;
 }
 
 .card-owned {
   font-size: 0.55rem;
   font-family: 'Consolas', monospace;
-  color: #6b4f2d;
-  background: rgba(0, 0, 0, 0.3);
+  color: #2a2520; /* Dark ink */
+  background: rgba(200, 190, 175, 0.5);
   padding: 0.1rem 0.3rem;
   border-radius: 2px;
+  border: 1px solid rgba(140, 125, 110, 0.5);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 /* --------------------------------------------------------------------------

@@ -100,6 +100,26 @@ function createBaseCampMap(): FieldMap {
       sprite: "tavern",
       metadata: { name: "Tavern" },
     },
+    {
+      id: "gear_workbench_station",
+      x: 11,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "gear_workbench",
+      metadata: { name: "Gear Workbench" },
+    },
+    {
+      id: "port_station",
+      x: 13,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "port",
+      metadata: { name: "Port" },
+    },
   ];
   
   // Interaction zones (in front of each station)
@@ -166,6 +186,24 @@ function createBaseCampMap(): FieldMap {
       height: 1,
       action: "tavern",
       label: "TAVERN",
+    },
+    {
+      id: "interact_gear_workbench",
+      x: 11,
+      y: 12,
+      width: 2,
+      height: 1,
+      action: "gear_workbench",
+      label: "GEAR WORKBENCH",
+    },
+    {
+      id: "interact_port",
+      x: 13,
+      y: 12,
+      width: 2,
+      height: 1,
+      action: "port",
+      label: "PORT",
     },
     {
       id: "enter_free_zone",

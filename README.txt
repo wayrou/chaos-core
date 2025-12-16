@@ -535,7 +535,34 @@ Implement sable, a dog companion that excitedly runs around and follows you on t
 
 Implement NPCs that walk around the base camp screen and that you can talk to, opening placeholder dialogue that the player can advance through.
 
+
+15ba. "auto battle" toggle for each friendly unit
+
+More than 2 units per side per battle encounter (choosing unit placement from units in party) (Grid Sizes: as small as 4x3 and as big as 8x6- max units allowed to be placed are grid area x 0.25 clamp 3-10. )
+
+When deck reaches <5 (can't draw a full hand from deck) reshuffle discard pile into deck
+
+Auto equip gear per unit in unit management screen
+
+Give cards paper computer punch card aesthetic
+
 -----------------------IMPLEMENTED UP TO HERE-----------------------------
+
+15c. Implement all cards and card effects
+
+15d. Implement all equipment fully
+
+20. The story update
+
+Implement all 5 operations fully, custom operation option
+
+20a. Minigame update
+
+-"Mini Core" minigame 
+
+20b. The Echo Run - Draft Mode update
+
+21. Multiplayer update
 
 16b. Character portraits + sprites
 
@@ -564,15 +591,7 @@ Damage numbers popping up, small screen shake on heavy hits.
 
 Tooltips for tiles, units, and cards.
 
-20. The story update
 
-Implement all 5 operations fully, custom operation option
-
-20a. Minigame update
-
-20b. The Echo Run - Draft Mode update
-
-21. Multiplayer update
 
 
 

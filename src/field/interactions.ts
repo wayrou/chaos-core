@@ -10,6 +10,8 @@ import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
 import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
 import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
 import { renderRecruitmentScreen } from "../ui/screens/RecruitmentScreen";
+import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
+import { renderPortScreen } from "../ui/screens/PortScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
@@ -56,6 +58,14 @@ export function handleInteraction(
       
     case "tavern":
       renderRecruitmentScreen("field");
+      break;
+      
+    case "gear_workbench":
+      renderGearWorkbenchScreen(undefined, undefined, "field");
+      break;
+      
+    case "port":
+      renderPortScreen("field");
       break;
       
     case "free_zone_entry":

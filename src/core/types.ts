@@ -296,6 +296,11 @@ equipmentPool?: string[];
     P1: Player;
     P2: Player;
   };
+
+  // Port System - Base Camp Visit Tracking
+  baseCampVisitIndex?: number; // Increments each time player enters base camp
+  portManifest?: import("./portTrades").PortManifest; // Current port manifest
+  portTradesRemaining?: number; // Tracks remaining normal trades this visit (max 2)
 }
 
 interface GearSlotData {

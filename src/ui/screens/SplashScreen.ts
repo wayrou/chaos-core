@@ -28,3 +28,9 @@ export function renderSplashScreen(): void {
   }, 2000);
 }
 
+
+
+
+
+
+

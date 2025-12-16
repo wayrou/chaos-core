@@ -506,6 +506,11 @@ consumables: {},
         controlledUnitIds: [],
       },
     },
+
+    // Port System
+    baseCampVisitIndex: 0,
+    portManifest: undefined,
+    portTradesRemaining: 2,
   };
 
   // Initialize unit controllers to P1 by default

@@ -4,7 +4,8 @@
 // Hooks affinity tracking into battle actions
 // ============================================================================
 
-import { UnitId, BattleState, BattleUnitState } from "./types";
+import { UnitId } from "./types";
+import { BattleState } from "./battle";
 import {
   recordMeleeAttack,
   recordRangedSkill,
@@ -13,7 +14,7 @@ import {
   recordMobilityAction,
   recordSurvival,
 } from "./affinity";
-import { getGameState, updateGameState } from "../state/gameStore";
+import { updateGameState } from "../state/gameStore";
 
 /**
  * Track affinity for a melee attack
@@ -22,9 +23,8 @@ export function trackMeleeAttackInBattle(attackerId: UnitId, battle: BattleState
   const attacker = battle.units[attackerId];
   if (!attacker || attacker.isEnemy) return;
 
-  const baseUnitId = attacker.baseUnitId || attackerId;
   updateGameState((state) => {
-    recordMeleeAttack(baseUnitId, state);
+    recordMeleeAttack(attackerId, state);
     return state;
   });
 }
@@ -36,9 +36,8 @@ export function trackRangedSkillInBattle(unitId: UnitId, battle: BattleState): v
   const unit = battle.units[unitId];
   if (!unit || unit.isEnemy) return;
 
-  const baseUnitId = unit.baseUnitId || unitId;
   updateGameState((state) => {
-    recordRangedSkill(baseUnitId, state);
+    recordRangedSkill(unitId, state);
     return state;
   });
 }
@@ -50,9 +49,8 @@ export function trackMagicSpellInBattle(unitId: UnitId, battle: BattleState): vo
   const unit = battle.units[unitId];
   if (!unit || unit.isEnemy) return;
 
-  const baseUnitId = unit.baseUnitId || unitId;
   updateGameState((state) => {
-    recordMagicSpell(baseUnitId, state);
+    recordMagicSpell(unitId, state);
     return state;
   });
 }
@@ -64,9 +62,8 @@ export function trackSupportActionInBattle(unitId: UnitId, battle: BattleState):
   const unit = battle.units[unitId];
   if (!unit || unit.isEnemy) return;
 
-  const baseUnitId = unit.baseUnitId || unitId;
   updateGameState((state) => {
-    recordSupportAction(baseUnitId, state);
+    recordSupportAction(unitId, state);
     return state;
   });
 }
@@ -78,9 +75,8 @@ export function trackMobilityActionInBattle(unitId: UnitId, battle: BattleState)
   const unit = battle.units[unitId];
   if (!unit || unit.isEnemy) return;
 
-  const baseUnitId = unit.baseUnitId || unitId;
   updateGameState((state) => {
-    recordMobilityAction(baseUnitId, state);
+    recordMobilityAction(unitId, state);
     return state;
   });
 }
@@ -95,8 +91,7 @@ export function trackBattleSurvival(battle: BattleState, victory: boolean): void
 
   updateGameState((state) => {
     for (const battleUnit of playerUnits) {
-      const baseUnitId = battleUnit.baseUnitId || battleUnit.id;
-      const baseUnit = state.unitsById[baseUnitId];
+      const baseUnit = state.unitsById[battleUnit.id];
       if (!baseUnit) continue;
 
       // Calculate damage taken (estimate from HP difference)
@@ -104,7 +99,7 @@ export function trackBattleSurvival(battle: BattleState, victory: boolean): void
       const currentHp = battleUnit.hp;
       const damageTaken = Math.max(0, maxHp - currentHp);
 
-      recordSurvival(baseUnitId, damageTaken, true, state);
+      recordSurvival(battleUnit.id, damageTaken, true, state);
     }
     return state;
   });

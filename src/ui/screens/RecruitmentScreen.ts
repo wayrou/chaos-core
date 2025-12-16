@@ -202,9 +202,12 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  // Back button
-  root.querySelector(".recruitment-back-btn")?.addEventListener("click", () => {
-    if (returnTo === "field") {
+  // Back button - check data attribute first as fallback
+  root.querySelector(".recruitment-back-btn")?.addEventListener("click", (e) => {
+    const btn = e.currentTarget as HTMLElement;
+    const returnDestination = btn.getAttribute("data-return-to") || returnTo;
+    
+    if (returnDestination === "field") {
       // Return to field mode
       import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
         renderFieldScreen("base_camp");
@@ -212,7 +215,7 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
     } else {
       // Return to base camp screen
       import("./BaseCampScreen").then(({ renderBaseCampScreen }) => {
-        renderBaseCampScreen();
+        renderBaseCampScreen(returnDestination === "menu" ? "menu" : "basecamp");
       });
     }
   });
