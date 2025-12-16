@@ -2,6 +2,7 @@
 // RECRUITMENT SCREEN - Headline 14az
 // ============================================================================
 // UI for viewing and hiring recruitment candidates from Taverns/Contract Boards
+// Includes NPC conversation system on the right side
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
@@ -9,11 +10,44 @@ import { RecruitmentCandidate, GUILD_ROSTER_LIMITS } from "../../core/types";
 import { generateCandidates, hireCandidate, getRosterSize } from "../../core/recruitment";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
+// ----------------------------------------------------------------------------
+// NPC CONVERSATION SYSTEM STATE
+// ----------------------------------------------------------------------------
+
+let npcWindowInterval: number | null = null;
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number }> = [];
+let npcWindowIdCounter = 0;
+
+// NPC dialogue data - conversations between NPCs in the tavern
+const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+  { name: "BARTENDER", text: "Another long day, commander? The usual, or something stronger?" },
+  { name: "VETERAN OPERATOR", text: "Been in this war longer than I care to remember. Seen too many good operators not come back." },
+  { name: "INTEL BROKER", text: "Heard rumors about a new operation zone. Dangerous, but the rewards could be worth it." },
+  { name: "MERCENARY", text: "Looking for work. Got a squad, got gear, just need a contract. You hiring?" },
+  { name: "TACTICIAN", text: "The key to survival isn't just firepower. It's knowing when to fight and when to run." },
+  { name: "SCOUT", text: "Scouted the perimeter earlier. Enemy activity's picking up. Something big's coming." },
+  { name: "MEDIC", text: "Treating wounds, patching up operators. The med bay's full, but we're managing." },
+  { name: "SUPPLY OFFICER", text: "Resources are running low. We need more metal scrap if we're going to keep the operation running." },
+  { name: "COMMS OPERATOR", text: "Intercepted some enemy chatter. They're planning something. We should be ready." },
+  { name: "WEAPONS SMITH", text: "Got some new gear in. Custom modifications, better than standard issue. Interested?" },
+  { name: "SQUAD LEADER", text: "Lost two good operators last mission. War's getting worse, not better." },
+  { name: "RECRUITER", text: "Always looking for new talent. Good operators are hard to find, harder to keep." },
+  { name: "STRATEGIST", text: "The enemy's adapting. We need to change tactics, or we'll keep losing ground." },
+  { name: "FIELD ENGINEER", text: "Working on some new field mods. Experimental stuff, but it could give us an edge." },
+  { name: "COMMANDER", text: "Every operation matters. Every decision counts. The war won't win itself." },
+  { name: "RUMOR MONGER", text: "Heard about a hidden cache in the old sector. Worth checking out, if you're brave enough." },
+  { name: "WAR CORRESPONDENT", text: "Documenting the war, one operation at a time. History needs to remember what happened here." },
+  { name: "QUARTERMASTER", text: "Managing supplies, tracking inventory. It's not glamorous, but someone's got to do it." },
+];
+
 // ============================================================================
 // RENDER
 // ============================================================================
 
 export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+  // Stop any existing NPC window system
+  stopNpcWindowSystem();
+  
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -55,69 +89,82 @@ export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "baseca
 
   root.innerHTML = `
     <div class="recruitment-root">
-      <div class="recruitment-card">
-        <div class="recruitment-header">
-          <div class="recruitment-header-left">
-            <div class="recruitment-title">TAVERN - RECRUITMENT HUB</div>
-            <div class="recruitment-subtitle">Review available candidates and hire new units</div>
-          </div>
-          <div class="recruitment-header-right">
-            <div class="recruitment-stats">
-              <div class="recruitment-stat-item">
-                <span class="recruitment-stat-label">ROSTER:</span>
-                <span class="recruitment-stat-value">${rosterSize} / ${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
+      <div class="recruitment-content-wrapper">
+        <!-- Left Column: Recruitment -->
+        <div class="recruitment-main-panel">
+          <div class="recruitment-card">
+            <div class="recruitment-header">
+              <div class="recruitment-header-left">
+                <div class="recruitment-title">TAVERN - RECRUITMENT HUB</div>
+                <div class="recruitment-subtitle">Review available candidates and hire new units</div>
               </div>
-              <div class="recruitment-stat-item">
-                <span class="recruitment-stat-label">WAD:</span>
-                <span class="recruitment-stat-value">${wad}</span>
+              <div class="recruitment-header-right">
+                <div class="recruitment-stats">
+                  <div class="recruitment-stat-item">
+                    <span class="recruitment-stat-label">ROSTER:</span>
+                    <span class="recruitment-stat-value">${rosterSize} / ${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
+                  </div>
+                  <div class="recruitment-stat-item">
+                    <span class="recruitment-stat-label">WAD:</span>
+                    <span class="recruitment-stat-value">${wad}</span>
+                  </div>
+                </div>
+                <button class="recruitment-back-btn" data-return-to="${returnTo}">BACK</button>
               </div>
             </div>
-            <button class="recruitment-back-btn" data-return-to="${returnTo}">BACK</button>
+            
+            <div class="recruitment-body">
+              ${rosterSize >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS ? `
+                <div class="recruitment-warning">
+                  ⚠️ ROSTER IS FULL (${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS})
+                  <br/>Dismiss units from the roster before recruiting new ones.
+                </div>
+              ` : ""}
+              
+              <div class="recruitment-candidates-grid">
+                ${candidatesHtml}
+              </div>
+            </div>
+            
+            <div class="recruitment-footer">
+              <div class="recruitment-legend">
+                <span class="recruitment-legend-item">
+                  <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(50)}"></span>
+                  Rookie (0-50 PWR)
+                </span>
+                <span class="recruitment-legend-item">
+                  <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(75)}"></span>
+                  Standard (51-100 PWR)
+                </span>
+                <span class="recruitment-legend-item">
+                  <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(125)}"></span>
+                  Veteran (101-150 PWR)
+                </span>
+                <span class="recruitment-legend-item">
+                  <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(175)}"></span>
+                  Elite (151-200 PWR)
+                </span>
+                <span class="recruitment-legend-item">
+                  <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(250)}"></span>
+                  Paragon (201+ PWR)
+                </span>
+              </div>
+            </div>
           </div>
         </div>
         
-        <div class="recruitment-body">
-          ${rosterSize >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS ? `
-            <div class="recruitment-warning">
-              ⚠️ ROSTER IS FULL (${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS})
-              <br/>Dismiss units from the roster before recruiting new ones.
-            </div>
-          ` : ""}
-          
-          <div class="recruitment-candidates-grid">
-            ${candidatesHtml}
-          </div>
-        </div>
-        
-        <div class="recruitment-footer">
-          <div class="recruitment-legend">
-            <span class="recruitment-legend-item">
-              <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(50)}"></span>
-              Rookie (0-50 PWR)
-            </span>
-            <span class="recruitment-legend-item">
-              <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(75)}"></span>
-              Standard (51-100 PWR)
-            </span>
-            <span class="recruitment-legend-item">
-              <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(125)}"></span>
-              Veteran (101-150 PWR)
-            </span>
-            <span class="recruitment-legend-item">
-              <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(175)}"></span>
-              Elite (151-200 PWR)
-            </span>
-            <span class="recruitment-legend-item">
-              <span class="recruitment-legend-dot" style="background: ${getPWRBandColor(250)}"></span>
-              Paragon (201+ PWR)
-            </span>
-          </div>
+        <!-- Right Column: NPC Conversations -->
+        <div class="recruitment-npc-panel">
+          ${renderNpcFlavorText()}
         </div>
       </div>
     </div>
   `;
 
   attachEventListeners(returnTo);
+  
+  // Start the NPC window system
+  startNpcWindowSystem();
 }
 
 /**
@@ -195,6 +242,141 @@ function renderCandidateCard(candidate: RecruitmentCandidate, playerWad: number)
   `;
 }
 
+// ----------------------------------------------------------------------------
+// NPC WINDOW SYSTEM
+// ----------------------------------------------------------------------------
+
+function renderNpcFlavorText(): string {
+  return `
+    <div class="recruitment-npc-panel-content">
+      <h2 class="recruitment-npc-panel-title">TAVERN CHATTER</h2>
+      <div class="recruitment-npc-windows-container" id="recruitmentNpcWindowsContainer">
+        ${activeNpcWindows.map(window => `
+          <div class="recruitment-npc-window recruitment-npc-window--visible" data-window-id="${window.id}">
+            <div class="recruitment-npc-name">${window.name}</div>
+            <div class="recruitment-npc-text">${window.text}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function startNpcWindowSystem(): void {
+  // Clear any existing interval
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+  }
+  
+  // Clear existing windows
+  activeNpcWindows = [];
+  npcWindowIdCounter = 0;
+  
+  // Add initial windows (2-3 to start)
+  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+  for (let i = 0; i < initialCount; i++) {
+    addNpcWindow();
+  }
+  
+  // Update the DOM
+  updateNpcWindowsDOM();
+  
+  // Start the cycle: add new windows and remove old ones
+  npcWindowInterval = window.setInterval(() => {
+    // Random chance to add a new window (60% chance)
+    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+      addNpcWindow();
+    }
+    
+    // Remove old windows (random, but keep at least 1)
+    if (activeNpcWindows.length > 1) {
+      const now = Date.now();
+      // Remove windows older than 8-12 seconds
+      const maxAge = 8000 + Math.random() * 4000;
+      activeNpcWindows = activeNpcWindows.filter(window => {
+        const age = now - window.timestamp;
+        return age < maxAge;
+      });
+    }
+    
+    // If we have too many windows, remove the oldest
+    if (activeNpcWindows.length > 4) {
+      activeNpcWindows.shift();
+    }
+    
+    updateNpcWindowsDOM();
+  }, 2000); // Check every 2 seconds
+}
+
+function addNpcWindow(): void {
+  const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const windowId = `recruitment-npc-window-${npcWindowIdCounter++}`;
+  
+  activeNpcWindows.push({
+    id: windowId,
+    name: dialogue.name,
+    text: dialogue.text,
+    timestamp: Date.now(),
+  });
+}
+
+function updateNpcWindowsDOM(): void {
+  const container = document.getElementById("recruitmentNpcWindowsContainer");
+  if (!container) return;
+  
+  // Get current window IDs in DOM
+  const currentWindowIds = Array.from(container.querySelectorAll('.recruitment-npc-window')).map(
+    el => el.getAttribute('data-window-id')
+  );
+  
+  // Get active window IDs
+  const activeWindowIds = activeNpcWindows.map(w => w.id);
+  
+  // Remove windows that are no longer active
+  currentWindowIds.forEach(windowId => {
+    if (windowId && !activeWindowIds.includes(windowId)) {
+      const windowEl = container.querySelector(`[data-window-id="${windowId}"]`);
+      if (windowEl) {
+        windowEl.classList.add('recruitment-npc-window--removing');
+        setTimeout(() => {
+          windowEl.remove();
+        }, 300); // Match animation duration
+      }
+    }
+  });
+  
+  // Add new windows
+  activeNpcWindows.forEach(window => {
+    if (!currentWindowIds.includes(window.id)) {
+      const windowEl = document.createElement('div');
+      windowEl.className = 'recruitment-npc-window';
+      windowEl.setAttribute('data-window-id', window.id);
+      windowEl.innerHTML = `
+        <div class="recruitment-npc-name">${window.name}</div>
+        <div class="recruitment-npc-text">${window.text}</div>
+      `;
+      
+      // Add with animation
+      windowEl.classList.add('recruitment-npc-window--appearing');
+      container.appendChild(windowEl);
+      
+      // Trigger animation
+      requestAnimationFrame(() => {
+        windowEl.classList.remove('recruitment-npc-window--appearing');
+        windowEl.classList.add('recruitment-npc-window--visible');
+      });
+    }
+  });
+}
+
+function stopNpcWindowSystem(): void {
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+    npcWindowInterval = null;
+  }
+  activeNpcWindows = [];
+}
+
 /**
  * Attach event listeners
  */
@@ -204,6 +386,9 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
 
   // Back button - check data attribute first as fallback
   root.querySelector(".recruitment-back-btn")?.addEventListener("click", (e) => {
+    // Stop NPC window system when leaving
+    stopNpcWindowSystem();
+    
     const btn = e.currentTarget as HTMLElement;
     const returnDestination = btn.getAttribute("data-return-to") || returnTo;
     

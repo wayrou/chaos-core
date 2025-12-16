@@ -58,10 +58,8 @@ export function handleInteraction(
       break;
       
     case "tavern":
-      // Show tavern dialogue first, then allow access to recruitment
-      import("../ui/screens/TavernDialogueScreen").then(m => {
-        m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", "field");
-      });
+      // Go directly to recruitment screen (no intro dialogue)
+      renderRecruitmentScreen("field");
       break;
       
     case "gear_workbench":

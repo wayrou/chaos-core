@@ -221,11 +221,6 @@ export class BattleGridRenderer {
               <div class="battle-grid-overlays"></div>
             </div>
           </div>
-          <div class="battle-zoom-controls">
-            <button id="battleZoomOutBtn" class="btn-secondary btn-zoom" type="button">–</button>
-            <div class="battle-zoom-level">${(zoom * 100).toFixed(0)}%</div>
-            <button id="battleZoomInBtn" class="btn-secondary btn-zoom" type="button">+</button>
-          </div>
         </div>
       </div>
     `;

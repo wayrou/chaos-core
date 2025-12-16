@@ -400,12 +400,14 @@ interface BattlePanState {
   x: number;
   y: number;
   keysPressed: Set<string>;
+  shiftPressed: boolean;
 }
 
 let battlePanState: BattlePanState = {
   x: 0,
   y: 0,
   keysPressed: new Set(),
+  shiftPressed: false,
 };
 
 let battlePanAnimationFrame: number | null = null;
@@ -436,17 +438,23 @@ function cleanupBattlePanHandlers(): void {
     battlePanAnimationFrame = null;
   }
   battlePanState.keysPressed.clear();
+  battlePanState.shiftPressed = false;
 }
 
 function setupBattlePanHandlers(): void {
   cleanupBattlePanHandlers();
   
   // Reset pan position
-  battlePanState = { x: 0, y: 0, keysPressed: new Set() };
+  battlePanState = { x: 0, y: 0, keysPressed: new Set(), shiftPressed: false };
 
   battleKeydownHandler = (e: KeyboardEvent) => {
     // Update player input system
     handlePlayerInputKeyDown(e);
+    
+    // Track shift key for speed boost
+    if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
+      battlePanState.shiftPressed = true;
+    }
     
     // Handle facing selection first (if active, arrow keys select facing instead of panning)
     if (turnState.isFacingSelection && localBattleState && activeUnit) {
@@ -502,6 +510,11 @@ function setupBattlePanHandlers(): void {
     // Update player input system
     handlePlayerInputKeyUp(e);
     
+    // Track shift key release
+    if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
+      battlePanState.shiftPressed = false;
+    }
+    
     battlePanState.keysPressed.delete(e.key.toLowerCase());
     
     // Also handle arrow keys
@@ -525,11 +538,15 @@ function startBattlePanLoop(): void {
   const update = () => {
     let dx = 0;
     let dy = 0;
+    
+    // Apply speed multiplier when shift is held
+    const speedMultiplier = battlePanState.shiftPressed ? 2.5 : 1;
+    const currentSpeed = BATTLE_PAN_SPEED * speedMultiplier;
 
-    if (battlePanState.keysPressed.has("w") || battlePanState.keysPressed.has("arrowup")) dy += BATTLE_PAN_SPEED;
-    if (battlePanState.keysPressed.has("s") || battlePanState.keysPressed.has("arrowdown")) dy -= BATTLE_PAN_SPEED;
-    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx += BATTLE_PAN_SPEED;
-    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx -= BATTLE_PAN_SPEED;
+    if (battlePanState.keysPressed.has("w") || battlePanState.keysPressed.has("arrowup")) dy += currentSpeed;
+    if (battlePanState.keysPressed.has("s") || battlePanState.keysPressed.has("arrowdown")) dy -= currentSpeed;
+    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx += currentSpeed;
+    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx -= currentSpeed;
 
     if (dx !== 0 || dy !== 0) {
       battlePanState.x += dx;
@@ -1798,16 +1815,8 @@ function attachBattleListeners() {
   const units = getUnitsArray(battle);
   const isPlacementPhase = battle.phase === "placement";
 
-  // Zoom controls
-  const zoomInBtn = document.getElementById("battleZoomInBtn");
-  const zoomOutBtn = document.getElementById("battleZoomOutBtn");
+  // Zoom controls - mouse wheel only
   const zoomViewport = document.querySelector(".battle-grid-zoom-viewport");
-  if (zoomInBtn) {
-    zoomInBtn.onclick = (e) => { e.stopPropagation(); zoomIn(); };
-  }
-  if (zoomOutBtn) {
-    zoomOutBtn.onclick = (e) => { e.stopPropagation(); zoomOut(); };
-  }
   if (zoomViewport) {
     zoomViewport.addEventListener("wheel", (e) => {
       e.preventDefault();

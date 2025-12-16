@@ -23,6 +23,7 @@ import {
 } from "../../core/saveSystem";
 import { initializeSettings } from "../../core/settings";
 import { initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
+import { loadCraftingRecipes } from "../../core/craftingRecipes";
 
 // ----------------------------------------------------------------------------
 // INITIALIZATION
@@ -37,6 +38,14 @@ async function initializeGame(): Promise<void> {
   
   await initializeSettings();
   initControllerSupport();
+  
+  // Load crafting recipes
+  try {
+    await loadCraftingRecipes();
+  } catch (error) {
+    console.error("[INIT] Failed to load crafting recipes:", error);
+    // Non-fatal - game can continue without recipes
+  }
   
   isInitialized = true;
   console.log("[INIT] Initialization complete");
@@ -95,26 +104,27 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-vignette"></div>
       </div>
       
-      <!-- Main content wrapper - horizontal layout with logo/menu on left, terminal on right -->
+      <!-- Main content wrapper - sleek two-column layout -->
       <div class="mainmenu-content">
         
-        <!-- Left side: Logo and menu -->
-        <div class="mainmenu-left">
-          <!-- Logo centered -->
-          <div class="mainmenu-logo-container">
-            <img 
-              id="logoImage"
-              alt="Chaos Core" 
-              class="mainmenu-logo-image"
-            />
-            <!-- Fallback text logo if image fails to load -->
-            <div id="logoFallback" class="mainmenu-logo mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
-            <div class="mainmenu-logo-glow"></div>
+        <!-- Left column: Unified logo and menu panel -->
+        <div class="mainmenu-left-panel">
+          <!-- Logo section -->
+          <div class="mainmenu-logo-section">
+            <div class="mainmenu-logo-container">
+              <img 
+                id="logoImage"
+                alt="Chaos Core" 
+                class="mainmenu-logo-image"
+              />
+              <div id="logoFallback" class="mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
+              <div class="mainmenu-logo-glow"></div>
+            </div>
             <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
           </div>
           
-          <!-- Card with buttons below logo -->
-          <div class="mainmenu-card">
+          <!-- Menu section - perfectly aligned with logo -->
+          <div class="mainmenu-menu-section">
             <div class="mainmenu-buttons">
               ${hasContinue ? `
                 <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
@@ -157,7 +167,7 @@ export async function renderMainMenu(): Promise<void> {
           </div>
         </div>
         
-        <!-- Right side: ScrollLink Terminal -->
+        <!-- Right column: ScrollLink Terminal -->
         <div class="mainmenu-terminal-container">
           <div class="mainmenu-terminal-window">
             <div class="mainmenu-terminal-header">

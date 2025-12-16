@@ -139,6 +139,7 @@ export interface OperationRun {
   floors: Floor[];
   currentFloorIndex: number;
   currentRoomId: RoomId | null;
+  connections?: Record<string, string[]>; // nodeId -> connected nodeIds (for branching UI)
 }
 
 export interface PlayerProfile {

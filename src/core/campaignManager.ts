@@ -18,8 +18,7 @@ import {
   OPERATION_DEFINITIONS,
 } from "./campaign";
 import { generateNodeMap } from "./nodeMapGenerator";
-import { generateEncounter, EncounterDefinition } from "./encounterGenerator";
-import { generateOperation } from "./procedural";
+import { generateEncounter } from "./encounterGenerator";
 import { OperationRun, Floor, RoomNode } from "./types";
 
 // ----------------------------------------------------------------------------
@@ -117,19 +116,29 @@ export function getAvailableNextNodes(
   nodeMap: NodeMap,
   clearedNodeIds: string[]
 ): RoomNode[] {
+  // Get connections from current node (forward-only: only nodes we can move TO from here)
   const connections = nodeMap.connections[currentNodeId] || [];
   const available: RoomNode[] = [];
+  
+  console.log(`[CAMPAIGN] getAvailableNextNodes: currentNodeId=${currentNodeId}, connections=${connections.length}, clearedNodeIds=${clearedNodeIds.length}`);
   
   for (const connectedId of connections) {
     const node = nodeMap.nodes.find(n => n.id === connectedId);
     if (node) {
-      // Available if not yet cleared (or if we're retrying the current node)
+      // Available if not yet cleared (forward-only: can't go back to cleared nodes)
+      // But we CAN go to uncleared nodes that are connected from current node
       if (!clearedNodeIds.includes(connectedId)) {
         available.push(node);
+        console.log(`[CAMPAIGN] Node ${connectedId} is available (connected from ${currentNodeId})`);
+      } else {
+        console.log(`[CAMPAIGN] Node ${connectedId} is not available (already cleared)`);
       }
+    } else {
+      console.warn(`[CAMPAIGN] Connected node ${connectedId} not found in nodeMap`);
     }
   }
   
+  console.log(`[CAMPAIGN] Returning ${available.length} available nodes: ${available.map(n => n.id).join(", ")}`);
   return available;
 }
 
@@ -359,10 +368,12 @@ export function completeOperationRun(): CampaignProgress {
         log: [],
       };
       
+      pinboard.completedOperations = pinboard.completedOperations || [];
       if (!pinboard.completedOperations.includes(operationId)) {
         pinboard.completedOperations.push(operationId);
       }
       
+      pinboard.log = pinboard.log || [];
       pinboard.log.push({
         timestamp: Date.now(),
         message: `Completed operation: ${operationId}`,
@@ -414,10 +425,12 @@ export function abandonRun(): CampaignProgress {
           log: [],
         };
         
-        if (!pinboard.failedOperations.includes(operationId)) {
+        if (!pinboard.failedOperations?.includes(operationId)) {
+          pinboard.failedOperations = pinboard.failedOperations || [];
           pinboard.failedOperations.push(operationId);
         }
         
+        pinboard.log = pinboard.log || [];
         pinboard.log.push({
           timestamp: Date.now(),
           message: `Failed operation: ${operationId}`,
@@ -461,12 +474,18 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
   const floors: Floor[] = [];
   for (let i = 0; i < activeRun.floorsTotal; i++) {
     const nodeMap = activeRun.nodeMapByFloor[i];
+    if (!nodeMap) {
+      console.warn(`[CAMPAIGN] No node map for floor ${i}`);
+      continue;
+    }
+    
     // Tag visited state and connections based on clearedNodeIds for UI consumption
     const nodesWithVisitFlag = nodeMap.nodes.map(n => ({
       ...n,
       visited: cleared.has(n.id),
       connections: nodeMap.connections[n.id] || [], // Include connections for branching UI
     }));
+    
     floors.push({
       id: `floor_${i}`,
       name: `Floor ${i + 1}`,
@@ -481,6 +500,7 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
     floors,
     currentFloorIndex: activeRun.floorIndex,
     currentRoomId: activeRun.currentNodeId,
+    connections: activeRun.nodeMapByFloor[activeRun.floorIndex]?.connections || {}, // Add connections for UI
   };
 }
 

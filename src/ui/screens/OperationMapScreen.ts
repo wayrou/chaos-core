@@ -6,7 +6,6 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { getCurrentOperation, getCurrentFloor } from "../../core/ops";
-import { createTestBattleForCurrentParty } from "../../core/battle";
 import { renderBattleScreen } from "./BattleScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
@@ -14,22 +13,18 @@ import { renderShopScreen } from "./ShopScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
-import { renderFacilitySelectionScreen } from "./FacilitySelectionScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
-import { canAdvanceToNextFloor, advanceToNextFloor, getBattleTemplate } from "../../core/procedural";
-import { updateQuestProgress } from "../../quests/questManager";
-import { syncCampaignToGameState, getCurrentNodeFromCampaign, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
+import { canAdvanceToNextFloor } from "../../core/procedural";
+import { syncCampaignToGameState, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
 import { 
   moveToNode, 
   clearNode, 
   prepareBattleForNode, 
-  recordBattleVictory,
   advanceToNextFloor as campaignAdvanceFloor,
   completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
-import { grantFloorResources } from "../../core/keyRoomSystem";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 
 // ============================================================================
@@ -40,12 +35,14 @@ interface PanState {
   x: number;
   y: number;
   keysPressed: Set<string>;
+  shiftPressed: boolean;
 }
 
 let panState: PanState = {
   x: 0,
   y: 0,
   keysPressed: new Set(),
+  shiftPressed: false,
 };
 
 let panAnimationFrame: number | null = null;
@@ -70,6 +67,7 @@ function cleanupPanHandlers(): void {
     panAnimationFrame = null;
   }
   panState.keysPressed.clear();
+  panState.shiftPressed = false;
 }
 
 function setupPanHandlers(): void {
@@ -77,11 +75,17 @@ function setupPanHandlers(): void {
   
   // Don't reset pan position here - let centerOnCurrentNode handle it
   panState.keysPressed = new Set();
+  panState.shiftPressed = false;
 
   keydownHandler = (e: KeyboardEvent) => {
     // Don't handle keys if typing in an input
     if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
       return;
+    }
+    
+    // Track shift key for speed boost
+    if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
+      panState.shiftPressed = true;
     }
     
     // Handle SPACE and ENTER to advance to next room
@@ -103,6 +107,11 @@ function setupPanHandlers(): void {
   };
 
   keyupHandler = (e: KeyboardEvent) => {
+    // Track shift key release
+    if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
+      panState.shiftPressed = false;
+    }
+    
     panState.keysPressed.delete(e.key.toLowerCase());
     
     // Also handle arrow keys
@@ -126,11 +135,15 @@ function startPanLoop(): void {
   const update = () => {
     let dx = 0;
     let dy = 0;
+    
+    // Apply speed multiplier when shift is held
+    const speedMultiplier = panState.shiftPressed ? 2.5 : 1;
+    const currentSpeed = PAN_SPEED * speedMultiplier;
 
-    if (panState.keysPressed.has("w") || panState.keysPressed.has("arrowup")) dy += PAN_SPEED;
-    if (panState.keysPressed.has("s") || panState.keysPressed.has("arrowdown")) dy -= PAN_SPEED;
-    if (panState.keysPressed.has("a") || panState.keysPressed.has("arrowleft")) dx += PAN_SPEED;
-    if (panState.keysPressed.has("d") || panState.keysPressed.has("arrowright")) dx -= PAN_SPEED;
+    if (panState.keysPressed.has("w") || panState.keysPressed.has("arrowup")) dy += currentSpeed;
+    if (panState.keysPressed.has("s") || panState.keysPressed.has("arrowdown")) dy -= currentSpeed;
+    if (panState.keysPressed.has("a") || panState.keysPressed.has("arrowleft")) dx += currentSpeed;
+    if (panState.keysPressed.has("d") || panState.keysPressed.has("arrowright")) dx -= currentSpeed;
 
     if (dx !== 0 || dy !== 0) {
       panState.x += dx;
@@ -501,7 +514,44 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
   const nextAvailableIndex = getNextAvailableRoomIndex(nodes);
   const availableNodeIds = getAvailableNodes();
   
+  // Debug logging
+  const state = getGameState();
+  const operation = getCurrentOperation(state);
+  const currentRoomId = operation?.currentRoomId;
+  console.log(`[OPMAP] Rendering map: currentRoomId=${currentRoomId}, availableNodeIds=${availableNodeIds.length}`, availableNodeIds);
+  
   let mapHtml = '<div class="opmap-nodes-container">';
+  
+  // Render connections first (if available from operation)
+  const connections = operation?.connections || {};
+  for (const fromNodeId in connections) {
+    const fromNode = nodes.find(n => n.id === fromNodeId);
+    if (!fromNode || !fromNode.position) continue;
+    
+    connections[fromNodeId].forEach(toNodeId => {
+      const toNode = nodes.find(n => n.id === toNodeId);
+      if (!toNode || !toNode.position) return;
+      
+      // Only show connections from visited/current nodes or to available nodes
+      const fromVisited = fromNode.visited || fromNode.id === currentRoomId;
+      const toAvailable = availableNodeIds.includes(toNodeId) || toNode.visited;
+      
+      if (fromVisited && toAvailable && fromNode.position && toNode.position) {
+        const x1 = fromNode.position.x * 120 + 60; // Approximate node center
+        const y1 = fromNode.position.y * 80 + 40;
+        const x2 = toNode.position.x * 120 + 60;
+        const y2 = toNode.position.y * 80 + 40;
+        
+        mapHtml += `
+          <svg class="opmap-connection" style="position: absolute; left: ${Math.min(x1, x2) - 2}px; top: ${Math.min(y1, y2) - 2}px; width: ${Math.abs(x2 - x1) + 4}px; height: ${Math.abs(y2 - y1) + 4}px; pointer-events: none; z-index: 0;">
+            <line x1="${x1 - Math.min(x1, x2) + 2}" y1="${y1 - Math.min(y1, y2) + 2}" 
+                  x2="${x2 - Math.min(x1, x2) + 2}" y2="${y2 - Math.min(y1, y2) + 2}" 
+                  stroke="rgba(255, 215, 0, 0.3)" stroke-width="2" />
+          </svg>
+        `;
+      }
+    });
+  }
   
   nodes.forEach((node, index) => {
     const isVisited = node.visited === true;
@@ -510,6 +560,11 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
     // Node is available if it's in the available nodes list (forward-only branching)
     const isAvailable = availableNodeIds.includes(node.id);
     const isLocked = !isVisited && !isNext && !isAvailable;
+    
+    // Debug logging for each node
+    if (isAvailable && !isVisited) {
+      console.log(`[OPMAP] Node ${node.id} is available and not visited`);
+    }
     
     const icon = getRoomIcon(node.type);
     const typeLabel = getRoomTypeLabel(node.type);
@@ -647,7 +702,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     });
     
     // Approach 3: mousedown as fallback
-    abandonBtn.addEventListener("mousedown", function(e) {
+    abandonBtn.addEventListener("mousedown", function() {
       console.log("[OPMAP] Abandon button mousedown detected!");
     });
   } else {
@@ -862,10 +917,10 @@ function enterBattleRoom(room: RoomNode): void {
       return;
     }
 
-    // Store battle in state
+    // Store battle in state (add turnIndex for types.ts compatibility)
     updateGameState(prev => ({
       ...prev,
-      currentBattle: battle,
+      currentBattle: { ...battle, turnIndex: 0 } as any,
       phase: "battle",
     }));
 
@@ -875,12 +930,6 @@ function enterBattleRoom(room: RoomNode): void {
     // Return to operation map on error
     renderOperationMapScreen();
   }
-}
-
-function createBattleFromTemplate(state: GameState, template: any): any {
-  // TODO: Use template to create enemies
-  console.log("[BATTLE] Would create battle from template:", template.name);
-  return createTestBattleForCurrentParty(state);
 }
 
 function enterKeyRoom(room: RoomNode): void {
@@ -936,10 +985,10 @@ function enterKeyRoom(room: RoomNode): void {
       return;
     }
 
-    // Store battle in state
+    // Store battle in state (add turnIndex for types.ts compatibility)
     updateGameState(prev => ({
       ...prev,
-      currentBattle: battle,
+      currentBattle: { ...battle, turnIndex: 0 } as any,
       phase: "battle",
     }));
 

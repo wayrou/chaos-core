@@ -633,6 +633,38 @@ html, body {
   border-radius: var(--radius-sm);
 }
 
+.port-npc-windows-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.port-npc-window {
+  background: rgba(15, 18, 45, 0.6);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.port-npc-window--appearing {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.port-npc-window--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.port-npc-window--removing {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
 /* Header */
 .port-header {
   display: flex;
@@ -2682,15 +2714,16 @@ html, body {
 .mainmenu-root {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   background:
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E"),
     radial-gradient(ellipse at center, var(--ard-brown-dark) 0%, var(--ard-dark) 70%, #0d0b09 100%);
   font-family: var(--font-display);
   color: var(--ard-sage);
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .mainmenu-bg-effects {
@@ -2723,46 +2756,59 @@ html, body {
   background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.6) 100%);
 }
 
-/* Content wrapper - horizontal layout with logo/menu on left, terminal on right */
+/* Content wrapper - sleek two-column layout */
 .mainmenu-content {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: 3rem;
+  gap: 4rem;
   z-index: 1;
-  padding: 2rem;
-  overflow: visible;
+  padding: 2rem 3rem 3rem 3rem;
+  overflow-y: auto;
+  overflow-x: hidden;
   width: 100%;
   max-width: 100%;
-  height: 100vh;
+  min-height: 100vh;
+  box-sizing: border-box;
 }
 
-/* Left side: Logo and menu */
-.mainmenu-left {
+/* Left panel: Unified logo and menu container */
+.mainmenu-left-panel {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1rem;
   flex-shrink: 0;
-  width: auto;
-  align-items: center;
+  width: 480px;
+  max-width: 480px;
 }
 
-/* Logo Container - centered and aligned with menu */
+/* Logo section */
+.mainmenu-logo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 0;
+}
+
+/* Logo Container */
 .mainmenu-logo-container {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   width: 100%;
-  max-width: 420px; /* Match menu card width */
+  overflow: visible;
+  margin: 0;
+  padding: 0;
 }
 
-/* Logo Image - Smaller, positioned top left */
+/* Logo Image */
 .mainmenu-logo-image {
-  width: 400px !important;
-  max-width: 100% !important;
+  width: 100% !important;
+  max-width: 480px !important;
   height: auto !important;
   object-fit: contain !important;
   filter: drop-shadow(0 0 40px rgba(195, 19, 44, 0.4)) !important;
@@ -2804,30 +2850,27 @@ html, body {
   transform: translate(-50%, -50%);
 }
 
-/* Subtitle - below logo, centered */
+/* Subtitle */
 .mainmenu-subtitle {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-family: var(--font-mono);
   color: var(--ard-cool-gray);
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  text-align: center;
-  margin-top: 0.5rem;
-  white-space: nowrap;
-  width: 100%;
+  text-align: left;
+  padding-left: 2px;
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
-/* Card - buttons only, positioned below logo */
-.mainmenu-card {
-  background: linear-gradient(180deg, var(--ard-brown-dark) 0%, var(--ard-dark) 100%);
+/* Menu section - perfectly aligned with logo */
+.mainmenu-menu-section {
+  background: var(--ard-brown-dark);
   border: 1px solid var(--ard-brown-mid);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem 2rem;
-  max-width: 420px;
-  width: auto;
-  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  padding: 2rem;
   box-shadow:
-    var(--shadow-lg),
+    0 4px 20px rgba(0, 0, 0, 0.4),
     0 0 30px rgba(128, 109, 78, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
@@ -2847,22 +2890,25 @@ html, body {
 
 .mainmenu-btn {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  padding: 0.6rem 1rem;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
   background: var(--ard-charcoal);
   border: 1px solid var(--ard-brown-mid);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--ard-sage);
   font-family: var(--font-display);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  width: 100%;
 }
 
 .mainmenu-btn::before {
@@ -2890,31 +2936,38 @@ html, body {
 }
 
 .mainmenu-btn .btn-icon {
-  font-size: 1rem;
-  margin-bottom: 0.2rem;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
 }
 
 .mainmenu-btn .btn-text {
-  font-size: 0.7rem;
+  flex: 1;
+  text-align: left;
+  font-size: 0.8rem;
 }
 
 .mainmenu-btn .btn-subtitle {
-  font-size: 0.55rem;
+  font-size: 0.6rem;
   font-family: var(--font-mono);
   color: var(--ard-cool-gray);
   margin-top: 0.25rem;
+  width: 100%;
+  text-align: left;
 }
 
 .mainmenu-btn-primary {
-  background: var(--gradient-card);
+  background: var(--ard-dark);
   border-color: var(--ard-gold);
   color: var(--ard-gold);
 }
 
 .mainmenu-btn-primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--ard-charcoal) 0%, var(--ard-brown-dark) 100%);
+  background: var(--ard-charcoal);
   border-color: var(--ard-amber);
-  box-shadow: var(--shadow-glow-gold);
+  color: var(--ard-amber);
+  box-shadow: 0 0 20px rgba(243, 163, 16, 0.3);
 }
 
 .mainmenu-btn-secondary {
@@ -2959,7 +3012,14 @@ html, body {
 }
 
 /* Terminal Container - takes up center/right side */
+/* Terminal container - right column */
 .mainmenu-terminal-container {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  max-width: 600px;
   flex: 1;
   display: flex;
   align-items: flex-start;
@@ -20029,16 +20089,28 @@ html, body {
 .recruitment-root {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px;
   background: radial-gradient(circle at top, #141432 0, #050512 50%, #000 100%);
   color: #e0e4ff;
 }
 
+.recruitment-content-wrapper {
+  display: flex;
+  gap: var(--spacing-lg);
+  width: 100%;
+  max-width: 1400px;
+  align-items: flex-start;
+}
+
+.recruitment-main-panel {
+  flex: 1;
+  min-width: 0;
+}
+
 .recruitment-card {
   width: 100%;
-  max-width: 1200px;
   background: linear-gradient(145deg, rgba(8, 9, 26, 0.98), rgba(18, 21, 48, 0.98));
   border-radius: 16px;
   border: 1px solid rgba(140, 160, 255, 0.5);
@@ -23291,6 +23363,14 @@ html, body {
   justify-content: center;
 }
 
+.tavern-dialogue-content-wrapper {
+  display: flex;
+  gap: var(--spacing-lg);
+  width: 90%;
+  max-width: 1200px;
+  align-items: flex-start;
+}
+
 .tavern-dialogue-overlay {
   position: absolute;
   inset: 0;
@@ -23298,9 +23378,14 @@ html, body {
   animation: fadeIn 0.3s ease;
 }
 
+.tavern-dialogue-main-window {
+  flex: 1;
+  min-width: 0;
+}
+
 .tavern-dialogue-window {
   position: relative;
-  width: 90%;
+  width: 100%;
   max-width: 600px;
   max-height: 80vh;
   background: linear-gradient(145deg, rgba(15, 18, 45, 0.98), rgba(25, 30, 65, 0.98));
@@ -23467,4 +23552,202 @@ html, body {
 .tavern-dialogue-continue:active {
   transform: translateY(0);
   box-shadow: 0 2px 8px rgba(243, 163, 16, 0.3);
+}
+
+/* ============================================================================
+   TAVERN NPC PANEL (similar to port NPC panel)
+   ============================================================================ */
+
+.tavern-npc-panel {
+  width: 50%;
+  max-width: 500px;
+  flex-shrink: 0;
+  background: var(--ard-dark);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  position: sticky;
+  top: var(--spacing-lg);
+  max-height: calc(100vh - var(--spacing-lg) * 2);
+  overflow-y: auto;
+}
+
+.tavern-npc-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.tavern-npc-panel-title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 var(--spacing-md) 0;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 2px solid var(--ard-brown-mid);
+}
+
+.tavern-npc-windows-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.tavern-npc-window {
+  background: rgba(15, 18, 45, 0.6);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.tavern-npc-window--appearing {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.tavern-npc-window--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tavern-npc-window--removing {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.tavern-npc-name {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--spacing-xs);
+}
+
+.tavern-npc-text {
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--ard-off-white);
+  font-style: italic;
+}
+
+/* Responsive: Stack on smaller screens */
+@media (max-width: 1024px) {
+  .tavern-dialogue-content-wrapper {
+    flex-direction: column;
+  }
+  
+  .tavern-npc-panel {
+    width: 100%;
+    max-width: none;
+    position: static;
+    max-height: none;
+  }
+  
+  .recruitment-content-wrapper {
+    flex-direction: column;
+  }
+  
+  .recruitment-npc-panel {
+    width: 100%;
+    max-width: none;
+    position: static;
+    max-height: none;
+  }
+}
+
+/* ============================================================================
+   RECRUITMENT NPC PANEL (matching port NPC panel styling)
+   ============================================================================ */
+
+.recruitment-npc-panel {
+  width: 50%;
+  max-width: 500px;
+  flex-shrink: 0;
+  background: var(--ard-dark);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  position: sticky;
+  top: var(--spacing-lg);
+  max-height: calc(100vh - var(--spacing-lg) * 2);
+  overflow-y: auto;
+}
+
+.recruitment-npc-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.recruitment-npc-panel-title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 var(--spacing-md) 0;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 2px solid var(--ard-brown-mid);
+}
+
+.recruitment-npc-windows-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.recruitment-npc-window {
+  background: rgba(15, 18, 45, 0.6);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.recruitment-npc-window--appearing {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.recruitment-npc-window--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.recruitment-npc-window--removing {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.recruitment-npc-name {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  margin-bottom: var(--spacing-xs);
+}
+
+.recruitment-npc-text {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--ard-cool-gray);
+  font-style: italic;
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.3);
+  border-left: 3px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
 }

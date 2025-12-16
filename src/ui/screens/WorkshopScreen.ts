@@ -32,6 +32,14 @@ let selectedRecipeId: string | null = null;
 // ----------------------------------------------------------------------------
 
 export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+  // Ensure recipes are loaded (lazy load if not already loaded, non-blocking)
+  import("../../core/craftingRecipes").then(({ loadCraftingRecipes, isRecipesLoaded }) => {
+    if (!isRecipesLoaded()) {
+      loadCraftingRecipes().catch(error => {
+        console.error("[Workshop] Failed to load recipes:", error);
+      });
+    }
+  });
   const app = document.getElementById("app");
   if (!app) return;
 

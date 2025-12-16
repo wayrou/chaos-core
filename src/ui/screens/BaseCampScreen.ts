@@ -150,10 +150,8 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
   });
 
   root.querySelector("#tavernBtn")?.addEventListener("click", () => {
-    // Show tavern dialogue first, then allow access to recruitment
-    import("./TavernDialogueScreen").then(m => {
-      m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", returnContext);
-    });
+    // Go directly to recruitment screen (no intro dialogue)
+    renderRecruitmentScreen(returnContext);
   });
 
   // Gear Workbench - Opens with first party unit's weapon selected
@@ -384,10 +382,8 @@ function attachBaseCampListeners(container: HTMLElement, returnTo: "basecamp" | 
 
   container.querySelector("#tavernBtn")?.addEventListener("click", () => {
     if (isModal) hideBaseCampModal();
-    // Show tavern dialogue first, then allow access to recruitment
-    import("./TavernDialogueScreen").then(m => {
-      m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", returnTo);
-    });
+    // Go directly to recruitment screen (no intro dialogue)
+    renderRecruitmentScreen(returnTo);
   });
 
   // Gear Workbench
