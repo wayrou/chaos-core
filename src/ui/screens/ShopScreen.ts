@@ -6,13 +6,14 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
 import { 
   PAK_DATABASE, 
   openPAK, 
   addCardsToLibrary,
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
+import { getAllStarterEquipment } from "../../core/equipment";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -108,7 +109,7 @@ const CONSUMABLE_ITEMS: ShopItem[] = [
 
 const EQUIPMENT_ITEMS: ShopItem[] = [
   {
-    id: "weapon_iron_sword",
+    id: "weapon_iron_longsword",
     name: "Iron Longsword",
     description: "Basic melee weapon. Reliable and sturdy.",
     price: 80,
@@ -116,7 +117,7 @@ const EQUIPMENT_ITEMS: ShopItem[] = [
     rarity: "common"
   },
   {
-    id: "weapon_elm_bow",
+    id: "weapon_elm_recurve_bow",
     name: "Elm Recurve Bow",
     description: "Standard ranged weapon. Range 3-6.",
     price: 85,
@@ -124,17 +125,17 @@ const EQUIPMENT_ITEMS: ShopItem[] = [
     rarity: "common"
   },
   {
-    id: "armor_leather_vest",
+    id: "armor_leather_jerkin",
     name: "Leather Jerkin",
-    description: "Light armor. +2 DEF, no movement penalty.",
+    description: "Light armor. +1 DEF, +1 AGI.",
     price: 60,
     category: "equipment",
     rarity: "common"
   },
   {
-    id: "accessory_fleetfoot",
+    id: "accessory_fleetfoot_anklet",
     name: "Fleetfoot Anklet",
-    description: "+1 AGI. Movement enhancement accessory.",
+    description: "+2 AGI. Movement enhancement accessory.",
     price: 70,
     category: "equipment",
     rarity: "uncommon"
@@ -310,8 +311,11 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
       } else if (returnDestination === "operation") {
-        // Mark the current room as visited when leaving the shop
-        markCurrentRoomVisited();
+        // Mark the current room as visited when leaving the shop (uses campaign system)
+        const state = getGameState();
+        if (state.operation?.currentRoomId) {
+          markRoomVisited(state.operation.currentRoomId);
+        }
         renderOperationMapScreen();
       } else {
         renderBaseCampScreen();
@@ -372,6 +376,7 @@ function purchasePAK(pakId: string, item: ShopItem): void {
   updateGameState(draft => {
     draft.wad -= item.price;
     draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, cards);
+    return draft;
   });
   
   // Show acquired cards
@@ -387,32 +392,126 @@ function purchasePAK(pakId: string, item: ShopItem): void {
 }
 
 function purchaseEquipment(itemId: string, item: ShopItem): void {
+  const state = getGameState();
+  if (state.wad < item.price) {
+    showNotification("INSUFFICIENT WAD", "error");
+    return;
+  }
+
+  // Get return destination from button
+  const backBtn = document.getElementById("backBtn");
+  const returnTo = (backBtn?.getAttribute("data-return-to") as "basecamp" | "field" | "operation") || "basecamp";
+
+  // Create equipment entry (basic structure - will need proper equipment data)
+  const equipmentData = createEquipmentFromShopItem(itemId, item);
+  
   updateGameState(draft => {
     draft.wad -= item.price;
-    draft.inventory = draft.inventory ?? [];
-    draft.inventory.push({ id: itemId, quantity: 1 });
+    
+    // Add to equipmentById
+    if (!draft.equipmentById) draft.equipmentById = {};
+    draft.equipmentById[itemId] = equipmentData;
+    
+    // Add to equipmentPool
+    if (!draft.equipmentPool) draft.equipmentPool = [];
+    if (!draft.equipmentPool.includes(itemId)) {
+      draft.equipmentPool.push(itemId);
+    }
+    
+    // Add to inventory baseStorage as InventoryItem
+    if (!draft.inventory) {
+      draft.inventory = {
+        muleClass: "E",
+        capacityMassKg: 100,
+        capacityBulkBu: 70,
+        capacityPowerW: 300,
+        forwardLocker: [],
+        baseStorage: [],
+      };
+    }
+    
+    const inventoryItem: import("../../core/types").InventoryItem = {
+      id: itemId,
+      name: item.name,
+      kind: "equipment",
+      stackable: false,
+      quantity: 1,
+      massKg: getEquipmentMass(itemId, item),
+      bulkBu: getEquipmentBulk(itemId, item),
+      powerW: getEquipmentPower(itemId, item),
+    };
+    
+    // Check if already in baseStorage
+    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    if (existingIndex >= 0) {
+      // Equipment doesn't stack, but we can increment quantity for tracking
+      draft.inventory.baseStorage[existingIndex].quantity += 1;
+    } else {
+      draft.inventory.baseStorage.push(inventoryItem);
+    }
+    
+    return draft;
   });
   
   showNotification(`${item.name} added to inventory!`, "success");
-  renderShopScreen();
+  renderShopScreen(returnTo);
 }
 
 function purchaseConsumable(itemId: string, item: ShopItem): void {
+  const state = getGameState();
+  if (state.wad < item.price) {
+    showNotification("INSUFFICIENT WAD", "error");
+    return;
+  }
+
+  // Get return destination from button
+  const backBtn = document.getElementById("backBtn");
+  const returnTo = (backBtn?.getAttribute("data-return-to") as "basecamp" | "field" | "operation") || "basecamp";
+
   updateGameState(draft => {
     draft.wad -= item.price;
-    draft.consumables = draft.consumables ?? [];
     
-    // Check if already have this consumable
-    const existing = draft.consumables.find((c: any) => c.id === itemId);
-    if (existing) {
-      existing.quantity = (existing.quantity ?? 1) + 1;
-    } else {
-      draft.consumables.push({ id: itemId, quantity: 1 });
+    // Add to consumables Record (consumable ID -> quantity)
+    if (!draft.consumables) draft.consumables = {};
+    const newQuantity = (draft.consumables[itemId] || 0) + 1;
+    draft.consumables[itemId] = newQuantity;
+    
+    // Also add to inventory baseStorage as InventoryItem for organization
+    if (!draft.inventory) {
+      draft.inventory = {
+        muleClass: "E",
+        capacityMassKg: 100,
+        capacityBulkBu: 70,
+        capacityPowerW: 300,
+        forwardLocker: [],
+        baseStorage: [],
+      };
     }
+    
+    const inventoryItem: import("../../core/types").InventoryItem = {
+      id: itemId,
+      name: item.name,
+      kind: "consumable",
+      stackable: true,
+      quantity: newQuantity,
+      massKg: getConsumableMass(itemId),
+      bulkBu: getConsumableBulk(itemId),
+      powerW: getConsumablePower(itemId),
+    };
+    
+    // Update or add to baseStorage
+    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    if (existingIndex >= 0) {
+      draft.inventory.baseStorage[existingIndex].quantity = newQuantity;
+    } else {
+      draft.inventory.baseStorage.push(inventoryItem);
+    }
+    
+    return draft;
   });
   
   showNotification(`${item.name} added to supplies!`, "success");
-  renderShopScreen();
+  renderShopScreen(returnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -484,28 +583,163 @@ function showPurchaseModal(itemName: string, items: string[], subtitle: string):
   });
 }
 
-// Mark current room as visited (for operation shops)
-function markCurrentRoomVisited(): void {
-  updateGameState(prev => {
-    if (!prev.operation) return prev;
+// ----------------------------------------------------------------------------
+// HELPER FUNCTIONS
+// ----------------------------------------------------------------------------
+
+/**
+ * Create basic equipment data structure from shop item
+ * Maps to existing equipment database or creates new entry
+ */
+function createEquipmentFromShopItem(itemId: string, item: ShopItem): any {
+  // First, try to get from existing equipment database
+  const existingEquipment = getAllStarterEquipment();
+  
+  if (existingEquipment[itemId]) {
+    // Equipment already exists in database, return it
+    return existingEquipment[itemId];
+  }
+  
+  // Create new equipment entry
+  const isWeapon = itemId.startsWith("weapon_");
+  const isArmor = itemId.startsWith("armor_");
+  const isAccessory = itemId.startsWith("accessory_");
+  
+  if (isWeapon) {
+    // Determine weapon type from name/ID
+    let weaponType: string = "sword";
+    if (itemId.includes("bow")) weaponType = "bow";
+    else if (itemId.includes("gun")) weaponType = "gun";
+    else if (itemId.includes("staff")) weaponType = "staff";
+    else if (itemId.includes("dagger")) weaponType = "dagger";
     
-    const operation = { ...prev.operation };
-    const floor = operation.floors[operation.currentFloorIndex];
-    const roomId = operation.currentRoomId;
-
-    if (floor && roomId && (floor.nodes || floor.rooms)) {
-      const nodes = floor.nodes || floor.rooms || [];
-      const room = nodes.find(n => n.id === roomId);
-      if (room) {
-        room.visited = true;
-      }
-    }
-
     return {
-      ...prev,
-      operation,
+      id: itemId,
+      name: item.name,
+      slot: "weapon",
+      weaponType,
+      isMechanical: itemId.includes("gun") || itemId.includes("steam"),
+      stats: { atk: 2, def: 0, agi: 0, acc: 0, hp: 0 }, // Basic stats
+      cardsGranted: [], // Will be empty for shop-bought items
+      moduleSlots: 1,
+      attachedModules: [],
+      wear: 0,
     };
-  });
+  } else if (isArmor) {
+    const slot = itemId.includes("helmet") || itemId.includes("hood") || itemId.includes("circlet") ? "helmet" : "chestpiece";
+    // Basic stats based on description
+    let stats = { atk: 0, def: 1, agi: 0, acc: 0, hp: 0 };
+    if (itemId.includes("leather")) {
+      stats = { atk: 0, def: 1, agi: 1, acc: 0, hp: 0 };
+    }
+    return {
+      id: itemId,
+      name: item.name,
+      slot,
+      stats,
+      cardsGranted: [],
+    };
+  } else if (isAccessory) {
+    // Basic stats based on description
+    let stats = { atk: 0, def: 0, agi: 1, acc: 0, hp: 0 };
+    if (itemId.includes("fleetfoot")) {
+      stats = { atk: 0, def: 0, agi: 2, acc: 0, hp: 0 };
+    }
+    return {
+      id: itemId,
+      name: item.name,
+      slot: "accessory",
+      stats,
+      cardsGranted: [],
+    };
+  }
+  
+  // Default fallback
+  return {
+    id: itemId,
+    name: item.name,
+    slot: "accessory",
+    stats: { atk: 0, def: 0, agi: 0, acc: 0, hp: 0 },
+    cardsGranted: [],
+  };
+}
+
+/**
+ * Get mass (kg) for equipment items
+ */
+function getEquipmentMass(itemId: string, _item: ShopItem): number {
+  // Equipment mass based on type
+  if (itemId.startsWith("weapon_")) {
+    if (itemId.includes("great")) return 8; // Greatsword/greatbow
+    if (itemId.includes("bow")) return 3;
+    if (itemId.includes("gun")) return 5;
+    return 4; // Standard weapon
+  } else if (itemId.startsWith("armor_")) {
+    if (itemId.includes("leather")) return 2;
+    if (itemId.includes("plate")) return 6;
+    return 3; // Default armor
+  } else if (itemId.startsWith("accessory_")) {
+    return 0.5; // Accessories are light
+  }
+  return 2; // Default
+}
+
+/**
+ * Get bulk (bu) for equipment items
+ */
+function getEquipmentBulk(itemId: string, _item: ShopItem): number {
+  if (itemId.startsWith("weapon_")) {
+    if (itemId.includes("great")) return 4;
+    if (itemId.includes("bow")) return 3;
+    return 2;
+  } else if (itemId.startsWith("armor_")) {
+    return 2;
+  } else if (itemId.startsWith("accessory_")) {
+    return 0.5;
+  }
+  return 1;
+}
+
+/**
+ * Get power (w) for equipment items
+ */
+function getEquipmentPower(itemId: string, _item: ShopItem): number {
+  if (itemId.startsWith("weapon_")) {
+    if (itemId.includes("gun") || itemId.includes("steam")) return 15; // Mechanical weapons
+    return 5; // Standard weapons
+  } else if (itemId.startsWith("armor_")) {
+    return 3;
+  } else if (itemId.startsWith("accessory_")) {
+    return 2;
+  }
+  return 3;
+}
+
+/**
+ * Get mass (kg) for consumable items
+ */
+function getConsumableMass(itemId: string): number {
+  // Consumables are generally light
+  if (itemId.includes("kit")) return 1;
+  if (itemId.includes("bomb") || itemId.includes("grenade")) return 0.5;
+  return 0.3; // Default consumable
+}
+
+/**
+ * Get bulk (bu) for consumable items
+ */
+function getConsumableBulk(itemId: string): number {
+  if (itemId.includes("kit")) return 1;
+  if (itemId.includes("bomb") || itemId.includes("grenade")) return 0.5;
+  return 0.3;
+}
+
+/**
+ * Get power (w) for consumable items
+ */
+function getConsumablePower(_itemId: string): number {
+  // Consumables generally don't use power
+  return 0;
 }
 
 export { renderShopScreen as default };

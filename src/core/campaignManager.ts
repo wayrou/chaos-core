@@ -74,6 +74,11 @@ export function startOperationRun(
   saveCampaignProgress(updated);
   console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}`);
   
+  // Consume quarters buff if active
+  import("./quartersBuffs").then(({ consumeBuffOnRunStart }) => {
+    consumeBuffOnRunStart();
+  });
+  
   return updated;
 }
 
@@ -105,23 +110,59 @@ export function clearNode(nodeId: string): CampaignProgress {
 }
 
 /**
- * Move to a new node
+ * Get available next nodes (forward-only movement)
+ */
+export function getAvailableNextNodes(
+  currentNodeId: string,
+  nodeMap: NodeMap,
+  clearedNodeIds: string[]
+): RoomNode[] {
+  const connections = nodeMap.connections[currentNodeId] || [];
+  const available: RoomNode[] = [];
+  
+  for (const connectedId of connections) {
+    const node = nodeMap.nodes.find(n => n.id === connectedId);
+    if (node) {
+      // Available if not yet cleared (or if we're retrying the current node)
+      if (!clearedNodeIds.includes(connectedId)) {
+        available.push(node);
+      }
+    }
+  }
+  
+  return available;
+}
+
+/**
+ * Move to a new node (forward-only branching movement)
  */
 export function moveToNode(nodeId: string): CampaignProgress {
   const progress = loadCampaignProgress();
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
-  
-  // Verify node is connected
-  const connected = currentFloorMap.connections[activeRun.currentNodeId] || [];
-  if (!connected.includes(nodeId) && nodeId !== activeRun.currentNodeId) {
-    throw new Error(`Node ${nodeId} is not connected to current node`);
+
+  // Allow staying on current node
+  if (nodeId === activeRun.currentNodeId) {
+    return progress;
   }
+
+  // Check if node is available (forward-only movement)
+  const availableNodes = getAvailableNextNodes(
+    activeRun.currentNodeId,
+    currentFloorMap,
+    activeRun.clearedNodeIds
+  );
   
+  const isAvailable = availableNodes.some(n => n.id === nodeId);
+  
+  if (!isAvailable) {
+    throw new Error(`Node ${nodeId} is not available. Available nodes: ${availableNodes.map(n => n.id).join(", ")}`);
+  }
+
   const updated = {
     ...progress,
     activeRun: {
@@ -129,7 +170,7 @@ export function moveToNode(nodeId: string): CampaignProgress {
       currentNodeId: nodeId,
     },
   };
-  
+
   saveCampaignProgress(updated);
   return updated;
 }
@@ -254,6 +295,11 @@ export function advanceToNextFloor(): CampaignProgress {
     throw new Error("Must be at exit node to advance floor");
   }
   
+  // Grant floor resources before advancing
+  import("./keyRoomSystem").then(({ grantFloorResources }) => {
+    grantFloorResources();
+  });
+  
   // Check if there's a next floor
   if (activeRun.floorIndex >= activeRun.floorsTotal - 1) {
     throw new Error("Already on last floor");
@@ -303,6 +349,35 @@ export function completeOperationRun(): CampaignProgress {
   saveCampaignProgress(final);
   console.log(`[CAMPAIGN] Completed operation: ${operationId}`);
   
+  // Update pinboard
+  import("../state/gameStore").then(({ updateGameState }) => {
+    updateGameState(s => {
+      const quarters = s.quarters ?? {};
+      const pinboard = quarters.pinboard ?? {
+        completedOperations: [],
+        failedOperations: [],
+        log: [],
+      };
+      
+      if (!pinboard.completedOperations.includes(operationId)) {
+        pinboard.completedOperations.push(operationId);
+      }
+      
+      pinboard.log.push({
+        timestamp: Date.now(),
+        message: `Completed operation: ${operationId}`,
+      });
+      
+      return {
+        ...s,
+        quarters: {
+          ...quarters,
+          pinboard,
+        },
+      };
+    });
+  });
+  
   return final;
 }
 
@@ -319,6 +394,45 @@ export function abandonRun(): CampaignProgress {
   
   saveCampaignProgress(updated);
   console.log("[CAMPAIGN] Run abandoned");
+  
+  // Get operation ID if available
+  const operationId = progress.activeRun?.operationId;
+  
+  // Trigger mail on operation failure
+  import("./mailSystem").then(({ triggerMailOnOperationComplete }) => {
+    triggerMailOnOperationComplete(false);
+  });
+  
+  // Update pinboard if operation ID available
+  if (operationId) {
+    import("../state/gameStore").then(({ updateGameState }) => {
+      updateGameState(s => {
+        const quarters = s.quarters ?? {};
+        const pinboard = quarters.pinboard ?? {
+          completedOperations: [],
+          failedOperations: [],
+          log: [],
+        };
+        
+        if (!pinboard.failedOperations.includes(operationId)) {
+          pinboard.failedOperations.push(operationId);
+        }
+        
+        pinboard.log.push({
+          timestamp: Date.now(),
+          message: `Failed operation: ${operationId}`,
+        });
+        
+        return {
+          ...s,
+          quarters: {
+            ...quarters,
+            pinboard,
+          },
+        };
+      });
+    });
+  }
   
   return updated;
 }
@@ -347,10 +461,11 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
   const floors: Floor[] = [];
   for (let i = 0; i < activeRun.floorsTotal; i++) {
     const nodeMap = activeRun.nodeMapByFloor[i];
-    // Tag visited state based on clearedNodeIds for UI consumption
+    // Tag visited state and connections based on clearedNodeIds for UI consumption
     const nodesWithVisitFlag = nodeMap.nodes.map(n => ({
       ...n,
       visited: cleared.has(n.id),
+      connections: nodeMap.connections[n.id] || [], // Include connections for branching UI
     }));
     floors.push({
       id: `floor_${i}`,

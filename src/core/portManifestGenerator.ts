@@ -34,7 +34,7 @@ export function generatePortManifest(
   
   // Generate normal trade offers (3-5 offers)
   const numOffers = 3 + Math.floor(rng() * 3); // 3-5 offers
-  const normalOffers = generateNormalOffers(numOffers, rng, playerInventory);
+  const normalOffers = generateNormalOffers(numOffers, rng, playerInventory, visitIndex);
   
   // Generate bulk shipment offer
   const bulkShipmentOffer = generateBulkShipmentOffer(
@@ -57,7 +57,8 @@ export function generatePortManifest(
 function generateNormalOffers(
   count: number,
   rng: () => number,
-  playerInventory: GameState["resources"]
+  playerInventory: GameState["resources"],
+  visitIndex: number
 ): TradeOffer[] {
   const templates = getNormalTradeTemplates();
   const offers: TradeOffer[] = [];
@@ -173,6 +174,7 @@ function generateBulkShipmentOffer(
     targetResource,
     basicPayout: isInteresting ? [] : payout,
     interestingPayout: isInteresting ? payout : [],
+    fulfilled: false,
   };
 }
 
@@ -195,4 +197,5 @@ function createSeededRNG(seed: number): () => number {
     return state / m;
   };
 }
+
 

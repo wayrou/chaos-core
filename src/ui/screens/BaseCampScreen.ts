@@ -12,6 +12,7 @@ import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderRecruitmentScreen } from "./RecruitmentScreen";
 import { renderQuestBoardScreen } from "./QuestBoardScreen";
 import { renderPortScreen } from "./PortScreen";
+import { renderQuartersScreen } from "./QuartersScreen";
 
 // Check if we're in field mode (base camp modal should be shown as overlay)
 function isInFieldMode(): boolean {
@@ -55,51 +56,59 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
       </div>
 
       <div class="basecamp-buttons">
-        <button class="bc-btn bc-field-mode" id="fieldModeBtn">
-          <span class="btn-icon">🌍</span>
-          <span class="btn-label">FIELD MODE</span>
-        </button>
-        <button class="bc-btn bc-startop">
-          <span class="btn-icon">🎯</span>
-          <span class="btn-label">START OPERATION</span>
-        </button>
-        <button class="bc-btn bc-loadout">
-          <span class="btn-icon">🎒</span>
-          <span class="btn-label">LOADOUT</span>
-        </button>
-        <button class="bc-btn bc-shop">
-          <span class="btn-icon">🛒</span>
-          <span class="btn-label">SHOP</span>
-        </button>
-        <button class="bc-btn bc-roster">
-          <span class="btn-icon">👥</span>
-          <span class="btn-label">UNIT ROSTER</span>
-        </button>
-        <button class="bc-btn bc-workshop">
-          <span class="btn-icon">🔨</span>
-          <span class="btn-label">CRAFTING</span>
-        </button>
-        <button class="bc-btn bc-tavern" id="tavernBtn">
-          <span class="btn-icon">🍺</span>
-          <span class="btn-label">TAVERN</span>
-        </button>
-        <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
-          <span class="btn-icon">&#128295;</span>
-          <span class="btn-label">GEAR WORKBENCH</span>
-        </button>
-        <button class="bc-btn bc-quest-board" id="questBoardBtn">
-          <span class="btn-icon">📋</span>
-          <span class="btn-label">QUEST BOARD</span>
-        </button>
-        <button class="bc-btn bc-port" id="portBtn">
-          <span class="btn-icon">⚓</span>
-          <span class="btn-label">PORT</span>
-        </button>
-        <button class="bc-btn bc-settings" id="settingsBtn">
-          <span class="btn-icon">⚙</span>
-          <span class="btn-label">SETTINGS</span>
-        </button>
-        <button class="bc-btn bc-exit-to-menu" id="exitToMenuBtn">← BACK TO TITLE SCREEN</button>
+        <div class="basecamp-buttons-left">
+          <button class="bc-btn bc-field-mode" id="fieldModeBtn">
+            <span class="btn-icon">🌍</span>
+            <span class="btn-label">FIELD MODE</span>
+          </button>
+          <button class="bc-btn bc-startop">
+            <span class="btn-icon">🎯</span>
+            <span class="btn-label">START OPERATION</span>
+          </button>
+          <button class="bc-btn bc-shop">
+            <span class="btn-icon">🛒</span>
+            <span class="btn-label">SHOP</span>
+          </button>
+          <button class="bc-btn bc-roster">
+            <span class="btn-icon">👥</span>
+            <span class="btn-label">UNIT ROSTER</span>
+          </button>
+          <button class="bc-btn bc-workshop">
+            <span class="btn-icon">🔨</span>
+            <span class="btn-label">CRAFTING</span>
+          </button>
+          <button class="bc-btn bc-tavern" id="tavernBtn">
+            <span class="btn-icon">🍺</span>
+            <span class="btn-label">TAVERN</span>
+          </button>
+          <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
+            <span class="btn-icon">&#128295;</span>
+            <span class="btn-label">GEAR WORKBENCH</span>
+          </button>
+          <button class="bc-btn bc-quest-board" id="questBoardBtn">
+            <span class="btn-icon">📋</span>
+            <span class="btn-label">QUEST BOARD</span>
+          </button>
+          <button class="bc-btn bc-port" id="portBtn">
+            <span class="btn-icon">⚓</span>
+            <span class="btn-label">PORT</span>
+          </button>
+          <button class="bc-btn bc-quarters" id="quartersBtn">
+            <span class="btn-icon">🏠</span>
+            <span class="btn-label">QUARTERS</span>
+          </button>
+          <button class="bc-btn bc-settings" id="settingsBtn">
+            <span class="btn-icon">⚙</span>
+            <span class="btn-label">SETTINGS</span>
+          </button>
+          <button class="bc-btn bc-exit-to-menu" id="exitToMenuBtn">← BACK TO TITLE SCREEN</button>
+        </div>
+        <div class="basecamp-buttons-right">
+          <button class="bc-btn bc-loadout">
+            <span class="btn-icon">🎒</span>
+            <span class="btn-label">LOADOUT</span>
+          </button>
+        </div>
       </div>
 
       <div class="basecamp-terminal-body">
@@ -141,7 +150,10 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
   });
 
   root.querySelector("#tavernBtn")?.addEventListener("click", () => {
-    renderRecruitmentScreen(returnContext);
+    // Show tavern dialogue first, then allow access to recruitment
+    import("./TavernDialogueScreen").then(m => {
+      m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", returnContext);
+    });
   });
 
   // Gear Workbench - Opens with first party unit's weapon selected
@@ -173,6 +185,11 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
   // Port button
   root.querySelector("#portBtn")?.addEventListener("click", () => {
     renderPortScreen("basecamp");
+  });
+
+  // Quarters button
+  root.querySelector("#quartersBtn")?.addEventListener("click", () => {
+    renderQuartersScreen(returnContext);
   });
 
   // Settings button
@@ -237,47 +254,55 @@ export function showBaseCampModal(): void {
         </div>
 
         <div class="basecamp-buttons">
-          <button class="bc-btn bc-startop">
-            <span class="btn-icon">🎯</span>
-            <span class="btn-label">START OPERATION</span>
-          </button>
-          <button class="bc-btn bc-loadout">
-            <span class="btn-icon">🎒</span>
-            <span class="btn-label">LOADOUT</span>
-          </button>
-          <button class="bc-btn bc-shop">
-            <span class="btn-icon">🛒</span>
-            <span class="btn-label">SHOP</span>
-          </button>
-          <button class="bc-btn bc-roster">
-            <span class="btn-icon">👥</span>
-            <span class="btn-label">UNIT ROSTER</span>
-          </button>
-          <button class="bc-btn bc-workshop">
-            <span class="btn-icon">🔨</span>
-            <span class="btn-label">WORKSHOP</span>
-          </button>
-          <button class="bc-btn bc-tavern" id="tavernBtn">
-            <span class="btn-icon">🍺</span>
-            <span class="btn-label">TAVERN</span>
-          </button>
-          <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
-            <span class="btn-icon">&#128295;</span>
-            <span class="btn-label">GEAR WORKBENCH</span>
-          </button>
-          <button class="bc-btn bc-quest-board" id="questBoardBtn">
-            <span class="btn-icon">📋</span>
-            <span class="btn-label">QUEST BOARD</span>
-          </button>
-          <button class="bc-btn bc-port" id="portBtn">
-            <span class="btn-icon">⚓</span>
-            <span class="btn-label">PORT</span>
-          </button>
-          <button class="bc-btn bc-settings" id="settingsBtn">
-            <span class="btn-icon">⚙</span>
-            <span class="btn-label">SETTINGS</span>
-          </button>
-          <button class="bc-btn bc-exit-to-menu" id="exitToMenuBtn">← BACK TO TITLE SCREEN</button>
+          <div class="basecamp-buttons-left">
+            <button class="bc-btn bc-startop">
+              <span class="btn-icon">🎯</span>
+              <span class="btn-label">START OPERATION</span>
+            </button>
+            <button class="bc-btn bc-shop">
+              <span class="btn-icon">🛒</span>
+              <span class="btn-label">SHOP</span>
+            </button>
+            <button class="bc-btn bc-roster">
+              <span class="btn-icon">👥</span>
+              <span class="btn-label">UNIT ROSTER</span>
+            </button>
+            <button class="bc-btn bc-workshop">
+              <span class="btn-icon">🔨</span>
+              <span class="btn-label">WORKSHOP</span>
+            </button>
+            <button class="bc-btn bc-tavern" id="tavernBtn">
+              <span class="btn-icon">🍺</span>
+              <span class="btn-label">TAVERN</span>
+            </button>
+            <button class="bc-btn bc-gear-workbench" id="gearWorkbenchBtn">
+              <span class="btn-icon">&#128295;</span>
+              <span class="btn-label">GEAR WORKBENCH</span>
+            </button>
+            <button class="bc-btn bc-quest-board" id="questBoardBtn">
+              <span class="btn-icon">📋</span>
+              <span class="btn-label">QUEST BOARD</span>
+            </button>
+            <button class="bc-btn bc-port" id="portBtn">
+              <span class="btn-icon">⚓</span>
+              <span class="btn-label">PORT</span>
+            </button>
+            <button class="bc-btn bc-quarters" id="quartersBtn">
+              <span class="btn-icon">🏠</span>
+              <span class="btn-label">QUARTERS</span>
+            </button>
+            <button class="bc-btn bc-settings" id="settingsBtn">
+              <span class="btn-icon">⚙</span>
+              <span class="btn-label">SETTINGS</span>
+            </button>
+            <button class="bc-btn bc-exit-to-menu" id="exitToMenuBtn">← BACK TO TITLE SCREEN</button>
+          </div>
+          <div class="basecamp-buttons-right">
+            <button class="bc-btn bc-loadout">
+              <span class="btn-icon">🎒</span>
+              <span class="btn-label">LOADOUT</span>
+            </button>
+          </div>
         </div>
 
         <div class="basecamp-terminal-body">
@@ -359,7 +384,10 @@ function attachBaseCampListeners(container: HTMLElement, returnTo: "basecamp" | 
 
   container.querySelector("#tavernBtn")?.addEventListener("click", () => {
     if (isModal) hideBaseCampModal();
-    renderRecruitmentScreen(returnTo);
+    // Show tavern dialogue first, then allow access to recruitment
+    import("./TavernDialogueScreen").then(m => {
+      m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", returnTo);
+    });
   });
 
   // Gear Workbench
@@ -393,6 +421,12 @@ function attachBaseCampListeners(container: HTMLElement, returnTo: "basecamp" | 
   container.querySelector("#portBtn")?.addEventListener("click", () => {
     if (isModal) hideBaseCampModal();
     renderPortScreen(returnTo);
+  });
+
+  // Quarters button
+  container.querySelector("#quartersBtn")?.addEventListener("click", () => {
+    if (isModal) hideBaseCampModal();
+    renderQuartersScreen(returnTo);
   });
 
   // Settings button

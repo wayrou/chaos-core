@@ -126,24 +126,6 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
           </div>
 
           <div class="loadout-right">
-            <div class="inventory-column" data-bin="forwardLocker">
-              <div class="inventory-column-header">
-                <div class="inventory-column-title">FORWARD LOCKER</div>
-                <div class="inventory-column-subtitle">
-                  Items carried into the dungeon. Count against load.
-                </div>
-              </div>
-              <div class="inventory-column-body" data-bin="forwardLocker">
-                ${
-                  forwardLocker.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
-                    : forwardLocker
-                        .map((i) => renderItem(i, "forwardLocker"))
-                        .join("")
-                }
-              </div>
-            </div>
-
             <div class="inventory-column" data-bin="baseStorage">
               <div class="inventory-column-header">
                 <div class="inventory-column-title">BASE CAMP STORAGE</div>
@@ -157,6 +139,24 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
                     ? `<div class="inv-empty">[ EMPTY ]</div>`
                     : baseStorage
                         .map((i) => renderItem(i, "baseStorage"))
+                        .join("")
+                }
+              </div>
+            </div>
+
+            <div class="inventory-column" data-bin="forwardLocker">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">FORWARD LOCKER</div>
+                <div class="inventory-column-subtitle">
+                  Items carried into the dungeon. Count against load.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="forwardLocker">
+                ${
+                  forwardLocker.length === 0
+                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    : forwardLocker
+                        .map((i) => renderItem(i, "forwardLocker"))
                         .join("")
                 }
               </div>

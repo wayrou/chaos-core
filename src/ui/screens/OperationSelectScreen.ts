@@ -5,7 +5,6 @@
 // ============================================================================
 
 import { updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import {
@@ -14,7 +13,6 @@ import {
   loadCampaignProgress,
   isOperationUnlocked,
   isOperationCompleted,
-  getUnlockedOperations,
 } from "../../core/campaign";
 import { startOperationRun } from "../../core/campaignManager";
 import { activeRunToOperationRun } from "../../core/campaignManager";
@@ -38,7 +36,6 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
   if (!root) return;
 
   const progress = loadCampaignProgress();
-  const unlockedOps = getUnlockedOperations(progress);
 
   // Story operations (exclude custom)
   const storyOperationIds: OperationId[] = [
@@ -80,26 +77,39 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
               return `
                 <div class="opselect-op-card ${!unlocked ? 'opselect-op-card--locked' : ''}" data-op-id="${opId}">
                   <div class="opselect-op-header">
-                    <div class="opselect-op-codename">${opDef.name}</div>
+                    <div class="opselect-op-codename">${unlocked ? opDef.name : '???'}</div>
                     ${statusBadge}
                   </div>
 
                   <div class="opselect-op-description">
-                    ${opDef.description}
+                    ${unlocked ? opDef.description : 'Complete previous operations to unlock this mission.'}
                   </div>
 
-                  <div class="opselect-op-details">
-                    <div class="opselect-op-detail">
-                      <span class="opselect-op-detail-label">Floors:</span>
-                      <span class="opselect-op-detail-value">${opDef.floors}</span>
-                    </div>
-                    ${opDef.recommendedPower ? `
+                  ${unlocked ? `
+                    <div class="opselect-op-details">
                       <div class="opselect-op-detail">
-                        <span class="opselect-op-detail-label">Recommended Power:</span>
-                        <span class="opselect-op-detail-value">${opDef.recommendedPower}</span>
+                        <span class="opselect-op-detail-label">Floors:</span>
+                        <span class="opselect-op-detail-value">${opDef.floors}</span>
                       </div>
-                    ` : ''}
-                  </div>
+                      ${opDef.recommendedPower ? `
+                        <div class="opselect-op-detail">
+                          <span class="opselect-op-detail-label">Recommended Power:</span>
+                          <span class="opselect-op-detail-value">${opDef.recommendedPower}</span>
+                        </div>
+                      ` : ''}
+                    </div>
+                  ` : `
+                    <div class="opselect-op-details opselect-op-details--locked">
+                      <div class="opselect-op-detail opselect-op-detail--locked">
+                        <span class="opselect-op-detail-label">Floors:</span>
+                        <span class="opselect-op-detail-value">???</span>
+                      </div>
+                      <div class="opselect-op-detail opselect-op-detail--locked">
+                        <span class="opselect-op-detail-label">Recommended Power:</span>
+                        <span class="opselect-op-detail-value">???</span>
+                      </div>
+                    </div>
+                  `}
 
                   <button class="opselect-deploy-btn" 
                           data-op-id="${opId}" 
@@ -168,7 +178,9 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
     if (returnDestination === "field") {
       renderFieldScreen("base_camp");
     } else {
-      renderBaseCampScreen();
+      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("base_camp");
+      });
     }
   });
 

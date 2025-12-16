@@ -8,13 +8,15 @@ import { GameState } from "./types";
 import { EncounterDefinition } from "./campaign";
 import { getEnemyDefinition } from "./enemies";
 import { createBattleUnitState } from "./battle";
+import { generateCover } from "./coverGenerator";
 
 /**
  * Create a battle state from an encounter definition
  */
 export function createBattleFromEncounter(
   gameState: GameState,
-  encounter: EncounterDefinition
+  encounter: EncounterDefinition,
+  encounterSeed?: string
 ): BattleState {
   // Get party units
   const partyUnitIds = gameState.partyUnitIds || [];
@@ -111,6 +113,23 @@ export function createBattleFromEncounter(
     }
   }
   
+  // Generate cover deterministically based on battle ID (which includes timestamp, but we'll use a deterministic seed)
+  // Get reserved cells (spawn zones - left edge for players, right edge for enemies)
+  const reservedCells: Array<{ x: number; y: number }> = [];
+  // Left edge (player spawn)
+  for (let y = 0; y < encounter.gridHeight; y++) {
+    reservedCells.push({ x: 0, y });
+  }
+  // Right edge (enemy spawn)
+  for (let y = 0; y < encounter.gridHeight; y++) {
+    reservedCells.push({ x: encounter.gridWidth - 1, y });
+  }
+  
+  // Use provided encounter seed or generate from encounter properties for deterministic generation
+  const seedForCover = encounterSeed || 
+    `cover_${encounter.gridWidth}x${encounter.gridHeight}_${encounter.enemyUnits.length}_${encounter.enemyUnits.map(e => e.enemyId).join('_')}`;
+  const tilesWithCover = generateCover(tiles, encounter.gridWidth, encounter.gridHeight, seedForCover, reservedCells);
+  
   // Create battle state (will start in placement phase)
   const battle: BattleState = {
     id: `battle_${Date.now()}`,
@@ -118,7 +137,7 @@ export function createBattleFromEncounter(
     roomId: "current_room",
     gridWidth: encounter.gridWidth,
     gridHeight: encounter.gridHeight,
-    tiles,
+    tiles: tilesWithCover,
     units,
     turnOrder: [], // Will be computed after placement
     activeUnitId: null,

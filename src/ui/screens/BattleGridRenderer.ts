@@ -4,6 +4,9 @@
 
 import { BattleState, BattleUnitState } from "../../core/battle";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
+import { getCoverVisualState } from "../../core/coverGenerator";
+import { getGameState } from "../../state/gameStore";
+import { PlayerId } from "../../core/types";
 
 /**
  * Simple, robust battle grid renderer
@@ -84,7 +87,23 @@ export class BattleGridRenderer {
         }
         
         // Build tile classes
-        let classes = "battle-tile battle-tile--floor";
+        let classes = "battle-tile";
+        
+        // Determine terrain class
+        if (tile) {
+          const terrain = tile.terrain;
+          if (terrain === "light_cover" || terrain === "heavy_cover") {
+            const visualState = getCoverVisualState(tile);
+            classes += ` battle-tile--${terrain} battle-tile--cover-${visualState}`;
+          } else if (terrain === "rubble") {
+            classes += " battle-tile--rubble";
+          } else {
+            classes += " battle-tile--floor";
+          }
+        } else {
+          classes += " battle-tile--floor";
+        }
+        
         if (moveTileSet.has(key)) classes += " battle-tile--move-option";
         if (attackTileSet.has(key)) classes += " battle-tile--attack-option";
         if (placementTiles.has(key)) classes += " battle-tile--placement-option";
@@ -130,6 +149,20 @@ export class BattleGridRenderer {
           const truncName = unit.name.length > 8 ? unit.name.slice(0, 8) + "…" : unit.name;
           const facing = unit.facing ?? (unit.isEnemy ? "west" : "east");
           
+          // Get controller info for player units
+          let controllerBadge = "";
+          if (!unit.isEnemy && unit.controller) {
+            const state = getGameState();
+            const player = state.players[unit.controller as PlayerId];
+            const controllerColor = player?.color || (unit.controller === "P1" ? "#ff8a00" : "#6849c2");
+            const controllerLabel = unit.controller === "P1" ? "P1" : "P2";
+            controllerBadge = `
+              <div class="battle-unit-controller-badge" style="background: ${controllerColor}; color: white; border: 2px solid ${controllerColor};">
+                ${controllerLabel}
+              </div>
+            `;
+          }
+          
           // Calculate pixel position for unit
           // CRITICAL: Account for grid padding (12px) and gaps (4px)
           // Grid has 12px padding, then tiles with 4px gaps
@@ -151,6 +184,7 @@ export class BattleGridRenderer {
                   <div class="battle-unit-portrait">
                     <img src="${getBattleUnitPortraitPath(unit.id, unit.baseUnitId)}" alt="${unit.name}" class="battle-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
                   </div>
+                  ${controllerBadge}
                   <div class="battle-unit-info-overlay">
                     <div class="battle-unit-name">${truncName}</div>
                     <div class="battle-unit-hp">HP ${unit.hp}/${unit.maxHp}</div>

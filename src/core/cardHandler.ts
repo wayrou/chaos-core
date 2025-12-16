@@ -4,8 +4,10 @@
 // card handling in handleTileClick
 // ============================================================================
 
-import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome } from "./battle";
+import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Tile, Vec2 } from "./battle";
 import { Card, CardEffect } from "./types";
+import { getCoverDamageReduction, damageCover } from "./coverGenerator";
+import { hasLineOfSight, getFirstCoverInLine } from "./lineOfSight";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
@@ -362,7 +364,16 @@ export function handleCardPlay(
       .reduce((sum, buff) => sum + buff.amount, 0);
     const totalDef = targetUnit.def + defBuffs;
     
-    const finalDamage = Math.max(1, totalDamage - totalDef);
+    let finalDamage = Math.max(1, totalDamage - totalDef);
+    
+    // Apply cover damage reduction if target is on cover
+    if (targetUnit.pos) {
+      const targetTile = getTileAt(battle, targetUnit.pos.x, targetUnit.pos.y);
+      if (targetTile) {
+        const coverReduction = getCoverDamageReduction(targetTile);
+        finalDamage = Math.max(1, finalDamage - coverReduction);
+      }
+    }
     
     // Apply damage
     const newHp = targetUnit.hp - finalDamage;
@@ -652,4 +663,62 @@ export function handleCardPlay(
   
   // Invalid target type
   return null;
+}
+
+/**
+ * Helper to get tile at a position
+ */
+function getTileAt(battle: BattleState, x: number, y: number): Tile | null {
+  if (x < 0 || x >= battle.gridWidth || y < 0 || y >= battle.gridHeight) {
+    return null;
+  }
+  const index = y * battle.gridWidth + x;
+  return battle.tiles[index] || null;
+}
+
+/**
+ * Damage cover tiles in an area (for AoE attacks)
+ */
+export function damageCoverInArea(
+  battle: BattleState,
+  center: Vec2,
+  radius: number,
+  damage: number
+): BattleState {
+  const updatedTiles = [...battle.tiles];
+  let coverDamaged = false;
+  
+  for (let y = 0; y < battle.gridHeight; y++) {
+    for (let x = 0; x < battle.gridWidth; x++) {
+      const dist = Math.abs(x - center.x) + Math.abs(y - center.y);
+      if (dist <= radius) {
+        const tileIndex = y * battle.gridWidth + x;
+        const tile = updatedTiles[tileIndex];
+        
+        if (tile && (tile.terrain === "light_cover" || tile.terrain === "heavy_cover")) {
+          const wasCover = tile.terrain === "light_cover" || tile.terrain === "heavy_cover";
+          const damagedTile = damageCover(tile, damage);
+          updatedTiles[tileIndex] = damagedTile;
+          
+          // Check if cover was destroyed (was cover, now rubble)
+          if (wasCover && damagedTile.terrain === "rubble") {
+            coverDamaged = true;
+          }
+        }
+      }
+    }
+  }
+  
+  if (coverDamaged) {
+    return {
+      ...battle,
+      tiles: updatedTiles,
+      log: [...battle.log, "SLK//COVER  :: Cover destroyed by area damage."],
+    };
+  }
+  
+  return {
+    ...battle,
+    tiles: updatedTiles,
+  };
 }

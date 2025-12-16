@@ -9,8 +9,8 @@ import { FieldMap, FieldObject, InteractionZone } from "./types";
 // ============================================================================
 
 function createBaseCampMap(): FieldMap {
-  const width = 20;
-  const height = 15;
+  const width = 30;
+  const height = 20;
   
   // Create walkable floor grid
   const tiles: FieldMap["tiles"] = [];
@@ -72,8 +72,8 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "ops_terminal",
-      x: 16,
-      y: 10,
+      x: 27,
+      y: 8,
       width: 2,
       height: 2,
       type: "station",
@@ -112,13 +112,23 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "port_station",
-      x: 13,
-      y: 10,
+      x: 25,
+      y: 15,
       width: 2,
       height: 2,
       type: "station",
       sprite: "port",
       metadata: { name: "Port" },
+    },
+    {
+      id: "quarters_station",
+      x: 25,
+      y: 12,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "quarters",
+      metadata: { name: "Quarters" },
     },
   ];
   
@@ -162,9 +172,9 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "interact_ops",
-      x: 15,
-      y: 12,
-      width: 4,
+      x: 27,
+      y: 10,
+      width: 2,
       height: 1,
       action: "ops_terminal",
       label: "OPS TERMINAL",
@@ -198,12 +208,21 @@ function createBaseCampMap(): FieldMap {
     },
     {
       id: "interact_port",
-      x: 13,
-      y: 12,
+      x: 25,
+      y: 17,
       width: 2,
       height: 1,
       action: "port",
       label: "PORT",
+    },
+    {
+      id: "interact_quarters",
+      x: 25,
+      y: 14,
+      width: 2,
+      height: 1,
+      action: "quarters",
+      label: "QUARTERS",
     },
     {
       id: "enter_free_zone",
@@ -303,12 +322,166 @@ function createFreeZoneMap(): FieldMap {
 }
 
 // ============================================================================
+// QUARTERS MAP
+// ============================================================================
+
+function createQuartersMap(): FieldMap {
+  const width = 10;
+  const height = 8;
+  
+  // Create walkable floor grid
+  const tiles: FieldMap["tiles"] = [];
+  for (let y = 0; y < height; y++) {
+    tiles[y] = [];
+    for (let x = 0; x < width; x++) {
+      // Walls around edges, floor in center
+      const isWall = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+      tiles[y][x] = {
+        x,
+        y,
+        walkable: !isWall,
+        type: isWall ? "wall" : "floor",
+      };
+    }
+  }
+  
+  // Quarters objects (visual placeholders)
+  const objects: FieldObject[] = [
+    {
+      id: "mailbox_object",
+      x: 2,
+      y: 2,
+      width: 1,
+      height: 1,
+      type: "station",
+      sprite: "mailbox",
+      metadata: { name: "Mailbox" },
+    },
+    {
+      id: "bunk_object",
+      x: 7,
+      y: 2,
+      width: 2,
+      height: 1,
+      type: "station",
+      sprite: "bunk",
+      metadata: { name: "Bunk" },
+    },
+    {
+      id: "pinboard_object",
+      x: 2,
+      y: 5,
+      width: 1,
+      height: 1,
+      type: "station",
+      sprite: "pinboard",
+      metadata: { name: "Pinboard" },
+    },
+    {
+      id: "footlocker_object",
+      x: 7,
+      y: 5,
+      width: 1,
+      height: 1,
+      type: "station",
+      sprite: "footlocker",
+      metadata: { name: "Footlocker" },
+    },
+    {
+      id: "exit_door_object",
+      x: 4,
+      y: 5,
+      width: 2,
+      height: 1,
+      type: "station",
+      sprite: "door",
+      metadata: { name: "Exit" },
+    },
+  ];
+  
+  // Interaction zones for quarters interactables
+  const interactionZones: InteractionZone[] = [
+    {
+      id: "interact_mailbox",
+      x: 2,
+      y: 3,
+      width: 1,
+      height: 1,
+      action: "custom",
+      label: "MAILBOX",
+      metadata: { quartersAction: "mailbox" },
+    },
+    {
+      id: "interact_bunk",
+      x: 7,
+      y: 3,
+      width: 2,
+      height: 1,
+      action: "custom",
+      label: "BUNK",
+      metadata: { quartersAction: "bunk" },
+    },
+    {
+      id: "interact_pinboard",
+      x: 2,
+      y: 6,
+      width: 1,
+      height: 1,
+      action: "custom",
+      label: "PINBOARD",
+      metadata: { quartersAction: "pinboard" },
+    },
+    {
+      id: "interact_footlocker",
+      x: 7,
+      y: 6,
+      width: 1,
+      height: 1,
+      action: "custom",
+      label: "FOOTLOCKER",
+      metadata: { quartersAction: "footlocker" },
+    },
+    {
+      id: "interact_sable",
+      x: 5,
+      y: 4,
+      width: 1,
+      height: 1,
+      action: "custom",
+      label: "SABLE",
+      metadata: { quartersAction: "sable" },
+    },
+    {
+      id: "exit_quarters",
+      x: 4,
+      y: 5,
+      width: 2,
+      height: 1,
+      action: "base_camp_entry",
+      label: "EXIT TO BASE CAMP",
+      metadata: { targetMap: "base_camp" },
+    },
+  ];
+  
+  return {
+    id: "quarters",
+    name: "Quarters",
+    width,
+    height,
+    tiles,
+    objects,
+    interactionZones,
+  };
+}
+
+// ============================================================================
 // MAP REGISTRY
 // ============================================================================
 
 const maps = new Map<FieldMap["id"], FieldMap>([
   ["base_camp", createBaseCampMap()],
   ["free_zone_1", createFreeZoneMap()],
+  ["quarters", createQuartersMap()],
 ]);
 
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {

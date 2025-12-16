@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { GameState, OperationRun } from "./types";
-import { getActiveRun, activeRunToOperationRun } from "./campaignManager";
+import { getActiveRun, activeRunToOperationRun, getAvailableNextNodes } from "./campaignManager";
 import { updateGameState } from "../state/gameStore";
 
 /**
@@ -18,7 +18,7 @@ export function syncCampaignToGameState(): void {
     updateGameState(prev => ({
       ...prev,
       operation: null,
-      phase: "basecamp",
+      phase: "shell",
     }));
     return;
   }
@@ -48,40 +48,37 @@ export function getCurrentNodeFromCampaign(): import("./campaign").NodeMap["node
 }
 
 /**
- * Get available nodes (connected and not cleared)
+ * Get available nodes (forward-only branching - nodes connected from current node that aren't cleared)
  */
 export function getAvailableNodes(): string[] {
   const activeRun = getActiveRun();
   if (!activeRun) return [];
-  
+
   const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
   if (!currentFloorMap) return [];
-  
-  const connections = currentFloorMap.connections[activeRun.currentNodeId] || [];
-  return connections.filter(nodeId => {
-    // Available if not cleared OR if it's the current node
-    return !activeRun.clearedNodeIds.includes(nodeId) || nodeId === activeRun.currentNodeId;
-  });
+
+  // Use forward-only branching logic
+  const availableNodes = getAvailableNextNodes(
+    activeRun.currentNodeId,
+    currentFloorMap,
+    activeRun.clearedNodeIds
+  );
+
+  return availableNodes.map(n => n.id);
 }
 
 /**
- * Check if node is accessible (cleared or connected to current)
+ * Check if node is accessible (forward-only branching - must be connected from current node and not cleared)
  */
 export function isNodeAccessible(nodeId: string): boolean {
   const activeRun = getActiveRun();
   if (!activeRun) return false;
-  
+
   // Current node is always accessible
   if (nodeId === activeRun.currentNodeId) return true;
-  
-  // Cleared nodes are accessible
-  if (activeRun.clearedNodeIds.includes(nodeId)) return true;
-  
-  // Check if connected to current node
-  const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
-  if (!currentFloorMap) return false;
-  
-  const connections = currentFloorMap.connections[activeRun.currentNodeId] || [];
-  return connections.includes(nodeId);
+
+  // Check if this is an available next node (forward-only branching)
+  const availableNodes = getAvailableNodes();
+  return availableNodes.includes(nodeId);
 }
 

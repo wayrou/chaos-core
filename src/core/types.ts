@@ -75,6 +75,7 @@ loadout?: {
   affinities?: UnitAffinities; // Long-term affinity tracking
   // Local Co-op: Which player controls this unit
   controller?: "P1" | "P2";
+  // Field Mods System - Hardpoints (run-scoped, stored in ActiveRunState)
 }
 
 export interface BattleTile {
@@ -109,7 +110,7 @@ export interface BattleState {
 //  OPERATION / WORLD
 // ---------------------------------------------------------
 
-export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss" | "field_node";
+export type RoomType = "tavern" | "battle" | "event" | "shop" | "rest" | "boss" | "field_node" | "key_room" | "elite" | "treasure";
 
 export interface RoomNode {
   id: RoomId;
@@ -301,6 +302,20 @@ equipmentPool?: string[];
   baseCampVisitIndex?: number; // Increments each time player enters base camp
   portManifest?: import("./portTrades").PortManifest; // Current port manifest
   portTradesRemaining?: number; // Tracks remaining normal trades this visit (max 2)
+
+  // Quarters System
+  quarters?: {
+    mail?: import("./mailSystem").MailState;
+    buffs?: import("./quartersBuffs").QuartersBuffsState;
+    decor?: import("./decorSystem").DecorState;
+    pinboard?: {
+      completedOperations?: string[];
+      failedOperations?: string[];
+      log?: Array<{ timestamp: number; message: string }>;
+    };
+  };
+  // Field Mods System - Run inventory (synced from ActiveRunState)
+  runFieldModInventory?: import("./fieldMods").FieldModInstance[];
 }
 
 interface GearSlotData {

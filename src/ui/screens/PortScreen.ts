@@ -21,12 +21,18 @@ import { loadCampaignProgress } from "../../core/campaign";
 // ----------------------------------------------------------------------------
 
 let manifestUpdatedStampVisible = false;
+let npcWindowInterval: number | null = null;
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number }> = [];
+let npcWindowIdCounter = 0;
 
 // ----------------------------------------------------------------------------
 // RENDER
 // ----------------------------------------------------------------------------
 
 export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+  // Stop any existing NPC window system
+  stopNpcWindowSystem();
+  
   // Reset stamp visibility
   manifestUpdatedStampVisible = false;
   const app = document.getElementById("app");
@@ -83,63 +89,77 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
         </div>
       </div>
       
-      <!-- Manifest Updated Stamp -->
-      <div class="port-stamp-container" id="manifestStampContainer">
-        <div class="port-stamp ${manifestUpdatedStampVisible ? 'port-stamp--visible' : ''}" id="manifestStamp">
-          MANIFEST UPDATED
+      <!-- Main Content: Two Column Layout -->
+      <div class="port-content">
+        <!-- Left Column: Main Window -->
+        <div class="port-main-window">
+          <!-- Manifest Updated Stamp -->
+          <div class="port-stamp-container" id="manifestStampContainer">
+            <div class="port-stamp ${manifestUpdatedStampVisible ? 'port-stamp--visible' : ''}" id="manifestStamp">
+              MANIFEST UPDATED
+            </div>
+          </div>
+          
+          <!-- Trades Remaining Indicator -->
+          <div class="port-trades-remaining">
+            <span class="trades-label">Trades remaining this visit:</span>
+            <span class="trades-value">${tradesRemaining}</span>
+          </div>
+          
+          <!-- Normal Trade Contracts -->
+          <div class="port-section">
+            <h2 class="port-section-title">NORMAL TRADE CONTRACTS</h2>
+            <div class="port-offers-list" id="normalOffersList">
+              ${renderNormalOffers(manifest.normalOffers, res, tradesRemaining)}
+            </div>
+          </div>
+          
+          <!-- Divider -->
+          <div class="port-divider"></div>
+          
+          <!-- Bulk Shipment -->
+          <div class="port-section">
+            <h2 class="port-section-title">BULK SHIPMENT</h2>
+            <div class="port-bulk-shipment" id="bulkShipmentContainer">
+              ${renderBulkShipment(manifest.bulkShipmentOffer, res)}
+            </div>
+          </div>
+          
+          <!-- Resources Footer -->
+          <div class="port-footer">
+            <div class="resource-display">
+              <div class="resource-item">
+                <span class="resource-label">METAL</span>
+                <span class="resource-value">${res.metalScrap}</span>
+              </div>
+              <div class="resource-item">
+                <span class="resource-label">WOOD</span>
+                <span class="resource-value">${res.wood}</span>
+              </div>
+              <div class="resource-item">
+                <span class="resource-label">SHARDS</span>
+                <span class="resource-value">${res.chaosShards}</span>
+              </div>
+              <div class="resource-item">
+                <span class="resource-label">STEAM</span>
+                <span class="resource-value">${res.steamComponents}</span>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-      
-      <!-- Trades Remaining Indicator -->
-      <div class="port-trades-remaining">
-        <span class="trades-label">Trades remaining this visit:</span>
-        <span class="trades-value">${tradesRemaining}</span>
-      </div>
-      
-      <!-- Normal Trade Contracts -->
-      <div class="port-section">
-        <h2 class="port-section-title">NORMAL TRADE CONTRACTS</h2>
-        <div class="port-offers-list" id="normalOffersList">
-          ${renderNormalOffers(manifest.normalOffers, res, tradesRemaining)}
-        </div>
-      </div>
-      
-      <!-- Divider -->
-      <div class="port-divider"></div>
-      
-      <!-- Bulk Shipment -->
-      <div class="port-section">
-        <h2 class="port-section-title">BULK SHIPMENT</h2>
-        <div class="port-bulk-shipment" id="bulkShipmentContainer">
-          ${renderBulkShipment(manifest.bulkShipmentOffer, res)}
-        </div>
-      </div>
-      
-      <!-- Resources Footer -->
-      <div class="port-footer">
-        <div class="resource-display">
-          <div class="resource-item">
-            <span class="resource-label">METAL</span>
-            <span class="resource-value">${res.metalScrap}</span>
-          </div>
-          <div class="resource-item">
-            <span class="resource-label">WOOD</span>
-            <span class="resource-value">${res.wood}</span>
-          </div>
-          <div class="resource-item">
-            <span class="resource-label">SHARDS</span>
-            <span class="resource-value">${res.chaosShards}</span>
-          </div>
-          <div class="resource-item">
-            <span class="resource-label">STEAM</span>
-            <span class="resource-value">${res.steamComponents}</span>
-          </div>
+        
+        <!-- Right Column: NPC Flavor Text -->
+        <div class="port-npc-panel">
+          ${renderNpcFlavorText()}
         </div>
       </div>
     </div>
   `;
   
   attachPortListeners(returnTo, manifest);
+  
+  // Start the NPC window system
+  startNpcWindowSystem();
 }
 
 // ----------------------------------------------------------------------------
@@ -195,7 +215,8 @@ function renderBulkShipment(
   playerResources: GameState["resources"]
 ): string {
   const playerAmount = playerResources[offer.targetResource] ?? 0;
-  const canShip = playerAmount > 0;
+  const canShip = playerAmount > 0 && !offer.fulfilled;
+  const isFulfilled = offer.fulfilled;
   
   // Determine payout (90% basic, 10% interesting)
   const payout = offer.interestingPayout.length > 0 
@@ -205,10 +226,11 @@ function renderBulkShipment(
   const isInteresting = offer.interestingPayout.length > 0;
   
   return `
-    <div class="port-bulk-offer">
+    <div class="port-bulk-offer ${isFulfilled ? 'port-bulk-offer--fulfilled' : ''}">
       <div class="port-bulk-header">
         <h3 class="port-bulk-name">${offer.name}</h3>
         ${isInteresting ? '<span class="port-bulk-bonus">PREMIUM PAYOUT</span>' : ''}
+        ${isFulfilled ? '<span class="port-bulk-status">FULFILLED</span>' : ''}
       </div>
       <p class="port-bulk-description">${offer.description}</p>
       <div class="port-bulk-details">
@@ -226,11 +248,13 @@ function renderBulkShipment(
           `).join('')}
         </div>
       </div>
-      <button class="port-bulk-btn ${canShip ? '' : 'port-bulk-btn--disabled'}" 
-              data-bulk-id="${offer.id}"
-              ${!canShip ? 'disabled' : ''}>
-        ${canShip ? 'EXECUTE BULK SHIPMENT' : 'NO RESOURCES AVAILABLE'}
-      </button>
+      ${!isFulfilled ? `
+        <button class="port-bulk-btn ${canShip ? '' : 'port-bulk-btn--disabled'}" 
+                data-bulk-id="${offer.id}"
+                ${!canShip ? 'disabled' : ''}>
+          ${canShip ? 'EXECUTE BULK SHIPMENT' : 'NO RESOURCES AVAILABLE'}
+        </button>
+      ` : ''}
     </div>
   `;
 }
@@ -246,6 +270,160 @@ function formatResourceName(resource: ResourceType): string {
 }
 
 // ----------------------------------------------------------------------------
+// NPC WINDOW SYSTEM
+// ----------------------------------------------------------------------------
+
+// NPC dialogue data - conversations between NPCs
+const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+  { name: "DOCK MASTER", text: "The caravans come and go, but the manifest never lies. Every scrap, every shard, every component—it's all accounted for." },
+  { name: "CARAVAN MERCHANT", text: "Been running these routes for twenty years. Seen empires rise and fall, but the trade routes? They never change." },
+  { name: "WAREHOUSE KEEPER", text: "Storage is tight these days. Everyone wants to hoard, but hoarding doesn't feed the operation." },
+  { name: "PORT SCRIBE", text: "Every transaction gets logged. Every shipment gets verified. The manifest is the law here." },
+  { name: "TRADE COORDINATOR", text: "The bulk shipments are where the real money is. Think big, commander." },
+  { name: "CARGO HANDLER", text: "Another shipment coming in. Metal scrap, mostly. The usual." },
+  { name: "HARBORMASTER", text: "Keep the docks clear. We've got three more caravans scheduled before sundown." },
+  { name: "SCRAP DEALER", text: "Prices are good today. If you've got metal, now's the time to move it." },
+  { name: "STEAM ENGINEER", text: "Those components need proper handling. One wrong move and you've got a pressure leak." },
+  { name: "QUARTERMASTER", text: "Resources are resources. Trade what you've got, take what you need." },
+  { name: "DOCK WORKER", text: "Heavy load today. Wood shipments are stacking up faster than we can move them." },
+  { name: "TRADER", text: "Shards for steam, steam for metal. It's all connected. You just need to know the right people." },
+  { name: "MANIFEST CLERK", text: "Double-checking the numbers. Can't afford mistakes in this business." },
+  { name: "CARAVAN LEADER", text: "Routes are getting dangerous. More chaos out there than usual." },
+  { name: "WAREHOUSE FOREMAN", text: "Inventory's running low. We need more shipments if we're going to keep up with demand." },
+];
+
+function renderNpcFlavorText(): string {
+  return `
+    <div class="port-npc-panel-content">
+      <h2 class="port-npc-panel-title">PORT ACTIVITY</h2>
+      <div class="port-npc-windows-container" id="portNpcWindowsContainer">
+        ${activeNpcWindows.map(window => `
+          <div class="port-npc-window port-npc-window--visible" data-window-id="${window.id}">
+            <div class="port-npc-name">${window.name}</div>
+            <div class="port-npc-text">${window.text}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function startNpcWindowSystem(): void {
+  // Clear any existing interval
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+  }
+  
+  // Clear existing windows
+  activeNpcWindows = [];
+  npcWindowIdCounter = 0;
+  
+  // Add initial windows (2-3 to start)
+  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+  for (let i = 0; i < initialCount; i++) {
+    addNpcWindow();
+  }
+  
+  // Update the DOM
+  updateNpcWindowsDOM();
+  
+  // Start the cycle: add new windows and remove old ones
+  npcWindowInterval = window.setInterval(() => {
+    // Random chance to add a new window (60% chance)
+    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+      addNpcWindow();
+    }
+    
+    // Remove old windows (random, but keep at least 1)
+    if (activeNpcWindows.length > 1) {
+      const now = Date.now();
+      // Remove windows older than 8-12 seconds
+      const maxAge = 8000 + Math.random() * 4000;
+      activeNpcWindows = activeNpcWindows.filter(window => {
+        const age = now - window.timestamp;
+        return age < maxAge;
+      });
+    }
+    
+    // If we have too many windows, remove the oldest
+    if (activeNpcWindows.length > 4) {
+      activeNpcWindows.shift();
+    }
+    
+    updateNpcWindowsDOM();
+  }, 2000); // Check every 2 seconds
+}
+
+function addNpcWindow(): void {
+  const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const windowId = `npc-window-${npcWindowIdCounter++}`;
+  
+  activeNpcWindows.push({
+    id: windowId,
+    name: dialogue.name,
+    text: dialogue.text,
+    timestamp: Date.now(),
+  });
+}
+
+function updateNpcWindowsDOM(): void {
+  const container = document.getElementById("portNpcWindowsContainer");
+  if (!container) return;
+  
+  // Get current window IDs in DOM
+  const currentWindowIds = Array.from(container.querySelectorAll('.port-npc-window')).map(
+    el => el.getAttribute('data-window-id')
+  );
+  
+  // Get active window IDs
+  const activeWindowIds = activeNpcWindows.map(w => w.id);
+  
+  // Remove windows that are no longer active
+  currentWindowIds.forEach(windowId => {
+    if (!activeWindowIds.includes(windowId)) {
+      const windowEl = container.querySelector(`[data-window-id="${windowId}"]`);
+      if (windowEl) {
+        windowEl.classList.add('port-npc-window--removing');
+        setTimeout(() => {
+          windowEl.remove();
+        }, 300); // Match animation duration
+      }
+    }
+  });
+  
+  // Add new windows
+  activeNpcWindows.forEach(window => {
+    if (!currentWindowIds.includes(window.id)) {
+      const windowEl = document.createElement('div');
+      windowEl.className = 'port-npc-window';
+      windowEl.setAttribute('data-window-id', window.id);
+      windowEl.innerHTML = `
+        <div class="port-npc-name">${window.name}</div>
+        <div class="port-npc-text">${window.text}</div>
+      `;
+      
+      // Add with animation
+      windowEl.classList.add('port-npc-window--appearing');
+      container.appendChild(windowEl);
+      
+      // Trigger animation
+      requestAnimationFrame(() => {
+        windowEl.classList.remove('port-npc-window--appearing');
+        windowEl.classList.add('port-npc-window--visible');
+      });
+    }
+  });
+}
+
+function stopNpcWindowSystem(): void {
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+    npcWindowInterval = null;
+  }
+  activeNpcWindows = [];
+}
+
+// ----------------------------------------------------------------------------
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
@@ -258,6 +436,9 @@ function attachPortListeners(
   
   // Back button
   app.querySelector("#backBtn")?.addEventListener("click", () => {
+    // Stop NPC window system when leaving
+    stopNpcWindowSystem();
+    
     if (returnTo === "field") {
       renderFieldScreen("base_camp");
     } else {
@@ -339,6 +520,12 @@ function executeBulkShipment(offer: BulkShipmentOffer): void {
   const state = getGameState();
   const playerAmount = state.resources[offer.targetResource] ?? 0;
   
+  // Check if already fulfilled
+  if (offer.fulfilled) {
+    return;
+  }
+  
+  // Check if player has resources
   if (playerAmount <= 0) {
     return;
   }
@@ -360,9 +547,17 @@ function executeBulkShipment(offer: BulkShipmentOffer): void {
       newResources[payoutItem.resource] = (newResources[payoutItem.resource] ?? 0) + payoutItem.amount;
     }
     
+    // Mark bulk shipment as fulfilled
+    const updatedManifest = { ...s.portManifest! };
+    updatedManifest.bulkShipmentOffer = {
+      ...updatedManifest.bulkShipmentOffer,
+      fulfilled: true,
+    };
+    
     return {
       ...s,
       resources: newResources,
+      portManifest: updatedManifest,
     };
   });
   
@@ -373,7 +568,8 @@ function executeBulkShipment(offer: BulkShipmentOffer): void {
   );
   
   // Re-render screen
-  renderPortScreen();
+  const returnTo = (document.getElementById("backBtn")?.getAttribute("data-return-to") as "basecamp" | "field") || "basecamp";
+  renderPortScreen(returnTo);
 }
 
 // ----------------------------------------------------------------------------

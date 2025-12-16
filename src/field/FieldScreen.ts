@@ -19,6 +19,7 @@ import { showDialogue } from "../ui/screens/DialogueScreen";
 import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { PlayerId } from "../core/types";
+import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 
 // ============================================================================
 // STATE
@@ -75,60 +76,110 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
 
   const isResuming = fieldState && fieldState.currentMap === mapId;
 
-  if (isResuming) {
+  // Always reset position when entering quarters (small map, needs specific spawn)
+  // For other maps, restore position if resuming
+  if (isResuming && mapId !== "quarters") {
     // Restore from fieldState if available, otherwise from game state
     playerX = fieldState!.player.x;
     playerY = fieldState!.player.y;
   } else {
-    playerX = (currentMap.width * tileSize) / 2;
-    playerY = (currentMap.height * tileSize) / 2;
-  }
-
-  // Initialize P1 avatar in game state if not present
-  // Ensure players object exists (for backward compatibility with old saves)
-  if (!state.players || !state.players.P1 || !state.players.P1.avatar) {
-    updateGameState(s => {
-      // Initialize players if they don't exist
-      const players = s.players || {
-        P1: {
-          id: "P1",
-          active: true,
-          color: "#ff8a00",
-          inputSource: "keyboard1" as const,
-          avatar: null,
-          controlledUnitIds: [],
-        },
-        P2: {
-          id: "P2",
-          active: false,
-          color: "#6849c2",
-          inputSource: "none" as const,
-          avatar: null,
-          controlledUnitIds: [],
-        },
-      };
+    // Set spawn position based on map (including quarters - always reset)
+    if (mapId === "quarters") {
+      // Spawn in the middle bottom of the walkable area
+      // Quarters is 10x8, walkable area is x:1-8, y:1-6
+      // Middle of x range (1-8): between 4 and 5, use tile 4 for clean positioning
+      // Bottom walkable row: y:6
+      // Use tile 4 center: 4 * 64 + 32 = 288px
+      const spawnTileX = 4; // Middle of walkable area (tiles 1-8, middle is ~4.5, use 4)
+      const spawnTileY = 6; // Bottom walkable row (y:1-6, bottom is 6)
+      playerX = spawnTileX * tileSize + tileSize / 2; // Center of tile 4 = 288px
+      playerY = spawnTileY * tileSize + tileSize / 2; // Center of tile 6 = 416px
       
-      return {
-        ...s,
-        players: {
-          ...players,
-          P1: {
-            ...players.P1,
-            active: true,
-            avatar: players.P1.avatar || {
-              x: playerX,
-              y: playerY,
-              facing: "south",
-              spriteId: "aeriss_p1",
-            },
-          },
-        },
-      };
-    });
+      // Skip validation for quarters - we know this position is walkable
+      // (tile 4,6 is in the middle-bottom of walkable area x:1-8, y:1-6)
+    } else if (mapId === "base_camp") {
+      // Spawn outside quarters node
+      // Quarters station is at x:25, y:12 (size 2x2)
+      // Quarters interaction zone is at x:25, y:14 (size 2x1)
+      // Spawn to the left of quarters interaction zone at x:23, y:14 (center of tile)
+      playerX = 23 * tileSize + tileSize / 2; // 1472px
+      playerY = 14 * tileSize + tileSize / 2; // 896px
+    } else {
+      // Default: center of map
+      playerX = (currentMap.width * tileSize) / 2;
+      playerY = (currentMap.height * tileSize) / 2;
+    }
+    
+    // Validate spawn position is walkable, if not, find nearest walkable tile
+    // Skip validation for quarters - we set a specific position
+    if (mapId !== "quarters") {
+      const spawnTileX = Math.floor(playerX / tileSize);
+      const spawnTileY = Math.floor(playerY / tileSize);
+      if (spawnTileX < 0 || spawnTileX >= currentMap.width || 
+          spawnTileY < 0 || spawnTileY >= currentMap.height ||
+          !currentMap.tiles[spawnTileY]?.[spawnTileX]?.walkable) {
+        // Find first walkable tile
+        for (let y = 1; y < currentMap.height - 1; y++) {
+          for (let x = 1; x < currentMap.width - 1; x++) {
+            if (currentMap.tiles[y]?.[x]?.walkable) {
+              playerX = x * tileSize + tileSize / 2;
+              playerY = y * tileSize + tileSize / 2;
+              break;
+            }
+          }
+          if (playerX !== (currentMap.width * tileSize) / 2) break;
+        }
+      }
+    }
   }
 
-  if (isResuming && fieldState && fieldState.player) {
+  // Initialize or update P1 avatar in game state
+  // Always update position when entering quarters to ensure correct spawn
+  updateGameState(s => {
+    // Initialize players if they don't exist
+    const players = s.players || {
+      P1: {
+        id: "P1",
+        active: true,
+        color: "#ff8a00",
+        inputSource: "keyboard1" as const,
+        avatar: null,
+        controlledUnitIds: [],
+      },
+      P2: {
+        id: "P2",
+        active: false,
+        color: "#6849c2",
+        inputSource: "none" as const,
+        avatar: null,
+        controlledUnitIds: [],
+      },
+    };
+    
+    // Always update position for quarters, or initialize if missing
+    const shouldUpdatePosition = mapId === "quarters" || !players.P1.avatar;
+    
+    return {
+      ...s,
+      players: {
+        ...players,
+        P1: {
+          ...players.P1,
+          active: true,
+          avatar: shouldUpdatePosition ? {
+            x: playerX,
+            y: playerY,
+            facing: "south",
+            spriteId: "aeriss_p1",
+          } : players.P1.avatar,
+        },
+      },
+    };
+  });
+
+  if (isResuming && fieldState && fieldState.player && mapId !== "quarters") {
     // Preserve companion if it exists
+    // For quarters, always reset position, so skip this resume logic
     const companion = fieldState.companion || createCompanion(playerX - 40, playerY - 40);
     fieldState = {
       ...fieldState,
@@ -150,12 +201,18 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     const npcs: import("./types").FieldNpc[] = [];
     if (mapId === "base_camp") {
       const tileSize = 64;
-      // Add a few NPCs at different locations
+      // Add NPCs at different locations
       npcs.push(
         createNpc("npc_medic", "Medic", 5 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_medic"),
         createNpc("npc_quartermaster", "Quartermaster", 12 * tileSize + tileSize / 2, 6 * tileSize + tileSize / 2, "npc_quartermaster"),
         createNpc("npc_scout", "Scout", 8 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_scout"),
-        createNpc("npc_engineer", "Engineer", 14 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_engineer")
+        createNpc("npc_engineer", "Engineer", 14 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_engineer"),
+        // 5 additional NPCs
+        createNpc("npc_supply_officer", "Supply Officer", 20 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_supply_officer"),
+        createNpc("npc_armorer", "Armorer", 6 * tileSize + tileSize / 2, 6 * tileSize + tileSize / 2, "npc_armorer"),
+        createNpc("npc_commander", "Commander", 10 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_commander"),
+        createNpc("npc_researcher", "Researcher", 4 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_researcher"),
+        createNpc("npc_sentinel", "Sentinel", 18 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_sentinel")
       );
     }
     
@@ -348,30 +405,32 @@ function render(): void {
 
   centerViewportOnPlayer();
   
-  // Attach button listener using event delegation on field-root
-  // This way we don't need to reattach on every render
-  if (fieldRoot) {
-    // Remove any existing listener first (by cloning)
-    const existingListener = (fieldRoot as any).__allNodesBtnListener;
-    if (existingListener) {
-      fieldRoot.removeEventListener("click", existingListener);
-    }
-    
-    // Create new listener
-    const allNodesBtnHandler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.id === "fieldAllNodesBtn" || target.closest("#fieldAllNodesBtn")) {
+  // Attach button listener directly to the button element
+  // Use requestAnimationFrame to ensure DOM is ready
+  requestAnimationFrame(() => {
+    const allNodesBtn = document.getElementById("fieldAllNodesBtn");
+    if (allNodesBtn) {
+      // Remove any existing listener first
+      const existingListener = (allNodesBtn as any).__allNodesBtnListener;
+      if (existingListener) {
+        allNodesBtn.removeEventListener("click", existingListener);
+      }
+      
+      // Create new listener
+      const allNodesBtnHandler = (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         console.log("[FIELD] All Nodes button clicked");
         toggleAllNodesPanel();
-      }
-    };
-    
-    // Store reference and attach
-    (fieldRoot as any).__allNodesBtnListener = allNodesBtnHandler;
-    fieldRoot.addEventListener("click", allNodesBtnHandler);
-  }
+      };
+      
+      // Store reference and attach
+      (allNodesBtn as any).__allNodesBtnListener = allNodesBtnHandler;
+      allNodesBtn.addEventListener("click", allNodesBtnHandler);
+    } else {
+      console.warn("[FIELD] All Nodes button not found in DOM");
+    }
+  });
 }
 
 function centerViewportOnPlayer(): void {
@@ -614,20 +673,24 @@ function updatePanelVisibility(): void {
 }
 
 function toggleAllNodesPanel(): void {
-  // Ensure panel exists
+  // Navigate to the standalone All Nodes Menu Screen
+  // This exits field mode and shows the menu as an independent screen
+  const currentMapId = fieldState?.currentMap ?? "base_camp";
+
+  // Stop the game loop and cleanup
+  stopGameLoop();
+  cleanupGlobalListeners();
+
+  // Remove the overlay panel if it exists
   const panel = document.getElementById("allNodesPanel");
-  if (!panel) {
-    createAllNodesPanel();
+  if (panel) {
+    panel.remove();
   }
-  
-  isPanelOpen = !isPanelOpen;
-  
-  // Refresh content when opening
-  if (isPanelOpen) {
-    updateAllNodesPanelContent();
-  }
-  
-  updatePanelVisibility();
+
+  isPanelOpen = false;
+
+  // Navigate to the All Nodes Menu Screen
+  renderAllNodesMenuScreen(currentMapId);
 }
 
 function closeAllNodesPanel(): void {
@@ -645,8 +708,26 @@ function setupGlobalListeners(): void {
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);
   document.addEventListener("click", handleFieldObjectClick, true);
+  
+  // Also add document-level click handler for All Nodes button as fallback
+  document.addEventListener("click", handleAllNodesButtonClick, true);
 
   globalListenersAttached = true;
+}
+
+function handleAllNodesButtonClick(e: MouseEvent): void {
+  // Only handle when field screen is active
+  if (!document.querySelector(".field-root")) return;
+  
+  const target = e.target as HTMLElement;
+  const allNodesBtn = target.closest("#fieldAllNodesBtn") as HTMLElement;
+  
+  if (allNodesBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log("[FIELD] All Nodes button clicked (document delegation)");
+    toggleAllNodesPanel();
+  }
 }
 
 function cleanupGlobalListeners(): void {
@@ -655,6 +736,7 @@ function cleanupGlobalListeners(): void {
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keyup", handleKeyUp);
   document.removeEventListener("click", handleFieldObjectClick, true);
+  document.removeEventListener("click", handleAllNodesButtonClick, true);
 
   globalListenersAttached = false;
 }

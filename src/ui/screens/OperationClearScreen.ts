@@ -190,6 +190,11 @@ export function renderOperationClearScreen(): void {
       // Complete operation
       completeOperationRun();
 
+      // Trigger mail on operation completion
+      import("../../core/mailSystem").then(({ triggerMailOnOperationComplete }) => {
+        triggerMailOnOperationComplete(true);
+      });
+
       // Return to operation select
       renderOperationSelectScreen();
     });

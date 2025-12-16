@@ -59,6 +59,35 @@ export async function renderMainMenu(): Promise<void> {
   const saves = await listSaves();
   const mostRecentSave = saves.length > 0 ? saves[0] : null;
   
+  // Flavor text for the terminal - will be output continuously
+  const flavorLines = [
+    "SLK&gt; SYSTEM_STATUS    :: ScrollLink OS v0.1.0 — All systems nominal.",
+    "SLK&gt; CORE_STATUS      :: Chaos core containment: STABLE.",
+    "SLK&gt; NETWORK_STATUS   :: MISTGUARD relay connected. Signal strength: EXCELLENT.",
+    "",
+    "SLK&gt; OPERATION_LOG    :: Accessing mission archives...",
+    "SLK&gt; OPERATION_LOG    :: Last deployment: Operation IRON GATE — Status: CLEARED",
+    "SLK&gt; OPERATION_LOG    :: Active units: 2 — Squad readiness: GREEN",
+    "",
+    "SLK&gt; BRIEFING         :: In ARDYCIA, bandits, knights, wizards and gunslingers",
+    "SLK&gt; BRIEFING         :: fight for control over cold and rocky terrain.",
+    "SLK&gt; BRIEFING         :: Reports of a dark, growing chasm of evil magic",
+    "SLK&gt; BRIEFING         :: threaten the stability of the Fairhaven empire.",
+    "",
+    "SLK&gt; MISSION_PARAMS   :: Objective: Locate and secure the CHAOS CORE",
+    "SLK&gt; MISSION_PARAMS   :: Close the rift before it consumes the region.",
+    "SLK&gt; MISSION_PARAMS   :: Leading officer: AERISS THORNE — Status: ACTIVE",
+    "",
+    "SLK&gt; AWAITING_INPUT   :: Select operation or adjust loadout.",
+    "SLK&gt; LEGACY_SYSTEM    :: Solaris (defunct) — \"Working for you.\"",
+    "",
+    "SLK&gt; SYSTEM_UPDATE    :: Running background diagnostics...",
+    "SLK&gt; SYSTEM_UPDATE    :: All subsystems operational.",
+    "",
+    "SLK&gt; NETWORK_STATUS   :: Maintaining connection to MISTGUARD relay...",
+    "SLK&gt; NETWORK_STATUS   :: Latency: 12ms — Quality: EXCELLENT",
+  ];
+
   root.innerHTML = /*html*/ `
     <div class="mainmenu-root">
       <div class="mainmenu-bg-effects">
@@ -66,63 +95,80 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-vignette"></div>
       </div>
       
-      <!-- Main content wrapper - centers everything vertically -->
+      <!-- Main content wrapper - horizontal layout with logo/menu on left, terminal on right -->
       <div class="mainmenu-content">
         
-        <!-- Logo ABOVE the card -->
-        <div class="mainmenu-logo-container">
-          <img 
-            id="logoImage"
-            alt="Chaos Core" 
-            class="mainmenu-logo-image"
-          />
-          <!-- Fallback text logo if image fails to load -->
-          <div id="logoFallback" class="mainmenu-logo mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
-          <div class="mainmenu-logo-glow"></div>
+        <!-- Left side: Logo and menu -->
+        <div class="mainmenu-left">
+          <!-- Logo centered -->
+          <div class="mainmenu-logo-container">
+            <img 
+              id="logoImage"
+              alt="Chaos Core" 
+              class="mainmenu-logo-image"
+            />
+            <!-- Fallback text logo if image fails to load -->
+            <div id="logoFallback" class="mainmenu-logo mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
+            <div class="mainmenu-logo-glow"></div>
+            <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
+          </div>
+          
+          <!-- Card with buttons below logo -->
+          <div class="mainmenu-card">
+            <div class="mainmenu-buttons">
+              ${hasContinue ? `
+                <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
+                  <span class="btn-icon">▶</span>
+                  <span class="btn-text">CONTINUE</span>
+                  ${mostRecentSave ? `
+                    <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
+                  ` : ''}
+                </button>
+              ` : ''}
+
+              <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
+                <span class="btn-icon">+</span>
+                <span class="btn-text">NEW OPERATION</span>
+              </button>
+
+              ${saves.length > 0 ? `
+                <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
+                  <span class="btn-icon">📂</span>
+                  <span class="btn-text">LOAD GAME</span>
+                </button>
+              ` : ''}
+
+              <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
+                <span class="btn-icon">⚙</span>
+                <span class="btn-text">SETTINGS</span>
+              </button>
+
+              <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
+                <span class="btn-icon">✕</span>
+                <span class="btn-text">EXIT</span>
+              </button>
+            </div>
+
+            <div class="mainmenu-footer">
+              <span>SCROLLINK OS BUILD 0.1.0</span>
+              <span class="mainmenu-separator">•</span>
+              <span>ARDCYTECH PROTOTYPE</span>
+            </div>
+          </div>
         </div>
         
-        <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
-      
-        <!-- Card with buttons only -->
-        <div class="mainmenu-card">
-          <div class="mainmenu-buttons">
-            ${hasContinue ? `
-              <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
-                <span class="btn-icon">▶</span>
-                <span class="btn-text">CONTINUE</span>
-                ${mostRecentSave ? `
-                  <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
-                ` : ''}
-              </button>
-            ` : ''}
-
-            <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
-              <span class="btn-icon">+</span>
-              <span class="btn-text">NEW OPERATION</span>
-            </button>
-
-            ${saves.length > 0 ? `
-              <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
-                <span class="btn-icon">📂</span>
-                <span class="btn-text">LOAD GAME</span>
-              </button>
-            ` : ''}
-
-            <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
-              <span class="btn-icon">⚙</span>
-              <span class="btn-text">SETTINGS</span>
-            </button>
-
-            <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
-              <span class="btn-icon">✕</span>
-              <span class="btn-text">EXIT</span>
-            </button>
-          </div>
-
-          <div class="mainmenu-footer">
-            <span>SCROLLINK OS BUILD 0.1.0</span>
-            <span class="mainmenu-separator">•</span>
-            <span>ARDCYTECH PROTOTYPE</span>
+        <!-- Right side: ScrollLink Terminal -->
+        <div class="mainmenu-terminal-container">
+          <div class="mainmenu-terminal-window">
+            <div class="mainmenu-terminal-header">
+              <span class="terminal-window-title">SCROLLINK OS // SYSTEM_CONSOLE</span>
+              <span class="terminal-window-status">[ACTIVE]</span>
+            </div>
+            <div class="mainmenu-terminal-body" id="terminalBody">
+              <div class="mainmenu-terminal-output" id="terminalOutput">
+                <!-- Terminal lines will be added dynamically -->
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -154,6 +200,187 @@ export async function renderMainMenu(): Promise<void> {
   
   attachMenuListeners(saves);
   updateFocusableElements();
+  
+  // Start terminal animation
+  startTerminalAnimation(flavorLines);
+}
+
+// ----------------------------------------------------------------------------
+// TERMINAL ANIMATION
+// ----------------------------------------------------------------------------
+
+function startTerminalAnimation(flavorLines: string[]): void {
+  const terminalOutput = document.getElementById("terminalOutput");
+  const terminalBody = document.getElementById("terminalBody");
+  
+  if (!terminalOutput || !terminalBody) return;
+  
+  let currentLineIndex = 0;
+  
+  // Add initial lines with typing animation
+  const initialLines = flavorLines.slice(0, 8);
+  let initialDelay = 0;
+  initialLines.forEach((line) => {
+    if (line === "") {
+      setTimeout(() => {
+        addEmptyTerminalLine(terminalOutput);
+        autoScrollTerminal(terminalBody);
+      }, initialDelay);
+      initialDelay += 200;
+    } else {
+      setTimeout(() => {
+        typeTerminalLine(terminalOutput, terminalBody, line, () => {
+          autoScrollTerminal(terminalBody);
+        });
+      }, initialDelay);
+      // Estimate delay: prompt + text characters * typing speed
+      const promptLength = line.startsWith('SLK&gt;') ? line.split('::')[0].length : 0;
+      const textLength = line.startsWith('SLK&gt;') ? line.split('::').slice(1).join('::').length : line.length;
+      initialDelay += (promptLength + textLength) * 30 + 500; // 30ms per char + 500ms pause
+    }
+  });
+  currentLineIndex = initialLines.length;
+  
+  // Then continuously add new lines with typing
+  const addNextLine = () => {
+    if (currentLineIndex >= flavorLines.length) {
+      currentLineIndex = 0; // Loop back to start
+    }
+    
+    const line = flavorLines[currentLineIndex];
+    if (line === "") {
+      addEmptyTerminalLine(terminalOutput);
+      autoScrollTerminal(terminalBody);
+      setTimeout(addNextLine, 300);
+    } else {
+      typeTerminalLine(terminalOutput, terminalBody, line, () => {
+        autoScrollTerminal(terminalBody);
+        // Schedule next line after typing completes
+        const promptLength = line.startsWith('SLK&gt;') ? line.split('::')[0].length : 0;
+        const textLength = line.startsWith('SLK&gt;') ? line.split('::').slice(1).join('::').length : line.length;
+        const typingTime = (promptLength + textLength) * 30;
+        setTimeout(addNextLine, typingTime + 800); // Add pause after line completes
+      });
+    }
+    
+    currentLineIndex++;
+  };
+  
+  // Start continuous output after initial load
+  setTimeout(addNextLine, initialDelay + 1000);
+}
+
+function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, line: string, onComplete: () => void): void {
+  const lineDiv = document.createElement("div");
+  lineDiv.className = "terminal-line";
+  container.appendChild(lineDiv);
+  
+  // Remove existing cursor line
+  const existingCursor = container.querySelector('.terminal-cursor-line');
+  if (existingCursor) {
+    existingCursor.remove();
+  }
+  
+  if (line === "") {
+    lineDiv.innerHTML = "<br>";
+    onComplete();
+    return;
+  }
+  
+  let promptSpan: HTMLSpanElement | null = null;
+  let textSpan: HTMLSpanElement | null = null;
+  
+  if (line.startsWith('SLK&gt;')) {
+    const parts = line.split('::');
+    const prompt = parts[0];
+    const text = parts.slice(1).join('::');
+    
+    promptSpan = document.createElement("span");
+    promptSpan.className = "terminal-prompt";
+    lineDiv.appendChild(promptSpan);
+    
+    textSpan = document.createElement("span");
+    textSpan.className = "terminal-text";
+    lineDiv.appendChild(textSpan);
+    
+    // Type prompt first
+    typeText(promptSpan, prompt, 30, () => {
+      // Then type text
+      if (textSpan) {
+        typeText(textSpan, text, 30, () => {
+          addCursorLine(container);
+          onComplete();
+        });
+      } else {
+        addCursorLine(container);
+        onComplete();
+      }
+    });
+  } else {
+    textSpan = document.createElement("span");
+    textSpan.className = "terminal-text";
+    lineDiv.appendChild(textSpan);
+    
+    typeText(textSpan, line, 30, () => {
+      addCursorLine(container);
+      onComplete();
+    });
+  }
+  
+  // Auto-scroll during typing
+  const scrollInterval = setInterval(() => {
+    autoScrollTerminal(terminalBody);
+  }, 100);
+  
+  // Clear interval when done
+  setTimeout(() => clearInterval(scrollInterval), (line.length * 30) + 1000);
+}
+
+function typeText(element: HTMLElement, text: string, delay: number, onComplete: () => void): void {
+  let index = 0;
+  
+  const typeChar = () => {
+    if (index < text.length) {
+      element.textContent = text.substring(0, index + 1);
+      index++;
+      setTimeout(typeChar, delay);
+    } else {
+      onComplete();
+    }
+  };
+  
+  typeChar();
+}
+
+function addEmptyTerminalLine(container: HTMLElement): void {
+  const lineDiv = document.createElement("div");
+  lineDiv.className = "terminal-line";
+  lineDiv.innerHTML = "<br>";
+  container.appendChild(lineDiv);
+}
+
+function addCursorLine(container: HTMLElement): void {
+  // Remove existing cursor line
+  const existingCursor = container.querySelector('.terminal-cursor-line');
+  if (existingCursor) {
+    existingCursor.remove();
+  }
+  
+  const cursorLine = document.createElement("div");
+  cursorLine.className = "terminal-line terminal-cursor-line";
+  cursorLine.innerHTML = `
+    <span class="terminal-prompt">SLK&gt;</span>
+    <span class="terminal-text"><span class="terminal-cursor">_</span></span>
+  `;
+  container.appendChild(cursorLine);
+}
+
+function autoScrollTerminal(terminalBody: HTMLElement): void {
+  // Smooth scroll to bottom
+  terminalBody.scrollTo({
+    top: terminalBody.scrollHeight,
+    behavior: 'smooth'
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -228,7 +455,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       if (result.success && result.state) {
         setGameState(result.state);
         enableAutosave(() => getGameState());
-        renderBaseCampScreen();
+        renderFieldScreen("base_camp");
       } else {
         alert("Failed to load save: " + (result.error ?? "Unknown error"));
         continueBtn.disabled = false;

@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
 import { getEventTemplate, EventRoom, EventChoice } from "../../core/procedural";
 import { GameState } from "../../core/types";
 
@@ -143,19 +143,14 @@ function handleChoice(choice: EventChoice, _event: EventRoom): void {
       console.log("[EVENT] Would apply buff:", outcome.buff);
     }
 
-    // Mark room as visited
-    if (updated.operation) {
-      const floor = updated.operation.floors[updated.operation.currentFloorIndex];
-      if (floor && floor.nodes) {
-        const room = floor.nodes.find(n => n.id === updated.operation!.currentRoomId);
-        if (room) {
-          room.visited = true;
-        }
-      }
-    }
-
     return updated as GameState;
   });
+
+  // Mark the room as visited in both game state and campaign system
+  const state = getGameState();
+  if (state.operation?.currentRoomId) {
+    markRoomVisited(state.operation.currentRoomId);
+  }
 
   // Show result message then return to map
   showEventResult(choice, () => {

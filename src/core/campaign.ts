@@ -24,6 +24,8 @@ export interface CampaignProgress {
   completedOperations: OperationId[];
   unlockedOperations: OperationId[];
   activeRun: ActiveRunState | null;
+  // Field Mods System - Black Market queue
+  queuedFieldModsForNextRun?: import("./fieldMods").FieldModInstance[];
 }
 
 export interface ActiveRunState {
@@ -41,6 +43,20 @@ export interface ActiveRunState {
   battlesLost: number;
   retries: number;
   nodesCleared: number;
+  // Field Mods System
+  runFieldModInventory?: import("./fieldMods").FieldModInstance[];
+  unitHardpoints?: Record<string, import("./fieldMods").HardpointState>; // unitId -> [mod1, mod2]
+  // Key Room System
+  keyRoomsByFloor?: Record<number, KeyRoomState[]>; // floorIndex -> KeyRoomState[]
+  pendingKeyRoomCapture?: {
+    nodeId: string;
+    floorIndex: number;
+  };
+  pendingDefenseDecision?: {
+    keyRoomId: string;
+    floorIndex: number;
+    nodeId: string;
+  };
 }
 
 export interface NodeMap {
@@ -66,6 +82,19 @@ export interface EncounterDefinition {
   gridWidth: number;
   gridHeight: number;
   introText?: string;
+}
+
+// Key Room System Types
+export type FacilityType = "supply_depot" | "medical_ward" | "armory" | "command_center" | "mine";
+
+export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents" | "wad";
+
+export interface KeyRoomState {
+  roomNodeId: string;
+  facility: FacilityType;
+  storedResources: Partial<Record<ResourceType, number>>;
+  isUnderAttack: boolean;
+  isDelayed: boolean;
 }
 
 export interface OperationDefinition {

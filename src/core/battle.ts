@@ -36,22 +36,30 @@ import {
 
 // Import affinity tracking
 import { trackMeleeAttackInBattle } from "./affinityBattle";
+import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
 
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type TerrainType = "floor" | "wall" | "cover" | "hazard";
+export type TerrainType = "floor" | "wall" | "light_cover" | "heavy_cover" | "rubble" | "hazard";
 
 export interface Vec2 {
   x: number;
   y: number;
 }
 
+export interface CoverState {
+  type: "light_cover" | "heavy_cover";
+  hp: number;
+  maxHp: number;
+}
+
 export interface Tile {
   pos: Vec2;
   terrain: TerrainType;
   elevation?: number; // Height level for isometric rendering (0 = ground, 1+ = raised)
+  cover?: CoverState | null; // Only present if terrain is light_cover or heavy_cover
 }
 
 export interface BattleUnitState {
@@ -90,6 +98,7 @@ export interface BattleUnitState {
   controller?: "P1" | "P2";
   // Auto-battle toggle (15a)
   autoBattle?: boolean;
+  // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
 }
 
 export interface BattleState {
@@ -454,6 +463,11 @@ export function advanceTurn(state: BattleState): BattleState {
         },
       },
     };
+  }
+
+  // Trigger Field Mod: turn_start (for new active unit)
+  if (nextActiveId) {
+    newState = triggerTurnStart(newState, nextActiveId);
   }
 
   // --- WEAPON PASSIVE COOLING (14b) ---
@@ -843,6 +857,8 @@ export function attackUnit(
   const damage = rawDamage <= 0 ? 1 : rawDamage;
 
   const newHp = defender.hp - damage;
+  const isKill = newHp <= 0;
+  const isCrit = false; // TODO: Add crit detection
 
   let units = { ...state.units };
   let turnOrder = [...state.turnOrder];
@@ -877,6 +893,14 @@ export function attackUnit(
       next,
       `SLK//HIT   :: ${attacker.name} hits ${defender.name} for ${damage} (HP ${newHp}/${defender.maxHp}).`
     );
+  }
+
+  // Trigger Field Mod: hit (and crit if applicable)
+  next = triggerHit(next, attackerId, defenderId, damage, isCrit, 0);
+
+  // Trigger Field Mod: kill (if target died)
+  if (isKill) {
+    next = triggerKill(next, attackerId, defenderId, 1);
   }
 
   // Track affinity for melee attack (if attacker is player unit)
@@ -1388,6 +1412,9 @@ export function createTestBattleForCurrentParty(
   // Update battle with enemy units
   battle.units = units;
 
+  // Trigger Field Mod: battle_start
+  battle = triggerBattleStart(battle);
+
   return battle;
 }
 
@@ -1528,6 +1555,9 @@ export function playCard(
     turnOrder: newTurnOrder,
     log: newLog,
   };
+
+  // Trigger Field Mod: card_played
+  newState = triggerCardPlayed(newState, unitId, cardId, 0);
 
   // Check for battle outcome
   newState = evaluateBattleOutcome(newState);

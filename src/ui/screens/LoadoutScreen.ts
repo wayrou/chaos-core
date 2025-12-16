@@ -9,8 +9,10 @@ import { renderOperationMapScreen } from "./OperationMapScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
-import { computeLoad, computeLoadPenaltyFlags } from "../../core/inventory";
-import { InventoryState } from "../../core/types";
+import { computeLoad, computeLoadPenaltyFlags, transferItem } from "../../core/inventory";
+import { InventoryState, InventoryItem } from "../../core/types";
+
+type InventoryBin = "forwardLocker" | "baseStorage";
 
 // ============================================================================
 // TYPES
@@ -90,6 +92,8 @@ export function renderLoadoutScreen(): void {
 
   // Get inventory state
   const inv: InventoryState = state.inventory;
+  const forwardLocker: InventoryItem[] = inv.forwardLocker ?? [];
+  const baseStorage: InventoryItem[] = inv.baseStorage ?? [];
   const load = computeLoad(inv);
   const penalties = computeLoadPenaltyFlags(inv);
 
@@ -119,6 +123,9 @@ export function renderLoadoutScreen(): void {
           <div class="loadout-screen-header-right">
             <button class="loadout-screen-back-btn" id="backBtn">
               ← CANCEL OPERATION
+            </button>
+            <button class="loadout-screen-proceed-btn" id="proceedBtn" ${partyUnits.length === 0 ? 'disabled' : ''}>
+              PROCEED TO OPERATION →
             </button>
           </div>
         </div>
@@ -177,10 +184,45 @@ export function renderLoadoutScreen(): void {
           </div>
         </div>
 
-        <div class="loadout-screen-footer">
-          <button class="loadout-screen-proceed-btn" id="proceedBtn" ${partyUnits.length === 0 ? 'disabled' : ''}>
-            PROCEED TO OPERATION →
-          </button>
+        <div class="loadout-screen-inventory-section">
+          <div class="loadout-screen-inventory-title">INVENTORY MANAGEMENT</div>
+          <div class="loadout-screen-inventory-columns">
+            <div class="inventory-column" data-bin="baseStorage">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">BASE CAMP STORAGE</div>
+                <div class="inventory-column-subtitle">
+                  Stored back at camp. No risk, no load penalties.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="baseStorage">
+                ${
+                  baseStorage.length === 0
+                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    : baseStorage
+                        .map((i) => renderInventoryItem(i, "baseStorage"))
+                        .join("")
+                }
+              </div>
+            </div>
+
+            <div class="inventory-column" data-bin="forwardLocker">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">FORWARD LOCKER</div>
+                <div class="inventory-column-subtitle">
+                  Items carried into the dungeon. Count against load.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="forwardLocker">
+                ${
+                  forwardLocker.length === 0
+                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    : forwardLocker
+                        .map((i) => renderInventoryItem(i, "forwardLocker"))
+                        .join("")
+                }
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -271,6 +313,26 @@ function formatClassName(cls: string): string {
   return names[cls] || cls;
 }
 
+function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
+  return `
+    <div class="inv-item"
+         draggable="true"
+         data-id="${item.id}"
+         data-bin="${bin}">
+      <div class="inv-item-header">
+        <div class="inv-item-name">${item.name}</div>
+        <div class="inv-item-qty">x${item.quantity}</div>
+      </div>
+      <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
+      <div class="inv-item-stats">
+        <span>${item.massKg}kg</span>
+        <span>${item.bulkBu}bu</span>
+        <span>${item.powerW}w</span>
+      </div>
+    </div>
+  `;
+}
+
 // ============================================================================
 // EVENT LISTENERS
 // ============================================================================
@@ -343,6 +405,95 @@ function attachLoadoutListeners(): void {
     }));
 
     renderOperationMapScreen();
+  });
+
+  // ------------------------------
+  // INVENTORY TRANSFER FUNCTIONALITY
+  // ------------------------------
+  
+  // Click-to-transfer
+  const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
+  itemEls.forEach((el) => {
+    el.style.cursor = "pointer";
+
+    el.addEventListener("click", () => {
+      const itemId = el.dataset.id;
+      const fromBinRaw = el.dataset.bin as InventoryBin | undefined;
+      if (!itemId || !fromBinRaw) return;
+
+      const fromBin = fromBinRaw;
+      const toBin: InventoryBin =
+        fromBin === "forwardLocker" ? "baseStorage" : "forwardLocker";
+
+      updateGameState((prev) => ({
+        ...prev,
+        inventory: transferItem(prev.inventory, fromBin, toBin, itemId),
+      }));
+
+      renderLoadoutScreen();
+    });
+  });
+
+  // Drag & Drop
+  itemEls.forEach((el) => {
+    el.addEventListener("dragstart", (event: DragEvent) => {
+      if (!event.dataTransfer) return;
+      const itemId = el.dataset.id;
+      const fromBin = el.dataset.bin as InventoryBin | undefined;
+      if (!itemId || !fromBin) return;
+
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", itemId);
+      event.dataTransfer.setData("itemId", itemId);
+      event.dataTransfer.setData("fromBin", fromBin);
+    });
+  });
+
+  const columnBodies = root.querySelectorAll<HTMLElement>(".inventory-column-body");
+  columnBodies.forEach((colBody) => {
+    colBody.addEventListener("dragover", (event: DragEvent) => {
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      colBody.classList.add("inventory-column-body--dragover");
+    });
+
+    colBody.addEventListener("dragleave", () => {
+      colBody.classList.remove("inventory-column-body--dragover");
+    });
+
+    colBody.addEventListener("drop", (event: DragEvent) => {
+      event.preventDefault();
+      colBody.classList.remove("inventory-column-body--dragover");
+      if (!event.dataTransfer) return;
+
+      const itemId =
+        event.dataTransfer.getData("itemId") ||
+        event.dataTransfer.getData("text/plain");
+      const fromBinRaw = event.dataTransfer.getData("fromBin");
+      const toBinRaw = colBody.dataset.bin;
+
+      if (!itemId || !fromBinRaw || !toBinRaw) return;
+
+      const fromBin = fromBinRaw as InventoryBin;
+      const toBin = toBinRaw as InventoryBin;
+
+      if (fromBin === toBin) return;
+      if (
+        (fromBin !== "forwardLocker" && fromBin !== "baseStorage") ||
+        (toBin !== "forwardLocker" && toBin !== "baseStorage")
+      ) {
+        return;
+      }
+
+      updateGameState((prev) => ({
+        ...prev,
+        inventory: transferItem(prev.inventory, fromBin, toBin, itemId),
+      }));
+
+      renderLoadoutScreen();
+    });
   });
 }
 

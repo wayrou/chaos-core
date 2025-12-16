@@ -8,11 +8,13 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { getCurrentOperation, getCurrentFloor } from "../../core/ops";
 import { createTestBattleForCurrentParty } from "../../core/battle";
 import { renderBattleScreen } from "./BattleScreen";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
 import { renderShopScreen } from "./ShopScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
+import { renderOperationSelectScreen } from "./OperationSelectScreen";
+import { renderFacilitySelectionScreen } from "./FacilitySelectionScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
 import { canAdvanceToNextFloor, advanceToNextFloor, getBattleTemplate } from "../../core/procedural";
 import { updateQuestProgress } from "../../quests/questManager";
@@ -27,6 +29,7 @@ import {
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
+import { grantFloorResources } from "../../core/keyRoomSystem";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 
 // ============================================================================
@@ -72,8 +75,8 @@ function cleanupPanHandlers(): void {
 function setupPanHandlers(): void {
   cleanupPanHandlers();
   
-  // Reset pan position
-  panState = { x: 0, y: 0, keysPressed: new Set() };
+  // Don't reset pan position here - let centerOnCurrentNode handle it
+  panState.keysPressed = new Set();
 
   keydownHandler = (e: KeyboardEvent) => {
     // Don't handle keys if typing in an input
@@ -151,12 +154,114 @@ function startPanLoop(): void {
 }
 
 function resetPan(): void {
-  panState.x = 0;
-  panState.y = 0;
-  const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
-  if (mapContainer) {
-    mapContainer.style.transform = `translate(0px, 0px)`;
+  // Center on current node instead of (0, 0)
+  centerOnCurrentNode();
+}
+
+/**
+ * Center the camera/viewport on the current active node
+ */
+function centerOnCurrentNode(): void {
+  const state = getGameState();
+  const operation = getCurrentOperation(state);
+  if (!operation) {
+    console.warn("[OPMAP] No operation found for centering");
+    return;
   }
+
+  const floor = getCurrentFloor(operation);
+  if (!floor) {
+    console.warn("[OPMAP] No floor found for centering");
+    return;
+  }
+
+  const nodes = floor.nodes || floor.rooms || [];
+  const currentRoomIndex = getCurrentRoomIndex(nodes, operation.currentRoomId);
+  
+  console.log("[OPMAP] Centering on node, index:", currentRoomIndex, "roomId:", operation.currentRoomId);
+  
+  if (currentRoomIndex < 0) {
+    // Fallback to (0, 0) if no current node found
+    console.warn("[OPMAP] Current room index not found, resetting to origin");
+    panState.x = 0;
+    panState.y = 0;
+    const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
+    if (mapContainer) {
+      mapContainer.style.transform = `translate(0px, 0px)`;
+    }
+    return;
+  }
+
+  // Wait for DOM to be ready, then find the current node element
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const currentNode = document.querySelector(`.opmap-node[data-room-index="${currentRoomIndex}"]`) as HTMLElement;
+      if (!currentNode) {
+        console.warn("[OPMAP] Current node element not found, index:", currentRoomIndex);
+        return;
+      }
+
+      const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
+      if (!mapContainer) {
+        console.warn("[OPMAP] Map container not found");
+        return;
+      }
+
+      const viewport = document.querySelector(".opmap-floor-background") as HTMLElement;
+      if (!viewport) {
+        console.warn("[OPMAP] Viewport not found");
+        return;
+      }
+
+      // Get viewport dimensions
+      const viewportRect = viewport.getBoundingClientRect();
+
+      // Reset transform to get base positions
+      mapContainer.style.transform = "translate(0px, 0px)";
+      
+      // Force layout recalculation
+      void mapContainer.offsetHeight;
+
+      // Get node position relative to container (at transform 0,0)
+      const nodeRect = currentNode.getBoundingClientRect();
+      const containerRect = mapContainer.getBoundingClientRect();
+      
+      // Node center relative to container origin
+      const nodeCenterXRelative = nodeRect.left - containerRect.left + nodeRect.width / 2;
+      const nodeCenterYRelative = nodeRect.top - containerRect.top + nodeRect.height / 2;
+
+      // Get container position relative to viewport
+      const containerXRelative = containerRect.left - viewportRect.left;
+      const containerYRelative = containerRect.top - viewportRect.top;
+
+      // Calculate where node center would be in viewport coordinates (at transform 0,0)
+      const nodeCenterInViewportX = containerXRelative + nodeCenterXRelative;
+      const nodeCenterInViewportY = containerYRelative + nodeCenterYRelative;
+
+      // Calculate transform needed to move node to viewport center
+      // We want: containerXRelative + nodeCenterXRelative + offsetX = viewportCenterX - viewportRect.left
+      // So: offsetX = (viewportCenterX - viewportRect.left) - (containerXRelative + nodeCenterXRelative)
+      const viewportCenterXRelative = viewportRect.width / 2;
+      const viewportCenterYRelative = viewportRect.height / 2;
+      
+      const offsetX = viewportCenterXRelative - nodeCenterInViewportX;
+      const offsetY = viewportCenterYRelative - nodeCenterInViewportY;
+
+      // Update pan state
+      panState.x = offsetX;
+      panState.y = offsetY;
+
+      // Apply transform
+      mapContainer.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+      
+      console.log("[OPMAP] Centered on node:", {
+        nodeIndex: currentRoomIndex,
+        nodeCenterInViewport: { x: nodeCenterInViewportX, y: nodeCenterInViewportY },
+        viewportCenter: { x: viewportCenterXRelative, y: viewportCenterYRelative },
+        offset: { x: offsetX, y: offsetY }
+      });
+    });
+  });
 }
 
 // Advance to the next available room via keyboard
@@ -174,9 +279,15 @@ function advanceToNextRoom(): void {
   // Check if there's a next room to enter
   if (nextIndex >= 0 && nextIndex < nodes.length) {
     const nextRoom = nodes[nextIndex];
-    if (nextRoom && !nextRoom.visited) {
-      console.log("[OPMAP] Advancing to next room via keyboard:", nextRoom.id);
-      enterRoom(nextRoom.id);
+    if (nextRoom) {
+      // Check if the room is accessible according to the campaign system
+      // This allows entering event nodes and other accessible nodes even if visited
+      if (isNodeAccessible(nextRoom.id)) {
+        console.log("[OPMAP] Advancing to next room via keyboard:", nextRoom.id);
+        enterRoom(nextRoom.id);
+      } else {
+        console.log("[OPMAP] Next room is not accessible:", nextRoom.id);
+      }
     }
   }
 }
@@ -214,7 +325,7 @@ export function renderOperationMapScreen(): void {
     `;
 
     root.querySelector(".opmap-back-btn")?.addEventListener("click", () => {
-      renderBaseCampScreen();
+      renderFieldScreen("base_camp");
     });
 
     return;
@@ -306,11 +417,13 @@ export function renderOperationMapScreen(): void {
   
   // Setup document-level click handler for abandon button (event delegation fallback)
   setupAbandonButtonHandler();
-  
+
   // Use requestAnimationFrame to ensure DOM is fully ready
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       attachEventListeners(nodes, currentRoomIndex);
+      // Center camera on current node after DOM is ready
+      centerOnCurrentNode();
     });
   });
 }
@@ -334,7 +447,7 @@ function setupAbandonButtonHandler(): void {
         cleanupPanHandlers();
         abandonRun();
         syncCampaignToGameState();
-        renderOperationSelectScreen();
+        renderFieldScreen("base_camp");
       }
     }
   }, true); // Use capture phase
@@ -386,6 +499,7 @@ function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
 
 function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string {
   const nextAvailableIndex = getNextAvailableRoomIndex(nodes);
+  const availableNodeIds = getAvailableNodes();
   
   let mapHtml = '<div class="opmap-nodes-container">';
   
@@ -393,7 +507,9 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
     const isVisited = node.visited === true;
     const isCurrent = index === currentRoomIndex;
     const isNext = index === nextAvailableIndex;
-    const isLocked = !isVisited && !isNext;
+    // Node is available if it's in the available nodes list (forward-only branching)
+    const isAvailable = availableNodeIds.includes(node.id);
+    const isLocked = !isVisited && !isNext && !isAvailable;
     
     const icon = getRoomIcon(node.type);
     const typeLabel = getRoomTypeLabel(node.type);
@@ -402,15 +518,15 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
     let statusClass = '';
     if (isVisited) statusClass = 'opmap-node--visited';
     else if (isCurrent) statusClass = 'opmap-node--current';
-    else if (isNext) statusClass = 'opmap-node--next';
+    else if (isNext || isAvailable) statusClass = 'opmap-node--next';
     else statusClass = 'opmap-node--locked';
     
     // Room type class
     const typeClass = `opmap-node--${node.type || 'unknown'}`;
     
     mapHtml += `
+      ${index > 0 ? '<div class="opmap-node-connector"></div>' : ''}
       <div class="opmap-node-wrapper">
-        ${index > 0 ? '<div class="opmap-node-connector"></div>' : ''}
         <div class="opmap-node ${statusClass} ${typeClass}" 
              data-room-id="${node.id}" 
              data-room-index="${index}"
@@ -421,10 +537,10 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
             <div class="opmap-node-type">${typeLabel}</div>
             ${isVisited ? '<div class="opmap-node-badge opmap-node-badge--cleared">✓ CLEARED</div>' : ''}
             ${isCurrent ? '<div class="opmap-node-badge opmap-node-badge--current">● CURRENT</div>' : ''}
-            ${isNext ? '<div class="opmap-node-badge opmap-node-badge--next">→ NEXT</div>' : ''}
+            ${(isNext || isAvailable) && !isVisited ? '<div class="opmap-node-badge opmap-node-badge--next">→ NEXT</div>' : ''}
             ${isLocked ? '<div class="opmap-node-badge opmap-node-badge--locked">🔒 LOCKED</div>' : ''}
           </div>
-          ${isNext && !isVisited ? `
+          ${(isNext || isAvailable) && !isVisited ? `
             <button class="opmap-node-enter" data-room-id="${node.id}">
               ENTER →
             </button>
@@ -466,6 +582,9 @@ function getRoomIcon(type?: RoomType): string {
     case "rest": return "🛏️";
     case "boss": return "👹";
     case "field_node": return "🗺️";
+    case "key_room": return "🔑";
+    case "elite": return "⭐";
+    case "treasure": return "💎";
     default: return "●";
   }
 }
@@ -479,6 +598,9 @@ function getRoomTypeLabel(type?: RoomType): string {
     case "rest": return "Rest Site";
     case "boss": return "BOSS FIGHT";
     case "field_node": return "Exploration";
+    case "key_room": return "Key Room";
+    case "elite": return "Elite Battle";
+    case "treasure": return "Treasure";
     default: return "Unknown";
   }
 }
@@ -535,12 +657,9 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   function handleAbandon() {
     if (confirm("Abandon this operation? Progress will be lost.")) {
       cleanupPanHandlers();
-      updateGameState(prev => ({
-        ...prev,
-        operation: null,
-        phase: "shell",
-      }));
-      renderBaseCampScreen();
+      abandonRun();
+      syncCampaignToGameState();
+      renderOperationSelectScreen();
     }
   }
 
@@ -571,14 +690,15 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     }
   }, true); // Use capture phase for reliability
 
-  // Clicking on the node itself (for next available room)
-  root.querySelectorAll(".opmap-node--next").forEach(node => {
+  // Clicking on the node itself (for next available room or any available node)
+  root.querySelectorAll(".opmap-node--next, .opmap-node[data-is-locked='false']").forEach(node => {
     node.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
       const clickedNode = (e.currentTarget as HTMLElement).closest(".opmap-node") || e.currentTarget as HTMLElement;
       const roomId = clickedNode.getAttribute("data-room-id");
-      if (roomId) {
+      const isLocked = clickedNode.getAttribute("data-is-locked") === "true";
+      if (roomId && !isLocked) {
         enterRoom(roomId);
       }
     });
@@ -650,13 +770,14 @@ function enterRoom(roomId: string): void {
   // Cleanup pan handlers before leaving screen
   cleanupPanHandlers();
 
-  // Move to node in campaign system
+  // Move to node in campaign system (must happen before entering room)
   try {
     moveToNode(roomId);
     syncCampaignToGameState();
   } catch (error) {
     console.error("[OPMAP] Failed to move to node:", error);
-    return;
+    // Don't return - still try to enter the room if it's accessible
+    // The error might be because we're already on that node
   }
 
   // Route to appropriate screen based on room type
@@ -685,14 +806,18 @@ function enterRoom(roomId: string): void {
       break;
 
     case "tavern":
-      // Safe zone, just mark as visited
-      markRoomVisited(roomId);
-      renderOperationMapScreen();
+      // Safe zone - show flavor dialogue
+      enterTavernRoom(room);
       break;
 
     case "field_node":
       // Mystery dungeon-style exploration room (Headline 14d)
       renderFieldNodeRoomScreen(roomId, room.fieldNodeSeed);
+      break;
+
+    case "key_room":
+      // Key Room - requires battle to capture
+      enterKeyRoom(room);
       break;
 
     default:
@@ -727,9 +852,10 @@ function enterBattleRoom(room: RoomNode): void {
     }
     
     const encounter = updatedRun.pendingBattle.encounterDefinition;
+    const encounterSeed = updatedRun.pendingBattle.encounterSeed;
     
-    // Create battle from encounter
-    const battle = createBattleFromEncounter(state, encounter);
+    // Create battle from encounter with seed for deterministic cover generation
+    const battle = createBattleFromEncounter(state, encounter, encounterSeed);
 
     if (!battle) {
       console.error("[OPMAP] Failed to create battle from encounter");
@@ -755,6 +881,81 @@ function createBattleFromTemplate(state: GameState, template: any): any {
   // TODO: Use template to create enemies
   console.log("[BATTLE] Would create battle from template:", template.name);
   return createTestBattleForCurrentParty(state);
+}
+
+function enterKeyRoom(room: RoomNode): void {
+  try {
+    const state = getGameState();
+    const activeRun = getActiveRun();
+    
+    if (!activeRun) {
+      console.error("[OPMAP] No active run for key room");
+      return;
+    }
+
+    // Check if already captured
+    const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
+    const floorKeyRooms = keyRoomsByFloor[activeRun.floorIndex] || [];
+    const isCaptured = floorKeyRooms.some(kr => kr.roomNodeId === room.id);
+    
+    if (isCaptured) {
+      // Already captured - just mark as visited and return to map
+      markRoomVisited(room.id);
+      renderOperationMapScreen();
+      return;
+    }
+
+    // Set campaign flag for battle screen
+    (window as any).__isCampaignRun = true;
+    (window as any).__isKeyRoomCapture = true;
+    (window as any).__keyRoomNodeId = room.id;
+
+    // Prepare battle for this node (generates encounter)
+    prepareBattleForNode(room.id);
+    syncCampaignToGameState();
+    
+    // Get the pending battle encounter
+    const updatedRun = getActiveRun();
+    if (!updatedRun || !updatedRun.pendingBattle) {
+      console.error("[OPMAP] Failed to prepare battle for key room");
+      // Return to map on error instead of getting stuck
+      renderOperationMapScreen();
+      return;
+    }
+    
+    const encounter = updatedRun.pendingBattle.encounterDefinition;
+    const encounterSeed = updatedRun.pendingBattle.encounterSeed;
+    
+    // Create battle from encounter with seed for deterministic cover generation
+    const battle = createBattleFromEncounter(state, encounter, encounterSeed);
+
+    if (!battle) {
+      console.error("[OPMAP] Failed to create battle from encounter");
+      // Return to map on error instead of getting stuck
+      renderOperationMapScreen();
+      return;
+    }
+
+    // Store battle in state
+    updateGameState(prev => ({
+      ...prev,
+      currentBattle: battle,
+      phase: "battle",
+    }));
+
+    renderBattleScreen();
+  } catch (error) {
+    console.error("[OPMAP] Error entering key room:", error);
+    // Return to operation map on error
+    renderOperationMapScreen();
+  }
+}
+
+function enterTavernRoom(room: RoomNode): void {
+  // Show tavern dialogue window
+  import("./TavernDialogueScreen").then(m => {
+    m.renderTavernDialogueScreen(room.id, room.label, "operation");
+  });
 }
 
 function enterRestRoom(room: RoomNode): void {
@@ -824,6 +1025,27 @@ export function markRoomVisited(roomId: string): void {
   try {
     clearNode(roomId);
     syncCampaignToGameState();
+    
+    // Generate Key Room resources and check for attacks (after room cleared)
+    import("../../core/keyRoomSystem").then(({ generateKeyRoomResources, applyKeyRoomPassiveEffects, rollKeyRoomAttack }) => {
+      generateKeyRoomResources();
+      applyKeyRoomPassiveEffects();
+      
+      // Check for attack (async, may show UI)
+      const attackResult = rollKeyRoomAttack();
+      if (attackResult) {
+        // Show defense decision UI
+        import("./DefenseDecisionScreen").then(m => {
+          const activeRun = getActiveRun();
+          if (activeRun?.pendingDefenseDecision) {
+            m.renderDefenseDecisionScreen(
+              activeRun.pendingDefenseDecision.keyRoomId,
+              activeRun.pendingDefenseDecision.nodeId
+            );
+          }
+        });
+      }
+    });
   } catch (error) {
     console.warn("[OPMAP] Failed to persist cleared node to campaign:", error);
   }

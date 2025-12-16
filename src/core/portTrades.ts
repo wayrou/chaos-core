@@ -26,6 +26,7 @@ export interface BulkShipmentOffer {
   targetResource: ResourceType; // Resource type to consume ALL of
   basicPayout: ResourceAmount[]; // 90% chance - basic resources
   interestingPayout: ResourceAmount[]; // 10% chance - interesting rewards
+  fulfilled: boolean; // Track if this shipment has been executed
 }
 
 export interface PortManifest {
@@ -183,4 +184,5 @@ export function getBulkShipmentBasicPayouts(): ResourceAmount[][] {
 export function getBulkShipmentInterestingPayouts(): ResourceAmount[][] {
   return BULK_SHIPMENT_INTERESTING_PAYOUTS;
 }
+
 

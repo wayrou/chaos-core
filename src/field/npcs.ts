@@ -171,5 +171,30 @@ export const NPC_DIALOGUE: Record<string, string[]> = {
     "Still works better than most modern systems though.",
     "Can't argue with reliability.",
   ],
+  npc_supply_officer: [
+    "The supply lines are holding, but we're running low on metal scrap.",
+    "Every shipment counts. Make sure you're trading efficiently.",
+    "If you need resources, the port is your best bet.",
+  ],
+  npc_armorer: [
+    "I maintain all the equipment around here.",
+    "Good gear makes the difference between life and death out there.",
+    "Stop by the shop if you need upgrades. I keep it stocked.",
+  ],
+  npc_commander: [
+    "Operations are running smoothly, but we need more intel.",
+    "The field nodes are our primary source of intelligence.",
+    "Keep pushing forward, commander. We're counting on you.",
+  ],
+  npc_researcher: [
+    "I've been studying the chaos shards we've collected.",
+    "There's something strange about their energy patterns.",
+    "The more we learn, the better prepared we'll be.",
+  ],
+  npc_sentinel: [
+    "I keep watch over the base camp perimeter.",
+    "Nothing gets past me. Safety is my priority.",
+    "If you see anything suspicious out there, report it immediately.",
+  ],
 };
 

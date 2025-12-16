@@ -3,12 +3,15 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMapScreen, markCurrentRoomVisited } from "./OperationMapScreen";
+import { recordBattleVictory, syncCampaignToGameState } from "../../core/campaignManager";
 const renderOperationMap = renderOperationMapScreen; // Alias for compatibility
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
+import { handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp, getPlayerInput } from "../../core/playerInput";
+import { PlayerId } from "../../core/types";
 
 import {
   BattleState,
@@ -442,31 +445,41 @@ function setupBattlePanHandlers(): void {
   battlePanState = { x: 0, y: 0, keysPressed: new Set() };
 
   battleKeydownHandler = (e: KeyboardEvent) => {
+    // Update player input system
+    handlePlayerInputKeyDown(e);
+    
     // Handle facing selection first (if active, arrow keys select facing instead of panning)
     if (turnState.isFacingSelection && localBattleState && activeUnit) {
-      const key = e.key.toLowerCase();
-      let newFacing: "north" | "south" | "east" | "west" | null = null;
+      // Check if current player can control this unit
+      const state = getGameState();
+      const activeController = activeUnit.controller || "P1";
+      const currentPlayer = state.players[activeController as PlayerId];
       
-      if (key === "arrowup" || key === "w") {
-        newFacing = "north";
-      } else if (key === "arrowdown" || key === "s") {
-        newFacing = "south";
-      } else if (key === "arrowleft" || key === "a") {
-        newFacing = "west";
-      } else if (key === "arrowright" || key === "d") {
-        newFacing = "east";
-      }
-      
-      if (newFacing) {
-        e.preventDefault();
-        // Update facing and exit facing selection phase
-        const newUnits = { ...localBattleState.units };
-        newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
-        const newState = { ...localBattleState, units: newUnits };
-        setBattleState(newState);
-        turnState.isFacingSelection = false;
-        renderBattleScreen();
-        return;
+      if (currentPlayer?.active) {
+        const playerInput = getPlayerInput(activeController as PlayerId);
+        let newFacing: "north" | "south" | "east" | "west" | null = null;
+        
+        if (playerInput.up) {
+          newFacing = "north";
+        } else if (playerInput.down) {
+          newFacing = "south";
+        } else if (playerInput.left) {
+          newFacing = "west";
+        } else if (playerInput.right) {
+          newFacing = "east";
+        }
+        
+        if (newFacing) {
+          e.preventDefault();
+          // Update facing and exit facing selection phase
+          const newUnits = { ...localBattleState.units };
+          newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+          const newState = { ...localBattleState, units: newUnits };
+          setBattleState(newState);
+          turnState.isFacingSelection = false;
+          renderBattleScreen();
+          return;
+        }
       }
     }
     
@@ -486,6 +499,9 @@ function setupBattlePanHandlers(): void {
   };
 
   battleKeyupHandler = (e: KeyboardEvent) => {
+    // Update player input system
+    handlePlayerInputKeyUp(e);
+    
     battlePanState.keysPressed.delete(e.key.toLowerCase());
     
     // Also handle arrow keys
@@ -1379,6 +1395,13 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
   const movePct = (turnState.movementRemaining / maxMove) * 100;
   const portraitPath = getBattleUnitPortraitPath(activeUnit.id, activeUnit.baseUnitId);
   
+  // Show which player controls this unit
+  const controller = activeUnit.controller || "P1";
+  const state = getGameState();
+  const player = state.players[controller as PlayerId];
+  const controllerColor = player?.color || "#ff8a00";
+  const controllerLabel = controller === "P1" ? "PLAYER 1" : "PLAYER 2";
+  
   return `
     <div class="unit-panel-header">
       <div class="unit-panel-portrait">
@@ -1388,6 +1411,9 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
       <div class="unit-panel-header-text">
         <div class="unit-panel-label">ACTIVE UNIT</div>
         <div class="unit-panel-name">${activeUnit.name}</div>
+        <div class="unit-panel-controller" style="color: ${controllerColor}; border-color: ${controllerColor};">
+          ${controllerLabel}
+        </div>
         <button class="unit-auto-battle-toggle ${activeUnit.autoBattle ? 'unit-auto-battle-toggle--active' : ''}" id="toggleAutoBattleBtn" data-unit-id="${activeUnit.id}">
           AUTO: ${activeUnit.autoBattle ? 'ON' : 'OFF'}
         </button>
@@ -1840,6 +1866,14 @@ function attachBattleListeners() {
     (el as HTMLElement).onclick = (e) => {
       e.stopPropagation();
       if (!isPlayerTurn) return;
+      
+      // Check if current player can control this unit
+      if (activeUnit) {
+        const state = getGameState();
+        const activeController = activeUnit.controller || "P1";
+        const currentPlayer = state.players[activeController as PlayerId];
+        if (!currentPlayer?.active) return; // Player not active, can't control
+      }
       const i = parseInt((el as HTMLElement).dataset.cardIndex ?? "-1");
       if (i >= 0) {
         selectedCardIndex = selectedCardIndex === i ? null : i;
@@ -2044,6 +2078,12 @@ function attachBattleListeners() {
       
       if (!isPlayerTurn || !activeUnit || !localBattleState) return;
       
+      // Check if current player can control this unit
+      const state = getGameState();
+      const activeController = activeUnit.controller || "P1";
+      const currentPlayer = state.players[activeController as PlayerId];
+      if (!currentPlayer?.active) return; // Player not active, can't control
+      
       // Handle facing selection (FFTA-style, after movement)
       if (turnState.isFacingSelection && tile.classList.contains("battle-tile--facing-option")) {
         if (!activeUnit.pos) return;
@@ -2219,6 +2259,12 @@ function attachBattleListeners() {
       if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
         if (!isPlayerTurn || !activeUnit || !localBattleState) return;
         
+        // Check if current player can control this unit
+        const state = getGameState();
+        const activeController = activeUnit.controller || "P1";
+        const currentPlayer = state.players[activeController as PlayerId];
+        if (!currentPlayer?.active) return; // Player not active, can't control
+        
         const units = getUnitsArray(localBattleState);
         const cardIdOrObj = activeUnit.hand[selectedCardIndex];
         const card = resolveCard(cardIdOrObj);
@@ -2333,6 +2379,13 @@ function attachBattleListeners() {
   const endTurnBtn = document.getElementById("endTurnBtn");
   if (endTurnBtn) {
     endTurnBtn.onclick = () => {
+      // Check if current player can control this unit
+      if (activeUnit) {
+        const state = getGameState();
+        const activeController = activeUnit.controller || "P1";
+        const currentPlayer = state.players[activeController as PlayerId];
+        if (!currentPlayer?.active) return; // Player not active, can't control
+      }
       if (!isPlayerTurn || !localBattleState) return;
       
       // Animate hand discard first
@@ -2486,16 +2539,17 @@ function attachBattleListeners() {
         
         // Track survival affinity for all units that survived
         trackBattleSurvival(localBattleState, true);
-        
-        // Mark battle as won in campaign system
-        import("../../core/campaignManager").then(m => {
-          m.recordBattleVictory();
-          m.syncCampaignToGameState?.();
-        }).catch(() => {
-          // Fallback if campaign system not available
+
+        // Mark battle as won in campaign system (synchronous to ensure state is updated before render)
+        try {
+          recordBattleVictory();
+          syncCampaignToGameState();
+        } catch (error) {
+          // Fallback if campaign system not available (e.g., no active run)
+          console.warn("[BATTLE] Campaign system error, using fallback:", error);
           markCurrentRoomVisited();
-        });
-        
+        }
+
         console.log("[BATTLE] Rewards claimed successfully");
       } catch (error) {
         console.error("[BATTLE] Error claiming rewards:", error);
@@ -2519,60 +2573,6 @@ function attachBattleListeners() {
         renderOperationMap();
       }
     };
-    
-    // Also add event listener as backup
-    claimBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      console.log("[BATTLE] Claim rewards button clicked (addEventListener)");
-      
-      if (!localBattleState) return;
-      const r = localBattleState.rewards;
-      if (r) {
-        // Same logic as onclick handler
-        updateGameState(s => ({
-          ...s,
-          wad: (s.wad ?? 0) + (r.wad ?? 0),
-          resources: {
-            metalScrap: (s.resources?.metalScrap ?? 0) + (r.metalScrap ?? 0),
-            wood: (s.resources?.wood ?? 0) + (r.wood ?? 0),
-            chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
-            steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
-          },
-          cardLibrary: r.cards && r.cards.length > 0 
-            ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
-            : s.cardLibrary,
-        }));
-        
-        // Update quest progress for battle completion
-        const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10));
-        updateQuestProgress("kill_enemies", enemyCount, enemyCount);
-        updateQuestProgress("complete_battle", "any", 1);
-        if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
-        if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
-        if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
-        if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
-        
-        // Track survival affinity for all units that survived
-        trackBattleSurvival(localBattleState, true);
-        
-        // Mark the current battle room as visited/completed
-        markCurrentRoomVisited();
-      }
-      
-      cleanupBattlePanHandlers();
-      localBattleState = null;
-      selectedCardIndex = null;
-      resetTurnStateForUnit(null);
-      uiPanelsMinimized = false;
-      
-      // If in endless mode, start next battle instead of returning to operation map
-      if (isEndlessBattleMode) {
-        startNextEndlessBattle();
-      } else {
-        renderOperationMap();
-      }
-    }, { once: false, passive: false });
     
     // Ensure button is clickable
     claimBtn.style.pointerEvents = "auto";
@@ -2647,7 +2647,9 @@ function attachBattleListeners() {
         endlessBattleCount = 0;
       }
       
-      renderBaseCampScreen();
+      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("base_camp");
+      });
     };
   }
 

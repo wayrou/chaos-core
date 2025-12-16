@@ -12,6 +12,7 @@ import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
 import { renderRecruitmentScreen } from "../ui/screens/RecruitmentScreen";
 import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
 import { renderPortScreen } from "../ui/screens/PortScreen";
+import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
@@ -57,7 +58,10 @@ export function handleInteraction(
       break;
       
     case "tavern":
-      renderRecruitmentScreen("field");
+      // Show tavern dialogue first, then allow access to recruitment
+      import("../ui/screens/TavernDialogueScreen").then(m => {
+        m.renderTavernDialogueScreen("base_camp_tavern", "Base Camp Tavern", "field");
+      });
       break;
       
     case "gear_workbench":
@@ -68,13 +72,28 @@ export function handleInteraction(
       renderPortScreen("field");
       break;
       
+    case "quarters":
+      // Switch to quarters field map
+      import("./FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("quarters");
+      });
+      break;
+      
+    case "base_camp_entry":
+      // Switch to base camp map
+      const baseCampTarget = zone.metadata?.targetMap || "base_camp";
+      import("./FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen(baseCampTarget as "base_camp" | "free_zone_1" | "quarters");
+      });
+      break;
+      
     case "free_zone_entry":
       // Switch to different map
       const targetMap = zone.metadata?.targetMap;
       if (targetMap) {
         // Import dynamically to avoid circular dependency
         import("./FieldScreen").then(({ renderFieldScreen }) => {
-          renderFieldScreen(targetMap as "base_camp" | "free_zone_1");
+          renderFieldScreen(targetMap as "base_camp" | "free_zone_1" | "quarters");
         });
       } else {
         // Default: switch to base camp
@@ -86,8 +105,25 @@ export function handleInteraction(
       
     case "custom":
       // Custom interactions can be handled via metadata
-      console.log("[FIELD] Custom interaction:", zone.metadata);
-      onResume();
+      const quartersAction = zone.metadata?.quartersAction;
+      if (quartersAction) {
+        // Handle quarters-specific actions
+        switch (quartersAction) {
+          case "mailbox":
+          case "bunk":
+          case "pinboard":
+          case "footlocker":
+          case "sable":
+            // Open quarters screen with specific panel
+            renderQuartersScreen("field", quartersAction as any);
+            break;
+          default:
+            onResume();
+        }
+      } else {
+        console.log("[FIELD] Custom interaction:", zone.metadata);
+        onResume();
+      }
       break;
       
     default:

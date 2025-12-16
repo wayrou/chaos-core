@@ -82,25 +82,28 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
         </div>
       </div>
       
-      <!-- Tabs -->
-      <div class="quest-board-tabs">
-        <button class="quest-board-tab ${currentTab === 'available' ? 'quest-board-tab--active' : ''}" data-tab="available">
-          <span class="tab-icon">📋</span>
-          <span class="tab-text">AVAILABLE</span>
-          ${availableQuests.length > 0 ? `<span class="tab-badge">${availableQuests.length}</span>` : ''}
-        </button>
-        <button class="quest-board-tab ${currentTab === 'active' ? 'quest-board-tab--active' : ''}" data-tab="active">
-          <span class="tab-icon">⚡</span>
-          <span class="tab-text">ACTIVE</span>
-          ${activeQuests.length > 0 ? `<span class="tab-badge">${activeQuests.length}</span>` : ''}
-        </button>
-      </div>
-      
-      <!-- Content -->
-      <div class="quest-board-content">
-        ${currentTab === "available" 
-          ? renderAvailableQuests(availableQuests) 
-          : renderActiveQuests(activeQuests)}
+      <!-- Main Content Card -->
+      <div class="quest-board-card">
+        <!-- Tabs -->
+        <div class="quest-board-tabs">
+          <button class="quest-board-tab ${currentTab === 'available' ? 'quest-board-tab--active' : ''}" data-tab="available">
+            <span class="tab-icon">📋</span>
+            <span class="tab-text">AVAILABLE</span>
+            ${availableQuests.length > 0 ? `<span class="tab-badge">${availableQuests.length}</span>` : ''}
+          </button>
+          <button class="quest-board-tab ${currentTab === 'active' ? 'quest-board-tab--active' : ''}" data-tab="active">
+            <span class="tab-icon">⚡</span>
+            <span class="tab-text">ACTIVE</span>
+            ${activeQuests.length > 0 ? `<span class="tab-badge">${activeQuests.length}</span>` : ''}
+          </button>
+        </div>
+        
+        <!-- Content -->
+        <div class="quest-board-content">
+          ${currentTab === "available" 
+            ? renderAvailableQuests(availableQuests) 
+            : renderActiveQuests(activeQuests)}
+        </div>
       </div>
     </div>
   `;
@@ -127,37 +130,69 @@ function renderAvailableQuests(quests: Quest[]): string {
 }
 
 function renderActiveQuests(quests: Quest[]): string {
-  if (quests.length === 0) {
-    return `
-      <div class="quest-board-empty">
-        <div class="empty-icon">📋</div>
-        <div class="empty-title">NO ACTIVE QUESTS</div>
-        <div class="empty-text">Quests are automatically generated. Check back soon!</div>
-      </div>
-    `;
-  }
-
   // Separate generated quests from static quests
   const generatedQuests = quests.filter(q => q.metadata?.isGenerated);
   const staticQuests = quests.filter(q => !q.metadata?.isGenerated);
 
   return `
-    <div class="quest-list">
+    <div class="quest-board-windows">
       ${staticQuests.length > 0 ? `
-        <div class="quest-list-section">
-          <div class="quest-section-header">STORY QUESTS</div>
-          ${staticQuests.map(quest => renderQuestCard(quest, "active")).join("")}
-        </div>
-      ` : ''}
-      ${generatedQuests.length > 0 ? `
-        <div class="quest-list-section">
-          <div class="quest-section-header">
-            <span>ENDLESS QUESTS</span>
-            <span class="quest-section-hint">Auto-generated · Complete for rewards</span>
+        <!-- Story Quests Window -->
+        <div class="quest-window quest-window--story">
+          <div class="quest-window-header">
+            <h2 class="quest-window-title">STORY QUESTS</h2>
+            <div class="quest-window-subtitle">Main campaign objectives</div>
           </div>
-          ${generatedQuests.map(quest => renderQuestCard(quest, "active")).join("")}
+          <div class="quest-window-body">
+            <div class="quest-list">
+              ${staticQuests.map(quest => renderQuestCard(quest, "active")).join("")}
+            </div>
+          </div>
         </div>
-      ` : ''}
+      ` : `
+        <div class="quest-window quest-window--story">
+          <div class="quest-window-header">
+            <h2 class="quest-window-title">STORY QUESTS</h2>
+            <div class="quest-window-subtitle">Main campaign objectives</div>
+          </div>
+          <div class="quest-window-body">
+            <div class="quest-board-empty">
+              <div class="empty-icon">📋</div>
+              <div class="empty-title">NO STORY QUESTS</div>
+              <div class="empty-text">Complete operations to unlock story quests.</div>
+            </div>
+          </div>
+        </div>
+      `}
+      
+      ${generatedQuests.length > 0 ? `
+        <!-- Endless Quests Window -->
+        <div class="quest-window quest-window--endless">
+          <div class="quest-window-header">
+            <h2 class="quest-window-title">ENDLESS QUESTS</h2>
+            <div class="quest-window-subtitle">Auto-generated · Complete for rewards</div>
+          </div>
+          <div class="quest-window-body">
+            <div class="quest-list">
+              ${generatedQuests.map(quest => renderQuestCard(quest, "active")).join("")}
+            </div>
+          </div>
+        </div>
+      ` : `
+        <div class="quest-window quest-window--endless">
+          <div class="quest-window-header">
+            <h2 class="quest-window-title">ENDLESS QUESTS</h2>
+            <div class="quest-window-subtitle">Auto-generated · Complete for rewards</div>
+          </div>
+          <div class="quest-window-body">
+            <div class="quest-board-empty">
+              <div class="empty-icon">⚡</div>
+              <div class="empty-title">NO ENDLESS QUESTS</div>
+              <div class="empty-text">Quests are automatically generated. Check back soon!</div>
+            </div>
+          </div>
+        </div>
+      `}
     </div>
   `;
 }
