@@ -43,8 +43,8 @@ chaos-core/
 │   │       ├── MainMenuScreen.ts
 │   │       ├── OperationMapScreen.ts
 │   │       ├── RosterScreen.ts
-│   │       ├── ScrollLinkBoot.ts  # Boot screen
-│   │       ├── ScrollLinkShell.ts # Main shell/OS
+│   │       ├── ScrollLinkBoot.ts  # Boot screen (file name kept as ScrollLinkBoot for code compatibility)
+│   │       ├── ScrollLinkShell.ts # Main shell/OS (file name kept as ScrollLinkShell for code compatibility)
 │   │       ├── SettingsScreen.ts
 │   │       ├── ShopScreen.ts
 │   │       └── WorkshopScreen.ts
@@ -109,9 +109,9 @@ chaos-core/
 - Serialized GameState with autosave functionality
 - Controller support with settings persistence
 
-### 8. ScrollLink OS Theme
-- **Boot sequence** (`ScrollLinkBoot.ts`): Logo, fake logs, loading bar
-- **Shell interface** (`ScrollLinkShell.ts`): Status bar, main window, terminal panel
+### 8. Scroll Link OS Theme
+- **Boot sequence** (`ScrollLinkBoot.ts` - file name kept for code compatibility): Logo, fake logs, loading bar
+- **Shell interface** (`ScrollLinkShell.ts` - file name kept for code compatibility): Status bar, main window, terminal panel
 - **OS-themed transitions**: All screens treated as "apps" within the shell
 
 ## Key Data Structures
@@ -181,7 +181,7 @@ Current implementation status: **Through Headline 12bza**
 
 ### Completed
 - ✅ Tauri + TypeScript setup
-- ✅ ScrollLink OS boot & shell
+- ✅ Scroll Link OS boot & shell
 - ✅ Core GameState & types
 - ✅ Global state store
 - ✅ Main menu & new game flow
@@ -232,7 +232,7 @@ Current implementation status: **Through Headline 12bza**
 
 Key principles:
 - Less "computer program", more "actual game"
-- Retain ScrollLink terminal boot screen as flourish
+- Retain Scroll Link terminal boot screen as flourish
 - Battle grid should feel at-home for Final Fantasy Tactics Advance players
 - Work within limitations before character portraits/art are implemented
 - Temp art should still capture the tactical RPG feel
@@ -325,11 +325,11 @@ npm run tauri build
 - This is an active game development project with a detailed roadmap
 - Implementation is currently at **Headline 12bza** (see README.txt)
 - The project follows a strict separation between core logic and UI
-- ScrollLink OS theming is a core aesthetic element
+- Scroll Link OS theming is a core aesthetic element
 - Strain mechanics and deck-building are central to gameplay identity
 - Equipment drives card availability (not standalone card collection)
 - Inventory uses three-axis capacity system (MASS/BULK/POWER)
-- All game screens operate within the ScrollLink shell interface
+- All game screens operate within the Scroll Link shell interface
 - Controller support is a first-class feature
 - Save system uses Tauri's Rust backend for file I/O
 

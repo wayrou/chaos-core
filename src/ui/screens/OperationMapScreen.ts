@@ -388,6 +388,9 @@ export function renderOperationMapScreen(): void {
           <button class="opmap-units-btn" id="unitsBtn">
             👥 UNIT MANAGEMENT
           </button>
+          <button class="opmap-controlled-rooms-btn" id="controlledRoomsBtn">
+            🏰 CONTROLLED ROOMS
+          </button>
           <button class="opmap-abandon-btn" id="abandonBtn">
             ✕ ABANDON
           </button>
@@ -431,44 +434,43 @@ export function renderOperationMapScreen(): void {
 
   // Setup pan handlers and attach event listeners
   setupPanHandlers();
-  
-  // Setup document-level click handler for abandon button (event delegation fallback)
-  setupAbandonButtonHandler();
 
   // Use requestAnimationFrame to ensure DOM is fully ready
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       attachEventListeners(nodes, currentRoomIndex);
+      // Setup resize observer for connection redrawing
+      setupConnectionRedrawOnResize();
+      // Draw connections after DOM is ready
+      drawMapConnections();
       // Center camera on current node after DOM is ready
       centerOnCurrentNode();
     });
   });
 }
 
-// Global abandon button handler using event delegation
-let abandonHandlerAttached = false;
-function setupAbandonButtonHandler(): void {
-  if (abandonHandlerAttached) return;
-  abandonHandlerAttached = true;
-  
-  document.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    // Check if click was on abandon button or its children
-    const abandonBtn = target.closest("#abandonBtn");
-    if (abandonBtn && document.querySelector(".opmap-root")) {
-      e.stopPropagation();
-      e.preventDefault();
-      console.log("[OPMAP] Abandon button clicked (document delegation)!");
-      
-      if (confirm("Abandon this operation? Progress will be lost.")) {
-        cleanupPanHandlers();
-        abandonRun();
-        syncCampaignToGameState();
-        renderFieldScreen("base_camp");
-      }
-    }
-  }, true); // Use capture phase
+// Global resize handler for redrawing connections
+let resizeObserver: ResizeObserver | null = null;
+
+function setupConnectionRedrawOnResize(): void {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+  }
+
+  const container = document.querySelector(".opmap-nodes-container") as HTMLElement | null;
+  if (!container) return;
+
+  resizeObserver = new ResizeObserver(() => {
+    // Redraw connections when container size changes
+    requestAnimationFrame(() => {
+      drawMapConnections();
+    });
+  });
+
+  resizeObserver.observe(container);
 }
+
+// Removed global abandon button handler - now handled in attachEventListeners
 
 // ============================================================================
 // ROOM INDEX TRACKING
@@ -514,23 +516,153 @@ function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
 // ROGUELIKE MAP RENDERING
 // ============================================================================
 
+/**
+ * Draw path connections between nodes using SVG overlay
+ * This is called after DOM is ready to ensure accurate measurements
+ */
+function drawMapConnections(): void {
+  const connectionData = (window as any).__opmapConnectionData as Array<{
+    fromNodeId: string;
+    toNodeId: string;
+    fromVisited: boolean;
+    isAvailable: boolean;
+  }>;
+
+  if (!connectionData || connectionData.length === 0) {
+    console.log("[OPMAP] No connection data to draw");
+    return;
+  }
+
+  const svg = document.getElementById("opmap-connections-overlay") as SVGSVGElement | null;
+  const container = document.querySelector(".opmap-nodes-container") as HTMLElement | null;
+
+  if (!svg || !container) {
+    console.warn("[OPMAP] SVG overlay or container not found");
+    return;
+  }
+
+  // Clear existing paths
+  svg.innerHTML = "";
+
+  // Get container bounding rect for coordinate conversion
+  const containerRect = container.getBoundingClientRect();
+
+  // Create SVG filter for glow effect (tactical map style)
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+  filter.setAttribute("id", "opmap-path-glow");
+  filter.setAttribute("x", "-50%");
+  filter.setAttribute("y", "-50%");
+  filter.setAttribute("width", "200%");
+  filter.setAttribute("height", "200%");
+
+  const blur = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
+  blur.setAttribute("in", "SourceGraphic");
+  blur.setAttribute("stdDeviation", "2");
+  blur.setAttribute("result", "blur");
+
+  const merge = document.createElementNS("http://www.w3.org/2000/svg", "feMerge");
+  const mergeNode1 = document.createElementNS("http://www.w3.org/2000/svg", "feMergeNode");
+  mergeNode1.setAttribute("in", "blur");
+  const mergeNode2 = document.createElementNS("http://www.w3.org/2000/svg", "feMergeNode");
+  mergeNode2.setAttribute("in", "SourceGraphic");
+
+  merge.appendChild(mergeNode1);
+  merge.appendChild(mergeNode2);
+  filter.appendChild(blur);
+  filter.appendChild(merge);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+
+  // Draw each connection
+  connectionData.forEach(({ fromNodeId, toNodeId, fromVisited, isAvailable }) => {
+    const fromNode = document.querySelector(`.opmap-node[data-room-id="${fromNodeId}"]`) as HTMLElement | null;
+    const toNode = document.querySelector(`.opmap-node[data-room-id="${toNodeId}"]`) as HTMLElement | null;
+
+    if (!fromNode || !toNode) {
+      console.warn(`[OPMAP] Node elements not found: ${fromNodeId} -> ${toNodeId}`);
+      return;
+    }
+
+    // Get node positions
+    const fromRect = fromNode.getBoundingClientRect();
+    const toRect = toNode.getBoundingClientRect();
+
+    // Calculate centers relative to container
+    const x1 = fromRect.left - containerRect.left + fromRect.width / 2;
+    const y1 = fromRect.top - containerRect.top + fromRect.height / 2;
+    const x2 = toRect.left - containerRect.left + toRect.width / 2;
+    const y2 = toRect.top - containerRect.top + toRect.height / 2;
+
+    // Determine line style based on state
+    let strokeColor: string;
+    let strokeWidth: number;
+    let strokeOpacity: number;
+    let useGlow: boolean;
+
+    if (isAvailable) {
+      // Available next edges: bright + glow
+      strokeColor = "rgba(255, 215, 0, 1)"; // Gold
+      strokeWidth = 3;
+      strokeOpacity = 0.9;
+      useGlow = true;
+    } else if (fromVisited) {
+      // Cleared path: muted greenish
+      strokeColor = "rgba(100, 255, 150, 1)"; // Greenish
+      strokeWidth = 2;
+      strokeOpacity = 0.4;
+      useGlow = false;
+    } else {
+      // Normal edges: dim
+      strokeColor = "rgba(150, 200, 255, 1)"; // Blue-ish
+      strokeWidth = 2;
+      strokeOpacity = 0.3;
+      useGlow = false;
+    }
+
+    // Create path element
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", x1.toString());
+    line.setAttribute("y1", y1.toString());
+    line.setAttribute("x2", x2.toString());
+    line.setAttribute("y2", y2.toString());
+    line.setAttribute("stroke", strokeColor);
+    line.setAttribute("stroke-width", strokeWidth.toString());
+    line.setAttribute("stroke-opacity", strokeOpacity.toString());
+    line.setAttribute("stroke-linecap", "round");
+
+    if (useGlow) {
+      line.setAttribute("filter", "url(#opmap-path-glow)");
+    }
+
+    svg.appendChild(line);
+  });
+
+  console.log(`[OPMAP] Drew ${connectionData.length} connections`);
+}
+
 function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string {
   const nextAvailableIndex = getNextAvailableRoomIndex(nodes);
   const availableNodeIds = getAvailableNodes();
-  
+
   // Debug logging
   const state = getGameState();
   const operation = getCurrentOperation(state);
   const currentRoomId = operation?.currentRoomId;
   console.log(`[OPMAP] Rendering map: currentRoomId=${currentRoomId}, availableNodeIds=${availableNodeIds.length}`, availableNodeIds);
-  
+
   let mapHtml = '<div class="opmap-nodes-container">';
-  
+
   // Find max layer (x in position = progression depth) to flip for bottom-to-top
   const maxLayer = Math.max(...nodes.map(n => n.position?.x || 0));
 
-  // Render connections first (if available from operation)
+  // SVG overlay will be added via ID for proper coordinate alignment
+  mapHtml += '<svg id="opmap-connections-overlay" class="opmap-connections-overlay"></svg>';
+
+  // Store connection data for rendering after DOM is ready
   const connections = operation?.connections || {};
+  const connectionData: Array<{fromNodeId: string, toNodeId: string, fromVisited: boolean, isAvailable: boolean}> = [];
+
   for (const fromNodeId in connections) {
     const fromNode = nodes.find(n => n.id === fromNodeId);
     if (!fromNode || !fromNode.position) continue;
@@ -543,24 +675,19 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
       const fromVisited = fromNode.visited || fromNode.id === currentRoomId;
       const toAvailable = availableNodeIds.includes(toNodeId) || toNode.visited;
 
-      if (fromVisited && toAvailable && fromNode.position && toNode.position) {
-        // SWAP x and y: position.x is progression (vertical), position.y is branching (horizontal)
-        // For bottom-to-top: x=0 is bottom, x=max is top
-        const x1 = fromNode.position.y * 400 + 200; // Horizontal (branches) - node center, wide spacing
-        const y1 = (maxLayer - fromNode.position.x) * 300 + 150; // Vertical (progression) - flipped, tall spacing
-        const x2 = toNode.position.y * 400 + 200;
-        const y2 = (maxLayer - toNode.position.x) * 300 + 150;
-
-        mapHtml += `
-          <svg class="opmap-connection" style="position: absolute; left: ${Math.min(x1, x2) - 2}px; top: ${Math.min(y1, y2) - 2}px; width: ${Math.abs(x2 - x1) + 4}px; height: ${Math.abs(y2 - y1) + 4}px; pointer-events: none; z-index: 0;">
-            <line x1="${x1 - Math.min(x1, x2) + 2}" y1="${y1 - Math.min(y1, y2) + 2}"
-                  x2="${x2 - Math.min(x1, x2) + 2}" y2="${y2 - Math.min(y1, y2) + 2}"
-                  stroke="rgba(255, 215, 0, 0.3)" stroke-width="2" />
-          </svg>
-        `;
+      if (fromVisited && toAvailable) {
+        connectionData.push({
+          fromNodeId,
+          toNodeId,
+          fromVisited,
+          isAvailable: availableNodeIds.includes(toNodeId) && !toNode.visited
+        });
       }
     });
   }
+
+  // Store connection data on window for post-render drawing
+  (window as any).__opmapConnectionData = connectionData;
 
   nodes.forEach((node, index) => {
     const isVisited = node.visited === true;
@@ -568,7 +695,8 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
     const isNext = index === nextAvailableIndex;
     // Node is available if it's in the available nodes list (forward-only branching)
     const isAvailable = availableNodeIds.includes(node.id);
-    const isLocked = !isVisited && !isNext && !isAvailable;
+    // Current room is never locked (can be re-entered), and available/next rooms are never locked
+    const isLocked = !isVisited && !isNext && !isAvailable && !isCurrent;
 
     // Debug logging for each node
     if (isAvailable && !isVisited) {
@@ -782,45 +910,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     resetPan();
   });
 
-  // Abandon button - use multiple approaches to ensure it works
-  const abandonBtn = root.querySelector("#abandonBtn") as HTMLButtonElement | null;
-  console.log("[OPMAP] Looking for abandon button, found:", abandonBtn);
-  
-  if (abandonBtn) {
-    console.log("[OPMAP] Attaching click handlers to abandon button");
-    
-    // Approach 1: Direct onclick
-    abandonBtn.onclick = function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      console.log("[OPMAP] Abandon button clicked (onclick)!");
-      handleAbandon();
-    };
-    
-    // Approach 2: addEventListener
-    abandonBtn.addEventListener("click", function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      console.log("[OPMAP] Abandon button clicked (addEventListener)!");
-      handleAbandon();
-    });
-    
-    // Approach 3: mousedown as fallback
-    abandonBtn.addEventListener("mousedown", function() {
-      console.log("[OPMAP] Abandon button mousedown detected!");
-    });
-  } else {
-    console.warn("[OPMAP] Abandon button NOT found in DOM!");
-  }
-  
-  function handleAbandon() {
-    if (confirm("Abandon this operation? Progress will be lost.")) {
-      cleanupPanHandlers();
-      abandonRun();
-      syncCampaignToGameState();
-      renderOperationSelectScreen();
-    }
-  }
+  // All click handlers are now in the unified handler below
 
   // Unit Management button
   root.querySelector("#unitsBtn")?.addEventListener("click", () => {
@@ -830,38 +920,88 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     renderRosterScreen("operation" as any);
   });
 
-  // Enter room buttons (only on next available room)
-  // Use event delegation for reliability - attach once to root
-  root.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const enterBtn = target.closest(".opmap-node-enter") as HTMLElement;
-    if (!enterBtn) return;
-    
-    e.stopPropagation();
-    e.preventDefault();
-    
-    const roomId = enterBtn.getAttribute("data-room-id");
-    console.log("[OPMAP] Enter button clicked (delegation), roomId:", roomId);
-    if (roomId) {
-      enterRoom(roomId);
-    } else {
-      console.warn("[OPMAP] Enter button clicked but no roomId found");
-    }
-  }, true); // Use capture phase for reliability
-
-  // Clicking on the node itself (for next available room or any available node)
-  root.querySelectorAll(".opmap-node--next, .opmap-node[data-is-locked='false']").forEach(node => {
-    node.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const clickedNode = (e.currentTarget as HTMLElement).closest(".opmap-node") || e.currentTarget as HTMLElement;
-      const roomId = clickedNode.getAttribute("data-room-id");
-      const isLocked = clickedNode.getAttribute("data-is-locked") === "true";
-      if (roomId && !isLocked) {
-        enterRoom(roomId);
-      }
+  // Controlled Rooms button (Headline 14e)
+  root.querySelector("#controlledRoomsBtn")?.addEventListener("click", () => {
+    cleanupPanHandlers();
+    import("./ControlledRoomsWindowScreen").then(({ renderControlledRoomsWindow }) => {
+      renderControlledRoomsWindow("operation_map");
     });
   });
+
+  // Single unified click handler for all interactive elements - use event delegation
+  // This handler is attached to root and uses event delegation to catch all clicks
+  const clickHandler = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target) return;
+    
+    console.log("[OPMAP] Click detected on:", target.tagName, target.className, target.id);
+    
+    // Priority 1: Abandon button (must be checked first to avoid conflicts)
+    const abandonBtn = target.closest("#abandonBtn") as HTMLElement;
+    if (abandonBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      console.log("[OPMAP] Abandon button clicked!");
+      
+      if (confirm("Abandon this operation? Progress will be lost.")) {
+        cleanupPanHandlers();
+        abandonRun();
+        syncCampaignToGameState();
+        renderOperationSelectScreen();
+      }
+      return;
+    }
+    
+    // Priority 2: Enter button
+    const enterBtn = target.closest(".opmap-node-enter") as HTMLElement;
+    if (enterBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+
+      const roomId = enterBtn.getAttribute("data-room-id");
+      console.log("[OPMAP] ===== ENTER BUTTON CLICKED =====, roomId:", roomId);
+      if (roomId) {
+        enterRoom(roomId);
+      } else {
+        console.warn("[OPMAP] Enter button clicked but no roomId found");
+      }
+      return;
+    }
+    
+    // Priority 3: Node click (but not if clicking on buttons or other interactive elements)
+    const clickedNode = target.closest(".opmap-node") as HTMLElement;
+    if (clickedNode) {
+      // Don't handle if clicking on a button or other interactive element inside the node
+      if (target.closest(".opmap-node-enter") ||
+          target.closest("button") ||
+          target.closest("#abandonBtn") ||
+          target.tagName === "BUTTON") {
+        console.log("[OPMAP] Click on node but inside button, ignoring");
+        return;
+      }
+
+      e.stopPropagation();
+      e.preventDefault();
+
+      const roomId = clickedNode.getAttribute("data-room-id");
+      const isLocked = clickedNode.getAttribute("data-is-locked") === "true";
+
+      console.log("[OPMAP] ===== NODE CLICKED =====, roomId:", roomId, "isLocked:", isLocked);
+
+      // Allow clicking on any unlocked node - enterRoom will validate accessibility
+      if (roomId && !isLocked) {
+        console.log("[OPMAP] Calling enterRoom for:", roomId);
+        enterRoom(roomId);
+      } else {
+        console.log("[OPMAP] Node click blocked - locked or no roomId:", { roomId, isLocked });
+        if (isLocked) {
+          alert("This room is locked. Complete connected rooms first.");
+        }
+      }
+    }
+  };
+  
+  root.addEventListener("click", clickHandler, true); // Use capture phase for reliability
 
   // Advance floor button
   // Advance floor button is handled above in the new handler
@@ -892,16 +1032,20 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 // ============================================================================
 
 function enterRoom(roomId: string): void {
+  console.log("[OPMAP] ========== enterRoom called for roomId:", roomId, "==========");
+
   const state = getGameState();
   const operation = getCurrentOperation(state);
   if (!operation) {
     console.warn("[OPMAP] No active operation when trying to enter room:", roomId);
+    alert("Error: No active operation found. Please start a new operation.");
     return;
   }
 
   const floor = getCurrentFloor(operation);
   if (!floor) {
     console.warn("[OPMAP] No current floor when trying to enter room:", roomId);
+    alert("Error: No current floor found.");
     return;
   }
 
@@ -909,20 +1053,31 @@ function enterRoom(roomId: string): void {
   const room = nodes.find(n => n.id === roomId);
   if (!room) {
     console.warn("[OPMAP] Room not found:", roomId);
+    alert(`Error: Room ${roomId} not found.`);
     return;
   }
 
-  // Check if node is accessible (campaign system) OR if it's the next available room
+  console.log("[OPMAP] Room found:", { id: room.id, type: room.type, label: room.label, visited: room.visited });
+
+  // Check if node is accessible (campaign system) OR if it's the next available room OR if it's the current room
   const nextIndex = getNextAvailableRoomIndex(nodes);
   const isNextRoom = nextIndex >= 0 && nextIndex < nodes.length && nodes[nextIndex].id === roomId;
-  
-  if (!isNodeAccessible(roomId) && !isNextRoom) {
-    console.warn("[OPMAP] Attempted to enter inaccessible room:", roomId, {
-      isAccessible: isNodeAccessible(roomId),
-      isNextRoom,
-      nextIndex,
-      nextRoomId: nextIndex >= 0 && nextIndex < nodes.length ? nodes[nextIndex].id : null
-    });
+  const isCurrentRoom = operation.currentRoomId === roomId;
+  const isAccessible = isNodeAccessible(roomId);
+
+  console.log("[OPMAP] Room accessibility check:", {
+    roomId,
+    isAccessible,
+    isNextRoom,
+    isCurrentRoom,
+    currentRoomId: operation.currentRoomId,
+    nextIndex,
+    nextRoomId: nextIndex >= 0 && nextIndex < nodes.length ? nodes[nextIndex].id : null
+  });
+
+  if (!isAccessible && !isNextRoom && !isCurrentRoom) {
+    console.warn("[OPMAP] Attempted to enter inaccessible room:", roomId);
+    alert(`Room ${room.label} is not accessible yet. Complete connected rooms first.`);
     return;
   }
 
@@ -930,38 +1085,50 @@ function enterRoom(roomId: string): void {
   cleanupPanHandlers();
 
   // Move to node in campaign system (must happen before entering room)
+  // IMPORTANT: moveToNode only updates currentNodeId, it does NOT clear the node
+  // Nodes are cleared later via clearNode() when the room is actually completed
   try {
+    console.log("[OPMAP] Calling moveToNode for:", roomId);
     moveToNode(roomId);
     syncCampaignToGameState();
+    console.log("[OPMAP] Successfully moved to node:", roomId);
   } catch (error) {
     console.error("[OPMAP] Failed to move to node:", error);
+    alert(`Failed to move to room: ${error instanceof Error ? error.message : "Unknown error"}`);
     // Don't return - still try to enter the room if it's accessible
     // The error might be because we're already on that node
   }
 
+  console.log("[OPMAP] Routing to room type:", room.type, "for room:", room.id);
+  
   // Route to appropriate screen based on room type
   switch (room.type) {
     case "battle":
     case "boss":
       // Check if this is a Key Room battle
       if ((room as any).isKeyRoom) {
+        console.log("[OPMAP] Entering key room battle:", room.id);
         enterKeyRoom(room);
       } else {
+        console.log("[OPMAP] Entering normal battle:", room.id);
         enterBattleRoom(room);
       }
       break;
 
     case "elite":
       // Elite battle - tougher encounter, better rewards including Field Mods
+      console.log("[OPMAP] Entering elite battle:", room.id);
       enterEliteRoom(room);
       break;
 
     case "treasure":
       // Treasure room - choose 1 of 3 Field Mods
+      console.log("[OPMAP] Entering treasure room:", room.id);
       enterTreasureRoom(room);
       break;
 
     case "event":
+      console.log("[OPMAP] Entering event room:", room.id);
       if (room.eventTemplate) {
         renderEventRoomScreen(room.eventTemplate);
       } else {
@@ -1003,6 +1170,7 @@ function enterBattleRoom(room: RoomNode): void {
     
     if (!activeRun) {
       console.error("[OPMAP] No active run for battle");
+      renderOperationMapScreen();
       return;
     }
 
@@ -1017,6 +1185,7 @@ function enterBattleRoom(room: RoomNode): void {
     const updatedRun = getActiveRun();
     if (!updatedRun || !updatedRun.pendingBattle) {
       console.error("[OPMAP] Failed to prepare battle");
+      renderOperationMapScreen();
       return;
     }
     
@@ -1028,6 +1197,7 @@ function enterBattleRoom(room: RoomNode): void {
 
     if (!battle) {
       console.error("[OPMAP] Failed to create battle from encounter");
+      renderOperationMapScreen();
       return;
     }
 
@@ -1053,6 +1223,7 @@ function enterKeyRoom(room: RoomNode): void {
     
     if (!activeRun) {
       console.error("[OPMAP] No active run for key room");
+      renderOperationMapScreen();
       return;
     }
 
@@ -1121,6 +1292,7 @@ function enterEliteRoom(room: RoomNode): void {
 
     if (!activeRun) {
       console.error("[OPMAP] No active run for elite battle");
+      renderOperationMapScreen();
       return;
     }
 
@@ -1130,6 +1302,7 @@ function enterEliteRoom(room: RoomNode): void {
     (window as any).__eliteRoomId = room.id;
 
     // Prepare battle for this node (generates encounter)
+    // Note: prepareBattleForNode now accepts "elite" nodes
     prepareBattleForNode(room.id);
     syncCampaignToGameState();
 
@@ -1173,6 +1346,7 @@ function enterTreasureRoom(room: RoomNode): void {
 
     if (!activeRun) {
       console.error("[OPMAP] No active run for treasure room");
+      renderOperationMapScreen();
       return;
     }
 

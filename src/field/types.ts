@@ -2,7 +2,18 @@
 // FIELD SYSTEM - TYPES
 // ============================================================================
 
-export type FieldMapId = "base_camp" | "free_zone_1" | "free_zone_2" | "quarters";
+export type FieldMapId =
+  | "base_camp"
+  | "free_zone_1"
+  | "free_zone_2"
+  | "quarters"
+  // Controlled Room maps (Headline 14e)
+  | "controlled_supply_depot"
+  | "controlled_medical_ward"
+  | "controlled_armory"
+  | "controlled_command_center"
+  | "controlled_mine"
+  | "controlled_outpost";
 
 export interface FieldMap {
   id: FieldMapId;
@@ -38,7 +49,27 @@ export interface InteractionZone {
   y: number;
   width: number;
   height: number;
-  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "gear_workbench" | "port" | "quarters" | "black_market" | "free_zone_entry" | "base_camp_entry" | "custom";
+  action:
+    | "shop"
+    | "workshop"
+    | "roster"
+    | "loadout"
+    | "ops_terminal"
+    | "quest_board"
+    | "tavern"
+    | "gear_workbench"
+    | "port"
+    | "quarters"
+    | "black_market"
+    | "free_zone_entry"
+    | "base_camp_entry"
+    | "custom"
+    // Controlled Room actions (Headline 14e)
+    | "build_barricade"
+    | "install_turret"
+    | "reinforce_walls"
+    | "install_generator"
+    | "exit_controlled_room";
   label: string;
   metadata?: Record<string, any>;
 }

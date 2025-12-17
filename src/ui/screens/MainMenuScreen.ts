@@ -70,7 +70,7 @@ export async function renderMainMenu(): Promise<void> {
   
   // Flavor text for the terminal - will be output continuously
   const flavorLines = [
-    "SLK&gt; SYSTEM_STATUS    :: ScrollLink OS v0.1.0 — All systems nominal.",
+    "SLK&gt; SYSTEM_STATUS    :: Scroll Link OS v0.1.0 — All systems nominal.",
     "SLK&gt; CORE_STATUS      :: Chaos core containment: STABLE.",
     "SLK&gt; NETWORK_STATUS   :: MISTGUARD relay connected. Signal strength: EXCELLENT.",
     "",
@@ -167,7 +167,7 @@ export async function renderMainMenu(): Promise<void> {
           </div>
         </div>
         
-        <!-- Right column: ScrollLink Terminal -->
+        <!-- Right column: Scroll Link Terminal -->
         <div class="mainmenu-terminal-container">
           <div class="mainmenu-terminal-window">
             <div class="mainmenu-terminal-header">

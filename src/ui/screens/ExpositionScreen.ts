@@ -1,7 +1,7 @@
 // ============================================================================
 // EXPOSITION SCREEN - Story introduction
-// Appears after ScrollLink boot, before main menu
-// Terminal/ScrollLink aesthetic window with exposition text
+// Appears after Scroll Link boot, before main menu
+// Terminal/Scroll Link aesthetic window with exposition text
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";

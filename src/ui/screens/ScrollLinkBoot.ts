@@ -1,4 +1,4 @@
-// src/ui/screens/ScrollLinkBoot.ts
+// src/ui/screens/ScrollLinkBoot.ts (Note: File name kept as ScrollLinkBoot for code compatibility)
 import { renderExpositionScreen } from "./ExpositionScreen";
 
 export function renderScrollLinkBoot() {
@@ -33,7 +33,7 @@ export function renderScrollLinkBoot() {
     "[OK] Initializing bios...",
     "[OK] Mounting ARDCY-A01 core drive...",
     "[OK] Loading Chaos Core modules...",
-    "[OK] Linking ScrollLink nodes...",
+    "[OK] Linking Scroll Link nodes...",
     "[OK] Verifying rift containment seals...",
     "[OK] Preparing OPS profile: AERISS.QW",
     "[OK] Legacy handoff from Solaris (defunct) — \"Working for you.\"",

@@ -104,6 +104,14 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       // Spawn to the left of quarters interaction zone at x:23, y:14 (center of tile)
       playerX = 23 * tileSize + tileSize / 2; // 1472px
       playerY = 14 * tileSize + tileSize / 2; // 896px
+    } else if (mapId.startsWith("controlled_")) {
+      // Controlled rooms: spawn near entrance/exit (bottom center)
+      // Exit is at x: 7-8, y: 10 (2 tiles wide)
+      // Spawn just above the exit at x: 7-8, y: 9
+      const exitTileX = 7; // Left side of exit (exit spans x: 7-8)
+      const exitTileY = 9; // Just above exit (exit is at y: 10)
+      playerX = exitTileX * tileSize + tileSize / 2; // Center of tile 7
+      playerY = exitTileY * tileSize + tileSize / 2; // Center of tile 9
     } else {
       // Default: center of map
       playerX = (currentMap.width * tileSize) / 2;
@@ -111,8 +119,8 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     }
     
     // Validate spawn position is walkable, if not, find nearest walkable tile
-    // Skip validation for quarters - we set a specific position
-    if (mapId !== "quarters") {
+    // Skip validation for quarters and controlled rooms - we set specific positions
+    if (mapId !== "quarters" && !mapId.startsWith("controlled_")) {
       const spawnTileX = Math.floor(playerX / tileSize);
       const spawnTileY = Math.floor(playerY / tileSize);
       if (spawnTileX < 0 || spawnTileX >= currentMap.width || 

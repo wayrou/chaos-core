@@ -32,6 +32,8 @@ export function createBattleFromEncounter(
           isEnemy: false,
           pos: null, // Will be placed in placement phase
           gearSlots: (gameState as any).gearSlots ?? {},
+          gridWidth: encounter.gridWidth,
+          gridHeight: encounter.gridHeight,
         },
         (gameState as any).equipmentById,
         (gameState as any).modulesById

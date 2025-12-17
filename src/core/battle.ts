@@ -25,6 +25,8 @@ import {
   createWeaponRuntimeState,
   passiveCooling,
 } from "./weaponSystem";
+import { isGridSizeAllowedForMounts, getMountInstance } from "./mountSystem";
+import { getMountDef, getMountCardPackage } from "../data/mounts";
 
 // STEP 6 & 7: Import gear workbench functions
 import {
@@ -100,6 +102,9 @@ export interface BattleUnitState {
   // Auto-battle toggle (15a)
   autoBattle?: boolean;
   // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
+  // Mount System
+  equippedMountId?: string; // Mount ID (from base unit)
+  isMounted?: boolean; // Battle state: true if currently mounted in this battle
 }
 
 export interface BattleState {
@@ -192,6 +197,8 @@ export function createBattleUnitState(
     isEnemy: boolean;
     pos: Vec2 | null;
     gearSlots?: Record<string, GearSlotData>;  // NEW
+    gridWidth?: number;  // For mount gating
+    gridHeight?: number;  // For mount gating
   },
   equipmentById?: Record<string, Equipment>,
   modulesById?: Record<string, Module>
@@ -242,6 +249,32 @@ export function createBattleUnitState(
     
     // Combine base cards + slotted cards
     deckCards = [...baseCards, ...slottedCards];
+    
+    // MOUNT SYSTEM: Inject mount cards if unit is mounted and grid allows
+    const equippedMountId = base.equippedMountId;
+    let isMounted = false;
+    
+    if (equippedMountId && opts.gridWidth && opts.gridHeight) {
+      if (isGridSizeAllowedForMounts(opts.gridWidth, opts.gridHeight)) {
+        // Grid allows mounts - check mount condition
+        const mountInstance = getMountInstance(equippedMountId);
+        if (mountInstance && mountInstance.condition > 0) {
+          const mountDef = getMountDef(equippedMountId);
+          if (mountDef) {
+            const cardPackage = getMountCardPackage(mountDef.cardPackageId);
+            if (cardPackage) {
+              // Inject mount cards into deck
+              deckCards = [...deckCards, ...cardPackage.cardIds];
+              isMounted = true;
+              console.log(`[MOUNT] ${base.name} mounted on ${mountDef.name} - injected ${cardPackage.cardIds.length} cards`);
+            }
+          }
+        }
+      } else {
+        // Grid is too small - auto-dismount (no condition penalty)
+        console.log(`[MOUNT] ${base.name} auto-dismounted: grid ${opts.gridWidth}x${opts.gridHeight} too small`);
+      }
+    }
   }
 
   // Shuffle the deck
@@ -303,6 +336,8 @@ export function createBattleUnitState(
     clutchActive: false,
     weaponHeat: 0,
     weaponWear: 0,
+    equippedMountId: base.equippedMountId,
+    isMounted: isMounted,
     controller: base.controller || "P1", // Copy controller from base unit
   };
 }
@@ -1422,6 +1457,8 @@ export function createTestBattleForCurrentParty(
         isEnemy: false,
         pos: null, // Start with no position - placement phase
         gearSlots: (state as any).gearSlots ?? {},  // NEW: Pass gear slots
+        gridWidth,
+        gridHeight,
       },
       equipmentById,
       modulesById
@@ -1506,7 +1543,9 @@ export function createTestBattleForCurrentParty(
         { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
         { 
           isEnemy: true, 
-          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) } 
+          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) },
+          gridWidth,
+          gridHeight,
         },
         equipmentById,
         modulesById

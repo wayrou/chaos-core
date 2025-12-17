@@ -1718,7 +1718,28 @@ function renderDefenseObjectiveHeader(objective: NonNullable<BattleState["defens
 }
 
 function renderBattleResultOverlay(battle: BattleState): string {
+  const isTrainingSim = (battle as any).isTrainingSim || false;
+
   if (battle.phase === "victory") {
+    // Training Sim Victory
+    if (isTrainingSim) {
+      return `
+        <div class="battle-result-overlay">
+          <div class="battle-result-card">
+            <div class="battle-result-title">TRAINING SIM COMPLETE</div>
+            <div class="battle-training-sim-message">
+              Simulated engagement concluded. No rewards issued.
+            </div>
+            <div class="battle-result-footer">
+              <button class="battle-result-btn battle-result-btn--primary" id="trainingSimRunAgainBtn">RUN AGAIN</button>
+              <button class="battle-result-btn" id="trainingSimReturnBtn">BACK TO COMMS ARRAY</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Normal Victory
     const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
 
@@ -1745,11 +1766,29 @@ function renderBattleResultOverlay(battle: BattleState): string {
       </div>
     `;
   }
-  
+
   if (battle.phase === "defeat") {
-    // Check if in campaign run (for retry option)
+    // Training Sim Defeat
+    if (isTrainingSim) {
+      return `
+        <div class="battle-result-overlay battle-result-overlay--defeat">
+          <div class="battle-result-card">
+            <div class="battle-result-title">TRAINING SIM FAILED</div>
+            <div class="battle-training-sim-message">
+              Simulated engagement failed. No rewards issued.
+            </div>
+            <div class="battle-result-footer">
+              <button class="battle-result-btn battle-result-btn--primary" id="trainingSimRunAgainBtn">RUN AGAIN</button>
+              <button class="battle-result-btn" id="trainingSimReturnBtn">BACK TO COMMS ARRAY</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Normal Defeat
     const isCampaignRun = (window as any).__isCampaignRun || false;
-    
+
     return `
       <div class="battle-result-overlay battle-result-overlay--defeat">
         <div class="battle-result-card">
@@ -1767,7 +1806,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
       </div>
     `;
   }
-  
+
   return "";
 }
 
@@ -2528,29 +2567,46 @@ function attachBattleListeners() {
   const claimBtn = document.getElementById("claimRewardsBtn");
   if (claimBtn) {
     console.log("[BATTLE] Found claim rewards button, attaching handlers");
-    
+
     // Clear any existing handlers
     claimBtn.onclick = null;
-    
+
     // Use onclick as primary handler (more reliable)
     claimBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       console.log("[BATTLE] Claim rewards button clicked (onclick)");
-      
+
       if (!localBattleState) {
         console.warn("[BATTLE] No battle state when claiming rewards");
         return;
       }
-      
+
+      // GUARD: Skip rewards for Training Sim
+      const isTrainingSim = (localBattleState as any).isTrainingSim || false;
+      if (isTrainingSim) {
+        console.log("[TRAININGSIM] Skipping rewards (Training Sim mode)");
+        cleanupBattlePanHandlers();
+        localBattleState = null;
+        selectedCardIndex = null;
+        resetTurnStateForUnit(null);
+        uiPanelsMinimized = false;
+
+        // Return to Comms Array
+        import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+          renderCommsArrayScreen("field");
+        });
+        return;
+      }
+
       const r = localBattleState.rewards;
       if (!r) {
         console.warn("[BATTLE] No rewards to claim");
         return;
       }
-      
+
       console.log("[BATTLE] Claiming rewards:", r);
-      
+
       try {
         updateGameState(s => {
           // MUST create a new object and RETURN it!
@@ -2563,7 +2619,7 @@ function attachBattleListeners() {
               chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
               steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
             },
-            cardLibrary: r.cards && r.cards.length > 0 
+            cardLibrary: r.cards && r.cards.length > 0
               ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
               : s.cardLibrary,
           };
@@ -2574,13 +2630,13 @@ function attachBattleListeners() {
         const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
         updateQuestProgress("kill_enemies", enemyCount, enemyCount);
         updateQuestProgress("complete_battle", "any", 1);
-        
+
         // Update resource collection quests
         if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
         if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
         if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
         if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
-        
+
         // Track survival affinity for all units that survived
         trackBattleSurvival(localBattleState, true);
 
@@ -2744,16 +2800,57 @@ function attachBattleListeners() {
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
       uiPanelsMinimized = false;
-      
+
       if (isEndlessBattleMode) {
         console.log(`[ENDLESS BATTLE] Defeated after ${endlessBattleCount} battles`);
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
       }
-      
+
       import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
         renderFieldScreen("base_camp");
       });
+    };
+  }
+
+  // Training Sim: Run Again button
+  const trainingSimRunAgainBtn = document.getElementById("trainingSimRunAgainBtn");
+  if (trainingSimRunAgainBtn) {
+    trainingSimRunAgainBtn.onclick = () => {
+      cleanupBattlePanHandlers();
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      uiPanelsMinimized = false;
+
+      // Return to Training Sim setup with same config
+      import("./TrainingSimSetupScreen").then(({ renderTrainingSimSetupScreen }) => {
+        renderTrainingSimSetupScreen("comms_array");
+      });
+    };
+  }
+
+  // Training Sim: Return button
+  const trainingSimReturnBtn = document.getElementById("trainingSimReturnBtn");
+  if (trainingSimReturnBtn) {
+    trainingSimReturnBtn.onclick = () => {
+      cleanupBattlePanHandlers();
+      localBattleState = null;
+      selectedCardIndex = null;
+      resetTurnStateForUnit(null);
+      uiPanelsMinimized = false;
+
+      // Return to Comms Array or field
+      const returnTo = (localBattleState as any)?.trainingSimReturnTo || "comms_array";
+      if (returnTo === "comms_array") {
+        import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+          renderCommsArrayScreen("field");
+        });
+      } else {
+        import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+          renderFieldScreen("base_camp");
+        });
+      }
     };
   }
 

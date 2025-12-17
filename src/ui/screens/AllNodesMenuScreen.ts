@@ -149,6 +149,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
               <span class="btn-icon">⚔</span>
               <span class="btn-label">ENDLESS BATTLES</span>
             </button>
+            <button class="all-nodes-menu-btn all-nodes-menu-btn--debug" data-action="unlock-stable">
+              <span class="btn-icon">🐴</span>
+              <span class="btn-label">UNLOCK STABLE</span>
+            </button>
           </div>
         </div>
       </div>
@@ -283,6 +287,14 @@ function handleNodeAction(action: string): void {
     case "endless-battles":
       import("./BattleScreen").then(({ startEndlessBattleMode }) => {
         startEndlessBattleMode();
+      });
+      break;
+    case "unlock-stable":
+      import("../../core/mountSystem").then(({ unlockStable }) => {
+        unlockStable();
+        alert("Stable unlocked! You can now access it from Base Camp.");
+        // Refresh the screen to show updated state
+        renderAllNodesMenuScreen(lastFieldMap);
       });
       break;
   }

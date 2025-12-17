@@ -223,6 +223,71 @@ function createAllCards(): Record<CardId, Card> {
     cards[id] = equipmentCardToGameCard(eqCard);
   }
   
+  // Add mount cards
+  const mountCards: Card[] = [
+    // Light mount cards
+    {
+      id: "mount_light_charge",
+      name: "Light Charge",
+      description: "Move 2 tiles and attack. Deal 3 damage.",
+      strainCost: 1,
+      targetType: "enemy",
+      range: 1,
+      effects: [{ type: "damage", amount: 3 }, { type: "move", amount: 2 }],
+    },
+    {
+      id: "mount_light_retreat",
+      name: "Light Retreat",
+      description: "Move 2 tiles away from nearest enemy.",
+      strainCost: 1,
+      targetType: "self",
+      range: 0,
+      effects: [{ type: "move", amount: 2 }],
+    },
+    // Heavy mount cards
+    {
+      id: "mount_heavy_trample",
+      name: "Trample",
+      description: "Deal 2 damage to all adjacent enemies.",
+      strainCost: 2,
+      targetType: "enemy",
+      range: 1,
+      effects: [{ type: "damage", amount: 2 }],
+    },
+    {
+      id: "mount_heavy_charge",
+      name: "Heavy Charge",
+      description: "Move 3 tiles and attack. Deal 5 damage.",
+      strainCost: 2,
+      targetType: "enemy",
+      range: 1,
+      effects: [{ type: "damage", amount: 5 }, { type: "move", amount: 3 }],
+    },
+    // Support mount cards
+    {
+      id: "mount_support_aid",
+      name: "Support Aid",
+      description: "Heal nearby ally for 4 HP.",
+      strainCost: 1,
+      targetType: "self",
+      range: 2,
+      effects: [{ type: "heal", amount: 4 }],
+    },
+    {
+      id: "mount_support_supply",
+      name: "Supply",
+      description: "Restore 1 strain to nearby ally.",
+      strainCost: 1,
+      targetType: "self",
+      range: 2,
+      effects: [], // Strain restoration handled in card handler
+    },
+  ];
+  
+  for (const card of mountCards) {
+    cards[card.id] = card;
+  }
+  
   return cards;
 }
 
@@ -511,6 +576,14 @@ consumables: {},
     baseCampVisitIndex: 0,
     portManifest: undefined,
     portTradesRemaining: 2,
+    
+    // Mount System - Initialize empty
+    mountInventory: [],
+    mountUnlocks: {
+      stableUnlocked: false,
+      heavyUnlocked: false,
+      supportUnlocked: false,
+    },
   };
 
   // Initialize unit controllers to P1 by default

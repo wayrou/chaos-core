@@ -155,7 +155,7 @@ export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"
         </div>
       </div>
       
-      <!-- ScrollLink Console -->
+      <!-- Scroll Link Console -->
       <div class="crafting-console">
         <div class="console-header">SCROLLINK OS // CRAFTING_LOG</div>
         <div class="console-body" id="craftingLog">

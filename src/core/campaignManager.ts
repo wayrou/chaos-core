@@ -70,6 +70,10 @@ export function startOperationRun(
     nodesCleared: 1,
     runFieldModInventory: purchasedFieldMods, // Transfer purchased mods to active run
     unitHardpoints: {}, // Initialize empty hardpoints
+    // Controlled Rooms System (Headline 14e)
+    controlledRooms: {}, // Start with no controlled rooms
+    opTimeStep: 0, // Start at time step 0
+    opSeed: rngSeed, // Use same seed for deterministic controlled room attacks
   };
   
   const updated = {
@@ -102,12 +106,12 @@ export function clearNode(nodeId: string): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   if (activeRun.clearedNodeIds.includes(nodeId)) {
     return progress; // Already cleared
   }
-  
+
   const updated = {
     ...progress,
     activeRun: {
@@ -116,8 +120,15 @@ export function clearNode(nodeId: string): CampaignProgress {
       nodesCleared: activeRun.nodesCleared + 1,
     },
   };
-  
+
   saveCampaignProgress(updated);
+
+  // Advance controlled rooms time step (Headline 14e)
+  import("./controlledRoomsSystem").then(({ advanceOpTimeStep, rollControlledRoomAttack }) => {
+    advanceOpTimeStep();
+    rollControlledRoomAttack();
+  });
+
   return updated;
 }
 
@@ -210,16 +221,17 @@ export function prepareBattleForNode(nodeId: string): CampaignProgress {
   const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
   const node = currentFloorMap.nodes.find(n => n.id === nodeId);
   
-  if (!node || (node.type !== "battle" && node.type !== "boss")) {
+  if (!node || (node.type !== "battle" && node.type !== "boss" && node.type !== "elite")) {
     throw new Error(`Node ${nodeId} is not a battle node`);
   }
   
   // Generate encounter seed (deterministic per node)
   const encounterSeed = `${activeRun.rngSeed}_node_${nodeId}`;
   
-  // Generate encounter
+  // Generate encounter - boss and elite nodes use eliteBattle, regular battles use battle
+  const encounterType = (node.type === "boss" || node.type === "elite") ? "eliteBattle" : "battle";
   const encounter = generateEncounter(
-    node.type === "boss" ? "eliteBattle" : "battle",
+    encounterType,
     activeRun.floorIndex,
     activeRun.operationId,
     activeRun.difficulty,
@@ -467,10 +479,16 @@ export function advanceToNextFloor(): CampaignProgress {
       pendingBattle: undefined,
     },
   };
-  
+
   saveCampaignProgress(updated);
   console.log(`[CAMPAIGN] Advanced to floor ${nextFloorIndex + 1}`);
-  
+
+  // Advance controlled rooms time step on floor transitions (Headline 14e)
+  import("./controlledRoomsSystem").then(({ advanceOpTimeStep, rollControlledRoomAttack }) => {
+    advanceOpTimeStep();
+    rollControlledRoomAttack();
+  });
+
   return updated;
 }
 

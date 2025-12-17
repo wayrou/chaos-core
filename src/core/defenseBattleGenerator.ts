@@ -176,6 +176,8 @@ export function createDefenseBattle(
         isEnemy: false,
         pos: null,
         gearSlots: (gameState as any).gearSlots ?? {},
+        gridWidth,
+        gridHeight,
       },
       equipmentById,
       modulesById
@@ -224,6 +226,8 @@ export function createDefenseBattle(
         {
           isEnemy: true,
           pos: { x: gridWidth - 1, y: Math.min(yPos, gridHeight - 1) },
+          gridWidth,
+          gridHeight,
         },
         equipmentById,
         modulesById

@@ -2,7 +2,7 @@
 
 Set up a fresh Tauri app with your chosen frontend stack (React or Svelte + TS). Confirm hot-reload, basic routing, and a simple “Hello, Chaos Core” screen.
 
-2. Implement ScrollLink OS Boot & Shell Frame
+2. Implement Scroll Link OS Boot & Shell Frame
 
 Create the fake OS:
 

@@ -148,7 +148,7 @@ export function renderWorkshopScreen(): void {
         </div>
       </div>
       
-      <!-- ScrollLink Console -->
+      <!-- Scroll Link Console -->
       <div class="workshop-console">
         <div class="console-header">SCROLLINK OS // WORKSHOP_LOG</div>
         <div class="console-body" id="workshopLog">

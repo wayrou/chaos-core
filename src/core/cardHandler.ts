@@ -11,6 +11,7 @@ import { hasLineOfSight, getFirstCoverInLine } from "./lineOfSight";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
+import { applyMountConditionLossFromDamage, rollForcedDismount, getMountInstance, getMountDef, getMountCardPackage } from "./mountSystem";
 
 /**
  * Process playing a card on a target
@@ -378,6 +379,41 @@ export function handleCardPlay(
     // Apply damage
     const newHp = targetUnit.hp - finalDamage;
     
+    // MOUNT SYSTEM: Apply condition loss if target is mounted
+    let updatedTargetUnit = targetUnit;
+    let dismounted = false;
+    
+    if (targetUnit.isMounted && targetUnit.equippedMountId && !targetUnit.isEnemy) {
+      const mountId = targetUnit.equippedMountId;
+      const mountInstance = getMountInstance(mountId);
+      
+      if (mountInstance) {
+        // Apply condition loss from damage
+        const newCondition = applyMountConditionLossFromDamage(mountId, finalDamage);
+        
+        // Check for forced dismount
+        if (newCondition > 0 && rollForcedDismount(mountId, newCondition)) {
+          dismounted = true;
+          // Remove mount cards from deck
+          const mountDef = getMountDef(mountId);
+          if (mountDef) {
+            const cardPackage = getMountCardPackage(mountDef.cardPackageId);
+            if (cardPackage) {
+              // Remove mount cards from hand, drawPile, discardPile
+              updatedTargetUnit = {
+                ...updatedTargetUnit,
+                hand: updatedTargetUnit.hand.filter(id => !cardPackage.cardIds.includes(id)),
+                drawPile: updatedTargetUnit.drawPile.filter(id => !cardPackage.cardIds.includes(id)),
+                discardPile: updatedTargetUnit.discardPile.filter(id => !cardPackage.cardIds.includes(id)),
+                isMounted: false,
+              };
+              logMessages.push(`${targetUnit.name} forced dismount! Mount condition: ${newCondition}%`);
+            }
+          }
+        }
+      }
+    }
+    
     if (newHp <= 0) {
       // Target dies
       const newUnits = { ...b.units };
@@ -396,7 +432,7 @@ export function handleCardPlay(
         ...b,
         units: {
           ...b.units,
-          [targetUnit.id]: { ...targetUnit, hp: newHp },
+          [targetUnit.id]: { ...updatedTargetUnit, hp: newHp },
         },
       };
       

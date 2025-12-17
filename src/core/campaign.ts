@@ -26,6 +26,12 @@ export interface CampaignProgress {
   activeRun: ActiveRunState | null;
   // Field Mods System - Black Market queue
   queuedFieldModsForNextRun?: import("./fieldMods").FieldModInstance[];
+  // Mount System - Unlock flags
+  mountUnlocks?: {
+    stableUnlocked: boolean;
+    heavyUnlocked: boolean;
+    supportUnlocked: boolean;
+  };
 }
 
 export interface ActiveRunState {
@@ -65,6 +71,10 @@ export interface ActiveRunState {
     encounterSeed: string;
     encounterDefinition?: EncounterDefinition;
   };
+  // Controlled Rooms System (Headline 14e)
+  controlledRooms?: Record<string, ControlledRoomState>; // nodeId -> ControlledRoomState
+  opTimeStep?: number; // Discrete time advancement (increments on room clears + floor transitions)
+  opSeed?: string; // Seed for deterministic attack rolls (defaults to rngSeed if not set)
 }
 
 export interface NodeMap {
@@ -105,6 +115,37 @@ export interface KeyRoomState {
   isDelayed: boolean;
 }
 
+// Controlled Rooms System Types (Headline 14e)
+export type ControlledRoomType =
+  | "supply_depot"
+  | "medical_ward"
+  | "armory"
+  | "command_center"
+  | "mine"
+  | "outpost" // Generic room type
+  | "forward_stable"; // Mount system - Forward Stable
+
+export type ControlledRoomStatus = "controlled" | "fortifying" | "under_attack" | "lost";
+
+export interface ControlledRoomState {
+  nodeId: string; // Room node ID from the dungeon map
+  floorIndex: number; // Which floor this room is on
+  roomType: ControlledRoomType; // What type of facility this is
+  status: ControlledRoomStatus; // Current state
+  threatLevel: number; // 0-100, influences attack chance
+  fortificationLevel: number; // 0-3, discrete levels
+  upkeepCost: Partial<Record<ResourceType, number>>; // Per-time-step cost
+  timeControlled: number; // How many opTimeSteps this room has been held
+  lastVisited: number; // Last opTimeStep player visited (for benefits)
+  // Physical upgrades installed
+  upgrades: {
+    barricades: number; // 0-3
+    turrets: number; // 0-2
+    reinforcedWalls: boolean;
+    powerGenerator: boolean;
+  };
+}
+
 export interface OperationDefinition {
   id: OperationId;
   name: string;
@@ -124,8 +165,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_iron_gate",
     name: "IRON GATE",
     description: "Secure the Chaos Rift entrance and clear the corrupted garrison.",
-    floors: 3,
-    recommendedPower: 10,
+    floors: 30,
+    recommendedPower: 25,
     unlocksNextOperationId: "op_black_spire",
     isCustom: false,
   },
@@ -133,8 +174,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_black_spire",
     name: "BLACK SPIRE",
     description: "Capture enemy artillery positions and neutralize long-range threats.",
-    floors: 3,
-    recommendedPower: 20,
+    floors: 30,
+    recommendedPower: 35,
     unlocksNextOperationId: "op_ghost_run",
     isCustom: false,
   },
@@ -142,8 +183,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_ghost_run",
     name: "GHOST RUN",
     description: "Disrupt enemy supply lines and eliminate fast-moving skirmishers.",
-    floors: 3,
-    recommendedPower: 30,
+    floors: 30,
+    recommendedPower: 45,
     unlocksNextOperationId: "op_ember_siege",
     isCustom: false,
   },
@@ -151,8 +192,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_ember_siege",
     name: "EMBER SIEGE",
     description: "Destroy key enemy fortifications and break through defensive lines.",
-    floors: 3,
-    recommendedPower: 40,
+    floors: 30,
+    recommendedPower: 55,
     unlocksNextOperationId: "op_final_dawn",
     isCustom: false,
   },
@@ -160,15 +201,15 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_final_dawn",
     name: "FINAL DAWN",
     description: "Assault the enemy command center and end the conflict.",
-    floors: 3,
-    recommendedPower: 50,
+    floors: 30,
+    recommendedPower: 65,
     isCustom: false,
   },
   op_custom: {
     id: "op_custom",
     name: "CUSTOM OPERATION",
     description: "Create a custom operation with your own parameters.",
-    floors: 3, // Default, can be overridden
+    floors: 30, // Default, can be overridden
     isCustom: true,
   },
 };
@@ -227,6 +268,11 @@ export function createDefaultCampaignProgress(): CampaignProgress {
     completedOperations: [],
     unlockedOperations: ["op_iron_gate"], // Only first operation unlocked
     activeRun: null,
+    mountUnlocks: {
+      stableUnlocked: false,
+      heavyUnlocked: false,
+      supportUnlocked: false,
+    },
   };
 }
 

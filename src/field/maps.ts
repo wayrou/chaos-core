@@ -140,6 +140,26 @@ function createBaseCampMap(): FieldMap {
       sprite: "black_market",
       metadata: { name: "Black Market" },
     },
+    {
+      id: "comms_array_station",
+      x: 19,
+      y: 3,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "comms_array",
+      metadata: { name: "Comms Array" },
+    },
+    {
+      id: "stable_station",
+      x: 1,
+      y: 1,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "stable",
+      metadata: { name: "Stable" },
+    },
   ];
   
   // Interaction zones (match station object bounds for accessibility anywhere in the box)
@@ -252,6 +272,24 @@ function createBaseCampMap(): FieldMap {
       action: "free_zone_entry",
       label: "ENTER FREE ZONE",
       metadata: { targetMap: "free_zone_1" },
+    },
+    {
+      id: "interact_comms_array",
+      x: 19,
+      y: 3,
+      width: 2,
+      height: 2,
+      action: "comms_array",
+      label: "COMMS ARRAY",
+    },
+    {
+      id: "interact_stable",
+      x: 1,
+      y: 1,
+      width: 2,
+      height: 2,
+      action: "stable",
+      label: "STABLE",
     },
   ];
   
@@ -497,18 +535,41 @@ function createQuartersMap(): FieldMap {
 // MAP REGISTRY
 // ============================================================================
 
+import { createControlledRoomMap } from "./controlledRoomMaps";
+import { ControlledRoomType } from "../core/campaign";
+
 const maps = new Map<FieldMap["id"], FieldMap>([
   ["base_camp", createBaseCampMap()],
   ["free_zone_1", createFreeZoneMap()],
   ["quarters", createQuartersMap()],
 ]);
 
+// Controlled room maps cache (generated on demand)
+const controlledRoomMapsCache = new Map<FieldMap["id"], FieldMap>();
+
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
-  const map = maps.get(mapId);
-  if (!map) {
-    throw new Error(`Field map not found: ${mapId}`);
+  // Check static maps first
+  const staticMap = maps.get(mapId);
+  if (staticMap) {
+    return staticMap;
   }
-  return map;
+
+  // Check if it's a controlled room map
+  if (mapId.startsWith("controlled_")) {
+    const cached = controlledRoomMapsCache.get(mapId);
+    if (cached) {
+      return cached;
+    }
+
+    // Generate controlled room map
+    const roomType = mapId.replace("controlled_", "") as ControlledRoomType;
+    const nodeId = ""; // Will be set when entering field mode
+    const generatedMap = createControlledRoomMap(roomType, nodeId);
+    controlledRoomMapsCache.set(mapId, generatedMap);
+    return generatedMap;
+  }
+
+  throw new Error(`Field map not found: ${mapId}`);
 }
 
 export function getAllMapIds(): FieldMap["id"][] {

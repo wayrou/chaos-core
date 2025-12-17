@@ -26,7 +26,7 @@ const SAMPLE_MAIL: Omit<MailItem, "receivedAt" | "read">[] = [
   {
     id: "mail_welcome",
     category: "system",
-    from: "ScrollLink OS",
+    from: "Scroll Link OS",
     subject: "Welcome to Quarters",
     bodyPages: [
       "Welcome to your personal quarters, Commander.",
@@ -77,7 +77,7 @@ const SAMPLE_MAIL: Omit<MailItem, "receivedAt" | "read">[] = [
   {
     id: "mail_system_tutorial",
     category: "system",
-    from: "ScrollLink OS",
+    from: "Scroll Link OS",
     subject: "Quarters Features",
     bodyPages: [
       "QUARTERS GUIDE:",

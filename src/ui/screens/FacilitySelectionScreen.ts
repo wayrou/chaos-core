@@ -81,15 +81,27 @@ export function renderFacilitySelectionScreen(nodeId: string): void {
  * Select a facility for the Key Room
  */
 function selectFacility(nodeId: string, facility: FacilityType): void {
-  // Capture the key room
+  // Capture the key room (floor-scoped)
   captureKeyRoom(nodeId, facility);
-  
+
+  // ALSO capture as Controlled Room (operation-scoped, Headline 14e)
+  import("../../core/controlledRoomsSystem").then(({ captureRoom }) => {
+    import("../../core/campaignManager").then(({ getActiveRun }) => {
+      const activeRun = getActiveRun();
+      if (activeRun) {
+        // Convert FacilityType to ControlledRoomType (same types)
+        captureRoom(nodeId, activeRun.floorIndex, facility as any);
+        console.log(`[FACILITY] Captured as Controlled Room: ${nodeId} on floor ${activeRun.floorIndex}`);
+      }
+    });
+  });
+
   // Mark the room as visited/cleared
   markRoomVisited(nodeId);
-  
+
   // Sync campaign state
   syncCampaignToGameState();
-  
+
   // Return to operation map
   renderOperationMapScreen();
 }

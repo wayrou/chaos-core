@@ -1,9 +1,9 @@
 // ============================================================================
 // SPLASH SCREEN - Mr. Planet Software Planning
-// Appears before ScrollLink boot screen
+// Appears before Scroll Link boot screen
 // ============================================================================
 
-import { renderScrollLinkBoot } from "./ScrollLinkBoot";
+import { renderScrollLinkBoot } from "./ScrollLinkBoot"; // Note: File name kept as ScrollLinkBoot for code compatibility
 
 export function renderSplashScreen(): void {
   const root = document.getElementById("app");
@@ -22,7 +22,7 @@ export function renderSplashScreen(): void {
     </div>
   `;
 
-  // Auto-advance to ScrollLink boot after 2 seconds
+  // Auto-advance to Scroll Link boot after 2 seconds
   setTimeout(() => {
     renderScrollLinkBoot();
   }, 2000);

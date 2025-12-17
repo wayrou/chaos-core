@@ -1,4 +1,4 @@
-// src/ui/screens/ScrollLinkShell.ts
+// src/ui/screens/ScrollLinkShell.ts (Note: File name kept as ScrollLinkShell for code compatibility)
 
 import { getGameState } from "../../state/gameStore";
 import { getCurrentOperation } from "../../core/ops";

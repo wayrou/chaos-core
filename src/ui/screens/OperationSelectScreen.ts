@@ -22,7 +22,7 @@ import { activeRunToOperationRun } from "../../core/campaignManager";
 // ----------------------------------------------------------------------------
 
 let customOperationConfig = {
-  floors: 3,
+  floors: 30,
   difficulty: "normal" as "easy" | "normal" | "hard",
   enemyDensity: "normal" as "low" | "normal" | "high",
 };
@@ -137,7 +137,7 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
                   <input type="number" 
                          id="customFloors" 
                          min="1" 
-                         max="10" 
+                         max="100" 
                          value="${customOperationConfig.floors}"
                          class="opselect-custom-input">
                 </div>
@@ -202,11 +202,11 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
       const difficultySelect = document.getElementById("customDifficulty") as HTMLSelectElement;
       const densitySelect = document.getElementById("customDensity") as HTMLSelectElement;
       
-      const floors = parseInt(floorsInput.value) || 3;
+      const floors = parseInt(floorsInput.value) || 30;
       const difficulty = difficultySelect.value as "easy" | "normal" | "hard";
       
       customOperationConfig = {
-        floors: Math.max(1, Math.min(10, floors)),
+        floors: Math.max(1, Math.min(100, floors)),
         difficulty,
         enemyDensity: densitySelect.value as "low" | "normal" | "high",
       };

@@ -76,6 +76,8 @@ loadout?: {
   // Local Co-op: Which player controls this unit
   controller?: "P1" | "P2";
   // Field Mods System - Hardpoints (run-scoped, stored in ActiveRunState)
+  // Mount System
+  equippedMountId?: string; // Mount ID assigned to this unit (null = no mount)
 }
 
 export interface BattleTile {
@@ -317,6 +319,14 @@ equipmentPool?: string[];
   };
   // Field Mods System - Run inventory (synced from ActiveRunState)
   runFieldModInventory?: import("./fieldMods").FieldModInstance[];
+  
+  // Mount System
+  mountInventory?: import("../data/mounts").MountInstance[]; // Owned mounts
+  mountUnlocks?: {
+    stableUnlocked: boolean;
+    heavyUnlocked: boolean;
+    supportUnlocked: boolean;
+  };
 }
 
 interface GearSlotData {

@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderScrollLinkOperationLoad } from "./ScrollLinkOperationLoad";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
@@ -404,7 +404,8 @@ function attachLoadoutListeners(): void {
       } as any,
     }));
 
-    renderOperationMapScreen();
+    // Show Scroll Link OS loading screen before operation map
+    renderScrollLinkOperationLoad();
   });
 
   // ------------------------------

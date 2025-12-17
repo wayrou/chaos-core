@@ -118,6 +118,10 @@ function generateSplitRejoinMap(
         position: { x: layer + 1, y: i - Math.floor(nodesInLayer / 2) },
         visited: false,
       };
+      // Generate seed for field_node rooms (Headline 14d)
+      if (nodeType === "field_node") {
+        node.fieldNodeSeed = rng.nextInt(0, 999999);
+      }
       nodes.push(node);
     }
     
@@ -131,15 +135,15 @@ function generateSplitRejoinMap(
   for (let layer = 0; layer < layers - 1; layer++) {
     const currentLayer = layerNodes[layer];
     const nextLayer = layerNodes[layer + 1];
-    
+
     // Each node in current layer connects to 1-2 nodes in next layer
     for (const currentNodeId of currentLayer) {
       const nextConnections: string[] = [];
-      
+
       // Connect to at least one node in next layer
       const nextIndex = rng.nextInt(0, nextLayer.length - 1);
       nextConnections.push(nextLayer[nextIndex]);
-      
+
       // 50% chance to connect to second node (if available)
       if (nextLayer.length > 1 && rng.nextFloat() < 0.5) {
         const secondIndex = rng.nextInt(0, nextLayer.length - 1);
@@ -147,10 +151,13 @@ function generateSplitRejoinMap(
           nextConnections.push(nextLayer[secondIndex]);
         }
       }
-      
+
       connections[currentNodeId] = nextConnections;
     }
   }
+
+  // Enforce unique types for branching choices (sibling nodes)
+  enforceUniqueBranchingTypes(nodes, connections, rng);
   
   // Exit node
   const exitNode: RoomNode = {
@@ -211,6 +218,10 @@ function generateRiskDetourMap(
       position: { x: i + 1, y: 0 },
       visited: false,
     };
+    // Generate seed for field_node rooms (Headline 14d)
+    if (nodeType === "field_node") {
+      node.fieldNodeSeed = rng.nextInt(0, 999999);
+    }
     nodes.push(node);
   }
   
@@ -255,7 +266,10 @@ function generateRiskDetourMap(
   };
   nodes.push(exitNode);
   connections[mainPath[mainPath.length - 1]] = [exitNode.id];
-  
+
+  // Enforce unique types for branching choices
+  enforceUniqueBranchingTypes(nodes, connections, rng);
+
   return { nodes, connections };
 }
 
@@ -289,25 +303,35 @@ function generateForkedCorridorMap(
     // Left path
     const leftNodeId = `floor_${floorIndex}_left_${i}`;
     leftPath.push(leftNodeId);
+    const leftNodeType = rollNodeType(rng, i, pathLength);
     const leftNode: RoomNode = {
       id: leftNodeId,
-      label: getNodeLabel(rollNodeType(rng, i, pathLength), i),
-      type: rollNodeType(rng, i, pathLength),
+      label: getNodeLabel(leftNodeType, i),
+      type: leftNodeType,
       position: { x: i + 1, y: -1 },
       visited: false,
     };
+    // Generate seed for field_node rooms (Headline 14d)
+    if (leftNodeType === "field_node") {
+      leftNode.fieldNodeSeed = rng.nextInt(0, 999999);
+    }
     nodes.push(leftNode);
     
     // Right path
     const rightNodeId = `floor_${floorIndex}_right_${i}`;
     rightPath.push(rightNodeId);
+    const rightNodeType = rollNodeType(rng, i, pathLength);
     const rightNode: RoomNode = {
       id: rightNodeId,
-      label: getNodeLabel(rollNodeType(rng, i, pathLength), i),
-      type: rollNodeType(rng, i, pathLength),
+      label: getNodeLabel(rightNodeType, i),
+      type: rightNodeType,
       position: { x: i + 1, y: 1 },
       visited: false,
     };
+    // Generate seed for field_node rooms (Headline 14d)
+    if (rightNodeType === "field_node") {
+      rightNode.fieldNodeSeed = rng.nextInt(0, 999999);
+    }
     nodes.push(rightNode);
   }
   
@@ -331,8 +355,85 @@ function generateForkedCorridorMap(
   
   connections[leftPath[pathLength - 1]] = [exitNode.id];
   connections[rightPath[pathLength - 1]] = [exitNode.id];
-  
+
+  // Enforce unique types for branching choices
+  enforceUniqueBranchingTypes(nodes, connections, rng);
+
   return { nodes, connections };
+}
+
+/**
+ * Enforce unique node types at branch points
+ * When a node has multiple outgoing connections (branches), ensure all target nodes have different types
+ */
+function enforceUniqueBranchingTypes(
+  nodes: RoomNode[],
+  connections: Record<string, string[]>,
+  rng: SeededRNG
+): void {
+  // Pool of fallback types if we run out of unique types
+  const fallbackTypes: RoomType[] = ["battle", "field_node", "shop", "rest", "event", "elite", "treasure"];
+
+  for (const fromNodeId in connections) {
+    const targetNodeIds = connections[fromNodeId];
+
+    // Only enforce for branches (2+ outgoing connections)
+    if (targetNodeIds.length < 2) continue;
+
+    const targetNodes = targetNodeIds.map(id => nodes.find(n => n.id === id)).filter(n => n != null) as RoomNode[];
+
+    // Check for duplicate types
+    const typeCounts = new Map<RoomType, number>();
+    for (const node of targetNodes) {
+      const count = typeCounts.get(node.type) || 0;
+      typeCounts.set(node.type, count + 1);
+    }
+
+    // Find duplicates
+    const duplicateTypes = Array.from(typeCounts.entries())
+      .filter(([_, count]) => count > 1)
+      .map(([type]) => type);
+
+    if (duplicateTypes.length === 0) continue;
+
+    // Fix duplicates
+    for (const dupType of duplicateTypes) {
+      const nodesWithDupType = targetNodes.filter(n => n.type === dupType);
+
+      // Keep the first, change the rest
+      for (let i = 1; i < nodesWithDupType.length; i++) {
+        const nodeToChange = nodesWithDupType[i];
+
+        // Find a type not already used by siblings
+        const usedTypes = new Set(targetNodes.map(n => n.type));
+        let newType: RoomType | null = null;
+
+        for (const candidateType of fallbackTypes) {
+          if (!usedTypes.has(candidateType)) {
+            newType = candidateType;
+            break;
+          }
+        }
+
+        // If we can't find a unique type (extremely rare), just use battle as fallback
+        if (!newType) {
+          console.warn(`[NODEMAP] Could not find unique type for branch at ${fromNodeId}, using battle`);
+          newType = "battle";
+        }
+
+        // Update the node type
+        nodeToChange.type = newType;
+        nodeToChange.label = getNodeLabel(newType, 0);
+        
+        // Generate seed for field_node rooms if changed to field_node (Headline 14d)
+        if (newType === "field_node" && !nodeToChange.fieldNodeSeed) {
+          nodeToChange.fieldNodeSeed = rng.nextInt(0, 999999);
+        }
+
+        console.log(`[NODEMAP] Changed duplicate branch type from ${dupType} to ${newType} at ${fromNodeId} -> ${nodeToChange.id}`);
+      }
+    }
+  }
 }
 
 /**
@@ -423,15 +524,17 @@ function rollNodeType(rng: SeededRNG, position: number, total: number): RoomType
   
   // Early nodes: more battles, fewer elites
   // Late nodes: more elites, fewer battles
-  if (roll < 0.5) {
+  if (roll < 0.4) {
     return "battle";
-  } else if (roll < 0.65) {
+  } else if (roll < 0.55) {
+    return "field_node"; // 15% - Field exploration nodes (Headline 14d)
+  } else if (roll < 0.7) {
     return "shop";
-  } else if (roll < 0.8) {
+  } else if (roll < 0.85) {
     return "rest";
-  } else if (roll < 0.9) {
+  } else if (roll < 0.95) {
     return "event";
-  } else if (progress > 0.7 && roll < 0.95) {
+  } else if (progress > 0.7 && roll < 0.98) {
     return "elite"; // Elite battles more likely later
   } else {
     return "treasure";

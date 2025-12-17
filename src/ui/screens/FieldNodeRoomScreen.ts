@@ -415,10 +415,50 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
     tiles[exitY][exitX].walkable = true;
   }
   
-  // Player starts in first room (left side)
+  // Player starts in first room (left side) - MUST be on walkable terrain
   const startRoom = rooms[0];
-  const playerX = (startRoom.x + 2) * TILE_SIZE + TILE_SIZE / 2;
-  const playerY = (startRoom.y + Math.floor(startRoom.height / 2)) * TILE_SIZE + TILE_SIZE / 2;
+  let playerTileX = startRoom.x + 2;
+  let playerTileY = startRoom.y + Math.floor(startRoom.height / 2);
+  
+  // Validate spawn position is walkable, if not find nearest walkable tile in start room
+  if (playerTileX < 0 || playerTileX >= totalWidth || 
+      playerTileY < 0 || playerTileY >= totalHeight ||
+      !tiles[playerTileY] || !tiles[playerTileY][playerTileX] || 
+      !tiles[playerTileY][playerTileX].walkable) {
+    // Try to find a walkable position in the start room
+    let foundWalkable = false;
+    for (let ry = 1; ry < startRoom.height - 1; ry++) {
+      for (let rx = 1; rx < startRoom.width - 1; rx++) {
+        const tx = startRoom.x + rx + 1; // +1 for outer wall
+        const ty = startRoom.y + ry + 1;
+        if (tx >= 0 && tx < totalWidth && ty >= 0 && ty < totalHeight &&
+            tiles[ty] && tiles[ty][tx] && tiles[ty][tx].walkable) {
+          playerTileX = tx;
+          playerTileY = ty;
+          foundWalkable = true;
+          break;
+        }
+      }
+      if (foundWalkable) break;
+    }
+    
+    // If still no walkable tile found (shouldn't happen, but safety fallback)
+    if (!foundWalkable) {
+      console.warn("[FIELDNODE] No walkable tile found in start room, using room center");
+      playerTileX = startRoom.x + Math.floor(startRoom.width / 2) + 1;
+      playerTileY = startRoom.y + Math.floor(startRoom.height / 2) + 1;
+      // Force the tile to be walkable as last resort
+      if (playerTileX >= 0 && playerTileX < totalWidth && 
+          playerTileY >= 0 && playerTileY < totalHeight &&
+          tiles[playerTileY] && tiles[playerTileY][playerTileX]) {
+        tiles[playerTileY][playerTileX].walkable = true;
+        tiles[playerTileY][playerTileX].type = "floor";
+      }
+    }
+  }
+  
+  const playerX = playerTileX * TILE_SIZE + TILE_SIZE / 2;
+  const playerY = playerTileY * TILE_SIZE + TILE_SIZE / 2;
   
   // Generate enemies distributed across all rooms (2-3 per room)
   const enemies: FieldNodeEnemy[] = [];

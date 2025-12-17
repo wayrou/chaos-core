@@ -37,7 +37,7 @@ Light Militarypunk
 Retrofuture Noir
 
 
-ScrollLink OS (Retro-Terminal Tech)
+Scroll Link OS (Retro-Terminal Tech)
 
 
 Each is broken down below with DO/DON’T rules.
@@ -295,7 +295,7 @@ Autumn oranges, muted reds
 Mist whites, charcoal blacks
 
 
-Tech palette (ScrollLink OS / old world remnants):
+Tech palette (Scroll Link OS / old world remnants):
 CRT green (#35ff95)
 
 
