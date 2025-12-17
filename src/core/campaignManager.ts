@@ -270,19 +270,146 @@ export function recordBattleDefeat(): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
-  
+
   const updated = {
     ...progress,
     activeRun: {
       ...activeRun,
       battlesLost: activeRun.battlesLost + 1,
       retries: activeRun.retries + 1,
-      // Keep pendingBattle so retry uses same encounter
+      // Keep pendingBattle and pendingDefenseBattle so retry uses same encounter
     },
   };
-  
+
+  saveCampaignProgress(updated);
+  return updated;
+}
+
+/**
+ * Prepare a defense battle for a key room under attack
+ */
+export function prepareDefenseBattle(keyRoomId: string): CampaignProgress {
+  const progress = loadCampaignProgress();
+  if (!progress.activeRun) {
+    throw new Error("No active run");
+  }
+
+  const activeRun = progress.activeRun;
+  const floorIndex = activeRun.floorIndex;
+
+  // Find the key room
+  const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
+  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
+  const keyRoom = floorKeyRooms.find(kr => kr.roomNodeId === keyRoomId);
+
+  if (!keyRoom) {
+    throw new Error(`Key room ${keyRoomId} not found`);
+  }
+
+  // Generate encounter seed for determinism
+  const encounterSeed = `${activeRun.rngSeed}_defense_${keyRoomId}_${activeRun.nodesCleared}`;
+
+  // Get turns to survive from key room system config
+  const turnsToSurvive = 6; // Default, will be imported from keyRoomSystem
+
+  // Import dynamically to avoid circular dependency
+  import("./keyRoomSystem").then(({ getDefenseBattleTurns }) => {
+    // This runs async but the value is already set above
+  });
+
+  // Generate defense encounter
+  import("./defenseBattleGenerator").then(({ generateDefenseEncounter }) => {
+    const encounter = generateDefenseEncounter(floorIndex, encounterSeed);
+
+    // Update with encounter definition
+    const updatedProgress = loadCampaignProgress();
+    if (updatedProgress.activeRun?.pendingDefenseBattle) {
+      updatedProgress.activeRun.pendingDefenseBattle.encounterDefinition = encounter;
+      saveCampaignProgress(updatedProgress);
+    }
+  });
+
+  const updated = {
+    ...progress,
+    activeRun: {
+      ...activeRun,
+      pendingDefenseBattle: {
+        keyRoomId,
+        nodeId: keyRoomId,
+        turnsToSurvive,
+        encounterSeed,
+      },
+      pendingDefenseDecision: undefined, // Clear the decision prompt
+    },
+  };
+
+  saveCampaignProgress(updated);
+  console.log(`[CAMPAIGN] Prepared defense battle for key room: ${keyRoomId}`);
+  return updated;
+}
+
+/**
+ * Record defense battle victory
+ */
+export function recordDefenseVictory(keyRoomId: string): CampaignProgress {
+  const progress = loadCampaignProgress();
+  if (!progress.activeRun) {
+    throw new Error("No active run");
+  }
+
+  const activeRun = progress.activeRun;
+  const floorIndex = activeRun.floorIndex;
+  const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
+  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
+
+  // Update the key room to clear attack and delay flags
+  const updatedKeyRooms = floorKeyRooms.map(kr =>
+    kr.roomNodeId === keyRoomId
+      ? { ...kr, isUnderAttack: false, isDelayed: false }
+      : kr
+  );
+
+  const updated = {
+    ...progress,
+    activeRun: {
+      ...activeRun,
+      keyRoomsByFloor: {
+        ...keyRoomsByFloor,
+        [floorIndex]: updatedKeyRooms,
+      },
+      pendingDefenseBattle: undefined, // Clear pending defense
+      battlesWon: activeRun.battlesWon + 1,
+    },
+  };
+
+  saveCampaignProgress(updated);
+  console.log(`[CAMPAIGN] Defense victory for key room: ${keyRoomId}`);
+  return updated;
+}
+
+/**
+ * Record defense battle defeat (allows retry)
+ */
+export function recordDefenseDefeat(): CampaignProgress {
+  const progress = loadCampaignProgress();
+  if (!progress.activeRun) {
+    throw new Error("No active run");
+  }
+
+  const activeRun = progress.activeRun;
+
+  const updated = {
+    ...progress,
+    activeRun: {
+      ...activeRun,
+      battlesLost: activeRun.battlesLost + 1,
+      retries: activeRun.retries + 1,
+      // Keep pendingDefenseBattle so retry uses same encounter
+    },
+  };
+
   saveCampaignProgress(updated);
   return updated;
 }

@@ -9,7 +9,8 @@ import {
   FieldModInstance,
   FieldModEffect,
 } from "./fieldMods";
-import { BattleState, BattleUnitState, UnitId } from "./types";
+import { BattleState } from "./battle";
+import { UnitId } from "./types";
 
 // Context passed to proc engine
 export interface ProcContext {
@@ -63,7 +64,7 @@ function gatherApplicableMods(
   ctx: ProcContext,
   allMods: FieldModDef[],
   unitHardpoints: Record<UnitId, (FieldModInstance | null)[]>,
-  runInventory: FieldModInstance[]
+  _runInventory: FieldModInstance[] // Reserved for future run-inventory based procs
 ): Array<{ def: FieldModDef; instance: FieldModInstance; unitId: UnitId | null }> {
   const applicable: Array<{ def: FieldModDef; instance: FieldModInstance; unitId: UnitId | null }> = [];
 
@@ -136,6 +137,24 @@ function scaleEffectByStacks(
   }
 }
 
+// Dev-only debug logging for Field Mods procs
+const DEBUG_FIELD_MODS = true;
+
+// Trigger label mapping for debug output
+const TRIGGER_DEBUG_LABELS: Record<FieldModTrigger, string> = {
+  battle_start: "On Engagement",
+  turn_start: "On Initiative",
+  card_played: "On Command Issued",
+  draw: "On Resupply",
+  move: "On Maneuver",
+  hit: "On Contact",
+  crit: "On Precision Hit",
+  kill: "On Confirmed Kill",
+  shield_gained: "On Barrier Raised",
+  damage_taken: "On Taking Fire",
+  room_cleared: "On Area Secured",
+};
+
 /**
  * Main proc engine entry point
  */
@@ -164,16 +183,33 @@ export function emit(
   for (const { def, instance, unitId } of applicable) {
     // Check proc chance
     const procChance = def.chance ?? 1.0;
-    if (rng() >= procChance) {
+    const roll = rng();
+    const procPassed = roll < procChance;
+
+    // DEV LOGGING: Log proc attempt
+    if (DEBUG_FIELD_MODS) {
+      const triggerLabel = TRIGGER_DEBUG_LABELS[trigger] || trigger;
+      console.log(
+        `[FieldMod] ${triggerLabel} triggered: ${def.name} ` +
+        `stacks=${instance.stacks} chance=${(procChance * 100).toFixed(0)}% ` +
+        `roll=${(roll * 100).toFixed(1)}% -> ${procPassed ? "PROC!" : "miss"}`
+      );
+    }
+
+    if (!procPassed) {
       continue; // Failed proc roll
     }
 
     // Scale effect by stacks
     const scaledEffect = scaleEffectByStacks(def.effect, instance.stacks, def.stackMode);
 
-    // Determine target units
+    // Determine target units based on effect type
     let targetUnitIds: UnitId[] = [];
-    switch (scaledEffect.target) {
+
+    // Extract target from effect (not all effects have targets)
+    const effectTarget = "target" in scaledEffect ? (scaledEffect as any).target : null;
+
+    switch (effectTarget) {
       case "self":
         if (unitId) targetUnitIds = [unitId];
         break;
@@ -207,6 +243,10 @@ export function emit(
         break;
       case "hit_target":
         if (ctx.targetUnitId) targetUnitIds = [ctx.targetUnitId];
+        break;
+      default:
+        // Effects without targets (e.g., gain_resource, summon_drone) apply globally
+        if (unitId) targetUnitIds = [unitId];
         break;
     }
 

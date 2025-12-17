@@ -6,7 +6,9 @@
       "Bash(npm install:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(./node_modules/.bin/tsc:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

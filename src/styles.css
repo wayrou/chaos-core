@@ -23751,3 +23751,196 @@ html, body {
   border-left: 3px solid var(--ard-brown-mid);
   border-radius: var(--radius-sm);
 }
+
+
+/* ============================================================================
+   KEY ROOM STATUS DISPLAY (Operation Map)
+   ============================================================================ */
+
+.opmap-keyroom-status {
+  padding: 12px 20px;
+  background: rgba(30, 40, 70, 0.4);
+  border-bottom: 1px solid rgba(140, 160, 255, 0.1);
+}
+
+.opmap-keyroom-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.opmap-keyroom-icon {
+  font-size: 18px;
+}
+
+.opmap-keyroom-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(200, 180, 255, 0.9);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.opmap-keyroom-alert {
+  font-size: 10px;
+  color: #ff6b6b;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  background: rgba(255, 80, 80, 0.2);
+  border-radius: 4px;
+  animation: pulseAlert 1.5s infinite;
+}
+
+@keyframes pulseAlert {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.opmap-keyroom-delayed {
+  font-size: 10px;
+  color: #ffbb66;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  background: rgba(255, 180, 80, 0.2);
+  border-radius: 4px;
+}
+
+.opmap-keyroom-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.opmap-keyroom-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(50, 70, 110, 0.5);
+  border: 1px solid rgba(100, 140, 200, 0.4);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.opmap-keyroom-item--attack {
+  background: rgba(100, 40, 40, 0.6);
+  border-color: rgba(255, 100, 100, 0.5);
+}
+
+.opmap-keyroom-item--delayed {
+  background: rgba(100, 80, 40, 0.5);
+  border-color: rgba(255, 180, 100, 0.4);
+  opacity: 0.8;
+}
+
+.opmap-keyroom-facility {
+  color: rgba(200, 220, 255, 0.9);
+  font-weight: 600;
+}
+
+.opmap-keyroom-status-icon {
+  font-size: 12px;
+}
+
+.opmap-keyroom-resources {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.opmap-keyroom-resources-label {
+  color: rgba(180, 180, 200, 0.7);
+  font-weight: 600;
+}
+
+.opmap-resource-item {
+  color: rgba(220, 220, 240, 0.9);
+  padding: 2px 6px;
+  background: rgba(60, 80, 120, 0.4);
+  border-radius: 4px;
+}
+
+.opmap-resource-empty {
+  color: rgba(150, 150, 170, 0.6);
+  font-style: italic;
+}
+
+/* ============================================================================
+   DEFENSE BATTLE OBJECTIVE (Battle Screen)
+   ============================================================================ */
+
+.battle-defense-objective {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(40, 70, 120, 0.8), rgba(30, 50, 90, 0.9));
+  border: 2px solid rgba(100, 160, 255, 0.6);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(60, 100, 180, 0.3);
+}
+
+.battle-defense-objective--urgent {
+  background: linear-gradient(135deg, rgba(120, 50, 50, 0.8), rgba(100, 30, 30, 0.9));
+  border-color: rgba(255, 100, 100, 0.7);
+  box-shadow: 0 4px 16px rgba(255, 80, 80, 0.3);
+  animation: urgentPulse 1s infinite;
+}
+
+@keyframes urgentPulse {
+  0%, 100% { 
+    box-shadow: 0 4px 16px rgba(255, 80, 80, 0.3);
+  }
+  50% { 
+    box-shadow: 0 4px 24px rgba(255, 80, 80, 0.5);
+  }
+}
+
+.defense-objective-icon {
+  font-size: 28px;
+}
+
+.defense-objective-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.defense-objective-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(180, 200, 255, 0.8);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.defense-objective-turns {
+  font-size: 18px;
+  font-weight: 700;
+  color: #88ddff;
+  text-shadow: 0 0 10px rgba(100, 200, 255, 0.5);
+}
+
+.battle-defense-objective--urgent .defense-objective-turns {
+  color: #ff8866;
+  text-shadow: 0 0 10px rgba(255, 120, 80, 0.5);
+}
+
+/* Defense battle victory text */
+.battle-defense-success {
+  font-size: 14px;
+  color: #88ff99;
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 8px 16px;
+  background: rgba(40, 100, 60, 0.3);
+  border-radius: 6px;
+}
+

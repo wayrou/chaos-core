@@ -3,14 +3,17 @@
 // Shown when a Key Room is under attack
 // ============================================================================
 
-import { 
-  defendKeyRoom, 
-  delayKeyRoomDefense, 
+import {
+  delayKeyRoomDefense,
   abandonKeyRoom,
   getDefenseBattleTurns,
 } from "../../core/keyRoomSystem";
 import { renderOperationMapScreen } from "./OperationMapScreen";
-import { getActiveRun } from "../../core/campaignManager";
+import { getActiveRun, prepareDefenseBattle } from "../../core/campaignManager";
+import { createDefenseBattle } from "../../core/defenseBattleGenerator";
+import { syncCampaignToGameState } from "../../core/campaignSync";
+import { getGameState, updateGameState } from "../../state/gameStore";
+import { renderBattleScreen } from "./BattleScreen";
 
 /**
  * Render defense decision screen
@@ -138,29 +141,78 @@ export function renderDefenseDecisionScreen(keyRoomId: string, nodeId: string): 
 function handleDefenseDecision(keyRoomId: string, action: string): void {
   switch (action) {
     case "defend":
-      // Start defense battle
-      defendKeyRoom(keyRoomId);
-      // Defense battle will be prepared separately
-      // For now, just return to map (defense battle preparation will be handled elsewhere)
-      renderOperationMapScreen();
-      // TODO: Trigger defense battle preparation
+      startDefenseBattle(keyRoomId);
       break;
-      
+
     case "delay":
       delayKeyRoomDefense(keyRoomId);
       renderOperationMapScreen();
       break;
-      
+
     case "abandon":
       if (confirm("Are you sure you want to abandon this facility? You will lose the facility and all stored resources.")) {
         abandonKeyRoom(keyRoomId);
         renderOperationMapScreen();
       }
       break;
-      
+
     default:
       console.warn("[DEFENSE] Unknown action:", action);
       renderOperationMapScreen();
+  }
+}
+
+/**
+ * Start a defense battle for a key room
+ */
+function startDefenseBattle(keyRoomId: string): void {
+  try {
+    // Prepare the defense battle in campaign state
+    prepareDefenseBattle(keyRoomId);
+    syncCampaignToGameState();
+
+    // Get the pending defense battle info
+    const activeRun = getActiveRun();
+    if (!activeRun?.pendingDefenseBattle) {
+      console.error("[DEFENSE] Failed to prepare defense battle");
+      renderOperationMapScreen();
+      return;
+    }
+
+    const { turnsToSurvive, encounterSeed } = activeRun.pendingDefenseBattle;
+
+    // Create the defense battle
+    const gameState = getGameState();
+    const battle = createDefenseBattle(
+      gameState,
+      keyRoomId,
+      turnsToSurvive,
+      encounterSeed
+    );
+
+    if (!battle) {
+      console.error("[DEFENSE] Failed to create defense battle");
+      renderOperationMapScreen();
+      return;
+    }
+
+    // Set flags for battle screen
+    (window as any).__isDefenseBattle = true;
+    (window as any).__defenseKeyRoomId = keyRoomId;
+    (window as any).__isCampaignRun = true;
+
+    // Store battle in state
+    updateGameState(prev => ({
+      ...prev,
+      currentBattle: { ...battle, turnIndex: 0 } as any,
+      phase: "battle",
+    }));
+
+    // Render battle screen
+    renderBattleScreen();
+  } catch (error) {
+    console.error("[DEFENSE] Error starting defense battle:", error);
+    renderOperationMapScreen();
   }
 }
 

@@ -57,6 +57,14 @@ export interface ActiveRunState {
     floorIndex: number;
     nodeId: string;
   };
+  // Defense Battle System
+  pendingDefenseBattle?: {
+    keyRoomId: string;
+    nodeId: string;
+    turnsToSurvive: number;
+    encounterSeed: string;
+    encounterDefinition?: EncounterDefinition;
+  };
 }
 
 export interface NodeMap {

@@ -4,8 +4,9 @@
 
 import { emit, ProcContext, ProcResult } from "./fieldModProcEngine";
 import { FieldModTrigger, FieldModInstance, HardpointState } from "./fieldMods";
-import { FieldModDef, getAllFieldModDefs } from "./fieldModDefinitions";
-import { BattleState, BattleUnitState, UnitId } from "./types";
+import { getAllFieldModDefs } from "./fieldModDefinitions";
+import { BattleState } from "./battle";
+import { UnitId } from "./types";
 import { getActiveRun } from "./campaignManager";
 import { getGameState } from "../state/gameStore";
 
@@ -27,7 +28,7 @@ function getFieldModState(): {
 function applyProcResults(
   battle: BattleState,
   results: ProcResult[],
-  eventSequence: number
+  _eventSequence: number // Reserved for future deterministic event handling
 ): BattleState {
   let next = battle;
   const allMods = getAllFieldModDefs();

@@ -95,6 +95,9 @@ function createSeededRNG(seed: string): SeededRNG {
 // COVER GENERATION
 // ----------------------------------------------------------------------------
 
+// Dev-only debug logging for cover generation
+const DEBUG_COVER = true;
+
 /**
  * Generate cover for a battle grid deterministically
  */
@@ -106,7 +109,7 @@ export function generateCover(
   reservedCells: Vec2[] = []
 ): Tile[] {
   const rng = createSeededRNG(`${battleSeed}_cover`);
-  
+
   // Select cover profile
   const profileRoll = rng.nextFloat();
   let selectedProfile: CoverProfile = "none";
@@ -118,8 +121,19 @@ export function generateCover(
       break;
     }
   }
-  
+
+  // DEV LOGGING: Log cover profile selection
+  if (DEBUG_COVER) {
+    console.log(
+      `[Cover] seed=${battleSeed.substring(0, 20)}..., ` +
+      `grid=${gridWidth}x${gridHeight}, profile=${selectedProfile} (roll=${(profileRoll * 100).toFixed(1)}%)`
+    );
+  }
+
   if (selectedProfile === "none") {
+    if (DEBUG_COVER) {
+      console.log(`[Cover] No cover generated for this battle`);
+    }
     return tiles; // No cover
   }
   
@@ -198,7 +212,16 @@ export function generateCover(
       };
     }
   }
-  
+
+  // DEV LOGGING: Final cover count
+  if (DEBUG_COVER) {
+    const finalLightCount = updatedTiles.filter(t => t.terrain === "light_cover").length;
+    const finalHeavyCount = updatedTiles.filter(t => t.terrain === "heavy_cover").length;
+    console.log(
+      `[Cover] Generated: ${finalLightCount} light cover, ${finalHeavyCount} heavy cover`
+    );
+  }
+
   return updatedTiles;
 }
 

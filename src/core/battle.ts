@@ -37,6 +37,7 @@ import {
 // Import affinity tracking
 import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
+import { getCoverDamageReduction } from "./coverGenerator";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -128,6 +129,13 @@ export interface BattleState {
     placedUnitIds: UnitId[]; // Array instead of Set for serialization
     selectedUnitId: UnitId | null;
     maxUnitsPerSide: number;
+  };
+  // Defense Battle Objective (survive X turns)
+  defenseObjective?: {
+    type: "survive_turns";
+    turnsRequired: number;
+    turnsRemaining: number;
+    keyRoomId: string;
   };
 }
 
@@ -405,14 +413,41 @@ export function advanceTurn(state: BattleState): BattleState {
 
   const nextActiveId = newState.turnOrder[nextIndex];
 
+  // Check if we're starting a new round (turn wrapped to beginning)
+  const isNewRound = nextIndex === 0 && currentIndex !== -1;
+
   newState = {
     ...newState,
     activeUnitId: nextActiveId,
     turnCount:
       currentIndex === -1
         ? 1
-        : newState.turnCount + (nextIndex === 0 ? 1 : 0),
+        : newState.turnCount + (isNewRound ? 1 : 0),
   };
+
+  // DEFENSE OBJECTIVE: Decrement turns remaining at end of each round
+  if (isNewRound && newState.defenseObjective?.type === "survive_turns") {
+    const newTurnsRemaining = Math.max(0, newState.defenseObjective.turnsRemaining - 1);
+    newState = {
+      ...newState,
+      defenseObjective: {
+        ...newState.defenseObjective,
+        turnsRemaining: newTurnsRemaining,
+      },
+      log: [
+        ...newState.log,
+        `SLK//DEFEND :: ${newTurnsRemaining} turns remaining to secure facility.`,
+      ],
+    };
+
+    // Check if defense objective is now complete
+    if (newTurnsRemaining <= 0) {
+      newState = evaluateBattleOutcome(newState);
+      if (newState.phase === "victory" || newState.phase === "defeat") {
+        return newState;
+      }
+    }
+  }
 
   // --- STRAIN COOLDOWN ON NEW ACTIVE UNIT ---
   if (nextActiveId && newState.units[nextActiveId]) {
@@ -625,6 +660,13 @@ export function isInsideBounds(state: BattleState, pos: Vec2): boolean {
     pos.x < state.gridWidth &&
     pos.y < state.gridHeight
   );
+}
+
+/**
+ * Get tile at position
+ */
+export function getTileAt(state: BattleState, x: number, y: number): Tile | null {
+  return state.tiles.find(t => t.pos.x === x && t.pos.y === y) || null;
 }
 
 export function isWalkableTile(state: BattleState, pos: Vec2): boolean {
@@ -853,7 +895,14 @@ export function attackUnit(
           .reduce((sum, b) => sum + b.amount, 0)
       : 0;
 
-  const rawDamage = attacker.atk - (defender.def + totalDefBuff);
+  // Cover damage reduction (if defender is on cover tile)
+  let coverReduction = 0;
+  if (defender.pos) {
+    const defenderTile = getTileAt(state, defender.pos.x, defender.pos.y);
+    coverReduction = getCoverDamageReduction(defenderTile);
+  }
+
+  const rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction);
   const damage = rawDamage <= 0 ? 1 : rawDamage;
 
   const newHp = defender.hp - damage;
@@ -1157,6 +1206,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
   const anyPlayers = units.some(isPlayerUnit);
   const anyEnemies = units.some(isEnemyUnit);
 
+  // DEFEAT: All player units dead
   if (!anyPlayers) {
     return {
       ...state,
@@ -1169,14 +1219,38 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
     };
   }
 
-  if (!anyEnemies) {
+  // DEFENSE OBJECTIVE: Check if survived required turns
+  if (state.defenseObjective?.type === "survive_turns") {
+    if (state.defenseObjective.turnsRemaining <= 0) {
+      // VICTORY - survived required turns
+      const rewards = generateDefenseRewards(state);
+      return {
+        ...state,
+        phase: "victory",
+        activeUnitId: null,
+        rewards,
+        log: [
+          ...state.log,
+          "SLK//DEFEND :: Defense successful! Facility secured.",
+          `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood.`,
+        ],
+      };
+    }
+    // Defense battle continues even if all enemies are dead
+    // (they may respawn, or we just survive the timer)
+    // For now, if enemies are dead and turns remain, still continue
+    // This could be adjusted based on design preference
+  }
+
+  // STANDARD VICTORY: All enemy units dead (for non-defense battles)
+  if (!anyEnemies && !state.defenseObjective) {
     const rewards = generateBattleRewards(state);
-    
+
     // STEP 7: Build card reward log
     const cardNames = (rewards.cards ?? [])
       .map(id => LIBRARY_CARD_DATABASE[id]?.name ?? id)
       .join(", ");
-    const cardLog = rewards.cards && rewards.cards.length > 0 
+    const cardLog = rewards.cards && rewards.cards.length > 0
       ? `SLK//CARDS :: Acquired: ${cardNames}`
       : "";
 
@@ -1194,7 +1268,38 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
     };
   }
 
+  // For defense battles, check if enemies are all dead but time remains
+  // In this case, also grant victory (optional design: could instead spawn more enemies)
+  if (!anyEnemies && state.defenseObjective) {
+    const rewards = generateDefenseRewards(state);
+    return {
+      ...state,
+      phase: "victory",
+      activeUnitId: null,
+      rewards,
+      log: [
+        ...state.log,
+        "SLK//DEFEND :: All attackers eliminated! Facility secured.",
+        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood.`,
+      ],
+    };
+  }
+
   return state;
+}
+
+/**
+ * Generate rewards for defense battles (smaller than standard battles)
+ */
+function generateDefenseRewards(state: BattleState) {
+  return {
+    wad: 25,
+    metalScrap: 5,
+    wood: 3,
+    chaosShards: 1,
+    steamComponents: 1,
+    cards: [],
+  };
 }
 
 function generateBattleRewards(state: BattleState) {

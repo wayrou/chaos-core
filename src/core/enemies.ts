@@ -3,7 +3,7 @@
 // Data-driven enemy unit archetypes for encounter generation
 // ============================================================================
 
-import { OperationId, Difficulty } from "./campaign";
+import { OperationId } from "./campaign";
 
 // ----------------------------------------------------------------------------
 // TYPES

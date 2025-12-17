@@ -4,11 +4,28 @@
 // ============================================================================
 
 import { OperationId, Difficulty, EncounterDefinition } from "./campaign";
-import { getEnemyPool, getEnemyDefinition, EnemyDefinition } from "./enemies";
+import { getEnemyPool } from "./enemies";
 
 // ----------------------------------------------------------------------------
 // ENCOUNTER GENERATION
 // ----------------------------------------------------------------------------
+
+// Dev-only debug logging (set to true for encounter debugging)
+const DEBUG_ENCOUNTERS = true;
+
+// Enemy count configuration table by node type
+const ENEMY_COUNT_CONFIG = {
+  battle: {
+    minBase: 2,      // Minimum enemies for normal battle
+    maxBase: 4,      // Maximum base enemies for normal battle
+    variance: 2,     // Random variance (+0 to +2)
+  },
+  eliteBattle: {
+    minBase: 3,      // Minimum enemies for elite battle
+    maxBase: 5,      // Maximum base enemies for elite battle
+    variance: 2,     // Random variance (+0 to +2)
+  },
+};
 
 /**
  * Generate an encounter definition for a battle room
@@ -22,28 +39,38 @@ export function generateEncounter(
 ): EncounterDefinition {
   // Create seeded RNG from seed
   const rng = createSeededRNG(rngSeed + `_floor${floorIndex}_${nodeType}`);
-  
+
   // Get enemy pool for this operation
   const pool = getEnemyPool(operationId);
-  
+
   // Determine grid size (4x3 to 8x6)
   const gridSize = determineGridSize(floorIndex, difficulty, nodeType, rng);
   const { width, height } = gridSize;
   const gridArea = width * height;
-  
-  // Calculate max enemies (grid area * 0.25, clamp 3-10)
-  const maxEnemies = Math.max(3, Math.min(10, Math.floor(gridArea * 0.25)));
-  
-  // Determine enemy count based on node type and difficulty
-  const baseCount = nodeType === "eliteBattle" ? 4 : 3;
+
+  // Calculate max units per side based on grid area (matches battle.ts formula)
+  // Formula: clamp(floor(gridArea * 0.25), 3, 10)
+  const maxUnitsPerSide = Math.max(3, Math.min(10, Math.floor(gridArea * 0.25)));
+
+  // Get config for this node type
+  const config = ENEMY_COUNT_CONFIG[nodeType];
+
+  // Calculate enemy count range
   const difficultyMod = getDifficultyModifier(difficulty);
-  const floorMod = Math.floor(floorIndex * 0.5); // Slight increase per floor
-  
-  const targetCount = Math.min(
-    maxEnemies,
-    baseCount + difficultyMod + floorMod + rng.nextInt(0, 2)
+  const floorMod = Math.floor(floorIndex * 0.5); // +1 per 2 floors
+
+  // Min enemies: base min + difficulty mod (clamped to at least 2)
+  const minEnemies = Math.max(2, config.minBase + difficultyMod);
+
+  // Max enemies: base max + difficulty mod + floor mod + variance (clamped to maxUnitsPerSide)
+  const maxEnemies = Math.min(
+    maxUnitsPerSide,
+    config.maxBase + difficultyMod + floorMod + config.variance
   );
-  
+
+  // Randomize enemy count within range
+  const targetCount = rng.nextInt(minEnemies, Math.max(minEnemies, maxEnemies));
+
   // Generate enemy composition
   const enemyUnits = generateEnemyComposition(
     pool,
@@ -52,10 +79,24 @@ export function generateEncounter(
     difficulty,
     rng
   );
-  
+
   // Generate intro text
   const introText = generateIntroText(nodeType, enemyUnits.length, rng);
-  
+
+  // DEV LOGGING: Log encounter generation for debugging
+  if (DEBUG_ENCOUNTERS) {
+    const enemySummary = enemyUnits
+      .map(e => `${e.enemyId}${e.elite ? " (elite)" : ""} x${e.count}`)
+      .join(", ");
+    const totalCount = enemyUnits.reduce((sum, e) => sum + e.count, 0);
+    console.log(
+      `[Encounter] node=${nodeType}, floor=${floorIndex}, op=${operationId}, ` +
+      `seed=${rngSeed.substring(0, 20)}..., grid=${width}x${height} (max=${maxUnitsPerSide}), ` +
+      `enemyRange=[${minEnemies}-${maxEnemies}], rolled=${targetCount}, ` +
+      `enemies=[${enemySummary}] (total=${totalCount})`
+    );
+  }
+
   return {
     enemyUnits,
     gridWidth: width,
@@ -76,33 +117,46 @@ function generateEnemyComposition(
 ): EncounterDefinition["enemyUnits"] {
   const composition: EncounterDefinition["enemyUnits"] = [];
   let remaining = targetCount;
-  
+
+  if (DEBUG_ENCOUNTERS) {
+    console.log(`[Encounter:Comp] targetCount=${targetCount}, starting composition generation`);
+  }
+
   // Filter enemies by floor constraints
   const availableEnemies = pool.enemies.filter(e => {
     if (e.minFloor !== undefined && floorIndex < e.minFloor) return false;
     if (e.maxFloor !== undefined && floorIndex > e.maxFloor) return false;
     return true;
   });
-  
+
+  if (DEBUG_ENCOUNTERS) {
+    console.log(`[Encounter:Comp] availableEnemies=${availableEnemies.length} (from pool of ${pool.enemies.length})`);
+  }
+
   if (availableEnemies.length === 0) {
     // Fallback to any enemy
     const fallback = Object.keys(pool.enemies)[0];
     if (fallback) {
+      if (DEBUG_ENCOUNTERS) {
+        console.log(`[Encounter:Comp] FALLBACK: Using ${pool.enemies[0].enemyId} x${targetCount}`);
+      }
       return [{
         enemyId: pool.enemies[0].enemyId,
         count: targetCount,
       }];
     }
   }
-  
+
   // Weighted random selection
   const totalWeight = availableEnemies.reduce((sum, e) => sum + e.weight, 0);
-  
+
+  let iteration = 0;
   while (remaining > 0 && availableEnemies.length > 0) {
+    iteration++;
     // Pick random enemy from pool
     let random = rng.nextFloat() * totalWeight;
     let selected = availableEnemies[0];
-    
+
     for (const enemy of availableEnemies) {
       random -= enemy.weight;
       if (random <= 0) {
@@ -110,24 +164,33 @@ function generateEnemyComposition(
         break;
       }
     }
-    
+
     // Determine count for this enemy type (1-3 typically)
     const countForType = Math.min(remaining, rng.nextInt(1, 3));
-    
+
     // Check if we should make it elite (based on difficulty and floor)
     const elite = shouldBeElite(floorIndex, difficulty, rng);
     const levelMod = difficulty === "hard" ? 1 : 0;
-    
+
+    if (DEBUG_ENCOUNTERS) {
+      console.log(`[Encounter:Comp] iter=${iteration}: selected=${selected.enemyId}, countForType=${countForType}, remaining=${remaining}->${remaining - countForType}`);
+    }
+
     composition.push({
       enemyId: selected.enemyId,
       count: countForType,
       levelMod,
       elite,
     });
-    
+
     remaining -= countForType;
   }
-  
+
+  if (DEBUG_ENCOUNTERS) {
+    const total = composition.reduce((sum, e) => sum + e.count, 0);
+    console.log(`[Encounter:Comp] FINAL: ${composition.length} groups, ${total} total enemies`);
+  }
+
   return composition;
 }
 

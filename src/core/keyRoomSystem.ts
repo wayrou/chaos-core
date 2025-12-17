@@ -5,7 +5,6 @@
 
 import {
   CampaignProgress,
-  ActiveRunState,
   KeyRoomState,
   FacilityType,
   ResourceType,
@@ -14,11 +13,14 @@ import {
 } from "./campaign";
 import { getActiveRun } from "./campaignManager";
 
+// Re-export FacilityType for screens that import from keyRoomSystem
+export type { FacilityType } from "./campaign";
+
 // ----------------------------------------------------------------------------
 // CONFIGURATION
 // ----------------------------------------------------------------------------
 
-const FACILITY_CONFIG: Record<FacilityType, {
+export const FACILITY_CONFIG: Record<FacilityType, {
   name: string;
   description: string;
   resourceGeneration: Partial<Record<ResourceType, number>>;
@@ -212,8 +214,7 @@ export function applyKeyRoomPassiveEffects(): void {
     
     if (effect === "heal_party_small") {
       // Heal party by 10% max HP
-      import("../state/gameStore").then(({ getGameState, updateGameState }) => {
-        const state = getGameState();
+      import("../state/gameStore").then(({ updateGameState }) => {
         updateGameState(prev => {
           const updated = { ...prev };
           prev.partyUnitIds.forEach(unitId => {
@@ -241,42 +242,52 @@ export function applyKeyRoomPassiveEffects(): void {
 
 /**
  * Roll for Key Room attack (called after room cleared)
+ * Uses seeded RNG for deterministic attack rolls (retry-safe)
  */
 export function rollKeyRoomAttack(): CampaignProgress | null {
   const progress = loadCampaignProgress();
   if (!progress.activeRun) {
     return null;
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   if (floorKeyRooms.length === 0) {
     return null; // No key rooms to attack
   }
-  
+
+  // Skip if already has a pending defense decision (don't double-attack)
+  if (activeRun.pendingDefenseDecision) {
+    return null;
+  }
+
+  // Use seeded RNG for deterministic attack roll (based on run seed + nodes cleared)
+  const rng = createSeededRNG(`${activeRun.rngSeed}_attack_${activeRun.nodesCleared}`);
+
   // Calculate attack chance
   let attackChance = ATTACK_CONFIG.baseChance;
   attackChance += floorKeyRooms.length * ATTACK_CONFIG.perRoomBonus;
-  
+
   // Check for Mine
   const hasMine = floorKeyRooms.some(kr => kr.facility === "mine");
   if (hasMine) {
     attackChance += ATTACK_CONFIG.mineBonus;
   }
-  
+
   attackChance = Math.min(attackChance, ATTACK_CONFIG.maxChance);
-  
-  // Roll for attack
-  const roll = Math.random();
+
+  // Roll for attack using seeded RNG (deterministic)
+  const roll = rng.nextFloat();
+  console.log(`[KEYROOM] Attack roll: ${(roll * 100).toFixed(1)}% vs ${(attackChance * 100).toFixed(1)}% chance`);
+
   if (roll >= attackChance) {
     return null; // No attack
   }
-  
-  // Select a random key room to attack (seeded)
-  const rng = createSeededRNG(`${activeRun.rngSeed}_attack_${activeRun.nodesCleared}`);
+
+  // Select a random key room to attack (also seeded)
   const targetIndex = rng.nextInt(0, floorKeyRooms.length - 1);
   const targetKeyRoom = floorKeyRooms[targetIndex];
   
@@ -550,6 +561,7 @@ export function getDefenseBattleTurns(): number {
 
 interface SeededRNG {
   nextInt(min: number, max: number): number;
+  nextFloat(): number;
 }
 
 function createSeededRNG(seed: string): SeededRNG {
@@ -567,6 +579,10 @@ function createSeededRNG(seed: string): SeededRNG {
       state = (state * 1103515245 + 12345) & 0x7fffffff;
       const normalized = state / 0x7fffffff;
       return Math.floor(min + normalized * (max - min + 1));
+    },
+    nextFloat(): number {
+      state = (state * 1103515245 + 12345) & 0x7fffffff;
+      return state / 0x7fffffff;
     },
   };
 }

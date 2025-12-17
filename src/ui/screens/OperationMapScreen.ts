@@ -16,16 +16,17 @@ import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
 import { canAdvanceToNextFloor } from "../../core/procedural";
 import { syncCampaignToGameState, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
-import { 
-  moveToNode, 
-  clearNode, 
-  prepareBattleForNode, 
+import {
+  moveToNode,
+  clearNode,
+  prepareBattleForNode,
   advanceToNextFloor as campaignAdvanceFloor,
   completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
 
 // ============================================================================
 // PAN STATE & CONTROLS
@@ -380,6 +381,8 @@ export function renderOperationMapScreen(): void {
 
         ${renderFloorProgress(nodes, currentRoomIndex)}
 
+        ${renderKeyRoomStatus(operation.currentFloorIndex)}
+
         <div class="opmap-panel-actions">
           <button class="opmap-units-btn" id="unitsBtn">
             👥 UNIT MANAGEMENT
@@ -620,6 +623,81 @@ function renderFloorProgress(nodes: RoomNode[], _currentRoomIndex: number): stri
       <div class="opmap-progress-bar">
         <div class="opmap-progress-fill" style="width: ${progressPercent}%"></div>
       </div>
+    </div>
+  `;
+}
+
+/**
+ * Render Key Room status summary
+ */
+function renderKeyRoomStatus(floorIndex: number): string {
+  const keyRooms = getKeyRoomsForFloor(floorIndex);
+
+  if (keyRooms.length === 0) {
+    return "";
+  }
+
+  // Calculate total stored resources
+  let totalWad = 0;
+  let totalMetal = 0;
+  let totalWood = 0;
+  let totalShards = 0;
+
+  for (const kr of keyRooms) {
+    totalWad += kr.storedResources?.wad || 0;
+    totalMetal += kr.storedResources?.metalScrap || 0;
+    totalWood += kr.storedResources?.wood || 0;
+    totalShards += kr.storedResources?.chaosShards || 0;
+  }
+
+  const hasUnderAttack = keyRooms.some(kr => kr.isUnderAttack);
+  const hasDelayed = keyRooms.some(kr => kr.isDelayed);
+
+  return `
+    <div class="opmap-keyroom-status">
+      <div class="opmap-keyroom-header">
+        <span class="opmap-keyroom-icon">🔑</span>
+        <span class="opmap-keyroom-title">KEY ROOMS (${keyRooms.length})</span>
+        ${hasUnderAttack ? '<span class="opmap-keyroom-alert">⚠️ UNDER ATTACK</span>' : ""}
+        ${hasDelayed && !hasUnderAttack ? '<span class="opmap-keyroom-delayed">⏸ DELAYED</span>' : ""}
+      </div>
+      <div class="opmap-keyroom-list">
+        ${keyRooms.map(kr => renderKeyRoomItem(kr)).join("")}
+      </div>
+      <div class="opmap-keyroom-resources">
+        <span class="opmap-keyroom-resources-label">Stored:</span>
+        ${totalWad > 0 ? `<span class="opmap-resource-item">💰${totalWad}</span>` : ""}
+        ${totalMetal > 0 ? `<span class="opmap-resource-item">⚙️${totalMetal}</span>` : ""}
+        ${totalWood > 0 ? `<span class="opmap-resource-item">🪵${totalWood}</span>` : ""}
+        ${totalShards > 0 ? `<span class="opmap-resource-item">💎${totalShards}</span>` : ""}
+        ${totalWad === 0 && totalMetal === 0 && totalWood === 0 && totalShards === 0 ? '<span class="opmap-resource-empty">None yet</span>' : ""}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render individual key room item
+ */
+function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUnderAttack?: boolean; isDelayed?: boolean }): string {
+  const facilityConfig = FACILITY_CONFIG[keyRoom.facility as keyof typeof FACILITY_CONFIG];
+  const facilityName = facilityConfig?.name || keyRoom.facility;
+
+  let statusIcon = "";
+  let statusClass = "";
+
+  if (keyRoom.isUnderAttack) {
+    statusIcon = "⚠️";
+    statusClass = "opmap-keyroom-item--attack";
+  } else if (keyRoom.isDelayed) {
+    statusIcon = "⏸";
+    statusClass = "opmap-keyroom-item--delayed";
+  }
+
+  return `
+    <div class="opmap-keyroom-item ${statusClass}">
+      <span class="opmap-keyroom-facility">${facilityName}</span>
+      ${statusIcon ? `<span class="opmap-keyroom-status-icon">${statusIcon}</span>` : ""}
     </div>
   `;
 }

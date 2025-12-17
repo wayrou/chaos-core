@@ -1163,15 +1163,24 @@ export function renderBattleScreen() {
   
   // Initialize battle if needed
   if (!localBattleState) {
-    const newBattle = createTestBattleForCurrentParty(state);
-    if (!newBattle) {
-      app.innerHTML = `<div class="battle-root"><div class="battle-card"><p>Error: No party members.</p><button id="backBtn">BACK</button></div></div>`;
-      document.getElementById("backBtn")?.addEventListener("click", () => renderOperationMap());
-      return;
+    // PRIORITY: Use currentBattle from state if available (from encounter generator)
+    // This is the proper flow from OperationMapScreen -> createBattleFromEncounter
+    if (state.currentBattle) {
+      localBattleState = state.currentBattle as BattleState;
+      console.log(`[BATTLE] Using encounter-based battle with ${Object.values(state.currentBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
+    } else {
+      // Fallback to test battle (legacy/debug path)
+      console.warn("[BATTLE] No currentBattle in state, falling back to test battle with 2 enemies");
+      const newBattle = createTestBattleForCurrentParty(state);
+      if (!newBattle) {
+        app.innerHTML = `<div class="battle-root"><div class="battle-card"><p>Error: No party members.</p><button id="backBtn">BACK</button></div></div>`;
+        document.getElementById("backBtn")?.addEventListener("click", () => renderOperationMap());
+        return;
+      }
+      localBattleState = newBattle;
     }
-    localBattleState = newBattle;
     // Initialize turn state for first unit
-    const firstUnit = newBattle.activeUnitId ? newBattle.units[newBattle.activeUnitId] : null;
+    const firstUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
     resetTurnStateForUnit(firstUnit);
   }
   
@@ -1193,8 +1202,9 @@ export function renderBattleScreen() {
       <!-- Header overlay at top -->
       <div class="battle-header-overlay">
         <div class="battle-header-left">
-          <div class="battle-title">${isEndlessBattleMode ? '∞ ' : ''}ENGAGEMENT – ${roomLabel}</div>
+          <div class="battle-title">${isEndlessBattleMode ? '∞ ' : ''}${battle.defenseObjective ? '🛡️ DEFENSE' : 'ENGAGEMENT'} – ${roomLabel}</div>
           <div class="battle-subtitle">${isPlacementPhase ? "PLACEMENT PHASE" : `TURN ${battle.turnCount}`} • GRID ${battle.gridWidth}×${battle.gridHeight}</div>
+          ${battle.defenseObjective ? renderDefenseObjectiveHeader(battle.defenseObjective) : ""}
         </div>
         <div class="battle-header-right">
           ${!isPlacementPhase ? `
@@ -1689,13 +1699,38 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
   return BattleGridRenderer.render(battle, selectedCardIdx, activeUnit, isPlacementPhase, battleZoom, moveOpts, atkOpts, facingTiles);
 }
 
+/**
+ * Render defense objective header display
+ */
+function renderDefenseObjectiveHeader(objective: NonNullable<BattleState["defenseObjective"]>): string {
+  const isUrgent = objective.turnsRemaining <= 2;
+  const urgentClass = isUrgent ? "defense-objective--urgent" : "";
+
+  return `
+    <div class="battle-defense-objective ${urgentClass}">
+      <div class="defense-objective-icon">🛡️</div>
+      <div class="defense-objective-text">
+        <div class="defense-objective-label">SURVIVE</div>
+        <div class="defense-objective-turns">${objective.turnsRemaining} TURNS</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderBattleResultOverlay(battle: BattleState): string {
   if (battle.phase === "victory") {
     const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+    const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
+
     return `
       <div class="battle-result-overlay">
         <div class="battle-result-card">
-          <div class="battle-result-title">VICTORY</div>
+          <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
+          ${isDefenseBattle ? `
+            <div class="battle-defense-success">
+              Your squad successfully defended the facility!
+            </div>
+          ` : ""}
           <div class="battle-reward-grid">
             <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
             <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
@@ -2551,8 +2586,21 @@ function attachBattleListeners() {
 
         // Mark battle as won in campaign system (synchronous to ensure state is updated before render)
         try {
-          recordBattleVictory();
-          syncCampaignToGameState();
+          // Check if this was a defense battle
+          const isDefenseBattle = localBattleState.defenseObjective?.type === "survive_turns";
+          if (isDefenseBattle && (window as any).__defenseKeyRoomId) {
+            // Record defense victory
+            import("../../core/campaignManager").then(m => {
+              m.recordDefenseVictory((window as any).__defenseKeyRoomId);
+              syncCampaignToGameState();
+            });
+            // Clear defense flags
+            (window as any).__isDefenseBattle = false;
+            (window as any).__defenseKeyRoomId = undefined;
+          } else {
+            recordBattleVictory();
+            syncCampaignToGameState();
+          }
         } catch (error) {
           // Fallback if campaign system not available (e.g., no active run)
           console.warn("[BATTLE] Campaign system error, using fallback:", error);
@@ -2595,32 +2643,53 @@ function attachBattleListeners() {
   const retryBtn = document.getElementById("retryRoomBtn");
   if (retryBtn) {
     retryBtn.onclick = () => {
+      // Check if this is a defense battle
+      const isDefenseBattle = (window as any).__isDefenseBattle || false;
+
       // Record defeat (increments retry counter)
       import("../../core/campaignManager").then(m => {
-        m.recordBattleDefeat();
-        // Retry uses same encounter (stored in pendingBattle)
-        // Just re-enter the battle room
+        if (isDefenseBattle) {
+          m.recordDefenseDefeat();
+        } else {
+          m.recordBattleDefeat();
+        }
+
+        // Cleanup UI state
         cleanupBattlePanHandlers();
         localBattleState = null;
         selectedCardIndex = null;
         resetTurnStateForUnit(null);
         uiPanelsMinimized = false;
-        
-        // Re-enter battle (will use same encounter from pendingBattle)
-        import("../../core/campaignManager").then(m => {
-          const activeRun = m.getActiveRun();
-          if (activeRun && activeRun.pendingBattle) {
-            // Re-create battle from same encounter
+
+        // Re-enter battle (will use same encounter from pendingBattle or pendingDefenseBattle)
+        const activeRun = m.getActiveRun();
+
+        if (isDefenseBattle && activeRun?.pendingDefenseBattle) {
+          // Re-create defense battle from same encounter
+          import("../../core/defenseBattleGenerator").then(({ createDefenseBattle }) => {
             const state = getGameState();
-            const battle = createBattleFromEncounter(state, activeRun.pendingBattle.encounterDefinition);
-            updateGameState(prev => ({
-              ...prev,
-              currentBattle: battle,
-              phase: "battle",
-            }));
-            renderBattleScreen();
-          }
-        });
+            const { keyRoomId, turnsToSurvive, encounterSeed } = activeRun.pendingDefenseBattle!;
+            const battle = createDefenseBattle(state, keyRoomId, turnsToSurvive, encounterSeed);
+            if (battle) {
+              updateGameState(prev => ({
+                ...prev,
+                currentBattle: { ...battle, turnIndex: 0 } as any,
+                phase: "battle",
+              }));
+              renderBattleScreen();
+            }
+          });
+        } else if (activeRun?.pendingBattle) {
+          // Re-create normal battle from same encounter
+          const state = getGameState();
+          const battle = createBattleFromEncounter(state, activeRun.pendingBattle.encounterDefinition);
+          updateGameState(prev => ({
+            ...prev,
+            currentBattle: battle,
+            phase: "battle",
+          }));
+          renderBattleScreen();
+        }
       });
     };
   }
