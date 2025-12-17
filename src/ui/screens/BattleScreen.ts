@@ -3,7 +3,7 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMapScreen, markCurrentRoomVisited } from "./OperationMapScreen";
-import { recordBattleVictory, syncCampaignToGameState } from "../../core/campaignManager";
+import { recordBattleVictory, syncCampaignToGameState, getActiveRun } from "../../core/campaignManager";
 const renderOperationMap = renderOperationMapScreen; // Alias for compatibility
 import { renderBaseCampScreen } from "./BaseCampScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
@@ -2619,13 +2619,39 @@ function attachBattleListeners() {
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
       uiPanelsMinimized = false;
-      
-      // Clear campaign flag
+
+      // Check if this was a special battle type
+      const isEliteBattle = (window as any).__isEliteBattle || false;
+      const eliteRoomId = (window as any).__eliteRoomId;
+      const isKeyRoomCapture = (window as any).__isKeyRoomCapture || false;
+      const keyRoomNodeId = (window as any).__keyRoomNodeId;
+
+      // Clear campaign flags
       (window as any).__isCampaignRun = false;
-      
+      (window as any).__isEliteBattle = false;
+      (window as any).__eliteRoomId = undefined;
+      (window as any).__isKeyRoomCapture = false;
+      (window as any).__keyRoomNodeId = undefined;
+
       // If in endless mode, start next battle instead of returning to operation map
       if (isEndlessBattleMode) {
         startNextEndlessBattle();
+      } else if (isKeyRoomCapture && keyRoomNodeId) {
+        // Key Room capture - show facility selection screen
+        import("./FacilitySelectionScreen").then(m => {
+          m.renderFacilitySelectionScreen(keyRoomNodeId);
+        });
+      } else if (isEliteBattle && eliteRoomId) {
+        // Elite battle victory - show Field Mod reward screen
+        import("./FieldModRewardScreen").then(m => {
+          const activeRun = getActiveRun();
+          if (activeRun) {
+            const rewardSeed = `${activeRun.runSeed}_elite_${eliteRoomId}`;
+            m.renderFieldModRewardScreen(eliteRoomId, rewardSeed, true); // true = elite weights
+          } else {
+            renderOperationMap();
+          }
+        });
       } else {
         renderOperationMap();
       }

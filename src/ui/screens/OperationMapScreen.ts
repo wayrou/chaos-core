@@ -13,6 +13,7 @@ import { renderShopScreen } from "./ShopScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
+import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
 import { GameState, RoomNode, RoomType } from "../../core/types";
 import { canAdvanceToNextFloor } from "../../core/procedural";
 import { syncCampaignToGameState, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
@@ -525,37 +526,42 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
   
   let mapHtml = '<div class="opmap-nodes-container">';
   
+  // Find max layer (x in position = progression depth) to flip for bottom-to-top
+  const maxLayer = Math.max(...nodes.map(n => n.position?.x || 0));
+
   // Render connections first (if available from operation)
   const connections = operation?.connections || {};
   for (const fromNodeId in connections) {
     const fromNode = nodes.find(n => n.id === fromNodeId);
     if (!fromNode || !fromNode.position) continue;
-    
+
     connections[fromNodeId].forEach(toNodeId => {
       const toNode = nodes.find(n => n.id === toNodeId);
       if (!toNode || !toNode.position) return;
-      
+
       // Only show connections from visited/current nodes or to available nodes
       const fromVisited = fromNode.visited || fromNode.id === currentRoomId;
       const toAvailable = availableNodeIds.includes(toNodeId) || toNode.visited;
-      
+
       if (fromVisited && toAvailable && fromNode.position && toNode.position) {
-        const x1 = fromNode.position.x * 120 + 60; // Approximate node center
-        const y1 = fromNode.position.y * 80 + 40;
-        const x2 = toNode.position.x * 120 + 60;
-        const y2 = toNode.position.y * 80 + 40;
-        
+        // SWAP x and y: position.x is progression (vertical), position.y is branching (horizontal)
+        // For bottom-to-top: x=0 is bottom, x=max is top
+        const x1 = fromNode.position.y * 400 + 200; // Horizontal (branches) - node center, wide spacing
+        const y1 = (maxLayer - fromNode.position.x) * 300 + 150; // Vertical (progression) - flipped, tall spacing
+        const x2 = toNode.position.y * 400 + 200;
+        const y2 = (maxLayer - toNode.position.x) * 300 + 150;
+
         mapHtml += `
           <svg class="opmap-connection" style="position: absolute; left: ${Math.min(x1, x2) - 2}px; top: ${Math.min(y1, y2) - 2}px; width: ${Math.abs(x2 - x1) + 4}px; height: ${Math.abs(y2 - y1) + 4}px; pointer-events: none; z-index: 0;">
-            <line x1="${x1 - Math.min(x1, x2) + 2}" y1="${y1 - Math.min(y1, y2) + 2}" 
-                  x2="${x2 - Math.min(x1, x2) + 2}" y2="${y2 - Math.min(y1, y2) + 2}" 
+            <line x1="${x1 - Math.min(x1, x2) + 2}" y1="${y1 - Math.min(y1, y2) + 2}"
+                  x2="${x2 - Math.min(x1, x2) + 2}" y2="${y2 - Math.min(y1, y2) + 2}"
                   stroke="rgba(255, 215, 0, 0.3)" stroke-width="2" />
           </svg>
         `;
       }
     });
   }
-  
+
   nodes.forEach((node, index) => {
     const isVisited = node.visited === true;
     const isCurrent = index === currentRoomIndex;
@@ -563,41 +569,53 @@ function renderRoguelikeMap(nodes: RoomNode[], currentRoomIndex: number): string
     // Node is available if it's in the available nodes list (forward-only branching)
     const isAvailable = availableNodeIds.includes(node.id);
     const isLocked = !isVisited && !isNext && !isAvailable;
-    
+
     // Debug logging for each node
     if (isAvailable && !isVisited) {
       console.log(`[OPMAP] Node ${node.id} is available and not visited`);
     }
-    
-    const icon = getRoomIcon(node.type);
-    const typeLabel = getRoomTypeLabel(node.type);
-    
+
+    const icon = getRoomIcon(node.type, node);
+    const typeLabel = getRoomTypeLabel(node.type, node);
+
+    // Hide detailed info for distant nodes (only show for visited, current, or next available)
+    const showDetails = isVisited || isCurrent || isAvailable;
+
     // Status classes
     let statusClass = '';
     if (isVisited) statusClass = 'opmap-node--visited';
     else if (isCurrent) statusClass = 'opmap-node--current';
     else if (isNext || isAvailable) statusClass = 'opmap-node--next';
     else statusClass = 'opmap-node--locked';
-    
+
     // Room type class
     const typeClass = `opmap-node--${node.type || 'unknown'}`;
-    
+
+    // SWAP x and y for bottom-to-top: position.x is vertical progression, position.y is horizontal branching
+    // x=0 is bottom (start), x=max is top (exit)
+    const nodeX = (node.position?.y || 0) * 400; // Horizontal (branches) - wider spacing
+    const nodeY = (maxLayer - (node.position?.x || 0)) * 300; // Vertical (progression) - taller spacing, flipped
+
     mapHtml += `
-      ${index > 0 ? '<div class="opmap-node-connector"></div>' : ''}
-      <div class="opmap-node-wrapper">
-        <div class="opmap-node ${statusClass} ${typeClass}" 
-             data-room-id="${node.id}" 
+      <div class="opmap-node-wrapper" style="position: absolute; left: ${nodeX}px; top: ${nodeY}px;">
+        <div class="opmap-node ${statusClass} ${typeClass}"
+             data-room-id="${node.id}"
              data-room-index="${index}"
              data-is-locked="${isLocked}">
           <div class="opmap-node-icon">${icon}</div>
-          <div class="opmap-node-info">
-            <div class="opmap-node-label">${node.label}</div>
-            <div class="opmap-node-type">${typeLabel}</div>
-            ${isVisited ? '<div class="opmap-node-badge opmap-node-badge--cleared">✓ CLEARED</div>' : ''}
-            ${isCurrent ? '<div class="opmap-node-badge opmap-node-badge--current">● CURRENT</div>' : ''}
-            ${(isNext || isAvailable) && !isVisited ? '<div class="opmap-node-badge opmap-node-badge--next">→ NEXT</div>' : ''}
-            ${isLocked ? '<div class="opmap-node-badge opmap-node-badge--locked">🔒 LOCKED</div>' : ''}
-          </div>
+          ${showDetails ? `
+            <div class="opmap-node-info">
+              <div class="opmap-node-label">${node.label}</div>
+              <div class="opmap-node-type">${typeLabel}</div>
+              ${isVisited ? '<div class="opmap-node-badge opmap-node-badge--cleared">✓ CLEARED</div>' : ''}
+              ${isCurrent ? '<div class="opmap-node-badge opmap-node-badge--current">● CURRENT</div>' : ''}
+              ${(isNext || isAvailable) && !isVisited ? '<div class="opmap-node-badge opmap-node-badge--next">→ NEXT</div>' : ''}
+            </div>
+          ` : `
+            <div class="opmap-node-info opmap-node-info--hidden">
+              <div class="opmap-node-label">???</div>
+            </div>
+          `}
           ${(isNext || isAvailable) && !isVisited ? `
             <button class="opmap-node-enter" data-room-id="${node.id}">
               ENTER →
@@ -706,7 +724,12 @@ function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUn
 // ROOM ICONS & LABELS
 // ============================================================================
 
-function getRoomIcon(type?: RoomType): string {
+function getRoomIcon(type?: RoomType, room?: any): string {
+  // Check for Key Room flag first
+  if (room?.isKeyRoom) {
+    return "🔑";
+  }
+
   switch (type) {
     case "tavern": return "🏠";
     case "battle": return "⚔️";
@@ -715,14 +738,18 @@ function getRoomIcon(type?: RoomType): string {
     case "rest": return "🛏️";
     case "boss": return "👹";
     case "field_node": return "🗺️";
-    case "key_room": return "🔑";
     case "elite": return "⭐";
     case "treasure": return "💎";
     default: return "●";
   }
 }
 
-function getRoomTypeLabel(type?: RoomType): string {
+function getRoomTypeLabel(type?: RoomType, room?: any): string {
+  // Check for Key Room flag first
+  if (room?.isKeyRoom) {
+    return "Key Room";
+  }
+
   switch (type) {
     case "tavern": return "Safe Zone";
     case "battle": return "Battle";
@@ -731,7 +758,6 @@ function getRoomTypeLabel(type?: RoomType): string {
     case "rest": return "Rest Site";
     case "boss": return "BOSS FIGHT";
     case "field_node": return "Exploration";
-    case "key_room": return "Key Room";
     case "elite": return "Elite Battle";
     case "treasure": return "Treasure";
     default: return "Unknown";
@@ -917,7 +943,22 @@ function enterRoom(roomId: string): void {
   switch (room.type) {
     case "battle":
     case "boss":
-      enterBattleRoom(room);
+      // Check if this is a Key Room battle
+      if ((room as any).isKeyRoom) {
+        enterKeyRoom(room);
+      } else {
+        enterBattleRoom(room);
+      }
+      break;
+
+    case "elite":
+      // Elite battle - tougher encounter, better rewards including Field Mods
+      enterEliteRoom(room);
+      break;
+
+    case "treasure":
+      // Treasure room - choose 1 of 3 Field Mods
+      enterTreasureRoom(room);
       break;
 
     case "event":
@@ -946,11 +987,6 @@ function enterRoom(roomId: string): void {
     case "field_node":
       // Mystery dungeon-style exploration room (Headline 14d)
       renderFieldNodeRoomScreen(roomId, room.fieldNodeSeed);
-      break;
-
-    case "key_room":
-      // Key Room - requires battle to capture
-      enterKeyRoom(room);
       break;
 
     default:
@@ -1074,6 +1110,81 @@ function enterKeyRoom(room: RoomNode): void {
   } catch (error) {
     console.error("[OPMAP] Error entering key room:", error);
     // Return to operation map on error
+    renderOperationMapScreen();
+  }
+}
+
+function enterEliteRoom(room: RoomNode): void {
+  try {
+    const state = getGameState();
+    const activeRun = getActiveRun();
+
+    if (!activeRun) {
+      console.error("[OPMAP] No active run for elite battle");
+      return;
+    }
+
+    // Set campaign flag for battle screen
+    (window as any).__isCampaignRun = true;
+    (window as any).__isEliteBattle = true;
+    (window as any).__eliteRoomId = room.id;
+
+    // Prepare battle for this node (generates encounter)
+    prepareBattleForNode(room.id);
+    syncCampaignToGameState();
+
+    // Get the pending battle encounter
+    const updatedRun = getActiveRun();
+    if (!updatedRun || !updatedRun.pendingBattle) {
+      console.error("[OPMAP] Failed to prepare elite battle");
+      renderOperationMapScreen();
+      return;
+    }
+
+    const encounter = updatedRun.pendingBattle.encounterDefinition;
+    const encounterSeed = updatedRun.pendingBattle.encounterSeed;
+
+    // Create battle from encounter
+    const battle = createBattleFromEncounter(state, encounter, encounterSeed);
+
+    if (!battle) {
+      console.error("[OPMAP] Failed to create elite battle");
+      renderOperationMapScreen();
+      return;
+    }
+
+    // Store battle in state
+    updateGameState(prev => ({
+      ...prev,
+      currentBattle: { ...battle, turnIndex: 0 } as any,
+      phase: "battle",
+    }));
+
+    renderBattleScreen();
+  } catch (error) {
+    console.error("[OPMAP] Error entering elite room:", error);
+    renderOperationMapScreen();
+  }
+}
+
+function enterTreasureRoom(room: RoomNode): void {
+  try {
+    const activeRun = getActiveRun();
+
+    if (!activeRun) {
+      console.error("[OPMAP] No active run for treasure room");
+      return;
+    }
+
+    // Generate deterministic seed for treasure rewards
+    const rewardSeed = `${activeRun.runSeed}_treasure_${room.id}`;
+
+    console.log("[OPMAP] Entering treasure room:", room.id);
+
+    // Show Field Mod reward screen with treasure weights
+    renderFieldModRewardScreen(room.id, rewardSeed, false);
+  } catch (error) {
+    console.error("[OPMAP] Error entering treasure room:", error);
     renderOperationMapScreen();
   }
 }

@@ -337,6 +337,7 @@ function generateForkedCorridorMap(
 
 /**
  * Ensure 2 Key Rooms per floor
+ * Key Rooms are battle nodes with isKeyRoom flag
  */
 function ensureKeyRooms(
   nodes: RoomNode[],
@@ -344,31 +345,36 @@ function ensureKeyRooms(
   floorIndex: number,
   rng: SeededRNG
 ): void {
-  // Find non-start, non-exit nodes that can be key rooms
+  // Find battle nodes (not start/exit) that can be key rooms
   const candidateNodes = nodes.filter(
-    n => !n.id.includes("_start") && !n.id.includes("_exit") && n.type !== "key_room"
+    n => !n.id.includes("_start") &&
+         !n.id.includes("_exit") &&
+         n.type === "battle" &&
+         !(n as any).isKeyRoom // Don't select already-marked key rooms
   );
-  
+
   if (candidateNodes.length < 2) {
-    console.warn(`[NODEMAP] Not enough candidate nodes for key rooms on floor ${floorIndex}`);
+    console.warn(`[NODEMAP] Not enough battle nodes for key rooms on floor ${floorIndex}`);
     return;
   }
-  
+
   // Select 2 random candidates
   const selected: RoomNode[] = [];
   const candidates = [...candidateNodes];
-  
+
   for (let i = 0; i < 2 && candidates.length > 0; i++) {
     const index = rng.nextInt(0, candidates.length - 1);
     selected.push(candidates[index]);
     candidates.splice(index, 1);
   }
-  
-  // Convert to key rooms
+
+  // Mark as key rooms (battle nodes with flag)
   for (const node of selected) {
-    node.type = "key_room";
-    node.label = "Key Room";
+    (node as any).isKeyRoom = true;
+    node.label = "Key Room Battle";
   }
+
+  console.log(`[NODEMAP] Marked ${selected.length} battle nodes as Key Rooms on floor ${floorIndex}`);
 }
 
 /**
