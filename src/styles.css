@@ -665,6 +665,53 @@ html, body {
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
+.port-npc-window {
+  cursor: pointer;
+}
+
+.port-npc-window:hover {
+  border-color: var(--ard-gold);
+  background: rgba(15, 18, 45, 0.8);
+}
+
+.port-npc-window--has-conversation {
+  border-color: var(--ard-gold);
+  background: rgba(30, 40, 70, 0.8);
+}
+
+.port-npc-conversation-message {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--ard-brown-mid);
+}
+
+.port-npc-conversation-message--aeriss {
+  border-left-color: var(--ard-gold);
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.port-npc-conversation-name {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.port-npc-conversation-message--aeriss .port-npc-conversation-name {
+  color: var(--ard-gold);
+}
+
+.port-npc-conversation-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--ard-off-white);
+  font-style: normal;
+}
+
 /* Header */
 .port-header {
   display: flex;
@@ -23731,6 +23778,53 @@ html, body {
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
+.recruitment-npc-window {
+  cursor: pointer;
+}
+
+.recruitment-npc-window:hover {
+  border-color: var(--ard-gold);
+  background: rgba(15, 18, 45, 0.8);
+}
+
+.recruitment-npc-window--has-conversation {
+  border-color: var(--ard-gold);
+  background: rgba(30, 40, 70, 0.8);
+}
+
+.recruitment-npc-conversation-message {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--ard-brown-mid);
+}
+
+.recruitment-npc-conversation-message--aeriss {
+  border-left-color: var(--ard-gold);
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.recruitment-npc-conversation-name {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.recruitment-npc-conversation-message--aeriss .recruitment-npc-conversation-name {
+  color: var(--ard-gold);
+}
+
+.recruitment-npc-conversation-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--ard-off-white);
+  font-style: normal;
+}
+
 .recruitment-npc-name {
   font-size: var(--font-size-sm);
   font-weight: 700;
@@ -23750,6 +23844,493 @@ html, body {
   background: rgba(0, 0, 0, 0.3);
   border-left: 3px solid var(--ard-brown-mid);
   border-radius: var(--radius-sm);
+}
+
+/* ============================================================================
+   BLACK MARKET SCREEN
+   ============================================================================ */
+
+.blackmarket-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--gradient-card);
+  padding: var(--spacing-lg);
+  overflow: hidden;
+}
+
+.blackmarket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: var(--ard-brown-dark);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+  box-shadow: none;
+}
+
+.blackmarket-header-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.blackmarket-title {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: var(--spacing-xs);
+}
+
+.blackmarket-subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--ard-cool-gray);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.blackmarket-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+}
+
+.blackmarket-wad {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+}
+
+.blackmarket-wad-label {
+  font-size: var(--font-size-xs);
+  color: var(--ard-cool-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.blackmarket-wad-amount {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--ard-gold);
+}
+
+.blackmarket-back-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--ard-brown-mid);
+  border: 1px solid var(--ard-brown-light);
+  border-radius: var(--radius-sm);
+  color: var(--ard-off-white);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.blackmarket-back-btn:hover {
+  background: var(--ard-brown-light);
+  border-color: var(--ard-gold);
+}
+
+.blackmarket-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.blackmarket-info {
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+}
+
+.blackmarket-info-text {
+  font-size: var(--font-size-sm);
+  color: var(--ard-cool-gray);
+  line-height: 1.6;
+}
+
+.blackmarket-inventory {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+}
+
+.blackmarket-inventory-title {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: var(--spacing-xs);
+}
+
+.blackmarket-inventory-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.blackmarket-inventory-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(50, 70, 110, 0.5);
+  border: 1px solid rgba(100, 140, 200, 0.4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+
+.blackmarket-inventory-item-name {
+  color: var(--ard-off-white);
+  font-weight: 600;
+}
+
+.blackmarket-inventory-item-rarity {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.blackmarket-inventory-item-rarity--common {
+  color: #a0a0a0;
+  background: rgba(160, 160, 160, 0.2);
+}
+
+.blackmarket-inventory-item-rarity--uncommon {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.blackmarket-inventory-item-rarity--rare {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.blackmarket-inventory-item-stacks {
+  color: var(--ard-gold);
+  font-weight: 700;
+}
+
+.blackmarket-inventory-empty {
+  color: var(--ard-cool-gray);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+}
+
+.blackmarket-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.blackmarket-catalog-title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.blackmarket-catalog-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.blackmarket-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+}
+
+.blackmarket-item:hover {
+  border-color: var(--ard-gold);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.2);
+}
+
+.blackmarket-item--unaffordable {
+  opacity: 0.6;
+}
+
+.blackmarket-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.blackmarket-item-name {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-off-white);
+}
+
+.blackmarket-item-rarity {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.blackmarket-item-rarity--common {
+  color: #a0a0a0;
+  background: rgba(160, 160, 160, 0.2);
+}
+
+.blackmarket-item-rarity--uncommon {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.blackmarket-item-rarity--rare {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.blackmarket-item-description {
+  font-size: var(--font-size-sm);
+  color: var(--ard-cool-gray);
+  line-height: 1.6;
+  min-height: 3em;
+}
+
+.blackmarket-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: var(--spacing-xs);
+  border-top: 1px solid rgba(140, 120, 100, 0.3);
+}
+
+.blackmarket-item-scope {
+  font-size: var(--font-size-xs);
+  color: var(--ard-cool-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.blackmarket-item-price {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-gold);
+}
+
+.blackmarket-item-price--unaffordable {
+  color: var(--ard-cool-gray);
+}
+
+.blackmarket-item-buy-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--ard-brown-mid);
+  border: 1px solid var(--ard-brown-light);
+  border-radius: var(--radius-sm);
+  color: var(--ard-off-white);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.blackmarket-item-buy-btn:hover:not(.blackmarket-item-buy-btn--disabled) {
+  background: var(--ard-brown-light);
+  border-color: var(--ard-gold);
+}
+
+.blackmarket-item-buy-btn--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Black Market Two Column Layout */
+.blackmarket-content-wrapper {
+  display: flex;
+  gap: var(--spacing-lg);
+  flex: 1;
+  overflow: hidden;
+}
+
+.blackmarket-main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Black Market NPC Panel */
+.blackmarket-npc-panel {
+  width: 50%;
+  max-width: 500px;
+  flex-shrink: 0;
+  background: var(--ard-dark);
+  border: 2px solid var(--ard-brown-mid);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  position: sticky;
+  top: var(--spacing-lg);
+  max-height: calc(100vh - var(--spacing-lg) * 2);
+  overflow-y: auto;
+}
+
+.blackmarket-npc-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.blackmarket-npc-panel-title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--ard-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 var(--spacing-md) 0;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 2px solid var(--ard-brown-mid);
+}
+
+.blackmarket-npc-windows-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.blackmarket-npc-window {
+  background: rgba(15, 18, 45, 0.6);
+  border: 1px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  cursor: pointer;
+}
+
+.blackmarket-npc-window:hover {
+  border-color: var(--ard-gold);
+  background: rgba(15, 18, 45, 0.8);
+}
+
+.blackmarket-npc-window--appearing {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.blackmarket-npc-window--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.blackmarket-npc-window--removing {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.blackmarket-npc-window--has-conversation {
+  border-color: var(--ard-gold);
+  background: rgba(30, 40, 70, 0.8);
+}
+
+.blackmarket-npc-name {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  margin-bottom: var(--spacing-xs);
+}
+
+.blackmarket-npc-text {
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  color: var(--ard-cool-gray);
+  font-style: italic;
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.3);
+  border-left: 3px solid var(--ard-brown-mid);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+/* Conversation Messages */
+.blackmarket-npc-conversation-message {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--ard-brown-mid);
+}
+
+.blackmarket-npc-conversation-message--aeriss {
+  border-left-color: var(--ard-gold);
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.blackmarket-npc-conversation-name {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--ard-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.blackmarket-npc-conversation-message--aeriss .blackmarket-npc-conversation-name {
+  color: var(--ard-gold);
+}
+
+.blackmarket-npc-conversation-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--ard-off-white);
+  font-style: normal;
+}
+
+/* Responsive: Stack on smaller screens */
+@media (max-width: 1024px) {
+  .blackmarket-content-wrapper {
+    flex-direction: column;
+  }
+  
+  .blackmarket-npc-panel {
+    width: 100%;
+    max-width: none;
+    position: static;
+    max-height: none;
+  }
 }
 
 
