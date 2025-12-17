@@ -15,8 +15,38 @@ import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 // ----------------------------------------------------------------------------
 
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number }> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
+let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+
+// Aeriss response templates based on dialogue context
+const AERISS_RESPONSES: Record<string, string[]> = {
+  default: [
+    "Interesting. Tell me more.",
+    "I'll keep that in mind.",
+    "Noted.",
+    "Understood.",
+    "I see.",
+  ],
+  recruitment: [
+    "Good operators are hard to find.",
+    "I'll review the candidates.",
+    "We need more units.",
+    "The roster needs fresh blood.",
+  ],
+  war: [
+    "The war doesn't stop for anyone.",
+    "We'll keep fighting.",
+    "Every operation matters.",
+    "We've lost too many good operators.",
+  ],
+  strategy: [
+    "Tactics matter as much as firepower.",
+    "I'll consider that advice.",
+    "Survival is the priority.",
+    "We adapt or we die.",
+  ],
+};
 
 // NPC dialogue data - conversations between NPCs in the tavern
 const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
@@ -47,6 +77,15 @@ const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
 export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   // Stop any existing NPC window system
   stopNpcWindowSystem();
+  
+  // Populate initial NPC windows before rendering
+  activeNpcWindows = [];
+  activeConversations.clear();
+  npcWindowIdCounter = 0;
+  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+  for (let i = 0; i < initialCount; i++) {
+    addNpcWindow();
+  }
   
   const root = document.getElementById("app");
   if (!root) return;
@@ -165,6 +204,11 @@ export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "baseca
   
   // Start the NPC window system
   startNpcWindowSystem();
+  
+  // Attach click handlers after a short delay to ensure DOM is ready
+  setTimeout(() => {
+    attachNpcWindowClickHandlers();
+  }, 100);
 }
 
 /**
@@ -268,18 +312,22 @@ function startNpcWindowSystem(): void {
     clearInterval(npcWindowInterval);
   }
   
-  // Clear existing windows
-  activeNpcWindows = [];
-  npcWindowIdCounter = 0;
-  
-  // Add initial windows (2-3 to start)
-  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
-  for (let i = 0; i < initialCount; i++) {
-    addNpcWindow();
+  // Don't clear windows here - they're already populated before render
+  // Just ensure we have windows
+  if (activeNpcWindows.length === 0) {
+    const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+    for (let i = 0; i < initialCount; i++) {
+      addNpcWindow();
+    }
   }
   
-  // Update the DOM
+  // Update the DOM immediately
   updateNpcWindowsDOM();
+  
+  // Also update after a short delay to ensure DOM is ready
+  setTimeout(() => {
+    updateNpcWindowsDOM();
+  }, 100);
   
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
@@ -295,13 +343,23 @@ function startNpcWindowSystem(): void {
       const maxAge = 8000 + Math.random() * 4000;
       activeNpcWindows = activeNpcWindows.filter(window => {
         const age = now - window.timestamp;
-        return age < maxAge;
+        if (age >= maxAge) {
+          // Clean up conversation when window is removed
+          if (window.conversationId) {
+            activeConversations.delete(window.conversationId);
+          }
+          return false;
+        }
+        return true;
       });
     }
     
     // If we have too many windows, remove the oldest
     if (activeNpcWindows.length > 4) {
-      activeNpcWindows.shift();
+      const removed = activeNpcWindows.shift();
+      if (removed?.conversationId) {
+        activeConversations.delete(removed.conversationId);
+      }
     }
     
     updateNpcWindowsDOM();
@@ -311,18 +369,24 @@ function startNpcWindowSystem(): void {
 function addNpcWindow(): void {
   const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
   const windowId = `recruitment-npc-window-${npcWindowIdCounter++}`;
+  const conversationId = `conv-${windowId}`;
   
   activeNpcWindows.push({
     id: windowId,
     name: dialogue.name,
     text: dialogue.text,
     timestamp: Date.now(),
+    conversationId,
   });
 }
 
 function updateNpcWindowsDOM(): void {
   const container = document.getElementById("recruitmentNpcWindowsContainer");
-  if (!container) return;
+  if (!container) {
+    // Container doesn't exist yet, try again after a short delay
+    setTimeout(() => updateNpcWindowsDOM(), 50);
+    return;
+  }
   
   // Get current window IDs in DOM
   const currentWindowIds = Array.from(container.querySelectorAll('.recruitment-npc-window')).map(
@@ -345,28 +409,129 @@ function updateNpcWindowsDOM(): void {
     }
   });
   
-  // Add new windows
+  // Add new windows and update existing ones
   activeNpcWindows.forEach(window => {
-    if (!currentWindowIds.includes(window.id)) {
-      const windowEl = document.createElement('div');
+    let windowEl = container.querySelector(`[data-window-id="${window.id}"]`) as HTMLElement;
+    const conversation = activeConversations.get(window.conversationId || "");
+    const hasConversation = conversation && conversation.length > 0;
+    
+    const isNewWindow = !windowEl;
+    
+    if (isNewWindow) {
+      // Create new window
+      windowEl = document.createElement('div');
       windowEl.className = 'recruitment-npc-window';
       windowEl.setAttribute('data-window-id', window.id);
-      windowEl.innerHTML = `
-        <div class="recruitment-npc-name">${window.name}</div>
-        <div class="recruitment-npc-text">${window.text}</div>
-      `;
+      windowEl.setAttribute('data-conversation-id', window.conversationId || "");
       
       // Add with animation
       windowEl.classList.add('recruitment-npc-window--appearing');
       container.appendChild(windowEl);
-      
-      // Trigger animation
+    }
+    
+    // Update window content
+    windowEl.innerHTML = `
+      <div class="recruitment-npc-name">${window.name}</div>
+      <div class="recruitment-npc-text">${window.text}</div>
+      ${hasConversation ? conversation!.map((msg) => `
+        <div class="recruitment-npc-conversation-message ${msg.name === "AERISS" ? "recruitment-npc-conversation-message--aeriss" : ""}">
+          <div class="recruitment-npc-conversation-name">${msg.name}</div>
+          <div class="recruitment-npc-conversation-text">${msg.text}</div>
+        </div>
+      `).join("") : ""}
+    `;
+    
+    // Handle visibility for new windows
+    if (isNewWindow) {
+      // Trigger animation after content is set
       requestAnimationFrame(() => {
         windowEl.classList.remove('recruitment-npc-window--appearing');
         windowEl.classList.add('recruitment-npc-window--visible');
       });
+    } else {
+      // For existing windows, ensure they're visible (not stuck in appearing state)
+      if (windowEl.classList.contains('recruitment-npc-window--appearing')) {
+        windowEl.classList.remove('recruitment-npc-window--appearing');
+      }
+      if (!windowEl.classList.contains('recruitment-npc-window--visible')) {
+        windowEl.classList.add('recruitment-npc-window--visible');
+      }
+    }
+    
+    if (hasConversation) {
+      windowEl.classList.add('recruitment-npc-window--has-conversation');
+    } else {
+      windowEl.classList.remove('recruitment-npc-window--has-conversation');
     }
   });
+  
+  // Re-attach click handlers after DOM update
+  attachNpcWindowClickHandlers();
+}
+
+function attachNpcWindowClickHandlers(): void {
+  const container = document.getElementById("recruitmentNpcWindowsContainer");
+  if (!container) return;
+  
+  // Remove old handlers and attach new ones
+  container.querySelectorAll('.recruitment-npc-window').forEach(windowEl => {
+    // Remove existing click handler
+    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
+    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
+    
+    // Attach click handler to the main window (not conversation messages)
+    newWindowEl.addEventListener('click', (e) => {
+      // Don't trigger if clicking on a conversation message
+      if ((e.target as HTMLElement).closest('.recruitment-npc-conversation-message')) {
+        return;
+      }
+      
+      const windowId = newWindowEl.getAttribute('data-window-id');
+      const conversationId = newWindowEl.getAttribute('data-conversation-id');
+      
+      if (windowId && conversationId) {
+        handleNpcWindowClick(windowId, conversationId);
+      }
+    });
+  });
+}
+
+function handleNpcWindowClick(windowId: string, conversationId: string): void {
+  const window = activeNpcWindows.find(w => w.id === windowId);
+  if (!window) return;
+  
+  // Get or create conversation
+  let conversation = activeConversations.get(conversationId) || [];
+  
+  // Determine response type based on dialogue content
+  let responseType = "default";
+  const text = window.text.toLowerCase();
+  if (text.includes("recruit") || text.includes("hire") || text.includes("candidate") || text.includes("operator")) {
+    responseType = "recruitment";
+  } else if (text.includes("war") || text.includes("mission") || text.includes("operation") || text.includes("lost")) {
+    responseType = "war";
+  } else if (text.includes("tactic") || text.includes("strategy") || text.includes("survival") || text.includes("fight")) {
+    responseType = "strategy";
+  }
+  
+  // Get random Aeriss response
+  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
+  
+  // Add Aeriss response to conversation
+  conversation.push({
+    name: "AERISS",
+    text: aerissResponse,
+  });
+  
+  // Store conversation
+  activeConversations.set(conversationId, conversation);
+  
+  // Update the window to show conversation
+  window.conversationId = conversationId;
+  
+  // Update DOM
+  updateNpcWindowsDOM();
 }
 
 function stopNpcWindowSystem(): void {
@@ -375,6 +540,7 @@ function stopNpcWindowSystem(): void {
     npcWindowInterval = null;
   }
   activeNpcWindows = [];
+  activeConversations.clear();
 }
 
 /**

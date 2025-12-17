@@ -22,8 +22,38 @@ import { loadCampaignProgress } from "../../core/campaign";
 
 let manifestUpdatedStampVisible = false;
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number }> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
+let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+
+// Aeriss response templates based on dialogue context
+const AERISS_RESPONSES: Record<string, string[]> = {
+  default: [
+    "Interesting. Tell me more.",
+    "I'll keep that in mind.",
+    "Noted.",
+    "Understood.",
+    "I see.",
+  ],
+  trade: [
+    "Good to know.",
+    "I'll consider that trade.",
+    "Resources are tight, but I'll manage.",
+    "The manifest is always changing.",
+  ],
+  supply: [
+    "We need all the supplies we can get.",
+    "Every resource counts.",
+    "I'll check the manifest.",
+    "Supply lines are critical.",
+  ],
+  danger: [
+    "The war doesn't stop for anyone.",
+    "We'll be ready.",
+    "Danger is part of the job.",
+    "I've seen worse.",
+  ],
+};
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -160,6 +190,11 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
   
   // Start the NPC window system
   startNpcWindowSystem();
+  
+  // Attach click handlers after a short delay to ensure DOM is ready
+  setTimeout(() => {
+    attachNpcWindowClickHandlers();
+  }, 100);
 }
 
 // ----------------------------------------------------------------------------
@@ -297,12 +332,24 @@ function renderNpcFlavorText(): string {
     <div class="port-npc-panel-content">
       <h2 class="port-npc-panel-title">PORT ACTIVITY</h2>
       <div class="port-npc-windows-container" id="portNpcWindowsContainer">
-        ${activeNpcWindows.map(window => `
-          <div class="port-npc-window port-npc-window--visible" data-window-id="${window.id}">
-            <div class="port-npc-name">${window.name}</div>
-            <div class="port-npc-text">${window.text}</div>
-          </div>
-        `).join('')}
+        ${activeNpcWindows.map(window => {
+          const conversation = activeConversations.get(window.conversationId || "");
+          const hasConversation = conversation && conversation.length > 0;
+          return `
+            <div class="port-npc-window port-npc-window--visible ${hasConversation ? "port-npc-window--has-conversation" : ""}" 
+                 data-window-id="${window.id}" 
+                 data-conversation-id="${window.conversationId || ""}">
+              <div class="port-npc-name">${window.name}</div>
+              <div class="port-npc-text">${window.text}</div>
+              ${hasConversation ? conversation!.map((msg) => `
+                <div class="port-npc-conversation-message ${msg.name === "AERISS" ? "port-npc-conversation-message--aeriss" : ""}">
+                  <div class="port-npc-conversation-name">${msg.name}</div>
+                  <div class="port-npc-conversation-text">${msg.text}</div>
+                </div>
+              `).join("") : ""}
+            </div>
+          `;
+        }).join('')}
       </div>
     </div>
   `;
@@ -314,18 +361,22 @@ function startNpcWindowSystem(): void {
     clearInterval(npcWindowInterval);
   }
   
-  // Clear existing windows
-  activeNpcWindows = [];
-  npcWindowIdCounter = 0;
-  
-  // Add initial windows (2-3 to start)
-  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
-  for (let i = 0; i < initialCount; i++) {
-    addNpcWindow();
+  // Don't clear windows here - they're already populated before render
+  // Just ensure we have windows
+  if (activeNpcWindows.length === 0) {
+    const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+    for (let i = 0; i < initialCount; i++) {
+      addNpcWindow();
+    }
   }
   
-  // Update the DOM
+  // Update the DOM immediately
   updateNpcWindowsDOM();
+  
+  // Also update after a short delay to ensure DOM is ready
+  setTimeout(() => {
+    updateNpcWindowsDOM();
+  }, 100);
   
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
@@ -341,13 +392,23 @@ function startNpcWindowSystem(): void {
       const maxAge = 8000 + Math.random() * 4000;
       activeNpcWindows = activeNpcWindows.filter(window => {
         const age = now - window.timestamp;
-        return age < maxAge;
+        if (age >= maxAge) {
+          // Clean up conversation when window is removed
+          if (window.conversationId) {
+            activeConversations.delete(window.conversationId);
+          }
+          return false;
+        }
+        return true;
       });
     }
     
     // If we have too many windows, remove the oldest
     if (activeNpcWindows.length > 4) {
-      activeNpcWindows.shift();
+      const removed = activeNpcWindows.shift();
+      if (removed?.conversationId) {
+        activeConversations.delete(removed.conversationId);
+      }
     }
     
     updateNpcWindowsDOM();
@@ -357,18 +418,24 @@ function startNpcWindowSystem(): void {
 function addNpcWindow(): void {
   const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
   const windowId = `npc-window-${npcWindowIdCounter++}`;
+  const conversationId = `conv-${windowId}`;
   
   activeNpcWindows.push({
     id: windowId,
     name: dialogue.name,
     text: dialogue.text,
     timestamp: Date.now(),
+    conversationId,
   });
 }
 
 function updateNpcWindowsDOM(): void {
   const container = document.getElementById("portNpcWindowsContainer");
-  if (!container) return;
+  if (!container) {
+    // Container doesn't exist yet, try again after a short delay
+    setTimeout(() => updateNpcWindowsDOM(), 50);
+    return;
+  }
   
   // Get current window IDs in DOM
   const currentWindowIds = Array.from(container.querySelectorAll('.port-npc-window')).map(
@@ -380,7 +447,7 @@ function updateNpcWindowsDOM(): void {
   
   // Remove windows that are no longer active
   currentWindowIds.forEach(windowId => {
-    if (!activeWindowIds.includes(windowId)) {
+    if (windowId && !activeWindowIds.includes(windowId)) {
       const windowEl = container.querySelector(`[data-window-id="${windowId}"]`);
       if (windowEl) {
         windowEl.classList.add('port-npc-window--removing');
@@ -391,28 +458,129 @@ function updateNpcWindowsDOM(): void {
     }
   });
   
-  // Add new windows
+  // Add new windows and update existing ones
   activeNpcWindows.forEach(window => {
-    if (!currentWindowIds.includes(window.id)) {
-      const windowEl = document.createElement('div');
+    let windowEl = container.querySelector(`[data-window-id="${window.id}"]`) as HTMLElement;
+    const conversation = activeConversations.get(window.conversationId || "");
+    const hasConversation = conversation && conversation.length > 0;
+    
+    const isNewWindow = !windowEl;
+    
+    if (isNewWindow) {
+      // Create new window
+      windowEl = document.createElement('div');
       windowEl.className = 'port-npc-window';
       windowEl.setAttribute('data-window-id', window.id);
-      windowEl.innerHTML = `
-        <div class="port-npc-name">${window.name}</div>
-        <div class="port-npc-text">${window.text}</div>
-      `;
+      windowEl.setAttribute('data-conversation-id', window.conversationId || "");
       
       // Add with animation
       windowEl.classList.add('port-npc-window--appearing');
       container.appendChild(windowEl);
-      
-      // Trigger animation
+    }
+    
+    // Update window content
+    windowEl.innerHTML = `
+      <div class="port-npc-name">${window.name}</div>
+      <div class="port-npc-text">${window.text}</div>
+      ${hasConversation ? conversation!.map((msg) => `
+        <div class="port-npc-conversation-message ${msg.name === "AERISS" ? "port-npc-conversation-message--aeriss" : ""}">
+          <div class="port-npc-conversation-name">${msg.name}</div>
+          <div class="port-npc-conversation-text">${msg.text}</div>
+        </div>
+      `).join("") : ""}
+    `;
+    
+    // Handle visibility for new windows
+    if (isNewWindow) {
+      // Trigger animation after content is set
       requestAnimationFrame(() => {
         windowEl.classList.remove('port-npc-window--appearing');
         windowEl.classList.add('port-npc-window--visible');
       });
+    } else {
+      // For existing windows, ensure they're visible (not stuck in appearing state)
+      if (windowEl.classList.contains('port-npc-window--appearing')) {
+        windowEl.classList.remove('port-npc-window--appearing');
+      }
+      if (!windowEl.classList.contains('port-npc-window--visible')) {
+        windowEl.classList.add('port-npc-window--visible');
+      }
+    }
+    
+    if (hasConversation) {
+      windowEl.classList.add('port-npc-window--has-conversation');
+    } else {
+      windowEl.classList.remove('port-npc-window--has-conversation');
     }
   });
+  
+  // Re-attach click handlers after DOM update
+  attachNpcWindowClickHandlers();
+}
+
+function attachNpcWindowClickHandlers(): void {
+  const container = document.getElementById("portNpcWindowsContainer");
+  if (!container) return;
+  
+  // Remove old handlers and attach new ones
+  container.querySelectorAll('.port-npc-window').forEach(windowEl => {
+    // Remove existing click handler
+    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
+    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
+    
+    // Attach click handler to the main window (not conversation messages)
+    newWindowEl.addEventListener('click', (e) => {
+      // Don't trigger if clicking on a conversation message
+      if ((e.target as HTMLElement).closest('.port-npc-conversation-message')) {
+        return;
+      }
+      
+      const windowId = newWindowEl.getAttribute('data-window-id');
+      const conversationId = newWindowEl.getAttribute('data-conversation-id');
+      
+      if (windowId && conversationId && conversationId !== "null") {
+        handleNpcWindowClick(windowId, conversationId);
+      }
+    });
+  });
+}
+
+function handleNpcWindowClick(windowId: string, conversationId: string): void {
+  const window = activeNpcWindows.find(w => w.id === windowId);
+  if (!window) return;
+  
+  // Get or create conversation
+  let conversation = activeConversations.get(conversationId) || [];
+  
+  // Determine response type based on dialogue content
+  let responseType = "default";
+  const text = window.text.toLowerCase();
+  if (text.includes("trade") || text.includes("manifest") || text.includes("shipment")) {
+    responseType = "trade";
+  } else if (text.includes("supply") || text.includes("resource") || text.includes("scrap")) {
+    responseType = "supply";
+  } else if (text.includes("dangerous") || text.includes("chaos") || text.includes("enemy")) {
+    responseType = "danger";
+  }
+  
+  // Get random Aeriss response
+  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
+  
+  // Add Aeriss response to conversation
+  conversation.push({
+    name: "AERISS",
+    text: aerissResponse,
+  });
+  
+  // Store conversation
+  activeConversations.set(conversationId, conversation);
+  
+  // Update the window to show conversation
+  window.conversationId = conversationId;
+  
+  // Update DOM
+  updateNpcWindowsDOM();
 }
 
 function stopNpcWindowSystem(): void {
@@ -421,6 +589,7 @@ function stopNpcWindowSystem(): void {
     npcWindowInterval = null;
   }
   activeNpcWindows = [];
+  activeConversations.clear();
 }
 
 // ----------------------------------------------------------------------------

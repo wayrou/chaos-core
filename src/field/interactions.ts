@@ -13,6 +13,7 @@ import { renderRecruitmentScreen } from "../ui/screens/RecruitmentScreen";
 import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
 import { renderPortScreen } from "../ui/screens/PortScreen";
 import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
+import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
@@ -75,6 +76,10 @@ export function handleInteraction(
       import("./FieldScreen").then(({ renderFieldScreen }) => {
         renderFieldScreen("quarters");
       });
+      break;
+      
+    case "black_market":
+      renderBlackMarketScreen("field");
       break;
       
     case "base_camp_entry":

@@ -20,6 +20,7 @@ import {
 import { generateNodeMap } from "./nodeMapGenerator";
 import { generateEncounter } from "./encounterGenerator";
 import { OperationRun, Floor, RoomNode } from "./types";
+import { getGameState, updateGameState } from "../state/gameStore";
 
 // ----------------------------------------------------------------------------
 // CAMPAIGN MANAGER
@@ -49,6 +50,10 @@ export function startOperationRun(
     nodeMapByFloor[i] = generateNodeMap(i, floorsTotal, difficulty, rngSeed);
   }
   
+  // Get field mods from game state (purchased from black market)
+  const gameState = getGameState();
+  const purchasedFieldMods = gameState.runFieldModInventory || [];
+  
   // Create active run state
   const activeRun: ActiveRunState = {
     operationId,
@@ -63,6 +68,8 @@ export function startOperationRun(
     battlesLost: 0,
     retries: 0,
     nodesCleared: 1,
+    runFieldModInventory: purchasedFieldMods, // Transfer purchased mods to active run
+    unitHardpoints: {}, // Initialize empty hardpoints
   };
   
   const updated = {
@@ -72,6 +79,12 @@ export function startOperationRun(
   
   saveCampaignProgress(updated);
   console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}`);
+  
+  // Clear field mod inventory from game state (they're now in the active run)
+  updateGameState(s => ({
+    ...s,
+    runFieldModInventory: [],
+  }));
   
   // Consume quarters buff if active
   import("./quartersBuffs").then(({ consumeBuffOnRunStart }) => {
