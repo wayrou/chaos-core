@@ -1113,15 +1113,25 @@ function playCardFromScreen(
   // Build new units Record
   const newUnits = { ...state.units };
   if (targetId === unitId) {
-    newUnits[unitId] = updatedTarget;
+    // Self-target: if unit died, delete it; otherwise update it
+    if (updatedTarget.hp <= 0) {
+      delete newUnits[unitId];
+    } else {
+      newUnits[unitId] = updatedTarget;
+    }
   } else {
     newUnits[unitId] = updatedUnit;
-    newUnits[targetId] = updatedTarget;
+    // If target died, delete it from units Record; otherwise update it
+    if (updatedTarget.hp <= 0) {
+      delete newUnits[targetId];
+    } else {
+      newUnits[targetId] = updatedTarget;
+    }
   }
 
   // Remove dead units from turn order
   let newTurnOrder = [...state.turnOrder];
-  if (updatedTarget.hp <= 0 && targetId !== unitId) {
+  if (updatedTarget.hp <= 0) {
     newTurnOrder = newTurnOrder.filter(id => id !== targetId);
   }
 
@@ -2112,6 +2122,11 @@ function attachBattleListeners() {
     
     // Create new handler
     const battleHandler = (e: MouseEvent) => {
+      // CRITICAL: Block all actions if battle is over
+      if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
+        return;
+      }
+      
       const tile = (e.target as HTMLElement).closest(".battle-tile") as HTMLElement;
       if (!tile) return;
       
@@ -2238,12 +2253,32 @@ function attachBattleListeners() {
         const wasAnimating = activeMovementAnim?.active || false;
         
         startMovementAnimation(activeUnit.id, path, currentState, () => {
+          // CRITICAL: Check if battle ended during animation
+          if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
+            renderBattleScreen();
+            return;
+          }
+          
           // Animation complete - now update state and re-render
           // Get fresh state (might have changed during animation)
           const stateAtCompletion = localBattleState || currentState;
           
+          // CRITICAL: Check again before moving
+          if (stateAtCompletion.phase === "victory" || stateAtCompletion.phase === "defeat") {
+            renderBattleScreen();
+            return;
+          }
+          
           // Move unit to final position
           let newState = moveUnit(stateAtCompletion, activeUnit.id, finalPos);
+          
+          // CRITICAL: Check if battle ended after move (e.g., if move triggered something)
+          newState = evaluateBattleOutcome(newState);
+          if (newState.phase === "victory" || newState.phase === "defeat") {
+            setBattleState(newState);
+            renderBattleScreen();
+            return;
+          }
           
           // Validate the move succeeded
           const movedUnit = newState.units[activeUnit.id];
@@ -2299,20 +2334,20 @@ function attachBattleListeners() {
         return;
       }
       
-      // Handle attack
-      if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
-        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-        
+      // Handle attack - check if there's a unit here first, then check card selection
+      const units = getUnitsArray(localBattleState);
+      const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
+      
+      // If clicking on an enemy and a card is selected, automatically attack
+      if (tgt && selectedCardIndex !== null && isPlayerTurn && activeUnit && localBattleState) {
         // Check if current player can control this unit
         const state = getGameState();
         const activeController = activeUnit.controller || "P1";
         const currentPlayer = state.players[activeController as PlayerId];
         if (!currentPlayer?.active) return; // Player not active, can't control
         
-        const units = getUnitsArray(localBattleState);
         const cardIdOrObj = activeUnit.hand[selectedCardIndex];
         const card = resolveCard(cardIdOrObj);
-        const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
         const ux = activeUnit.pos?.x ?? 0;
         const uy = activeUnit.pos?.y ?? 0;
         const dist = getDistance(ux, uy, x, y);
@@ -2356,6 +2391,80 @@ function attachBattleListeners() {
           selectedCardIndex = null;
           newState = evaluateBattleOutcome(newState);
           setBattleState(newState);
+          
+          // CRITICAL: If battle ended, render immediately and block further actions
+          if (newState.phase === "victory" || newState.phase === "defeat") {
+            renderBattleScreen();
+            return; // Exit early to prevent other handlers
+          }
+          
+          renderBattleScreen();
+          return; // Exit early to prevent other handlers
+        }
+      }
+      
+      // Handle attack via attack-option tile (legacy/fallback)
+      if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
+        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
+        
+        // Check if current player can control this unit
+        const state = getGameState();
+        const activeController = activeUnit.controller || "P1";
+        const currentPlayer = state.players[activeController as PlayerId];
+        if (!currentPlayer?.active) return; // Player not active, can't control
+        
+        const cardIdOrObj = activeUnit.hand[selectedCardIndex];
+        const card = resolveCard(cardIdOrObj);
+        const ux = activeUnit.pos?.x ?? 0;
+        const uy = activeUnit.pos?.y ?? 0;
+        const dist = getDistance(ux, uy, x, y);
+        
+        let shouldPlay = false;
+        let targetUnitId = "";
+        
+        if (card.target === "enemy" && tgt?.isEnemy && dist <= card.range) {
+          shouldPlay = true;
+          targetUnitId = tgt.id;
+        } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= card.range || card.range === 0)) {
+          shouldPlay = true;
+          targetUnitId = tgt.id;
+        } else if (card.target === "self" && x === ux && y === uy) {
+          shouldPlay = true;
+          targetUnitId = activeUnit.id;
+        }
+        
+        if (shouldPlay) {
+          const targetUnit = units.find(u => u.id === targetUnitId);
+          let newFacing = activeUnit.facing ?? "east";
+          
+          if (targetUnit && targetUnit.pos && activeUnit.pos && targetUnitId !== activeUnit.id) {
+            const dx = targetUnit.pos.x - activeUnit.pos.x;
+            const dy = targetUnit.pos.y - activeUnit.pos.y;
+            if (Math.abs(dx) >= Math.abs(dy)) {
+              newFacing = dx > 0 ? "east" : "west";
+            } else {
+              newFacing = dy > 0 ? "south" : "north";
+            }
+          }
+          
+          let stateWithFacing = localBattleState;
+          if (newFacing !== activeUnit.facing) {
+            const newUnits = { ...localBattleState.units };
+            newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+            stateWithFacing = { ...localBattleState, units: newUnits };
+          }
+          
+          let newState = playCardFromScreen(stateWithFacing, activeUnit.id, selectedCardIndex, targetUnitId);
+          selectedCardIndex = null;
+          newState = evaluateBattleOutcome(newState);
+          setBattleState(newState);
+          
+          // CRITICAL: If battle ended, render immediately and block further actions
+          if (newState.phase === "victory" || newState.phase === "defeat") {
+            renderBattleScreen();
+            return;
+          }
+          
           renderBattleScreen();
         }
       }
@@ -2371,6 +2480,11 @@ function attachBattleListeners() {
   const undoBtn = document.getElementById("undoMoveBtn");
   if (undoBtn) {
     undoBtn.onclick = () => {
+      // CRITICAL: Block undo if battle is over
+      if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
+        return;
+      }
+      
       if (turnState.hasCommittedMove && turnState.originalPosition && activeUnit && localBattleState) {
         const newUnits = { ...localBattleState.units };
         newUnits[activeUnit.id] = {
@@ -2423,6 +2537,11 @@ function attachBattleListeners() {
   const endTurnBtn = document.getElementById("endTurnBtn");
   if (endTurnBtn) {
     endTurnBtn.onclick = () => {
+      // CRITICAL: Block end turn if battle is over
+      if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
+        return;
+      }
+      
       // Check if current player can control this unit
       if (activeUnit) {
         const state = getGameState();
@@ -2525,7 +2644,10 @@ function attachBattleListeners() {
   }
 
   // Claim rewards button - use both onclick and addEventListener for maximum reliability
-  const claimBtn = document.getElementById("claimRewardsBtn");
+  // Only look for button if battle phase is victory or defeat
+  const claimBtn = (battle.phase === "victory" || battle.phase === "defeat") 
+    ? document.getElementById("claimRewardsBtn") 
+    : null;
   if (claimBtn) {
     console.log("[BATTLE] Found claim rewards button, attaching handlers");
     
@@ -2552,9 +2674,33 @@ function attachBattleListeners() {
       console.log("[BATTLE] Claiming rewards:", r);
       
       try {
+        // Handle recipe reward if present
+        let recipeToGrant: string | null = null;
+        if (r.recipe === "pending") {
+          // Generate a random unknown recipe
+          import("../../core/crafting").then(({ RECIPE_DATABASE, learnRecipe }) => {
+            const state = getGameState();
+            const allRecipes = Object.values(RECIPE_DATABASE);
+            const knownRecipeIds = state.knownRecipeIds || [];
+            const unknownRecipes = allRecipes.filter(r => !r.starterRecipe && !knownRecipeIds.includes(r.id));
+            if (unknownRecipes.length > 0) {
+              const randomRecipe = unknownRecipes[Math.floor(Math.random() * unknownRecipes.length)];
+              updateGameState(s => ({
+                ...s,
+                knownRecipeIds: learnRecipe(s.knownRecipeIds || [], randomRecipe.id),
+              }));
+              console.log(`[BATTLE] Learned recipe: ${randomRecipe.name}`);
+            }
+          }).catch(err => {
+            console.warn("[BATTLE] Could not grant recipe reward:", err);
+          });
+        } else if (r.recipe) {
+          recipeToGrant = r.recipe;
+        }
+
         updateGameState(s => {
           // MUST create a new object and RETURN it!
-          return {
+          const updatedState = {
             ...s,
             wad: (s.wad ?? 0) + (r.wad ?? 0),
             resources: {
@@ -2567,6 +2713,8 @@ function attachBattleListeners() {
               ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
               : s.cardLibrary,
           };
+
+          return updatedState;
         });
 
         // Update quest progress for battle completion
@@ -2661,8 +2809,9 @@ function attachBattleListeners() {
     claimBtn.style.pointerEvents = "auto";
     claimBtn.style.cursor = "pointer";
     claimBtn.style.zIndex = "1001";
-  } else {
-    console.warn("[BATTLE] Claim rewards button not found in DOM");
+  } else if (battle.phase === "victory" || battle.phase === "defeat") {
+    // Only warn if we're in victory/defeat phase but button is missing (actual bug)
+    console.warn("[BATTLE] Claim rewards button not found in DOM despite battle phase:", battle.phase);
   }
 
   // Defeat handlers - retry or abandon

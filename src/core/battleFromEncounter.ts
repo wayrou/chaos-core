@@ -41,12 +41,45 @@ export function createBattleFromEncounter(
   
   // Create enemy units from encounter
   let enemyInstanceCounter = 0;
+  
+  // Calculate middle Y position to center enemies around
+  const middleY = Math.floor(encounter.gridHeight / 2);
+  const rightEdgeX = encounter.gridWidth - 1;
+  
+  // Calculate total number of enemies
+  let totalEnemyCount = 0;
+  encounter.enemyUnits.forEach(({ count }) => {
+    totalEnemyCount += count;
+  });
+  
+  // Generate enemy positions centered around the middle line on right edge
   const enemyPositions: Array<{ x: number; y: number }> = [];
   
-  // Generate enemy positions on right edge (x = gridWidth - 1)
-  const rightEdgeX = encounter.gridWidth - 1;
-  for (let y = 0; y < encounter.gridHeight; y++) {
-    enemyPositions.push({ x: rightEdgeX, y });
+  if (totalEnemyCount > 0) {
+    for (let i = 0; i < totalEnemyCount; i++) {
+      // Calculate Y position: start from middle, spread outward
+      let yPos: number;
+      const offsetFromMiddle = Math.floor(i / 2);
+      const isOddIndex = i % 2 === 1;
+      
+      if (totalEnemyCount % 2 === 1) {
+        // Odd number of enemies: center one on middle, others spread around
+        if (i === 0) {
+          yPos = middleY;
+        } else {
+          const direction = isOddIndex ? -1 : 1;
+          yPos = middleY + direction * Math.ceil(offsetFromMiddle);
+        }
+      } else {
+        // Even number: place around middle line
+        const direction = isOddIndex ? -1 : 1;
+        yPos = middleY + direction * (offsetFromMiddle - (isOddIndex ? 0 : 1));
+      }
+      
+      // Clamp to valid grid bounds
+      yPos = Math.max(0, Math.min(encounter.gridHeight - 1, yPos));
+      enemyPositions.push({ x: rightEdgeX, y: yPos });
+    }
   }
   
   let positionIndex = 0;
@@ -66,8 +99,8 @@ export function createBattleFromEncounter(
       const hpMod = levelMod * 2 + (elite ? 5 : 0);
       const statMod = levelMod + (elite ? 1 : 0);
       
-      // Get position (distribute along right edge)
-      const pos = enemyPositions[positionIndex % enemyPositions.length];
+      // Get position (centered around middle line)
+      const pos = enemyPositions[positionIndex];
       positionIndex++;
       
       // Create base unit from enemy definition

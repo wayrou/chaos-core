@@ -70,6 +70,25 @@ export function grantQuestRewards(quest: Quest): void {
     console.log(`[QUEST] Would grant equipment: ${rewards.equipment.join(", ")}`);
   }
 
+  // Grant recipes
+  if (rewards.recipes && rewards.recipes.length > 0) {
+    import("../core/crafting").then(({ learnRecipe }) => {
+      updateGameState(s => {
+        let updatedRecipeIds = s.knownRecipeIds || [];
+        for (const recipeId of rewards.recipes!) {
+          updatedRecipeIds = learnRecipe(updatedRecipeIds, recipeId);
+        }
+        return {
+          ...s,
+          knownRecipeIds: updatedRecipeIds,
+        };
+      });
+      console.log(`[QUEST] Learned recipes: ${rewards.recipes.join(", ")}`);
+    }).catch((err: any) => {
+      console.warn("[QUEST] Could not grant recipe rewards:", err);
+    });
+  }
+
   // Grant unit recruitment
   if (rewards.unitRecruit) {
     // TODO: Integrate with unit recruitment system

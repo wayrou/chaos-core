@@ -5,8 +5,9 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBaseCampScreen } from "./BaseCampScreen";
-import { renderUnitDetailScreen } from "./Unitdetailscreen";
+import { renderUnitDetailScreen } from "./UnitDetailScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { GameState } from "../../core/types";
 
 import {
   GearSlotData,
@@ -19,13 +20,24 @@ import {
   filterLibraryCards,
   slotCard,
   unslotCard,
-  getGearCards,
   compileDeck,
   getDeckPreview,
   getStarterCardLibrary,
   CardRarity,
   CardCategory,
 } from "../../core/gearWorkbench";
+import { 
+  getChassisById, 
+  getChassisBySlotType,
+  ChassisSlotType,
+  GearChassis 
+} from "../../data/gearChassis";
+import { 
+  ALL_DOCTRINES, 
+  getDoctrineById,
+  GearDoctrine 
+} from "../../data/gearDoctrines";
+import { buildGear, getBuildCost, canAffordBuild } from "../../core/gearBuilder";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -33,7 +45,10 @@ import {
 
 type ReturnDestination = "basecamp" | "unitdetail" | "field";
 
+type WorkbenchTab = "build" | "customize";
+
 interface WorkbenchState {
+  activeTab: WorkbenchTab;
   selectedEquipmentId: string | null;
   selectedUnitId: string | null;
   draggedCardId: string | null;
@@ -43,9 +58,15 @@ interface WorkbenchState {
   isCompiling: boolean;
   compileMessages: string[];
   returnDestination: ReturnDestination;
+  
+  // Build Gear tab state
+  buildSlotType: "weapon" | "helmet" | "chestpiece" | "accessory" | null;
+  buildChassisId: string | null;
+  buildDoctrineId: string | null;
 }
 
 let workbenchState: WorkbenchState = {
+  activeTab: "build",
   selectedEquipmentId: null,
   selectedUnitId: null,
   draggedCardId: null,
@@ -55,6 +76,9 @@ let workbenchState: WorkbenchState = {
   isCompiling: false,
   compileMessages: [],
   returnDestination: "basecamp",
+  buildSlotType: null,
+  buildChassisId: null,
+  buildDoctrineId: null,
 };
 
 // ----------------------------------------------------------------------------
@@ -81,8 +105,10 @@ export function renderGearWorkbenchScreen(
   
   // Get gear slots for selected equipment
   const gearSlots: Record<string, GearSlotData> = (state as any).gearSlots ?? {};
+  const equipmentById = (state as any).equipmentById ?? {};
+  const selectedEquipment = workbenchState.selectedEquipmentId ? equipmentById[workbenchState.selectedEquipmentId] : null;
   let selectedGear = workbenchState.selectedEquipmentId
-    ? gearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId)
+    ? gearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId, selectedEquipment)
     : null;
 
   // Ensure we have the latest gear data from state
@@ -107,12 +133,14 @@ export function renderGearWorkbenchScreen(
   
   // Get unit's equipped gear for deck preview and gear selector
   const unitEquipment = getUnitEquippedGear(state, workbenchState.selectedUnitId);
-  const unitGearSlots = unitEquipment.map(eqId => gearSlots[eqId] ?? getDefaultGearSlots(eqId));
+  const unitGearSlots = unitEquipment.map(eqId => {
+    const eq = equipmentById[eqId];
+    return gearSlots[eqId] ?? getDefaultGearSlots(eqId, eq);
+  });
   const compiledDeck = compileDeck(unitGearSlots);
   const deckPreview = getDeckPreview(compiledDeck);
 
-  // Get equipment data for names
-  const equipmentById = (state as any).equipmentById ?? {};
+  // equipmentById already retrieved above
 
   const backBtnText = workbenchState.returnDestination === "unitdetail" 
     ? "← UNIT ROSTER" 
@@ -129,102 +157,338 @@ export function renderGearWorkbenchScreen(
       <div class="workbench-header">
         <div class="workbench-header-left">
           <h1 class="workbench-title">GEAR WORKBENCH</h1>
-          <div class="workbench-subtitle">SLK://CARD_SLOT_INTERFACE • DECK COMPILER v2.3</div>
+          <div class="workbench-subtitle">SLK://GEAR_FABRICATION_INTERFACE • DECK COMPILER v2.3</div>
         </div>
         <div class="workbench-header-right">
           <button class="workbench-back-btn" id="backBtn">${backBtnText}</button>
         </div>
       </div>
       
+      <!-- Tabs -->
+      <div class="workbench-tabs">
+        <button class="workbench-tab ${workbenchState.activeTab === 'build' ? 'workbench-tab--active' : ''}" 
+                data-tab="build" 
+                id="buildTabBtn">
+          BUILD GEAR
+        </button>
+        <button class="workbench-tab ${workbenchState.activeTab === 'customize' ? 'workbench-tab--active' : ''}" 
+                data-tab="customize" 
+                id="customizeTabBtn">
+          CUSTOMIZE GEAR
+        </button>
+      </div>
+      
       <!-- Main Content -->
       <div class="workbench-main">
-        <!-- Left Panel: Selected Gear -->
-        <div class="workbench-gear-panel">
+        ${workbenchState.activeTab === "build" 
+          ? renderBuildGearTab(state)
+          : renderCustomizeGearTab(state, unitEquipment, equipmentById, selectedGear, filteredCards, cardLibrary, gearSlots, compiledDeck, deckPreview)
+        }
+      </div>
           <div class="panel-section-title">SELECTED GEAR</div>
           
           <!-- Gear Selector -->
           ${renderGearSelector(unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
           
-          ${selectedGear ? renderGearEditor(selectedGear, workbenchState.selectedEquipmentId!) : renderNoGearSelected()}
-          
-          <!-- Deck Preview -->
-          <div class="deck-preview">
-            <div class="panel-section-title">COMPILED DECK PREVIEW</div>
-            <div class="deck-preview-stats">
-              <span class="deck-stat">Total Cards: ${compiledDeck.totalCards}</span>
-            </div>
-            <div class="deck-preview-list">
-              ${deckPreview.length > 0 
-                ? deckPreview.map(line => `<div class="deck-preview-item">${line}</div>`).join('')
-                : '<div class="deck-preview-empty">No cards in deck</div>'
-              }
-            </div>
-          </div>
-          
-          <!-- Compile Button -->
-          <div class="workbench-actions">
-            <button class="compile-btn" id="compileBtn" ${!selectedGear ? 'disabled' : ''}>
-              ⚙ COMPILE GEAR
-            </button>
-          </div>
-        </div>
-        
-        <!-- Right Panel: Card Library -->
-        <div class="workbench-library-panel">
-          <div class="panel-section-title">CARD LIBRARY</div>
-          
-          <!-- Filters -->
-          <div class="library-filters">
-            <input type="text" 
-                   class="library-search" 
-                   id="cardSearch"
-                   placeholder="Search cards..." 
-                   value="${workbenchState.searchFilter}">
-            
-            <div class="filter-row">
-              <select class="filter-select" id="rarityFilter">
-                <option value="">All Rarities</option>
-                <option value="common" ${workbenchState.rarityFilter === 'common' ? 'selected' : ''}>Common</option>
-                <option value="uncommon" ${workbenchState.rarityFilter === 'uncommon' ? 'selected' : ''}>Uncommon</option>
-                <option value="rare" ${workbenchState.rarityFilter === 'rare' ? 'selected' : ''}>Rare</option>
-                <option value="epic" ${workbenchState.rarityFilter === 'epic' ? 'selected' : ''}>Epic</option>
-              </select>
-              
-              <select class="filter-select" id="categoryFilter">
-                <option value="">All Types</option>
-                <option value="attack" ${workbenchState.categoryFilter === 'attack' ? 'selected' : ''}>Attack</option>
-                <option value="defense" ${workbenchState.categoryFilter === 'defense' ? 'selected' : ''}>Defense</option>
-                <option value="mobility" ${workbenchState.categoryFilter === 'mobility' ? 'selected' : ''}>Mobility</option>
-                <option value="buff" ${workbenchState.categoryFilter === 'buff' ? 'selected' : ''}>Buff</option>
-                <option value="debuff" ${workbenchState.categoryFilter === 'debuff' ? 'selected' : ''}>Debuff</option>
-                <option value="steam" ${workbenchState.categoryFilter === 'steam' ? 'selected' : ''}>Steam</option>
-                <option value="chaos" ${workbenchState.categoryFilter === 'chaos' ? 'selected' : ''}>Chaos</option>
-              </select>
-            </div>
-          </div>
-          
-          <!-- Card List -->
-          <div class="library-card-list" id="cardLibraryList">
-            ${filteredCards.length > 0 
-              ? filteredCards.map(card => renderLibraryCard(card, cardLibrary[card.id] ?? 0)).join('')
-              : '<div class="library-empty">No cards match your filters</div>'
-            }
-          </div>
-        </div>
-      </div>
       
       <!-- Console -->
       <div class="workbench-console">
         <div class="console-header">SCROLLINK OS // WORKBENCH_LOG</div>
         <div class="console-body" id="workbenchLog">
-          <div class="console-line">SLK//WORKBENCH :: Card slotting interface online.</div>
-          <div class="console-line">SLK//READY :: Drag cards from library to gear slots.</div>
+          ${workbenchState.activeTab === "build"
+            ? '<div class="console-line">SLK//BUILDER :: Gear fabrication interface online.</div>'
+            : '<div class="console-line">SLK//WORKBENCH :: Card slotting interface online.</div><div class="console-line">SLK//READY :: Drag cards from library to gear slots.</div>'
+          }
         </div>
       </div>
     </div>
   `;
 
-  attachWorkbenchListeners(state, cardLibrary, gearSlots, selectedGear);
+  if (workbenchState.activeTab === "build") {
+    attachBuildGearListeners(state);
+  } else {
+    attachWorkbenchListeners(state, cardLibrary, gearSlots, selectedGear);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// BUILD GEAR TAB
+// ----------------------------------------------------------------------------
+
+function renderBuildGearTab(state: GameState): string {
+  const unlockedChassisIds = state.unlockedChassisIds || [];
+  const unlockedDoctrineIds = state.unlockedDoctrineIds || [];
+  
+  // Get available chassis for selected slot type
+  const availableChassis = workbenchState.buildSlotType
+    ? getChassisBySlotType(workbenchState.buildSlotType).filter(c => unlockedChassisIds.includes(c.id))
+    : [];
+  
+  // Get available doctrines
+  const availableDoctrines = ALL_DOCTRINES.filter(d => unlockedDoctrineIds.includes(d.id));
+  
+  // Get selected chassis and doctrine
+  const selectedChassis = workbenchState.buildChassisId ? getChassisById(workbenchState.buildChassisId) : null;
+  const selectedDoctrine = workbenchState.buildDoctrineId ? getDoctrineById(workbenchState.buildDoctrineId) : null;
+  
+  // Calculate build cost and can afford
+  let buildCost = null;
+  let canAfford = false;
+  if (selectedChassis && selectedDoctrine) {
+    buildCost = getBuildCost(selectedChassis.id, selectedDoctrine.id);
+    canAfford = buildCost ? canAffordBuild(selectedChassis.id, selectedDoctrine.id, state) : false;
+  }
+  
+  // Generate item name preview
+  let itemNamePreview = "—";
+  if (selectedChassis && selectedDoctrine) {
+    itemNamePreview = `${selectedDoctrine.name} ${selectedChassis.name}`;
+  }
+  
+  // Calculate final stability
+  let finalStability = 0;
+  if (selectedChassis && selectedDoctrine) {
+    finalStability = Math.max(0, Math.min(100, selectedChassis.baseStability + selectedDoctrine.stabilityModifier));
+  }
+  
+  return `
+    <div class="builder-main">
+      <!-- Left: Slot Type Selection -->
+      <div class="builder-slot-selector">
+        <div class="panel-section-title">SELECT SLOT TYPE</div>
+        <div class="slot-type-options">
+          <button class="slot-type-btn ${workbenchState.buildSlotType === 'weapon' ? 'slot-type-btn--active' : ''}" 
+                  data-slot-type="weapon">
+            ⚔ WEAPON
+          </button>
+          <button class="slot-type-btn ${workbenchState.buildSlotType === 'helmet' ? 'slot-type-btn--active' : ''}" 
+                  data-slot-type="helmet">
+            🪖 HELMET
+          </button>
+          <button class="slot-type-btn ${workbenchState.buildSlotType === 'chestpiece' ? 'slot-type-btn--active' : ''}" 
+                  data-slot-type="chestpiece">
+            🛡 CHESTPIECE
+          </button>
+          <button class="slot-type-btn ${workbenchState.buildSlotType === 'accessory' ? 'slot-type-btn--active' : ''}" 
+                  data-slot-type="accessory">
+            💎 ACCESSORY
+          </button>
+        </div>
+      </div>
+      
+      <!-- Middle: Chassis Selection -->
+      <div class="builder-chassis-panel">
+        <div class="panel-section-title">CHASSIS</div>
+        <div class="chassis-list" id="chassisList">
+          ${availableChassis.length > 0
+            ? availableChassis.map(chassis => renderChassisCard(chassis, workbenchState.buildChassisId === chassis.id)).join('')
+            : '<div class="builder-empty">Select slot type to view available chassis</div>'
+          }
+        </div>
+      </div>
+      
+      <!-- Right: Doctrine Selection -->
+      <div class="builder-doctrine-panel">
+        <div class="panel-section-title">DOCTRINE</div>
+        <div class="doctrine-list" id="doctrineList">
+          ${availableDoctrines.map(doctrine => renderDoctrineCard(doctrine, workbenchState.buildDoctrineId === doctrine.id)).join('')}
+        </div>
+      </div>
+      
+      <!-- Bottom: Summary and Build -->
+      <div class="builder-summary-panel">
+        <div class="panel-section-title">BUILD SUMMARY</div>
+        <div class="summary-content">
+          <div class="summary-row">
+            <span class="summary-label">Item Name:</span>
+            <span class="summary-value">${itemNamePreview}</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Slot Type:</span>
+            <span class="summary-value">${workbenchState.buildSlotType ? workbenchState.buildSlotType.toUpperCase() : "—"}</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Base Stability:</span>
+            <span class="summary-value">${finalStability}</span>
+          </div>
+          ${selectedChassis ? `
+            <div class="summary-row">
+              <span class="summary-label">Logistics:</span>
+              <span class="summary-value">${selectedChassis.baseMassKg}kg / ${selectedChassis.baseBulkBu}bu / ${selectedChassis.basePowerW}W</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Card Slots:</span>
+              <span class="summary-value">${selectedChassis.maxCardSlots}</span>
+            </div>
+          ` : ''}
+          ${buildCost ? `
+            <div class="summary-cost">
+              <div class="summary-label">BUILD COST:</div>
+              <div class="cost-items">
+                <span class="cost-item ${state.resources.metalScrap >= buildCost.metalScrap ? '' : 'cost-item--insufficient'}">
+                  ⚙ ${buildCost.metalScrap} Metal (${state.resources.metalScrap})
+                </span>
+                <span class="cost-item ${state.resources.wood >= buildCost.wood ? '' : 'cost-item--insufficient'}">
+                  🪵 ${buildCost.wood} Wood (${state.resources.wood})
+                </span>
+                <span class="cost-item ${state.resources.chaosShards >= buildCost.chaosShards ? '' : 'cost-item--insufficient'}">
+                  💎 ${buildCost.chaosShards} Shards (${state.resources.chaosShards})
+                </span>
+                <span class="cost-item ${state.resources.steamComponents >= buildCost.steamComponents ? '' : 'cost-item--insufficient'}">
+                  ⚙ ${buildCost.steamComponents} Steam (${state.resources.steamComponents})
+                </span>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        <div class="builder-actions">
+          <button class="builder-btn builder-btn--cancel" id="cancelBuildBtn">CANCEL</button>
+          <button class="builder-btn builder-btn--build" 
+                  id="buildBtn" 
+                  ${(workbenchState.buildSlotType && selectedChassis && selectedDoctrine && canAfford) ? '' : 'disabled'}>
+            ${canAfford ? 'BUILD' : (selectedChassis && selectedDoctrine ? 'INSUFFICIENT MATERIALS' : 'SELECT OPTIONS')}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderChassisCard(chassis: GearChassis, isSelected: boolean): string {
+  return `
+    <div class="chassis-card ${isSelected ? 'chassis-card--selected' : ''}" 
+         data-chassis-id="${chassis.id}">
+      <div class="chassis-card-header">
+        <div class="chassis-card-name">${chassis.name}</div>
+        ${isSelected ? '<div class="chassis-card-badge">SELECTED</div>' : ''}
+      </div>
+      <div class="chassis-card-stability">
+        <span class="stability-label">Stability:</span>
+        <span class="stability-value">${chassis.baseStability}</span>
+      </div>
+      <div class="chassis-card-logistics">
+        <span>${chassis.baseMassKg}kg / ${chassis.baseBulkBu}bu / ${chassis.basePowerW}W</span>
+      </div>
+      <div class="chassis-card-slots">
+        <span>${chassis.maxCardSlots} Card Slots</span>
+      </div>
+      <div class="chassis-card-description">${chassis.description}</div>
+    </div>
+  `;
+}
+
+function renderDoctrineCard(doctrine: GearDoctrine, isSelected: boolean): string {
+  const stabilityMod = doctrine.stabilityModifier >= 0 ? `+${doctrine.stabilityModifier}` : `${doctrine.stabilityModifier}`;
+  
+  return `
+    <div class="doctrine-card ${isSelected ? 'doctrine-card--selected' : ''}" 
+         data-doctrine-id="${doctrine.id}">
+      <div class="doctrine-card-header">
+        <div class="doctrine-card-name">${doctrine.name}</div>
+        ${isSelected ? '<div class="doctrine-card-badge">SELECTED</div>' : ''}
+      </div>
+      <div class="doctrine-card-intent">
+        <span class="intent-tags">${doctrine.intentTags.map(t => t.toUpperCase()).join(', ')}</span>
+      </div>
+      <div class="doctrine-card-stability">
+        <span class="stability-label">Stability Mod:</span>
+        <span class="stability-value ${doctrine.stabilityModifier >= 0 ? 'stability-value--positive' : 'stability-value--negative'}">
+          ${stabilityMod}
+        </span>
+      </div>
+      <div class="doctrine-card-description">${doctrine.shortDescription}</div>
+      <div class="doctrine-card-rules">${doctrine.doctrineRules || ''}</div>
+    </div>
+  `;
+}
+
+function renderCustomizeGearTab(
+  state: any,
+  unitEquipment: string[],
+  equipmentById: Record<string, any>,
+  selectedGear: GearSlotData | null,
+  filteredCards: LibraryCard[],
+  cardLibrary: CardLibrary,
+  gearSlots: Record<string, GearSlotData>,
+  compiledDeck: CompiledDeck,
+  deckPreview: string[],
+  selectedEquipment?: any
+): string {
+  return `
+    <!-- Left Panel: Selected Gear -->
+    <div class="workbench-gear-panel">
+      <div class="panel-section-title">SELECTED GEAR</div>
+      
+      <!-- Gear Selector -->
+      ${renderGearSelector(unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
+      
+      ${selectedGear ? renderGearEditor(selectedGear, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
+      
+      <!-- Deck Preview -->
+      <div class="deck-preview">
+        <div class="panel-section-title">COMPILED DECK PREVIEW</div>
+        <div class="deck-preview-stats">
+          <span class="deck-stat">Total Cards: ${compiledDeck.totalCards}</span>
+        </div>
+        <div class="deck-preview-list">
+          ${deckPreview.length > 0 
+            ? deckPreview.map(line => `<div class="deck-preview-item">${line}</div>`).join('')
+            : '<div class="deck-preview-empty">No cards in deck</div>'
+          }
+        </div>
+      </div>
+      
+      <!-- Compile Button -->
+      <div class="workbench-actions">
+        <button class="compile-btn" id="compileBtn" ${!selectedGear ? 'disabled' : ''}>
+          ⚙ COMPILE GEAR
+        </button>
+      </div>
+    </div>
+    
+    <!-- Right Panel: Card Library -->
+    <div class="workbench-library-panel">
+      <div class="panel-section-title">CARD LIBRARY</div>
+      
+      <!-- Filters -->
+      <div class="library-filters">
+        <input type="text" 
+               class="library-search" 
+               id="cardSearch"
+               placeholder="Search cards..." 
+               value="${workbenchState.searchFilter}">
+        
+        <div class="filter-row">
+          <select class="filter-select" id="rarityFilter">
+            <option value="">All Rarities</option>
+            <option value="common" ${workbenchState.rarityFilter === 'common' ? 'selected' : ''}>Common</option>
+            <option value="uncommon" ${workbenchState.rarityFilter === 'uncommon' ? 'selected' : ''}>Uncommon</option>
+            <option value="rare" ${workbenchState.rarityFilter === 'rare' ? 'selected' : ''}>Rare</option>
+            <option value="epic" ${workbenchState.rarityFilter === 'epic' ? 'selected' : ''}>Epic</option>
+          </select>
+          
+          <select class="filter-select" id="categoryFilter">
+            <option value="">All Types</option>
+            <option value="attack" ${workbenchState.categoryFilter === 'attack' ? 'selected' : ''}>Attack</option>
+            <option value="defense" ${workbenchState.categoryFilter === 'defense' ? 'selected' : ''}>Defense</option>
+            <option value="mobility" ${workbenchState.categoryFilter === 'mobility' ? 'selected' : ''}>Mobility</option>
+            <option value="buff" ${workbenchState.categoryFilter === 'buff' ? 'selected' : ''}>Buff</option>
+            <option value="debuff" ${workbenchState.categoryFilter === 'debuff' ? 'selected' : ''}>Debuff</option>
+            <option value="steam" ${workbenchState.categoryFilter === 'steam' ? 'selected' : ''}>Steam</option>
+            <option value="chaos" ${workbenchState.categoryFilter === 'chaos' ? 'selected' : ''}>Chaos</option>
+          </select>
+        </div>
+      </div>
+      
+      <!-- Card List -->
+      <div class="library-card-list" id="cardLibraryList">
+        ${filteredCards.length > 0 
+          ? filteredCards.map(card => renderLibraryCard(card, cardLibrary[card.id] ?? 0)).join('')
+          : '<div class="library-empty">No cards match your filters</div>'
+        }
+      </div>
+    </div>
+  `;
 }
 
 // ----------------------------------------------------------------------------
@@ -280,15 +544,21 @@ function getEquipmentIcon(equipmentId: string): string {
   return '💎';
 }
 
-function renderGearEditor(gear: GearSlotData, equipmentId: string): string {
-  const equipmentName = formatEquipmentName(equipmentId);
+function renderGearEditor(gear: GearSlotData, equipmentId: string, equipment?: any): string {
+  const equipmentName = equipment?.name ?? formatEquipmentName(equipmentId);
   const slotsUsed = gear.slottedCards.length;
   const slotsTotal = gear.freeSlots;
+  const stability = equipment?.stability;
   
   return `
     <div class="gear-editor">
       <div class="gear-name">${equipmentName}</div>
       <div class="gear-slot-info">Slots: ${slotsUsed} / ${slotsTotal}</div>
+      ${stability !== undefined ? `
+        <div class="gear-stability-info" title="Lower stability increases jam/strain volatility (future)">
+          Stability: ${stability}/100
+        </div>
+      ` : ''}
       
       <!-- Locked Cards -->
       <div class="gear-section">
@@ -461,21 +731,32 @@ function getUnitEquippedGear(state: any, unitId: string | null): string[] {
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachWorkbenchListeners(
-  state: any,
-  cardLibrary: CardLibrary,
-  gearSlots: Record<string, GearSlotData>,
-  selectedGear: GearSlotData | null
-): void {
+function attachBuildGearListeners(state: any): void {
+  // Tab buttons
+  const buildTabBtn = document.getElementById("buildTabBtn");
+  const customizeTabBtn = document.getElementById("customizeTabBtn");
+  
+  if (buildTabBtn) {
+    buildTabBtn.onclick = () => {
+      workbenchState.activeTab = "build";
+      renderGearWorkbenchScreen();
+    };
+  }
+  
+  if (customizeTabBtn) {
+    customizeTabBtn.onclick = () => {
+      workbenchState.activeTab = "customize";
+      renderGearWorkbenchScreen();
+    };
+  }
+  
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
-      const unitId = workbenchState.selectedUnitId;
       const returnTo = workbenchState.returnDestination;
-      
-      // Reset state
       workbenchState = {
+        activeTab: "build",
         selectedEquipmentId: null,
         selectedUnitId: null,
         draggedCardId: null,
@@ -485,6 +766,187 @@ function attachWorkbenchListeners(
         isCompiling: false,
         compileMessages: [],
         returnDestination: "basecamp",
+        buildSlotType: null,
+        buildChassisId: null,
+        buildDoctrineId: null,
+      };
+      
+      if (returnTo === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderBaseCampScreen();
+      }
+    };
+  }
+  
+  // Slot type selection
+  document.querySelectorAll(".slot-type-btn").forEach(btn => {
+    const el = btn as HTMLElement;
+    el.onclick = () => {
+      const slotType = el.getAttribute("data-slot-type") as ChassisSlotType;
+      workbenchState.buildSlotType = slotType;
+      workbenchState.buildChassisId = null; // Reset chassis selection when slot type changes
+      renderGearWorkbenchScreen();
+    };
+  });
+  
+  // Chassis selection
+  document.querySelectorAll(".chassis-card").forEach(card => {
+    const el = card as HTMLElement;
+    el.onclick = () => {
+      const chassisId = el.getAttribute("data-chassis-id");
+      if (chassisId) {
+        workbenchState.buildChassisId = chassisId;
+        renderGearWorkbenchScreen();
+      }
+    };
+  });
+  
+  // Doctrine selection
+  document.querySelectorAll(".doctrine-card").forEach(card => {
+    const el = card as HTMLElement;
+    el.onclick = () => {
+      const doctrineId = el.getAttribute("data-doctrine-id");
+      if (doctrineId) {
+        workbenchState.buildDoctrineId = doctrineId;
+        renderGearWorkbenchScreen();
+      }
+    };
+  });
+  
+  // Build button
+  const buildBtn = document.getElementById("buildBtn");
+  if (buildBtn) {
+    buildBtn.onclick = () => {
+      if (!workbenchState.buildChassisId || !workbenchState.buildDoctrineId) return;
+      
+      const result = buildGear(workbenchState.buildChassisId, workbenchState.buildDoctrineId, state);
+      
+      if (result.success && result.equipment) {
+        // Deduct materials
+        const cost = getBuildCost(workbenchState.buildChassisId, workbenchState.buildDoctrineId);
+        if (cost) {
+          updateGameState(prev => ({
+            ...prev,
+            resources: {
+              metalScrap: prev.resources.metalScrap - cost.metalScrap,
+              wood: prev.resources.wood - cost.wood,
+              chaosShards: prev.resources.chaosShards - cost.chaosShards,
+              steamComponents: prev.resources.steamComponents - cost.steamComponents,
+            },
+          }));
+        }
+        
+        // Add equipment to inventory
+        const currentState = getGameState();
+        updateGameState(prev => {
+          const equipmentById = (prev as any).equipmentById || {};
+          const equipmentPool = (prev as any).equipmentPool || [];
+          
+          return {
+            ...prev,
+            equipmentById: {
+              ...equipmentById,
+              [result.equipment!.id]: result.equipment,
+            },
+            equipmentPool: [...equipmentPool, result.equipment!.id],
+          } as GameState;
+        });
+        
+        // Initialize gear slots for new equipment
+        const gearSlots = (currentState as any).gearSlots || {};
+        updateGameState(prev => {
+          const newGearSlots = {
+            ...gearSlots,
+            [result.equipment!.id]: {
+              lockedCards: [],
+              freeSlots: getChassisById(workbenchState.buildChassisId!)?.maxCardSlots || 3,
+              slottedCards: [],
+            },
+          };
+          
+          return {
+            ...prev,
+            gearSlots: newGearSlots,
+          } as GameState;
+        });
+        
+        // Show success message
+        addWorkbenchLog(`SLK//FABRICATE :: ${result.equipment.name} fabricated successfully.`);
+        addWorkbenchLog(`SLK//READY :: Gear added to inventory. Switch to Customize tab to slot cards.`);
+        
+        // Reset build state
+        workbenchState.buildSlotType = null;
+        workbenchState.buildChassisId = null;
+        workbenchState.buildDoctrineId = null;
+        
+        // Optionally switch to customize tab and select the new gear
+        // For now, just refresh the build tab
+        renderGearWorkbenchScreen();
+      } else {
+        addWorkbenchLog(`SLK//ERROR :: ${result.error || "Build failed"}`);
+      }
+    };
+  }
+  
+  // Cancel button
+  const cancelBtn = document.getElementById("cancelBuildBtn");
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      workbenchState.buildSlotType = null;
+      workbenchState.buildChassisId = null;
+      workbenchState.buildDoctrineId = null;
+      renderGearWorkbenchScreen();
+    };
+  }
+}
+
+function attachWorkbenchListeners(
+  state: any,
+  cardLibrary: CardLibrary,
+  gearSlots: Record<string, GearSlotData>,
+  selectedGear: GearSlotData | null
+): void {
+  // Tab buttons
+  const buildTabBtn = document.getElementById("buildTabBtn");
+  const customizeTabBtn = document.getElementById("customizeTabBtn");
+  
+  if (buildTabBtn) {
+    buildTabBtn.onclick = () => {
+      workbenchState.activeTab = "build";
+      renderGearWorkbenchScreen();
+    };
+  }
+  
+  if (customizeTabBtn) {
+    customizeTabBtn.onclick = () => {
+      workbenchState.activeTab = "customize";
+      renderGearWorkbenchScreen();
+    };
+  }
+  
+  // Back button
+  const backBtn = document.getElementById("backBtn");
+  if (backBtn) {
+    backBtn.onclick = () => {
+      const unitId = workbenchState.selectedUnitId;
+      const returnTo = workbenchState.returnDestination;
+      
+      // Reset state
+      workbenchState = {
+        activeTab: "customize",
+        selectedEquipmentId: null,
+        selectedUnitId: null,
+        draggedCardId: null,
+        searchFilter: "",
+        rarityFilter: null,
+        categoryFilter: null,
+        isCompiling: false,
+        compileMessages: [],
+        returnDestination: "basecamp",
+        buildSlotType: null,
+        buildChassisId: null,
+        buildDoctrineId: null,
       };
       
       // Navigate back
@@ -646,7 +1108,9 @@ function attachWorkbenchListeners(
         // Get fresh gear state
         const currentState = getGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
-        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+        const currentEquipmentById = (currentState as any).equipmentById ?? {};
+        const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId, currentEquipment);
 
         console.log("[SLOT CLICK] Current gear:", currentGear);
         console.log("[SLOT CLICK] Slotted cards:", currentGear.slottedCards);
@@ -727,7 +1191,9 @@ function attachWorkbenchListeners(
         // Get fresh gear state
         const currentState = getGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
-        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+        const currentEquipmentById = (currentState as any).equipmentById ?? {};
+        const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId, currentEquipment);
 
         console.log("[DROP] Current gear:", currentGear);
 
@@ -776,7 +1242,9 @@ function attachWorkbenchListeners(
         // Get fresh gear state
         const currentState = getGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
-        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId);
+        const currentEquipmentById = (currentState as any).equipmentById ?? {};
+        const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
+        const currentGear = currentGearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId, currentEquipment);
 
         const removedCardId = currentGear.slottedCards[index];
         const newGear = unslotCard(currentGear, index);

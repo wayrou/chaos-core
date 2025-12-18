@@ -142,11 +142,70 @@ const EQUIPMENT_ITEMS: ShopItem[] = [
   }
 ];
 
+const RECIPE_ITEMS: ShopItem[] = [
+  {
+    id: "recipe_emberclaw_repeater",
+    name: "Emberclaw Repeater Blueprint",
+    description: "Learn to craft a mechanical repeater weapon.",
+    price: 150,
+    category: "recipe",
+    rarity: "uncommon"
+  },
+  {
+    id: "recipe_brassback_scattergun",
+    name: "Brassback Scattergun Schematic",
+    description: "Learn to craft a steam-powered shotgun.",
+    price: 180,
+    category: "recipe",
+    rarity: "uncommon"
+  },
+  {
+    id: "recipe_blazefang_saber",
+    name: "Blazefang Saber Pattern",
+    description: "Learn to craft a steam-heated blade.",
+    price: 200,
+    category: "recipe",
+    rarity: "rare"
+  },
+  {
+    id: "recipe_steam_valve_wristguard",
+    name: "Steam Valve Wristguard Blueprint",
+    description: "Learn to craft a heat-venting accessory.",
+    price: 120,
+    category: "recipe",
+    rarity: "common"
+  },
+  {
+    id: "recipe_coolant_flask",
+    name: "Coolant Flask Formula",
+    description: "Learn to craft a heat-removing consumable.",
+    price: 100,
+    category: "recipe",
+    rarity: "uncommon"
+  },
+  {
+    id: "recipe_overcharge_cell",
+    name: "Overcharge Cell Formula",
+    description: "Learn to craft a power-boosting consumable.",
+    price: 110,
+    category: "recipe",
+    rarity: "uncommon"
+  },
+  {
+    id: "recipe_blazefang_saber_plus1",
+    name: "Blazefang Saber +1 Upgrade",
+    description: "Learn to upgrade the Blazefang Saber.",
+    price: 250,
+    category: "recipe",
+    rarity: "rare"
+  }
+];
+
 // ----------------------------------------------------------------------------
 // RENDER
 // ----------------------------------------------------------------------------
 
-let currentTab: "paks" | "equipment" | "consumables" = "paks";
+let currentTab: "paks" | "equipment" | "consumables" | "recipes" = "paks";
 
 export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
@@ -188,6 +247,10 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
         <button class="shop-tab ${currentTab === 'consumables' ? 'shop-tab--active' : ''}" data-tab="consumables">
           <span class="tab-icon">💊</span>
           <span class="tab-text">CONSUMABLES</span>
+        </button>
+        <button class="shop-tab ${currentTab === 'recipes' ? 'shop-tab--active' : ''}" data-tab="recipes">
+          <span class="tab-icon">📜</span>
+          <span class="tab-text">RECIPES</span>
         </button>
       </div>
       
@@ -248,6 +311,13 @@ function renderShopContent(state: any): string {
       sectionTitle = "CONSUMABLES";
       sectionDesc = "Single-use items for battle support.";
       break;
+    case "recipes":
+      // Filter out recipes that are already known
+      const knownRecipeIds = state.knownRecipeIds || [];
+      items = RECIPE_ITEMS.filter(item => !knownRecipeIds.includes(item.id));
+      sectionTitle = "CRAFTING RECIPES";
+      sectionDesc = "Learn new schematics and blueprints for the workshop.";
+      break;
   }
   
   return `
@@ -266,9 +336,11 @@ function renderShopContent(state: any): string {
 function renderShopItem(item: ShopItem, state: any): string {
   const canAfford = state.wad >= item.price;
   const rarityClass = `shop-item--${item.rarity ?? 'common'}`;
+  const isRecipe = item.category === 'recipe';
+  const isKnown = isRecipe && state.knownRecipeIds && state.knownRecipeIds.includes(item.id);
   
   return `
-    <div class="shop-item ${rarityClass} ${!canAfford ? 'shop-item--disabled' : ''}" data-item-id="${item.id}">
+    <div class="shop-item ${rarityClass} ${!canAfford || isKnown ? 'shop-item--disabled' : ''}" data-item-id="${item.id}">
       <div class="shop-item-header">
         <span class="shop-item-name">${item.name}</span>
         <span class="shop-item-rarity">${(item.rarity ?? 'common').toUpperCase()}</span>
@@ -280,17 +352,22 @@ function renderShopItem(item: ShopItem, state: any): string {
             <span class="meta-tag">${PAK_DATABASE[item.id]?.cardCount ?? '?'} cards</span>
           </div>
         ` : ''}
+        ${isKnown ? `
+          <div class="shop-item-meta">
+            <span class="meta-tag" style="color: #35ff95;">ALREADY LEARNED</span>
+          </div>
+        ` : ''}
       </div>
       <div class="shop-item-footer">
         <div class="shop-item-price">
           <span class="price-value">${item.price}</span>
           <span class="price-label">WAD</span>
         </div>
-        <button class="shop-buy-btn ${!canAfford ? 'shop-buy-btn--disabled' : ''}" 
+        <button class="shop-buy-btn ${!canAfford || isKnown ? 'shop-buy-btn--disabled' : ''}" 
                 data-item-id="${item.id}"
                 data-category="${item.category}"
-                ${!canAfford ? 'disabled' : ''}>
-          ${canAfford ? 'PURCHASE' : 'INSUFFICIENT'}
+                ${!canAfford || isKnown ? 'disabled' : ''}>
+          ${isKnown ? 'KNOWN' : canAfford ? 'PURCHASE' : 'INSUFFICIENT'}
         </button>
       </div>
     </div>
@@ -328,7 +405,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
     tab.addEventListener("click", (e) => {
       const tabName = (e.currentTarget as HTMLElement).getAttribute("data-tab");
       if (tabName) {
-        currentTab = tabName as "paks" | "equipment" | "consumables";
+        currentTab = tabName as "paks" | "equipment" | "consumables" | "recipes";
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
         renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
@@ -349,7 +426,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
 }
 
 function purchaseItem(itemId: string, category: ShopItem["category"]): void {
-  const allItems = [...PAK_ITEMS, ...EQUIPMENT_ITEMS, ...CONSUMABLE_ITEMS];
+  const allItems = [...PAK_ITEMS, ...EQUIPMENT_ITEMS, ...CONSUMABLE_ITEMS, ...RECIPE_ITEMS];
   const item = allItems.find(i => i.id === itemId);
   if (!item) return;
   
@@ -365,7 +442,40 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
     purchaseEquipment(itemId, item);
   } else if (category === "consumable") {
     purchaseConsumable(itemId, item);
+  } else if (category === "recipe") {
+    purchaseRecipe(itemId, item);
   }
+}
+
+function purchaseRecipe(itemId: string, item: ShopItem): void {
+  const state = getGameState();
+  
+  // Check if already known
+  if (state.knownRecipeIds && state.knownRecipeIds.includes(itemId)) {
+    showNotification("RECIPE ALREADY KNOWN", "error");
+    return;
+  }
+  
+  // Deduct WAD and learn recipe
+  import("../../core/crafting").then(({ learnRecipe, RECIPE_DATABASE }) => {
+    const recipe = RECIPE_DATABASE[itemId];
+    if (!recipe) {
+      showNotification("INVALID RECIPE", "error");
+      return;
+    }
+    
+    updateGameState(s => ({
+      ...s,
+      wad: s.wad - item.price,
+      knownRecipeIds: learnRecipe(s.knownRecipeIds || [], itemId),
+    }));
+    
+    showNotification(`LEARNED: ${recipe.name}`, "success");
+    renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as "basecamp" | "field" | "operation" || "basecamp");
+  }).catch((err: any) => {
+    console.error("[SHOP] Failed to purchase recipe:", err);
+    showNotification("PURCHASE FAILED", "error");
+  });
 }
 
 function purchasePAK(pakId: string, item: ShopItem): void {

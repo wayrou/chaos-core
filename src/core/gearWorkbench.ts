@@ -392,10 +392,23 @@ export const PAK_DATABASE: Record<string, PAKFile> = {
 // GEAR SLOT DEFAULTS - Default slot configurations for equipment types
 // ----------------------------------------------------------------------------
 
-export function getDefaultGearSlots(equipmentId: string): GearSlotData {
-  // Weapons get more slots, armor gets fewer
-  const isWeapon = equipmentId.startsWith("weapon_");
-  const isAccessory = equipmentId.startsWith("accessory_");
+export function getDefaultGearSlots(equipmentId: string, equipment?: any): GearSlotData {
+  // Check if this is built gear with chassis metadata
+  if (equipment?.chassisId) {
+    const chassis = getChassisById(equipment.chassisId);
+    if (chassis) {
+      // Return with correct slot count from chassis
+      return {
+        lockedCards: [],
+        freeSlots: chassis.maxCardSlots,
+        slottedCards: [],
+      };
+    }
+  }
+  
+  // Weapons get more slots, armor gets fewer (legacy/fallback)
+  const isWeapon = equipmentId.startsWith("weapon_") || equipmentId.startsWith("built_weapon_");
+  const isAccessory = equipmentId.startsWith("accessory_") || equipmentId.startsWith("built_accessory_");
   
   // Default locked cards based on equipment
   const lockedCards = getEquipmentLockedCards(equipmentId);

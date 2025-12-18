@@ -2,7 +2,7 @@
 // FIELD SYSTEM - TYPES
 // ============================================================================
 
-export type FieldMapId = "base_camp" | "free_zone_1" | "free_zone_2" | "quarters";
+export type FieldMapId = "base_camp" | "free_zone_1" | "free_zone_2" | "quarters" | string; // Allow dynamic key room maps
 
 export interface FieldMap {
   id: FieldMapId;

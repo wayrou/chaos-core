@@ -493,6 +493,65 @@ function createQuartersMap(): FieldMap {
   };
 }
 
+// KEY ROOM MAPS (Dynamic)
+function createKeyRoomMap(mapId: string): FieldMap {
+  // Extract key room ID from map ID (format: "keyroom_<roomNodeId>")
+  const keyRoomId = mapId.replace("keyroom_", "");
+  
+  // Create a simple facility map for the key room
+  // This is a placeholder - can be expanded with facility-specific layouts
+  const width = 20;
+  const height = 15;
+  
+  const tiles: Array<{ x: number; y: number; type: "floor" | "wall" }> = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // Create walls around edges, floor in center
+      if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+        tiles.push({ x, y, type: "wall" });
+      } else {
+        tiles.push({ x, y, type: "floor" });
+      }
+    }
+  }
+  
+  // Convert to 2D array format
+  const tiles2D: import("./types").FieldTile[][] = [];
+  for (let y = 0; y < height; y++) {
+    tiles2D[y] = [];
+    for (let x = 0; x < width; x++) {
+      const tile = tiles.find(t => t.x === x && t.y === y);
+      tiles2D[y][x] = {
+        x,
+        y,
+        walkable: tile?.type === "floor",
+        type: tile?.type === "wall" ? "wall" : "floor",
+      };
+    }
+  }
+  
+  return {
+    id: mapId as FieldMap["id"],
+    name: `Key Room: ${keyRoomId}`,
+    width,
+    height,
+    tiles: tiles2D,
+    objects: [],
+    interactionZones: [
+      {
+        id: `exit_${keyRoomId}`,
+        x: 1,
+        y: height - 2,
+        width: 2,
+        height: 1,
+        action: "base_camp_entry",
+        label: "EXIT",
+        metadata: { targetMap: "base_camp" },
+      },
+    ],
+  };
+}
+
 // ============================================================================
 // MAP REGISTRY
 // ============================================================================
@@ -504,6 +563,10 @@ const maps = new Map<FieldMap["id"], FieldMap>([
 ]);
 
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
+  // Handle dynamic key room maps
+  if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
+    return createKeyRoomMap(mapId);
+  }
   const map = maps.get(mapId);
   if (!map) {
     throw new Error(`Field map not found: ${mapId}`);

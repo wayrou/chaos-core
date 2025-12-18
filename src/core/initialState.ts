@@ -511,6 +511,19 @@ consumables: {},
     baseCampVisitIndex: 0,
     portManifest: undefined,
     portTradesRemaining: 2,
+    
+    // Gear Builder System - Starter unlocks
+    unlockedChassisIds: [
+      "chassis_standard_rifle",
+      "chassis_standard_helmet",
+      "chassis_standard_chest",
+      "chassis_utility_module",
+    ],
+    unlockedDoctrineIds: [
+      "doctrine_balanced",
+      "doctrine_skirmish",
+      "doctrine_sustain",
+    ],
   };
 
   // Initialize unit controllers to P1 by default

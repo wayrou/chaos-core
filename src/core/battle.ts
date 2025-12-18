@@ -122,6 +122,7 @@ export interface BattleState {
     chaosShards: number;
     steamComponents: number;
     cards?: string[];  // NEW: Card IDs won
+    recipe?: string | null;  // NEW: Recipe ID won
   };
   loadPenalties?: LoadPenaltyFlags;
   // Placement phase state
@@ -1309,6 +1310,21 @@ function generateBattleRewards(state: BattleState) {
   // STEP 7: Generate card rewards
   const cardRewards = generateBattleRewardCards(enemyCount);
 
+  // Generate recipe reward (5% base chance, +2% per enemy, capped at 20%)
+  const recipeChance = Math.min(0.20, 0.05 + (enemyCount * 0.02));
+  let recipeReward: string | null = null;
+  if (Math.random() < recipeChance) {
+    // Import recipe database - use dynamic import to avoid circular dependencies
+    try {
+      // Use a lazy import pattern - we'll handle this in the reward claiming code
+      // For now, we'll generate the recipe ID here but grant it later
+      recipeReward = "recipe_reward_pending"; // Placeholder, will be resolved when claiming
+    } catch (e) {
+      // If import fails, no recipe reward
+      console.warn("[BATTLE] Could not generate recipe reward:", e);
+    }
+  }
+
   return {
     wad: 10 * enemyCount,
     metalScrap: 2 * enemyCount,
@@ -1316,6 +1332,7 @@ function generateBattleRewards(state: BattleState) {
     chaosShards: enemyCount >= 2 ? 1 : 0,
     steamComponents: enemyCount >= 2 ? 1 : 0,
     cards: cardRewards,
+    recipe: recipeReward,
   };
 }
 
@@ -1641,10 +1658,20 @@ export function playCard(
   const newUnits = { ...state.units };
   newUnits[unitId] = updatedUnit;
   if (targetId !== unitId) {
-    newUnits[targetId] = updatedTarget;
+    // If target died, remove it from units Record (like attackUnit does)
+    if (updatedTarget.hp <= 0) {
+      delete newUnits[targetId];
+    } else {
+      newUnits[targetId] = updatedTarget;
+    }
   } else {
     // Self-target: updatedUnit already has the changes
-    newUnits[unitId] = updatedTarget;
+    // If unit died from self-target, remove it
+    if (updatedTarget.hp <= 0) {
+      delete newUnits[unitId];
+    } else {
+      newUnits[unitId] = updatedTarget;
+    }
   }
 
   // Remove dead units from turn order
@@ -1759,10 +1786,38 @@ export function quickPlaceUnits(state: BattleState): BattleState {
   let newState = state;
   let placedCount = placementState.placedUnitIds.length;
   
-  // Place units from top to bottom along left edge
+  // Calculate middle Y position to center units around
+  const middleY = Math.floor(newState.gridHeight / 2);
+  
+  // Place units centered around the middle line along left edge (x = 0)
   for (let i = 0; i < unplacedUnits.length && placedCount < placementState.maxUnitsPerSide; i++) {
     const unit = unplacedUnits[i];
-    const yPos = Math.min(i, newState.gridHeight - 1);
+    
+    // Calculate Y position: start from middle, spread outward
+    // For odd number of units: center around middle
+    // For even number: place slightly above and below middle
+    let yPos: number;
+    const totalUnits = unplacedUnits.length;
+    const offsetFromMiddle = Math.floor(i / 2);
+    const isOddIndex = i % 2 === 1;
+    
+    if (totalUnits % 2 === 1) {
+      // Odd number of units: center one on middle, others spread around
+      if (i === 0) {
+        yPos = middleY;
+      } else {
+        const direction = isOddIndex ? -1 : 1;
+        yPos = middleY + direction * Math.ceil(offsetFromMiddle);
+      }
+    } else {
+      // Even number: place around middle line
+      const direction = isOddIndex ? -1 : 1;
+      yPos = middleY + direction * (offsetFromMiddle - (isOddIndex ? 0 : 1));
+    }
+    
+    // Clamp to valid grid bounds
+    yPos = Math.max(0, Math.min(newState.gridHeight - 1, yPos));
+    
     newState = placeUnit(newState, unit.id, { x: 0, y: yPos });
     placedCount++;
   }

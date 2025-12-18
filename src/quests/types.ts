@@ -43,6 +43,7 @@ export interface QuestReward {
   }>;
   cards?: string[]; // Card IDs
   equipment?: string[]; // Equipment IDs
+  recipes?: string[]; // Recipe IDs to learn
   unitRecruit?: string; // Unit ID to recruit
 }
 

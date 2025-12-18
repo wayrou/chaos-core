@@ -317,6 +317,10 @@ equipmentPool?: string[];
   };
   // Field Mods System - Run inventory (synced from ActiveRunState)
   runFieldModInventory?: import("./fieldMods").FieldModInstance[];
+  
+  // Gear Builder System - Unlock flags
+  unlockedChassisIds?: string[];
+  unlockedDoctrineIds?: string[];
 }
 
 interface GearSlotData {

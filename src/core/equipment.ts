@@ -165,6 +165,12 @@ export interface WeaponEquipment {
   clutchToggle?: string;
   doubleClutch?: string;
   wear: number;
+  
+  // Gear Builder metadata (v1)
+  chassisId?: string;
+  doctrineId?: string;
+  stability?: number; // 0-100
+  builderVersion?: number; // For migration safety
 }
 
 export interface ArmorEquipment {
@@ -173,6 +179,12 @@ export interface ArmorEquipment {
   slot: "helmet" | "chestpiece";
   stats: EquipmentStats;
   cardsGranted: string[];
+  
+  // Gear Builder metadata (v1)
+  chassisId?: string;
+  doctrineId?: string;
+  stability?: number; // 0-100
+  builderVersion?: number; // For migration safety
 }
 
 export interface AccessoryEquipment {
@@ -181,6 +193,12 @@ export interface AccessoryEquipment {
   slot: "accessory";
   stats: EquipmentStats;
   cardsGranted: string[];
+  
+  // Gear Builder metadata (v1)
+  chassisId?: string;
+  doctrineId?: string;
+  stability?: number; // 0-100
+  builderVersion?: number; // For migration safety
 }
 
 export type Equipment = WeaponEquipment | ArmorEquipment | AccessoryEquipment;
