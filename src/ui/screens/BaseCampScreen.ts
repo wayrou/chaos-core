@@ -13,6 +13,7 @@ import { renderRecruitmentScreen } from "./RecruitmentScreen";
 import { renderQuestBoardScreen } from "./QuestBoardScreen";
 import { renderPortScreen } from "./PortScreen";
 import { renderQuartersScreen } from "./QuartersScreen";
+import { renderStableScreen } from "./StableScreen";
 
 // Check if we're in field mode (base camp modal should be shown as overlay)
 function isInFieldMode(): boolean {
@@ -96,6 +97,10 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
           <button class="bc-btn bc-quarters" id="quartersBtn">
             <span class="btn-icon">🏠</span>
             <span class="btn-label">QUARTERS</span>
+          </button>
+          <button class="bc-btn bc-stable" id="stableBtn">
+            <span class="btn-icon">&#127943;</span>
+            <span class="btn-label">STABLE</span>
           </button>
           <button class="bc-btn bc-settings" id="settingsBtn">
             <span class="btn-icon">⚙</span>
@@ -188,6 +193,11 @@ export function renderBaseCampScreen(returnTo: "basecamp" | "menu" = "basecamp")
   // Quarters button
   root.querySelector("#quartersBtn")?.addEventListener("click", () => {
     renderQuartersScreen(returnContext);
+  });
+
+  // Stable button
+  root.querySelector("#stableBtn")?.addEventListener("click", () => {
+    renderStableScreen(returnContext);
   });
 
   // Settings button

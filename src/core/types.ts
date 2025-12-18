@@ -76,6 +76,8 @@ loadout?: {
   // Local Co-op: Which player controls this unit
   controller?: "P1" | "P2";
   // Field Mods System - Hardpoints (run-scoped, stored in ActiveRunState)
+  // Mount System
+  mountInstanceId?: string;  // ID of the OwnedMount instance assigned to this unit
 }
 
 export interface BattleTile {
@@ -211,6 +213,104 @@ export const GUILD_ROSTER_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------
+//  MOUNT SYSTEM
+// ---------------------------------------------------------
+
+export type MountId = string;
+
+export type MountType =
+  | "horse"      // Standard cavalry - balanced stats
+  | "warhorse"   // Heavy cavalry - high HP, low AGI
+  | "lizard"     // Reptilian mount - terrain flexibility
+  | "mechanical" // Steam-powered - high stats, maintenance cost
+  | "beast"      // Magical creature - special abilities
+  | "bird";      // Flying mount - terrain ignore
+
+export interface MountTerrainModifier {
+  terrain: string;  // e.g. "mud", "plains", "forest", "water"
+  effect: "ignore_penalty" | "bonus_movement" | "damage_reduction";
+  value?: number;   // Amount for bonus_movement or damage_reduction
+}
+
+export interface MountStatModifiers {
+  hp?: number;
+  atk?: number;
+  def?: number;
+  agi?: number;
+  acc?: number;
+  movement?: number;  // Flat movement bonus
+}
+
+export type MountPassiveTrait =
+  | "trample"        // Deal damage when moving through enemy tiles
+  | "charge"         // Bonus damage when attacking after moving 3+ tiles
+  | "surefooted"     // Immune to knockback/push effects
+  | "swift"          // +1 movement on first turn
+  | "armored"        // Reduce incoming damage by 1
+  | "intimidate"     // Adjacent enemies have -10 ACC
+  | "loyal"          // Mount cannot be removed by enemy effects
+  | "heat_resistant" // Immune to burn status
+  | "cold_resistant" // Immune to freeze status
+  | "aquatic";       // Can traverse water tiles
+
+export interface MountRestriction {
+  type: "unit_class" | "armor_weight" | "unit_size";
+  allowed?: string[];   // Allowed values (whitelist)
+  disallowed?: string[]; // Disallowed values (blacklist)
+}
+
+/**
+ * Mount definition - the template/data for a mount type
+ */
+export interface Mount {
+  id: MountId;
+  name: string;
+  description: string;
+  mountType: MountType;
+
+  // Stat modifications applied when mounted
+  statModifiers: MountStatModifiers;
+
+  // Terrain-specific bonuses
+  terrainModifiers: MountTerrainModifier[];
+
+  // Passive traits/abilities
+  passiveTraits: MountPassiveTrait[];
+
+  // Cards added to unit's deck when mounted
+  grantedCards: string[];
+
+  // Restrictions on which units can use this mount
+  restrictions: MountRestriction[];
+
+  // Visual/flavor
+  spriteId?: string;
+
+  // Unlock/acquisition
+  unlockCost?: number;         // WAD cost to unlock
+  isStarterMount?: boolean;    // Available from game start
+}
+
+/**
+ * Instance of a mount owned by the player
+ * Tracks ownership and assignment state
+ */
+export interface OwnedMount {
+  mountId: MountId;           // Reference to Mount definition
+  instanceId: string;         // Unique instance ID
+  assignedToUnitId: UnitId | null;  // Currently assigned unit
+  condition?: number;         // 0-100, for wear/maintenance (mechanical mounts)
+}
+
+/**
+ * Stable state - tracks unlocked mounts and assignments
+ */
+export interface StableState {
+  unlockedMountIds: MountId[];        // Which mount types are unlocked
+  ownedMounts: OwnedMount[];          // Mount instances the player owns
+}
+
+// ---------------------------------------------------------
 //  INVENTORY
 // ---------------------------------------------------------
 
@@ -321,6 +421,9 @@ equipmentPool?: string[];
   // Gear Builder System - Unlock flags
   unlockedChassisIds?: string[];
   unlockedDoctrineIds?: string[];
+
+  // Mount/Stable System
+  stable?: StableState;
 }
 
 interface GearSlotData {

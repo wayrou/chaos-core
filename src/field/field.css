@@ -744,6 +744,31 @@
   text-transform: none;
 }
 
+/* Stable button - warm earthy browns with horseshoe accent */
+.all-nodes-menu-btn--stable,
+.all-nodes-btn--stable {
+  border-color: rgba(180, 140, 80, 0.6);
+  background: linear-gradient(135deg, rgba(60, 45, 25, 0.95), rgba(80, 60, 35, 0.98));
+}
+
+.all-nodes-menu-btn--stable:hover,
+.all-nodes-btn--stable:hover {
+  border-color: rgba(210, 170, 100, 0.9);
+  background: linear-gradient(135deg, rgba(80, 60, 35, 0.98), rgba(100, 75, 45, 1));
+  box-shadow: 0 0 15px rgba(180, 140, 80, 0.3);
+}
+
+.all-nodes-menu-btn--stable:active,
+.all-nodes-btn--stable:active {
+  transform: scale(0.98);
+}
+
+.all-nodes-menu-btn--stable .btn-icon,
+.all-nodes-btn--stable .btn-icon {
+  color: rgba(210, 170, 100, 1);
+  text-shadow: 0 0 8px rgba(180, 140, 80, 0.5);
+}
+
 .all-nodes-menu-btn--debug {
   border-color: rgba(255, 150, 100, 0.5);
   background: linear-gradient(135deg, rgba(42, 30, 16, 0.95), rgba(60, 40, 25, 0.98));

@@ -596,6 +596,10 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-icon">⚓</span>
             <span class="btn-label">PORT</span>
           </button>
+          <button class="all-nodes-btn all-nodes-btn--stable" data-action="stable">
+            <span class="btn-icon">🐎</span>
+            <span class="btn-label">STABLE</span>
+          </button>
           <button class="all-nodes-btn" data-action="settings">
             <span class="btn-icon">⚙</span>
             <span class="btn-label">SETTINGS</span>
@@ -994,6 +998,11 @@ function handleNodeAction(action: string): void {
     case "port":
       import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("basecamp");
+      });
+      break;
+    case "stable":
+      import("../ui/screens/StableScreen").then(({ renderStableScreen }) => {
+        renderStableScreen("basecamp");
       });
       break;
     case "settings":

@@ -14,6 +14,7 @@ import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
 import { renderPortScreen } from "../ui/screens/PortScreen";
 import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
 import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
+import { renderStableScreen } from "../ui/screens/StableScreen";
 
 /**
  * Handle interaction action - opens appropriate UI or performs action
@@ -81,7 +82,11 @@ export function handleInteraction(
     case "black_market":
       renderBlackMarketScreen("field");
       break;
-      
+
+    case "stable":
+      renderStableScreen("field");
+      break;
+
     case "base_camp_entry":
       // Switch to base camp map
       const baseCampTarget = zone.metadata?.targetMap || "base_camp";

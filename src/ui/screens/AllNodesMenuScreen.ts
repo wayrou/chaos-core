@@ -130,6 +130,11 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <span class="btn-label">QUARTERS</span>
           <span class="btn-desc">Rest & buffs</span>
         </button>
+        <button class="all-nodes-menu-btn all-nodes-menu-btn--stable" data-action="stable">
+          <span class="btn-icon">🐎</span>
+          <span class="btn-label">STABLE</span>
+          <span class="btn-desc">Manage mounts</span>
+        </button>
         <button class="all-nodes-menu-btn" data-action="settings">
           <span class="btn-icon">⚙</span>
           <span class="btn-label">SETTINGS</span>
@@ -268,6 +273,11 @@ function handleNodeAction(action: string): void {
     case "quarters":
       // Go to quarters in field mode
       renderFieldScreen("quarters");
+      break;
+    case "stable":
+      import("./StableScreen").then(({ renderStableScreen }) => {
+        renderStableScreen("basecamp");
+      });
       break;
     case "settings":
       import("./SettingsScreen").then(({ renderSettingsScreen }) => {

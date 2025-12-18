@@ -140,6 +140,16 @@ function createBaseCampMap(): FieldMap {
       sprite: "black_market",
       metadata: { name: "Black Market" },
     },
+    {
+      id: "stable_station",
+      x: 15,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "stable",
+      metadata: { name: "Stable" },
+    },
   ];
   
   // Interaction zones (match station object bounds for accessibility anywhere in the box)
@@ -242,6 +252,15 @@ function createBaseCampMap(): FieldMap {
       height: 2,
       action: "black_market",
       label: "BLACK MARKET",
+    },
+    {
+      id: "interact_stable",
+      x: 15,
+      y: 10,
+      width: 2,
+      height: 2,
+      action: "stable",
+      label: "STABLE",
     },
     {
       id: "enter_free_zone",

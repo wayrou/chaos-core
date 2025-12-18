@@ -38,6 +38,9 @@ import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
 // Isometric imports removed - using simple grid now
 import { BattleGridRenderer } from "./BattleGridRenderer";
+// Mount system imports
+import { getMountById, isUnitMounted } from "../../core/battle";
+import { getMountById as getMountDefinition } from "../../core/mounts";
 
 // Card type definition
 interface Card {
@@ -1352,6 +1355,21 @@ export function renderBattleScreen() {
 // ============================================================================
 
 /**
+ * Get icon for mount type (used in battle UI)
+ */
+function getMountIconForType(mountType: string): string {
+  const icons: Record<string, string> = {
+    horse: "&#127943;", // Horse racing emoji
+    warhorse: "&#9876;", // Crossed swords (represents war)
+    lizard: "&#129422;", // Lizard emoji
+    mechanical: "&#9881;", // Gear emoji
+    beast: "&#128058;", // Wolf emoji
+    bird: "&#128038;", // Bird emoji
+  };
+  return icons[mountType] || "&#128052;"; // Default horse face
+}
+
+/**
  * Render segmented strain ring SVG around portrait
  */
 function renderStrainRing(currentStrain: number, maxStrain: number): string {
@@ -1439,15 +1457,27 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
   const controllerColor = player?.color || "#ff8a00";
   const controllerLabel = controller === "P1" ? "PLAYER 1" : "PLAYER 2";
   
+  // Check if unit is mounted and get mount info
+  const isMounted = isUnitMounted(activeUnit);
+  const mountDef = isMounted && activeUnit.mountId ? getMountDefinition(activeUnit.mountId) : null;
+  const mountIcon = mountDef ? getMountIconForType(mountDef.mountType) : "";
+
   return `
     <div class="unit-panel-header">
       <div class="unit-panel-portrait">
         ${renderStrainRing(currentStrain, maxStrain)}
         <img src="${portraitPath}" alt="${activeUnit.name}" class="unit-panel-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+        ${isMounted ? `<span class="unit-panel-mount-badge" title="${mountDef?.name || 'Mounted'}">${mountIcon}</span>` : ""}
       </div>
       <div class="unit-panel-header-text">
         <div class="unit-panel-label">ACTIVE UNIT</div>
         <div class="unit-panel-name">${activeUnit.name}</div>
+        ${isMounted && mountDef ? `
+          <div class="unit-panel-mount-info">
+            <span class="unit-mount-icon">${mountIcon}</span>
+            <span class="unit-mount-name">${mountDef.name}</span>
+          </div>
+        ` : ""}
         <div class="unit-panel-controller" style="color: ${controllerColor}; border-color: ${controllerColor};">
           ${controllerLabel}
         </div>

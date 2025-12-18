@@ -34,6 +34,14 @@ import {
   LIBRARY_CARD_DATABASE,
 } from "./gearWorkbench";
 
+// Mount system imports
+import {
+  getMountById,
+  findOwnedMount,
+  validateMountCards,
+} from "./mounts";
+import { StableState, MountPassiveTrait } from "./types";
+
 // Import affinity tracking
 import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
@@ -100,6 +108,17 @@ export interface BattleUnitState {
   // Auto-battle toggle (15a)
   autoBattle?: boolean;
   // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
+  // Mount System
+  mountId?: string;                       // ID of the mount definition (if mounted)
+  mountPassiveTraits?: MountPassiveTrait[]; // Active mount traits for quick lookup
+  baseStatsBeforeMount?: {                // For clean rollback if mount is removed
+    hp: number;
+    maxHp: number;
+    atk: number;
+    def: number;
+    agi: number;
+    acc: number;
+  };
 }
 
 export interface BattleState {
@@ -186,13 +205,15 @@ export function createGrid(width: number, height: number, elevationMap?: number[
 /**
  * Build a BattleUnitState from a global Unit and placement info.
  * NOW: Builds deck from equipment loadout instead of using base.deck
+ * MOUNT SYSTEM: Also applies mount modifiers if unit has a mount assigned
  */
 export function createBattleUnitState(
   base: Unit,
   opts: {
     isEnemy: boolean;
     pos: Vec2 | null;
-    gearSlots?: Record<string, GearSlotData>;  // NEW
+    gearSlots?: Record<string, GearSlotData>;
+    stable?: StableState;  // Mount system: stable state for looking up mounts
   },
   equipmentById?: Record<string, Equipment>,
   modulesById?: Record<string, Module>
@@ -222,10 +243,10 @@ export function createBattleUnitState(
   } else {
     // STEP 6: Player units - build deck from equipment + slotted cards
     const baseCards = buildDeckFromLoadout(unitClass, loadout, equipment, modules);
-    
+
     // Get slotted cards from gear workbench
     const gearSlots = opts.gearSlots ?? {};
-    
+
     // Collect all equipped gear IDs
     const equippedGearIds: string[] = [];
     if (loadout.weapon) equippedGearIds.push(loadout.weapon);
@@ -233,23 +254,17 @@ export function createBattleUnitState(
     if (loadout.chestpiece) equippedGearIds.push(loadout.chestpiece);
     if (loadout.accessory1) equippedGearIds.push(loadout.accessory1);
     if (loadout.accessory2) equippedGearIds.push(loadout.accessory2);
-    
+
     // Get slotted cards from each piece of gear
     const slottedCards: string[] = [];
     equippedGearIds.forEach(eqId => {
       const slots = gearSlots[eqId] ?? getDefaultGearSlots(eqId);
       slottedCards.push(...slots.slottedCards);
     });
-    
+
     // Combine base cards + slotted cards
     deckCards = [...baseCards, ...slottedCards];
   }
-
-  // Shuffle the deck
-  const deck = shuffleArray(deckCards);
-  const hand: CardId[] = [];
-  const discardPile: CardId[] = [];
-  const exhaustedPile: CardId[] = [];
 
   // Calculate equipment stat bonuses
   const equipStats = calculateEquipmentStats(loadout, equipment, modules);
@@ -261,11 +276,69 @@ export function createBattleUnitState(
   const baseAcc = (base as any).stats?.acc ?? 80;
   const baseMaxHp = base.maxHp ?? 100;
 
-  const finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
-  const finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
-  const finalAgi = baseAgi + (opts.isEnemy ? 0 : equipStats.agi);
-  const finalAcc = baseAcc + (opts.isEnemy ? 0 : equipStats.acc);
-  const finalMaxHp = baseMaxHp + (opts.isEnemy ? 0 : equipStats.hp);
+  let finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
+  let finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
+  let finalAgi = baseAgi + (opts.isEnemy ? 0 : equipStats.agi);
+  let finalAcc = baseAcc + (opts.isEnemy ? 0 : equipStats.acc);
+  let finalMaxHp = baseMaxHp + (opts.isEnemy ? 0 : equipStats.hp);
+
+  // MOUNT SYSTEM: Apply mount modifiers if unit has a mount
+  let mountId: string | undefined;
+  let mountPassiveTraits: MountPassiveTrait[] | undefined;
+  let baseStatsBeforeMount: BattleUnitState["baseStatsBeforeMount"];
+
+  if (!opts.isEnemy && base.mountInstanceId && opts.stable) {
+    const mountInstance = findOwnedMount(opts.stable, base.mountInstanceId);
+
+    if (mountInstance) {
+      const mount = getMountById(mountInstance.mountId);
+
+      if (mount) {
+        // Store base stats before mount for potential rollback
+        baseStatsBeforeMount = {
+          hp: finalMaxHp,
+          maxHp: finalMaxHp,
+          atk: finalAtk,
+          def: finalDef,
+          agi: finalAgi,
+          acc: finalAcc,
+        };
+
+        // Apply mount stat modifiers
+        const mountStats = mount.statModifiers;
+        finalMaxHp += mountStats.hp ?? 0;
+        finalAtk += mountStats.atk ?? 0;
+        finalDef += mountStats.def ?? 0;
+        finalAgi += mountStats.agi ?? 0;
+        finalAcc += mountStats.acc ?? 0;
+        // Note: movement bonus is handled separately in movement logic
+
+        // Get mount cards and validate them
+        const mountCards = validateMountCards(mount.grantedCards);
+        if (mountCards.length > 0) {
+          deckCards = [...deckCards, ...mountCards];
+        }
+
+        // Store mount info for battle reference
+        mountId = mount.id;
+        mountPassiveTraits = mount.passiveTraits;
+
+        console.log(`[BATTLE] Unit ${base.name} mounted on ${mount.name}: +${mountStats.hp ?? 0} HP, +${mountStats.atk ?? 0} ATK, +${mountStats.def ?? 0} DEF, +${mountStats.agi ?? 0} AGI`);
+      } else {
+        // Mount definition not found - fail safe, continue without mount
+        console.warn(`[BATTLE] Mount definition not found for ${mountInstance.mountId}, continuing as infantry`);
+      }
+    } else {
+      // Mount instance not found - fail safe, continue without mount
+      console.warn(`[BATTLE] Mount instance not found: ${base.mountInstanceId}, continuing as infantry`);
+    }
+  }
+
+  // Shuffle the deck (after potentially adding mount cards)
+  const deck = shuffleArray(deckCards);
+  const hand: CardId[] = [];
+  const discardPile: CardId[] = [];
+  const exhaustedPile: CardId[] = [];
 
   // Initialize weapon state (14b)
   let equippedWeaponId: string | null = null;
@@ -305,6 +378,10 @@ export function createBattleUnitState(
     weaponHeat: 0,
     weaponWear: 0,
     controller: base.controller || "P1", // Copy controller from base unit
+    // Mount fields
+    mountId,
+    mountPassiveTraits,
+    baseStatsBeforeMount,
   };
 }
 
@@ -645,6 +722,83 @@ export function updateUnitWeaponState(
 }
 
 // ----------------------------------------------------------------------------
+// MOUNT HELPERS
+// ----------------------------------------------------------------------------
+
+/**
+ * Check if a battle unit has a specific mount passive trait
+ */
+export function unitHasMountPassive(unit: BattleUnitState, trait: MountPassiveTrait): boolean {
+  return unit.mountPassiveTraits?.includes(trait) ?? false;
+}
+
+/**
+ * Check if a unit is mounted
+ */
+export function isUnitMounted(unit: BattleUnitState): boolean {
+  return !!unit.mountId;
+}
+
+/**
+ * Get the movement bonus from a unit's mount (if any)
+ */
+export function getMountMovementBonus(unit: BattleUnitState): number {
+  if (!unit.mountId) return 0;
+  const mount = getMountById(unit.mountId);
+  if (!mount) return 0;
+  return mount.statModifiers.movement ?? 0;
+}
+
+/**
+ * Calculate total movement range for a unit (AGI + mount bonus)
+ */
+export function getUnitMovementRange(unit: BattleUnitState): number {
+  const baseMovement = unit.agi;
+  const mountBonus = getMountMovementBonus(unit);
+  // Swift trait: +1 movement on first turn (turn 1)
+  // This would need turn count context, so we skip it here
+  return baseMovement + mountBonus;
+}
+
+/**
+ * Apply charge damage bonus if unit has charge trait and moved 3+ tiles
+ * Returns the bonus damage amount
+ */
+export function getChargeDamageBonus(unit: BattleUnitState, tilesMoved: number): number {
+  if (!unitHasMountPassive(unit, "charge") || tilesMoved < 3) {
+    return 0;
+  }
+  return 2; // +2 damage for charge
+}
+
+/**
+ * Get armored damage reduction from mount
+ */
+export function getArmoredDamageReduction(unit: BattleUnitState): number {
+  if (!unitHasMountPassive(unit, "armored")) {
+    return 0;
+  }
+  return 1; // -1 incoming damage
+}
+
+/**
+ * Get intimidate accuracy penalty for adjacent enemies
+ */
+export function getIntimidateAccuracyPenalty(attacker: BattleUnitState, defender: BattleUnitState): number {
+  if (!unitHasMountPassive(defender, "intimidate")) {
+    return 0;
+  }
+  // Check if attacker is adjacent to defender
+  if (!attacker.pos || !defender.pos) return 0;
+  const dx = Math.abs(attacker.pos.x - defender.pos.x);
+  const dy = Math.abs(attacker.pos.y - defender.pos.y);
+  if (dx + dy === 1) {
+    return -10; // -10 ACC penalty
+  }
+  return 0;
+}
+
+// ----------------------------------------------------------------------------
 // POSITION / MOVEMENT HELPERS
 // ----------------------------------------------------------------------------
 
@@ -877,14 +1031,22 @@ export function attackUnit(
     }
   }
 
-  // Accuracy check
-  const hitChance = computeHitChance(attacker);
+  // Accuracy check - apply mount intimidate penalty if defender has intimidate
+  let hitChance = computeHitChance(attacker);
+  const intimidatePenalty = getIntimidateAccuracyPenalty(attacker, defender);
+  if (intimidatePenalty !== 0) {
+    hitChance = Math.max(10, hitChance + intimidatePenalty);
+  }
+
   const roll = Math.random() * 100;
 
   if (roll > hitChance) {
+    const missReason = intimidatePenalty !== 0
+      ? "(mount intimidation)"
+      : "(strain interference)";
     return appendBattleLog(
       state,
-      `SLK//MISS  :: ${attacker.name} swings at ${defender.name} but the strike goes wide (strain interference).`
+      `SLK//MISS  :: ${attacker.name} swings at ${defender.name} but the strike goes wide ${missReason}.`
     );
   }
 
@@ -903,7 +1065,10 @@ export function attackUnit(
     coverReduction = getCoverDamageReduction(defenderTile);
   }
 
-  const rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction);
+  // Mount armored damage reduction
+  const armoredReduction = getArmoredDamageReduction(defender);
+
+  const rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction + armoredReduction);
   const damage = rawDamage <= 0 ? 1 : rawDamage;
 
   const newHp = defender.hp - damage;
@@ -1438,7 +1603,8 @@ export function createTestBattleForCurrentParty(
       {
         isEnemy: false,
         pos: null, // Start with no position - placement phase
-        gearSlots: (state as any).gearSlots ?? {},  // NEW: Pass gear slots
+        gearSlots: (state as any).gearSlots ?? {},
+        stable: state.stable,  // Pass stable state for mount system
       },
       equipmentById,
       modulesById
