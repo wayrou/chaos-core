@@ -406,9 +406,11 @@ export function renderOperationMapScreen(): void {
       <!-- Floating control panel -->
       <div class="opmap-control-panel">
         <div class="opmap-panel-header">
-          <div class="opmap-panel-title">${operation.codename}</div>
-          <div class="opmap-panel-subtitle">
-            FLOOR ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}
+          <div class="opmap-panel-header-left">
+            <h1 class="opmap-panel-title">${operation.codename}</h1>
+            <div class="opmap-panel-subtitle">
+              SCROLLINK OS // FLOOR ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}
+            </div>
           </div>
         </div>
 

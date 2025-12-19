@@ -1,58 +1,60 @@
 /* ==========================================================================
    CHAOS CORE - BATTLE SYSTEM STYLES
    Ardycia Aesthetic: Utilitycore + ScrollLink Terminal + FFTA Tactical
+
+   Uses tokens from ardycia-design-system.css (imported in styles.css)
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
-   CSS CUSTOM PROPERTIES - Ardycia Color Palette
+   CSS CUSTOM PROPERTIES - Battle-Specific Colors (extend design system)
    -------------------------------------------------------------------------- */
 :root {
-  /* Base World Palette */
-  --ardycia-earth-dark: #1a1612;
-  --ardycia-earth-mid: #2d261f;
-  --ardycia-earth-light: #3d3428;
-  --ardycia-iron: #4a4843;
-  --ardycia-charcoal: #252321;
-  
-  /* Autumn Warmth */
-  --ardycia-rust: #8b4513;
-  --ardycia-oxide: #6b2f2f;
-  --ardycia-amber: #c4863a;
+  /* Base World Palette - Map to design system */
+  --ardycia-earth-dark: var(--world-coal, #1a1917);
+  --ardycia-earth-mid: var(--world-ash, #2d2c2a);
+  --ardycia-earth-light: var(--world-walnut, #4d3f34);
+  --ardycia-iron: var(--world-iron, #4a4a4d);
+  --ardycia-charcoal: var(--world-soot, #232220);
+
+  /* Autumn Warmth - Map to design system */
+  --ardycia-rust: var(--accent-oxide-light, #8a4242);
+  --ardycia-oxide: var(--accent-oxide, #6b2f2f);
+  --ardycia-amber: var(--tech-amber, #ffcc6e);
   --ardycia-pumpkin: #b8612a;
-  
-  /* ScrollLink Tech Palette */
-  --slk-green: #35ff95;
-  --slk-green-dim: #1a7a48;
-  --slk-green-glow: rgba(53, 255, 149, 0.3);
-  --slk-teal: #8ce6ff;
-  --slk-amber: #ffcc6e;
-  --slk-violet: #c0b3ff;
-  --slk-red: #ff6b6b;
-  --slk-red-dim: #8b3a3a;
-  
-  /* Metallic Accents */
-  --bronze: #a87c45;
-  --bronze-dark: #6b4f2d;
-  --bronze-light: #c9a66b;
-  --steam-blue: #4fa2ff;
-  
-  /* UI Surfaces */
-  --surface-dark: rgba(20, 18, 15, 0.95);
-  --surface-mid: rgba(35, 30, 25, 0.9);
-  --surface-light: rgba(50, 43, 35, 0.85);
-  --surface-border: rgba(168, 124, 69, 0.3);
-  
+
+  /* ScrollLink Tech Palette - Map to design system */
+  --slk-green: var(--tech-crt, #35ff95);
+  --slk-green-dim: var(--tech-crt-dim, #28cc78);
+  --slk-green-glow: var(--tech-crt-glow, rgba(53, 255, 149, 0.4));
+  --slk-teal: var(--tech-teal, #8ce6ff);
+  --slk-amber: var(--tech-amber, #ffcc6e);
+  --slk-violet: var(--tech-violet, #c0b3ff);
+  --slk-red: var(--tech-red, #ff6b5e);
+  --slk-red-dim: var(--tech-red-dim, #cc5548);
+
+  /* Metallic Accents - Map to design system */
+  --bronze: var(--accent-bronze, #a87c45);
+  --bronze-dark: var(--accent-bronze-dark, #7a5a32);
+  --bronze-light: var(--accent-bronze-light, #c9a066);
+  --steam-blue: var(--accent-steam, #4fa2ff);
+
+  /* UI Surfaces - Map to design system */
+  --surface-dark: var(--bg-terminal, rgba(10, 12, 15, 0.95));
+  --surface-mid: var(--bg-panel, #4d3f34);
+  --surface-light: var(--bg-elevated, #3a3937);
+  --surface-border: var(--stroke-subtle, rgba(168, 124, 69, 0.25));
+
   /* Grid Colors - FFTA Inspired */
-  --tile-floor: #2a3328;
-  --tile-floor-highlight: #3d4a38;
+  --tile-floor: var(--world-moss, #3d4a35);
+  --tile-floor-highlight: #4a5a45;
   --tile-move: rgba(53, 255, 149, 0.25);
-  --tile-move-border: rgba(53, 255, 149, 0.6);
-  --tile-attack: rgba(255, 107, 107, 0.25);
-  --tile-attack-border: rgba(255, 107, 107, 0.6);
-  --tile-selected: rgba(255, 204, 110, 0.3);
-  
+  --tile-move-border: var(--tech-crt-glow, rgba(53, 255, 149, 0.6));
+  --tile-attack: rgba(255, 107, 94, 0.25);
+  --tile-attack-border: rgba(255, 107, 94, 0.6);
+  --tile-selected: var(--tech-amber-glow, rgba(255, 204, 110, 0.4));
+
   /* Scanline Effect */
-  --scanline-opacity: 0.03;
+  --scanline-opacity: var(--scanline-opacity, 0.04);
 }
 
 /* --------------------------------------------------------------------------
@@ -60,16 +62,16 @@
    -------------------------------------------------------------------------- */
 .battle-root {
   min-height: 100vh;
-  background: 
+  background:
     /* Subtle noise texture */
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E"),
     /* Radial vignette */
     radial-gradient(ellipse at center, var(--ardycia-earth-mid) 0%, var(--ardycia-earth-dark) 70%, #0d0b09 100%);
-  padding: 1rem;
+  padding: var(--space-4, 1rem);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  font-family: 'Courier New', 'Consolas', monospace;
+  gap: var(--space-3, 0.75rem);
+  font-family: var(--font-terminal, 'JetBrains Mono', monospace);
   color: var(--bronze-light);
   position: relative;
   overflow: hidden;

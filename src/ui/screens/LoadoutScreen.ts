@@ -111,21 +111,24 @@ export function renderLoadoutScreen(): void {
   };
 
   root.innerHTML = `
-    <div class="loadout-screen-root">
+    <div class="loadout-screen-root ard-noise">
       <div class="loadout-screen-card">
+        <!-- Header - Adventure Gothic Panel -->
         <div class="loadout-screen-header">
           <div class="loadout-screen-header-left">
-            <div class="loadout-screen-title">OPERATION LOADOUT</div>
+            <h1 class="loadout-screen-title">OPERATION LOADOUT</h1>
             <div class="loadout-screen-subtitle">
-              ${operation.codename} • ${operation.floors.length} FLOORS
+              SCROLLINK OS // ${operation.codename} • ${operation.floors.length} FLOORS
             </div>
           </div>
           <div class="loadout-screen-header-right">
             <button class="loadout-screen-back-btn" id="backBtn">
-              ← CANCEL OPERATION
+              <span class="btn-icon">←</span>
+              <span class="btn-text">CANCEL</span>
             </button>
             <button class="loadout-screen-proceed-btn" id="proceedBtn" ${partyUnits.length === 0 ? 'disabled' : ''}>
-              PROCEED TO OPERATION →
+              <span class="btn-text">PROCEED</span>
+              <span class="btn-icon">→</span>
             </button>
           </div>
         </div>

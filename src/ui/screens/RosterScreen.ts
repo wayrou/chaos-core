@@ -181,16 +181,23 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
   const reserveCardsHtml = reserveUnits.map(id => renderUnitCard(id, false)).join("");
 
   root.innerHTML = `
-    <div class="roster-root">
+    <div class="roster-root ard-noise">
       <div class="roster-card">
+        <!-- Header - Adventure Gothic Panel -->
         <div class="roster-header">
           <div class="roster-header-left">
-            <div class="roster-title">UNIT ROSTER</div>
-            <div class="roster-subtitle">Manage units, equipment, and decks</div>
+            <h1 class="roster-title">UNIT ROSTER</h1>
+            <div class="roster-subtitle">SCROLLINK OS // UNIT_MANAGEMENT</div>
           </div>
           <div class="roster-header-right">
-            <div class="roster-count">${unitIds.length} UNITS / ${partyUnitIds.length} IN PARTY</div>
-            <button class="roster-back-btn" data-return-to="${returnTo}">${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO BASE CAMP"}</button>
+            <div class="roster-count">
+              <span class="roster-count-label">UNITS</span>
+              <span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span>
+            </div>
+            <button class="roster-back-btn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
           </div>
         </div>
         <div class="roster-body">

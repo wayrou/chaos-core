@@ -49,11 +49,20 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
   ];
 
   root.innerHTML = `
-    <div class="opselect-root">
+    <div class="opselect-root ard-noise">
       <div class="opselect-card">
+        <!-- Header - Adventure Gothic Panel -->
         <div class="opselect-header">
-          <div class="opselect-title">SELECT OPERATION</div>
-          <button class="opselect-back-btn" data-return-to="${returnTo}">← ${returnTo === "field" ? "BACK TO FIELD MODE" : "BACK TO BASE CAMP"}</button>
+          <div class="opselect-header-left">
+            <h1 class="opselect-title">SELECT OPERATION</h1>
+            <div class="opselect-subtitle">SCROLLINK OS // OPERATION_SELECT</div>
+          </div>
+          <div class="opselect-header-right">
+            <button class="opselect-back-btn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
+          </div>
         </div>
 
         <div class="opselect-body">

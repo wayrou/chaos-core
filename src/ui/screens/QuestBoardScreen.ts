@@ -57,12 +57,12 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
   }
 
   app.innerHTML = `
-    <div class="quest-board-root">
-      <!-- Header -->
+    <div class="quest-board-root ard-noise">
+      <!-- Header - Adventure Gothic Panel -->
       <div class="quest-board-header">
         <div class="quest-board-header-left">
           <h1 class="quest-board-title">QUEST BOARD</h1>
-          <div class="quest-board-subtitle">SCROLLINK OPERATIONS TERMINAL</div>
+          <div class="quest-board-subtitle">SCROLLINK OS // OPERATIONS_TERMINAL</div>
         </div>
         <div class="quest-board-header-right">
           <div class="quest-board-stats-group">
@@ -82,28 +82,25 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
         </div>
       </div>
       
-      <!-- Main Content Card -->
-      <div class="quest-board-card">
-        <!-- Tabs -->
-        <div class="quest-board-tabs">
-          <button class="quest-board-tab ${currentTab === 'available' ? 'quest-board-tab--active' : ''}" data-tab="available">
-            <span class="tab-icon">📋</span>
-            <span class="tab-text">AVAILABLE</span>
-            ${availableQuests.length > 0 ? `<span class="tab-badge">${availableQuests.length}</span>` : ''}
-          </button>
-          <button class="quest-board-tab ${currentTab === 'active' ? 'quest-board-tab--active' : ''}" data-tab="active">
-            <span class="tab-icon">⚡</span>
-            <span class="tab-text">ACTIVE</span>
-            ${activeQuests.length > 0 ? `<span class="tab-badge">${activeQuests.length}</span>` : ''}
-          </button>
-        </div>
-        
-        <!-- Content -->
-        <div class="quest-board-content">
-          ${currentTab === "available" 
-            ? renderAvailableQuests(availableQuests) 
-            : renderActiveQuests(activeQuests)}
-        </div>
+      <!-- Tabs - FFTA Style -->
+      <div class="quest-board-tabs">
+        <button class="quest-board-tab ${currentTab === 'available' ? 'quest-board-tab--active' : ''}" data-tab="available">
+          <span class="tab-icon">📋</span>
+          <span class="tab-text">AVAILABLE</span>
+          ${availableQuests.length > 0 ? `<span class="tab-badge">${availableQuests.length}</span>` : ''}
+        </button>
+        <button class="quest-board-tab ${currentTab === 'active' ? 'quest-board-tab--active' : ''}" data-tab="active">
+          <span class="tab-icon">⚡</span>
+          <span class="tab-text">ACTIVE</span>
+          ${activeQuests.length > 0 ? `<span class="tab-badge">${activeQuests.length}</span>` : ''}
+        </button>
+      </div>
+      
+      <!-- Content - World Panel -->
+      <div class="quest-board-content">
+        ${currentTab === "available" 
+          ? renderAvailableQuests(availableQuests) 
+          : renderActiveQuests(activeQuests)}
       </div>
     </div>
   `;

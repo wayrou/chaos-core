@@ -127,28 +127,32 @@ export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "baseca
   const candidatesHtml = candidates.map((candidate) => renderCandidateCard(candidate, wad)).join("");
 
   root.innerHTML = `
-    <div class="recruitment-root">
+    <div class="recruitment-root ard-noise">
       <div class="recruitment-content-wrapper">
         <!-- Left Column: Recruitment -->
         <div class="recruitment-main-panel">
           <div class="recruitment-card">
+            <!-- Header - Adventure Gothic Panel -->
             <div class="recruitment-header">
               <div class="recruitment-header-left">
-                <div class="recruitment-title">TAVERN - RECRUITMENT HUB</div>
-                <div class="recruitment-subtitle">Review available candidates and hire new units</div>
+                <h1 class="recruitment-title">TAVERN</h1>
+                <div class="recruitment-subtitle">SCROLLINK OS // RECRUITMENT_HUB</div>
               </div>
               <div class="recruitment-header-right">
                 <div class="recruitment-stats">
                   <div class="recruitment-stat-item">
-                    <span class="recruitment-stat-label">ROSTER:</span>
+                    <span class="recruitment-stat-label">ROSTER</span>
                     <span class="recruitment-stat-value">${rosterSize} / ${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
                   </div>
                   <div class="recruitment-stat-item">
-                    <span class="recruitment-stat-label">WAD:</span>
-                    <span class="recruitment-stat-value">${wad}</span>
+                    <span class="recruitment-stat-label">WAD</span>
+                    <span class="recruitment-stat-value">${wad.toLocaleString()}</span>
                   </div>
                 </div>
-                <button class="recruitment-back-btn" data-return-to="${returnTo}">BACK</button>
+                <button class="recruitment-back-btn" data-return-to="${returnTo}">
+                  <span class="btn-icon">←</span>
+                  <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+                </button>
               </div>
             </div>
             

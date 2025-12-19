@@ -91,12 +91,12 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
   }
 
   root.innerHTML = `
-    <div class="inventory-root">
+    <div class="inventory-root ard-noise">
       <div class="inventory-card">
-
+        <!-- Header - Adventure Gothic Panel -->
         <div class="inventory-header">
           <div class="inventory-header-left">
-            <div class="inventory-title">LOADOUT</div>
+            <h1 class="inventory-title">LOADOUT</h1>
             <div class="inventory-subtitle">SCROLLINK OS // FORWARD_LOCKER • BASE_STORAGE</div>
           </div>
           <div class="inventory-header-right">
