@@ -309,6 +309,7 @@ export function calculateBattleRewards(template: BattleTemplate): {
     chaosShards: number;
     steamComponents: number;
   };
+  unlockable?: string; // unlockable_id if awarded
 } {
   const wad = template.rewards.wadMin + Math.floor(Math.random() * (template.rewards.wadMax - template.rewards.wadMin + 1));
 
@@ -326,7 +327,51 @@ export function calculateBattleRewards(template: BattleTemplate): {
     steamComponents: Math.floor(Math.random() * (resourceCount / 4)),
   };
 
-  return { wad, equipment, resources };
+  // Roll for unlockable reward (5% chance per battle)
+  // Note: This function is not used in battle rewards (handled in battle.ts)
+  // Keeping for potential future use
+  let unlockable: string | undefined;
+
+  return { wad, equipment, resources, unlockable };
+}
+
+/**
+ * Roll a random unlockable reward (chassis, doctrine, or field mod)
+ */
+export async function rollUnlockableReward(): Promise<string | null> {
+  const { getRewardEligibleUnlockables, getUnownedUnlockables } = await import("./unlockables");
+  const { getAllOwnedUnlockableIds } = await import("./unlockableOwnership");
+  
+  const owned = getAllOwnedUnlockableIds();
+  const allOwnedIds = [...owned.chassis, ...owned.doctrines];
+  
+  const eligible = getRewardEligibleUnlockables();
+  const unowned = getUnownedUnlockables(allOwnedIds);
+  
+  if (unowned.length === 0) {
+    return null; // Player owns everything
+  }
+  
+  // Weight by rarity (common: 60%, uncommon: 30%, rare: 10%)
+  const common = unowned.filter(u => u.rarity === "common");
+  const uncommon = unowned.filter(u => u.rarity === "uncommon");
+  const rare = unowned.filter(u => u.rarity === "rare" || u.rarity === "epic");
+  
+  const roll = Math.random();
+  let pool: typeof unowned;
+  
+  if (roll < 0.6 && common.length > 0) {
+    pool = common;
+  } else if (roll < 0.9 && uncommon.length > 0) {
+    pool = uncommon;
+  } else if (rare.length > 0) {
+    pool = rare;
+  } else {
+    pool = unowned; // Fallback to any available
+  }
+  
+  const selected = pool[Math.floor(Math.random() * pool.length)];
+  return selected ? selected.id : null;
 }
 
 // ============================================================================

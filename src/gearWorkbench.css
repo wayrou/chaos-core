@@ -1375,3 +1375,358 @@
   cursor: not-allowed;
   box-shadow: none;
 }
+
+/* --------------------------------------------------------------------------
+   ENDLESS CRAFT TAB
+   -------------------------------------------------------------------------- */
+.endless-craft-main {
+  display: grid;
+  grid-template-columns: 300px 1fr 280px;
+  gap: 0.75rem;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Chassis Panel */
+.endless-chassis-panel {
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.endless-chassis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.endless-chassis-card {
+  padding: 0.75rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.endless-chassis-card:hover {
+  background: #3d3428;
+  border-color: #a87c45;
+}
+
+.endless-chassis-card--selected {
+  background: linear-gradient(180deg, rgba(140, 230, 255, 0.15) 0%, rgba(140, 230, 255, 0.05) 100%);
+  border-color: #8ce6ff;
+  box-shadow: 0 0 8px rgba(140, 230, 255, 0.2);
+}
+
+.chassis-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.chassis-card-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8ce6ff;
+  text-shadow: 0 0 6px rgba(140, 230, 255, 0.3);
+}
+
+.chassis-card-slot {
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.4rem;
+  background: rgba(168, 124, 69, 0.1);
+  border-radius: 2px;
+}
+
+.chassis-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+}
+
+.endless-empty {
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.65rem;
+  color: #6b4f2d;
+  font-style: italic;
+}
+
+/* Materials Panel */
+.endless-materials-panel {
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  gap: 1rem;
+}
+
+.endless-materials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.endless-material-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: #2d261f;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  transition: all 0.2s ease;
+}
+
+.endless-material-card--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.material-card-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.material-card-name {
+  flex: 1;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #c9a66b;
+}
+
+.material-card-count,
+.material-card-selected {
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #a87c45;
+}
+
+.material-card-selected {
+  color: #8ce6ff;
+  font-weight: 500;
+}
+
+.material-add-btn,
+.material-remove-btn {
+  padding: 0.3rem 0.6rem;
+  background: #3d3428;
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  color: #c9a66b;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+  min-width: 2rem;
+}
+
+.material-add-btn:hover:not(:disabled) {
+  background: #6b4f2d;
+  border-color: #a87c45;
+  color: #ffcc6e;
+}
+
+.material-remove-btn:hover {
+  background: #6b4f2d;
+  border-color: #a87c45;
+  color: #ffcc6e;
+}
+
+.material-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Recipe Summary */
+.endless-recipe-summary {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 3px;
+}
+
+.recipe-cost-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  font-size: 0.65rem;
+  color: #c9a66b;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.1);
+}
+
+.recipe-cost-item:last-child {
+  border-bottom: none;
+}
+
+.recipe-cost-item span:last-child {
+  font-family: 'Consolas', monospace;
+  font-weight: 600;
+  color: #8ce6ff;
+}
+
+.recipe-cost-item .cost-insufficient {
+  color: #ff6b6b;
+  text-shadow: 0 0 4px rgba(255, 107, 107, 0.5);
+}
+
+/* Preview */
+.endless-preview {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(140, 230, 255, 0.2);
+  border-radius: 3px;
+}
+
+.endless-preview-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  font-size: 0.65rem;
+  border-bottom: 1px solid rgba(168, 124, 69, 0.1);
+}
+
+.endless-preview-item:last-of-type {
+  border-bottom: none;
+}
+
+.preview-label {
+  color: #a87c45;
+  font-family: 'Consolas', monospace;
+}
+
+.preview-value {
+  color: #8ce6ff;
+  font-weight: 500;
+}
+
+.endless-preview-note {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(168, 124, 69, 0.2);
+  font-size: 0.55rem;
+  font-family: 'Consolas', monospace;
+  color: #6b4f2d;
+  font-style: italic;
+}
+
+.endless-preview-error {
+  padding: 0.75rem;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 3px;
+  color: #ff6b6b;
+  font-size: 0.65rem;
+  font-family: 'Consolas', monospace;
+}
+
+/* Craft Panel */
+.endless-craft-panel {
+  background: rgba(20, 18, 15, 0.95);
+  border: 1px solid rgba(168, 124, 69, 0.3);
+  border-radius: 3px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.endless-craft-info {
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 3px;
+  font-size: 0.65rem;
+  color: #c9a66b;
+  line-height: 1.6;
+}
+
+.endless-craft-info p {
+  margin: 0 0 0.5rem 0;
+}
+
+.endless-craft-info p:last-child {
+  margin-bottom: 0;
+}
+
+.endless-craft-info strong {
+  color: #ffcc6e;
+}
+
+.endless-craft-info ul {
+  margin: 0.5rem 0 0 1.25rem;
+  padding: 0;
+  list-style: disc;
+}
+
+.endless-craft-info li {
+  margin-bottom: 0.25rem;
+}
+
+.endless-craft-btn {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(180deg, #6b4f2d 0%, #4a3a25 100%);
+  border: 1px solid #a87c45;
+  color: #ffcc6e;
+  font-family: 'Consolas', monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 3px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.endless-craft-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8b6f4d 0%, #6b5a35 100%);
+  border-color: #ffcc6e;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 204, 110, 0.3);
+}
+
+.endless-craft-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.endless-craft-btn:disabled {
+  background: #2d261f;
+  border-color: #4a4843;
+  color: #6b4f2d;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.endless-craft-warning {
+  padding: 0.5rem;
+  background: rgba(255, 204, 110, 0.1);
+  border: 1px solid rgba(255, 204, 110, 0.3);
+  border-radius: 3px;
+  font-size: 0.6rem;
+  font-family: 'Consolas', monospace;
+  color: #ffcc6e;
+  text-align: center;
+}

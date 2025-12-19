@@ -209,6 +209,56 @@ export async function saveGame(slot: SaveSlot, state: GameState): Promise<SaveRe
 /**
  * Load the game state from a slot
  */
+/**
+ * Migrate old crafted weapons to mark them as migrated
+ * This preserves old saves while preventing new weapon crafting
+ */
+function migrateCraftedWeapons(state: GameState): void {
+  if (!state.equipmentById) return;
+  
+  let migratedCount = 0;
+  for (const [equipmentId, equipment] of Object.entries(state.equipmentById)) {
+    // Check if this is a weapon that might have been crafted
+    if (equipmentId.startsWith("weapon_") && typeof equipment === "object" && equipment !== null) {
+      const eq = equipment as any;
+      
+      // If it has provenance indicating it was crafted, mark as migrated
+      if (eq.provenance?.kind === "crafted" || eq.provenance?.kind === "endless_crafted") {
+        if (!eq.provenance.migratedFromWeaponCrafting) {
+          eq.provenance = {
+            ...eq.provenance,
+            migratedFromWeaponCrafting: true,
+            migrationNote: "This weapon was crafted before weapon crafting moved to Gear Builder",
+          };
+          migratedCount++;
+        }
+      }
+      // If no provenance but it's a weapon from a deprecated recipe ID pattern, add migration marker
+      else if (!eq.provenance && (
+        equipmentId.includes("iron_longsword") ||
+        equipmentId.includes("runed_shortsword") ||
+        equipmentId.includes("elm_recurve_bow") ||
+        equipmentId.includes("oak_battlestaff") ||
+        equipmentId.includes("steel_dagger") ||
+        equipmentId.includes("emberclaw_repeater") ||
+        equipmentId.includes("brassback_scattergun") ||
+        equipmentId.includes("blazefang_saber")
+      )) {
+        eq.provenance = {
+          kind: "crafted",
+          migratedFromWeaponCrafting: true,
+          migrationNote: "This weapon was crafted before weapon crafting moved to Gear Builder",
+        };
+        migratedCount++;
+      }
+    }
+  }
+  
+  if (migratedCount > 0) {
+    console.log(`[MIGRATION] Migrated ${migratedCount} crafted weapon(s) from old crafting system`);
+  }
+}
+
 export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
   try {
     let json: string | null;
@@ -225,6 +275,9 @@ export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
     
     const state = JSON.parse(json) as GameState;
     delete (state as any)._saveMetadata;
+    
+    // Run migration for old crafted weapons
+    migrateCraftedWeapons(state);
     
     console.log(`[LOAD] Game loaded from slot: ${slot}`);
     return { success: true, state };

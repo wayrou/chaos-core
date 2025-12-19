@@ -7,7 +7,7 @@
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
 import { renderSettingsScreen } from "./SettingsScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   canContinue,
   loadMostRecent,
@@ -135,6 +135,12 @@ export async function renderMainMenu(): Promise<void> {
                   ` : ''}
                 </button>
               ` : ''}
+
+              <button class="mainmenu-btn mainmenu-btn-echo" data-action="echo-run" disabled>
+                <span class="btn-icon">🔄</span>
+                <span class="btn-text">ECHO RUN</span>
+                <span class="btn-subtitle">Coming soon</span>
+              </button>
 
               <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
                 <span class="btn-icon">+</span>
@@ -595,7 +601,7 @@ function openLoadModal(saves: SaveInfo[]): void {
             setGameState(result.state);
             enableAutosave(() => getGameState());
             modal.style.display = "none";
-            renderBaseCampScreen();
+            renderAllNodesMenuScreen();
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));
           }

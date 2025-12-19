@@ -13,6 +13,8 @@ import {
   loadCampaignProgress,
   isOperationUnlocked,
   isOperationCompleted,
+  getEffectiveFloors,
+  calculateRecommendedPower,
 } from "../../core/campaign";
 import { startOperationRun } from "../../core/campaignManager";
 import { activeRunToOperationRun } from "../../core/campaignManager";
@@ -74,6 +76,10 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
                 statusBadge = '<span class="opselect-status-badge opselect-status--locked">🔒 LOCKED</span>';
               }
               
+              // Calculate values before template string to ensure functions are in scope
+              const effectiveFloors = unlocked ? getEffectiveFloors(opDef) : 0;
+              const recommendedPWR = unlocked ? calculateRecommendedPower(0, opDef.recommendedPower) : 0;
+              
               return `
                 <div class="opselect-op-card ${!unlocked ? 'opselect-op-card--locked' : ''}" data-op-id="${opId}">
                   <div class="opselect-op-header">
@@ -89,14 +95,12 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
                     <div class="opselect-op-details">
                       <div class="opselect-op-detail">
                         <span class="opselect-op-detail-label">Floors:</span>
-                        <span class="opselect-op-detail-value">${opDef.floors}</span>
+                        <span class="opselect-op-detail-value">${effectiveFloors}</span>
                       </div>
-                      ${opDef.recommendedPower ? `
-                        <div class="opselect-op-detail">
-                          <span class="opselect-op-detail-label">Recommended Power:</span>
-                          <span class="opselect-op-detail-value">${opDef.recommendedPower}</span>
-                        </div>
-                      ` : ''}
+                      <div class="opselect-op-detail">
+                        <span class="opselect-op-detail-label">Recommended Power:</span>
+                        <span class="opselect-op-detail-value">${recommendedPWR}</span>
+                      </div>
                     </div>
                   ` : `
                     <div class="opselect-op-details opselect-op-details--locked">

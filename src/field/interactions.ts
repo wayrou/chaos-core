@@ -87,6 +87,12 @@ export function handleInteraction(
       renderStableScreen("field");
       break;
 
+    case "comms-array":
+      import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen("field");
+      });
+      break;
+
     case "base_camp_entry":
       // Switch to base camp map
       const baseCampTarget = zone.metadata?.targetMap || "base_camp";
@@ -128,6 +134,12 @@ export function handleInteraction(
           default:
             onResume();
         }
+      } else if (zone.metadata?.placeholder) {
+        // Handle placeholder interactions (coming soon features)
+        const message = zone.metadata?.message || `${zone.label} - Coming soon`;
+        console.log(`[FIELD] Placeholder interaction: ${message}`);
+        // Could show a toast/notification here in the future
+        onResume();
       } else {
         console.log("[FIELD] Custom interaction:", zone.metadata);
         onResume();

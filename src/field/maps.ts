@@ -150,6 +150,26 @@ function createBaseCampMap(): FieldMap {
       sprite: "stable",
       metadata: { name: "Stable" },
     },
+    {
+      id: "comms_array_station",
+      x: 19,
+      y: 3,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "comms_array",
+      metadata: { name: "Comms Array" },
+    },
+    {
+      id: "mini_core_station",
+      x: 19,
+      y: 10,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "mini_core",
+      metadata: { name: "Mini Core" },
+    },
   ];
   
   // Interaction zones (match station object bounds for accessibility anywhere in the box)
@@ -261,6 +281,25 @@ function createBaseCampMap(): FieldMap {
       height: 2,
       action: "stable",
       label: "STABLE",
+    },
+    {
+      id: "interact_comms_array",
+      x: 19,
+      y: 3,
+      width: 2,
+      height: 2,
+      action: "comms-array",
+      label: "COMMS ARRAY",
+    },
+    {
+      id: "interact_mini_core",
+      x: 19,
+      y: 10,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: "MINI CORE",
+      metadata: { placeholder: true, message: "Mini Core - Coming soon" },
     },
     {
       id: "enter_free_zone",

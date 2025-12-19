@@ -41,7 +41,9 @@ export function startOperationRun(
     throw new Error(`Unknown operation: ${operationId}`);
   }
   
-  const floorsTotal = customFloors || opDef.floors;
+  // Apply 10× floor scaling
+  const baseFloors = customFloors || opDef.floors;
+  const floorsTotal = baseFloors * 10;
   const rngSeed = generateRunSeed();
   
   // Generate node maps for all floors

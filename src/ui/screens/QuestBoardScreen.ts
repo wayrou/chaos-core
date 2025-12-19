@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { 
   getAvailableQuests, 
@@ -319,7 +319,7 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
       if (returnTo === "field") {
         renderFieldScreen("base_camp");
       } else {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       }
     });
   }

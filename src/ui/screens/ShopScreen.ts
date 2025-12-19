@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
 import { 
@@ -14,6 +14,9 @@ import {
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
 import { getAllStarterEquipment } from "../../core/equipment";
+import { getShopEligibleUnlockables, getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
+import { getAllOwnedUnlockableIds } from "../../core/unlockableOwnership";
+import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -205,7 +208,7 @@ const RECIPE_ITEMS: ShopItem[] = [
 // RENDER
 // ----------------------------------------------------------------------------
 
-let currentTab: "paks" | "equipment" | "consumables" | "recipes" = "paks";
+let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell" = "paks";
 
 export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
@@ -251,6 +254,14 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
         <button class="shop-tab ${currentTab === 'recipes' ? 'shop-tab--active' : ''}" data-tab="recipes">
           <span class="tab-icon">📜</span>
           <span class="tab-text">RECIPES</span>
+        </button>
+        <button class="shop-tab ${currentTab === 'unlockables' ? 'shop-tab--active' : ''}" data-tab="unlockables">
+          <span class="tab-icon">🔓</span>
+          <span class="tab-text">WEAPON PARTS</span>
+        </button>
+        <button class="shop-tab ${currentTab === 'sell' ? 'shop-tab--active' : ''}" data-tab="sell">
+          <span class="tab-icon">💰</span>
+          <span class="tab-text">SELL</span>
         </button>
       </div>
       
@@ -318,6 +329,35 @@ function renderShopContent(state: any): string {
       sectionTitle = "CRAFTING RECIPES";
       sectionDesc = "Learn new schematics and blueprints for the workshop.";
       break;
+    case "unlockables":
+      // Generate unlockable items dynamically
+      try {
+        const owned = getAllOwnedUnlockableIds();
+        const allOwnedIds = [...owned.chassis, ...owned.doctrines];
+        const eligible = getShopEligibleUnlockables();
+        const unowned = getUnownedUnlockables(allOwnedIds);
+        
+        // Convert to ShopItem format
+        items = unowned.map(unlock => ({
+          id: unlock.id,
+          name: unlock.displayName,
+          description: unlock.description,
+          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
+          category: "unlockable" as any,
+          rarity: unlock.rarity,
+        }));
+        
+        sectionTitle = "WEAPON PARTS";
+        sectionDesc = "Chassis, doctrines, and field modifications for the gear builder.";
+      } catch (err) {
+        console.warn("[SHOP] Could not load unlockables:", err);
+        items = [];
+        sectionTitle = "WEAPON PARTS";
+        sectionDesc = "No weapon parts available.";
+      }
+      break;
+    case "sell":
+      return renderSellTab(state);
   }
   
   return `
@@ -395,7 +435,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
         }
         renderOperationMapScreen();
       } else {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       }
     };
   }
@@ -405,7 +445,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
     tab.addEventListener("click", (e) => {
       const tabName = (e.currentTarget as HTMLElement).getAttribute("data-tab");
       if (tabName) {
-        currentTab = tabName as "paks" | "equipment" | "consumables" | "recipes";
+        currentTab = tabName as "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell";
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
         renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
@@ -423,11 +463,36 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
       }
     });
   });
+  
+  // Sell tab handlers (only attach if sell tab is active)
+  if (currentTab === "sell") {
+    attachSellListeners(returnTo);
+  }
 }
 
 function purchaseItem(itemId: string, category: ShopItem["category"]): void {
   const allItems = [...PAK_ITEMS, ...EQUIPMENT_ITEMS, ...CONSUMABLE_ITEMS, ...RECIPE_ITEMS];
-  const item = allItems.find(i => i.id === itemId);
+  let item = allItems.find(i => i.id === itemId);
+  
+  // If not found in static items, check if it's an unlockable
+  if (!item && category === "unlockable") {
+    try {
+      const unlock = getUnlockableById(itemId);
+      if (unlock) {
+        item = {
+          id: unlock.id,
+          name: unlock.displayName,
+          description: unlock.description,
+          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
+          category: "unlockable" as any,
+          rarity: unlock.rarity,
+        };
+      }
+    } catch (err) {
+      console.warn("[SHOP] Could not load unlockable:", err);
+    }
+  }
+  
   if (!item) return;
   
   const state = getGameState();
@@ -444,6 +509,8 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
     purchaseConsumable(itemId, item);
   } else if (category === "recipe") {
     purchaseRecipe(itemId, item);
+  } else if (category === "unlockable") {
+    purchaseUnlockable(itemId, item);
   }
 }
 
@@ -474,6 +541,34 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
     renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as "basecamp" | "field" | "operation" || "basecamp");
   }).catch((err: any) => {
     console.error("[SHOP] Failed to purchase recipe:", err);
+    showNotification("PURCHASE FAILED", "error");
+  });
+}
+
+function purchaseUnlockable(itemId: string, item: ShopItem): void {
+  const state = getGameState();
+  
+  // Check if already owned
+  import("../../core/unlockableOwnership").then(({ hasUnlock, grantUnlock }) => {
+    if (hasUnlock(itemId)) {
+      showNotification("ALREADY OWNED", "error");
+      return;
+    }
+    
+    // Deduct WAD and grant unlock
+    updateGameState(s => ({
+      ...s,
+      wad: s.wad - item.price,
+    }));
+    
+    grantUnlock(itemId, "shop_purchase");
+    showNotification(`UNLOCKED: ${item.name}`, "success");
+    
+    // Refresh shop screen
+    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as "basecamp" | "field" | "operation" || "basecamp";
+    renderShopScreen(returnTo);
+  }).catch((err: any) => {
+    console.error("[SHOP] Failed to purchase unlockable:", err);
     showNotification("PURCHASE FAILED", "error");
   });
 }
@@ -850,6 +945,250 @@ function getConsumableBulk(itemId: string): number {
 function getConsumablePower(_itemId: string): number {
   // Consumables generally don't use power
   return 0;
+}
+
+// ----------------------------------------------------------------------------
+// SELL TAB
+// ----------------------------------------------------------------------------
+
+let sellCategoryFilter: "all" | "equipment" | "consumable" | "weaponPart" | "resource" = "all";
+let sellSelectedLines: Map<string, number> = new Map(); // key -> quantity
+
+function renderSellTab(state: any): string {
+  const entries = getSellableEntries(state);
+  
+  // Filter by category
+  const filteredEntries = sellCategoryFilter === "all"
+    ? entries
+    : entries.filter(e => e.kind === sellCategoryFilter);
+  
+  // Sort: equipped/locked items last
+  filteredEntries.sort((a, b) => {
+    if (a.equipped && !b.equipped) return 1;
+    if (!a.equipped && b.equipped) return -1;
+    if (a.locked && !b.locked) return 1;
+    if (!a.locked && b.locked) return -1;
+    return a.name.localeCompare(b.name);
+  });
+  
+  // Calculate transaction summary
+  let totalWad = 0;
+  const selectedItems: Array<{ entry: SellableEntry; quantity: number }> = [];
+  for (const [key, quantity] of sellSelectedLines.entries()) {
+    const entry = entries.find(e => e.key === key);
+    if (entry && quantity > 0) {
+      selectedItems.push({ entry, quantity });
+      totalWad += entry.unitSellPrice * quantity;
+    }
+  }
+  
+  return `
+    <div class="sell-layout">
+      <!-- Left: Category Filter -->
+      <div class="sell-sidebar">
+        <div class="panel-section-title">CATEGORIES</div>
+        <div class="sell-category-list">
+          <button class="sell-category-btn ${sellCategoryFilter === 'all' ? 'sell-category-btn--active' : ''}" 
+                  data-category="all">
+            ALL
+          </button>
+          <button class="sell-category-btn ${sellCategoryFilter === 'equipment' ? 'sell-category-btn--active' : ''}" 
+                  data-category="equipment">
+            EQUIPMENT
+          </button>
+          <button class="sell-category-btn ${sellCategoryFilter === 'consumable' ? 'sell-category-btn--active' : ''}" 
+                  data-category="consumable">
+            CONSUMABLES
+          </button>
+          <button class="sell-category-btn ${sellCategoryFilter === 'weaponPart' ? 'sell-category-btn--active' : ''}" 
+                  data-category="weaponPart">
+            WEAPON PARTS
+          </button>
+          <button class="sell-category-btn ${sellCategoryFilter === 'resource' ? 'sell-category-btn--active' : ''}" 
+                  data-category="resource">
+            RESOURCES
+          </button>
+        </div>
+      </div>
+      
+      <!-- Center: Item List -->
+      <div class="sell-main">
+        <div class="panel-section-title">SELLABLE ITEMS</div>
+        <div class="sell-item-list">
+          ${filteredEntries.length === 0
+            ? '<div class="sell-empty">No items available in this category.</div>'
+            : filteredEntries.map(entry => renderSellItem(entry)).join('')
+          }
+        </div>
+      </div>
+      
+      <!-- Right: Transaction Summary -->
+      <div class="sell-summary">
+        <div class="panel-section-title">TRANSACTION</div>
+        <div class="sell-summary-content">
+          ${selectedItems.length === 0
+            ? '<div class="sell-summary-empty">Select items to sell</div>'
+            : `
+              <div class="sell-summary-items">
+                ${selectedItems.map(({ entry, quantity }) => `
+                  <div class="sell-summary-item">
+                    <span class="summary-item-name">${entry.name}</span>
+                    <span class="summary-item-qty">×${quantity}</span>
+                    <span class="summary-item-price">${entry.unitSellPrice * quantity} WAD</span>
+                  </div>
+                `).join('')}
+              </div>
+              <div class="sell-summary-total">
+                <div class="summary-total-label">TOTAL:</div>
+                <div class="summary-total-value">${totalWad} WAD</div>
+              </div>
+              <button class="sell-confirm-btn" id="sellConfirmBtn" ${selectedItems.length === 0 ? 'disabled' : ''}>
+                CONFIRM SELL
+              </button>
+            `
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSellItem(entry: SellableEntry): string {
+  const selectedQty = sellSelectedLines.get(entry.key) || 0;
+  const canSell = !entry.equipped && !entry.locked && entry.owned > 0;
+  const maxQty = entry.stackable ? entry.owned : 1;
+  
+  return `
+    <div class="sell-item ${!canSell ? 'sell-item--disabled' : ''}" data-entry-key="${entry.key}">
+      <div class="sell-item-info">
+        <div class="sell-item-name">${entry.name}</div>
+        <div class="sell-item-meta">
+          <span class="sell-item-owned">Owned: ${entry.owned}</span>
+          ${entry.equipped ? '<span class="sell-item-status sell-item-status--equipped">EQUIPPED</span>' : ''}
+          ${entry.locked ? '<span class="sell-item-status sell-item-status--locked">LOCKED</span>' : ''}
+        </div>
+      </div>
+      <div class="sell-item-price">${entry.unitSellPrice} WAD</div>
+      ${canSell ? `
+        <div class="sell-item-controls">
+          ${entry.stackable ? `
+            <input type="number" 
+                   class="sell-qty-input" 
+                   data-entry-key="${entry.key}"
+                   min="1" 
+                   max="${maxQty}" 
+                   value="${selectedQty}"
+                   placeholder="0">
+          ` : `
+            <button class="sell-toggle-btn ${selectedQty > 0 ? 'sell-toggle-btn--active' : ''}" 
+                    data-entry-key="${entry.key}">
+              ${selectedQty > 0 ? 'SELECTED' : 'SELECT'}
+            </button>
+          `}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void {
+  // Category filter buttons
+  document.querySelectorAll(".sell-category-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const category = (e.currentTarget as HTMLElement).getAttribute("data-category");
+      if (category) {
+        sellCategoryFilter = category as typeof sellCategoryFilter;
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+      }
+    });
+  });
+  
+  // Quantity inputs (for stackables)
+  document.querySelectorAll(".sell-qty-input").forEach(input => {
+    const el = input as HTMLInputElement;
+    el.addEventListener("change", () => {
+      const key = el.getAttribute("data-entry-key");
+      if (key) {
+        const qty = parseInt(el.value) || 0;
+        if (qty > 0) {
+          sellSelectedLines.set(key, qty);
+        } else {
+          sellSelectedLines.delete(key);
+        }
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+      }
+    });
+  });
+  
+  // Toggle buttons (for non-stackables)
+  document.querySelectorAll(".sell-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const key = (e.currentTarget as HTMLElement).getAttribute("data-entry-key");
+      if (key) {
+        const current = sellSelectedLines.get(key) || 0;
+        if (current > 0) {
+          sellSelectedLines.delete(key);
+        } else {
+          sellSelectedLines.set(key, 1);
+        }
+        const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+      }
+    });
+  });
+  
+  // Confirm sell button
+  const confirmBtn = document.getElementById("sellConfirmBtn");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+      const state = getGameState();
+      const entries = getSellableEntries(state);
+      
+      // Build sell lines
+      const lines: SellLine[] = [];
+      for (const [key, quantity] of sellSelectedLines.entries()) {
+        const entry = entries.find(e => e.key === key);
+        if (entry && quantity > 0) {
+          lines.push({
+            kind: entry.kind,
+            id: entry.id,
+            quantity,
+          });
+        }
+      }
+      
+      if (lines.length === 0) {
+        showNotification("No items selected", "error");
+        return;
+      }
+      
+      // Execute transaction
+      const result = sellToShop(state, lines);
+      
+      if ("error" in result) {
+        showNotification(result.error, "error");
+        return;
+      }
+      
+      // Apply state update (merge result.next into current state)
+      updateGameState(draft => {
+        // Merge all changes from result.next
+        Object.assign(draft, result.next);
+        return draft;
+      });
+      
+      // Clear selection
+      sellSelectedLines.clear();
+      
+      showNotification(`Sold items for ${result.wadGained} WAD`, "success");
+      
+      // Re-render
+      const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+      renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+    });
+  }
 }
 
 export { renderShopScreen as default };

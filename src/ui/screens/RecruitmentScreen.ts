@@ -565,8 +565,8 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
       });
     } else {
       // Return to base camp screen
-      import("./BaseCampScreen").then(({ renderBaseCampScreen }) => {
-        renderBaseCampScreen(returnDestination === "menu" ? "menu" : "basecamp");
+      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+        renderAllNodesMenuScreen();
       });
     }
   });

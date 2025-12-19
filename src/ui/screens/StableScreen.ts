@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   Mount,
   OwnedMount,
@@ -358,9 +358,7 @@ export function renderStableScreen(returnTo: "basecamp" | "field" = "basecamp"):
 
   // Back button
   root.querySelector("#backBtn")?.addEventListener("click", () => {
-    // renderBaseCampScreen only accepts "basecamp" | "menu", so map "field" to "basecamp"
-    const navReturnTo = returnTo === "field" ? "basecamp" : returnTo;
-    renderBaseCampScreen(navReturnTo);
+    renderAllNodesMenuScreen();
   });
 
   // Unlock mount buttons

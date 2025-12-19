@@ -8,7 +8,7 @@ import {
   upgradeMuleClass,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 
 
@@ -176,7 +176,7 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
       } else {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       }
     });
   }

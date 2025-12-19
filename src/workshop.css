@@ -584,3 +584,71 @@
 .workshop-root ::-webkit-scrollbar-thumb:hover {
   background: #a87c45;
 }
+
+/* --------------------------------------------------------------------------
+   CRAFTING NOTE & GEAR BUILDER LINK
+   -------------------------------------------------------------------------- */
+.crafting-note {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(168, 124, 69, 0.2);
+  border-radius: 3px;
+  font-size: 0.6rem;
+  color: #a87c45;
+  line-height: 1.4;
+}
+
+.note-text {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.gear-builder-link {
+  background: transparent;
+  border: none;
+  color: #8ce6ff;
+  font-family: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s ease;
+}
+
+.gear-builder-link:hover {
+  color: #ffcc6e;
+  text-shadow: 0 0 4px rgba(255, 204, 110, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   DEPRECATED RECIPE PANEL
+   -------------------------------------------------------------------------- */
+.detail-panel--deprecated {
+  background: rgba(107, 79, 45, 0.1);
+  border-color: rgba(168, 124, 69, 0.4);
+}
+
+.detail-panel--deprecated .detail-category {
+  color: #ff6b6b;
+  font-weight: 600;
+}
+
+.detail-panel--deprecated .detail-description {
+  color: #c9a66b;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.detail-panel--deprecated .detail-description p {
+  margin: 0.5rem 0;
+}
+
+.detail-panel--deprecated .detail-description p:first-child {
+  margin-top: 0;
+}
+
+.detail-panel--deprecated .detail-description p:last-child {
+  margin-bottom: 0;
+}

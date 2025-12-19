@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState, addResources } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import {
   PortManifest,
@@ -611,7 +611,7 @@ function attachPortListeners(
     if (returnTo === "field") {
       renderFieldScreen("base_camp");
     } else {
-      renderBaseCampScreen();
+      renderAllNodesMenuScreen();
     }
   });
   

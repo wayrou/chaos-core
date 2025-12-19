@@ -351,8 +351,8 @@ function attachTavernListeners(
       renderFieldScreen("base_camp");
     } else {
       // Return to base camp screen
-      import("./BaseCampScreen").then(({ renderBaseCampScreen }) => {
-        renderBaseCampScreen("basecamp");
+      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+        renderAllNodesMenuScreen();
       });
     }
   };

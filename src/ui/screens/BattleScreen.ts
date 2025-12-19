@@ -5,8 +5,9 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMapScreen, markCurrentRoomVisited } from "./OperationMapScreen";
 import { recordBattleVictory, syncCampaignToGameState, getActiveRun } from "../../core/campaignManager";
 const renderOperationMap = renderOperationMapScreen; // Alias for compatibility
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { addCardsToLibrary } from "../../core/gearWorkbench";
+import { getUnlockableById } from "../../core/unlockables";
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
@@ -1758,9 +1759,38 @@ function renderDefenseObjectiveHeader(objective: NonNullable<BattleState["defens
 }
 
 function renderBattleResultOverlay(battle: BattleState): string {
+  // Check if this is a training battle
+  const isTraining = (battle as any).isTraining === true;
+  
+  if (isTraining && battle.phase === "victory") {
+    // Training battles show a simplified overlay
+    return `
+      <div class="battle-result-overlay battle-result-overlay--training">
+        <div class="battle-result-content">
+          <div class="battle-result-title">TRAINING COMPLETE</div>
+          <div class="battle-result-message">Simulation ended successfully. No rewards granted.</div>
+          <button class="battle-result-btn" id="trainingContinueBtn">CONTINUE</button>
+        </div>
+      </div>
+    `;
+  }
+  
+  // Normal battle overlay
   if (battle.phase === "victory") {
     const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
+    
+    // Load unlockable name if present
+    const unlockableId = (r as any).unlockable;
+    let unlockableName = "";
+    if (unlockableId && unlockableId !== "pending") {
+      try {
+        const unlock = getUnlockableById(unlockableId);
+        unlockableName = unlock ? unlock.displayName : unlockableId;
+      } catch {
+        unlockableName = "Unlockable";
+      }
+    }
 
     return `
       <div class="battle-result-overlay">
@@ -1777,6 +1807,12 @@ function renderBattleResultOverlay(battle: BattleState): string {
             <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
             <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
             <div class="battle-reward-item"><div class="reward-label">STEAM COMP</div><div class="reward-value">+${r.steamComponents}</div></div>
+            ${unlockableId && unlockableId !== "pending" && unlockableName ? `
+              <div class="battle-reward-item battle-reward-item--unlockable">
+                <div class="reward-label">NEW UNLOCK</div>
+                <div class="reward-value">${unlockableName}</div>
+              </div>
+            ` : ""}
           </div>
           <div class="battle-result-footer">
             <button class="battle-result-btn" id="claimRewardsBtn">CLAIM & CONTINUE</button>
@@ -2673,6 +2709,16 @@ function attachBattleListeners() {
     };
   }
 
+  // Training continue button (for training battles)
+  const trainingContinueBtn = document.getElementById("trainingContinueBtn");
+  if (trainingContinueBtn) {
+    trainingContinueBtn.onclick = () => {
+      if (localBattleState) {
+        handleTrainingBattleComplete(localBattleState);
+      }
+    };
+  }
+  
   // Claim rewards button - use both onclick and addEventListener for maximum reliability
   // Only look for button if battle phase is victory or defeat
   const claimBtn = (battle.phase === "victory" || battle.phase === "defeat") 
@@ -2698,6 +2744,15 @@ function attachBattleListeners() {
       const r = localBattleState.rewards;
       if (!r) {
         console.warn("[BATTLE] No rewards to claim");
+        return;
+      }
+      
+      // Block rewards for training battles
+      const isTraining = (localBattleState as any).isTraining === true;
+      if (isTraining) {
+        console.warn("[TRAINING_NO_REWARDS] blocked reward grant");
+        // Show training completion screen instead
+        handleTrainingBattleComplete(localBattleState);
         return;
       }
       
@@ -2744,45 +2799,64 @@ function attachBattleListeners() {
               : s.cardLibrary,
           };
 
+          // Grant unlockable if present
+          if ((r as any).unlockable) {
+            import("../../core/unlockableOwnership").then(({ grantUnlock }) => {
+              grantUnlock((r as any).unlockable, "battle_reward");
+            }).catch(err => {
+              console.warn("[BATTLE] Could not grant unlockable reward:", err);
+            });
+          }
+
           return updatedState;
         });
 
-        // Update quest progress for battle completion
-        // Count enemies defeated (estimate from rewards or battle state)
-        const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
-        updateQuestProgress("kill_enemies", enemyCount, enemyCount);
-        updateQuestProgress("complete_battle", "any", 1);
-        
-        // Update resource collection quests
-        if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
-        if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
-        if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
-        if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
-        
-        // Track survival affinity for all units that survived
-        trackBattleSurvival(localBattleState, true);
+        // Block quest progress for training battles (isTraining already declared above)
+        if (!isTraining) {
+          // Update quest progress for battle completion
+          // Count enemies defeated (estimate from rewards or battle state)
+          const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
+          updateQuestProgress("kill_enemies", enemyCount, enemyCount);
+          updateQuestProgress("complete_battle", "any", 1);
+          
+          // Update resource collection quests
+          if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
+          if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
+          if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
+          if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
+          
+          // Track survival affinity for all units that survived
+          trackBattleSurvival(localBattleState, true);
+        } else {
+          console.warn("[TRAINING_NO_REWARDS] blocked quest progress update");
+        }
 
-        // Mark battle as won in campaign system (synchronous to ensure state is updated before render)
-        try {
-          // Check if this was a defense battle
-          const isDefenseBattle = localBattleState.defenseObjective?.type === "survive_turns";
-          if (isDefenseBattle && (window as any).__defenseKeyRoomId) {
-            // Record defense victory
-            import("../../core/campaignManager").then(m => {
-              m.recordDefenseVictory((window as any).__defenseKeyRoomId);
+        // Block campaign progress for training battles (isTraining already declared above)
+        if (!isTraining) {
+          // Mark battle as won in campaign system (synchronous to ensure state is updated before render)
+          try {
+            // Check if this was a defense battle
+            const isDefenseBattle = localBattleState.defenseObjective?.type === "survive_turns";
+            if (isDefenseBattle && (window as any).__defenseKeyRoomId) {
+              // Record defense victory
+              import("../../core/campaignManager").then(m => {
+                m.recordDefenseVictory((window as any).__defenseKeyRoomId);
+                syncCampaignToGameState();
+              });
+              // Clear defense flags
+              (window as any).__isDefenseBattle = false;
+              (window as any).__defenseKeyRoomId = undefined;
+            } else {
+              recordBattleVictory();
               syncCampaignToGameState();
-            });
-            // Clear defense flags
-            (window as any).__isDefenseBattle = false;
-            (window as any).__defenseKeyRoomId = undefined;
-          } else {
-            recordBattleVictory();
-            syncCampaignToGameState();
+            }
+          } catch (error) {
+            // Fallback if campaign system not available (e.g., no active run)
+            console.warn("[BATTLE] Campaign system error, using fallback:", error);
+            markCurrentRoomVisited();
           }
-        } catch (error) {
-          // Fallback if campaign system not available (e.g., no active run)
-          console.warn("[BATTLE] Campaign system error, using fallback:", error);
-          markCurrentRoomVisited();
+        } else {
+          console.warn("[TRAINING_NO_REWARDS] blocked campaign progress update");
         }
 
         console.log("[BATTLE] Rewards claimed successfully");
@@ -2811,6 +2885,18 @@ function attachBattleListeners() {
       (window as any).__isKeyRoomCapture = false;
       (window as any).__keyRoomNodeId = undefined;
 
+      // Check if this was a training battle (should have been handled earlier, but double-check)
+      // isTraining is already declared above, so just check it
+      if (isTraining) {
+        // Training battle - should have been handled by handleTrainingBattleComplete
+        // But if we reach here, route to Comms Array
+        import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+          const returnTo = (localBattleState as any).returnTo || "basecamp";
+          renderCommsArrayScreen(returnTo);
+        });
+        return;
+      }
+      
       // If in endless mode, start next battle instead of returning to operation map
       if (isEndlessBattleMode) {
         startNextEndlessBattle();
@@ -3276,6 +3362,114 @@ function startNextEndlessBattle(): void {
   
   // Render the battle screen
   renderBattleScreen();
+}
+
+/**
+ * Handle training battle completion - show rematch/change settings/return options
+ */
+function handleTrainingBattleComplete(battle: BattleState): void {
+  const trainingConfig = (battle as any).trainingConfig;
+  const returnTo = (battle as any).returnTo || "basecamp";
+  
+  // Cleanup battle state
+  cleanupBattlePanHandlers();
+  localBattleState = null;
+  selectedCardIndex = null;
+  resetTurnStateForUnit(null);
+  uiPanelsMinimized = false;
+  
+  // Show training completion screen
+  const app = document.getElementById("app");
+  if (!app) return;
+  
+  app.innerHTML = `
+    <div class="training-complete-screen">
+      <div class="training-complete-header">
+        <h1 class="training-complete-title">TRAINING COMPLETE</h1>
+        <div class="training-complete-subtitle">Simulation ended successfully</div>
+      </div>
+      
+      <div class="training-complete-content">
+        <div class="training-complete-message">
+          <p>Training battle completed. No rewards were granted (training mode).</p>
+        </div>
+        
+        <div class="training-complete-actions">
+          <button class="training-action-btn training-action-btn--primary" id="rematchBtn">
+            REMATCH
+          </button>
+          <button class="training-action-btn" id="changeSettingsBtn">
+            CHANGE SETTINGS
+          </button>
+          <button class="training-action-btn" id="returnToBaseBtn">
+            RETURN TO BASE CAMP
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Attach handlers
+  const rematchBtn = document.getElementById("rematchBtn");
+  if (rematchBtn) {
+    rematchBtn.onclick = () => {
+      // Use stored training config to start a new battle directly
+      import("./CommsArrayScreen").then(({ getLastTrainingConfig }) => {
+        const lastConfig = getLastTrainingConfig();
+        if (lastConfig && trainingConfig) {
+          // Start training battle directly with stored config
+          import("../../core/trainingEncounter").then(({ createTrainingEncounter }) => {
+            import("../../core/battleFromEncounter").then(({ createBattleFromEncounter }) => {
+              import("../../state/gameStore").then(({ getGameState, updateGameState }) => {
+                import("./BattleScreen").then(({ renderBattleScreen }) => {
+                  const state = getGameState();
+                  const encounter = createTrainingEncounter(state, lastConfig);
+                  if (encounter) {
+                    const battle = createBattleFromEncounter(state, encounter, `training_${Date.now()}`);
+                    if (battle) {
+                      (battle as any).isTraining = true;
+                      (battle as any).trainingConfig = lastConfig;
+                      (battle as any).returnTo = returnTo;
+                      updateGameState(prev => ({
+                        ...prev,
+                        currentBattle: { ...battle, turnIndex: 0 } as any,
+                        phase: "battle",
+                      }));
+                      renderBattleScreen();
+                    }
+                  }
+                });
+              });
+            });
+          });
+        } else {
+          // Fallback: go to Comms Array
+          import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+            renderCommsArrayScreen(returnTo);
+          });
+        }
+      });
+    };
+  }
+  
+  const changeSettingsBtn = document.getElementById("changeSettingsBtn");
+  if (changeSettingsBtn) {
+    changeSettingsBtn.onclick = () => {
+      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen(returnTo);
+      });
+    };
+  }
+  
+  const returnToBaseBtn = document.getElementById("returnToBaseBtn");
+  if (returnToBaseBtn) {
+    returnToBaseBtn.onclick = () => {
+      // Always return to Comms Array screen after training battle
+      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen(returnTo);
+      });
+    };
+  }
 }
 
 /**

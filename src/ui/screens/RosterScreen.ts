@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
@@ -303,7 +303,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
         } else if (returnDestination === "operation") {
           renderOperationMapScreen();
         } else {
-          renderBaseCampScreen();
+          renderAllNodesMenuScreen();
         }
       };
     } else {

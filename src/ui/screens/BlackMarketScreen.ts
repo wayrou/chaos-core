@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState, spendWad } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { getAllFieldModDefs, getFieldModDef } from "../../core/fieldModDefinitions";
 import { FieldModInstance } from "../../core/fieldMods";
@@ -230,7 +230,7 @@ function attachBlackMarketListeners(root: HTMLElement, returnTo: "basecamp" | "f
     if (returnTo === "field") {
       renderFieldScreen("base_camp");
     } else {
-      renderBaseCampScreen();
+      renderAllNodesMenuScreen();
     }
   });
 

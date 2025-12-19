@@ -645,8 +645,8 @@ function attachQuartersListeners(returnTo: "basecamp" | "field"): void {
         renderFieldScreen("quarters");
       });
     } else {
-      import("./BaseCampScreen").then(({ renderBaseCampScreen }) => {
-        renderBaseCampScreen(returnTo);
+      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+        renderAllNodesMenuScreen();
       });
     }
   });

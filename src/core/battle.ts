@@ -47,6 +47,10 @@ import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
 import { getCoverDamageReduction } from "./coverGenerator";
 
+// Import unlockable system (for battle rewards)
+import { getRewardEligibleUnlockables, getUnownedUnlockables, getUnlockableById } from "./unlockables";
+import { getAllOwnedUnlockableIds } from "./unlockableOwnership";
+
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
@@ -142,6 +146,7 @@ export interface BattleState {
     steamComponents: number;
     cards?: string[];  // NEW: Card IDs won
     recipe?: string | null;  // NEW: Recipe ID won
+    unlockable?: string | null;  // NEW: Unlockable ID (chassis, doctrine, or field mod)
   };
   loadPenalties?: LoadPenaltyFlags;
   // Placement phase state
@@ -1410,7 +1415,22 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
 
   // STANDARD VICTORY: All enemy units dead (for non-defense battles)
   if (!anyEnemies && !state.defenseObjective) {
-    const rewards = generateBattleRewards(state);
+    // Block rewards for training battles
+    const isTraining = (state as any).isTraining === true;
+    const rewards = isTraining ? {
+      wad: 0,
+      metalScrap: 0,
+      wood: 0,
+      chaosShards: 0,
+      steamComponents: 0,
+      cards: [],
+      recipe: null,
+      unlockable: null,
+    } : generateBattleRewardsSync(state);
+    
+    if (isTraining) {
+      console.warn("[TRAINING_NO_REWARDS] blocked reward generation");
+    }
 
     // STEP 7: Build card reward log
     const cardNames = (rewards.cards ?? [])
@@ -1420,17 +1440,24 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       ? `SLK//CARDS :: Acquired: ${cardNames}`
       : "";
 
+    const logMessages = isTraining
+      ? [
+          ...state.log,
+          "SLK//TRAIN :: Training simulation complete. No rewards granted.",
+        ]
+      : [
+          ...state.log,
+          "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
+          `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components.`,
+          ...(cardLog ? [cardLog] : []),
+        ];
+    
     return {
       ...state,
       phase: "victory",
       activeUnitId: null,
       rewards,
-      log: [
-        ...state.log,
-        "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
-        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components.`,
-        ...(cardLog ? [cardLog] : []),
-      ],
+      log: logMessages,
     };
   }
 
@@ -1490,6 +1517,45 @@ function generateBattleRewards(state: BattleState) {
     }
   }
 
+  // Generate unlockable reward (5% base chance, +1% per enemy, capped at 15%)
+  const unlockableChance = Math.min(0.15, 0.05 + (enemyCount * 0.01));
+  let unlockableReward: string | null = null;
+  if (Math.random() < unlockableChance) {
+    try {
+      const owned = getAllOwnedUnlockableIds();
+      const allOwnedIds = [...owned.chassis, ...owned.doctrines];
+      const eligible = getRewardEligibleUnlockables();
+      const unowned = getUnownedUnlockables(allOwnedIds);
+      
+      if (unowned.length === 0) {
+        unlockableReward = null;
+      } else {
+        // Weight by rarity (common: 60%, uncommon: 30%, rare: 10%)
+        const common = unowned.filter(u => u.rarity === "common");
+        const uncommon = unowned.filter(u => u.rarity === "uncommon");
+        const rare = unowned.filter(u => u.rarity === "rare" || u.rarity === "epic");
+        
+        const roll = Math.random();
+        let pool: typeof unowned;
+        
+        if (roll < 0.6 && common.length > 0) {
+          pool = common;
+        } else if (roll < 0.9 && uncommon.length > 0) {
+          pool = uncommon;
+        } else if (rare.length > 0) {
+          pool = rare;
+        } else {
+          pool = unowned;
+        }
+        
+        const selected = pool[Math.floor(Math.random() * pool.length)];
+        unlockableReward = selected ? selected.id : null;
+      }
+    } catch (e) {
+      console.warn("[BATTLE] Could not generate unlockable reward:", e);
+    }
+  }
+
   return {
     wad: 10 * enemyCount,
     metalScrap: 2 * enemyCount,
@@ -1498,6 +1564,7 @@ function generateBattleRewards(state: BattleState) {
     steamComponents: enemyCount >= 2 ? 1 : 0,
     cards: cardRewards,
     recipe: recipeReward,
+    unlockable: unlockableReward,
   };
 }
 

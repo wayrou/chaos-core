@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { GameState } from "./types";
 import { getSettings } from "./settings";
 
@@ -337,7 +337,7 @@ function attachWorkshopListeners(
   if (backBtn) {
     backBtn.onclick = () => {
       selectedRecipeId = null;
-      renderBaseCampScreen();
+      renderAllNodesMenuScreen();
     };
   }
   

@@ -30,3 +30,8 @@ declare module "*.webp" {
   const src: string;
   export default src;
 }
+
+declare module "*.json" {
+  const content: any;
+  export default content;
+}

@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 
 import {
@@ -24,7 +24,7 @@ import {
 // STATE
 // ----------------------------------------------------------------------------
 
-let selectedCategory: Recipe["category"] = "weapon";
+let selectedCategory: Recipe["category"] = "armor";
 let selectedRecipeId: string | null = null;
 
 // ----------------------------------------------------------------------------
@@ -111,9 +111,6 @@ export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"
           <div class="crafting-categories">
             <div class="panel-section-title">CATEGORIES</div>
             <div class="category-tabs">
-              <button class="category-tab ${selectedCategory === 'weapon' ? 'category-tab--active' : ''}" data-category="weapon">
-                ⚔ Weapons
-              </button>
               <button class="category-tab ${selectedCategory === 'armor' ? 'category-tab--active' : ''}" data-category="armor">
                 🛡 Armor
               </button>
@@ -123,6 +120,9 @@ export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"
               <button class="category-tab ${selectedCategory === 'upgrade' ? 'category-tab--active' : ''}" data-category="upgrade">
                 ⬆ Upgrades
               </button>
+            </div>
+            <div class="crafting-note">
+              <div class="note-text">⚔ Weapons are engineered in the <button class="gear-builder-link" id="gearBuilderLink">Gear Builder</button></div>
             </div>
           </div>
           
@@ -176,7 +176,6 @@ export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"
 
 function getCategoryTitle(category: Recipe["category"]): string {
   switch (category) {
-    case "weapon": return "WEAPON SCHEMATICS";
     case "armor": return "ARMOR BLUEPRINTS";
     case "consumable": return "CONSUMABLE FORMULAE";
     case "upgrade": return "UPGRADE PATHS";
@@ -212,6 +211,26 @@ function renderRecipeDetails(
   inventoryItemIds: string[],
   canCraft: boolean
 ): string {
+  // Handle deprecated weapon recipes
+  if (recipe.deprecated || recipe.resultItemId.startsWith("weapon_")) {
+    return `
+      <div class="detail-panel detail-panel--deprecated">
+        <div class="detail-header">
+          <div class="detail-title">${recipe.name}</div>
+          <div class="detail-category">DEPRECATED</div>
+        </div>
+        <div class="detail-description">
+          <p>Weapon crafting has moved to the Gear Builder.</p>
+          <p>Use the Gear Builder to engineer and customize weapons.</p>
+        </div>
+        <div class="detail-actions">
+          <button class="craft-btn" id="openGearBuilderBtn">
+            ⚔ Open Gear Builder
+          </button>
+        </div>
+      </div>
+    `;
+  }
   const costLines = [];
   if (recipe.cost.metalScrap) costLines.push({ name: "Metal Scrap", need: recipe.cost.metalScrap, have: resources.metalScrap });
   if (recipe.cost.wood) costLines.push({ name: "Wood", need: recipe.cost.wood, have: resources.wood });
@@ -349,8 +368,17 @@ function attachCraftingListeners(
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
       } else {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       }
+    };
+  }
+  
+  // Gear Builder link
+  const gearBuilderLink = document.getElementById("gearBuilderLink");
+  if (gearBuilderLink) {
+    gearBuilderLink.onclick = () => {
+      const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+      renderGearWorkbenchScreen(undefined, undefined, currentReturnTo === "field" ? "field" : "basecamp");
     };
   }
   
@@ -381,12 +409,27 @@ function attachCraftingListeners(
     };
   });
   
+  // Open Gear Builder button (for deprecated recipes)
+  const openGearBuilderBtn = document.getElementById("openGearBuilderBtn");
+  if (openGearBuilderBtn) {
+    openGearBuilderBtn.onclick = () => {
+      const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
+      renderGearWorkbenchScreen(undefined, undefined, currentReturnTo === "field" ? "field" : "basecamp");
+    };
+  }
+  
   // Craft button
   const craftBtn = document.getElementById("craftBtn");
   if (craftBtn && selectedRecipeId) {
     craftBtn.onclick = () => {
       const recipe = RECIPE_DATABASE[selectedRecipeId!];
       if (!recipe) return;
+      
+      // Double-check: prevent weapon crafting
+      if (recipe.deprecated || recipe.resultItemId.startsWith("weapon_")) {
+        addCraftingLog(`SLK//ERROR :: Weapons must be built in Gear Builder.`);
+        return;
+      }
       
       const result = craftItem(recipe, resources, inventoryItemIds);
       

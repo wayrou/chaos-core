@@ -109,10 +109,29 @@ export interface OperationDefinition {
   id: OperationId;
   name: string;
   description: string;
-  floors: number;
-  recommendedPower?: number;
+  floors: number; // Base floor count (will be multiplied by 10 at runtime)
+  recommendedPower?: number; // Base recommended power (will be calculated from floor index)
   unlocksNextOperationId?: OperationId;
   isCustom: boolean;
+}
+
+/**
+ * Get effective floor count for an operation (base × 10)
+ */
+export function getEffectiveFloors(opDef: OperationDefinition, customFloors?: number): number {
+  const baseFloors = customFloors || opDef.floors;
+  return baseFloors * 10;
+}
+
+/**
+ * Calculate recommended power for a floor
+ * Starts at 25 for floor 0, scales linearly
+ */
+export function calculateRecommendedPower(floorIndex: number, baseRecommendedPower?: number): number {
+  // Start at 25 for first floor, scale by 2.5 per floor
+  const basePWR = 25;
+  const pwrPerFloor = 2.5;
+  return Math.round(basePWR + (floorIndex * pwrPerFloor));
 }
 
 // ----------------------------------------------------------------------------
@@ -124,8 +143,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_iron_gate",
     name: "IRON GATE",
     description: "Secure the Chaos Rift entrance and clear the corrupted garrison.",
-    floors: 3,
-    recommendedPower: 10,
+    floors: 3, // Effective: 30 floors
+    recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_black_spire",
     isCustom: false,
   },
@@ -133,8 +152,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_black_spire",
     name: "BLACK SPIRE",
     description: "Capture enemy artillery positions and neutralize long-range threats.",
-    floors: 3,
-    recommendedPower: 20,
+    floors: 3, // Effective: 30 floors
+    recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_ghost_run",
     isCustom: false,
   },
@@ -142,8 +161,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_ghost_run",
     name: "GHOST RUN",
     description: "Disrupt enemy supply lines and eliminate fast-moving skirmishers.",
-    floors: 3,
-    recommendedPower: 30,
+    floors: 3, // Effective: 30 floors
+    recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_ember_siege",
     isCustom: false,
   },
@@ -151,8 +170,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_ember_siege",
     name: "EMBER SIEGE",
     description: "Destroy key enemy fortifications and break through defensive lines.",
-    floors: 3,
-    recommendedPower: 40,
+    floors: 3, // Effective: 30 floors
+    recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_final_dawn",
     isCustom: false,
   },
@@ -160,8 +179,8 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
     id: "op_final_dawn",
     name: "FINAL DAWN",
     description: "Assault the enemy command center and end the conflict.",
-    floors: 3,
-    recommendedPower: 50,
+    floors: 3, // Effective: 30 floors
+    recommendedPower: 25, // Base, will scale per floor
     isCustom: false,
   },
   op_custom: {

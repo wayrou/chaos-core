@@ -12,14 +12,13 @@ import {
 } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
-import { renderBaseCampScreen } from "../ui/screens/BaseCampScreen";
+import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { createCompanion, updateCompanion } from "./companion";
 import { createNpc, updateNpc, getNpcInRange, NPC_DIALOGUE } from "./npcs";
 import { showDialogue } from "../ui/screens/DialogueScreen";
 import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
-import { PlayerId } from "../core/types";
-import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
+import { resolvePlayerSpawn, SpawnSource, SpawnResult } from "./spawnResolver";
 
 // ============================================================================
 // STATE
@@ -45,6 +44,9 @@ let isPanelOpen = false;
 
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
+
+// Spawn debug info (for debug label)
+let lastSpawnResult: SpawnResult | null = null;
 
 // ============================================================================
 // GETTERS
@@ -76,59 +78,85 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
 
   const isResuming = fieldState && fieldState.currentMap === mapId;
 
+  // Detect spawn source (FCP = key room entry, normal = everything else)
+  const spawnSource: SpawnSource = (typeof mapId === "string" && mapId.startsWith("keyroom_")) ? "FCP" : "normal";
+
   // Always reset position when entering quarters (small map, needs specific spawn)
   // For other maps, restore position if resuming
   if (isResuming && mapId !== "quarters") {
     // Restore from fieldState if available, otherwise from game state
     playerX = fieldState!.player.x;
     playerY = fieldState!.player.y;
+    // No spawn resolution needed for resume
+    lastSpawnResult = null;
   } else {
-    // Set spawn position based on map (including quarters - always reset)
+    // Determine requested spawn position
+    let requestedX: number;
+    let requestedY: number;
+    
     if (mapId === "quarters") {
       // Spawn in the middle bottom of the walkable area
       // Quarters is 10x8, walkable area is x:1-8, y:1-6
       // Middle of x range (1-8): between 4 and 5, use tile 4 for clean positioning
       // Bottom walkable row: y:6
-      // Use tile 4 center: 4 * 64 + 32 = 288px
-      const spawnTileX = 4; // Middle of walkable area (tiles 1-8, middle is ~4.5, use 4)
-      const spawnTileY = 6; // Bottom walkable row (y:1-6, bottom is 6)
-      playerX = spawnTileX * tileSize + tileSize / 2; // Center of tile 4 = 288px
-      playerY = spawnTileY * tileSize + tileSize / 2; // Center of tile 6 = 416px
-      
-      // Skip validation for quarters - we know this position is walkable
-      // (tile 4,6 is in the middle-bottom of walkable area x:1-8, y:1-6)
+      const spawnTileX = 4;
+      const spawnTileY = 6;
+      requestedX = spawnTileX * tileSize + tileSize / 2;
+      requestedY = spawnTileY * tileSize + tileSize / 2;
     } else if (mapId === "base_camp") {
       // Spawn outside quarters node
       // Quarters station is at x:25, y:12 (size 2x2)
       // Quarters interaction zone is at x:25, y:14 (size 2x1)
       // Spawn to the left of quarters interaction zone at x:23, y:14 (center of tile)
-      playerX = 23 * tileSize + tileSize / 2; // 1472px
-      playerY = 14 * tileSize + tileSize / 2; // 896px
+      requestedX = 23 * tileSize + tileSize / 2;
+      requestedY = 14 * tileSize + tileSize / 2;
     } else {
-      // Default: center of map
-      playerX = (currentMap.width * tileSize) / 2;
-      playerY = (currentMap.height * tileSize) / 2;
+      // Default: center of map (avoiding edge tiles which are typically walls)
+      // Use floor to ensure we're not on the right edge (width-1) or bottom edge (height-1)
+      const centerTileX = Math.max(1, Math.min(currentMap.width - 2, Math.floor(currentMap.width / 2)));
+      const centerTileY = Math.max(1, Math.min(currentMap.height - 2, Math.floor(currentMap.height / 2)));
+      requestedX = centerTileX * tileSize + tileSize / 2;
+      requestedY = centerTileY * tileSize + tileSize / 2;
     }
     
-    // Validate spawn position is walkable, if not, find nearest walkable tile
-    // Skip validation for quarters - we set a specific position
-    if (mapId !== "quarters") {
-      const spawnTileX = Math.floor(playerX / tileSize);
-      const spawnTileY = Math.floor(playerY / tileSize);
-      if (spawnTileX < 0 || spawnTileX >= currentMap.width || 
-          spawnTileY < 0 || spawnTileY >= currentMap.height ||
-          !currentMap.tiles[spawnTileY]?.[spawnTileX]?.walkable) {
-        // Find first walkable tile
-        for (let y = 1; y < currentMap.height - 1; y++) {
-          for (let x = 1; x < currentMap.width - 1; x++) {
-            if (currentMap.tiles[y]?.[x]?.walkable) {
-              playerX = x * tileSize + tileSize / 2;
-              playerY = y * tileSize + tileSize / 2;
-              break;
-            }
-          }
-          if (playerX !== (currentMap.width * tileSize) / 2) break;
-        }
+    // Use spawn resolver for all maps except quarters (quarters has known-good spawn)
+    if (mapId === "quarters") {
+      playerX = requestedX;
+      playerY = requestedY;
+      const requestedTileX = Math.floor(requestedX / tileSize);
+      const requestedTileY = Math.floor(requestedY / tileSize);
+      lastSpawnResult = {
+        x: playerX,
+        y: playerY,
+        tileX: Math.floor(playerX / tileSize),
+        tileY: Math.floor(playerY / tileSize),
+        passable: true,
+        usedFallback: false,
+        candidatesScanned: 0,
+        requestedTileX,
+        requestedTileY,
+      };
+    } else {
+      // Use centralized spawn resolver
+      const spawnResult = resolvePlayerSpawn(
+        spawnSource,
+        currentMap,
+        { x: requestedX, y: requestedY }
+      );
+      
+      playerX = spawnResult.x;
+      playerY = spawnResult.y;
+      lastSpawnResult = spawnResult;
+      
+      // Validate final result - this should never fail, but log if it does
+      if (!spawnResult.passable) {
+        console.error(`[SPAWN] CRITICAL: Resolved spawn is not passable! This should never happen.`);
+        console.error(`[SPAWN] Resolved tile: (${spawnResult.tileX}, ${spawnResult.tileY}), Map size: ${currentMap.width}x${currentMap.height}`);
+      }
+      
+      // Explicit check for right wall spawn (should never happen)
+      if (spawnResult.tileX === currentMap.width - 1) {
+        console.error(`[SPAWN] CRITICAL: Player spawned on right wall! Tile X: ${spawnResult.tileX}, Map width: ${currentMap.width}`);
       }
     }
   }
@@ -401,6 +429,19 @@ function render(): void {
         WASD to move • Shift to dash • E to interact • ESC for All Nodes
       </div>
     </div>
+    
+    ${lastSpawnResult ? `
+      <div class="field-spawn-debug" style="position: fixed; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: #0f0; padding: 8px; font-family: monospace; font-size: 11px; z-index: 10000; border: 1px solid #0f0; border-radius: 4px;">
+        <div style="font-weight: bold; margin-bottom: 4px;">CURSOR_PROOF_FCP_SPAWN_FIX</div>
+        <div>spawn_source: ${(typeof currentMap.id === "string" && currentMap.id.startsWith("keyroom_")) ? "FCP" : "normal"}</div>
+        <div>requested_spawn: (${lastSpawnResult.requestedTileX}, ${lastSpawnResult.requestedTileY})</div>
+        <div>resolved_spawn: (${lastSpawnResult.tileX}, ${lastSpawnResult.tileY})</div>
+        <div>tile_passable(resolved): ${lastSpawnResult.passable ? "true" : "false"}</div>
+        ${lastSpawnResult.entryZoneUsed ? `<div>entry_zone: ${lastSpawnResult.entryZoneUsed}</div>` : ""}
+        <div>candidates_scanned: ${lastSpawnResult.candidatesScanned}</div>
+        <div>fallback_used: ${lastSpawnResult.usedFallback ? "true" : "false"}</div>
+      </div>
+    ` : ""}
   `;
 
   centerViewportOnPlayer();
@@ -576,6 +617,10 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-icon">🎒</span>
             <span class="btn-label">LOADOUT</span>
           </button>
+          <button class="all-nodes-btn" data-action="inventory">
+            <span class="btn-icon">📦</span>
+            <span class="btn-label">INVENTORY</span>
+          </button>
           <button class="all-nodes-btn" data-action="quest-board">
             <span class="btn-icon">📋</span>
             <span class="btn-label">QUEST BOARD</span>
@@ -603,6 +648,10 @@ function updateAllNodesPanelContent(): void {
           <button class="all-nodes-btn" data-action="settings">
             <span class="btn-icon">⚙</span>
             <span class="btn-label">SETTINGS</span>
+          </button>
+          <button class="all-nodes-btn" data-action="comms-array">
+            <span class="btn-icon">📡</span>
+            <span class="btn-label">COMMS ARRAY</span>
           </button>
           <div class="all-nodes-divider"></div>
           <button class="all-nodes-btn all-nodes-btn--debug" data-action="endless-field-nodes">
@@ -637,7 +686,7 @@ function updateAllNodesPanelContent(): void {
       const mode = (btn as HTMLElement).dataset.mode;
       if (mode === "basecamp") {
         toggleAllNodesPanel();
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       } else if (mode === "field") {
         toggleAllNodesPanel();
         // Use current map if in field mode, otherwise default to base_camp
@@ -967,6 +1016,11 @@ function handleNodeAction(action: string): void {
         renderInventoryScreen("basecamp");
       });
       break;
+    case "inventory":
+      import("../ui/screens/InventoryViewScreen").then(({ renderInventoryViewScreen }) => {
+        renderInventoryViewScreen("basecamp");
+      });
+      break;
     case "quest-board":
       import("../ui/screens/QuestBoardScreen").then(({ renderQuestBoardScreen }) => {
         renderQuestBoardScreen("basecamp");
@@ -1008,6 +1062,11 @@ function handleNodeAction(action: string): void {
     case "settings":
       import("../ui/screens/SettingsScreen").then(({ renderSettingsScreen }) => {
         renderSettingsScreen("basecamp");
+      });
+      break;
+    case "comms-array":
+      import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen("basecamp");
       });
       break;
     case "endless-field-nodes":
@@ -1255,5 +1314,5 @@ export function exitFieldMode(): void {
   }
 
   isPanelOpen = false;
-  renderBaseCampScreen();
+  renderAllNodesMenuScreen();
 }

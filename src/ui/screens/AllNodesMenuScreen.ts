@@ -5,7 +5,7 @@
 
 import "../../field/field.css"; // Import styles for the menu screen
 import { getGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+// BaseCampScreen removed - using AllNodesMenuScreen instead
 import { renderFieldScreen } from "../../field/FieldScreen";
 
 // Track last field map for returning to field mode
@@ -95,6 +95,11 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <span class="btn-label">LOADOUT</span>
           <span class="btn-desc">Equipment & inventory</span>
         </button>
+        <button class="all-nodes-menu-btn" data-action="inventory">
+          <span class="btn-icon">📦</span>
+          <span class="btn-label">INVENTORY</span>
+          <span class="btn-desc">View all owned items</span>
+        </button>
         <button class="all-nodes-menu-btn" data-action="gear-workbench">
           <span class="btn-icon">🔧</span>
           <span class="btn-label">GEAR WORKBENCH</span>
@@ -139,6 +144,11 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <span class="btn-icon">⚙</span>
           <span class="btn-label">SETTINGS</span>
           <span class="btn-desc">Game options</span>
+        </button>
+        <button class="all-nodes-menu-btn" data-action="comms-array">
+          <span class="btn-icon">📡</span>
+          <span class="btn-label">COMMS ARRAY</span>
+          <span class="btn-desc">Training & multiplayer</span>
         </button>
       </div>
 
@@ -207,7 +217,7 @@ function handleModeSwitch(mode: string | undefined): void {
       renderFieldScreen(lastFieldMap as any);
       break;
     case "classic":
-      renderBaseCampScreen();
+      // Already on AllNodesMenuScreen, do nothing
       break;
     case "menu":
       // Already on menu, do nothing
@@ -235,6 +245,11 @@ function handleNodeAction(action: string): void {
     case "loadout":
       import("./InventoryScreen").then(({ renderInventoryScreen }) => {
         renderInventoryScreen("basecamp");
+      });
+      break;
+    case "inventory":
+      import("./InventoryViewScreen").then(({ renderInventoryViewScreen }) => {
+        renderInventoryViewScreen("basecamp");
       });
       break;
     case "quest-board":
@@ -282,6 +297,11 @@ function handleNodeAction(action: string): void {
     case "settings":
       import("./SettingsScreen").then(({ renderSettingsScreen }) => {
         renderSettingsScreen("basecamp");
+      });
+      break;
+    case "comms-array":
+      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen("basecamp");
       });
       break;
     case "endless-field-nodes":

@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   getSettings,
   updateSettings,
@@ -380,7 +380,7 @@ function attachSettingsListeners(settings: GameSettings): void {
   if (backBtn) {
     backBtn.onclick = () => {
       if (returnDestination === "basecamp") {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       } else {
         renderMainMenu();
       }
