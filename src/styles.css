@@ -25397,7 +25397,7 @@ body {
 
 /* NPC Panel - Ardycia style */
 .tavern-npc-panel {
-  width: 350px;
+  width: 360px;
   max-width: calc(100vw - var(--space-8, 2rem));
   flex-shrink: 0;
   background: linear-gradient(
@@ -25414,7 +25414,10 @@ body {
   flex-direction: column;
 }
 
-.tavern-npc-panel-content {
+.tavern-npc-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
   overflow-y: auto;
   flex: 1;
@@ -25452,6 +25455,7 @@ body {
   transition: all 0.3s ease;
   opacity: 0;
   transform: translateY(10px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .tavern-npc-window--visible {

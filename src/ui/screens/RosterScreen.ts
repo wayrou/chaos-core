@@ -451,12 +451,11 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
     }
     
     const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-    const equipmentPool = Object.keys(equipmentById);
+    const equipmentPool = (state as any).equipmentPool || Object.keys(equipmentById);
     
     // Import autoEquipUnit function
     import("./UnitDetailScreen").then((module) => {
       const { autoEquipUnit } = module;
-      const equipmentPool = Object.keys(equipmentById);
       
       partyUnitIds.forEach(unitId => {
         const unit = state.unitsById[unitId];
@@ -476,72 +475,66 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
   // Debug button to give all equipment to all units
   root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {
     if (confirm("Give all starter equipment to all units for testing?")) {
-      updateGameState(draft => {
-        // Give resources
-        draft.wad = 9999;
-        if (!draft.resources) {
-          draft.resources = { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
-        }
-        draft.resources.metalScrap = 99;
-        draft.resources.wood = 99;
-        draft.resources.chaosShards = 99;
-        draft.resources.steamComponents = 99;
+      updateGameState(prev => {
+        const starterEquipment = getAllStarterEquipment();
+        const nextEquipmentById = {
+          ...(prev as any).equipmentById || {},
+          ...starterEquipment,
+        };
 
-        // Get all starter equipment
-        const allEquipment = getAllStarterEquipment();
-
-        // Add all equipment to equipmentById
-        if (!draft.equipmentById) draft.equipmentById = {};
-        Object.assign(draft.equipmentById, allEquipment);
-
-        // Equip all units with compatible gear
-        Object.keys(draft.unitsById).forEach(unitId => {
-          const unit = draft.unitsById[unitId];
-          const unitClass: UnitClass = (unit as any).unitClass || "squire";
-
-          if (!unit.loadout) {
-            (unit as any).loadout = {
+        const updatedUnits = Object.fromEntries(
+          Object.entries(prev.unitsById).map(([unitId, unit]) => {
+            const unitClass: UnitClass = (unit as any).unitClass || "squire";
+            const existingLoadout: UnitLoadout = (unit as any).loadout || {
               weapon: null,
               helmet: null,
               chestpiece: null,
               accessory1: null,
               accessory2: null,
             };
-          }
 
-          // Find a compatible weapon for this class
-          const weapons = Object.values(allEquipment).filter(eq => eq.slot === "weapon");
-          const compatibleWeapon = weapons.find(w => {
-            const weaponType = (w as any).weaponType;
-            const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
-            return allowed?.includes(weaponType);
-          });
+            const weapons = Object.values(starterEquipment).filter(eq => eq.slot === "weapon");
+            const compatibleWeapon = weapons.find(w => {
+              const weaponType = (w as any).weaponType;
+              const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+              return allowed?.includes(weaponType);
+            });
 
-          if (compatibleWeapon) {
-            (unit as any).loadout.weapon = compatibleWeapon.id;
-          }
+            const helmet = Object.values(starterEquipment).find(eq => eq.slot === "helmet") || null;
+            const chestpiece = Object.values(starterEquipment).find(eq => eq.slot === "chestpiece") || null;
+            const accessories = Object.values(starterEquipment).filter(eq => eq.slot === "accessory");
 
-          // Equip first helmet
-          const helmet = Object.values(allEquipment).find(eq => eq.slot === "helmet");
-          if (helmet) {
-            (unit as any).loadout.helmet = helmet.id;
-          }
+            const newLoadout: UnitLoadout = {
+              ...existingLoadout,
+              weapon: compatibleWeapon?.id || existingLoadout.weapon,
+              helmet: helmet?.id || existingLoadout.helmet,
+              chestpiece: chestpiece?.id || existingLoadout.chestpiece,
+              accessory1: accessories[0]?.id || existingLoadout.accessory1,
+              accessory2: accessories[1]?.id || existingLoadout.accessory2,
+            };
 
-          // Equip first chestpiece
-          const chestpiece = Object.values(allEquipment).find(eq => eq.slot === "chestpiece");
-          if (chestpiece) {
-            (unit as any).loadout.chestpiece = chestpiece.id;
-          }
+            return [unitId, { ...unit, loadout: newLoadout }];
+          }),
+        ) as typeof prev.unitsById;
 
-          // Equip first two accessories
-          const accessories = Object.values(allEquipment).filter(eq => eq.slot === "accessory");
-          if (accessories.length > 0) {
-            (unit as any).loadout.accessory1 = accessories[0].id;
-          }
-          if (accessories.length > 1) {
-            (unit as any).loadout.accessory2 = accessories[1].id;
-          }
-        });
+        return {
+          ...prev,
+          wad: 9999,
+          resources: {
+            ...(prev.resources || {
+              metalScrap: 0,
+              wood: 0,
+              chaosShards: 0,
+              steamComponents: 0,
+            }),
+            metalScrap: 99,
+            wood: 99,
+            chaosShards: 99,
+            steamComponents: 99,
+          },
+          equipmentById: nextEquipmentById,
+          unitsById: updatedUnits,
+        };
       });
 
       // Re-render to show updated equipment

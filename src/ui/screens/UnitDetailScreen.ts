@@ -7,9 +7,6 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
 
 import {
   Equipment,
@@ -23,15 +20,13 @@ import {
   getAllEquipmentCards,
   buildDeckFromLoadout,
   canEquipWeapon,
-  EquipmentCard,
   CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
 import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
-import { HardpointState, FieldModInstance } from "../../core/fieldMods";
-import { getFieldModDef, getAllFieldModDefs } from "../../core/fieldModDefinitions";
-import { getTriggerLabel } from "../../core/fieldModStrings";
+import { HardpointState } from "../../core/fieldMods";
+import { getFieldModDef } from "../../core/fieldModDefinitions";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -172,13 +167,6 @@ export function renderUnitDetailScreen(unitId: string): void {
       `;
     })
     .join("");
-
-  // Auto-equip button (15d)
-  const autoEquipButton = `
-    <div class="auto-equip-section">
-      <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
-    </div>
-  `;
 
   const cardCounts: Record<string, number> = {};
   for (const cardId of deck) {
