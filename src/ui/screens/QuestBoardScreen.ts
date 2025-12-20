@@ -21,6 +21,7 @@ import { Quest } from "../../quests/types";
 // ----------------------------------------------------------------------------
 
 let currentTab: "available" | "active" = "available";
+let questBoardExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const app = document.getElementById("app");
@@ -104,6 +105,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
       </div>
     </div>
   `;
+  attachQuestBoardExitHotkey(returnTo);
 
   attachEventListeners(returnTo);
 }
@@ -313,6 +315,7 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
+      detachQuestBoardExitHotkey();
       if (returnTo === "field") {
         renderFieldScreen("base_camp");
       } else {
@@ -369,3 +372,33 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
   });
 }
 
+function detachQuestBoardExitHotkey(): void {
+  if (questBoardExitKeyHandler) {
+    window.removeEventListener("keydown", questBoardExitKeyHandler);
+    questBoardExitKeyHandler = null;
+  }
+}
+
+function attachQuestBoardExitHotkey(returnTo: "basecamp" | "field"): void {
+  detachQuestBoardExitHotkey();
+
+  if (returnTo !== "field") return;
+
+  questBoardExitKeyHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    if (key === "escape" || key === "e") {
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      detachQuestBoardExitHotkey();
+      renderFieldScreen("base_camp");
+    }
+  };
+
+  window.addEventListener("keydown", questBoardExitKeyHandler);
+}
