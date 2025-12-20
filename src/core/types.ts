@@ -57,13 +57,20 @@ export interface Unit {
   discardPile: CardId[];
   strain: number;
   unitClass?: string;
-loadout?: {
-  weapon: string | null;
-  helmet: string | null;
-  chestpiece: string | null;
-  accessory1: string | null;
-  accessory2: string | null;
-};
+  stats?: {
+    maxHp: number;
+    atk: number;
+    def: number;
+    agi: number;
+    acc: number;
+  };
+  loadout?: {
+    weapon: string | null;
+    helmet: string | null;
+    chestpiece: string | null;
+    accessory1: string | null;
+    accessory2: string | null;
+  };
   buffs?: Array<{
     id: string;
     type: "def_up" | "atk_up" | "agi_up" | string;
