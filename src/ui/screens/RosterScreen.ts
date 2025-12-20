@@ -198,7 +198,13 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
             </div>
             <button class="roster-back-btn" data-return-to="${returnTo}">
               <span class="btn-icon">←</span>
-              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+              <span class="btn-text">${
+                returnTo === "field"
+                  ? "FIELD MODE"
+                  : returnTo === "operation"
+                    ? "BACK TO MAP"
+                    : "BASE CAMP"
+              }</span>
             </button>
           </div>
         </div>

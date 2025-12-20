@@ -28,6 +28,7 @@ import {
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
+import { EVENT_TEMPLATES } from "../../core/procedural";
 // Supply chain removed for now
 
 // ============================================================================
@@ -42,9 +43,9 @@ interface PanState {
   shiftPressed: boolean;
 }
 
-const MIN_ZOOM = 0.6;
-const MAX_ZOOM = 1.8;
-const DEFAULT_ZOOM = 1.0;
+const MIN_ZOOM = 0.8;
+const MAX_ZOOM = 1.6;
+const DEFAULT_ZOOM = 1.5;
 const ZOOM_SENSITIVITY = 0.1;
 
 let panState: PanState = {
@@ -63,6 +64,10 @@ let wheelHandler: ((e: WheelEvent) => void) | null = null;
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 const ADVANCE_KEYS = new Set([" ", "Enter"]); // Space and Enter to advance
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.max(0, Math.min(arr.length - 1, Math.floor(Math.random() * arr.length)))] as T;
+}
 
 function cleanupPanHandlers(): void {
   if (keydownHandler) {
@@ -704,6 +709,21 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     }
   }
 
+  // Determine start and end nodes for icon overrides
+  let startNodeId: string | null = null;
+  let endNodeId: string | null = null;
+  if (nodes.length > 0) {
+    for (const candidate of nodes) {
+      const hasIncoming = nodes.some(n => n.connections?.includes(candidate.id));
+      if (!hasIncoming) {
+        startNodeId = candidate.id;
+        break;
+      }
+    }
+    if (!startNodeId) startNodeId = nodes[0].id;
+    endNodeId = nodes[nodes.length - 1].id;
+  }
+
   // Render connections ONLY from explicit graph edges (node.connections arrays)
   // Track rendered edges to avoid duplicates
   const renderedEdges = new Set<string>();
@@ -787,6 +807,9 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
 
     const icon = getRoomIcon(node.type, node);
     const typeLabel = getRoomTypeLabel(node.type, node);
+    const isStart = startNodeId === node.id;
+    const isEnd = endNodeId === node.id;
+    const displayIcon = isStart ? "🚀" : isEnd ? "🏁" : icon;
 
     // Status classes
     let statusClass = '';
@@ -817,7 +840,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
              data-room-type-label="${typeLabel}">
           ${isRevealed ? `
             <div class="opmap-node-shape">
-              <span class="opmap-node-icon-small">${icon}</span>
+              <span class="opmap-node-icon-small">${displayIcon}</span>
             </div>
             <div class="opmap-node-label-compact">${node.label}</div>
           ` : `
@@ -841,7 +864,10 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
  * Render Key Room status summary
  */
 function renderKeyRoomStatus(floorIndex: number): string {
-  const keyRooms = getKeyRoomsForFloor(floorIndex);
+  const activeRun = getActiveRun();
+  const keyRooms = activeRun
+    ? Object.values(activeRun.keyRoomsByFloor || {}).flat()
+    : getKeyRoomsForFloor(floorIndex);
 
   if (keyRooms.length === 0) {
     return "";
@@ -996,6 +1022,44 @@ function getNodeShapeClass(type?: RoomType): string {
     default:
       return "opmap-node-shape--circle";
   }
+}
+
+function updateContextPanel(
+  node: RoomNode | null,
+  _nodes: RoomNode[],
+  operation: any,
+  floor: any
+): void {
+  const panel = document.getElementById("opmapContextBody");
+  if (!panel) return;
+
+  if (!node) {
+    panel.innerHTML = `
+      <div class="opmap-context-default">
+        <div class="opmap-context-description">${operation.description}</div>
+        <div class="opmap-context-hint">Hover or click a node to view details</div>
+      </div>
+    `;
+    return;
+  }
+
+  const typeLabel = getRoomTypeLabel(node.type, node);
+  const status = node.visited ? "Cleared" : "Unvisited";
+  const icon = getRoomIcon(node.type, node);
+
+  panel.innerHTML = `
+    <div class="opmap-context-node">
+      <div class="opmap-context-node-header">
+        <span class="opmap-context-node-icon">${icon}</span>
+        <div>
+          <div class="opmap-context-node-title">${node.label}</div>
+          <div class="opmap-context-node-subtitle">${typeLabel}</div>
+        </div>
+      </div>
+      <div class="opmap-context-node-status">Status: ${status}</div>
+      <div class="opmap-context-node-floor">Floor: ${floor.name}</div>
+    </div>
+  `;
 }
 
 // ============================================================================
@@ -1165,10 +1229,9 @@ function handleKeyRoomAction(keyRoomId: string, action: string): void {
     return;
   }
 
-  const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  const keyRoom = floorKeyRooms.find(kr => kr.roomNodeId === keyRoomId);
+  const allKeyRooms = Object.values(keyRoomsByFloor).flat();
+  const keyRoom = allKeyRooms.find(kr => kr.roomNodeId === keyRoomId);
 
   if (!keyRoom) {
     console.warn("[OPMAP] Key room not found:", keyRoomId);
@@ -1346,9 +1409,14 @@ function enterRoom(roomId: string): void {
       if (room.eventTemplate) {
         renderEventRoomScreen(room.eventTemplate);
       } else {
-        console.error("[OPMAP] Event room missing eventTemplate");
-        markRoomVisited(roomId);
-        renderOperationMapScreen();
+        const fallback = EVENT_TEMPLATES.length ? pickRandom(EVENT_TEMPLATES).id : null;
+        if (fallback) {
+          renderEventRoomScreen(fallback);
+        } else {
+          console.error("[OPMAP] Event room missing eventTemplate");
+          markRoomVisited(roomId);
+          renderOperationMapScreen();
+        }
       }
       break;
 
