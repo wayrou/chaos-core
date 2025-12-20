@@ -20429,7 +20429,7 @@ html, body {
 .event-result-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.9);
+  background: radial-gradient(ellipse at center, rgba(20, 18, 15, 0.82) 0%, rgba(4, 4, 5, 0.95) 65%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -20444,20 +20444,20 @@ html, body {
 
 .event-result-card {
   width: 100%;
-  max-width: 500px;
+  max-width: 520px;
   padding: 2rem;
-  background: linear-gradient(145deg, rgba(15, 18, 45, 0.98), rgba(25, 30, 65, 0.98));
-  border: 2px solid var(--ard-gold);
+  background: linear-gradient(180deg, rgba(30, 34, 40, 0.9), rgba(14, 16, 20, 0.95));
+  border: 1px solid rgba(140, 198, 255, 0.25);
   border-radius: 12px;
   text-align: center;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.8);
 }
 
 .event-result-title {
   font-size: 24px;
   font-weight: 700;
   letter-spacing: 0.15em;
-  color: var(--ard-gold);
+  color: var(--slk-teal);
   margin-bottom: 1.5rem;
 }
 
@@ -20473,18 +20473,18 @@ html, body {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  background: linear-gradient(135deg, var(--ard-gold), #c98910);
-  border: none;
+  background: linear-gradient(180deg, rgba(53, 255, 149, 0.18) 0%, rgba(26, 122, 72, 0.28) 100%);
+  border: 1px solid rgba(53, 255, 149, 0.4);
   border-radius: 6px;
-  color: #000;
+  color: #0a0a0a;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .event-result-continue:hover {
-  background: linear-gradient(135deg, #ffb833, var(--ard-gold));
-  transform: scale(1.05);
-  box-shadow: 0 4px 15px rgba(243, 163, 16, 0.5);
+  background: linear-gradient(180deg, rgba(53, 255, 149, 0.24) 0%, rgba(26, 122, 72, 0.34) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(53, 255, 149, 0.25);
 }
 
 .event-result-continue:active {
@@ -23447,7 +23447,7 @@ html, body {
 }
 
 .opmap-node:hover {
-  transform: scale(1.1);
+  transform: none;
   z-index: 20;
 }
 
@@ -23750,13 +23750,13 @@ html, body {
 .opmap-units-btn-compact,
 .opmap-abandon-btn-compact,
 .opmap-advance-btn-compact {
-  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  padding: var(--space-3, 0.75rem) var(--space-5, 1.25rem);
   background: var(--bg-surface, #2d2c2a);
   border: var(--stroke-1, 1px) solid var(--stroke-subtle, rgba(168, 124, 69, 0.25));
   border-radius: var(--radius-sm, 3px);
   color: var(--ink-secondary, #a8a8a5);
   font-family: var(--font-terminal, 'JetBrains Mono', monospace);
-  font-size: var(--text-xs, 0.6875rem);
+  font-size: var(--text-sm, 0.8rem);
   font-weight: var(--weight-semibold, 600);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wide, 0.05em);
@@ -23950,6 +23950,106 @@ html, body {
 
 .opmap-keyroom-btn .btn-label {
   font-size: 9px;
+}
+
+.keyroom-mgmt-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+  background: radial-gradient(ellipse at center, rgba(20, 18, 15, 0.85) 0%, rgba(5, 6, 8, 0.95) 70%);
+  color: var(--ard-white);
+  font-family: var(--font-display);
+}
+
+.keyroom-mgmt-card {
+  width: min(960px, 100%);
+  background: linear-gradient(180deg, rgba(24, 28, 34, 0.9), rgba(16, 18, 22, 0.95));
+  border: 1px solid rgba(140, 198, 255, 0.25);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 1.5rem;
+}
+
+.keyroom-mgmt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(140, 198, 255, 0.25);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.keyroom-mgmt-title {
+  margin: 0;
+  font-size: 1.3rem;
+  letter-spacing: 0.1em;
+  color: var(--slk-teal);
+}
+
+.keyroom-mgmt-back-btn {
+  padding: 0.5rem 1rem;
+  background: linear-gradient(180deg, rgba(255, 204, 110, 0.2), rgba(255, 204, 110, 0.15));
+  border: 1px solid rgba(255, 204, 110, 0.4);
+  color: #0a0a0a;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.keyroom-mgmt-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.keyroom-mgmt-facility,
+.keyroom-mgmt-status,
+.keyroom-mgmt-resources,
+.keyroom-mgmt-generation {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(140, 198, 255, 0.2);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.keyroom-mgmt-facility-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.keyroom-mgmt-facility-name {
+  margin: 0;
+  letter-spacing: 0.05em;
+  color: var(--ard-white);
+}
+
+.keyroom-mgmt-effect-label,
+.keyroom-mgmt-status-label,
+.keyroom-mgmt-resource-type,
+.keyroom-mgmt-generation-type {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--slk-teal);
+}
+
+.keyroom-mgmt-resource-item,
+.keyroom-mgmt-generation-item,
+.keyroom-mgmt-status-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(140, 198, 255, 0.12);
+}
+
+.keyroom-mgmt-resource-item:last-child,
+.keyroom-mgmt-generation-item:last-child,
+.keyroom-mgmt-status-item:last-child {
+  border-bottom: none;
 }
 
 .opmap-keyroom-resources {
@@ -24496,10 +24596,10 @@ html, body {
   width: 350px;
   max-width: calc(100vw - var(--space-8, 2rem));
   flex-shrink: 0;
-  background: var(--bg-panel, #4d3f34);
-  border: var(--stroke-2, 2px) solid var(--stroke-panel, #7a5a32);
+  background: linear-gradient(180deg, rgba(20, 25, 30, 0.9), rgba(10, 12, 14, 0.95));
+  border: 1px solid rgba(140, 198, 255, 0.25);
   border-radius: var(--radius-panel, 6px);
-  box-shadow: var(--shadow-elev-1, 0 2px 4px rgba(0, 0, 0, 0.5));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   overflow: hidden;
   max-height: calc(100vh - var(--space-8, 2rem));
   display: flex;
@@ -24510,17 +24610,19 @@ html, body {
   padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
   overflow-y: auto;
   flex: 1;
+  background: rgba(12, 15, 19, 0.8);
+  border-top: 1px solid rgba(140, 198, 255, 0.18);
 }
 
 .tavern-npc-panel-title {
   font-size: var(--text-lg, 1.125rem);
   font-weight: var(--weight-bold, 700);
-  color: var(--ink-accent, #ffcc6e);
+  color: var(--slk-teal);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wider, 0.1em);
   margin-bottom: var(--space-3, 0.75rem);
   padding-bottom: var(--space-2, 0.5rem);
-  border-bottom: var(--stroke-1, 1px) solid var(--stroke-panel, #7a5a32);
+  border-bottom: 1px solid rgba(140, 198, 255, 0.25);
 }
 
 .tavern-npc-windows-container {
@@ -24530,8 +24632,8 @@ html, body {
 }
 
 .tavern-npc-window {
-  background: rgba(15, 18, 45, 0.6);
-  border: 1px solid var(--stroke-panel, #7a5a32);
+  background: linear-gradient(180deg, rgba(24, 38, 52, 0.4), rgba(16, 26, 36, 0.5));
+  border: 1px solid rgba(140, 198, 255, 0.25);
   border-radius: var(--radius-sm, 3px);
   padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
   cursor: pointer;
@@ -24557,13 +24659,14 @@ html, body {
 }
 
 .tavern-npc-window:hover {
-  border-color: var(--ink-accent, #ffcc6e);
-  background: rgba(15, 18, 45, 0.8);
+  border-color: var(--slk-amber);
+  background: linear-gradient(180deg, rgba(24, 38, 52, 0.6), rgba(16, 26, 36, 0.7));
 }
 
 .tavern-npc-window--has-conversation {
-  border-color: var(--ink-accent, #ffcc6e);
+  border-color: var(--slk-amber);
   background: rgba(30, 40, 70, 0.8);
+  box-shadow: 0 0 14px rgba(255, 204, 110, 0.25);
 }
 
 @keyframes tavernNpcWindowFadeIn {
@@ -24591,7 +24694,7 @@ html, body {
 .tavern-npc-name {
   font-size: var(--text-xs, 0.6875rem);
   font-weight: var(--weight-bold, 700);
-  color: var(--ink-accent, #ffcc6e);
+  color: var(--slk-teal);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: var(--space-1, 0.25rem);
@@ -24604,17 +24707,17 @@ html, body {
   color: var(--ink-secondary, #a8a8a5);
   font-style: italic;
   padding: var(--space-2, 0.5rem);
-  background: rgba(0, 0, 0, 0.3);
-  border-left: 3px solid var(--stroke-panel, #7a5a32);
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 3px solid rgba(140, 198, 255, 0.35);
   border-radius: var(--radius-sm, 3px);
 }
 
 .tavern-npc-conversation-message {
   margin-top: var(--space-2, 0.5rem);
   padding: var(--space-2, 0.5rem);
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(140, 198, 255, 0.08);
   border-radius: var(--radius-sm, 3px);
-  border-left: 2px solid var(--stroke-panel, #7a5a32);
+  border-left: 2px solid rgba(140, 198, 255, 0.25);
 }
 
 .tavern-npc-conversation-message--aeriss {
@@ -24909,4 +25012,3 @@ html, body {
   color: var(--ard-dark, #252424);
   transform: translateY(-1px);
 }
-

@@ -1753,11 +1753,28 @@ export function createTestBattleForCurrentParty(
 
     for (let i = 0; i < enemyCount; i++) {
       const enemyId = `enemy_grunt_${i + 1}`;
+      // Initial desired position
+      let yPos = Math.floor((gridHeight / enemyCount) * i + 1);
+      yPos = Math.max(0, Math.min(gridHeight - 1, yPos));
+      let enemyPos: Vec2 = { x: gridWidth - 1, y: yPos };
+
+      // Find nearest walkable tile on the right edge if blocked
+      if (!isWalkableTile({ ...battle, units, gridWidth, gridHeight } as BattleState, enemyPos)) {
+        const rightEdgeTiles = tiles
+          .filter(t => t.pos.x === gridWidth - 1 && t.terrain !== "wall")
+          .map(t => t.pos)
+          .sort((a, b) => Math.abs(a.y - yPos) - Math.abs(b.y - yPos));
+        const fallback = rightEdgeTiles.find(pos => isWalkableTile({ ...battle, units, gridWidth, gridHeight } as BattleState, pos));
+        if (fallback) {
+          enemyPos = fallback;
+        }
+      }
+
       units[enemyId] = createBattleUnitState(
         { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
         { 
           isEnemy: true, 
-          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) } 
+          pos: enemyPos, 
         },
         equipmentById,
         modulesById
@@ -1963,6 +1980,11 @@ export function placeUnit(
   if (pos.x !== 0 || pos.y < 0 || pos.y >= state.gridHeight) {
     return appendBattleLog(state, `SLK//PLACE  :: Invalid placement position. Units must be placed on the left edge (x=0).`);
   }
+
+  // Ensure tile exists and is walkable
+  if (!isWalkableTile(state, pos)) {
+    return appendBattleLog(state, `SLK//PLACE  :: Tile (${pos.x}, ${pos.y}) is not walkable.`);
+  }
   
   // Check if tile is already occupied
   const occupied = Object.values(state.units).some(
@@ -2016,7 +2038,13 @@ export function quickPlaceUnits(state: BattleState): BattleState {
   const unplacedUnits = friendlyUnits.filter(
     u => !placementState.placedUnitIds.includes(u.id) && !u.pos
   );
-  
+
+  // Gather available walkable tiles along the left edge
+  const walkableLeftTiles = state.tiles
+    .filter(t => t.pos.x === 0 && t.terrain !== "wall")
+    .map(t => t.pos)
+    .sort((a, b) => a.y - b.y);
+
   let newState = state;
   let placedCount = placementState.placedUnitIds.length;
   
@@ -2051,9 +2079,14 @@ export function quickPlaceUnits(state: BattleState): BattleState {
     
     // Clamp to valid grid bounds
     yPos = Math.max(0, Math.min(newState.gridHeight - 1, yPos));
+
+    // Prefer a walkable, unoccupied tile on the left edge
+    const candidate = walkableLeftTiles.find(pos => pos.y === yPos && isWalkableTile(newState, pos));
+    const fallback = walkableLeftTiles.find(pos => isWalkableTile(newState, pos));
+    const targetPos = candidate || fallback || { x: 0, y: yPos };
     
-    newState = placeUnit(newState, unit.id, { x: 0, y: yPos });
-    placedCount++;
+    newState = placeUnit(newState, unit.id, targetPos);
+    placedCount = newState.placementState?.placedUnitIds.length ?? placedCount;
   }
   
   return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedCount - state.placementState!.placedUnitIds.length} units.`);
