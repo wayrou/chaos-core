@@ -93,6 +93,15 @@ export function handleInteraction(
       });
       break;
 
+    case "fcp_test":
+      // CURSOR_PROOF_FCP_SPAWN_FIX: Open test FCP field map to test spawn bug
+      const fcpTestMap = zone.metadata?.targetMap || "keyroom_test_fcp";
+      import("./FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen(fcpTestMap as any);
+      });
+      break;
+
+
     case "base_camp_entry":
       // Switch to base camp map
       const baseCampTarget = zone.metadata?.targetMap || "base_camp";

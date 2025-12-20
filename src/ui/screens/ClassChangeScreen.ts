@@ -38,16 +38,21 @@ export function renderClassChangeScreen(unitId: UnitId): void {
   const currentClassDef = getClassDefinition(classProgress.currentClass);
 
   root.innerHTML = `
-    <div class="class-change-root">
+    <div class="class-change-root ard-noise">
       <div class="class-change-card">
         <div class="class-change-header">
-          <div>
-            <div class="class-change-title">${unit.name} - CLASS MANAGEMENT</div>
+          <div class="class-change-header-left">
+            <h1 class="class-change-title">${unit.name} - CLASS MANAGEMENT</h1>
             <div class="class-change-subtitle">
-              Current: ${currentClassDef.name} (Tier ${currentClassDef.tier})
+              SCROLLINK OS // CLASS_SYSTEM • Current: ${currentClassDef.name} (Tier ${currentClassDef.tier})
             </div>
           </div>
-          <button class="class-change-back-btn">← BACK TO UNIT</button>
+          <div class="class-change-header-right">
+            <button class="class-change-back-btn">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">BACK TO UNIT</span>
+            </button>
+          </div>
         </div>
 
         <div class="class-change-body">
@@ -67,7 +72,6 @@ export function renderClassChangeScreen(unitId: UnitId): void {
       </div>
     </div>
   `;
-
   // Event listeners
   attachEventListeners(unitId, classProgress);
 }

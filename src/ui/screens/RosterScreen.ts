@@ -204,8 +204,17 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
           <div class="roster-sections">
             <div class="roster-section roster-section--party">
               <div class="roster-section-header">
-                <div class="roster-section-title">PARTY (${partyUnitIds.length})</div>
-                <div class="roster-section-subtitle">Units that will participate in battles</div>
+                <div class="roster-section-header-top">
+                  <div>
+                    <div class="roster-section-title">PARTY (${partyUnitIds.length})</div>
+                    <div class="roster-section-subtitle">Units that will participate in battles</div>
+                  </div>
+                  ${partyUnitIds.length > 0 ? `
+                    <button class="roster-auto-equip-btn" id="autoEquipPartyBtn" title="Auto-equip best available gear for all party units">
+                      ⚡ AUTO-EQUIP ALL
+                    </button>
+                  ` : ''}
+                </div>
               </div>
               <div class="roster-section-grid roster-section-grid--party" 
                    data-section="party">
@@ -416,6 +425,43 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       });
     });
   }, 0);
+
+  // Auto-equip all party units button
+  root.querySelector("#autoEquipPartyBtn")?.addEventListener("click", () => {
+    const state = getGameState();
+    const partyUnitIds = state.partyUnitIds || [];
+    
+    if (partyUnitIds.length === 0) {
+      alert("No units in party to equip!");
+      return;
+    }
+    
+    if (!confirm(`Auto-equip best available gear for all ${partyUnitIds.length} party unit(s)?`)) {
+      return;
+    }
+    
+    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+    const equipmentPool = Object.keys(equipmentById);
+    
+    // Import autoEquipUnit function
+    import("./UnitDetailScreen").then((module) => {
+      const { autoEquipUnit } = module;
+      const equipmentPool = Object.keys(equipmentById);
+      
+      partyUnitIds.forEach(unitId => {
+        const unit = state.unitsById[unitId];
+        if (!unit) return;
+        
+        const unitClass: UnitClass = (unit as any).unitClass || "squire";
+        autoEquipUnit(unitId, unitClass, equipmentById, equipmentPool);
+      });
+      
+      // Re-render to show updated equipment
+      setTimeout(() => {
+        renderRosterScreen(returnTo);
+      }, 100);
+    });
+  });
 
   // Debug button to give all equipment to all units
   root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {

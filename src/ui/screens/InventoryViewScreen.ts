@@ -230,8 +230,25 @@ function attachInventoryViewListeners(returnTo: "basecamp" | "field"): void {
   const searchInput = root.querySelector<HTMLInputElement>("#searchInput");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
-      searchQuery = (e.target as HTMLInputElement).value;
+      const target = e.target as HTMLInputElement;
+      searchQuery = target.value;
+      
+      // Preserve focus and cursor position before re-rendering
+      const hadFocus = document.activeElement === searchInput;
+      const cursorPosition = searchInput.selectionStart || 0;
+      
       renderInventoryViewScreen(returnTo);
+      
+      // Restore focus and cursor position after re-rendering
+      if (hadFocus) {
+        requestAnimationFrame(() => {
+          const newSearchInput = document.querySelector<HTMLInputElement>("#searchInput");
+          if (newSearchInput) {
+            newSearchInput.focus();
+            newSearchInput.setSelectionRange(cursorPosition, cursorPosition);
+          }
+        });
+      }
     });
 
     // Focus search on Ctrl+F or Cmd+F

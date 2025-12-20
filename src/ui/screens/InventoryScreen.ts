@@ -6,6 +6,7 @@ import {
   computeLoadPenaltyFlags,
   transferItem,
   upgradeMuleClass,
+  MULE_CLASS_CAPS,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
 import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
@@ -31,10 +32,12 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
   const load = computeLoad(inv);
   const penalties = computeLoadPenaltyFlags(inv);
 
+  // Get current MULE class caps directly from MULE_CLASS_CAPS (always up-to-date)
+  const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
   const caps = {
-    mass: inv.capacityMassKg,
-    bulk: inv.capacityBulkBu,
-    power: inv.capacityPowerW,
+    mass: muleCaps.massKg,
+    bulk: muleCaps.bulkBu,
+    power: muleCaps.powerW,
   };
 
   function renderBar(label: string, current: number, cap: number, unit: string): string {

@@ -73,7 +73,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Squire",
     description: "Balanced frontline unit, adaptive and reliable.",
     tier: 0,
-    baseStats: { maxHp: 100, atk: 8, def: 6, agi: 5, acc: 6 },
+    baseStats: { maxHp: 12, atk: 8, def: 6, agi: 3, acc: 6 },
     weaponTypes: ["sword"],
     unlockConditions: [{ type: "always_unlocked" }],
     innateAbility: "Gained Ground: +1 DEF when adjacent to ally",
@@ -84,7 +84,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Ranger",
     description: "Long-range attacker with strong mobility options.",
     tier: 0,
-    baseStats: { maxHp: 90, atk: 8, def: 4, agi: 7, acc: 8 },
+    baseStats: { maxHp: 12, atk: 8, def: 4, agi: 4, acc: 8 },
     weaponTypes: ["bow"],
     unlockConditions: [{ type: "always_unlocked" }],
     innateAbility: "Far Shot: +1 range on bow attacks",
@@ -99,7 +99,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Magician",
     description: "Damage + utility casting. Harnesses chaos energy.",
     tier: 1,
-    baseStats: { maxHp: 75, atk: 9, def: 3, agi: 5, acc: 7 },
+    baseStats: { maxHp: 10, atk: 9, def: 3, agi: 3, acc: 7 },
     weaponTypes: ["staff"],
     unlockConditions: [
       { type: "milestone", description: "Bring 5 Chaos Shards to Base Camp" },
@@ -112,7 +112,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Thief",
     description: "Stealth, mobility, debuffs, and critical strikes.",
     tier: 1,
-    baseStats: { maxHp: 85, atk: 7, def: 4, agi: 10, acc: 8 },
+    baseStats: { maxHp: 11, atk: 7, def: 4, agi: 5, acc: 8 },
     weaponTypes: ["shortsword"],
     unlockConditions: [
       { type: "milestone", description: "Successfully steal from an enemy" },
@@ -125,7 +125,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Academic",
     description: "Tactical analysis, buffing, and intel gathering.",
     tier: 1,
-    baseStats: { maxHp: 80, atk: 6, def: 4, agi: 6, acc: 7 },
+    baseStats: { maxHp: 10, atk: 6, def: 4, agi: 3, acc: 7 },
     weaponTypes: ["bow", "shortsword"],
     unlockConditions: [
       { type: "milestone", description: "Scan 10 unique enemy types" },
@@ -138,7 +138,7 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
     name: "Freelancer",
     description: "Adaptive generalist. Can use any weapon with minor penalties.",
     tier: 1,
-    baseStats: { maxHp: 95, atk: 7, def: 5, agi: 6, acc: 6 },
+    baseStats: { maxHp: 12, atk: 7, def: 5, agi: 3, acc: 6 },
     weaponTypes: ["sword", "bow", "staff", "shortsword"], // Can use any
     unlockConditions: [
       { type: "class_rank", requiredClass: "squire", requiredRank: 2 },

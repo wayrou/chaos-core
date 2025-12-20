@@ -9,6 +9,10 @@ import { getActiveRun } from "../../core/campaignManager";
 import { OPERATION_DEFINITIONS } from "../../core/campaign";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderRecruitmentScreen } from "./RecruitmentScreen";
+import { getGameState, updateGameState } from "../../state/gameStore";
+import { RecruitmentCandidate, GUILD_ROSTER_LIMITS } from "../../core/types";
+import { generateCandidates, hireCandidate, getRosterSize } from "../../core/recruitment";
+import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -21,6 +25,47 @@ let npcWindowIdCounter = 0;
 // ----------------------------------------------------------------------------
 // NPC DIALOGUE DATA
 // ----------------------------------------------------------------------------
+
+// Aeriss response templates based on dialogue context
+const AERISS_RESPONSES: Record<string, string[]> = {
+  default: [
+    "Interesting. Tell me more.",
+    "I'll keep that in mind.",
+    "Noted.",
+    "Understood.",
+    "I see.",
+  ],
+  war: [
+    "The war doesn't stop for anyone.",
+    "We'll keep fighting.",
+    "Every operation matters.",
+    "We've lost too many good operators.",
+  ],
+  strategy: [
+    "Tactics matter as much as firepower.",
+    "I'll consider that advice.",
+    "Survival is the priority.",
+    "We adapt or we die.",
+  ],
+  recruitment: [
+    "Good operators are hard to find.",
+    "I'll review the candidates.",
+    "We need more units.",
+    "The roster needs fresh blood.",
+  ],
+  intel: [
+    "Information is as valuable as firepower.",
+    "I'll investigate that.",
+    "Good to know.",
+    "Every piece of intel helps.",
+  ],
+  supply: [
+    "Resources are always tight.",
+    "We'll make do with what we have.",
+    "Supply lines are critical.",
+    "I'll check our inventory.",
+  ],
+};
 
 // NPC dialogue data - conversations between NPCs in the tavern
 const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
@@ -115,12 +160,24 @@ function renderNpcFlavorText(): string {
     <div class="tavern-npc-panel-content">
       <h2 class="tavern-npc-panel-title">TAVERN CHATTER</h2>
       <div class="tavern-npc-windows-container" id="tavernNpcWindowsContainer">
-        ${activeNpcWindows.map(window => `
-          <div class="tavern-npc-window tavern-npc-window--visible" data-window-id="${window.id}">
-            <div class="tavern-npc-name">${window.name}</div>
-            <div class="tavern-npc-text">${window.text}</div>
-          </div>
-        `).join('')}
+        ${activeNpcWindows.map(window => {
+          const conversation = activeConversations.get(window.conversationId || "");
+          const hasConversation = conversation && conversation.length > 0;
+          return `
+            <div class="tavern-npc-window tavern-npc-window--visible ${hasConversation ? "tavern-npc-window--has-conversation" : ""}" 
+                 data-window-id="${window.id}" 
+                 data-conversation-id="${window.conversationId || ""}">
+              <div class="tavern-npc-name">${window.name}</div>
+              <div class="tavern-npc-text">${window.text}</div>
+              ${hasConversation ? conversation!.map((msg) => `
+                <div class="tavern-npc-conversation-message ${msg.name === "AERISS" ? "tavern-npc-conversation-message--aeriss" : ""}">
+                  <div class="tavern-npc-conversation-name">${msg.name}</div>
+                  <div class="tavern-npc-conversation-text">${msg.text}</div>
+                </div>
+              `).join("") : ""}
+            </div>
+          `;
+        }).join('')}
       </div>
     </div>
   `;
@@ -134,7 +191,14 @@ function startNpcWindowSystem(): void {
   
   // Clear existing windows
   activeNpcWindows = [];
+  activeConversations.clear();
   npcWindowIdCounter = 0;
+  
+  // Clear the container completely to remove any leftover elements
+  const container = document.getElementById("tavernNpcWindowsContainer");
+  if (container) {
+    container.innerHTML = '';
+  }
   
   // Add initial windows (2-3 to start)
   const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
@@ -147,25 +211,39 @@ function startNpcWindowSystem(): void {
   
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
-    // Random chance to add a new window (60% chance)
-    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
-      addNpcWindow();
-    }
+    const now = Date.now();
+    const maxAge = 30000; // 30 seconds
     
-    // Remove old windows (random, but keep at least 1)
+    // Remove old windows (keep at least 1)
     if (activeNpcWindows.length > 1) {
-      const now = Date.now();
-      // Remove windows older than 8-12 seconds
-      const maxAge = 8000 + Math.random() * 4000;
       activeNpcWindows = activeNpcWindows.filter(window => {
         const age = now - window.timestamp;
-        return age < maxAge;
+        if (age >= maxAge) {
+          // Clean up conversation when window is removed
+          if (window.conversationId) {
+            activeConversations.delete(window.conversationId);
+          }
+          return false;
+        }
+        return true;
       });
     }
     
-    // If we have too many windows, remove the oldest
-    if (activeNpcWindows.length > 4) {
-      activeNpcWindows.shift();
+    // Limit to maximum 3 windows to prevent overflow
+    const maxWindows = 3;
+    if (activeNpcWindows.length > maxWindows) {
+      // Remove oldest windows
+      while (activeNpcWindows.length > maxWindows) {
+        const removed = activeNpcWindows.shift();
+        if (removed?.conversationId) {
+          activeConversations.delete(removed.conversationId);
+        }
+      }
+    }
+    
+    // Random chance to add a new window (60% chance, but only if under max)
+    if (Math.random() < 0.6 && activeNpcWindows.length < maxWindows) {
+      addNpcWindow();
     }
     
     updateNpcWindowsDOM();
@@ -238,12 +316,96 @@ function stopNpcWindowSystem(): void {
     clearInterval(npcWindowInterval);
     npcWindowInterval = null;
   }
+  
+  // Remove click handler
+  const container = document.getElementById("tavernNpcWindowsContainer");
+  if (container && containerClickHandler) {
+    container.removeEventListener('click', containerClickHandler);
+    containerClickHandler = null;
+  }
+  
   activeNpcWindows = [];
+  activeConversations.clear();
 }
 
 // ----------------------------------------------------------------------------
 // RENDER
 // ----------------------------------------------------------------------------
+
+/**
+ * Render a single candidate card
+ */
+function renderCandidateCard(candidate: RecruitmentCandidate, playerWad: number): string {
+  const pwrBand = getPWRBand(candidate.pwr);
+  const pwrColor = getPWRBandColor(candidate.pwr);
+  const canAfford = playerWad >= candidate.contractCost;
+  const traitsHtml = candidate.traits?.map((t) => `<span class="candidate-trait">${t}</span>`).join("") || "";
+
+  return `
+    <div class="candidate-card" data-candidate-id="${candidate.id}">
+      <div class="candidate-header">
+        <div class="candidate-name">${candidate.name}</div>
+        <div class="candidate-pwr" style="color: ${pwrColor}">
+          <span class="candidate-pwr-label">PWR</span>
+          <span class="candidate-pwr-value">${candidate.pwr}</span>
+          <span class="candidate-pwr-band">${pwrBand}</span>
+        </div>
+      </div>
+      
+      <div class="candidate-body">
+        <div class="candidate-class">
+          <span class="candidate-class-label">CLASS:</span>
+          <span class="candidate-class-value">${candidate.currentClass.toUpperCase()}</span>
+        </div>
+        
+        <div class="candidate-stats">
+          <div class="candidate-stat">
+            <span class="candidate-stat-label">HP</span>
+            <span class="candidate-stat-value">${candidate.stats.maxHp}</span>
+          </div>
+          <div class="candidate-stat">
+            <span class="candidate-stat-label">ATK</span>
+            <span class="candidate-stat-value">${candidate.stats.atk}</span>
+          </div>
+          <div class="candidate-stat">
+            <span class="candidate-stat-label">DEF</span>
+            <span class="candidate-stat-value">${candidate.stats.def}</span>
+          </div>
+          <div class="candidate-stat">
+            <span class="candidate-stat-label">AGI</span>
+            <span class="candidate-stat-value">${candidate.stats.agi}</span>
+          </div>
+        </div>
+        
+        ${traitsHtml ? `<div class="candidate-traits">${traitsHtml}</div>` : ""}
+        
+        <div class="candidate-affinities">
+          <div class="candidate-affinity-label">AFFINITIES:</div>
+          <div class="candidate-affinity-list">
+            ${Object.entries(candidate.affinities)
+              .filter(([_, value]) => value > 0)
+              .map(([type, value]) => `<span class="candidate-affinity-item">${type}: ${value}</span>`)
+              .join("") || "<span class='candidate-affinity-item'>None</span>"}
+          </div>
+        </div>
+      </div>
+      
+      <div class="candidate-footer">
+        <div class="candidate-cost">
+          <span class="candidate-cost-label">COST:</span>
+          <span class="candidate-cost-value ${canAfford ? "" : "insufficient"}">${candidate.contractCost} WAD</span>
+        </div>
+        <button 
+          class="candidate-hire-btn ${canAfford ? "" : "disabled"}" 
+          data-candidate-id="${candidate.id}"
+          ${!canAfford ? "disabled" : ""}
+        >
+          ${canAfford ? "HIRE" : "INSUFFICIENT WAD"}
+        </button>
+      </div>
+    </div>
+  `;
+}
 
 /**
  * Render tavern dialogue screen
@@ -267,48 +429,119 @@ export function renderTavernDialogueScreen(
   const floorIndex = isBaseCamp ? null : (activeRun?.floorIndex ?? 0);
   const operationId = isBaseCamp ? null : (activeRun?.operationId ?? "op_iron_gate");
   
-  const dialogues = getTavernDialogue(floorIndex, operationId, isBaseCamp);
   const displayLabel = roomLabel || (isBaseCamp ? "Base Camp Tavern" : "Safe Zone");
   
+  // Get recruitment candidates
+  const state = getGameState();
+  let candidates = state.recruitmentCandidates || [];
+  const rosterSize = getRosterSize(state);
+  const wad = state.wad || 0;
+  
+  // If no candidates and this is base camp, generate a new pool
+  if (candidates.length === 0 && isBaseCamp) {
+    const hub = {
+      id: "base_camp_tavern",
+      name: "Base Camp Tavern",
+      type: "base_camp" as const,
+      candidatePoolSize: 4,
+    };
+    
+    const newCandidates = generateCandidates(hub, rosterSize);
+    
+    if (newCandidates.length > 0) {
+      updateGameState((s) => ({
+        ...s,
+        recruitmentCandidates: newCandidates,
+      }));
+      candidates = newCandidates;
+    }
+  }
+  
+  const candidatesHtml = isBaseCamp ? candidates.map((candidate) => renderCandidateCard(candidate, wad)).join("") : "";
+  
   root.innerHTML = `
-    <div class="tavern-dialogue-root">
-      <div class="tavern-dialogue-overlay"></div>
-      <div class="tavern-dialogue-content-wrapper">
-        <!-- Main Window -->
-        <div class="tavern-dialogue-main-window">
-          <div class="tavern-dialogue-window">
-            <div class="tavern-dialogue-header">
-              <div class="tavern-dialogue-title">${displayLabel}</div>
-              <button class="tavern-dialogue-close" id="tavernCloseBtn">✕</button>
-            </div>
-            
-            <div class="tavern-dialogue-content">
-              <div class="tavern-dialogue-icon">🏠</div>
-              <div class="tavern-dialogue-text-container">
-                ${dialogues.map((dialogue, index) => `
-                  <div class="tavern-dialogue-text ${index === 0 ? 'tavern-dialogue-text--active' : ''}" data-dialogue-index="${index}">
-                    ${dialogue}
+    <div class="tavern-root ard-noise">
+      <div class="tavern-content-wrapper">
+        <div class="tavern-main-panel">
+          <div class="tavern-card">
+            <div class="tavern-header">
+              <div class="tavern-header-left">
+                <h1 class="tavern-title">TAVERN</h1>
+                <div class="tavern-subtitle">SCROLLINK OS // RECRUITMENT_HUB</div>
+              </div>
+              <div class="tavern-header-right">
+                ${isBaseCamp ? `
+                  <div class="tavern-stats">
+                    <div class="tavern-stat-item">
+                      <span class="tavern-stat-label">ROSTER</span>
+                      <span class="tavern-stat-value">${rosterSize} / ${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
+                    </div>
+                    <div class="tavern-stat-item">
+                      <span class="tavern-stat-label">WAD</span>
+                      <span class="tavern-stat-value">${wad.toLocaleString()}</span>
+                    </div>
                   </div>
-                `).join("")}
+                ` : ""}
+                <button class="tavern-back-btn" id="tavernBackBtn" data-return-to="${returnTo}">
+                  <span class="btn-icon">←</span>
+                  <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "OPERATION MAP" : "BASE CAMP"}</span>
+                </button>
               </div>
             </div>
             
-            <div class="tavern-dialogue-footer">
+            <div class="tavern-body">
               ${isBaseCamp ? `
-                <div class="tavern-dialogue-footer-actions">
-                  <button class="tavern-dialogue-action" id="tavernRecruitmentBtn">RECRUITMENT</button>
-                  <button class="tavern-dialogue-continue" id="tavernContinueBtn">CLOSE</button>
+                ${rosterSize >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS ? `
+                  <div class="tavern-warning">
+                    ⚠️ ROSTER IS FULL (${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS})
+                    <br/>Dismiss units from the roster before recruiting new ones.
+                  </div>
+                ` : ""}
+                
+                <div class="tavern-candidates-grid">
+                  ${candidatesHtml}
                 </div>
               ` : `
-                <button class="tavern-dialogue-continue" id="tavernContinueBtn">CONTINUE</button>
+                <div class="tavern-safe-zone-message">
+                  <div class="tavern-safe-zone-icon">🏠</div>
+                  <div class="tavern-safe-zone-text">
+                    <p>You have reached a safe zone. Take a moment to rest and prepare for the next challenge.</p>
+                  </div>
+                </div>
               `}
             </div>
+            
+            ${isBaseCamp ? `
+              <div class="tavern-footer">
+                <div class="tavern-legend">
+                  <span class="tavern-legend-item">
+                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(50)}"></span>
+                    Rookie (0-50 PWR)
+                  </span>
+                  <span class="tavern-legend-item">
+                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(75)}"></span>
+                    Standard (51-100 PWR)
+                  </span>
+                  <span class="tavern-legend-item">
+                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(125)}"></span>
+                    Veteran (101-150 PWR)
+                  </span>
+                  <span class="tavern-legend-item">
+                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(175)}"></span>
+                    Elite (151-200 PWR)
+                  </span>
+                  <span class="tavern-legend-item">
+                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(250)}"></span>
+                    Paragon (201+ PWR)
+                  </span>
+                </div>
+              </div>
+            ` : `
+              <div class="tavern-footer">
+                <button class="tavern-continue-btn" id="tavernContinueBtn">CONTINUE</button>
+              </div>
+            `}
           </div>
-        </div>
-        
-        <!-- Right Column: NPC Flavor Text -->
-        <div class="tavern-npc-panel">
-          ${renderNpcFlavorText()}
         </div>
       </div>
     </div>
@@ -317,13 +550,52 @@ export function renderTavernDialogueScreen(
   // Attach event listeners
   attachTavernListeners(roomId, returnTo);
   
-  // Start the NPC window system
-  startNpcWindowSystem();
+  // Attach click handlers for hiring candidates (base camp only)
+  if (isBaseCamp) {
+    setTimeout(() => {
+      attachCandidateHireHandlers(returnTo);
+    }, 100);
+  }
 }
 
 // ----------------------------------------------------------------------------
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
+
+function attachCandidateHireHandlers(returnTo: "operation" | "field" | "basecamp"): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+
+  // Hire buttons
+  root.querySelectorAll(".candidate-hire-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const candidateId = (e.currentTarget as HTMLElement).getAttribute("data-candidate-id");
+      if (!candidateId) return;
+
+      handleHireCandidate(candidateId, returnTo);
+    });
+  });
+}
+
+function handleHireCandidate(candidateId: string, returnTo: "operation" | "field" | "basecamp"): void {
+  const state = getGameState();
+  const candidates = state.recruitmentCandidates || [];
+
+  updateGameState((s) => {
+    const result = hireCandidate(candidateId, candidates, s);
+    
+    if (!result.success) {
+      console.warn("[TAVERN] Failed to hire candidate:", result.error);
+      return s;
+    }
+
+    console.log("[TAVERN] Candidate hired successfully!");
+    return s;
+  });
+
+  // Re-render to show updated roster and remaining candidates
+  setTimeout(() => renderTavernDialogueScreen("base_camp_tavern", undefined, returnTo), 100);
+}
 
 function attachTavernListeners(
   roomId: string,
@@ -332,12 +604,11 @@ function attachTavernListeners(
   const root = document.getElementById("app");
   if (!root) return;
   
-  const closeBtn = root.querySelector("#tavernCloseBtn");
+  const backBtn = root.querySelector("#tavernBackBtn");
   const continueBtn = root.querySelector("#tavernContinueBtn");
-  const recruitmentBtn = root.querySelector("#tavernRecruitmentBtn");
   
   const closeDialogue = () => {
-    // Stop NPC window system when leaving
+    // Cleanup NPC window system when leaving
     stopNpcWindowSystem();
     
     if (returnTo === "operation") {
@@ -357,25 +628,29 @@ function attachTavernListeners(
     }
   };
   
-  closeBtn?.addEventListener("click", closeDialogue);
+  backBtn?.addEventListener("click", closeDialogue);
   continueBtn?.addEventListener("click", closeDialogue);
   
-  // Recruitment button (base camp only)
-  if (recruitmentBtn) {
-    recruitmentBtn.addEventListener("click", () => {
-      if (returnTo === "field") {
-        renderRecruitmentScreen("field");
-      } else {
-        renderRecruitmentScreen("basecamp");
-      }
-    });
-  }
-  
-  // Close on Escape key
+  // ESC and E key handlers to exit (always works for ESC, E key only for field mode)
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
+    const key = e.key?.toLowerCase() ?? "";
+    
+    // Handle ESC key - always works regardless of returnTo
+    if (key === "escape" || e.key === "Escape" || e.keyCode === 27) {
+      e.preventDefault();
       closeDialogue();
       document.removeEventListener("keydown", handleKeyDown);
+      return;
+    }
+    
+    // Handle E key (only if returnTo is "field" and not typing in input)
+    if (returnTo === "field" && key === "e") {
+      const target = e.target as HTMLElement;
+      if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA" && !target.isContentEditable) {
+        e.preventDefault();
+        closeDialogue();
+        document.removeEventListener("keydown", handleKeyDown);
+      }
     }
   };
   document.addEventListener("keydown", handleKeyDown);

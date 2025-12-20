@@ -251,10 +251,10 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       classId: "vanguard" as UnitClassId,
       unitClass: "squire",
       stats: {
-        maxHp: 30,
+        maxHp: 9,
         atk: 7,
         def: 3,
-        agi: 5,
+        agi: 3,
         acc: 90,
       },
       deck: baseDeck,
@@ -273,10 +273,10 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       classId: "marksman" as UnitClassId,
       unitClass: "ranger",
       stats: {
-        maxHp: 22,
+        maxHp: 13,
         atk: 6,
         def: 2,
-        agi: 6,
+        agi: 3,
         acc: 95,
       },
       deck: baseDeck,
@@ -285,6 +285,28 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         helmet: "armor_rangers_hood",
         chestpiece: "armor_leather_jerkin",
         accessory1: "accessory_eagle_eye_lens",
+        accessory2: null,
+      },
+      affinities: createDefaultAffinities(),
+    },
+    {
+      id: "unit_mage_1",
+      name: "Field Mage",
+      classId: "caster" as UnitClassId,
+      unitClass: "magician",
+      stats: {
+        maxHp: 10,
+        atk: 5,
+        def: 1,
+        agi: 2,
+        acc: 85,
+      },
+      deck: baseDeck,
+      loadout: {
+        weapon: "weapon_oak_battlestaff",
+        helmet: "armor_mystic_circlet",
+        chestpiece: "armor_mages_robe",
+        accessory1: "accessory_vitality_charm",
         accessory2: null,
       },
       affinities: createDefaultAffinities(),
@@ -368,15 +390,13 @@ function createDefaultProfile(rosterUnitIds: UnitId[]): PlayerProfile {
 
 function createInitialInventory(): InventoryState {
   const muleClass: MuleWeightClass = "E";
-  const capacityMassKg = 100;
-  const capacityBulkBu = 70;
-  const capacityPowerW = 300;
+  const caps = MULE_CLASS_CAPS[muleClass];
 
   return {
     muleClass,
-    capacityMassKg,
-    capacityBulkBu,
-    capacityPowerW,
+    capacityMassKg: caps.massKg,
+    capacityBulkBu: caps.bulkBu,
+    capacityPowerW: caps.powerW,
     forwardLocker: [],
     baseStorage: [],
   };
@@ -437,7 +457,7 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-    partyUnitIds: ["unit_aeriss", "unit_marksman_1"],
+    partyUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
 
     wad: 0,
     resources: {
@@ -463,9 +483,9 @@ consumables: {},
 
     inventory: {
       muleClass: "E",
-      capacityMassKg: 100,
-      capacityBulkBu: 70,
-      capacityPowerW: 300,
+      capacityMassKg: 50,
+      capacityBulkBu: 35,
+      capacityPowerW: 150,
       forwardLocker: [],
       baseStorage: [],
     },

@@ -468,6 +468,27 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
   if (currentTab === "sell") {
     attachSellListeners(returnTo);
   }
+
+  // ESC and E key handlers to exit to field mode (only when opened from field)
+  if (returnTo === "field") {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key?.toLowerCase() ?? "";
+      if (key === "escape" || e.key === "Escape" || e.keyCode === 27 || key === "e") {
+        // Only exit if E key and not typing in an input
+        if (key === "e") {
+          const target = e.target as HTMLElement;
+          if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+            return; // Don't exit if typing in an input
+          }
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        renderFieldScreen("base_camp");
+        window.removeEventListener("keydown", handleKeyDown);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+  }
 }
 
 function purchaseItem(itemId: string, category: ShopItem["category"]): void {

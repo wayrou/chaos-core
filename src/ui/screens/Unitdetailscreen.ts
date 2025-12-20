@@ -744,7 +744,7 @@ function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
  * Auto-equip best gear for a unit (15d)
  * Scores gear by: ATK*3 + DEF*2 + AGI*1 + ACC*1
  */
-function autoEquipUnit(
+export function autoEquipUnit(
   unitId: string,
   unitClass: UnitClass,
   equipmentById: Record<string, Equipment>,

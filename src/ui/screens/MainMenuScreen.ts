@@ -102,14 +102,14 @@ export async function renderMainMenu(): Promise<void> {
       <div class="mainmenu-bg-effects">
         <div class="mainmenu-scanline"></div>
         <div class="mainmenu-vignette"></div>
+        <div class="mainmenu-particles"></div>
       </div>
       
-      <!-- Main content wrapper - sleek two-column layout -->
+      <!-- Two-column layout: Logo/Menu on left, Terminal on right -->
       <div class="mainmenu-content">
-        
-        <!-- Left column: Unified logo and menu panel -->
+        <!-- Left column: Logo and Menu -->
         <div class="mainmenu-left-panel">
-          <!-- Logo section -->
+          <!-- Logo at top -->
           <div class="mainmenu-logo-section">
             <div class="mainmenu-logo-container">
               <img 
@@ -123,7 +123,7 @@ export async function renderMainMenu(): Promise<void> {
             <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
           </div>
           
-          <!-- Menu section - perfectly aligned with logo -->
+          <!-- Menu buttons below logo -->
           <div class="mainmenu-menu-section">
             <div class="mainmenu-buttons">
               ${hasContinue ? `
@@ -136,14 +136,8 @@ export async function renderMainMenu(): Promise<void> {
                 </button>
               ` : ''}
 
-              <button class="mainmenu-btn mainmenu-btn-echo" data-action="echo-run" disabled>
-                <span class="btn-icon">🔄</span>
-                <span class="btn-text">ECHO RUN</span>
-                <span class="btn-subtitle">Coming soon</span>
-              </button>
-
               <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
-                <span class="btn-icon">+</span>
+                <span class="btn-icon">⚔</span>
                 <span class="btn-text">NEW OPERATION</span>
               </button>
 
@@ -164,16 +158,17 @@ export async function renderMainMenu(): Promise<void> {
                 <span class="btn-text">EXIT</span>
               </button>
             </div>
-
+            
+            <!-- Footer info -->
             <div class="mainmenu-footer">
-              <span>SCROLLINK OS BUILD 0.1.0</span>
+              <span>SCROLLINK OS v0.1.0</span>
               <span class="mainmenu-separator">•</span>
               <span>ARDCYTECH PROTOTYPE</span>
             </div>
           </div>
         </div>
         
-        <!-- Right column: ScrollLink Terminal -->
+        <!-- Right column: Terminal taking up remaining space -->
         <div class="mainmenu-terminal-container">
           <div class="mainmenu-terminal-window">
             <div class="mainmenu-terminal-header">

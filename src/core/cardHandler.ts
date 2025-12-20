@@ -4,10 +4,11 @@
 // card handling in handleTileClick
 // ============================================================================
 
-import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Tile, Vec2 } from "./battle";
+import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Tile, Vec2, getEquippedWeapon } from "./battle";
 import { Card, CardEffect } from "./types";
 import { getCoverDamageReduction, damageCover } from "./coverGenerator";
 import { hasLineOfSight, getFirstCoverInLine } from "./lineOfSight";
+import { getAllStarterEquipment } from "./equipment";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
@@ -28,7 +29,26 @@ export function handleCardPlay(
   
   // Calculate distance to target
   const distance = Math.abs(user.pos.x - targetPos.x) + Math.abs(user.pos.y - targetPos.y);
-  const cardRange = card.range ?? 1;
+  let cardRange = card.range ?? 1;
+  
+  // Apply Far Shot ability: Rangers get +1 range on bow attack cards
+  // Check both targetType (from core Card type) and target (from BattleScreen Card type) for compatibility
+  // Also check card name/ID to catch basic attack and other attack cards
+  const isAttackCard = 
+    card.targetType === "enemy" || 
+    (card as any).target === "enemy" ||
+    card.id === "core_basic_attack" ||
+    card.name.toLowerCase().includes("attack") ||
+    card.name.toLowerCase().includes("shot") ||
+    card.name.toLowerCase().includes("strike");
+  
+  if (user.unitClass === "ranger" && isAttackCard) {
+    const equipmentById = getAllStarterEquipment();
+    const weapon = getEquippedWeapon(user, equipmentById);
+    if (weapon && weapon.weaponType === "bow") {
+      cardRange += 1;
+    }
+  }
   
   // Check range
   if (distance > cardRange) return null;

@@ -4,7 +4,7 @@
 // ============================================================================
 
 import "../../field/field.css"; // Import styles for the menu screen
-import { getGameState } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../../state/gameStore";
 // BaseCampScreen removed - using AllNodesMenuScreen instead
 import { renderFieldScreen } from "../../field/FieldScreen";
 
@@ -50,10 +50,6 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         <button class="all-nodes-mode-tab all-nodes-mode-tab--active" data-mode="menu">
           <span class="mode-icon">[CMD]</span>
           <span class="mode-label">COMMAND</span>
-        </button>
-        <button class="all-nodes-mode-tab" data-mode="field">
-          <span class="mode-icon">[FLD]</span>
-          <span class="mode-label">FIELD</span>
         </button>
       </nav>
 
@@ -171,6 +167,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <button class="all-nodes-debug-btn" data-action="endless-battles">
             <span class="debug-icon">BTL</span>
             <span class="debug-text">ENDLESS BATTLES</span>
+          </button>
+          <button class="all-nodes-debug-btn" data-action="debug-wad">
+            <span class="debug-icon">WAD</span>
+            <span class="debug-text">+999999 WAD</span>
           </button>
         </div>
         <div class="all-nodes-escape-hint">
@@ -340,6 +340,20 @@ function handleNodeAction(action: string): void {
       import("./BattleScreen").then(({ startEndlessBattleMode }) => {
         startEndlessBattleMode();
       });
+      break;
+    case "debug-wad":
+      updateGameState((state) => ({
+        ...state,
+        wad: 999999,
+        resources: {
+          metalScrap: 99999,
+          wood: 99999,
+          chaosShards: 99999,
+          steamComponents: 99999,
+        },
+      }));
+      // Re-render to show updated wad and resources
+      renderAllNodesMenuScreen();
       break;
   }
 }

@@ -9,7 +9,7 @@ import { renderOperationMapScreen } from "./OperationMapScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
-import { computeLoad, computeLoadPenaltyFlags, transferItem } from "../../core/inventory";
+import { computeLoad, computeLoadPenaltyFlags, transferItem, MULE_CLASS_CAPS } from "../../core/inventory";
 import { InventoryState, InventoryItem } from "../../core/types";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
@@ -104,10 +104,12 @@ export function renderLoadoutScreen(): void {
     power: load.power + totalEquipmentPower,
   };
 
+  // Get current MULE class caps directly from MULE_CLASS_CAPS (always up-to-date)
+  const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
   const caps = {
-    mass: inv.capacityMassKg,
-    bulk: inv.capacityBulkBu,
-    power: inv.capacityPowerW,
+    mass: muleCaps.massKg,
+    bulk: muleCaps.bulkBu,
+    power: muleCaps.powerW,
   };
 
   root.innerHTML = `

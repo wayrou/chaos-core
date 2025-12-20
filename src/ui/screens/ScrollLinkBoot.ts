@@ -11,12 +11,19 @@ export function renderScrollLinkBoot() {
   root.innerHTML = `
     <div class="scrolllink-boot">
       <div class="boot-inner">
-        <div class="boot-logo">SCROLLLINK OS</div>
-        <div class="boot-subtitle">ARDCYTECH TERMINAL INTERFACE</div>
-        <div class="boot-tagline">Legacy Solaris Systems — "Working for you."</div>
-        <div class="boot-log"></div>
-        <div class="boot-progress">
-          <div class="boot-progress-bar"></div>
+        <div class="boot-header">
+          <div class="boot-window-header">
+            <span class="boot-window-title">SCROLLINK OS // SYSTEM_BOOT</span>
+            <span class="boot-window-status">[INIT]</span>
+          </div>
+        </div>
+        <div class="boot-body">
+          <div class="boot-logo">SCROLLLINK OS</div>
+          <div class="boot-subtitle">ARDCYTECH TERMINAL INTERFACE</div>
+          <div class="boot-log"></div>
+          <div class="boot-progress">
+            <div class="boot-progress-bar"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -49,7 +56,25 @@ export function renderScrollLinkBoot() {
     const line = logLines[index];
     const lineDiv = document.createElement("div");
     lineDiv.className = "boot-line";
-    lineDiv.textContent = line;
+    
+    // Format as terminal line with prompt for [OK] lines
+    if (line.startsWith("[OK]")) {
+      const prompt = document.createElement("span");
+      prompt.className = "boot-prompt";
+      prompt.textContent = "SLK>";
+      lineDiv.appendChild(prompt);
+      
+      const text = document.createElement("span");
+      text.className = "boot-text";
+      text.textContent = " " + line;
+      lineDiv.appendChild(text);
+    } else {
+      const text = document.createElement("span");
+      text.className = "boot-text boot-text--command";
+      text.textContent = line;
+      lineDiv.appendChild(text);
+    }
+    
     logEl.appendChild(lineDiv);
     logEl.scrollTop = logEl.scrollHeight;
 

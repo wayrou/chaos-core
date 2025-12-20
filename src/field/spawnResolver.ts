@@ -272,40 +272,56 @@ export function resolvePlayerSpawn(
   let entryZoneUsed: string | undefined;
   let candidatesScanned = 0;
   
-  // For FCP entry, prefer entry zones
+  // For FCP entry, spawn near exit/entry nodes so player can leave easily
   if (spawnSource === "FCP") {
-    const entryZones = getEntryZoneCandidates(map, "FCP");
-    
-    if (entryZones.length > 0) {
-      // Filter by preferred zones if provided
-      let candidates = entryZones;
-      if (preferredZoneIds && preferredZoneIds.length > 0) {
-        candidates = entryZones.filter(ez => preferredZoneIds.includes(ez.zoneId));
-        if (candidates.length === 0) {
-          candidates = entryZones; // Fallback to all if preferred not found
+    // CURSOR_PROOF_FCP_SPAWN_FIX: First try to spawn near exit/entry zones
+    const entryCandidates = getEntryZoneCandidates(map, "FCP");
+    console.log(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] FCP spawn detected, searching for exit/entry zones...`);
+    console.log(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] Found ${entryCandidates.length} exit/entry zone candidates`);
+    if (entryCandidates.length > 0) {
+      // Use the first exit/entry zone found (prefer exit zones)
+      const preferredCandidate = entryCandidates.find(c => c.zoneId.includes("exit")) || entryCandidates[0];
+      resolvedTileX = preferredCandidate.x;
+      resolvedTileY = preferredCandidate.y;
+      entryZoneUsed = preferredCandidate.zoneId;
+      
+      console.log(`[SPAWN] FCP spawn near exit/entry zone: (${resolvedTileX}, ${resolvedTileY}) from zone ${entryZoneUsed} [CURSOR_PROOF_FCP_SPAWN_FIX]`);
+      
+      // Validate the position - if it's not passable, find nearest valid tile
+      if (!isTilePassable(map, resolvedTileX, resolvedTileY)) {
+        console.warn(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] Entry zone position (${resolvedTileX}, ${resolvedTileY}) not passable, finding nearest valid tile...`);
+        const nearest = findNearestValidTile(map, resolvedTileX, resolvedTileY, 10);
+        if (nearest) {
+          resolvedTileX = nearest.tileX;
+          resolvedTileY = nearest.tileY;
+          candidatesScanned = nearest.candidatesScanned;
+          console.log(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] Found valid spawn near exit at (${resolvedTileX}, ${resolvedTileY})`);
         }
       }
+    } else {
+      // Fallback: Use safe center-left position if no exit/entry zones found
+      console.warn(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] No exit/entry zones found, using safe fallback position`);
+      const safeTileX = Math.max(2, Math.min(Math.floor(map.width * 0.25), map.width - 3));
+      const safeTileY = Math.max(2, Math.min(Math.floor(map.height * 0.5), map.height - 3));
       
-      // Find nearest entry zone to requested position
-      let nearestZone = candidates[0];
-      let minDistance = Math.abs(candidates[0].x - requestedTileX) + Math.abs(candidates[0].y - requestedTileY);
+      resolvedTileX = safeTileX;
+      resolvedTileY = safeTileY;
       
-      for (const zone of candidates) {
-        const distance = Math.abs(zone.x - requestedTileX) + Math.abs(zone.y - requestedTileY);
-        if (distance < minDistance) {
-          minDistance = distance;
-          nearestZone = zone;
+      console.log(`[SPAWN] FCP safe spawn requested: (${resolvedTileX}, ${resolvedTileY}) [CURSOR_PROOF_FCP_SPAWN_FIX]`);
+      
+      // Validate the safe position - if it's not passable, find nearest valid tile
+      if (!isTilePassable(map, resolvedTileX, resolvedTileY)) {
+        console.warn(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] Safe position (${resolvedTileX}, ${resolvedTileY}) not passable, finding nearest valid tile...`);
+        const nearest = findNearestValidTile(map, resolvedTileX, resolvedTileY, 20);
+        if (nearest) {
+          resolvedTileX = nearest.tileX;
+          resolvedTileY = nearest.tileY;
+          candidatesScanned = nearest.candidatesScanned;
+          console.log(`[SPAWN] [CURSOR_PROOF_FCP_SPAWN_FIX] Found valid spawn at (${resolvedTileX}, ${resolvedTileY})`);
         }
       }
-      
-      entryZoneUsed = nearestZone.zoneId;
-      resolvedTileX = nearestZone.x;
-      resolvedTileY = nearestZone.y;
-      
-      console.log(`[SPAWN] FCP entry zone chosen: ${entryZoneUsed} at (${resolvedTileX}, ${resolvedTileY})`);
     }
   }
-  
   // Validate and resolve spawn position
   if (!isTilePassable(map, resolvedTileX, resolvedTileY)) {
     console.warn(`[SPAWN] Requested spawn (${resolvedTileX}, ${resolvedTileY}) is not passable, searching for nearest valid tile...`);
@@ -374,4 +390,5 @@ export function resolvePlayerSpawn(
     requestedTileY,
   };
 }
+
 

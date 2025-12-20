@@ -48,6 +48,15 @@ let globalListenersAttached = false;
 // Spawn debug info (for debug label)
 let lastSpawnResult: SpawnResult | null = null;
 
+// Store last interaction zone position for returning to field from nodes
+let lastInteractionZonePosition: { x: number; y: number; zoneId: string } | null = null;
+
+// Zoom state
+let fieldZoom = 1.0;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.0;
+const ZOOM_STEP = 0.1;
+
 // ============================================================================
 // GETTERS
 // ============================================================================
@@ -57,6 +66,13 @@ let lastSpawnResult: SpawnResult | null = null;
  */
 export function getCurrentFieldMap(): FieldMap["id"] | null {
   return fieldState?.currentMap || null;
+}
+
+/**
+ * Store the interaction zone position for returning to field from nodes
+ */
+export function storeInteractionZonePosition(zoneId: string, x: number, y: number): void {
+  lastInteractionZonePosition = { x, y, zoneId };
 }
 
 // ============================================================================
@@ -81,9 +97,23 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   // Detect spawn source (FCP = key room entry, normal = everything else)
   const spawnSource: SpawnSource = (typeof mapId === "string" && mapId.startsWith("keyroom_")) ? "FCP" : "normal";
 
-  // Always reset position when entering quarters (small map, needs specific spawn)
-  // For other maps, restore position if resuming
-  if (isResuming && mapId !== "quarters") {
+  // Check if we have a stored interaction zone position (returning from a node) - prioritize this over resume
+  if (mapId === "base_camp" && lastInteractionZonePosition) {
+    // Use the stored interaction zone position
+    const storedX = lastInteractionZonePosition.x;
+    const storedY = lastInteractionZonePosition.y;
+    // Clear the stored position after using it
+    lastInteractionZonePosition = null;
+    // Use spawn resolver to ensure position is valid
+    const spawnResult = resolvePlayerSpawn(
+      spawnSource,
+      currentMap,
+      { x: storedX, y: storedY }
+    );
+    playerX = spawnResult.x;
+    playerY = spawnResult.y;
+    lastSpawnResult = spawnResult;
+  } else if (isResuming && mapId !== "quarters") {
     // Restore from fieldState if available, otherwise from game state
     playerX = fieldState!.player.x;
     playerY = fieldState!.player.y;
@@ -184,8 +214,9 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       },
     };
     
-    // Always update position for quarters, or initialize if missing
-    const shouldUpdatePosition = mapId === "quarters" || !players.P1.avatar;
+    // Always update position for quarters, FCP maps (keyroom_*), or initialize if missing
+    const isFCPMap = typeof mapId === "string" && mapId.startsWith("keyroom_");
+    const shouldUpdatePosition = mapId === "quarters" || isFCPMap || !players.P1.avatar;
     
     return {
       ...s,
@@ -341,10 +372,9 @@ function render(): void {
   if (p1Avatar) {
     playerHtml += `
       <div class="field-player field-player-p1" 
-           style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px; border: 2px solid ${state.players.P1.color};"
+           style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p1Avatar.facing}">
         <div class="field-player-sprite">A</div>
-        <div class="field-player-indicator" style="background: ${state.players.P1.color}; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P1</div>
       </div>
     `;
   }
@@ -353,10 +383,9 @@ function render(): void {
   if (p2Avatar) {
     playerHtml += `
       <div class="field-player field-player-p2" 
-           style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px; border: 2px solid ${state.players.P2.color};"
+           style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p2Avatar.facing}">
         <div class="field-player-sprite">A</div>
-        <div class="field-player-indicator" style="background: ${players.P2.color}; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P2</div>
       </div>
     `;
   }
@@ -405,13 +434,6 @@ function render(): void {
 
   // Update only the field-root content (preserves panel)
   fieldRoot.innerHTML = `
-    <div class="field-header">
-      <div class="field-header-title">FIELD MODE — ${currentMap.name.toUpperCase()}</div>
-      <div class="field-header-buttons">
-        <button class="field-basecamp-btn" id="fieldAllNodesBtn">ALL NODES (ESC)</button>
-      </div>
-    </div>
-    
     <div class="field-viewport">
       <div class="field-map" style="width: ${mapPixelWidth}px; height: ${mapPixelHeight}px;">
         ${tilesHtml}
@@ -426,52 +448,18 @@ function render(): void {
     
     <div class="field-hud">
       <div class="field-hud-instructions">
-        WASD to move • Shift to dash • E to interact • ESC for All Nodes
+        WASD to move • Shift to dash • E to interact • Hold ESC for Inventory
       </div>
     </div>
-    
-    ${lastSpawnResult ? `
-      <div class="field-spawn-debug" style="position: fixed; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: #0f0; padding: 8px; font-family: monospace; font-size: 11px; z-index: 10000; border: 1px solid #0f0; border-radius: 4px;">
-        <div style="font-weight: bold; margin-bottom: 4px;">CURSOR_PROOF_FCP_SPAWN_FIX</div>
-        <div>spawn_source: ${(typeof currentMap.id === "string" && currentMap.id.startsWith("keyroom_")) ? "FCP" : "normal"}</div>
-        <div>requested_spawn: (${lastSpawnResult.requestedTileX}, ${lastSpawnResult.requestedTileY})</div>
-        <div>resolved_spawn: (${lastSpawnResult.tileX}, ${lastSpawnResult.tileY})</div>
-        <div>tile_passable(resolved): ${lastSpawnResult.passable ? "true" : "false"}</div>
-        ${lastSpawnResult.entryZoneUsed ? `<div>entry_zone: ${lastSpawnResult.entryZoneUsed}</div>` : ""}
-        <div>candidates_scanned: ${lastSpawnResult.candidatesScanned}</div>
-        <div>fallback_used: ${lastSpawnResult.usedFallback ? "true" : "false"}</div>
-      </div>
-    ` : ""}
   `;
 
   centerViewportOnPlayer();
   
-  // Attach button listener directly to the button element
-  // Use requestAnimationFrame to ensure DOM is ready
-  requestAnimationFrame(() => {
-    const allNodesBtn = document.getElementById("fieldAllNodesBtn");
-    if (allNodesBtn) {
-      // Remove any existing listener first
-      const existingListener = (allNodesBtn as any).__allNodesBtnListener;
-      if (existingListener) {
-        allNodesBtn.removeEventListener("click", existingListener);
-      }
-      
-      // Create new listener
-      const allNodesBtnHandler = (e: MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log("[FIELD] All Nodes button clicked");
-        toggleAllNodesPanel();
-      };
-      
-      // Store reference and attach
-      (allNodesBtn as any).__allNodesBtnListener = allNodesBtnHandler;
-      allNodesBtn.addEventListener("click", allNodesBtnHandler);
-    } else {
-      console.warn("[FIELD] All Nodes button not found in DOM");
-    }
-  });
+  // Re-attach wheel listener if needed (viewport is recreated on each render)
+  const viewport = fieldRoot.querySelector(".field-viewport");
+  if (viewport) {
+    viewport.addEventListener("wheel", handleWheelZoom, { passive: false });
+  }
 }
 
 function centerViewportOnPlayer(): void {
@@ -505,10 +493,18 @@ function centerViewportOnPlayer(): void {
     centerY = fieldState.player.y;
   }
 
+  // Account for zoom when calculating offset
   const offsetX = centerX - viewportRect.width / 2;
   const offsetY = centerY - viewportRect.height / 2;
 
-  mapElement.style.transform = `translate(${-offsetX}px, ${-offsetY}px)`;
+  applyMapTransform(mapElement, offsetX, offsetY, fieldZoom);
+}
+
+function applyMapTransform(mapElement: HTMLElement, offsetX: number, offsetY: number, zoom: number): void {
+  // Apply scale first, then translate (order matters for CSS transforms)
+  // We need to adjust translate to account for scale
+  mapElement.style.transform = `translate(${-offsetX * zoom}px, ${-offsetY * zoom}px) scale(${zoom})`;
+  mapElement.style.transformOrigin = "0 0";
 }
 
 // ============================================================================
@@ -765,22 +761,41 @@ function setupGlobalListeners(): void {
   // Also add document-level click handler for All Nodes button as fallback
   document.addEventListener("click", handleAllNodesButtonClick, true);
 
+  // Add wheel event listener for zoom
+  const viewport = document.querySelector(".field-viewport");
+  if (viewport) {
+    viewport.addEventListener("wheel", handleWheelZoom, { passive: false });
+  }
+
   globalListenersAttached = true;
 }
 
-function handleAllNodesButtonClick(e: MouseEvent): void {
-  // Only handle when field screen is active
-  if (!document.querySelector(".field-root")) return;
+function handleWheelZoom(e: WheelEvent): void {
+  // Only zoom if we're over the viewport
+  const viewport = document.querySelector(".field-viewport");
+  if (!viewport || !fieldState) return;
   
   const target = e.target as HTMLElement;
-  const allNodesBtn = target.closest("#fieldAllNodesBtn") as HTMLElement;
+  if (!viewport.contains(target) && target !== viewport) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Determine zoom direction
+  const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+  const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fieldZoom + delta));
   
-  if (allNodesBtn) {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log("[FIELD] All Nodes button clicked (document delegation)");
-    toggleAllNodesPanel();
-  }
+  if (newZoom === fieldZoom) return; // No change
+  
+  // Update zoom
+  fieldZoom = newZoom;
+  
+  // Re-center on player with new zoom level
+  centerViewportOnPlayer();
+}
+
+function handleAllNodesButtonClick(e: MouseEvent): void {
+  // Button removed - no longer needed
 }
 
 function cleanupGlobalListeners(): void {
@@ -793,6 +808,7 @@ function cleanupGlobalListeners(): void {
 
   globalListenersAttached = false;
 }
+
 
 function handleKeyDown(e: KeyboardEvent): void {
   // Only handle when field screen is active

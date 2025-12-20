@@ -60,62 +60,62 @@ interface Card {
 // CARD DATABASE - Based on GDD
 const CARD_DATABASE: Record<string, Card> = {
   // CORE CARDS
-  "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 1, range: 0, description: "Move 2 extra tiles this turn." },
-  "core_basic_attack": { id: "core_basic_attack", name: "Basic Attack", type: "core", target: "enemy", strainCost: 0, range: 1, description: "Deal weapon damage to adjacent enemy.", damage: 0 },
-  "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 1, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
-  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 1, range: 0, description: "Attack enemy that enters range." },
-  "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 0, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
-  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 0, range: 0, description: "End turn. Reduce strain by 1." },
+  "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 3, range: 0, description: "Move 2 extra tiles this turn." },
+  "core_basic_attack": { id: "core_basic_attack", name: "Basic Attack", type: "core", target: "enemy", strainCost: 2, range: 1, description: "Deal weapon damage to adjacent enemy.", damage: 0 },
+  "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
+  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 3, range: 0, description: "Attack enemy that enters range." },
+  "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
+  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 1." },
   
   // ELM RECURVE BOW (Range 3-6)
-  "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
-  "card_warning_shot": { id: "card_warning_shot", name: "Warning Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Target suffers -2 ACC for 1 turn.", damage: 1 },
-  "card_defensive_draw": { id: "card_defensive_draw", name: "Defensive Draw", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 ACC until next attack.", defBuff: 1 },
+  "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
+  "card_warning_shot": { id: "card_warning_shot", name: "Warning Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Target suffers -2 ACC for 1 turn.", damage: 1 },
+  "card_defensive_draw": { id: "card_defensive_draw", name: "Defensive Draw", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 ACC until next attack.", defBuff: 1 },
   
   // HUNTER'S COIF
-  "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 1, range: 5, description: "Deal 3 damage.", damage: 3 },
-  "card_tracking_shot": { id: "card_tracking_shot", name: "Tracking Shot", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Reveal target movement for 1 turn.", damage: 2 },
-  "card_predators_brace": { id: "card_predators_brace", name: "Predator's Brace", type: "equipment", target: "self", strainCost: 1, range: 0, description: "First attacker loses 1 DEF.", defBuff: 1 },
+  "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Deal 3 damage.", damage: 3 },
+  "card_tracking_shot": { id: "card_tracking_shot", name: "Tracking Shot", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target movement for 1 turn.", damage: 2 },
+  "card_predators_brace": { id: "card_predators_brace", name: "Predator's Brace", type: "equipment", target: "self", strainCost: 3, range: 0, description: "First attacker loses 1 DEF.", defBuff: 1 },
   
   // HUNTER'S VEST
   "card_quiver_barrage": { id: "card_quiver_barrage", name: "Quiver Barrage", type: "equipment", target: "enemy", strainCost: 2, range: 4, description: "Three attacks, 2 damage each.", damage: 6 },
-  "card_camouflage": { id: "card_camouflage", name: "Camouflage", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+3 ACC on next ranged attack." },
-  "card_camouflage_guard": { id: "card_camouflage_guard", name: "Camouflage Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 DEF if attacked at range.", defBuff: 2 },
+  "card_camouflage": { id: "card_camouflage", name: "Camouflage", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+3 ACC on next ranged attack." },
+  "card_camouflage_guard": { id: "card_camouflage_guard", name: "Camouflage Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF if attacked at range.", defBuff: 2 },
   
   // HUNTER'S TALISMAN
-  "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 1, range: 2, description: "Deal 4 damage if target moved this turn.", damage: 4 },
-  "card_scent_mark": { id: "card_scent_mark", name: "Scent Mark", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Reveal target location for 2 turns.", damage: 1 },
-  "card_trackers_guard": { id: "card_trackers_guard", name: "Tracker's Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Reveal first attacker on map.", defBuff: 1 },
+  "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 4 damage if target moved this turn.", damage: 4 },
+  "card_scent_mark": { id: "card_scent_mark", name: "Scent Mark", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target location for 2 turns.", damage: 1 },
+  "card_trackers_guard": { id: "card_trackers_guard", name: "Tracker's Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Reveal first attacker on map.", defBuff: 1 },
   
   // EAGLE EYE LENS
-  "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Deal 4 damage; mark for +1 damage.", damage: 4 },
-  "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 1, range: 6, description: "Allies deal +1 damage to target this turn.", damage: 1 },
-  "card_farsight_guard": { id: "card_farsight_guard", name: "Farsight Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Ignore overwatch this turn." },
+  "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; mark for +1 damage.", damage: 4 },
+  "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Allies deal +1 damage to target this turn.", damage: 1 },
+  "card_farsight_guard": { id: "card_farsight_guard", name: "Farsight Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore overwatch this turn." },
   
   // FLEETFOOT ANKLET
-  "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 1, range: 2, description: "Deal 3 damage; pass through target tile.", damage: 3 },
-  "card_speed_burst": { id: "card_speed_burst", name: "Speed Burst", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 movement this turn." },
-  "card_swift_guard": { id: "card_swift_guard", name: "Swift Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 movement and +1 DEF this turn.", defBuff: 1 },
+  "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 3 damage; pass through target tile.", damage: 3 },
+  "card_speed_burst": { id: "card_speed_burst", name: "Speed Burst", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement this turn." },
+  "card_swift_guard": { id: "card_swift_guard", name: "Swift Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement and +1 DEF this turn.", defBuff: 1 },
   
   // RANGER'S HOOD
-  "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 1, range: 4, description: "Deal 3 damage with +1 ACC.", damage: 3 },
-  "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 1, range: 5, description: "Mark target; next ranged attack deals +2 damage.", damage: 1 },
-  "card_hide_in_shadows": { id: "card_hide_in_shadows", name: "Hide in Shadows", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 AGI, untargetable at range for 1 turn." },
+  "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Deal 3 damage with +1 ACC.", damage: 3 },
+  "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Mark target; next ranged attack deals +2 damage.", damage: 1 },
+  "card_hide_in_shadows": { id: "card_hide_in_shadows", name: "Hide in Shadows", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 AGI, untargetable at range for 1 turn." },
   
   // LEATHER JERKIN
-  "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 1, range: 3, description: "Deal 2 damage; +1 AGI next turn.", damage: 2 },
-  "card_quick_roll": { id: "card_quick_roll", name: "Quick Roll", type: "equipment", target: "self", strainCost: 0, range: 0, description: "Move 1 tile as free action." },
-  "card_light_guard": { id: "card_light_guard", name: "Light Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 AGI until next turn.", defBuff: 1 },
+  "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 3, range: 3, description: "Deal 2 damage; +1 AGI next turn.", damage: 2 },
+  "card_quick_roll": { id: "card_quick_roll", name: "Quick Roll", type: "equipment", target: "self", strainCost: 2, range: 0, description: "Move 1 tile as free action." },
+  "card_light_guard": { id: "card_light_guard", name: "Light Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 AGI until next turn.", defBuff: 1 },
   
   // SHADOW CLOAK
   "card_ambush_slash": { id: "card_ambush_slash", name: "Ambush Slash", type: "equipment", target: "enemy", strainCost: 2, range: 1, description: "Deal 5 damage if undetected at turn start.", damage: 5 },
-  "card_fade": { id: "card_fade", name: "Fade", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Untargetable by ranged attacks until next turn." },
-  "card_shade_guard": { id: "card_shade_guard", name: "Shade Guard", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Untargetable if you don't move this turn." },
+  "card_fade": { id: "card_fade", name: "Fade", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable by ranged attacks until next turn." },
+  "card_shade_guard": { id: "card_shade_guard", name: "Shade Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable if you don't move this turn." },
   
   // CLASS - RANGER
   "class_pinning_shot": { id: "class_pinning_shot", name: "Pinning Shot", type: "class", target: "enemy", strainCost: 2, range: 5, description: "Immobilize enemy for 1 turn.", damage: 2 },
   "class_volley": { id: "class_volley", name: "Volley", type: "class", target: "enemy", strainCost: 3, range: 6, description: "Deal light damage to all enemies in range.", damage: 3 },
-  "class_scouts_mark": { id: "class_scouts_mark", name: "Scout's Mark", type: "class", target: "self", strainCost: 1, range: 0, description: "Reveal all enemies and traps in range." },
+  "class_scouts_mark": { id: "class_scouts_mark", name: "Scout's Mark", type: "class", target: "self", strainCost: 3, range: 0, description: "Reveal all enemies and traps in range." },
   
   // CLASS - SQUIRE
   "class_power_slash": { id: "class_power_slash", name: "Power Slash", type: "class", target: "enemy", strainCost: 2, range: 1, description: "Deal heavy melee damage.", damage: 6 },
@@ -123,24 +123,24 @@ const CARD_DATABASE: Record<string, Card> = {
   "class_rally_cry": { id: "class_rally_cry", name: "Rally Cry", type: "class", target: "self", strainCost: 2, range: 0, description: "All allies gain +2 ATK for 2 turns.", atkBuff: 2 },
   
   // IRON LONGSWORD
-  "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 3 damage to up to 3 adjacent enemies.", damage: 3 },
-  "card_parry_readiness": { id: "card_parry_readiness", name: "Parry Readiness", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Cancel next attack against you.", defBuff: 3 },
-  "card_guarded_stance": { id: "card_guarded_stance", name: "Guarded Stance", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+2 DEF until your next turn.", defBuff: 2 },
+  "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage to up to 3 adjacent enemies.", damage: 3 },
+  "card_parry_readiness": { id: "card_parry_readiness", name: "Parry Readiness", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Cancel next attack against you.", defBuff: 3 },
+  "card_guarded_stance": { id: "card_guarded_stance", name: "Guarded Stance", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF until your next turn.", defBuff: 2 },
   
   // STEEL SIGNET RING
-  "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 2 damage and push target 1 tile.", damage: 2 },
-  "card_mark_of_command": { id: "card_mark_of_command", name: "Mark of Command", type: "equipment", target: "self", strainCost: 1, range: 0, description: "All allies gain +1 ACC next turn." },
-  "card_signet_shield": { id: "card_signet_shield", name: "Signet Shield", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+1 DEF and +1 LUK until next turn.", defBuff: 1 },
+  "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and push target 1 tile.", damage: 2 },
+  "card_mark_of_command": { id: "card_mark_of_command", name: "Mark of Command", type: "equipment", target: "self", strainCost: 3, range: 0, description: "All allies gain +1 ACC next turn." },
+  "card_signet_shield": { id: "card_signet_shield", name: "Signet Shield", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 LUK until next turn.", defBuff: 1 },
   
   // IRONGUARD HELM
-  "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 2 damage and stun for 1 turn.", damage: 2 },
-  "card_shield_sight": { id: "card_shield_sight", name: "Shield Sight", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Ignore flanking penalties until next turn." },
-  "card_shield_headbutt": { id: "card_shield_headbutt", name: "Shield Headbutt", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Stun target for 1 turn.", damage: 1 },
+  "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and stun for 1 turn.", damage: 2 },
+  "card_shield_sight": { id: "card_shield_sight", name: "Shield Sight", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore flanking penalties until next turn." },
+  "card_shield_headbutt": { id: "card_shield_headbutt", name: "Shield Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Stun target for 1 turn.", damage: 1 },
   
   // STEELPLATE CUIRASS
-  "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 1, range: 1, description: "Deal 3 damage; push target 1 tile.", damage: 3 },
-  "card_fortify": { id: "card_fortify", name: "Fortify", type: "equipment", target: "self", strainCost: 1, range: 0, description: "Immunity to knockback until next turn.", defBuff: 1 },
-  "card_fortress_form": { id: "card_fortress_form", name: "Fortress Form", type: "equipment", target: "self", strainCost: 1, range: 0, description: "+3 DEF but -1 movement this turn.", defBuff: 3 },
+  "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage; push target 1 tile.", damage: 3 },
+  "card_fortify": { id: "card_fortify", name: "Fortify", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Immunity to knockback until next turn.", defBuff: 1 },
+  "card_fortress_form": { id: "card_fortress_form", name: "Fortress Form", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+3 DEF but -1 movement this turn.", defBuff: 3 },
 };
 
 function getCardById(id: string): Card | null {
@@ -172,7 +172,7 @@ function fallbackGetCardById(id: string): Card {
   } else if (lower.includes("slash") || lower.includes("strike") || lower.includes("attack") || lower.includes("stab") || lower.includes("jab") || lower.includes("charge") || lower.includes("headbutt")) {
     range = 1;
   }
-  return { id, name, type, target, strainCost: 1, range, damage, description: `Use ${name}.` };
+  return { id, name, type, target, strainCost: 3, range, damage, description: `Use ${name}.` };
 }
 
 function renderWeaponWindow(unit: BattleUnitState | undefined): string {
@@ -1015,6 +1015,34 @@ function resolveHandCards(hand: (string | Card)[]): Card[] {
   return hand.map(resolveCard);
 }
 
+/**
+ * Calculate effective range for a card, applying class abilities like Far Shot
+ */
+function getEffectiveCardRange(card: Card, unit: BattleUnitState): number {
+  let range = card.range ?? 1;
+  
+  // Apply Far Shot ability: Rangers get +1 range on bow attack cards
+  // Check both target (from BattleScreen Card type) and targetType (from core Card type) for compatibility
+  // Also check card name/ID to catch basic attack and other attack cards
+  const isAttackCard = 
+    card.target === "enemy" || 
+    (card as any).targetType === "enemy" ||
+    card.id === "core_basic_attack" ||
+    card.name.toLowerCase().includes("attack") ||
+    card.name.toLowerCase().includes("shot") ||
+    card.name.toLowerCase().includes("strike");
+  
+  if (unit && unit.unitClass === "ranger" && isAttackCard) {
+    const equipmentById = getAllStarterEquipment();
+    const weapon = getEquippedWeapon(unit, equipmentById);
+    if (weapon && weapon.weaponType === "bow") {
+      range += 1;
+    }
+  }
+  
+  return range;
+}
+
 function getDistance(x1: number, y1: number, x2: number, y2: number): number {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
@@ -1548,11 +1576,11 @@ function renderHandPanel(activeUnit: BattleUnitState | undefined, isPlayerTurn: 
         <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
       </div>
     </div>
-    <div class="hand-cards-row-floating">${renderHandCards(hand, isPlayerTurn)}</div>
+    <div class="hand-cards-row-floating">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
   `;
 }
 
-function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined): string {
+function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, activeUnit: BattleUnitState | undefined): string {
   if (hand.length === 0) return `<div class="hand-empty">No cards in hand</div>`;
   
   const total = hand.length;
@@ -1565,15 +1593,16 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined): strin
     const yOff = Math.abs(angle) * 0.5;
     const icon = card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
     
+    // Calculate effective range for display (includes Far Shot bonus)
+    const effectiveRange = activeUnit ? getEffectiveCardRange(card, activeUnit) : card.range ?? 1;
+    
     return `
       <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i+1};" data-card-index="${i}">
         <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${!isPlayerTurn ? "battle-cardui--disabled" : ""}" data-card-index="${i}">
-          <div class="card-top-row">
-            <span class="card-icon">${icon}</span>
-            <span class="card-cost">STR ${card.strainCost}</span>
-          </div>
+          <div class="card-cost-circle">${card.strainCost}</div>
+          <div class="card-icon-top">${icon}</div>
           <div class="card-name">${card.name}</div>
-          <div class="card-tag">${card.target.toUpperCase()}${card.range > 0 ? ` R${card.range}` : ""}</div>
+          <div class="card-tag">${card.target.toUpperCase()}${effectiveRange > 0 ? ` R${effectiveRange}` : ""}</div>
           <div class="card-desc">${card.description}</div>
         </div>
       </div>
@@ -1638,7 +1667,7 @@ function renderPlacementUI(battle: BattleState): string {
     u => !placementState.placedUnitIds.includes(u.id) && !u.pos
   );
   const placedCount = placementState.placedUnitIds.length;
-  const canConfirm = placedCount > 0 && (placedCount >= placementState.maxUnitsPerSide || unplacedUnits.length === 0);
+  const canConfirm = placedCount > 0; // Allow confirming with any placed units
   
   return `
     <div class="battle-placement-overlay">
@@ -2403,35 +2432,66 @@ function attachBattleListeners() {
       const units = getUnitsArray(localBattleState);
       const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
       
-      // If clicking on an enemy and a card is selected, automatically attack
-      if (tgt && selectedCardIndex !== null && isPlayerTurn && activeUnit && localBattleState) {
+      // If clicking on an enemy or ally unit, try to attack
+      if (tgt && isPlayerTurn && activeUnit && localBattleState) {
         // Check if current player can control this unit
         const state = getGameState();
         const activeController = activeUnit.controller || "P1";
         const currentPlayer = state.players[activeController as PlayerId];
         if (!currentPlayer?.active) return; // Player not active, can't control
         
-        const cardIdOrObj = activeUnit.hand[selectedCardIndex];
-        const card = resolveCard(cardIdOrObj);
         const ux = activeUnit.pos?.x ?? 0;
         const uy = activeUnit.pos?.y ?? 0;
         const dist = getDistance(ux, uy, x, y);
         
+        let cardToPlay: number | null = selectedCardIndex;
         let shouldPlay = false;
         let targetUnitId = "";
         
-        if (card.target === "enemy" && tgt?.isEnemy && dist <= card.range) {
-          shouldPlay = true;
-          targetUnitId = tgt.id;
-        } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= card.range || card.range === 0)) {
-          shouldPlay = true;
-          targetUnitId = tgt.id;
-        } else if (card.target === "self" && x === ux && y === uy) {
-          shouldPlay = true;
-          targetUnitId = activeUnit.id;
+        // If no card is selected, try to auto-select the first valid attack card
+        if (cardToPlay === null && activeUnit.hand.length > 0) {
+          // Find first card that can target this unit
+          for (let i = 0; i < activeUnit.hand.length; i++) {
+            const cardIdOrObj = activeUnit.hand[i];
+            const card = resolveCard(cardIdOrObj);
+            const effectiveRange = getEffectiveCardRange(card, activeUnit);
+            
+            if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
+              cardToPlay = i;
+              shouldPlay = true;
+              targetUnitId = tgt.id;
+              break;
+            } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= effectiveRange || effectiveRange === 0)) {
+              cardToPlay = i;
+              shouldPlay = true;
+              targetUnitId = tgt.id;
+              break;
+            } else if (card.target === "self" && x === ux && y === uy) {
+              cardToPlay = i;
+              shouldPlay = true;
+              targetUnitId = activeUnit.id;
+              break;
+            }
+          }
+        } else if (cardToPlay !== null) {
+          // Card is already selected, check if it can target this unit
+          const cardIdOrObj = activeUnit.hand[cardToPlay];
+          const card = resolveCard(cardIdOrObj);
+          const effectiveRange = getEffectiveCardRange(card, activeUnit);
+          
+          if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
+            shouldPlay = true;
+            targetUnitId = tgt.id;
+          } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= effectiveRange || effectiveRange === 0)) {
+            shouldPlay = true;
+            targetUnitId = tgt.id;
+          } else if (card.target === "self" && x === ux && y === uy) {
+            shouldPlay = true;
+            targetUnitId = activeUnit.id;
+          }
         }
         
-        if (shouldPlay) {
+        if (shouldPlay && cardToPlay !== null) {
           const targetUnit = units.find(u => u.id === targetUnitId);
           let newFacing = activeUnit.facing ?? "east";
           
@@ -2452,7 +2512,7 @@ function attachBattleListeners() {
             stateWithFacing = { ...localBattleState, units: newUnits };
           }
           
-          let newState = playCardFromScreen(stateWithFacing, activeUnit.id, selectedCardIndex, targetUnitId);
+          let newState = playCardFromScreen(stateWithFacing, activeUnit.id, cardToPlay, targetUnitId);
           selectedCardIndex = null;
           newState = evaluateBattleOutcome(newState);
           setBattleState(newState);
@@ -2487,10 +2547,11 @@ function attachBattleListeners() {
         let shouldPlay = false;
         let targetUnitId = "";
         
-        if (card.target === "enemy" && tgt?.isEnemy && dist <= card.range) {
+        const effectiveRange = getEffectiveCardRange(card, activeUnit);
+        if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
           shouldPlay = true;
           targetUnitId = tgt.id;
-        } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= card.range || card.range === 0)) {
+        } else if (card.target === "ally" && tgt && !tgt.isEnemy && (dist <= effectiveRange || effectiveRange === 0)) {
           shouldPlay = true;
           targetUnitId = tgt.id;
         } else if (card.target === "self" && x === ux && y === uy) {

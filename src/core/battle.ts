@@ -277,9 +277,9 @@ export function createBattleUnitState(
   // Base stats + equipment bonuses
   const baseAtk = (base as any).stats?.atk ?? 10;
   const baseDef = (base as any).stats?.def ?? 5;
-  const baseAgi = base.agi ?? 5;
+  const baseAgi = base.agi ?? 3;
   const baseAcc = (base as any).stats?.acc ?? 80;
-  const baseMaxHp = base.maxHp ?? 100;
+  const baseMaxHp = base.maxHp ?? 12;
 
   let finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
   let finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
@@ -1374,8 +1374,9 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
   }
 
   const units = Object.values(state.units);
-  const anyPlayers = units.some(isPlayerUnit);
-  const anyEnemies = units.some(isEnemyUnit);
+  // Only count units with hp > 0 (alive units)
+  const anyPlayers = units.some(u => isPlayerUnit(u) && u.hp > 0);
+  const anyEnemies = units.some(u => isEnemyUnit(u) && u.hp > 0);
 
   // DEFEAT: All player units dead
   if (!anyPlayers) {
@@ -1426,7 +1427,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       cards: [],
       recipe: null,
       unlockable: null,
-    } : generateBattleRewardsSync(state);
+    } : generateBattleRewards(state);
     
     if (isTraining) {
       console.warn("[TRAINING_NO_REWARDS] blocked reward generation");

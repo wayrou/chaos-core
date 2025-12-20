@@ -75,17 +75,8 @@ const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
 // ============================================================================
 
 export function renderRecruitmentScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
-  // Stop any existing NPC window system
+  // Stop any existing NPC window system (cleanup)
   stopNpcWindowSystem();
-  
-  // Populate initial NPC windows before rendering
-  activeNpcWindows = [];
-  activeConversations.clear();
-  npcWindowIdCounter = 0;
-  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
-  for (let i = 0; i < initialCount; i++) {
-    addNpcWindow();
-  }
   
   const root = document.getElementById("app");
   if (!root) return;
@@ -590,7 +581,7 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
     card.addEventListener("click", (e) => {
       // Only trigger if not clicking a button
       if ((e.target as HTMLElement).closest("button")) return;
-      
+
       const candidateId = (card as HTMLElement).getAttribute("data-candidate-id");
       if (candidateId) {
         // TODO: Show detailed candidate view
@@ -598,6 +589,45 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
       }
     });
   });
+
+  // ESC and E key handlers to exit (especially for field mode)
+  const handleExit = () => {
+    // Stop NPC window system when leaving
+    stopNpcWindowSystem();
+
+    if (returnTo === "field") {
+      // Return to field mode
+      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("base_camp");
+      });
+    } else {
+      // Return to base camp screen
+      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+        renderAllNodesMenuScreen();
+      });
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    
+    // Handle ESC key - always works
+    if (key === "escape" || e.key === "Escape" || e.keyCode === 27) {
+      handleExit();
+      document.removeEventListener("keydown", handleKeyDown);
+      return;
+    }
+    
+    // Handle E key (only if returnTo is "field" and not typing in input)
+    if (returnTo === "field" && key === "e") {
+      const target = e.target as HTMLElement;
+      if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA" && !target.isContentEditable) {
+        handleExit();
+        document.removeEventListener("keydown", handleKeyDown);
+      }
+    }
+  };
+  document.addEventListener("keydown", handleKeyDown);
 }
 
 /**

@@ -17,7 +17,6 @@ export function renderSplashScreen(): void {
       <div class="splash-content">
         <div class="splash-logo">MR. PLANET</div>
         <div class="splash-subtitle">SOFTWARE PLANNING</div>
-        <div class="splash-tagline">Game Development Studio</div>
       </div>
     </div>
   `;

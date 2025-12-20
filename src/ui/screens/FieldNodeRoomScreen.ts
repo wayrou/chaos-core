@@ -805,12 +805,10 @@ function renderPlayer(player: FieldNodePlayer): string {
            top: ${player.y - player.height / 2}px;
            width: ${player.width}px;
            height: ${player.height}px;
-           border: 2px solid #ff8a00;
            ${invulnerableStyle}
          "
          data-facing="${player.facing}">
       <div class="field-player-sprite">⚔</div>
-      <div class="field-player-indicator" style="background: #ff8a00; color: white; font-size: 10px; padding: 2px 4px; border-radius: 4px; position: absolute; top: -18px; left: 50%; transform: translateX(-50%);">P1</div>
     </div>
   `;
 }
@@ -900,7 +898,7 @@ function renderAttackEffect(player: FieldNodePlayer): string {
       height: 80px;
       transform-origin: center center;
     ">
-      <div class="sword-slash-line"></div>
+      <div class="sword-slash-line" style="transform: rotate(${offset.rotation}deg);"></div>
     </div>
   `;
 }
@@ -1021,6 +1019,7 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
     player.attackAnimTime -= deltaTime;
     if (player.attackAnimTime <= 0) {
       player.isAttacking = false;
+      player.attackAnimTime = 0;
     }
   }
   
@@ -1195,12 +1194,7 @@ function performAttack(): void {
     }
   }
   
-  // Remove dead enemies after animation
-  setTimeout(() => {
-    if (roomState) {
-      roomState.enemies = roomState.enemies.filter(e => e.hp > 0 || (e.deathAnimTime && performance.now() - e.deathAnimTime < 500));
-    }
-  }, 500);
+  // Enemy cleanup is now handled in updateEnemies() every frame
 }
 
 function performRangedAttack(): void {
@@ -1360,6 +1354,13 @@ function updateProjectiles(deltaTime: number): void {
 
 function updateEnemies(deltaTime: number, currentTime: number): void {
   if (!roomState) return;
+  
+  // Clean up dead enemies that have finished their death animation (500ms)
+  roomState.enemies = roomState.enemies.filter(e => {
+    if (e.hp > 0) return true; // Keep alive enemies
+    if (e.deathAnimTime === undefined) return false; // Remove enemies without death animation time
+    return currentTime - e.deathAnimTime < 500; // Keep enemies that died less than 500ms ago
+  });
   
   for (const enemy of roomState.enemies) {
     if (enemy.hp <= 0) continue;

@@ -28,7 +28,7 @@ import {
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
-import * as supplyChain from "../../core/supplyChain";
+// Supply chain removed for now
 
 // ============================================================================
 // PAN STATE & CONTROLS
@@ -148,13 +148,38 @@ function setupPanHandlers(): void {
       return;
     }
     
-    // Handle zoom with Ctrl/Cmd + wheel
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = -e.deltaY * ZOOM_SENSITIVITY * 0.01;
-      panState.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, panState.zoom + delta));
-      applyMapTransform();
+    // Handle zoom with scroll wheel (no modifier needed)
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Calculate zoom delta
+    const zoomDelta = -e.deltaY * ZOOM_SENSITIVITY * 0.01;
+    const oldZoom = panState.zoom;
+    const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom + zoomDelta));
+    
+    if (oldZoom === newZoom) return; // No change
+    
+    // Adjust pan to zoom around viewport center
+    const viewport = document.querySelector(".opmap-floor-background") as HTMLElement;
+    const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
+    
+    if (viewport && mapContainer) {
+      const viewportRect = viewport.getBoundingClientRect();
+      const viewportCenterX = viewportRect.width / 2;
+      const viewportCenterY = viewportRect.height / 2;
+      
+      // Calculate zoom factor
+      const zoomFactor = newZoom / oldZoom;
+      
+      // Adjust pan to zoom around viewport center
+      // When zooming in, we need to move the pan to keep the center point in the same place
+      panState.x = viewportCenterX - (viewportCenterX - panState.x) * zoomFactor;
+      panState.y = viewportCenterY - (viewportCenterY - panState.y) * zoomFactor;
     }
+    
+    panState.zoom = newZoom;
+    applyMapTransform();
+    updateZoomDisplay();
   };
 
   window.addEventListener("keydown", keydownHandler);
@@ -198,8 +223,9 @@ function startPanLoop(): void {
 function applyMapTransform(): void {
   const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
   if (mapContainer) {
+    // Set transform origin to center for zooming around viewport center
+    mapContainer.style.transformOrigin = "center center";
     mapContainer.style.transform = `translate(${panState.x}px, ${panState.y}px) scale(${panState.zoom})`;
-    mapContainer.style.transformOrigin = "0 0";
   }
 }
 
@@ -211,9 +237,9 @@ function resetPan(): void {
 }
 
 /**
- * Center the camera/viewport on the current active node
+ * Center the camera/viewport on the start node (first node or node with no incoming connections)
  */
-function centerOnCurrentNode(): void {
+function centerOnStartNode(): void {
   const state = getGameState();
   const operation = getCurrentOperation(state);
   if (!operation) {
@@ -228,13 +254,38 @@ function centerOnCurrentNode(): void {
   }
 
   const nodes = floor.nodes || floor.rooms || [];
-  const currentRoomIndex = getCurrentRoomIndex(nodes, operation.currentRoomId);
   
-  console.log("[OPMAP] Centering on node, index:", currentRoomIndex, "roomId:", operation.currentRoomId);
+  // Find start node (first node or node with no incoming connections)
+  let startNode: RoomNode | null = null;
+  let startNodeIndex = -1;
   
-  if (currentRoomIndex < 0) {
-    // Fallback to (0, 0) if no current node found
-    console.warn("[OPMAP] Current room index not found, resetting to origin");
+  if (nodes.length > 0) {
+    // First, try to find node with no incoming connections
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      let hasIncoming = false;
+      for (const other of nodes) {
+        if (other.connections?.includes(node.id)) {
+          hasIncoming = true;
+          break;
+        }
+      }
+      if (!hasIncoming) {
+        startNode = node;
+        startNodeIndex = i;
+        break;
+      }
+    }
+    
+    // Fallback to first node if no node without incoming connections found
+    if (!startNode && nodes.length > 0) {
+      startNode = nodes[0];
+      startNodeIndex = 0;
+    }
+  }
+  
+  if (!startNode || startNodeIndex < 0) {
+    // Fallback to (0, 0) if no start node found
     panState.x = 0;
     panState.y = 0;
     panState.zoom = DEFAULT_ZOOM;
@@ -243,12 +294,12 @@ function centerOnCurrentNode(): void {
     return;
   }
 
-  // Wait for DOM to be ready, then find the current node element
+  // Wait for DOM to be ready, then find the start node element
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      const currentNode = document.querySelector(`.opmap-node[data-room-index="${currentRoomIndex}"]`) as HTMLElement;
-      if (!currentNode) {
-        console.warn("[OPMAP] Current node element not found, index:", currentRoomIndex);
+      const startNodeEl = document.querySelector(`.opmap-node[data-room-index="${startNodeIndex}"]`) as HTMLElement;
+      if (!startNodeEl) {
+        console.warn("[OPMAP] Start node element not found, index:", startNodeIndex);
         return;
       }
 
@@ -268,13 +319,14 @@ function centerOnCurrentNode(): void {
       const viewportRect = viewport.getBoundingClientRect();
 
       // Reset transform to get base positions
-      mapContainer.style.transform = "translate(0px, 0px)";
+      mapContainer.style.transform = "translate(0px, 0px) scale(1)";
+      mapContainer.style.transformOrigin = "center center";
       
       // Force layout recalculation
       void mapContainer.offsetHeight;
 
       // Get node position relative to container (at transform 0,0)
-      const nodeRect = currentNode.getBoundingClientRect();
+      const nodeRect = startNodeEl.getBoundingClientRect();
       const containerRect = mapContainer.getBoundingClientRect();
       
       // Node center relative to container origin
@@ -290,8 +342,6 @@ function centerOnCurrentNode(): void {
       const nodeCenterInViewportY = containerYRelative + nodeCenterYRelative;
 
       // Calculate transform needed to move node to viewport center
-      // We want: containerXRelative + nodeCenterXRelative + offsetX = viewportCenterX - viewportRect.left
-      // So: offsetX = (viewportCenterX - viewportRect.left) - (containerXRelative + nodeCenterXRelative)
       const viewportCenterXRelative = viewportRect.width / 2;
       const viewportCenterYRelative = viewportRect.height / 2;
       
@@ -301,18 +351,20 @@ function centerOnCurrentNode(): void {
       // Update pan state
       panState.x = offsetX;
       panState.y = offsetY;
+      panState.zoom = DEFAULT_ZOOM;
 
-      // Apply transform
-      mapContainer.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
-      
-      console.log("[OPMAP] Centered on node:", {
-        nodeIndex: currentRoomIndex,
-        nodeCenterInViewport: { x: nodeCenterInViewportX, y: nodeCenterInViewportY },
-        viewportCenter: { x: viewportCenterXRelative, y: viewportCenterYRelative },
-        offset: { x: offsetX, y: offsetY }
-      });
+      // Apply transform with zoom
+      applyMapTransform();
+      updateZoomDisplay();
     });
   });
+}
+
+/**
+ * Center the camera/viewport on the current active node (for reset button)
+ */
+function centerOnCurrentNode(): void {
+  centerOnStartNode(); // Use start node for now
 }
 
 // Advance to the next available room via keyboard
@@ -396,79 +448,76 @@ export function renderOperationMapScreen(): void {
 
   root.innerHTML = `
     <div class="opmap-root opmap-root--fullscreen">
-      <!-- Full-screen floor map background -->
+      <!-- PROOF MARKER -->
+      <div class="opmap-proof-marker">CURSOR_PROOF_DUNGEON_MAP_REIMAGINE</div>
+
+      <!-- PRIMARY LAYER: The Map -->
       <div class="opmap-floor-background">
         <div class="opmap-floor-map-full">
           ${renderRoguelikeMap(nodes, currentRoomIndex)}
         </div>
       </div>
 
-      <!-- Floating control panel -->
-      <div class="opmap-control-panel">
-        <div class="opmap-panel-header">
-          <div class="opmap-panel-header-left">
-            <h1 class="opmap-panel-title">${operation.codename}</h1>
-            <div class="opmap-panel-subtitle">
-              SCROLLINK OS // FLOOR ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}
-            </div>
+      <!-- SECONDARY LAYER: Context Panel (updates on hover/selection) -->
+      <div class="opmap-context-panel" id="opmapContextPanel">
+        <div class="opmap-context-header">
+          <div class="opmap-context-title">${operation.codename}</div>
+          <div class="opmap-context-subtitle">Floor ${operation.currentFloorIndex + 1}/${operation.floors.length} · ${floor.name}</div>
+        </div>
+        <div class="opmap-context-body" id="opmapContextBody">
+          <div class="opmap-context-default">
+            <div class="opmap-context-description">${operation.description}</div>
+            <div class="opmap-context-hint">Hover or click a node to view details</div>
           </div>
         </div>
-
-        <div class="opmap-panel-description">
-          ${operation.description}
-        </div>
-
-
         ${renderKeyRoomStatus(operation.currentFloorIndex)}
+      </div>
 
-        ${renderSupplyChainPanel(operation, nodes)}
-
-        <div class="opmap-panel-actions">
-          <button class="opmap-units-btn" id="unitsBtn">
-            👥 UNIT MANAGEMENT
-          </button>
-          <button class="opmap-abandon-btn" id="abandonBtn">
-            ✕ ABANDON
-          </button>
-        </div>
-
-        ${canAdvance ? `
-          <div class="opmap-panel-advance">
-            <div class="opmap-advance-text">
-              ✓ Floor ${operation.currentFloorIndex + 1} Complete!
-            </div>
-            ${operation.currentFloorIndex < operation.floors.length - 1 ? `
-              <button class="opmap-advance-btn" id="advanceFloorBtn">
-                PROCEED TO FLOOR ${operation.currentFloorIndex + 2} →
-              </button>
-            ` : `
-              <button class="opmap-complete-btn" id="completeOpBtn">
-                🎉 COMPLETE OPERATION
-              </button>
-            `}
+      <!-- TERTIARY LAYER: Minimal Legend -->
+      <div class="opmap-legend-panel">
+        <div class="opmap-legend-title">ROOM TYPES</div>
+        <div class="opmap-legend-items">
+          <div class="opmap-legend-item" data-room-type="battle">
+            <span class="opmap-legend-shape opmap-legend-shape--battle"></span>
+            <span class="opmap-legend-label">Battle</span>
           </div>
+          <div class="opmap-legend-item" data-room-type="boss">
+            <span class="opmap-legend-shape opmap-legend-shape--boss"></span>
+            <span class="opmap-legend-label">Boss</span>
+          </div>
+          <div class="opmap-legend-item" data-room-type="event">
+            <span class="opmap-legend-shape opmap-legend-shape--event"></span>
+            <span class="opmap-legend-label">Event</span>
+          </div>
+          <div class="opmap-legend-item" data-room-type="shop">
+            <span class="opmap-legend-shape opmap-legend-shape--shop"></span>
+            <span class="opmap-legend-label">Shop</span>
+          </div>
+          <div class="opmap-legend-item" data-room-type="tavern">
+            <span class="opmap-legend-shape opmap-legend-shape--tavern"></span>
+            <span class="opmap-legend-label">Safe Zone</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TERTIARY LAYER: Controls -->
+      <div class="opmap-controls-compact">
+        <button class="opmap-back-btn-compact" id="opmapBackBtn">← BACK</button>
+        <div class="opmap-pan-controls-compact">
+          <div class="opmap-pan-hint-compact">
+            <span class="opmap-pan-keys">WASD</span> pan · <span class="opmap-pan-keys">SCROLL</span> zoom
+          </div>
+          <button class="opmap-pan-reset-compact" id="resetPanBtn">⟲ CENTER</button>
+        </div>
+        <div class="opmap-panel-actions-compact">
+          <button class="opmap-units-btn-compact" id="opmapUnitsBtn">👥 UNITS</button>
+          <button class="opmap-abandon-btn-compact" id="opmapAbandonBtn">✕ ABANDON</button>
+        </div>
+        ${canAdvance ? `
+          <button class="opmap-advance-btn-compact" id="opmapAdvanceBtn">
+            → NEXT FLOOR
+          </button>
         ` : ''}
-      </div>
-
-      <!-- Floor indicator on the map -->
-      <div class="opmap-floor-indicator">
-        <span class="opmap-floor-label">FLOOR</span>
-        <span class="opmap-floor-number">${operation.currentFloorIndex + 1}</span>
-        <span class="opmap-floor-total">/ ${operation.floors.length}</span>
-      </div>
-
-      <!-- Pan controls hint -->
-      <div class="opmap-pan-controls">
-        <div class="opmap-pan-hint">
-          <span class="opmap-pan-keys">WASD</span> or <span class="opmap-pan-keys">↑←↓→</span> to pan
-          · <span class="opmap-pan-keys">SPACE</span> or <span class="opmap-pan-keys">ENTER</span> to advance
-          · <span class="opmap-pan-keys">SCROLL</span> to zoom
-        </div>
-        <div class="opmap-zoom-display">
-          <span class="opmap-zoom-label">Zoom:</span>
-          <span class="opmap-zoom-value" id="zoomValue">${Math.round(panState.zoom * 100)}%</span>
-        </div>
-        <button class="opmap-pan-reset" id="resetPanBtn">⟲ CENTER</button>
       </div>
     </div>
   `;
@@ -483,8 +532,8 @@ export function renderOperationMapScreen(): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       attachEventListeners(nodes, currentRoomIndex);
-      // Center camera on current node after DOM is ready
-      centerOnCurrentNode();
+      // Center camera on start node after DOM is ready
+      centerOnStartNode();
       // Update zoom display
       updateZoomDisplay();
     });
@@ -659,24 +708,10 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
   // Compute cleared route
   const clearedRoute = computeClearedRoute(nodes, currentRoomId || null, clearedNodeIds);
   
-  // Check if supply overlay is active
-  const supplyOverlayActive = (window as any).__supplyOverlayActive === true;
-  
   let mapHtml = '<div class="opmap-nodes-container">';
   
   // Find max layer (x in position = progression depth) to flip for bottom-to-top
   const maxLayer = Math.max(...nodes.map(n => n.position?.x || 0));
-  
-  // Get supply state for overlay rendering (synchronous)
-  let supplyFlowCache: Record<string, number> = {};
-  let supplyEdgeState: Record<string, any> = {};
-  if (supplyOverlayActive) {
-    const supplyState = supplyChain.getSupplyState(state);
-    if (supplyState) {
-      supplyFlowCache = supplyState.flowCache || supplyChain.computeSupplyFlow(nodes, supplyState, supplyState.supplyProfile);
-      supplyEdgeState = supplyState.edgeState || {};
-    }
-  }
 
   // Build node visibility map (fog of war)
   const revealedNodeIds = new Set<string>();
@@ -736,48 +771,23 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
       let strokeWidth: number;
       let edgeClass = "opmap-connection";
       
-      if (supplyOverlayActive) {
-        const flow = supplyFlowCache[edgeId] || 0;
-        const edgeState = supplyEdgeState[edgeId];
-        const integrity = edgeState?.integrity || 100;
-        
-        strokeWidth = 2 + Math.min(6, (flow / 20) * 6);
-        
-        if (integrity < 30) {
-          strokeColor = "rgba(255, 60, 60, 0.8)";
-          edgeClass += " opmap-connection--critical";
-        } else if (integrity < 60) {
-          strokeColor = "rgba(255, 150, 60, 0.6)";
-          edgeClass += " opmap-connection--damaged";
-        } else if (flow > 30) {
-          strokeColor = "rgba(100, 255, 100, 0.6)";
-          edgeClass += " opmap-connection--high-flow";
-        } else {
-          strokeColor = "rgba(255, 215, 0, 0.5)";
-        }
-        
-        if (flow > 40) {
-          edgeClass += " opmap-connection--glow";
-        }
+      // Normal styling: cleared route = gold, branch choices = amber, others = muted (Ardycia colors)
+      if (isOnClearedRoute) {
+        strokeColor = "rgba(243, 163, 16, 0.8)"; // Gold - cleared route
+        strokeWidth = 3;
+        edgeClass += " opmap-connection--cleared-route";
+      } else if (isBranchChoice) {
+        strokeColor = "rgba(235, 156, 101, 0.9)"; // Amber - available choice
+        strokeWidth = 3;
+        edgeClass += " opmap-connection--branch-choice";
+      } else if (fromCleared && toCleared) {
+        strokeColor = "rgba(128, 109, 78, 0.4)"; // Brown - cleared but not on route
+        strokeWidth = 2;
+        edgeClass += " opmap-connection--cleared-off-route";
       } else {
-        // Normal styling: cleared route = gold, branch choices = amber, others = muted (Ardycia colors)
-        if (isOnClearedRoute) {
-          strokeColor = "rgba(243, 163, 16, 0.8)"; // Gold - cleared route
-          strokeWidth = 3;
-          edgeClass += " opmap-connection--cleared-route";
-        } else if (isBranchChoice) {
-          strokeColor = "rgba(235, 156, 101, 0.9)"; // Amber - available choice
-          strokeWidth = 3;
-          edgeClass += " opmap-connection--branch-choice";
-        } else if (fromCleared && toCleared) {
-          strokeColor = "rgba(128, 109, 78, 0.4)"; // Brown - cleared but not on route
-          strokeWidth = 2;
-          edgeClass += " opmap-connection--cleared-off-route";
-        } else {
-          strokeColor = "rgba(88, 81, 80, 0.3)"; // Charcoal - known but untraveled
-          strokeWidth = 1.5;
-          edgeClass += " opmap-connection--unexplored";
-        }
+        strokeColor = "rgba(88, 81, 80, 0.3)"; // Charcoal - known but untraveled
+        strokeWidth = 1.5;
+        edgeClass += " opmap-connection--unexplored";
       }
       
       mapHtml += `
@@ -812,34 +822,33 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     // Room type class
     const typeClass = `opmap-node--${node.type || 'unknown'}`;
 
-    // Calculate position
-    const nodeX = (node.position?.y || 0) * 400;
-    const nodeY = (maxLayer - (node.position?.x || 0)) * 300;
+    // Calculate position (center node on its position, matching connection endpoints)
+    const nodeX = (node.position?.y || 0) * 400 + 200; // Center of 400px column
+    const nodeY = (maxLayer - (node.position?.x || 0)) * 300 + 150; // Center of 300px row
 
+    // Determine node shape based on room type
+    const shapeClass = getNodeShapeClass(node.type);
+    
     mapHtml += `
-      <div class="opmap-node-wrapper" style="position: absolute; left: ${nodeX}px; top: ${nodeY}px;">
-        <div class="opmap-node ${statusClass} ${typeClass}"
+      <div class="opmap-node-wrapper" style="position: absolute; left: ${nodeX}px; top: ${nodeY}px; transform: translate(-50%, -50%);">
+        <div class="opmap-node ${statusClass} ${typeClass} ${shapeClass}"
              data-room-id="${node.id}"
              data-room-index="${index}"
-             data-is-locked="${isLocked}">
-          <div class="opmap-node-icon">${isRevealed ? icon : '???'}</div>
+             data-is-locked="${isLocked}"
+             data-room-type="${node.type || 'unknown'}"
+             data-room-label="${node.label || ''}"
+             data-room-type-label="${typeLabel}">
           ${isRevealed ? `
-            <div class="opmap-node-info">
-              <div class="opmap-node-label">${node.label}</div>
-              <div class="opmap-node-type">${typeLabel}</div>
-              ${isVisited ? '<div class="opmap-node-badge opmap-node-badge--cleared">✓ CLEARED</div>' : ''}
-              ${isCurrent ? '<div class="opmap-node-badge opmap-node-badge--current">● CURRENT</div>' : ''}
+            <div class="opmap-node-shape">
+              <span class="opmap-node-icon-small">${icon}</span>
             </div>
+            <div class="opmap-node-label-compact">${node.label}</div>
           ` : `
-            <div class="opmap-node-info opmap-node-info--hidden">
-              <div class="opmap-node-label">???</div>
+            <div class="opmap-node-shape opmap-node-shape--hidden">
+              <span class="opmap-node-icon-small">?</span>
             </div>
+            <div class="opmap-node-label-compact">???</div>
           `}
-          ${isAvailable && !isVisited ? `
-            <button class="opmap-node-enter" data-room-id="${node.id}">
-              ENTER →
-            </button>
-          ` : ''}
         </div>
       </div>
     `;
@@ -903,54 +912,6 @@ function renderKeyRoomStatus(floorIndex: number): string {
 /**
  * Render individual key room item
  */
-/**
- * Render Supply Chain Panel
- */
-function renderSupplyChainPanel(_operation: OperationRun, nodes: RoomNode[]): string {
-  const state = getGameState();
-  const supplyState = supplyChain.getSupplyState(state);
-  const supplyOverlayActive = (window as any).__supplyOverlayActive === true;
-  
-  // Get supply state values
-  let currentProfile: string = "balanced";
-  let supplyHealth: string = "stable";
-  
-  if (supplyState) {
-    currentProfile = supplyState.supplyProfile || "balanced";
-    if (supplyState.flowCache) {
-      supplyHealth = supplyChain.computeSupplyHealth(supplyState.flowCache, nodes);
-    }
-  }
-  
-  return `
-    <div class="opmap-supply-panel">
-      <div class="opmap-supply-header">
-        <span class="opmap-supply-title">SUPPLY CHAIN</span>
-        <button class="opmap-supply-overlay-toggle ${supplyOverlayActive ? 'opmap-supply-overlay-toggle--active' : ''}" id="supplyOverlayToggle">
-          ${supplyOverlayActive ? 'OVERLAY ON' : 'OVERLAY OFF'}
-        </button>
-      </div>
-      <div class="opmap-supply-profile">
-        <label class="opmap-supply-label">Profile:</label>
-        <select class="opmap-supply-select" id="supplyProfileSelect">
-          <option value="balanced" ${currentProfile === "balanced" ? "selected" : ""}>Balanced</option>
-          <option value="forward_push" ${currentProfile === "forward_push" ? "selected" : ""}>Forward Push</option>
-          <option value="defensive_hold" ${currentProfile === "defensive_hold" ? "selected" : ""}>Defensive Hold</option>
-          <option value="consolidation" ${currentProfile === "consolidation" ? "selected" : ""}>Consolidation</option>
-        </select>
-      </div>
-      <div class="opmap-supply-status opmap-supply-status--${supplyHealth}">
-        <span class="opmap-supply-status-label">Status:</span>
-        <span class="opmap-supply-status-value">${supplyHealth.toUpperCase()}</span>
-      </div>
-      ${supplyHealth !== "stable" ? `
-        <div class="opmap-supply-warning">
-          ⚠️ SUPPLY ${supplyHealth.toUpperCase()}
-        </div>
-      ` : ''}
-    </div>
-  `;
-}
 
 function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUnderAttack?: boolean; isDelayed?: boolean }): string {
   const facilityConfig = FACILITY_CONFIG[keyRoom.facility as keyof typeof FACILITY_CONFIG];
@@ -1035,6 +996,31 @@ function getRoomTypeLabel(type?: RoomType, room?: any): string {
   }
 }
 
+/**
+ * Get shape class for node based on room type
+ * Shapes communicate category: circle (battle), diamond (boss), square (shop/event), etc.
+ */
+function getNodeShapeClass(type?: RoomType): string {
+  switch (type) {
+    case "battle":
+    case "elite":
+      return "opmap-node-shape--circle";
+    case "boss":
+      return "opmap-node-shape--diamond";
+    case "shop":
+    case "tavern":
+      return "opmap-node-shape--square";
+    case "event":
+    case "field_node":
+      return "opmap-node-shape--hexagon";
+    case "rest":
+    case "treasure":
+      return "opmap-node-shape--rounded-square";
+    default:
+      return "opmap-node-shape--circle";
+  }
+}
+
 // ============================================================================
 // EVENT LISTENERS
 // ============================================================================
@@ -1053,8 +1039,8 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     resetPan();
   });
 
-  // Abandon button - use multiple approaches to ensure it works
-  const abandonBtn = root.querySelector("#abandonBtn") as HTMLButtonElement | null;
+  // Abandon button
+  const abandonBtn = root.querySelector("#opmapAbandonBtn") as HTMLButtonElement | null;
   console.log("[OPMAP] Looking for abandon button, found:", abandonBtn);
   
   if (abandonBtn) {
@@ -1093,105 +1079,74 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     }
   }
 
-  // Unit Management button
-  root.querySelector("#unitsBtn")?.addEventListener("click", () => {
-    cleanupPanHandlers();
-    // Store current operation state and go to roster
-    // The roster will return to operation map
-    renderRosterScreen("operation" as any);
-  });
+  // Node hover/click handlers for context panel updates and navigation
+  const state = getGameState();
+  const operation = getCurrentOperation(state);
+  const floor = operation ? getCurrentFloor(operation) : null;
+  const availableNodeIds = getAvailableNodes();
+  
+  if (operation && floor) {
+    root.addEventListener("mouseenter", (e) => {
+    const target = e.target as HTMLElement;
+    const nodeEl = target.closest(".opmap-node") as HTMLElement;
+    if (!nodeEl) return;
+    
+    const roomId = nodeEl.getAttribute("data-room-id");
+    if (!roomId || !operation || !floor) return;
+    
+    const node = (floor.nodes || floor.rooms || []).find(n => n.id === roomId);
+    if (node) {
+      updateContextPanel(node, floor.nodes || floor.rooms || [], operation, floor);
+      nodeEl.classList.add("opmap-node--hovered");
+    }
+  }, true);
 
-  // Enter room buttons (only on next available room)
-  // Use event delegation for reliability - attach once to root
+  root.addEventListener("mouseleave", (e) => {
+    const target = e.target as HTMLElement;
+    const nodeEl = target.closest(".opmap-node") as HTMLElement;
+    if (nodeEl) {
+      nodeEl.classList.remove("opmap-node--hovered");
+      // Optionally reset to default, or keep last hovered node visible
+    }
+  }, true);
+
+  // Clicking on available nodes to enter
   root.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
-    const enterBtn = target.closest(".opmap-node-enter") as HTMLElement;
-    if (!enterBtn) return;
+    const nodeEl = target.closest(".opmap-node") as HTMLElement;
+    if (!nodeEl) return;
     
     e.stopPropagation();
     e.preventDefault();
     
-    const roomId = enterBtn.getAttribute("data-room-id");
-    console.log("[OPMAP] Enter button clicked (delegation), roomId:", roomId);
-    if (roomId) {
-      enterRoom(roomId);
-    } else {
-      console.warn("[OPMAP] Enter button clicked but no roomId found");
-    }
-  }, true); // Use capture phase for reliability
-
-  // Clicking on the node itself (for next available room or any available node)
-  root.querySelectorAll(".opmap-node--next, .opmap-node[data-is-locked='false']").forEach(node => {
-    node.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const clickedNode = (e.currentTarget as HTMLElement).closest(".opmap-node") || e.currentTarget as HTMLElement;
-      const roomId = clickedNode.getAttribute("data-room-id");
-      const isLocked = clickedNode.getAttribute("data-is-locked") === "true";
-      if (roomId && !isLocked) {
-        enterRoom(roomId);
-      }
-    });
-  });
-
-  // Supply overlay toggle
-  root.querySelector("#supplyOverlayToggle")?.addEventListener("click", () => {
-    (window as any).__supplyOverlayActive = !(window as any).__supplyOverlayActive;
-    renderOperationMapScreen(); // Re-render to update overlay
-  });
-  
-  // Supply profile selector
-  root.querySelector("#supplyProfileSelect")?.addEventListener("change", (e) => {
-    const select = e.target as HTMLSelectElement;
-    const newProfile = select.value as import("../../core/supplyChain").SupplyProfile;
+    const roomId = nodeEl.getAttribute("data-room-id");
+    const isLocked = nodeEl.getAttribute("data-is-locked") === "true";
     
-    import("../../core/supplyChain").then(({ updateSupplyState, getSupplyState, computeSupplyFlow }) => {
-      const state = getGameState();
-      const supplyState = getSupplyState(state);
-      if (!supplyState) return;
-      
-      const floor = getCurrentFloor(getCurrentOperation(state)!);
-      if (!floor) return;
-      const nodes = floor.nodes || floor.rooms || [];
-      
-      // Update profile and recompute flow
-      updateSupplyState(state, (supply) => {
-        const updated = {
-          ...supply,
-          supplyProfile: newProfile,
-        };
-        updated.flowCache = computeSupplyFlow(nodes, updated, newProfile);
-        return updated;
-      });
-      
-      // Re-render if overlay is active
-      if ((window as any).__supplyOverlayActive) {
-        renderOperationMapScreen();
+    if (roomId && !isLocked) {
+      const isAvailable = availableNodeIds.includes(roomId);
+      if (isAvailable) {
+        enterRoom(roomId);
+      } else {
+        // Invalid action - provide feedback
+        nodeEl.classList.add("opmap-node--invalid-click");
+        setTimeout(() => {
+          nodeEl.classList.remove("opmap-node--invalid-click");
+        }, 300);
       }
-    });
-  });
+    }
+  }, true);
+  }
 
-  // Advance floor button
-  // Advance floor button is handled above in the new handler
+  // Initialize context panel with default state
+  if (operation && floor) {
+    updateContextPanel(null, floor.nodes || floor.rooms || [], operation, floor);
+  }
 
-  // Complete operation button
+  // Complete operation button (if using old ID, handled above)
   root.querySelector("#completeOpBtn")?.addEventListener("click", () => {
-    // Complete operation via campaign manager
     completeOperationRun();
     syncCampaignToGameState();
-    // Show operation clear screen
     import("./OperationClearScreen").then(m => m.renderOperationClearScreen());
-  });
-  
-  root.querySelector("#advanceFloorBtn")?.addEventListener("click", () => {
-    try {
-      campaignAdvanceFloor();
-      syncCampaignToGameState();
-      renderOperationMapScreen();
-    } catch (error) {
-      console.error("[OPMAP] Failed to advance floor:", error);
-      alert(`Failed to advance floor: ${error instanceof Error ? error.message : "Unknown error"}`);
-    }
   });
 
   // Key room action buttons
@@ -1268,7 +1223,62 @@ function handleKeyRoomAction(keyRoomId: string, action: string): void {
 // ROOM ENTRY
 // ============================================================================
 
+export function markRoomVisited(roomId: string): void {
+  updateGameState(prev => {
+    if (!prev.operation) return prev;
+    
+    const operation = { ...prev.operation };
+    const floor = operation.floors[operation.currentFloorIndex];
+
+    if (floor && (floor.nodes || floor.rooms)) {
+      const nodes = floor.nodes || floor.rooms || [];
+      const room = nodes.find(n => n.id === roomId);
+      if (room) {
+        room.visited = true;
+      }
+    }
+
+    return {
+      ...prev,
+      operation,
+    } as GameState;
+  });
+
+  // Persist to campaign progress so cleared nodes unlock next connections
+  try {
+    clearNode(roomId);
+    syncCampaignToGameState();
+    
+    // Generate Key Room resources and check for attacks (after room cleared)
+    import("../../core/keyRoomSystem").then(({ generateKeyRoomResources, applyKeyRoomPassiveEffects, rollKeyRoomAttack }) => {
+      generateKeyRoomResources();
+      applyKeyRoomPassiveEffects();
+      
+      // Check for attack (async, may show UI)
+      const attackResult = rollKeyRoomAttack();
+      if (attackResult) {
+        // Show defense decision UI
+        import("./DefenseDecisionScreen").then(m => {
+          const activeRun = getActiveRun();
+          if (activeRun?.pendingDefenseDecision) {
+            m.renderDefenseDecisionScreen(
+              activeRun.pendingDefenseDecision.keyRoomId,
+              activeRun.pendingDefenseDecision.nodeId
+            );
+          }
+        });
+      }
+    });
+  } catch (error) {
+    console.warn("[OPMAP] Failed to persist cleared node to campaign:", error);
+  }
+}
+
+
+
 function enterRoom(roomId: string): void {
+
+
   const state = getGameState();
   const operation = getCurrentOperation(state);
   if (!operation) {
@@ -1339,6 +1349,7 @@ function enterRoom(roomId: string): void {
       // Treasure room - choose 1 of 3 Field Mods
       enterTreasureRoom(room);
       break;
+
 
     case "event":
       if (room.eventTemplate) {
@@ -1616,60 +1627,6 @@ function enterRestRoom(room: RoomNode): void {
     root.querySelector("#continueBtn")?.addEventListener("click", () => {
       renderOperationMapScreen();
     });
-  }
-}
-
-export function markRoomVisited(roomId: string): void {
-  updateGameState(prev => {
-    if (!prev.operation) return prev;
-    
-    const operation = { ...prev.operation };
-    const floor = operation.floors[operation.currentFloorIndex];
-
-    if (floor && (floor.nodes || floor.rooms)) {
-      const nodes = floor.nodes || floor.rooms || [];
-      const room = nodes.find(n => n.id === roomId);
-      if (room) {
-        room.visited = true;
-      }
-    }
-
-    return {
-      ...prev,
-      operation,
-    } as GameState;
-  });
-
-  // Persist to campaign progress so cleared nodes unlock next connections
-  try {
-    clearNode(roomId);
-    syncCampaignToGameState();
-    
-    // Advance supply step (deterministic link attacks)
-    supplyChain.advanceSupplyStep(getGameState());
-    
-    // Generate Key Room resources and check for attacks (after room cleared)
-    import("../../core/keyRoomSystem").then(({ generateKeyRoomResources, applyKeyRoomPassiveEffects, rollKeyRoomAttack }) => {
-      generateKeyRoomResources();
-      applyKeyRoomPassiveEffects();
-      
-      // Check for attack (async, may show UI)
-      const attackResult = rollKeyRoomAttack();
-      if (attackResult) {
-        // Show defense decision UI
-        import("./DefenseDecisionScreen").then(m => {
-          const activeRun = getActiveRun();
-          if (activeRun?.pendingDefenseDecision) {
-            m.renderDefenseDecisionScreen(
-              activeRun.pendingDefenseDecision.keyRoomId,
-              activeRun.pendingDefenseDecision.nodeId
-            );
-          }
-        });
-      }
-    });
-  } catch (error) {
-    console.warn("[OPMAP] Failed to persist cleared node to campaign:", error);
   }
 }
 

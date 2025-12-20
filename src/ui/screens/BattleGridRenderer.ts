@@ -41,12 +41,19 @@ export class BattleGridRenderer {
     
     if (isPlacementPhase && battle.placementState) {
       // Show all legal placement squares on the left edge (x=0)
-      // These are always visible during placement phase
-      for (let y = 0; y < gridHeight; y++) {
-        const occupied = units.some(u => u.pos && u.pos.x === 0 && u.pos.y === y);
-        // Show tile if not occupied (player can still see it, but clicking won't place if max reached)
-        if (!occupied) {
-          placementTiles.add(`0,${y}`);
+      // Highlight all tiles on the left edge so players know where they can place units
+      const placementState = battle.placementState;
+      const placedCount = placementState.placedUnitIds.length;
+      const maxUnits = placementState.maxUnitsPerSide;
+      
+      // Only show placement options if we haven't reached the max unit limit
+      if (placedCount < maxUnits) {
+        for (let y = 0; y < gridHeight; y++) {
+          const occupied = units.some(u => u.pos && u.pos.x === 0 && u.pos.y === y);
+          // Show tile if not occupied - these are valid placement locations
+          if (!occupied) {
+            placementTiles.add(`0,${y}`);
+          }
         }
       }
     }

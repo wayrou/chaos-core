@@ -292,16 +292,6 @@ function createBaseCampMap(): FieldMap {
       label: "COMMS ARRAY",
     },
     {
-      id: "interact_mini_core",
-      x: 19,
-      y: 10,
-      width: 2,
-      height: 2,
-      action: "custom",
-      label: "MINI CORE",
-      metadata: { placeholder: true, message: "Mini Core - Coming soon" },
-    },
-    {
       id: "enter_free_zone",
       x: 9,
       y: 13,
