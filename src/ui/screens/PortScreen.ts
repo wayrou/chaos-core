@@ -25,6 +25,7 @@ let npcWindowInterval: number | null = null;
 let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+let portExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // Aeriss response templates based on dialogue context
 const AERISS_RESPONSES: Record<string, string[]> = {
@@ -186,6 +187,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
     </div>
   `;
   
+  attachPortExitHotkey(returnTo);
   attachPortListeners(returnTo, manifest);
   
   // Start the NPC window system
@@ -607,6 +609,7 @@ function attachPortListeners(
   app.querySelector("#backBtn")?.addEventListener("click", () => {
     // Stop NPC window system when leaving
     stopNpcWindowSystem();
+    detachPortExitHotkey();
     
     if (returnTo === "field") {
       renderFieldScreen("base_camp");
@@ -848,9 +851,39 @@ export function debugPrintPortManifest(): void {
   console.log(`  Bulk Shipment: ${manifest.bulkShipmentOffer.targetResource}`);
 }
 
+function detachPortExitHotkey(): void {
+  if (portExitKeyHandler) {
+    window.removeEventListener("keydown", portExitKeyHandler);
+    portExitKeyHandler = null;
+  }
+}
+
+function attachPortExitHotkey(returnTo: "basecamp" | "field"): void {
+  detachPortExitHotkey();
+
+  if (returnTo !== "field") return;
+
+  portExitKeyHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    if (key === "escape" || key === "e") {
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      detachPortExitHotkey();
+      renderFieldScreen("base_camp");
+    }
+  };
+
+  window.addEventListener("keydown", portExitKeyHandler);
+}
+
 // Expose to window for console access (DEV only)
 if (typeof window !== 'undefined') {
   (window as any).debugRefreshPortManifest = debugRefreshPortManifest;
   (window as any).debugPrintPortManifest = debugPrintPortManifest;
 }
-

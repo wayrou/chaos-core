@@ -473,33 +473,6 @@ export function renderOperationMapScreen(): void {
         ${renderKeyRoomStatus(operation.currentFloorIndex)}
       </div>
 
-      <!-- TERTIARY LAYER: Minimal Legend -->
-      <div class="opmap-legend-panel">
-        <div class="opmap-legend-title">ROOM TYPES</div>
-        <div class="opmap-legend-items">
-          <div class="opmap-legend-item" data-room-type="battle">
-            <span class="opmap-legend-shape opmap-legend-shape--battle"></span>
-            <span class="opmap-legend-label">Battle</span>
-          </div>
-          <div class="opmap-legend-item" data-room-type="boss">
-            <span class="opmap-legend-shape opmap-legend-shape--boss"></span>
-            <span class="opmap-legend-label">Boss</span>
-          </div>
-          <div class="opmap-legend-item" data-room-type="event">
-            <span class="opmap-legend-shape opmap-legend-shape--event"></span>
-            <span class="opmap-legend-label">Event</span>
-          </div>
-          <div class="opmap-legend-item" data-room-type="shop">
-            <span class="opmap-legend-shape opmap-legend-shape--shop"></span>
-            <span class="opmap-legend-label">Shop</span>
-          </div>
-          <div class="opmap-legend-item" data-room-type="tavern">
-            <span class="opmap-legend-shape opmap-legend-shape--tavern"></span>
-            <span class="opmap-legend-label">Safe Zone</span>
-          </div>
-        </div>
-      </div>
-
       <!-- TERTIARY LAYER: Controls -->
       <div class="opmap-controls-compact">
         <button class="opmap-back-btn-compact" id="opmapBackBtn">← BACK</button>
@@ -790,10 +763,14 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
         edgeClass += " opmap-connection--unexplored";
       }
       
+      const left = Math.min(x1, x2);
+      const top = Math.min(y1, y2);
+      const width = Math.abs(x2 - x1) || 1;
+      const height = Math.abs(y2 - y1) || 1;
       mapHtml += `
-        <svg class="${edgeClass}" data-edge-from="${fromNode.id}" data-edge-to="${toNodeId}" style="position: absolute; left: ${Math.min(x1, x2) - 2}px; top: ${Math.min(y1, y2) - 2}px; width: ${Math.abs(x2 - x1) + 4}px; height: ${Math.abs(y2 - y1) + 4}px; pointer-events: none; z-index: 0;">
-          <line x1="${x1 - Math.min(x1, x2) + 2}" y1="${y1 - Math.min(y1, y2) + 2}"
-                x2="${x2 - Math.min(x1, x2) + 2}" y2="${y2 - Math.min(y1, y2) + 2}"
+        <svg class="${edgeClass}" data-edge-from="${fromNode.id}" data-edge-to="${toNodeId}" style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}px; height: ${height}px; pointer-events: none; z-index: 0;">
+          <line x1="${x1 - left}" y1="${y1 - top}"
+                x2="${x2 - left}" y2="${y2 - top}"
                 stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" />
         </svg>
       `;
@@ -1038,6 +1015,17 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   root.querySelector("#resetPanBtn")?.addEventListener("click", () => {
     resetPan();
   });
+  // Units button -> roster
+  root.querySelector("#opmapUnitsBtn")?.addEventListener("click", () => {
+    renderRosterScreen("operation");
+  });
+
+  // Advance button
+  root.querySelector("#opmapAdvanceBtn")?.addEventListener("click", () => {
+    campaignAdvanceFloor();
+    syncCampaignToGameState();
+    renderOperationMapScreen();
+  });
 
   // Abandon button
   const abandonBtn = root.querySelector("#opmapAbandonBtn") as HTMLButtonElement | null;
@@ -1084,6 +1072,8 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   const operation = getCurrentOperation(state);
   const floor = operation ? getCurrentFloor(operation) : null;
   const availableNodeIds = getAvailableNodes();
+  const activeRun = getActiveRun();
+  const clearedNodeIds = activeRun?.clearedNodeIds || operation?.clearedNodeIds || [];
   
   if (operation && floor) {
     root.addEventListener("mouseenter", (e) => {
@@ -1124,7 +1114,8 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     
     if (roomId && !isLocked) {
       const isAvailable = availableNodeIds.includes(roomId);
-      if (isAvailable) {
+      const isCleared = clearedNodeIds.includes(roomId);
+      if (isAvailable && !isCleared) {
         enterRoom(roomId);
       } else {
         // Invalid action - provide feedback

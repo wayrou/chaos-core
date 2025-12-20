@@ -1601,6 +1601,9 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
         <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${!isPlayerTurn ? "battle-cardui--disabled" : ""}" data-card-index="${i}">
           <div class="card-cost-circle">${card.strainCost}</div>
           <div class="card-icon-top">${icon}</div>
+          <div class="card-art-placeholder">
+            <span class="card-art-glyph">✶</span>
+          </div>
           <div class="card-name">${card.name}</div>
           <div class="card-tag">${card.target.toUpperCase()}${effectiveRange > 0 ? ` R${effectiveRange}` : ""}</div>
           <div class="card-desc">${card.description}</div>
