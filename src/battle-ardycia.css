@@ -228,6 +228,7 @@
   height: 64px;
   position: relative;
   cursor: pointer;
+  overflow: hidden;
   transition: all 0.15s ease;
   
   /* Base tile appearance */
@@ -1104,6 +1105,108 @@
   background: var(--bronze);
   color: var(--ardycia-earth-dark);
   box-shadow: 0 0 20px rgba(168, 124, 69, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   TRAINING COMPLETE SCREEN
+   -------------------------------------------------------------------------- */
+.training-complete-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+  background:
+    radial-gradient(ellipse at center, rgba(45, 38, 31, 0.55) 0%, rgba(10, 9, 7, 0.95) 75%),
+    linear-gradient(135deg, rgba(53, 255, 149, 0.06), rgba(255, 204, 110, 0.08));
+  color: var(--bronze-light);
+  font-family: var(--font-terminal, 'JetBrains Mono', monospace);
+}
+
+.training-complete-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.training-complete-title {
+  margin: 0;
+  letter-spacing: 0.24em;
+  font-size: 1.6rem;
+  color: var(--slk-amber);
+  text-shadow:
+    0 0 12px rgba(255, 204, 110, 0.4),
+    0 0 24px rgba(255, 204, 110, 0.2);
+}
+
+.training-complete-subtitle {
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--bronze);
+  letter-spacing: 0.12em;
+}
+
+.training-complete-content {
+  width: min(720px, 100%);
+  background: rgba(24, 23, 22, 0.92);
+  border: 1px solid rgba(168, 124, 69, 0.35);
+  box-shadow:
+    0 0 25px rgba(0, 0, 0, 0.65),
+    inset 0 0 30px rgba(53, 255, 149, 0.05);
+  border-radius: 6px;
+  padding: 2rem;
+  backdrop-filter: blur(6px);
+}
+
+.training-complete-message {
+  background: linear-gradient(180deg, rgba(77, 63, 52, 0.35) 0%, rgba(45, 38, 31, 0.55) 100%);
+  border: 1px solid rgba(168, 124, 69, 0.35);
+  padding: 1rem 1.25rem;
+  border-radius: 4px;
+  color: var(--ard-off-white);
+  line-height: 1.5;
+}
+
+.training-complete-actions {
+  margin-top: 1.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.training-action-btn {
+  padding: 0.9rem 1rem;
+  background: var(--surface-dark);
+  color: var(--bronze-light);
+  border: 1px solid var(--surface-border);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  border-radius: 3px;
+}
+
+.training-action-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--slk-amber);
+  box-shadow:
+    0 0 12px rgba(255, 204, 110, 0.4),
+    inset 0 0 8px rgba(255, 204, 110, 0.18);
+}
+
+.training-action-btn--primary {
+  background: linear-gradient(180deg, rgba(53, 255, 149, 0.18) 0%, rgba(26, 122, 72, 0.28) 100%);
+  border-color: var(--slk-green);
+  color: var(--slk-green);
+  box-shadow:
+    0 0 12px var(--slk-green-glow),
+    inset 0 0 10px rgba(53, 255, 149, 0.18);
+}
+
+.training-action-btn--primary:hover {
+  box-shadow:
+    0 0 16px var(--slk-green-glow),
+    inset 0 0 14px rgba(53, 255, 149, 0.25);
 }
 
 /* --------------------------------------------------------------------------

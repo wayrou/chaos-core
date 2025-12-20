@@ -22,6 +22,8 @@ import {
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
 
+let rosterExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
     squire: "Squire",
@@ -252,6 +254,7 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
     </div>
   `;
 
+  attachRosterExitHotkey(returnTo);
   // Attach event listeners
   attachRosterListeners(root, returnTo);
 }
@@ -311,6 +314,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       (backBtn as HTMLElement).onclick = () => {
         const btn = backBtn as HTMLElement;
         const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+        detachRosterExitHotkey();
         console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
         if (returnDestination === "field") {
           renderFieldScreen("base_camp");
@@ -538,4 +542,35 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       renderRosterScreen();
     }
   });
+}
+
+function detachRosterExitHotkey(): void {
+  if (rosterExitKeyHandler) {
+    window.removeEventListener("keydown", rosterExitKeyHandler);
+    rosterExitKeyHandler = null;
+  }
+}
+
+function attachRosterExitHotkey(returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
+  detachRosterExitHotkey();
+
+  if (returnTo !== "field") return;
+
+  rosterExitKeyHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    if (key === "escape" || key === "e") {
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      detachRosterExitHotkey();
+      renderFieldScreen("base_camp");
+    }
+  };
+
+  window.addEventListener("keydown", rosterExitKeyHandler);
 }

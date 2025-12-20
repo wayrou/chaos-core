@@ -26,6 +26,7 @@ import {
 
 let selectedCategory: Recipe["category"] = "armor";
 let selectedRecipeId: string | null = null;
+let craftingExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -165,6 +166,7 @@ export function renderCraftingScreen(returnTo: "basecamp" | "field" = "basecamp"
       </div>
     </div>
   `;
+  attachCraftingExitHotkey(returnTo);
 
   // Attach event listeners
   attachCraftingListeners(state, knownRecipeIds, resources, consumables, inventoryItemIds, returnTo);
@@ -363,6 +365,7 @@ function attachCraftingListeners(
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
+      detachCraftingExitHotkey();
       selectedRecipeId = null;
       const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
       if (returnDestination === "field") {
@@ -486,4 +489,35 @@ function addCraftingLog(message: string): void {
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
   }
+}
+
+function detachCraftingExitHotkey(): void {
+  if (craftingExitKeyHandler) {
+    window.removeEventListener("keydown", craftingExitKeyHandler);
+    craftingExitKeyHandler = null;
+  }
+}
+
+function attachCraftingExitHotkey(returnTo: "basecamp" | "field"): void {
+  detachCraftingExitHotkey();
+
+  if (returnTo !== "field") return;
+
+  craftingExitKeyHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    if (key === "escape" || key === "e") {
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      detachCraftingExitHotkey();
+      renderFieldScreen("base_camp");
+    }
+  };
+
+  window.addEventListener("keydown", craftingExitKeyHandler);
 }
