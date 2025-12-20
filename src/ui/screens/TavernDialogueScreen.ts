@@ -182,17 +182,8 @@ function getTavernDialogue(
 function renderNpcFlavorText(): string {
   return `
     <div class="tavern-npc-panel">
-      <div class="tavern-npc-panel-header">
-        <div class="tavern-npc-panel-meta">
-          <div class="tavern-npc-eyebrow">SCROLLINK OS // SOCIAL_FEED</div>
-          <h2 class="tavern-npc-panel-title">TAVERN CHATTER</h2>
-        </div>
-        <div class="tavern-npc-panel-status">
-          <span class="tavern-npc-status-dot"></span>
-          Live
-        </div>
-      </div>
       <div class="tavern-npc-panel-content">
+        <h2 class="tavern-npc-panel-title">TAVERN CHATTER</h2>
         <div class="tavern-npc-windows-container" id="tavernNpcWindowsContainer">
           ${activeNpcWindows.map(renderNpcWindow).join("")}
         </div>

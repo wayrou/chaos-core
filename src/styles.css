@@ -25400,10 +25400,14 @@ body {
   width: 360px;
   max-width: calc(100vw - var(--space-8, 2rem));
   flex-shrink: 0;
-  background: var(--bg-panel, #4d3f34);
-  border: var(--stroke-2, 2px) solid var(--stroke-panel, #7a5a32);
+  background: linear-gradient(
+    180deg,
+    rgba(20, 25, 30, 0.9),
+    rgba(10, 12, 14, 0.95)
+  );
+  border: 1px solid rgba(140, 198, 255, 0.25);
   border-radius: var(--radius-panel, 6px);
-  box-shadow: var(--shadow-elev-1, 0 2px 4px rgba(0, 0, 0, 0.5));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   overflow: hidden;
   max-height: calc(100vh - var(--space-8, 2rem));
   display: flex;
@@ -25415,71 +25419,21 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
-  background: linear-gradient(
-    90deg,
-    rgba(59, 47, 36, 0.95),
-    rgba(48, 40, 32, 0.98)
-  );
-  border-bottom: var(--stroke-1, 1px) solid var(--stroke-panel, #7a5a32);
-}
-
-.tavern-npc-panel-meta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 0.25rem);
-}
-
-.tavern-npc-eyebrow {
-  font-size: var(--text-xxs, 0.625rem);
-  font-family: var(--font-terminal, "JetBrains Mono", monospace);
-  color: var(--ink-muted, #6b6b6e);
-  letter-spacing: var(--tracking-widest, 0.15em);
-  text-transform: uppercase;
+  overflow-y: auto;
+  flex: 1;
+  background: rgba(12, 15, 19, 0.8);
+  border-top: 1px solid rgba(140, 198, 255, 0.18);
 }
 
 .tavern-npc-panel-title {
   font-size: var(--text-lg, 1.125rem);
   font-weight: var(--weight-bold, 700);
-  color: var(--ink-accent, #ffcc6e);
+  color: var(--slk-teal);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wider, 0.1em);
-  margin: 0;
-}
-
-.tavern-npc-panel-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 0.5rem);
-  padding: var(--space-1, 0.25rem) var(--space-3, 0.75rem);
-  background: var(--tech-crt-10, rgba(53, 255, 149, 0.1));
-  border: var(--stroke-1, 1px) solid var(--tech-crt-dim, #28cc78);
-  border-radius: var(--radius-pill, 999px);
-  font-family: var(--font-terminal, "JetBrains Mono", monospace);
-  font-size: var(--text-xs, 0.6875rem);
-  font-weight: var(--weight-semibold, 600);
-  color: var(--tech-crt, #35ff95);
-  letter-spacing: var(--tracking-wide, 0.05em);
-  text-transform: uppercase;
-}
-
-.tavern-npc-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--tech-crt, #35ff95);
-  box-shadow: 0 0 12px rgba(53, 255, 149, 0.7);
-  flex-shrink: 0;
-}
-
-.tavern-npc-panel-content {
-  padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
-  overflow-y: auto;
-  flex: 1;
-  background: var(--bg-surface, #2d2c2a);
-  border-top: 1px solid rgba(122, 90, 50, 0.45);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3, 0.75rem);
+  margin-bottom: var(--space-3, 0.75rem);
+  padding-bottom: var(--space-2, 0.5rem);
+  border-bottom: 1px solid rgba(140, 198, 255, 0.25);
 }
 
 .tavern-npc-windows-container {
@@ -25489,8 +25443,12 @@ body {
 }
 
 .tavern-npc-window {
-  background: var(--bg-inset, rgba(0, 0, 0, 0.25));
-  border: var(--stroke-1, 1px) solid var(--stroke-subtle, rgba(168, 124, 69, 0.35));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 38, 52, 0.4),
+    rgba(16, 26, 36, 0.5)
+  );
+  border: 1px solid rgba(140, 198, 255, 0.25);
   border-radius: var(--radius-sm, 3px);
   padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
   cursor: pointer;
@@ -25519,14 +25477,18 @@ body {
 }
 
 .tavern-npc-window:hover {
-  border-color: var(--accent-bronze, #a87c45);
-  background: rgba(0, 0, 0, 0.35);
+  border-color: var(--slk-amber);
+  background: linear-gradient(
+    180deg,
+    rgba(24, 38, 52, 0.6),
+    rgba(16, 26, 36, 0.7)
+  );
 }
 
 .tavern-npc-window--has-conversation {
-  border-color: var(--ink-accent, #ffcc6e);
-  background: rgba(243, 163, 16, 0.08);
-  box-shadow: var(--shadow-glow-bronze, 0 0 20px rgba(168, 124, 69, 0.35));
+  border-color: var(--slk-amber);
+  background: rgba(30, 40, 70, 0.8);
+  box-shadow: 0 0 14px rgba(255, 204, 110, 0.25);
 }
 
 @keyframes tavernNpcWindowFadeIn {
@@ -25554,7 +25516,7 @@ body {
 .tavern-npc-name {
   font-size: var(--text-xs, 0.6875rem);
   font-weight: var(--weight-bold, 700);
-  color: var(--ink-accent, #ffcc6e);
+  color: var(--slk-teal);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: var(--space-1, 0.25rem);
@@ -25568,16 +25530,16 @@ body {
   font-style: italic;
   padding: var(--space-2, 0.5rem);
   background: rgba(0, 0, 0, 0.25);
-  border-left: 3px solid rgba(168, 124, 69, 0.55);
+  border-left: 3px solid rgba(140, 198, 255, 0.35);
   border-radius: var(--radius-sm, 3px);
 }
 
 .tavern-npc-conversation-message {
   margin-top: var(--space-2, 0.5rem);
   padding: var(--space-2, 0.5rem);
-  background: rgba(243, 163, 16, 0.08);
+  background: rgba(140, 198, 255, 0.08);
   border-radius: var(--radius-sm, 3px);
-  border-left: 2px solid rgba(168, 124, 69, 0.35);
+  border-left: 2px solid rgba(140, 198, 255, 0.25);
 }
 
 .tavern-npc-conversation-message--aeriss {
