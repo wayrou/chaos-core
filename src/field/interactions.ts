@@ -105,7 +105,18 @@ export function handleInteraction(
     case "base_camp_entry":
       // Switch to base camp map
       const baseCampTarget = zone.metadata?.targetMap || "base_camp";
-      import("./FieldScreen").then(({ renderFieldScreen }) => {
+      import("./FieldScreen").then(({ renderFieldScreen, storeInteractionZonePosition }) => {
+        if (baseCampTarget === "base_camp" && map.id === "quarters") {
+          // Spawn beside the quarters interaction on return
+          const tileSize = 64;
+          const spawnTileX = 23;
+          const spawnTileY = 14;
+          storeInteractionZonePosition(
+            "interact_quarters",
+            spawnTileX * tileSize + tileSize / 2,
+            spawnTileY * tileSize + tileSize / 2
+          );
+        }
         renderFieldScreen(baseCampTarget as "base_camp" | "free_zone_1" | "quarters");
       });
       break;

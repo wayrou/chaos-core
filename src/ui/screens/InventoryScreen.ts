@@ -15,6 +15,38 @@ import { renderFieldScreen } from "../../field/FieldScreen";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
+let inventoryExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function attachInventoryExitHotkey(returnTo: "basecamp" | "field"): void {
+  if (inventoryExitKeyHandler) {
+    window.removeEventListener("keydown", inventoryExitKeyHandler);
+  }
+
+  if (returnTo !== "field") {
+    inventoryExitKeyHandler = null;
+    return;
+  }
+
+  inventoryExitKeyHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    if (key === "escape" || key === "e") {
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      window.removeEventListener("keydown", inventoryExitKeyHandler!);
+      inventoryExitKeyHandler = null;
+      renderFieldScreen("base_camp");
+    }
+  };
+
+  window.addEventListener("keydown", inventoryExitKeyHandler);
+}
+
 export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) {
@@ -170,12 +202,17 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
       </div>
     </div>
   `;
+  attachInventoryExitHotkey(returnTo);
 
   // --- BUTTON: BACK ---
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
       const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;
+      if (inventoryExitKeyHandler) {
+        window.removeEventListener("keydown", inventoryExitKeyHandler);
+        inventoryExitKeyHandler = null;
+      }
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
       } else {
