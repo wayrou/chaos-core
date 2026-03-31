@@ -3,14 +3,13 @@
 // Headline 11b: Unit customization, roster, stats, and current decks
 // ============================================================================
 
-import { getGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
-import { renderUnitDetailScreen } from "./UnitDetailScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
 import { getGameState, updateGameState } from "../../state/gameStore";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
+import { renderUnitDetailScreen } from "./UnitDetailScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderLoadoutScreen } from "./LoadoutScreen";
+import { renderOperationMapScreen } from "./OperationMapScreen";
+import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 
 import {
   UnitLoadout,
@@ -19,7 +18,9 @@ import {
   getAllModules,
   buildDeckFromLoadout,
   UnitClass,
+  CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -51,7 +52,7 @@ function formatStatDiff(diff: number): string {
   return "";
 }
 
-export function renderRosterScreen(): void {
+export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | "operation" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -63,106 +64,193 @@ export function renderRosterScreen(): void {
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
 
-  const unitCardsHtml = unitIds
-    .map((unitId) => {
-      const unit = units[unitId];
-      if (!unit) return "";
+  // Separate units into party and reserve
+  const partyUnits = unitIds.filter(id => partyUnitIds.includes(id));
+  const reserveUnits = unitIds.filter(id => !partyUnitIds.includes(id));
 
-      const isInParty = partyUnitIds.includes(unitId);
-      const loadout: UnitLoadout = (unit as any).loadout || {
-        weapon: null,
-        helmet: null,
-        chestpiece: null,
-        accessory1: null,
-        accessory2: null,
-      };
+  // Function to render a unit card
+  const renderUnitCard = (unitId: string, isInParty: boolean): string => {
+    const unit = units[unitId];
+    if (!unit) return "";
 
-      const weaponId = loadout.weapon;
-      const weapon = weaponId ? equipmentById[weaponId] : null;
-      const weaponName = weapon ? weapon.name : "None";
+    const loadout: UnitLoadout = (unit as any).loadout || {
+      primaryWeapon: null,
+      secondaryWeapon: null,
+      helmet: null,
+      chestpiece: null,
+      accessory1: null,
+      accessory2: null,
+    };
 
-      const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
-      const unitClass: UnitClass = (unit as any).unitClass || "squire";
-      const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
-      const deckSize = deck.length;
+    const primaryWeaponId = loadout.primaryWeapon;
+    const primaryWeapon = primaryWeaponId ? equipmentById[primaryWeaponId] : null;
+    const secondaryWeaponId = loadout.secondaryWeapon;
+    const secondaryWeapon = secondaryWeaponId ? equipmentById[secondaryWeaponId] : null;
 
-      const baseStats = unit.stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
-      const totalAtk = baseStats.atk + equipStats.atk;
-      const totalDef = baseStats.def + equipStats.def;
-      const totalAgi = baseStats.agi + equipStats.agi;
-      const totalAcc = baseStats.acc + equipStats.acc;
-      const totalHp = baseStats.maxHp + equipStats.hp;
+    let weaponName = "None";
+    if (primaryWeapon && secondaryWeapon) {
+      weaponName = `${primaryWeapon.name} & ${secondaryWeapon.name}`;
+    } else if (primaryWeapon) {
+      weaponName = primaryWeapon.name;
+    } else if (secondaryWeapon) {
+      weaponName = secondaryWeapon.name;
+    }
 
-      return `
-        <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" data-unit-id="${unitId}">
-          <div class="roster-unit-header">
+    const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
+    const unitClass: UnitClass = (unit as any).unitClass || "squire";
+    const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
+    const deckSize = deck.length;
+
+    const baseStats = unit.stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
+    const totalAtk = baseStats.atk + equipStats.atk;
+    const totalDef = baseStats.def + equipStats.def;
+    const totalAgi = baseStats.agi + equipStats.agi;
+    const totalAcc = baseStats.acc + equipStats.acc;
+    const totalHp = baseStats.maxHp + equipStats.hp;
+    const portraitPath = getUnitPortraitPath(unitId);
+
+    // PWR display
+    const pwr = (unit as any).pwr || 0;
+    const pwrBand = getPWRBand(pwr);
+    const pwrColor = getPWRBandColor(pwr);
+
+    return `
+      <div class="roster-unit-card ${isInParty ? "roster-unit-card--in-party" : ""}" 
+           data-unit-id="${unitId}" 
+           data-section="${isInParty ? 'party' : 'reserve'}">
+        <div class="roster-unit-header">
+          <div class="roster-unit-portrait">
+            <img src="${portraitPath}" alt="${unit.name}" class="roster-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+          </div>
+          <div class="roster-unit-header-text">
             <div class="roster-unit-name">${unit.name}</div>
             <div class="roster-unit-class">${formatClassName(unitClass)}</div>
-          </div>
-          <div class="roster-unit-body">
-            <div class="roster-unit-stats">
-              <div class="roster-stat">
-                <span class="roster-stat-label">HP</span>
-                <span class="roster-stat-value">${totalHp}</span>
-                ${formatStatDiff(equipStats.hp)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">ATK</span>
-                <span class="roster-stat-value">${totalAtk}</span>
-                ${formatStatDiff(equipStats.atk)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">DEF</span>
-                <span class="roster-stat-value">${totalDef}</span>
-                ${formatStatDiff(equipStats.def)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">AGI</span>
-                <span class="roster-stat-value">${totalAgi}</span>
-                ${formatStatDiff(equipStats.agi)}
-              </div>
-              <div class="roster-stat">
-                <span class="roster-stat-label">ACC</span>
-                <span class="roster-stat-value">${totalAcc}</span>
-                ${formatStatDiff(equipStats.acc)}
-              </div>
+            <div class="roster-unit-pwr" style="color: ${pwrColor}">
+              <span class="roster-pwr-label">PWR:</span>
+              <span class="roster-pwr-value">${pwr}</span>
+              <span class="roster-pwr-band">(${pwrBand})</span>
             </div>
-            <div class="roster-unit-equip">
-              <div class="roster-equip-row">
-                <span class="roster-equip-label">WEAPON</span>
-                <span class="roster-equip-value">${weaponName}</span>
-              </div>
-              <div class="roster-equip-row">
-                <span class="roster-equip-label">DECK</span>
-                <span class="roster-equip-value">${deckSize} cards</span>
-              </div>
-            </div>
-          </div>
-          <div class="roster-unit-footer">
-            ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
-            <button class="roster-detail-btn" data-unit-id="${unitId}">MANAGE</button>
           </div>
         </div>
-      `;
-    })
-    .join("");
+        <div class="roster-unit-body">
+          <div class="roster-unit-stats">
+            <div class="roster-stat">
+              <span class="roster-stat-label">HP</span>
+              <span class="roster-stat-value">${totalHp}</span>
+              ${formatStatDiff(equipStats.hp)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">ATK</span>
+              <span class="roster-stat-value">${totalAtk}</span>
+              ${formatStatDiff(equipStats.atk)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">DEF</span>
+              <span class="roster-stat-value">${totalDef}</span>
+              ${formatStatDiff(equipStats.def)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">AGI</span>
+              <span class="roster-stat-value">${totalAgi}</span>
+              ${formatStatDiff(equipStats.agi)}
+            </div>
+            <div class="roster-stat">
+              <span class="roster-stat-label">ACC</span>
+              <span class="roster-stat-value">${totalAcc}</span>
+              ${formatStatDiff(equipStats.acc)}
+            </div>
+          </div>
+          <div class="roster-unit-equip">
+            <div class="roster-equip-row">
+              <span class="roster-equip-label">WEAPON</span>
+              <span class="roster-equip-value">${weaponName}</span>
+            </div>
+            <div class="roster-equip-row">
+              <span class="roster-equip-label">DECK</span>
+              <span class="roster-equip-value">${deckSize} cards</span>
+            </div>
+          </div>
+        </div>
+        <div class="roster-unit-footer">
+          ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
+          <div class="roster-unit-actions">
+            <button class="roster-toggle-party-btn ${isInParty ? 'roster-toggle-party-btn--remove' : 'roster-toggle-party-btn--add'}" 
+                    data-unit-id="${unitId}" 
+                    data-action="${isInParty ? 'remove' : 'add'}"
+                    type="button"
+                    title="${isInParty ? 'Remove from party' : 'Add to party'}">
+              ${isInParty ? '− REMOVE' : '+ ADD TO PARTY'}
+            </button>
+            <button class="roster-detail-btn" data-unit-id="${unitId}" type="button">MANAGE</button>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  const partyCardsHtml = partyUnits.map(id => renderUnitCard(id, true)).join("");
+  const reserveCardsHtml = reserveUnits.map(id => renderUnitCard(id, false)).join("");
+
+  const getReturnToText = (target: string): string => {
+    switch (target) {
+      case "operation": return "OPERATION MAP";
+      case "field": return "FIELD MODE";
+      case "loadout": return "LOADOUT";
+      default: return "BASE CAMP";
+    }
+  };
 
   root.innerHTML = `
-    <div class="roster-root">
-      <div class="roster-card">
-        <div class="roster-header">
-          <div class="roster-header-left">
-            <div class="roster-title">UNIT ROSTER</div>
-            <div class="roster-subtitle">Manage units, equipment, and decks</div>
+    <div class="roster-root town-screen ard-noise">
+      <div class="roster-card town-screen__panel">
+        <!-- Header - Adventure Gothic Panel -->
+        <div class="roster-header town-screen__header">
+          <div class="roster-header-left town-screen__titleblock">
+            <h1 class="roster-title">UNIT ROSTER</h1>
+            <div class="roster-subtitle">S/COM_OS // UNIT_MANAGEMENT</div>
           </div>
-          <div class="roster-header-right">
-            <div class="roster-count">${unitIds.length} UNITS / ${partyUnitIds.length} IN PARTY</div>
-            <button class="roster-back-btn">BACK TO BASE CAMP</button>
+          <div class="roster-header-right town-screen__header-right">
+            <div class="roster-count">
+              <span class="roster-count-label">UNITS</span>
+              <span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span>
+            </div>
+            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${getReturnToText(returnTo)}</span>
+            </button>
           </div>
         </div>
         <div class="roster-body">
-          <div class="roster-grid">
-            ${unitCardsHtml}
+          <div class="roster-sections">
+            <div class="roster-section roster-section--party">
+              <div class="roster-section-header">
+                <div class="roster-section-header-top">
+                  <div>
+                    <div class="roster-section-title">PARTY (${partyUnitIds.length})</div>
+                    <div class="roster-section-subtitle">Units that will participate in battles</div>
+                  </div>
+                  ${partyUnitIds.length > 0 ? `
+                    <button class="roster-auto-equip-btn" id="autoEquipPartyBtn" title="Auto-equip best available gear for all party units">
+                      ⚡ AUTO-EQUIP ALL
+                    </button>
+                  ` : ''}
+                </div>
+              </div>
+              <div class="roster-section-grid roster-section-grid--party" 
+                   data-section="party">
+                ${partyCardsHtml || '<div class="roster-section-empty">Click "ADD TO PARTY" on reserve units to add them here</div>'}
+              </div>
+            </div>
+            <div class="roster-section roster-section--reserve">
+              <div class="roster-section-header">
+                <div class="roster-section-title">RESERVE (${reserveUnits.length})</div>
+                <div class="roster-section-subtitle">Units not currently in party</div>
+              </div>
+              <div class="roster-section-grid roster-section-grid--reserve" 
+                   data-section="reserve">
+                ${reserveCardsHtml || '<div class="roster-section-empty">No reserve units</div>'}
+              </div>
+            </div>
           </div>
         </div>
         <div class="roster-footer">
@@ -176,31 +264,264 @@ export function renderRosterScreen(): void {
               Reserve
             </span>
           </div>
+          <div class="roster-debug">
+            <button class="roster-debug-btn" id="debugEquipBtn">🔧 DEBUG: Give All Equipment</button>
+          </div>
         </div>
       </div>
     </div>
   `;
 
-  root.querySelector(".roster-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
-  });
+  // Attach event listeners
+  attachRosterListeners(root, returnTo);
+}
 
-  root.querySelectorAll(".roster-detail-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const unitId = (e.target as HTMLElement).getAttribute("data-unit-id");
-      if (unitId) {
-        renderUnitDetailScreen(unitId);
-      }
+// Functions to manage party membership
+function addUnitToParty(unitId: string): void {
+  updateGameState((prev) => {
+    const partyUnitIds = prev.partyUnitIds || [];
+    if (!partyUnitIds.includes(unitId)) {
+      return {
+        ...prev,
+        partyUnitIds: [...partyUnitIds, unitId],
+      };
+    }
+    return prev;
+  });
+}
+
+function removeUnitFromParty(unitId: string): void {
+  updateGameState((prev) => {
+    const partyUnitIds = prev.partyUnitIds || [];
+    return {
+      ...prev,
+      partyUnitIds: partyUnitIds.filter(id => id !== unitId),
+    };
+  });
+}
+
+function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
+  // Use setTimeout to ensure DOM is fully rendered
+  setTimeout(() => {
+    // Toggle party buttons - click to add/remove from party
+    root.querySelectorAll(".roster-toggle-party-btn").forEach((btn) => {
+      const button = btn as HTMLElement;
+      const unitId = button.getAttribute("data-unit-id");
+      const action = button.getAttribute("data-action");
+
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        if (!unitId) return;
+
+        if (action === "add") {
+          addUnitToParty(unitId);
+        } else if (action === "remove") {
+          removeUnitFromParty(unitId);
+        }
+
+        // Re-render to show updated sections
+        renderRosterScreen(returnTo);
+      });
     });
-  });
+    // Back button
+    const backBtn = root.querySelector(".roster-back-btn");
+    if (backBtn) {
+      (backBtn as HTMLElement).onclick = () => {
+        const btn = backBtn as HTMLElement;
+        const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+        console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
+        if (returnDestination === "field") {
+          renderFieldScreen("base_camp");
+        } else if (returnDestination === "loadout") {
+          renderLoadoutScreen();
+        } else if (returnDestination === "operation") {
+          renderOperationMapScreen();
+        } else {
+          renderAllNodesMenuScreen();
+        }
+      };
+    } else {
+      console.warn("[ROSTER] Back button not found");
+    }
 
-  root.querySelectorAll(".roster-unit-card").forEach((card) => {
-    card.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).classList.contains("roster-detail-btn")) return;
-      const unitId = (card as HTMLElement).getAttribute("data-unit-id");
-      if (unitId) {
-        renderUnitDetailScreen(unitId);
+    // Manage buttons - use both onclick and addEventListener for maximum compatibility
+    const manageButtons = root.querySelectorAll(".roster-detail-btn");
+    console.log(`[ROSTER] Found ${manageButtons.length} manage buttons`);
+
+    if (manageButtons.length === 0) {
+      console.error("[ROSTER] No manage buttons found in DOM!");
+    }
+
+    manageButtons.forEach((btn, index) => {
+      const button = btn as HTMLElement;
+      const unitId = button.getAttribute("data-unit-id");
+
+      if (!unitId) {
+        console.warn(`[ROSTER] Button ${index} has no data-unit-id attribute`);
       }
+
+      // Clear any existing handlers
+      button.onclick = null;
+
+      // Use onclick as primary handler (more reliable)
+      button.onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log(`[ROSTER] Manage button ${index} clicked (onclick), unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+            alert(`Error opening unit detail: ${error}`);
+          }
+        } else {
+          console.error(`[ROSTER] Button ${index} has no unit-id!`);
+          alert("Error: Unit ID not found on button");
+        }
+      };
+
+      // Also add event listener as backup
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log(`[ROSTER] Manage button ${index} clicked (addEventListener), unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      }, { once: false, passive: false });
+
+      // Ensure button is clickable
+      button.style.pointerEvents = "auto";
+      button.style.cursor = "pointer";
+      button.style.zIndex = "10";
+    });
+
+    // Unit cards - click anywhere on card to open detail (but not on buttons)
+    const unitCards = root.querySelectorAll(".roster-unit-card");
+    console.log(`[ROSTER] Found ${unitCards.length} unit cards`);
+
+    unitCards.forEach((card, index) => {
+      const cardEl = card as HTMLElement;
+      const unitId = cardEl.getAttribute("data-unit-id");
+
+      // Use onclick for reliability
+      cardEl.onclick = (e) => {
+        const target = e.target as HTMLElement;
+        // Don't open if clicking on buttons
+        if (target.closest(".roster-detail-btn") || target.closest(".roster-toggle-party-btn")) {
+          return;
+        }
+        console.log(`[ROSTER] Unit card ${index} clicked, unitId: ${unitId}`);
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      };
+
+      // Also add event listener
+      card.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest(".roster-detail-btn") || target.closest(".roster-toggle-party-btn")) {
+          return;
+        }
+        const unitId = cardEl.getAttribute("data-unit-id");
+        if (unitId) {
+          try {
+            renderUnitDetailScreen(unitId);
+          } catch (error) {
+            console.error("[ROSTER] Error opening unit detail screen:", error);
+          }
+        }
+      });
+    });
+  }, 0);
+
+  // Debug button to give all equipment to all units
+  root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {
+    if (!confirm("Give all starter equipment to all units for testing?")) return;
+
+    import("./UnitDetailScreen").then(() => {
+      updateGameState((draft) => {
+        // Give resources
+        draft.wad = 9999;
+        if (!draft.resources) {
+          draft.resources = {
+            metalScrap: 0,
+            wood: 0,
+            chaosShards: 0,
+            steamComponents: 0,
+          };
+        }
+        draft.resources.metalScrap = 99;
+        draft.resources.wood = 99;
+        draft.resources.chaosShards = 99;
+        draft.resources.steamComponents = 99;
+
+        // Get all starter equipment
+        const allEquipment = getAllStarterEquipment();
+
+        // Add all equipment to equipmentById
+        Object.assign(draft.equipmentById, allEquipment);
+
+        // Equip all units with compatible gear
+        Object.keys(draft.unitsById).forEach((unitId) => {
+          const unit = draft.unitsById[unitId];
+          const unitClass: UnitClass = (unit as any).unitClass || "squire";
+
+          if (!(unit as any).loadout) {
+            (unit as any).loadout = {
+              primaryWeapon: null,
+              secondaryWeapon: null,
+              helmet: null,
+              chestpiece: null,
+              accessory1: null,
+              accessory2: null,
+            };
+          }
+
+          // Find a compatible weapon for this class
+          const weapons = Object.values(allEquipment).filter((eq) => eq.slot === "weapon");
+          const compatibleWeapon = weapons.find((w) => {
+            const weaponType = (w as any).weaponType;
+            const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+            return allowed?.includes(weaponType);
+          });
+
+          if (compatibleWeapon) {
+            (unit as any).loadout.primaryWeapon = compatibleWeapon.id;
+          }
+
+          // Equip first helmet
+          const helmet = Object.values(allEquipment).find((eq) => eq.slot === "helmet");
+          if (helmet) {
+            (unit as any).loadout.helmet = helmet.id;
+          }
+
+          // Equip first chestpiece
+          const chestpiece = Object.values(allEquipment).find((eq) => eq.slot === "chestpiece");
+          if (chestpiece) {
+            (unit as any).loadout.chestpiece = chestpiece.id;
+          }
+
+          // Equip first two accessories
+          const accessories = Object.values(allEquipment).filter((eq) => eq.slot === "accessory");
+          if (accessories.length > 0) (unit as any).loadout.accessory1 = accessories[0].id;
+          if (accessories.length > 1) (unit as any).loadout.accessory2 = accessories[1].id;
+        });
+      });
+
+      // Re-render to show updated equipment
+      renderRosterScreen(returnTo);
     });
   });
 }

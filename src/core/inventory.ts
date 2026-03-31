@@ -20,12 +20,12 @@ export const MULE_CLASS_CAPS: Record<
   MuleWeightClass,
   { massKg: number; bulkBu: number; powerW: number }
 > = {
-  E: { massKg: 100, bulkBu: 70, powerW: 300 },
-  D: { massKg: 150, bulkBu: 100, powerW: 450 },
-  C: { massKg: 200, bulkBu: 130, powerW: 600 },
-  B: { massKg: 260, bulkBu: 170, powerW: 800 },
-  A: { massKg: 330, bulkBu: 220, powerW: 1000 },
-  S: { massKg: 400, bulkBu: 300, powerW: 1300 },
+  E: { massKg: 50, bulkBu: 35, powerW: 150 },
+  D: { massKg: 75, bulkBu: 50, powerW: 225 },
+  C: { massKg: 100, bulkBu: 65, powerW: 300 },
+  B: { massKg: 130, bulkBu: 85, powerW: 400 },
+  A: { massKg: 165, bulkBu: 110, powerW: 500 },
+  S: { massKg: 200, bulkBu: 150, powerW: 650 },
 };
 
 // -------------------------------------------------------------

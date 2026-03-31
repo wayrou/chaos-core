@@ -1,0 +1,53 @@
+import { EquipmentCard } from "../../core/equipment";
+
+export const CORE_CARDS: EquipmentCard[] = [
+    {
+        id: "core_move_plus",
+        name: "Move+",
+        type: "core",
+        strainCost: 6,
+        description: "Move 2 extra tiles this turn.",
+        range: "R(0-0)",
+    },
+    {
+        id: "core_basic_attack",
+        name: "Basic Attack",
+        type: "core",
+        strainCost: 2,
+        description: "Standard attack on enemy.",
+        range: "R(1-1)",
+        damage: 0,
+    },
+    {
+        id: "core_aid",
+        name: "Aid",
+        type: "core",
+        strainCost: 6,
+        description: "Restore small amount of HP to ally.",
+        range: "R(1-2)",
+    },
+    {
+        id: "core_overwatch",
+        name: "Overwatch",
+        type: "core",
+        strainCost: 6,
+        description: "Attack enemy that enters range.",
+        range: "R(2-5)",
+    },
+    {
+        id: "core_guard",
+        name: "Guard",
+        type: "core",
+        strainCost: 6,
+        description: "Gain +2 DEF until your next turn.",
+        range: "R(0-0)",
+    },
+    {
+        id: "core_wait",
+        name: "Wait",
+        type: "core",
+        strainCost: 6,
+        description: "End turn without acting. Reduce strain by 1.",
+        range: "R(0-0)",
+    },
+];

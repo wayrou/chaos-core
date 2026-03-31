@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   getSettings,
   updateSettings,
@@ -16,6 +16,7 @@ import {
   getCategoryLabel,
   SettingDescriptor,
 } from "../../core/settings";
+import { getAllThemes, getTheme } from "../../core/themes";
 import {
   isControllerConnected,
   getConnectedControllers,
@@ -34,6 +35,7 @@ import {
   SAVE_SLOTS,
   SaveSlot,
 } from "../../core/saveSystem";
+import { SCROLLINK_BUILD_LABEL } from "../../core/appVersion";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -61,7 +63,7 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
       <div class="settings-header">
         <div class="settings-header-left">
           <h1 class="settings-title">SETTINGS</h1>
-          <div class="settings-subtitle">SLK://SYSTEM_CONFIG</div>
+          <div class="settings-subtitle">S/COM://SYSTEM_CONFIG</div>
         </div>
         <div class="settings-header-right">
           <button class="settings-back-btn" id="backBtn">← BACK</button>
@@ -91,7 +93,7 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
       
       <div class="settings-footer">
         <button class="settings-reset-btn" id="resetBtn">RESET TO DEFAULTS</button>
-        <div class="settings-version">SCROLLINK OS BUILD 0.1.0</div>
+        <div class="settings-version">${SCROLLINK_BUILD_LABEL}</div>
       </div>
     </div>
   `;
@@ -160,15 +162,34 @@ function renderSettingItem(desc: SettingDescriptor, settings: GameSettings): str
       break;
       
     case 'select':
-      control = /*html*/ `
-        <select class="setting-select" data-setting="${desc.key}">
-          ${desc.options?.map(opt => `
-            <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
-              ${opt.label}
-            </option>
-          `).join('')}
-        </select>
-      `;
+      // Special handling for theme selector with descriptions
+      if (desc.key === "uiTheme") {
+        const themes = getAllThemes();
+        control = /*html*/ `
+          <div class="setting-theme-container">
+            <select class="setting-select" data-setting="${desc.key}">
+              ${themes.map(theme => `
+                <option value="${theme.id}" ${value === theme.id ? 'selected' : ''}>
+                  ${theme.name}
+                </option>
+              `).join('')}
+            </select>
+            <div class="setting-theme-description">
+              ${getTheme(value as any)?.description || ''}
+            </div>
+          </div>
+        `;
+      } else {
+        control = /*html*/ `
+          <select class="setting-select" data-setting="${desc.key}">
+            ${desc.options?.map(opt => `
+              <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
+                ${opt.label}
+              </option>
+            `).join('')}
+          </select>
+        `;
+      }
       break;
   }
   
@@ -360,7 +381,7 @@ function attachSettingsListeners(settings: GameSettings): void {
   if (backBtn) {
     backBtn.onclick = () => {
       if (returnDestination === "basecamp") {
-        renderBaseCampScreen();
+        renderAllNodesMenuScreen();
       } else {
         renderMainMenu();
       }
@@ -432,7 +453,25 @@ function attachSettingsListeners(settings: GameSettings): void {
       const sel = e.target as HTMLSelectElement;
       const key = sel.dataset.setting as keyof GameSettings;
       await updateSettings({ [key]: sel.value });
+      
+      // Update theme description if this is the theme selector
+      if (key === "uiTheme") {
+        const themeDesc = select.parentElement?.querySelector(".setting-theme-description");
+        if (themeDesc) {
+          const theme = getTheme(sel.value as any);
+          themeDesc.textContent = theme?.description || "";
+        }
+      }
     });
+    
+    // Update theme description on initial load
+    if (select.dataset.setting === "uiTheme") {
+      const themeDesc = select.parentElement?.querySelector(".setting-theme-description");
+      if (themeDesc) {
+        const theme = getTheme(select.value as any);
+        themeDesc.textContent = theme?.description || "";
+      }
+    }
   });
   
   // Load saves if on saves tab

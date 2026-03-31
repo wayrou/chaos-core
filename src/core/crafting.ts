@@ -18,10 +18,13 @@ export interface ResourceCost {
   steamComponents?: number;
 }
 
+// Crafting categories - weapons are built in Gear Builder, not crafted
+export type CraftingCategory = "armor" | "accessory" | "consumable" | "upgrade";
+
 export interface Recipe {
   id: string;
   name: string;
-  category: "weapon" | "armor" | "consumable" | "upgrade";
+  category: CraftingCategory;
   description: string;
   cost: ResourceCost;
   resultItemId: string;
@@ -30,6 +33,8 @@ export interface Recipe {
   requiresItemId?: string;
   // Whether this recipe is known by default or must be found/bought
   starterRecipe: boolean;
+  // Mark deprecated recipes (e.g., old weapon recipes)
+  deprecated?: boolean;
 }
 
 export interface CraftingState {
@@ -41,88 +46,98 @@ export interface CraftingState {
 // ----------------------------------------------------------------------------
 
 export const RECIPE_DATABASE: Record<string, Recipe> = {
-  // ==================== WEAPONS ====================
+  // ==================== DEPRECATED WEAPON RECIPES ====================
+  // Weapons are now built in Gear Builder, not crafted
+  // These recipes are kept for save compatibility but marked deprecated
   recipe_iron_longsword: {
     id: "recipe_iron_longsword",
     name: "Iron Longsword",
-    category: "weapon",
-    description: "A sturdy blade for frontline combat.",
+    category: "armor", // Changed to armor for type safety, but deprecated flag prevents use
+    description: "A sturdy blade for frontline combat. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 5, wood: 2 },
     resultItemId: "weapon_iron_longsword",
     resultQuantity: 1,
     starterRecipe: true,
+    deprecated: true,
   },
   recipe_runed_shortsword: {
     id: "recipe_runed_shortsword",
     name: "Runed Shortsword",
-    category: "weapon",
-    description: "A quick blade etched with arcane symbols.",
+    category: "armor",
+    description: "A quick blade etched with arcane symbols. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 4, chaosShards: 2 },
     resultItemId: "weapon_runed_shortsword",
     resultQuantity: 1,
     starterRecipe: true,
+    deprecated: true,
   },
   recipe_elm_recurve_bow: {
     id: "recipe_elm_recurve_bow",
     name: "Elm Recurve Bow",
-    category: "weapon",
-    description: "A reliable ranged weapon crafted from elm wood.",
+    category: "armor",
+    description: "A reliable ranged weapon crafted from elm wood. [DEPRECATED: Use Gear Builder]",
     cost: { wood: 6, metalScrap: 2 },
     resultItemId: "weapon_elm_recurve_bow",
     resultQuantity: 1,
     starterRecipe: true,
+    deprecated: true,
   },
   recipe_oak_battlestaff: {
     id: "recipe_oak_battlestaff",
     name: "Oak Battlestaff",
-    category: "weapon",
-    description: "A sturdy staff for channeling and combat.",
+    category: "armor",
+    description: "A sturdy staff for channeling and combat. [DEPRECATED: Use Gear Builder]",
     cost: { wood: 5, chaosShards: 1 },
     resultItemId: "weapon_oak_battlestaff",
     resultQuantity: 1,
     starterRecipe: true,
+    deprecated: true,
   },
   recipe_steel_dagger: {
     id: "recipe_steel_dagger",
     name: "Steel Dagger",
-    category: "weapon",
-    description: "A swift blade for quick strikes.",
+    category: "armor",
+    description: "A swift blade for quick strikes. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 3, wood: 1 },
     resultItemId: "weapon_steel_dagger",
     resultQuantity: 1,
     starterRecipe: true,
+    deprecated: true,
   },
   
   // Mechanical Weapons (require steam components)
   recipe_emberclaw_repeater: {
     id: "recipe_emberclaw_repeater",
     name: "Emberclaw Repeater",
-    category: "weapon",
-    description: "A repeating rifle powered by steam mechanisms.",
+    category: "armor",
+    description: "A repeating rifle powered by steam mechanisms. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 6, steamComponents: 4, chaosShards: 1 },
     resultItemId: "weapon_emberclaw_repeater",
     resultQuantity: 1,
     starterRecipe: false,
+    deprecated: true,
   },
   recipe_brassback_scattergun: {
     id: "recipe_brassback_scattergun",
     name: "Brassback Scattergun",
-    category: "weapon",
-    description: "A steam-powered shotgun with devastating spread.",
+    category: "armor",
+    description: "A steam-powered shotgun with devastating spread. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 5, steamComponents: 3, wood: 2 },
     resultItemId: "weapon_brassback_scattergun",
     resultQuantity: 1,
     starterRecipe: false,
+    deprecated: true,
   },
   recipe_blazefang_saber: {
     id: "recipe_blazefang_saber",
     name: "Blazefang Saber",
-    category: "weapon",
-    description: "A steam-heated blade that sears on contact.",
+    category: "armor",
+    description: "A steam-heated blade that sears on contact. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 4, steamComponents: 3, chaosShards: 2 },
     resultItemId: "weapon_blazefang_saber",
     resultQuantity: 1,
     starterRecipe: false,
+    deprecated: true,
   },
 
   // ==================== ARMOR ====================
@@ -260,27 +275,30 @@ export const RECIPE_DATABASE: Record<string, Recipe> = {
   },
 
   // ==================== UPGRADES ====================
+  // Weapon upgrades are deprecated - weapons are built/modified in Gear Builder
   recipe_iron_longsword_plus1: {
     id: "recipe_iron_longsword_plus1",
     name: "Iron Longsword +1",
     category: "upgrade",
-    description: "An improved longsword with better stats.",
+    description: "An improved longsword with better stats. [DEPRECATED: Use Gear Builder]",
     cost: { metalScrap: 3, chaosShards: 1 },
     resultItemId: "weapon_iron_longsword_plus1",
     resultQuantity: 1,
     requiresItemId: "weapon_iron_longsword",
     starterRecipe: true,
+    deprecated: true,
   },
   recipe_blazefang_saber_plus1: {
     id: "recipe_blazefang_saber_plus1",
     name: "Blazefang Saber +1",
     category: "upgrade",
-    description: "An enhanced Blazefang with increased heat efficiency.",
+    description: "An enhanced Blazefang with increased heat efficiency. [DEPRECATED: Use Gear Builder]",
     cost: { steamComponents: 4, chaosShards: 3 },
     resultItemId: "weapon_blazefang_saber_plus1",
     resultQuantity: 1,
     requiresItemId: "weapon_blazefang_saber",
     starterRecipe: false,
+    deprecated: true,
   },
   recipe_steelplate_cuirass_plus1: {
     id: "recipe_steelplate_cuirass_plus1",
@@ -361,13 +379,27 @@ export function getRecipeCostString(recipe: Recipe): string {
 }
 
 /**
- * Get recipes by category
+ * Get recipes by category (excludes deprecated recipes)
  */
 export function getRecipesByCategory(
   recipes: Recipe[],
-  category: Recipe["category"]
+  category: CraftingCategory
 ): Recipe[] {
-  return recipes.filter(r => r.category === category);
+  return recipes.filter(r => r.category === category && !r.deprecated);
+}
+
+/**
+ * Get all active (non-deprecated) recipes
+ */
+export function getActiveRecipes(recipes: Recipe[]): Recipe[] {
+  return recipes.filter(r => !r.deprecated);
+}
+
+/**
+ * Get deprecated recipes (for migration/history purposes)
+ */
+export function getDeprecatedRecipes(recipes: Recipe[]): Recipe[] {
+  return recipes.filter(r => r.deprecated);
 }
 
 /**
@@ -398,6 +430,25 @@ export function craftItem(
   resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number },
   inventoryItemIds: string[]
 ): CraftResult {
+  // Prevent weapon crafting - weapons are built in Gear Builder
+  if (recipe.deprecated || recipe.resultItemId.startsWith("weapon_")) {
+    console.error(`[CRAFTING] Attempted to craft weapon via deprecated recipe: ${recipe.id}. Weapons must be built in Gear Builder.`);
+    return { 
+      success: false, 
+      error: "Weapons are engineered in the Gear Builder, not crafted here." 
+    };
+  }
+  
+  // Validate category - runtime check for safety
+  const validCategories: CraftingCategory[] = ["armor", "accessory", "consumable", "upgrade"];
+  if (!validCategories.includes(recipe.category)) {
+    console.error(`[CRAFTING] Invalid recipe category: ${recipe.category}. Recipe ID: ${recipe.id}`);
+    return { 
+      success: false, 
+      error: `Invalid recipe category: ${recipe.category}` 
+    };
+  }
+  
   // Check resources
   if (!canAffordRecipe(recipe, resources)) {
     return { success: false, error: "Insufficient resources" };

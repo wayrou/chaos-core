@@ -6,20 +6,16 @@ import {
   computeLoadPenaltyFlags,
   transferItem,
   upgradeMuleClass,
+  MULE_CLASS_CAPS,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
-import { renderScrollLinkShell } from "./ScrollLinkShell";
-import { renderBaseCampScreen } from "./BaseCampScreen";
-
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
 
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
-export function renderInventoryScreen(): void {
+export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element in index.html");
@@ -36,30 +32,43 @@ export function renderInventoryScreen(): void {
   const load = computeLoad(inv);
   const penalties = computeLoadPenaltyFlags(inv);
 
+  // Get current MULE class caps directly from MULE_CLASS_CAPS (always up-to-date)
+  const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
   const caps = {
-    mass: inv.capacityMassKg,
-    bulk: inv.capacityBulkBu,
-    power: inv.capacityPowerW,
+    mass: muleCaps.massKg,
+    bulk: muleCaps.bulkBu,
+    power: muleCaps.powerW,
   };
 
-  function renderBar(label: string, pct: number, text: string): string {
-    let color = "#52a0ff"; // normal
-    if (pct >= 0.8 && pct < 1) color = "#e4d96f"; // warning
-    if (pct >= 1 && pct < 1.2) color = "#ff5c5c"; // overloaded
-    if (pct >= 1.2) color = "#ff3030"; // heavily overloaded / flashing
+  function renderBar(label: string, current: number, cap: number, unit: string): string {
+    const pct = current / cap;
+    let color = "#52a0ff"; // White/Blue = normal
+    let isFlashing = false;
+    
+    if (pct >= 0.8 && pct < 1) {
+      color = "#e4d96f"; // Yellow = nearing capacity (≥ 80%)
+    } else if (pct >= 1 && pct < 1.2) {
+      color = "#ff5c5c"; // Red = overloaded (>100%)
+    } else if (pct >= 1.2) {
+      color = "#ff3030"; // Flashing Red = extreme overload
+      isFlashing = true;
+    }
+
+    const fillWidth = Math.min(pct * 100, 150);
+    const displayText = `${current.toFixed(0)} / ${cap} ${unit}`;
 
     return `
       <div class="loadout-bar">
-        <div class="loadout-bar-label">${label} — ${text}</div>
+        <div class="loadout-bar-label">${label}</div>
         <div class="loadout-bar-track">
-          <div class="loadout-bar-fill"
+          <div class="loadout-bar-fill ${isFlashing ? 'loadout-bar-fill--flashing' : ''}"
                style="
-                 width:${Math.min(pct * 100, 150)}%;
+                 width:${fillWidth}%;
                  background:${color};
-                 ${pct >= 1.2 ? "animation:pulseRed 1s infinite;" : ""}
                ">
           </div>
         </div>
+        <div class="loadout-bar-value">${displayText}</div>
       </div>
     `;
   }
@@ -85,64 +94,41 @@ export function renderInventoryScreen(): void {
   }
 
   root.innerHTML = `
-    <div class="inventory-root">
-      <div class="inventory-card">
-
-        <div class="inventory-header">
-          <div class="inventory-header-left">
-            <div class="inventory-title">LOADOUT</div>
-            <div class="inventory-subtitle">
-              Forward Locker (carried into runs) + Base Camp Storage (safe).
-            </div>
+    <div class="inventory-root town-screen ard-noise">
+      <div class="inventory-card town-screen__panel">
+        <!-- Header - Adventure Gothic Panel -->
+        <div class="inventory-header town-screen__header">
+          <div class="inventory-header-left town-screen__titleblock">
+            <h1 class="inventory-title">LOADOUT</h1>
+            <div class="inventory-subtitle">S/COM_OS // FORWARD_LOCKER • BASE_STORAGE</div>
           </div>
-          <div class="inventory-header-right">
-            <button class="inventory-back-btn">BACK TO SHELL</button>
+          <div class="inventory-header-right town-screen__header-right">
+            <button class="inventory-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
           </div>
         </div>
 
         <div class="loadout-body">
           <div class="loadout-left">
-            ${renderBar(
-              "MASS",
-              penalties.massPct,
-              `${load.mass.toFixed(1)} / ${caps.mass} kg`
-            )}
-            ${renderBar(
-              "BULK",
-              penalties.bulkPct,
-              `${load.bulk.toFixed(1)} / ${caps.bulk} bu`
-            )}
-            ${renderBar(
-              "POWER",
-              penalties.powerPct,
-              `${load.power.toFixed(1)} / ${caps.power} w`
-            )}
+            <div class="loadout-capacity-section">
+              <div class="loadout-section-title">CAPACITY METERS</div>
+              ${renderBar("MASS", load.mass, caps.mass, "kg")}
+              ${renderBar("BULK", load.bulk, caps.bulk, "bu")}
+              ${renderBar("POWER", load.power, caps.power, "w")}
+            </div>
 
             <div class="mule-upgrade">
-              <div>MULE CLASS: ${inv.muleClass}</div>
-              <button class="mule-upgrade-btn">UPGRADE MULE (placeholder)</button>
+              <div class="mule-class-display">
+                <div class="mule-class-label">MULE SYSTEM</div>
+                <div class="mule-class-value">CLASS ${inv.muleClass}</div>
+              </div>
+              <button class="mule-upgrade-btn">UPGRADE MULE</button>
             </div>
           </div>
 
           <div class="loadout-right">
-            <div class="inventory-column" data-bin="forwardLocker">
-              <div class="inventory-column-header">
-                <div class="inventory-column-title">FORWARD LOCKER</div>
-                <div class="inventory-column-subtitle">
-                  Items carried into the dungeon. Count against load.
-                </div>
-              </div>
-              <div class="inventory-column-body" data-bin="forwardLocker">
-                ${
-                  forwardLocker.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
-                    : forwardLocker
-                        .map((i) => renderItem(i, "forwardLocker"))
-                        .join("")
-                }
-              </div>
-            </div>
-
             <div class="inventory-column" data-bin="baseStorage">
               <div class="inventory-column-header">
                 <div class="inventory-column-title">BASE CAMP STORAGE</div>
@@ -160,6 +146,24 @@ export function renderInventoryScreen(): void {
                 }
               </div>
             </div>
+
+            <div class="inventory-column" data-bin="forwardLocker">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">FORWARD LOCKER</div>
+                <div class="inventory-column-subtitle">
+                  Items carried into the dungeon. Count against load.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="forwardLocker">
+                ${
+                  forwardLocker.length === 0
+                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    : forwardLocker
+                        .map((i) => renderItem(i, "forwardLocker"))
+                        .join("")
+                }
+              </div>
+            </div>
           </div>
         </div>
 
@@ -167,12 +171,16 @@ export function renderInventoryScreen(): void {
     </div>
   `;
 
-  // --- BUTTON: BACK TO SHELL ---
-  const backBtn = root.querySelector<HTMLButtonElement>(".inventory-back-btn");
+  // --- BUTTON: BACK ---
+  const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
-renderBaseCampScreen();
-
+      const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;
+      if (returnDestination === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderAllNodesMenuScreen();
+      }
     });
   }
 

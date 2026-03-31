@@ -1,17 +1,15 @@
 // ============================================================================
 // UNIT DETAIL SCREEN - Individual unit equipment and deck management
 // Headline 11b & 11c: Equipment slots, deck building from equipment
-// Updated: Added CUSTOMIZE button for Gear Workbench (11da)
+// Updated: Added CUSTOMIZE button for Workshop (11da)
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
-
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
 
 import {
   Equipment,
@@ -26,7 +24,14 @@ import {
   buildDeckFromLoadout,
   canEquipWeapon,
   EquipmentCard,
+  CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
+import { getUnitPortraitPath } from "../../core/portraits";
+import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
+import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
+import { HardpointState, FieldModInstance } from "../../core/fieldMods";
+import { getFieldModDef, getAllFieldModDefs } from "../../core/fieldModDefinitions";
+import { getTriggerLabel } from "../../core/fieldModStrings";
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -54,7 +59,8 @@ function formatClassName(cls: UnitClass): string {
 
 function formatSlotName(slot: EquipSlot): string {
   const names: Record<EquipSlot, string> = {
-    weapon: "Weapon",
+    primaryWeapon: "Primary Weapon",
+    secondaryWeapon: "Secondary Weapon",
     helmet: "Helmet",
     chestpiece: "Chestpiece",
     accessory1: "Accessory 1",
@@ -86,14 +92,15 @@ export function renderUnitDetailScreen(unitId: string): void {
 
   const unitClass: UnitClass = (unit as any).unitClass || "squire";
   const loadout: UnitLoadout = (unit as any).loadout || {
-    weapon: null,
+    primaryWeapon: null,
+    secondaryWeapon: null,
     helmet: null,
     chestpiece: null,
     accessory1: null,
     accessory2: null,
   };
 
-  const baseStats = unit.stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
+  const baseStats = (unit as any).stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
   const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
   const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
 
@@ -105,7 +112,7 @@ export function renderUnitDetailScreen(unitId: string): void {
 
   const equipmentPool = (state as any).equipmentPool || Object.keys(equipmentById);
 
-  const slots: EquipSlot[] = ["weapon", "helmet", "chestpiece", "accessory1", "accessory2"];
+  const slots: EquipSlot[] = ["primaryWeapon", "secondaryWeapon", "helmet", "chestpiece", "accessory1", "accessory2"];
 
   const equipSlotsHtml = slots
     .map((slot) => {
@@ -146,13 +153,20 @@ export function renderUnitDetailScreen(unitId: string): void {
             <button class="equip-change-btn" data-slot="${slot}">
               ${equip ? "CHANGE" : "EQUIP"}
             </button>
+            ${equipId && (slot === "primaryWeapon" || slot === "secondaryWeapon") ? `
+              <button class="equip-view-weapon-btn"
+                      data-weapon-id="${equipId}"
+                      title="View weapon details and diagrams">
+                📊 VIEW
+              </button>
+            ` : ""}
             ${equipId ? `
-              <button class="equip-customize-btn" 
-                      data-slot="${slot}" 
-                      data-unit-id="${unitId}" 
+              <button class="equip-customize-btn"
+                      data-slot="${slot}"
+                      data-unit-id="${unitId}"
                       data-equipment-id="${equipId}"
                       title="Customize card slots for this gear">
-                ðŸ”§ CUSTOMIZE
+                🔧 CUSTOMIZE
               </button>
             ` : ""}
           </div>
@@ -160,6 +174,13 @@ export function renderUnitDetailScreen(unitId: string): void {
       `;
     })
     .join("");
+
+  // Auto-equip button (15d)
+  const autoEquipButton = `
+    <div class="auto-equip-section">
+      <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
+    </div>
+  `;
 
   const cardCounts: Record<string, number> = {};
   for (const cardId of deck) {
@@ -186,21 +207,45 @@ export function renderUnitDetailScreen(unitId: string): void {
     })
     .join("");
 
+  const portraitPath = getUnitPortraitPath(unitId);
+
+  // Calculate PWR for the unit
+  const pwr = (unit as any).pwr ?? calculatePWR({
+    unit,
+    equipmentById,
+    modulesById,
+  });
+  const pwrBand = getPWRBand(pwr);
+  const pwrColor = getPWRBandColor(pwr);
+
   root.innerHTML = `
     <div class="unitdetail-root">
       <div class="unitdetail-card">
         <div class="unitdetail-header">
           <div class="unitdetail-header-left">
-            <div class="unitdetail-name">${unit.name}</div>
-            <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+            <div class="unitdetail-portrait">
+              <img src="${portraitPath}" alt="${unit.name}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+            </div>
+            <div class="unitdetail-header-text">
+              <div class="unitdetail-name">${unit.name}</div>
+              <div class="unitdetail-class">${formatClassName(unitClass)}</div>
+              <div class="unitdetail-pwr" style="color: ${pwrColor}">
+                <span class="unitdetail-pwr-label">PWR:</span>
+                <span class="unitdetail-pwr-value">${pwr}</span>
+                <span class="unitdetail-pwr-band">(${pwrBand})</span>
+              </div>
+            </div>
           </div>
           <div class="unitdetail-header-right">
+            <button class="unitdetail-class-btn" id="changeClassBtn">
+              🎭 CHANGE CLASS
+            </button>
             <button class="unitdetail-back-btn">BACK TO ROSTER</button>
           </div>
         </div>
 
         <div class="unitdetail-body">
-          <div class="unitdetail-left">
+          <div class="unitdetail-stats-section">
             <div class="unitdetail-section">
               <div class="unitdetail-section-title">STATS</div>
               <div class="unitdetail-stats-grid">
@@ -236,21 +281,32 @@ export function renderUnitDetailScreen(unitId: string): void {
                 </div>
               </div>
             </div>
-
-            <div class="unitdetail-section">
-              <div class="unitdetail-section-title">EQUIPMENT (5 SLOTS)</div>
-              <div class="equip-slots-grid">
-                ${equipSlotsHtml}
-              </div>
-            </div>
           </div>
 
-          <div class="unitdetail-right">
-            <div class="unitdetail-section">
-              <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
-              <div class="deck-grid">
-                ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
+          <div class="unitdetail-columns">
+            <div class="unitdetail-column">
+              <div class="unitdetail-section">
+                <div class="unitdetail-section-title">EQUIPMENT (5 SLOTS)</div>
+                <div class="auto-equip-section">
+                  <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
+                </div>
+                <div class="equip-slots-grid">
+                  ${equipSlotsHtml}
+                </div>
               </div>
+            </div>
+
+            <div class="unitdetail-column">
+              <div class="unitdetail-section">
+                <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
+                <div class="deck-grid">
+                  ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
+                </div>
+              </div>
+            </div>
+
+            <div class="unitdetail-column">
+              ${renderHardpointsSection(unitId)}
             </div>
           </div>
         </div>
@@ -266,6 +322,17 @@ export function renderUnitDetailScreen(unitId: string): void {
           </div>
         </div>
       </div>
+
+      <div class="weapon-detail-modal" id="weaponDetailModal" style="display: none;">
+        <div class="weapon-detail-modal-content">
+          <div class="weapon-detail-modal-header">
+            <span class="weapon-detail-modal-title">WEAPON DETAILS</span>
+            <button class="weapon-detail-modal-close">&times;</button>
+          </div>
+          <div class="weapon-detail-modal-body" id="weaponDetailModalBody">
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -274,6 +341,14 @@ export function renderUnitDetailScreen(unitId: string): void {
   // Back to roster
   root.querySelector(".unitdetail-back-btn")?.addEventListener("click", () => {
     renderRosterScreen();
+  });
+
+  // Change Class button
+  root.querySelector("#changeClassBtn")?.addEventListener("click", () => {
+    // Import dynamically to avoid circular dependencies
+    import("./ClassChangeScreen").then(({ renderClassChangeScreen }) => {
+      renderClassChangeScreen(unitId);
+    });
   });
 
   // Change/Equip buttons
@@ -297,7 +372,19 @@ export function renderUnitDetailScreen(unitId: string): void {
     });
   });
 
-  // CUSTOMIZE buttons - Opens Gear Workbench with correct return destination
+  // VIEW WEAPON buttons - Opens weapon detail modal
+  root.querySelectorAll(".equip-view-weapon-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const el = e.currentTarget as HTMLElement;
+      const weaponId = el.getAttribute("data-weapon-id");
+      if (weaponId) {
+        openWeaponDetailModal(weaponId);
+      }
+    });
+  });
+
+  // CUSTOMIZE buttons - Opens Workshop with correct return destination
   root.querySelectorAll(".equip-customize-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -322,6 +409,45 @@ export function renderUnitDetailScreen(unitId: string): void {
       closeEquipModal();
     }
   });
+
+  // Weapon detail modal close button
+  root.querySelector(".weapon-detail-modal-close")?.addEventListener("click", () => {
+    closeWeaponDetailModal();
+  });
+
+  // Weapon detail modal backdrop click
+  root.querySelector(".weapon-detail-modal")?.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).classList.contains("weapon-detail-modal")) {
+      closeWeaponDetailModal();
+    }
+  });
+
+  // Auto-equip button (15d)
+  const autoEquipBtn = root.querySelector("#autoEquipBtn");
+  if (autoEquipBtn) {
+    autoEquipBtn.addEventListener("click", () => {
+      autoEquipUnit(unitId, unitClass, equipmentById, equipmentPool);
+    });
+  }
+
+  // Hardpoint slot buttons
+  root.querySelectorAll(".hardpoint-slot-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const hardpointIndex = parseInt((e.currentTarget as HTMLElement).getAttribute("data-hardpoint-index") || "0");
+      openHardpointModal(unitId, hardpointIndex);
+    });
+  });
+
+  // Hardpoint mod items (click to slot)
+  root.querySelectorAll(".hardpoint-mod-item:not(.hardpoint-mod-item--slotted)").forEach((item) => {
+    item.addEventListener("click", (e) => {
+      const modInstanceId = (e.currentTarget as HTMLElement).getAttribute("data-mod-instance-id");
+      if (modInstanceId) {
+        // Open modal to select which hardpoint to slot into
+        openHardpointSelectModal(unitId, modInstanceId);
+      }
+    });
+  });
 }
 
 function openEquipModal(
@@ -336,21 +462,44 @@ function openEquipModal(
   const modalBody = document.getElementById("equipModalBody");
   if (!modal || !modalBody) return;
 
+  const state = getGameState();
+  const isInOperation = state.phase === "operation" && state.operation !== null;
+
   const currentEquippedIds = [
-    currentLoadout.weapon,
+    currentLoadout.primaryWeapon,
+    currentLoadout.secondaryWeapon,
     currentLoadout.helmet,
     currentLoadout.chestpiece,
     currentLoadout.accessory1,
     currentLoadout.accessory2,
   ].filter(Boolean) as string[];
 
-  const availableEquipment = equipmentPool
+  // In town/base camp, use the player's owned equipment inventory/pool.
+  // During an operation, restrict swaps to what is physically in the forward locker
+  // plus whatever is already equipped on the unit.
+  let filteredPool = Array.from(new Set([
+    ...(state.equipmentPool || equipmentPool || []),
+    ...currentEquippedIds,
+  ]));
+
+  if (isInOperation) {
+    const forwardLocker = state.inventory?.forwardLocker || [];
+    const forwardLockerEquipmentIds = forwardLocker
+      .filter(item => item.kind === "equipment")
+      .map(item => item.id);
+
+    filteredPool = filteredPool.filter(id =>
+      forwardLockerEquipmentIds.includes(id) || currentEquippedIds.includes(id)
+    );
+  }
+
+  const availableEquipment = filteredPool
     .map((id) => equipmentById[id])
     .filter((eq): eq is Equipment => {
       if (!eq) return false;
       if (currentEquippedIds.includes(eq.id) && eq.id !== currentLoadout[slot]) return false;
 
-      if (slot === "weapon") {
+      if (slot === "primaryWeapon" || slot === "secondaryWeapon") {
         if (eq.slot !== "weapon") return false;
         const wep = eq as WeaponEquipment;
         return canEquipWeapon(unitClass, wep.weaponType);
@@ -365,9 +514,12 @@ function openEquipModal(
     });
 
   if (availableEquipment.length === 0) {
+    const emptyMessage = isInOperation
+      ? "No equipment available in forward locker for this slot."
+      : "No available equipment for this slot.";
     modalBody.innerHTML = `
       <div class="equip-modal-empty">
-        No available equipment for this slot.
+        ${emptyMessage}
       </div>
     `;
   } else {
@@ -424,13 +576,151 @@ function closeEquipModal(): void {
   }
 }
 
+function openWeaponDetailModal(weaponId: string): void {
+  const state = getGameState();
+  const equipmentById = (state as any).equipmentById || {};
+  const weapon = equipmentById[weaponId] as WeaponEquipment;
+
+  if (!weapon) return;
+
+  const modal = document.getElementById("weaponDetailModal");
+  const body = document.getElementById("weaponDetailModalBody");
+
+  if (!modal || !body) return;
+
+  // Render weapon details
+  let html = `
+    <div class="weapon-detail-content">
+      <div class="weapon-detail-header-section">
+        <div class="weapon-detail-name">${weapon.name}</div>
+        <div class="weapon-detail-type">${weapon.weaponType.toUpperCase()} ${weapon.isMechanical ? "• MECHANICAL" : ""}</div>
+      </div>
+
+      <div class="weapon-detail-stats">
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">ATK:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.atk >= 0 ? '+' : ''}${weapon.stats.atk}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">DEF:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.def >= 0 ? '+' : ''}${weapon.stats.def}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">AGI:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.agi >= 0 ? '+' : ''}${weapon.stats.agi}</span>
+        </div>
+        <div class="weapon-detail-stat-row">
+          <span class="weapon-detail-stat-label">ACC:</span>
+          <span class="weapon-detail-stat-value">${weapon.stats.acc >= 0 ? '+' : ''}${weapon.stats.acc}</span>
+        </div>
+        ${weapon.stats.hp !== 0 ? `
+          <div class="weapon-detail-stat-row">
+            <span class="weapon-detail-stat-label">HP:</span>
+            <span class="weapon-detail-stat-value">${weapon.stats.hp >= 0 ? '+' : ''}${weapon.stats.hp}</span>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="weapon-detail-section">
+        <div class="weapon-detail-section-title">CARDS GRANTED (${weapon.cardsGranted.length})</div>
+        <div class="weapon-detail-cards">
+          ${weapon.cardsGranted.map(cardId => `<div class="weapon-detail-card-name">• ${cardId}</div>`).join('')}
+        </div>
+      </div>
+
+      ${weapon.clutchToggle ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">CLUTCH TOGGLE</div>
+          <div class="weapon-detail-clutch">${weapon.clutchToggle}</div>
+        </div>
+      ` : ''}
+
+      ${weapon.isMechanical && weapon.heatCapacity ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">HEAT SYSTEM</div>
+          <div class="weapon-detail-heat-info">
+            <div class="weapon-detail-heat-row">
+              <span>Heat Capacity:</span>
+              <span>${weapon.heatCapacity}</span>
+            </div>
+            ${weapon.passiveHeatDecay ? `
+              <div class="weapon-detail-heat-row">
+                <span>Passive Decay:</span>
+                <span>${weapon.passiveHeatDecay}/turn</span>
+              </div>
+            ` : ''}
+          </div>
+          ${weapon.heatZones && weapon.heatZones.length > 0 ? `
+            <div class="weapon-detail-heat-zones">
+              <div class="weapon-detail-section-subtitle">HEAT ZONES</div>
+              ${weapon.heatZones.map(zone => `
+                <div class="weapon-detail-heat-zone">
+                  <div class="weapon-detail-heat-zone-header">
+                    <span class="weapon-detail-heat-zone-range">${zone.min}-${zone.max}</span>
+                    <span class="weapon-detail-heat-zone-name">${zone.name}</span>
+                  </div>
+                  ${zone.effect ? `
+                    <div class="weapon-detail-heat-zone-effect">${zone.effect}</div>
+                  ` : `
+                    <div class="weapon-detail-heat-zone-effect weapon-detail-heat-zone-effect--ok">No penalties</div>
+                  `}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      ${weapon.ammoMax ? `
+        <div class="weapon-detail-section">
+          <div class="weapon-detail-section-title">AMMO SYSTEM</div>
+          <div class="weapon-detail-ammo-info">
+            <div class="weapon-detail-heat-row">
+              <span>Max Ammo:</span>
+              <span>${weapon.ammoMax}</span>
+            </div>
+            ${weapon.quickReloadStrain !== undefined ? `
+              <div class="weapon-detail-heat-row">
+                <span>Quick Reload Strain:</span>
+                <span>${weapon.quickReloadStrain}</span>
+              </div>
+            ` : ''}
+            ${weapon.fullReloadStrain !== undefined ? `
+              <div class="weapon-detail-heat-row">
+                <span>Full Reload Strain:</span>
+                <span>${weapon.fullReloadStrain}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="weapon-detail-section">
+        <div class="weapon-detail-section-title">MODULE SLOTS</div>
+        <div class="weapon-detail-modules">${weapon.moduleSlots} available slots</div>
+      </div>
+    </div>
+  `;
+
+  body.innerHTML = html;
+  modal.style.display = "flex";
+}
+
+function closeWeaponDetailModal(): void {
+  const modal = document.getElementById("weaponDetailModal");
+  if (modal) {
+    modal.style.display = "none";
+  }
+}
+
 function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
   updateGameState((prev) => {
     const unit = prev.unitsById[unitId];
     if (!unit) return prev;
 
     const currentLoadout: UnitLoadout = (unit as any).loadout || {
-      weapon: null,
+      primaryWeapon: null,
+      secondaryWeapon: null,
       helmet: null,
       chestpiece: null,
       accessory1: null,
@@ -459,13 +749,101 @@ function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
   renderUnitDetailScreen(unitId);
 }
 
+/**
+ * Auto-equip best gear for a unit (15d)
+ * Scores gear by: ATK*3 + DEF*2 + AGI*1 + ACC*1
+ */
+export function autoEquipUnit(
+  unitId: string,
+  unitClass: UnitClass,
+  equipmentById: Record<string, Equipment>,
+  equipmentPool: string[]
+): void {
+  const state = getGameState();
+  const unit = state.unitsById[unitId];
+  if (!unit) return;
+
+  // Score function for equipment
+  const scoreGear = (equip: Equipment): number => {
+    const s = equip.stats;
+    return (s.atk || 0) * 3 + (s.def || 0) * 2 + (s.agi || 0) * 1 + (s.acc || 0) * 1;
+  };
+
+  // Get available equipment
+  const availableEquipment = equipmentPool
+    .map(id => equipmentById[id])
+    .filter(eq => eq !== undefined);
+
+  // Get weapon restrictions for this class
+  const allowedWeaponTypes = CLASS_WEAPON_RESTRICTIONS[unitClass] || [];
+
+  // Wait: The autoEquip logic is only picking the "best weapon", we want to pick the top 2 here actually
+  // Find top 2 best weapons
+  const bestWeapons = availableEquipment
+    .filter(eq => eq.slot === "weapon")
+    .filter(eq => {
+      const weaponType = (eq as WeaponEquipment).weaponType;
+      return allowedWeaponTypes.includes(weaponType);
+    })
+    .sort((a, b) => scoreGear(b) - scoreGear(a))
+    .slice(0, 2);
+
+  const bestWeapon = bestWeapons[0];
+  const secondaryWeapon = bestWeapons[1];
+
+  // Find best helmet
+  const bestHelmet = availableEquipment
+    .filter(eq => eq.slot === "helmet")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))[0];
+
+  // Find best chestpiece
+  const bestChestpiece = availableEquipment
+    .filter(eq => eq.slot === "chestpiece")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))[0];
+
+  // Find best accessories (top 2)
+  const bestAccessories = availableEquipment
+    .filter(eq => eq.slot === "accessory")
+    .sort((a, b) => scoreGear(b) - scoreGear(a))
+    .slice(0, 2);
+
+  // Build new loadout
+  const newLoadout: UnitLoadout = {
+    primaryWeapon: bestWeapon?.id || null,
+    secondaryWeapon: secondaryWeapon?.id || null,
+    helmet: bestHelmet?.id || null,
+    chestpiece: bestChestpiece?.id || null,
+    accessory1: bestAccessories[0]?.id || null,
+    accessory2: bestAccessories[1]?.id || null,
+  };
+
+  // Update state
+  updateGameState((prev) => {
+    const updatedUnit = {
+      ...prev.unitsById[unitId],
+      loadout: newLoadout,
+    };
+
+    return {
+      ...prev,
+      unitsById: {
+        ...prev.unitsById,
+        [unitId]: updatedUnit,
+      },
+    };
+  });
+
+  renderUnitDetailScreen(unitId);
+}
+
 function unequipItem(unitId: string, slot: EquipSlot): void {
   updateGameState((prev) => {
     const unit = prev.unitsById[unitId];
     if (!unit) return prev;
 
     const currentLoadout: UnitLoadout = (unit as any).loadout || {
-      weapon: null,
+      primaryWeapon: null,
+      secondaryWeapon: null,
       helmet: null,
       chestpiece: null,
       accessory1: null,
@@ -492,4 +870,199 @@ function unequipItem(unitId: string, slot: EquipSlot): void {
   });
 
   renderUnitDetailScreen(unitId);
+}
+
+// ----------------------------------------------------------------------------
+// HARDPOINTS SECTION
+// ----------------------------------------------------------------------------
+
+function renderHardpointsSection(unitId: string): string {
+  const campaignProgress = loadCampaignProgress();
+  const activeRun = campaignProgress.activeRun;
+
+  // Get hardpoint state for this unit (2 slots per unit)
+  const unitHardpoints: HardpointState = activeRun?.unitHardpoints?.[unitId] || [null, null];
+  const runInventory = activeRun?.runFieldModInventory || [];
+
+  // Only show hardpoints section if there's an active run
+  if (!activeRun) {
+    return `
+      <div class="unitdetail-section">
+        <div class="unitdetail-section-title">HARDPOINTS (2 SLOTS)</div>
+        <div class="hardpoints-empty-message">
+          Hardpoints are only available during active operations.
+        </div>
+      </div>
+    `;
+  }
+
+  const hardpointSlotsHtml = unitHardpoints.map((modInstance, index) => {
+    const slotNumber = index + 1;
+    let modDef = null;
+    let modName = "Empty";
+    let modDescription = "";
+    let modRarity = "";
+
+    if (modInstance) {
+      modDef = getFieldModDef(modInstance.defId);
+      if (modDef) {
+        modName = modDef.name;
+        modDescription = modDef.description;
+        modRarity = modDef.rarity;
+      }
+    }
+
+    return `
+      <div class="hardpoint-slot" data-hardpoint-index="${index}">
+        <div class="hardpoint-slot-header">
+          <span class="hardpoint-slot-label">HARDPOINT ${slotNumber}</span>
+          ${modRarity ? `<span class="hardpoint-rarity hardpoint-rarity--${modRarity}">${modRarity.toUpperCase()}</span>` : ""}
+        </div>
+        <div class="hardpoint-slot-body ${modInstance ? "" : "hardpoint-slot-body--empty"}">
+          <div class="hardpoint-slot-name">${modName}</div>
+          ${modDescription ? `<div class="hardpoint-slot-description">${modDescription}</div>` : ""}
+          ${modInstance && modInstance.stacks > 1 ? `<div class="hardpoint-slot-stacks">x${modInstance.stacks}</div>` : ""}
+        </div>
+        <div class="hardpoint-slot-buttons">
+          <button class="hardpoint-slot-btn" data-hardpoint-index="${index}">
+            ${modInstance ? "REMOVE" : "SLOT MOD"}
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Available mods in run inventory
+  const availableModsHtml = runInventory.length > 0
+    ? runInventory.map(modInstance => {
+      const modDef = getFieldModDef(modInstance.defId);
+      if (!modDef) return "";
+
+      // Check if this mod is already slotted
+      const isSlotted = unitHardpoints.some(hp => hp?.instanceId === modInstance.instanceId);
+
+      return `
+          <div class="hardpoint-mod-item ${isSlotted ? "hardpoint-mod-item--slotted" : ""}" data-mod-instance-id="${modInstance.instanceId}">
+            <div class="hardpoint-mod-name">${modDef.name}</div>
+            <div class="hardpoint-mod-rarity hardpoint-mod-rarity--${modDef.rarity}">${modDef.rarity.toUpperCase()}</div>
+            <div class="hardpoint-mod-description">${modDef.description}</div>
+            ${modInstance.stacks > 1 ? `<div class="hardpoint-mod-stacks">x${modInstance.stacks}</div>` : ""}
+            ${isSlotted ? '<div class="hardpoint-mod-badge">SLOTTED</div>' : ""}
+          </div>
+        `;
+    }).join("")
+    : '<div class="hardpoints-empty-inventory">No field mods available in run inventory.</div>';
+
+  return `
+    <div class="unitdetail-section">
+      <div class="unitdetail-section-title">HARDPOINTS (2 SLOTS)</div>
+      <div class="hardpoints-slots-grid">
+        ${hardpointSlotsHtml}
+      </div>
+      <div class="hardpoints-inventory">
+        <div class="hardpoints-inventory-title">AVAILABLE FIELD MODS</div>
+        <div class="hardpoints-inventory-list">
+          ${availableModsHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ----------------------------------------------------------------------------
+// HARDPOINT INTERACTIONS
+// ----------------------------------------------------------------------------
+
+function openHardpointModal(unitId: string, hardpointIndex: number): void {
+  const campaignProgress = loadCampaignProgress();
+  const activeRun = campaignProgress.activeRun;
+
+  if (!activeRun) return;
+
+  const unitHardpoints: HardpointState = activeRun.unitHardpoints?.[unitId] || [null, null];
+  const runInventory = activeRun.runFieldModInventory || [];
+  const currentMod = unitHardpoints[hardpointIndex];
+
+  // If there's a mod, remove it
+  if (currentMod) {
+    const newHardpoints: HardpointState = [...unitHardpoints];
+    newHardpoints[hardpointIndex] = null;
+
+    // Return mod to inventory
+    const newInventory = [...runInventory, currentMod];
+
+    const progress = loadCampaignProgress();
+    if (progress.activeRun) {
+      saveCampaignProgress({
+        ...progress,
+        activeRun: {
+          ...progress.activeRun,
+          unitHardpoints: {
+            ...(progress.activeRun.unitHardpoints || {}),
+            [unitId]: newHardpoints,
+          },
+          runFieldModInventory: newInventory,
+        },
+      });
+    }
+
+    renderUnitDetailScreen(unitId);
+    return;
+  }
+
+  // If empty, show selection modal
+  openHardpointSelectModal(unitId, null, hardpointIndex);
+}
+
+function openHardpointSelectModal(unitId: string, modInstanceId: string | null, targetHardpointIndex?: number): void {
+  const campaignProgress = loadCampaignProgress();
+  const activeRun = campaignProgress.activeRun;
+
+  if (!activeRun) return;
+
+  const unitHardpoints: HardpointState = activeRun.unitHardpoints?.[unitId] || [null, null];
+  const runInventory = activeRun.runFieldModInventory || [];
+
+  // If modInstanceId provided, find available hardpoints
+  // If targetHardpointIndex provided, use that
+  if (modInstanceId) {
+    const modInstance = runInventory.find(m => m.instanceId === modInstanceId);
+    if (!modInstance) return;
+
+    // Find first empty hardpoint, or use target if provided
+    let slotIndex = targetHardpointIndex;
+    if (slotIndex === undefined) {
+      slotIndex = unitHardpoints.findIndex(hp => hp === null);
+    }
+
+    if (slotIndex === -1 || slotIndex >= 2) {
+      // No empty slot
+      alert("No available hardpoint slots!");
+      return;
+    }
+
+    // Slot the mod
+    const newHardpoints: HardpointState = [...unitHardpoints];
+    newHardpoints[slotIndex] = modInstance;
+
+    // Remove from inventory
+    const newInventory = runInventory.filter(m => m.instanceId !== modInstanceId);
+
+    const progress = loadCampaignProgress();
+    if (progress.activeRun) {
+      saveCampaignProgress({
+        ...progress,
+        activeRun: {
+          ...progress.activeRun,
+          unitHardpoints: {
+            ...(progress.activeRun.unitHardpoints || {}),
+            [unitId]: newHardpoints,
+          },
+          runFieldModInventory: newInventory,
+        },
+      });
+    }
+
+    renderUnitDetailScreen(unitId);
+  }
 }

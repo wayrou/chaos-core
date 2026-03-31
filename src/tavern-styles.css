@@ -1,0 +1,516 @@
+/* ===========================================================================
+   TAVERN SCREEN STYLES (Unified with Ardycia Design System)
+   =========================================================================== */
+
+/* Root container */
+.tavern-root {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-world);
+    padding: var(--space-4);
+    font-family: var(--font-ui);
+    color: var(--ink);
+    overflow: hidden;
+}
+
+/* Header */
+.tavern-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-panel-alt);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-panel);
+    margin-bottom: var(--space-4);
+    box-shadow: var(--shadow-elev-1);
+}
+
+.tavern-title-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.tavern-title {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-bold);
+    color: var(--ink-accent);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    margin: 0;
+}
+
+.tavern-subtitle {
+    font-size: var(--text-xs);
+    font-family: var(--font-terminal);
+    color: var(--ink-muted);
+    letter-spacing: var(--tracking-widest);
+}
+
+.tavern-controls {
+    display: flex;
+    gap: var(--space-4);
+    align-items: center;
+}
+
+.tavern-stats {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.stat-badge {
+    padding: var(--space-1) var(--space-3);
+    background: var(--bg-surface);
+    border: var(--stroke-1) solid var(--accent-bronze);
+    border-radius: var(--radius-sm);
+    color: var(--ink-accent);
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+}
+
+/* Body & Content Layout */
+.tavern-body {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.tavern-content-wrapper {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    gap: var(--space-4);
+    min-height: 0;
+}
+
+.tavern-main-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+/* Info Box & Flavor Text */
+.tavern-info-box {
+    background: var(--bg-panel);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-panel);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.tavern-flavor-text {
+    font-size: var(--text-base);
+    line-height: var(--leading-relaxed);
+    color: var(--ink);
+    font-style: italic;
+    padding: var(--space-3);
+    background: var(--bg-surface);
+    border-left: var(--stroke-2) solid var(--ink-accent);
+    border-radius: var(--radius-sm);
+}
+
+/* Safe Zone Message */
+.tavern-safe-zone {
+    padding: var(--space-3);
+    background: rgba(37, 150, 122, 0.1);
+    border: var(--stroke-1) solid var(--color-success-dark);
+    border-radius: var(--radius-sm);
+    color: var(--color-success-dark);
+}
+
+.safe-zone-title {
+    font-weight: var(--weight-bold);
+    margin-bottom: var(--space-1);
+    font-size: var(--text-sm);
+    text-transform: uppercase;
+}
+
+.safe-zone-desc {
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+}
+
+/* Recruitment Section */
+.tavern-recruitment-section {
+    background: var(--bg-panel);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-panel);
+    padding: var(--space-4);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tavern-candidates-grid {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: var(--space-2);
+}
+
+.tavern-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-4);
+}
+
+.tavern-section-title {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    color: var(--ink-accent);
+    text-transform: uppercase;
+}
+
+/* Candidate Grid */
+.tavern-candidates-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--space-3);
+}
+
+.candidate-card {
+    background: var(--bg-panel-alt);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    transition: var(--transition-base);
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-elev-1);
+}
+
+.candidate-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-elev-2), var(--shadow-glow-bronze);
+    border-color: var(--accent-bronze);
+}
+
+.candidate-header {
+    padding: var(--space-3);
+    background: var(--world-smoke);
+    border-bottom: var(--stroke-1) solid var(--accent-bronze-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.candidate-name {
+    font-weight: var(--weight-bold);
+    color: var(--ink);
+    font-size: var(--text-base);
+}
+
+.candidate-pwr {
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+}
+
+.candidate-body {
+    padding: var(--space-3);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.candidate-class {
+    font-size: var(--text-xs);
+    color: var(--tech-amber);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-wide);
+}
+
+.candidate-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: var(--bg-inset-dark);
+    border: var(--stroke-1) solid var(--stroke-faint);
+    border-radius: var(--radius-sm);
+}
+
+.candidate-stat {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+}
+
+.candidate-stat-label {
+    color: var(--ink-muted);
+}
+
+.candidate-stat-value {
+    color: var(--ink);
+    font-weight: var(--weight-bold);
+}
+
+.candidate-traits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.candidate-trait {
+    font-size: var(--text-xs);
+    padding: 2px 6px;
+    background: var(--tech-teal-05);
+    border: 1px solid var(--tech-teal-dim);
+    color: var(--tech-teal);
+    border-radius: 2px;
+}
+
+.candidate-affinities {
+    font-size: var(--text-xs);
+}
+
+.candidate-affinity-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: 2px;
+}
+
+.candidate-affinity-item {
+    color: var(--ink-muted);
+}
+
+/* Footer & Warnings */
+.tavern-footer {
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: var(--stroke-1) solid var(--stroke-subtle);
+    text-align: right;
+    color: var(--ink-muted);
+    font-size: var(--text-xs);
+    font-family: var(--font-terminal);
+    text-transform: uppercase;
+}
+
+.tavern-warning {
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-danger-20);
+    border: var(--stroke-1) solid var(--color-danger);
+    color: var(--color-danger);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
+    font-weight: var(--weight-bold);
+}
+
+/* Hire Button */
+.candidate-hire-btn {
+    width: 100%;
+    padding: var(--space-2);
+    background: var(--accent-bronze-dark);
+    border: var(--stroke-1) solid var(--accent-bronze);
+    color: var(--world-parchment);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-weight: var(--weight-bold);
+    text-transform: uppercase;
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wider);
+    transition: var(--transition-base);
+}
+
+.candidate-hire-btn:hover:not(:disabled) {
+    background: var(--accent-bronze);
+    color: var(--world-parchment);
+    box-shadow: var(--shadow-glow-bronze);
+    border-color: var(--accent-bronze-light);
+}
+
+.candidate-hire-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-inset);
+}
+
+.candidate-footer {
+    padding: var(--space-3);
+    background: var(--bg-inset);
+    border-top: var(--stroke-1) solid var(--accent-bronze-muted);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.candidate-cost {
+    text-align: center;
+    font-family: var(--font-terminal);
+    font-weight: var(--weight-bold);
+}
+
+.candidate-cost-value.insufficient {
+    color: var(--color-danger);
+}
+
+/* Back Button */
+.tavern-back-btn {
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-surface);
+    border: var(--stroke-1) solid var(--stroke-subtle);
+    color: var(--ink-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: var(--font-terminal);
+    text-transform: uppercase;
+    font-size: var(--text-xs);
+    transition: var(--transition-base);
+}
+
+.tavern-back-btn:hover {
+    background: var(--interactive-hover);
+    border-color: var(--accent-bronze);
+    color: var(--ink);
+    transform: translateY(-1px);
+}
+
+/* NPC Panel & Chatter System */
+.tavern-npc-panel {
+    background: var(--bg-panel);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-panel);
+    padding: var(--space-4);
+    height: fit-content;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+
+.tavern-npc-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.tavern-npc-panel-title {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+    color: var(--ink-accent);
+    text-transform: uppercase;
+    margin-bottom: var(--space-2);
+}
+
+.tavern-npc-windows-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.tavern-npc-window {
+    background: var(--bg-surface);
+    border: var(--stroke-1) solid var(--stroke-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.tavern-npc-window:hover {
+    border-color: var(--accent-bronze);
+    background: rgba(168, 124, 69, 0.1);
+}
+
+.tavern-npc-window--appearing {
+    opacity: 0;
+    transform: translateY(10px);
+}
+
+.tavern-npc-window--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.tavern-npc-window--removing {
+    opacity: 0;
+    transform: translateY(-10px);
+}
+
+.tavern-npc-window--has-conversation {
+    border-color: var(--tech-amber);
+    box-shadow: 0 0 10px var(--tech-amber-glow);
+}
+
+.tavern-npc-name {
+    font-family: var(--font-terminal);
+    font-weight: var(--weight-bold);
+    font-size: var(--text-xs);
+    color: var(--ink-accent);
+    margin-bottom: var(--space-1);
+    text-transform: uppercase;
+}
+
+.tavern-npc-text {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--ink);
+}
+
+.tavern-npc-conversation-message {
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+    background: rgba(0, 0, 0, 0.2);
+    border-left: 2px solid var(--accent-bronze-muted);
+    border-radius: 2px;
+}
+
+.tavern-npc-conversation-message--aeriss {
+    border-left-color: var(--tech-crt);
+    background: rgba(53, 255, 149, 0.05);
+}
+
+.tavern-npc-conversation-name {
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    color: var(--ink-muted);
+    margin-bottom: 2px;
+    text-transform: uppercase;
+}
+
+.tavern-npc-conversation-message--aeriss .tavern-npc-conversation-name {
+    color: var(--tech-crt);
+}
+
+.tavern-npc-conversation-text {
+    font-size: var(--text-xs);
+    color: var(--ink-secondary);
+}
+
+/* Empty State */
+.tavern-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--ink-muted);
+    gap: var(--space-4);
+    padding: var(--space-10);
+}
+
+.empty-icon {
+    font-size: 3rem;
+    opacity: 0.5;
+}
+
+.empty-text {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-bold);
+}

@@ -1,0 +1,1331 @@
+{
+  "version": 1,
+  "recipes": [
+    {
+      "itemId": "MW001",
+      "itemName": "Emberclaw Repeater",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "barrel_assembly",
+          "qty": 1
+        },
+        {
+          "id": "spring_kit",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW002",
+      "itemName": "Steamburst Pike",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW003",
+      "itemName": "Vulcan Coilgun",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "coil_array",
+          "qty": 2
+        },
+        {
+          "id": "copper_wire",
+          "qty": 6
+        }
+      ]
+    },
+    {
+      "itemId": "MW004",
+      "itemName": "Brassback Scattergun",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "barrel_assembly",
+          "qty": 1
+        },
+        {
+          "id": "spring_kit",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW005",
+      "itemName": "Ironwhisper Crossbow",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "hardwood",
+          "qty": 4
+        },
+        {
+          "id": "cable_spool",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW006",
+      "itemName": "Stormlash Arcstaff",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "conductive_crystal",
+          "qty": 2
+        },
+        {
+          "id": "copper_wire",
+          "qty": 4
+        }
+      ]
+    },
+    {
+      "itemId": "MW007",
+      "itemName": "Blazefang Saber",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW008",
+      "itemName": "Gearspike Mortar",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "reinforced_plating",
+          "qty": 2
+        },
+        {
+          "id": "gunpowder",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "MW009",
+      "itemName": "Emberdrake Harpooner",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "hardwood",
+          "qty": 4
+        },
+        {
+          "id": "cable_spool",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "MW010",
+      "itemName": "Thunderjaw Cannon",
+      "category": "Mechanical Weapon",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 4
+        },
+        {
+          "id": "gearwork",
+          "qty": 3
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        },
+        {
+          "id": "reinforced_plating",
+          "qty": 2
+        },
+        {
+          "id": "gunpowder",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_IRON_LONGSWORD",
+      "itemName": "Iron Longsword",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_RUNED_SHORTSWORD",
+      "itemName": "Runed Shortsword",
+      "category": "Sword",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 2
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_SCISSOR_SWORD",
+      "itemName": "Scissor Sword",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 2
+        },
+        {
+          "id": "hinge_kit",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_BOW_ELM_RECURVE_BOW",
+      "itemName": "Elm Recurve Bow",
+      "category": "Bow",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "hardwood",
+          "qty": 5
+        },
+        {
+          "id": "bowstring",
+          "qty": 2
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_COMPOSITE_GREATBOW",
+      "itemName": "Composite Greatbow",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_WILLOW_SHORTBOW",
+      "itemName": "Willow Shortbow",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_OAK_BATTLESTAFF",
+      "itemName": "Oak Battlestaff",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_STAFF_SILVER_CHANNELING_ROD",
+      "itemName": "Silver Channeling Rod",
+      "category": "Staff",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "hardwood",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "silver_ingot",
+          "qty": 2
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_SWORD_BLACKWOOD_GREATSTAFF",
+      "itemName": "Blackwood Greatstaff",
+      "category": "Sword",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 4
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_DAGGER_STEEL_DAGGER",
+      "itemName": "Steel Dagger",
+      "category": "Dagger",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 2
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_DAGGER_IVORY_FANGBLADE",
+      "itemName": "Ivory Fangblade",
+      "category": "Dagger",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 2
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        },
+        {
+          "id": "ivory_piece",
+          "qty": 2
+        },
+        {
+          "id": "resin",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "WPN_DAGGER_WEIGHTED_DAGGER",
+      "itemName": "Weighted Dagger",
+      "category": "Dagger",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 2
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "whetstone",
+          "qty": 1
+        },
+        {
+          "id": "lead_weight",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_IRONGUARD_HELM",
+      "itemName": "Ironguard Helm",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_RANGERS_HOOD",
+      "itemName": "Ranger\u2019s Hood",
+      "category": "Helmet",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_MYSTIC_CIRCLET",
+      "itemName": "Mystic Circlet",
+      "category": "Helmet",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_THIEFS_BANDANA",
+      "itemName": "Thief\u2019s Bandana",
+      "category": "Helmet",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_SCHOLARS_CAP",
+      "itemName": "Scholar\u2019s Cap",
+      "category": "Helmet",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "ink_vial",
+          "qty": 1
+        },
+        {
+          "id": "paper_stack",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_BRASS_VISOR",
+      "itemName": "Brass Visor",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "glass_lens",
+          "qty": 2
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_HUNTERS_COIF",
+      "itemName": "Hunter\u2019s Coif",
+      "category": "Helmet",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_STEAMWELD_GOGGLES",
+      "itemName": "Steamweld Goggles",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "glass_lens",
+          "qty": 2
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_BATTLE_MASK",
+      "itemName": "Battle Mask",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_ARCANE_HOOD",
+      "itemName": "Arcane Hood",
+      "category": "Helmet",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_MARKSMANS_SCOPE_VISOR",
+      "itemName": "Marksman\u2019s Scope Visor",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        },
+        {
+          "id": "glass_lens",
+          "qty": 2
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "HELM_WARRIORS_CREST",
+      "itemName": "Warrior\u2019s Crest",
+      "category": "Helmet",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 3
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_STEELPLATE_CUIRASS",
+      "itemName": "Steelplate Cuirass",
+      "category": "Chestpiece",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_LEATHER_JERKIN",
+      "itemName": "Leather Jerkin",
+      "category": "Chestpiece",
+      "craftingStation": "loom",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_MAGES_ROBE",
+      "itemName": "Mage\u2019s Robe",
+      "category": "Chestpiece",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 3
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_SHADOW_CLOAK",
+      "itemName": "Shadow Cloak",
+      "category": "Chestpiece",
+      "craftingStation": "loom",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_SCHOLARS_VEST",
+      "itemName": "Scholar\u2019s Vest",
+      "category": "Chestpiece",
+      "craftingStation": "loom",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_CHAINMAIL_HAUBERK",
+      "itemName": "Chainmail Hauberk",
+      "category": "Chestpiece",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "chain_links",
+          "qty": 4
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_STEAMLINE_ARMOR",
+      "itemName": "Steamline Armor",
+      "category": "Chestpiece",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 2
+        },
+        {
+          "id": "steam_core",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_HUNTERS_VEST",
+      "itemName": "Hunter\u2019s Vest",
+      "category": "Chestpiece",
+      "craftingStation": "loom",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_REINFORCED_GAMBESON",
+      "itemName": "Reinforced Gambeson",
+      "category": "Chestpiece",
+      "craftingStation": "loom",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_BATTLE_HARNESS",
+      "itemName": "Battle Harness",
+      "category": "Chestpiece",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_ARCANE_TUNIC",
+      "itemName": "Arcane Tunic",
+      "category": "Chestpiece",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 3
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "CHEST_MARKSMANS_BRIGANDINE",
+      "itemName": "Marksman\u2019s Brigandine",
+      "category": "Chestpiece",
+      "craftingStation": "forge",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "steel_ingot",
+          "qty": 6
+        },
+        {
+          "id": "leather",
+          "qty": 2
+        },
+        {
+          "id": "chain_links",
+          "qty": 4
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_STEEL_SIGNET_RING",
+      "itemName": "Steel Signet Ring",
+      "category": "Accessory",
+      "craftingStation": "jeweler",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_EAGLE_EYE_LENS",
+      "itemName": "Eagle Eye Lens",
+      "category": "Accessory",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "glass_lens",
+          "qty": 2
+        },
+        {
+          "id": "brass_ingot",
+          "qty": 1
+        },
+        {
+          "id": "copper_wire",
+          "qty": 2
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_FLEETFOOT_ANKLET",
+      "itemName": "Fleetfoot Anklet",
+      "category": "Accessory",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "leather",
+          "qty": 3
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_RUNE_PENDANT",
+      "itemName": "Rune Pendant",
+      "category": "Accessory",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_POWER_BRACER",
+      "itemName": "Power Bracer",
+      "category": "Accessory",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "leather",
+          "qty": 3
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_VITALITY_CHARM",
+      "itemName": "Vitality Charm",
+      "category": "Accessory",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_STEAM_VALVE_WRISTGUARD",
+      "itemName": "Steam Valve Wristguard",
+      "category": "Accessory",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "leather",
+          "qty": 3
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_HUNTERS_TALISMAN",
+      "itemName": "Hunter\u2019s Talisman",
+      "category": "Accessory",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_SCHOLARS_QUILL_PENDANT",
+      "itemName": "Scholar\u2019s Quill Pendant",
+      "category": "Accessory",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_SMOKE_BOMB_SATCHEL",
+      "itemName": "Smoke Bomb Satchel",
+      "category": "Accessory",
+      "craftingStation": "workbench",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "cloth",
+          "qty": 2
+        },
+        {
+          "id": "gunpowder",
+          "qty": 1
+        },
+        {
+          "id": "charcoal",
+          "qty": 2
+        },
+        {
+          "id": "leather",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_WARRIORS_BELT",
+      "itemName": "Warrior\u2019s Belt",
+      "category": "Accessory",
+      "craftingStation": "leatherwork",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "leather",
+          "qty": 3
+        },
+        {
+          "id": "steel_ingot",
+          "qty": 1
+        }
+      ]
+    },
+    {
+      "itemId": "ACC_ARCANE_CRYSTAL_BROOCH",
+      "itemName": "Arcane Crystal Brooch",
+      "category": "Accessory",
+      "craftingStation": "arcane_table",
+      "outputQty": 1,
+      "ingredients": [
+        {
+          "id": "silver_ingot",
+          "qty": 1
+        },
+        {
+          "id": "arcane_dust",
+          "qty": 2
+        },
+        {
+          "id": "rune_fragment",
+          "qty": 1
+        },
+        {
+          "id": "crystal_shard",
+          "qty": 1
+        }
+      ]
+    }
+  ]
+}

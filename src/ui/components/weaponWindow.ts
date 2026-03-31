@@ -3,7 +3,6 @@
 // Shows heat, ammo, wear, clutch toggles, and weapon node diagram
 // ============================================================================
 
-import { getGameState, updateGameState } from "../../state/gameStore";
 import { WeaponEquipment } from "../../core/equipment";
 
 
@@ -22,6 +21,8 @@ import {
   deactivateDoubleClutch,
   quickReload,
   fullReload,
+  fieldPatch,
+  ventWeapon,
   isWeaponDestroyed,
 } from "../../core/weaponSystem";
 
@@ -59,6 +60,7 @@ export function renderWeaponWindow(
 
       <div class="weapon-window-body">
         <!-- Stats and Controls -->
+        <div class="weapon-stats-panel-wrapper">
         <div class="weapon-stats-panel">
           ${weapon.isMechanical && weapon.heatCapacity ? `
             <div class="weapon-stat-row">
@@ -70,9 +72,6 @@ export function renderWeaponWindow(
                 <div class="weapon-stat-value">${weaponState.currentHeat}/${maxHeat}</div>
               </div>
               ${weaponState.isJammed ? '<div class="weapon-jammed-badge">JAMMED</div>' : ''}
-			  
-			          ${renderNodeDiagram(weaponState)}
-			  
             </div>
           ` : ''}
 
@@ -141,8 +140,17 @@ export function renderWeaponWindow(
                 VENT <span class="weapon-action-cost">(10% HP)</span>
               </button>
             ` : ''}
+            ${weapon.isMechanical ? `
+              <button class="weapon-action-btn weapon-action-btn--patch" data-action="field-patch">
+                PATCH <span class="weapon-action-cost">(1 STR)</span>
+              </button>
+            ` : ''}
           </div>
         </div>
+        </div>
+
+        <!-- Node Diagram -->
+        ${weapon.isMechanical ? renderNodeDiagram(weaponState) : ''}
       </div>
 
       ${isDestroyed ? `
@@ -168,13 +176,13 @@ function renderNodeDiagram(weaponState: WeaponRuntimeState): string {
       <div class="weapon-node-title">SYSTEM STATUS</div>
       <div class="weapon-node-grid">
         ${nodes.map(nodeId => {
-          const status = weaponState.nodes[nodeId];
-          const names = WEAPON_NODE_NAMES[nodeId];
-          const effects = NODE_DAMAGE_EFFECTS[nodeId];
-          const statusClass = `weapon-node--${status}`;
-          const statusLabel = status === "ok" ? "OK" : status.toUpperCase();
+    const status = weaponState.nodes[nodeId];
+    const names = WEAPON_NODE_NAMES[nodeId];
+    const effects = NODE_DAMAGE_EFFECTS[nodeId];
+    const statusClass = `weapon-node--${status}`;
+    const statusLabel = status === "ok" ? "OK" : status.toUpperCase();
 
-          return `
+    return `
             <div class="weapon-node ${statusClass}" data-node="${nodeId}">
               <div class="weapon-node-id">${nodeId}</div>
               <div class="weapon-node-name">${names.primary}</div>
@@ -187,7 +195,7 @@ function renderNodeDiagram(weaponState: WeaponRuntimeState): string {
               </div>
             </div>
           `;
-        }).join('')}
+  }).join('')}
       </div>
     </div>
   `;
@@ -430,6 +438,15 @@ export const WEAPON_WINDOW_STYLES = `
   font-size: 9px;
 }
 
+.weapon-action-btn--patch {
+  border-color: rgba(74, 222, 128, 0.5);
+}
+
+.weapon-action-btn--patch:hover {
+  background: rgba(74, 222, 128, 0.2);
+  border-color: #4ade80;
+}
+
 /* Node Diagram */
 
 .weapon-node-diagram {
@@ -579,6 +596,29 @@ export const WEAPON_WINDOW_STYLES = `
   margin-top: 4px;
 }
 
+/* Animations for damage/repair pulses */
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(74, 222, 128, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
+.weapon-node.pulse-damage {
+  animation: pulse-red 1s cubic-bezier(0.66, 0, 0, 1);
+  border-color: #ef4444 !important;
+}
+
+.weapon-node.pulse-repair {
+  animation: pulse-green 1s cubic-bezier(0.66, 0, 0, 1);
+  border-color: #4ade80 !important;
+}
+
 /* Pulse animation for jammed badge */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -647,14 +687,21 @@ export function attachWeaponWindowHandlers(
   const ventBtn = container.querySelector('[data-action="vent"]');
   if (ventBtn) {
     ventBtn.addEventListener("click", () => {
-      // Full vent: reset heat to 0, but costs 10% HP
-      const newState: WeaponRuntimeState = {
-        ...weaponState,
-        currentHeat: 0,
-        isJammed: false,
-      };
-      onStateChange(newState);
+      const result = ventWeapon(weaponState, weapon);
+      onStateChange(result.state);
       // TODO: Apply 10% HP damage to unit
+    });
+  }
+
+  // Field Patch
+  const patchBtn = container.querySelector('[data-action="field-patch"]');
+  if (patchBtn) {
+    patchBtn.addEventListener("click", () => {
+      const result = fieldPatch(weaponState);
+      if (result.strainCost > 0) {
+        onStateChange(result.state);
+        // TODO: Apply strain cost to unit
+      }
     });
   }
 }

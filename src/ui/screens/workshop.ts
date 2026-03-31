@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
@@ -63,7 +63,7 @@ export function renderWorkshopScreen(): void {
       <div class="workshop-header">
         <div class="workshop-header-left">
           <h1 class="workshop-title">WORKSHOP</h1>
-          <div class="workshop-subtitle">SLK://CRAFT_NODE โ€ข FABRICATION TERMINAL</div>
+          <div class="workshop-subtitle">S/COM://CRAFT_NODE โ€ข FABRICATION TERMINAL</div>
         </div>
         <div class="workshop-header-right">
           <button class="workshop-back-btn" id="backBtn">โ�� BASE CAMP</button>
@@ -149,9 +149,9 @@ export function renderWorkshopScreen(): void {
         </div>
       </div>
       
-      <!-- ScrollLink Console -->
+      <!-- S/COM_OS Console -->
       <div class="workshop-console">
-        <div class="console-header">SCROLLINK OS // WORKSHOP_LOG</div>
+        <div class="console-header">S/COM_OS // WORKSHOP_LOG</div>
         <div class="console-body" id="workshopLog">
           <div class="console-line">SLK//WORKSHOP :: Fabrication terminal online.</div>
           <div class="console-line">SLK//READY :: Select a recipe to begin crafting.</div>
@@ -338,7 +338,7 @@ function attachWorkshopListeners(
   if (backBtn) {
     backBtn.onclick = () => {
       selectedRecipeId = null;
-      renderBaseCampScreen();
+      renderAllNodesMenuScreen();
     };
   }
   

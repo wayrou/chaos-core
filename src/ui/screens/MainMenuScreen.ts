@@ -5,8 +5,9 @@
 // ============================================================================
 
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
 import { renderSettingsScreen } from "./SettingsScreen";
+import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   canContinue,
   loadMostRecent,
@@ -22,6 +23,24 @@ import {
 } from "../../core/saveSystem";
 import { initializeSettings } from "../../core/settings";
 import { initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
+import { loadCraftingRecipes } from "../../core/craftingRecipes";
+import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
+
+const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
+const FLOATING_TERMINAL_TITLES = [
+  "S/COM_OS // AUX_CONSOLE",
+  "S/COM_OS // SIGNAL_MONITOR",
+  "S/COM_OS // OPS_RELAY",
+  "S/COM_OS // ARCHIVE_NODE",
+];
+
+let floatingTerminalCount = 0;
+let floatingTerminalZIndex = 220;
+
+type TerminalElements = {
+  body: HTMLElement;
+  output: HTMLElement;
+};
 
 // ----------------------------------------------------------------------------
 // INITIALIZATION
@@ -36,6 +55,14 @@ async function initializeGame(): Promise<void> {
   
   await initializeSettings();
   initControllerSupport();
+  
+  // Load crafting recipes
+  try {
+    await loadCraftingRecipes();
+  } catch (error) {
+    console.error("[INIT] Failed to load crafting recipes:", error);
+    // Non-fatal - game can continue without recipes
+  }
   
   isInitialized = true;
   console.log("[INIT] Initialization complete");
@@ -58,73 +85,128 @@ export async function renderMainMenu(): Promise<void> {
   const saves = await listSaves();
   const mostRecentSave = saves.length > 0 ? saves[0] : null;
   
+  // Flavor text for the terminal - will be output continuously
+  const flavorLines = [
+    `S/COM&gt; SYSTEM_STATUS    :: ${SCROLLINK_VERSION_LABEL} — All systems nominal.`,
+    "S/COM&gt; CORE_STATUS      :: Chaos core containment: STABLE.",
+    "S/COM&gt; NETWORK_STATUS   :: MISTGUARD relay connected. Signal strength: EXCELLENT.",
+    "",
+    "S/COM&gt; OPERATION_LOG    :: Accessing mission archives...",
+    "S/COM&gt; OPERATION_LOG    :: Last deployment: Operation IRON GATE — Status: CLEARED",
+    "S/COM&gt; OPERATION_LOG    :: Active units: 2 — Squad readiness: GREEN",
+    "",
+    "S/COM&gt; BRIEFING         :: In ARDYCIA, bandits, knights, wizards and gunslingers",
+    "S/COM&gt; BRIEFING         :: fight for control over cold and rocky terrain.",
+    "S/COM&gt; BRIEFING         :: Reports of a dark, growing chasm of evil magic",
+    "S/COM&gt; BRIEFING         :: threaten the stability of the Fairhaven empire.",
+    "",
+    "S/COM&gt; MISSION_PARAMS   :: Objective: Locate and secure the CHAOS CORE",
+    "S/COM&gt; MISSION_PARAMS   :: Close the rift before it consumes the region.",
+    "S/COM&gt; MISSION_PARAMS   :: Leading officer: AERISS THORNE — Status: ACTIVE",
+    "",
+    "S/COM&gt; AWAITING_INPUT   :: Select operation or adjust loadout.",
+    "S/COM&gt; LEGACY_SYSTEM    :: Solaris (defunct) — \"Working for you.\"",
+    "",
+    "S/COM&gt; SYSTEM_UPDATE    :: Running background diagnostics...",
+    "S/COM&gt; SYSTEM_UPDATE    :: All subsystems operational.",
+    "",
+    "S/COM&gt; NETWORK_STATUS   :: Maintaining connection to MISTGUARD relay...",
+    "S/COM&gt; NETWORK_STATUS   :: Latency: 12ms — Quality: EXCELLENT",
+  ];
+
   root.innerHTML = /*html*/ `
     <div class="mainmenu-root">
       <div class="mainmenu-bg-effects">
         <div class="mainmenu-scanline"></div>
         <div class="mainmenu-vignette"></div>
+        <div class="mainmenu-particles"></div>
       </div>
       
-      <!-- Main content wrapper - centers everything vertically -->
+      <!-- Two-column layout: Logo/Menu on left, Terminal on right -->
       <div class="mainmenu-content">
-        
-        <!-- Logo ABOVE the card -->
-        <div class="mainmenu-logo-container">
-          <img 
-            id="logoImage"
-            alt="Chaos Core" 
-            class="mainmenu-logo-image"
-          />
-          <!-- Fallback text logo if image fails to load -->
-          <div id="logoFallback" class="mainmenu-logo mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
-          <div class="mainmenu-logo-glow"></div>
+        <!-- Left column: Logo and Menu -->
+        <div class="mainmenu-left-panel">
+          <!-- Logo at top -->
+          <div class="mainmenu-logo-section">
+            <div class="mainmenu-logo-container">
+              <img 
+                id="logoImage"
+                alt="Chaos Core" 
+                class="mainmenu-logo-image"
+              />
+              <div id="logoFallback" class="mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
+              <div class="mainmenu-logo-glow"></div>
+            </div>
+          </div>
+          
+          <!-- Menu buttons below logo -->
+          <div class="mainmenu-menu-section">
+            <div class="mainmenu-buttons">
+              ${hasContinue ? `
+                <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
+                  <span class="btn-icon">▶</span>
+                  <span class="btn-text">CONTINUE</span>
+                  ${mostRecentSave ? `
+                    <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
+                  ` : ''}
+                </button>
+              ` : ''}
+
+              <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
+                <span class="btn-icon">⚔</span>
+                <span class="btn-text">NEW OPERATION</span>
+              </button>
+
+              ${saves.length > 0 ? `
+                <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
+                  <span class="btn-icon">📂</span>
+                  <span class="btn-text">LOAD GAME</span>
+                </button>
+              ` : ''}
+
+              <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
+                <span class="btn-icon">⚙</span>
+                <span class="btn-text">SETTINGS</span>
+              </button>
+
+              <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
+                <span class="btn-icon">✕</span>
+                <span class="btn-text">EXIT</span>
+              </button>
+            </div>
+            
+            <!-- Footer info -->
+            <div class="mainmenu-version" aria-label="Game version">${APP_VERSION}</div>
+          </div>
         </div>
         
-        <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
-      
-        <!-- Card with buttons only -->
-        <div class="mainmenu-card">
-          <div class="mainmenu-buttons">
-            ${hasContinue ? `
-              <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
-                <span class="btn-icon">▶</span>
-                <span class="btn-text">CONTINUE</span>
-                ${mostRecentSave ? `
-                  <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
-                ` : ''}
-              </button>
-            ` : ''}
-
-            <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
-              <span class="btn-icon">+</span>
-              <span class="btn-text">NEW OPERATION</span>
-            </button>
-
-            ${saves.length > 0 ? `
-              <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
-                <span class="btn-icon">📂</span>
-                <span class="btn-text">LOAD GAME</span>
-              </button>
-            ` : ''}
-
-            <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
-              <span class="btn-icon">⚙</span>
-              <span class="btn-text">SETTINGS</span>
-            </button>
-
-            <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
-              <span class="btn-icon">✕</span>
-              <span class="btn-text">EXIT</span>
-            </button>
-          </div>
-
-          <div class="mainmenu-footer">
-            <span>SCROLLINK OS BUILD 0.1.0</span>
-            <span class="mainmenu-separator">•</span>
-            <span>ARDCYTECH PROTOTYPE</span>
+        <!-- Right column: Terminal taking up remaining space -->
+        <div class="mainmenu-terminal-container">
+          <div class="mainmenu-terminal-window">
+            <div class="mainmenu-terminal-header">
+              <span class="terminal-window-title">S/COM_OS // SYSTEM_CONSOLE</span>
+              <span class="terminal-window-status">[ACTIVE]</span>
+            </div>
+            <div class="mainmenu-terminal-body" id="terminalBody">
+              <div class="mainmenu-terminal-output" id="terminalOutput">
+                <!-- Terminal lines will be added dynamically -->
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      <button
+        class="mainmenu-terminal-fab"
+        type="button"
+        data-action="new-terminal"
+        aria-label="Open new S/COM_OS window"
+        title="Open new S/COM_OS window"
+      >
+        +
+      </button>
+
+      <div class="mainmenu-floating-layer" id="mainmenuFloatingLayer" aria-live="polite"></div>
       
       <div class="mainmenu-modal" id="loadModal" style="display: none;">
         <div class="mainmenu-modal-content">
@@ -153,6 +235,214 @@ export async function renderMainMenu(): Promise<void> {
   
   attachMenuListeners(saves);
   updateFocusableElements();
+  
+  // Start terminal animation
+  startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
+}
+
+// ----------------------------------------------------------------------------
+// TERMINAL ANIMATION
+// ----------------------------------------------------------------------------
+
+function getTerminalElements(bodyId: string, outputId: string): TerminalElements | null {
+  const body = document.getElementById(bodyId);
+  const output = document.getElementById(outputId);
+
+  if (!body || !output) {
+    return null;
+  }
+
+  return { body, output };
+}
+
+function isTerminalPromptLine(line: string): boolean {
+  return line.startsWith(TERMINAL_PROMPT_PREFIX);
+}
+
+function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): void {
+  const elements = getTerminalElements(bodyId, outputId);
+  if (!elements) return;
+
+  const { body: terminalBody, output: terminalOutput } = elements;
+  
+  let currentLineIndex = 0;
+  
+  // Add initial lines with typing animation
+  const initialLines = flavorLines.slice(0, 8);
+  let initialDelay = 0;
+  initialLines.forEach((line) => {
+    if (line === "") {
+      setTimeout(() => {
+        addEmptyTerminalLine(terminalOutput);
+        autoScrollTerminal(terminalBody);
+      }, initialDelay);
+      initialDelay += 200;
+    } else {
+      setTimeout(() => {
+        typeTerminalLine(terminalOutput, terminalBody, line, () => {
+          autoScrollTerminal(terminalBody);
+        });
+      }, initialDelay);
+      // Estimate delay: prompt + text characters * typing speed
+      const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
+      const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
+      initialDelay += (promptLength + textLength) * 30 + 500; // 30ms per char + 500ms pause
+    }
+  });
+  currentLineIndex = initialLines.length;
+  
+  // Then continuously add new lines with typing
+  const addNextLine = () => {
+    if (currentLineIndex >= flavorLines.length) {
+      currentLineIndex = 0; // Loop back to start
+    }
+    
+    const line = flavorLines[currentLineIndex];
+    if (line === "") {
+      addEmptyTerminalLine(terminalOutput);
+      autoScrollTerminal(terminalBody);
+      setTimeout(addNextLine, 300);
+    } else {
+      typeTerminalLine(terminalOutput, terminalBody, line, () => {
+        autoScrollTerminal(terminalBody);
+        // Schedule next line after typing completes
+        const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
+        const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
+        const typingTime = (promptLength + textLength) * 30;
+        setTimeout(addNextLine, typingTime + 800); // Add pause after line completes
+      });
+    }
+    
+    currentLineIndex++;
+  };
+  
+  // Start continuous output after initial load
+  setTimeout(addNextLine, initialDelay + 1000);
+}
+
+function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, line: string, onComplete: () => void): void {
+  if (!container.isConnected || !terminalBody.isConnected) {
+    return;
+  }
+
+  const lineDiv = document.createElement("div");
+  lineDiv.className = "terminal-line";
+  container.appendChild(lineDiv);
+  
+  // Remove existing cursor line
+  const existingCursor = container.querySelector('.terminal-cursor-line');
+  if (existingCursor) {
+    existingCursor.remove();
+  }
+  
+  if (line === "") {
+    lineDiv.innerHTML = "<br>";
+    onComplete();
+    return;
+  }
+  
+  let promptSpan: HTMLSpanElement | null = null;
+  let textSpan: HTMLSpanElement | null = null;
+  
+  if (isTerminalPromptLine(line)) {
+    const parts = line.split('::');
+    const prompt = parts[0];
+    const text = parts.slice(1).join('::');
+    
+    promptSpan = document.createElement("span");
+    promptSpan.className = "terminal-prompt";
+    lineDiv.appendChild(promptSpan);
+    
+    textSpan = document.createElement("span");
+    textSpan.className = "terminal-text";
+    lineDiv.appendChild(textSpan);
+    
+    // Type prompt first
+    typeText(promptSpan, prompt, 30, () => {
+      // Then type text
+      if (textSpan) {
+        typeText(textSpan, text, 30, () => {
+          addCursorLine(container);
+          onComplete();
+        });
+      } else {
+        addCursorLine(container);
+        onComplete();
+      }
+    });
+  } else {
+    textSpan = document.createElement("span");
+    textSpan.className = "terminal-text";
+    lineDiv.appendChild(textSpan);
+    
+    typeText(textSpan, line, 30, () => {
+      addCursorLine(container);
+      onComplete();
+    });
+  }
+  
+  // Auto-scroll during typing
+  const scrollInterval = setInterval(() => {
+    autoScrollTerminal(terminalBody);
+  }, 100);
+  
+  // Clear interval when done
+  setTimeout(() => clearInterval(scrollInterval), (line.length * 30) + 1000);
+}
+
+function typeText(element: HTMLElement, text: string, delay: number, onComplete: () => void): void {
+  let index = 0;
+  
+  const typeChar = () => {
+    if (!element.isConnected) {
+      return;
+    }
+
+    if (index < text.length) {
+      element.textContent = text.substring(0, index + 1);
+      index++;
+      setTimeout(typeChar, delay);
+    } else {
+      onComplete();
+    }
+  };
+  
+  typeChar();
+}
+
+function addEmptyTerminalLine(container: HTMLElement): void {
+  const lineDiv = document.createElement("div");
+  lineDiv.className = "terminal-line";
+  lineDiv.innerHTML = "<br>";
+  container.appendChild(lineDiv);
+}
+
+function addCursorLine(container: HTMLElement): void {
+  if (!container.isConnected) {
+    return;
+  }
+
+  // Remove existing cursor line
+  const existingCursor = container.querySelector('.terminal-cursor-line');
+  if (existingCursor) {
+    existingCursor.remove();
+  }
+  
+  const cursorLine = document.createElement("div");
+  cursorLine.className = "terminal-line terminal-cursor-line";
+  cursorLine.innerHTML = `
+    <span class="terminal-prompt">S/COM&gt;</span>
+    <span class="terminal-text"><span class="terminal-cursor">_</span></span>
+  `;
+  container.appendChild(cursorLine);
+}
+
+function autoScrollTerminal(terminalBody: HTMLElement): void {
+  // Smooth scroll to bottom
+  terminalBody.scrollTo({
+    top: terminalBody.scrollHeight,
+    behavior: 'smooth'
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -227,7 +517,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       if (result.success && result.state) {
         setGameState(result.state);
         enableAutosave(() => getGameState());
-        renderBaseCampScreen();
+        renderFieldScreen("base_camp");
       } else {
         alert("Failed to load save: " + (result.error ?? "Unknown error"));
         continueBtn.disabled = false;
@@ -248,7 +538,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       
       resetToNewGame();
       enableAutosave(() => getGameState());
-      renderBaseCampScreen();
+      renderFieldScreen("base_camp");
     });
   }
   
@@ -267,16 +557,24 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       renderSettingsScreen("menu");
     });
   }
+
+  const newTerminalBtn = root.querySelector<HTMLButtonElement>('button[data-action="new-terminal"]');
+  if (newTerminalBtn) {
+    newTerminalBtn.addEventListener("click", () => {
+      createFloatingTerminalWindow();
+    });
+  }
   
   // Exit button
   const exitBtn = root.querySelector<HTMLButtonElement>('button[data-action="exit"]');
   if (exitBtn) {
-    exitBtn.addEventListener("click", () => {
-      const anyWindow = window as any;
-      if (anyWindow.__TAURI__?.window) {
-        anyWindow.__TAURI__.window.getCurrent().close();
-      } else {
-        console.log("Exit requested (no Tauri context)");
+    exitBtn.addEventListener("click", async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      } catch (err) {
+        console.log("Exit requested (no Tauri context):", err);
+        window.close();
       }
     });
   }
@@ -310,6 +608,72 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       (e.target as HTMLElement).style.display = "none";
     }
   });
+}
+
+function createFloatingTerminalWindow(): void {
+  const floatingLayer = document.getElementById("mainmenuFloatingLayer");
+  if (!floatingLayer) return;
+
+  floatingTerminalCount += 1;
+  const terminalId = `mainmenuFloatingTerminal${floatingTerminalCount}`;
+  const terminalBodyId = `${terminalId}Body`;
+  const terminalOutputId = `${terminalId}Output`;
+  const title = FLOATING_TERMINAL_TITLES[(floatingTerminalCount - 1) % FLOATING_TERMINAL_TITLES.length];
+  const offsetIndex = floatingTerminalCount - 1;
+  const left = Math.min(480 + offsetIndex * 28, Math.max(480, window.innerWidth - 420));
+  const top = Math.min(72 + offsetIndex * 22, Math.max(24, window.innerHeight - 360));
+
+  const windowEl = document.createElement("div");
+  windowEl.className = "mainmenu-terminal-window mainmenu-terminal-window--floating";
+  windowEl.id = terminalId;
+  windowEl.style.left = `${left}px`;
+  windowEl.style.top = `${top}px`;
+  windowEl.style.zIndex = String(++floatingTerminalZIndex);
+  windowEl.innerHTML = `
+    <div class="mainmenu-terminal-header">
+      <span class="terminal-window-title">${title}</span>
+      <div class="mainmenu-terminal-controls">
+        <span class="terminal-window-status">[ACTIVE]</span>
+        <button
+          class="mainmenu-terminal-close"
+          type="button"
+          aria-label="Close terminal window"
+          data-close-terminal="${terminalId}"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+    <div class="mainmenu-terminal-body" id="${terminalBodyId}">
+      <div class="mainmenu-terminal-output" id="${terminalOutputId}"></div>
+    </div>
+  `;
+
+  floatingLayer.appendChild(windowEl);
+
+  windowEl.addEventListener("pointerdown", () => {
+    windowEl.style.zIndex = String(++floatingTerminalZIndex);
+  });
+
+  const closeBtn = windowEl.querySelector<HTMLButtonElement>(`button[data-close-terminal="${terminalId}"]`);
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      windowEl.remove();
+    });
+  }
+
+  const floatingFlavorLines = [
+    `${TERMINAL_PROMPT_PREFIX} WINDOW_STATUS   :: Auxiliary console online.`,
+    `${TERMINAL_PROMPT_PREFIX} NODE_ID         :: ${terminalId.toUpperCase()}`,
+    `${TERMINAL_PROMPT_PREFIX} QUAC_BRIDGE     :: Listening for local shell requests.`,
+    "",
+    `${TERMINAL_PROMPT_PREFIX} DIAGNOSTICS     :: Memory lattice stable.`,
+    `${TERMINAL_PROMPT_PREFIX} DIAGNOSTICS     :: Riftwatch telemetry buffered.`,
+    `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Drag this header to reposition.`,
+    `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Use ✕ to dismiss the pane.`,
+  ];
+
+  startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
 }
 
 // ----------------------------------------------------------------------------
@@ -356,7 +720,7 @@ function openLoadModal(saves: SaveInfo[]): void {
             setGameState(result.state);
             enableAutosave(() => getGameState());
             modal.style.display = "none";
-            renderBaseCampScreen();
+            renderAllNodesMenuScreen();
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));
           }

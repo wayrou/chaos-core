@@ -1,71 +1,269 @@
-// src/ui/screens/OperationSelectScreen.ts
+// ============================================================================
+// OPERATION SELECT SCREEN - Campaign System Integration
+// Choose and start operations with locking and custom operation support
+// Flow: Select Operation → Loadout Screen → Floor Screen
+// ============================================================================
 
-import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBaseCampScreen } from "./BaseCampScreen";
-import { renderOperationMap } from "./OperationMapScreen";
+import { updateGameState } from "../../state/gameStore";
+import { renderFieldScreen } from "../../field/FieldScreen";
+import { renderLoadoutScreen } from "./LoadoutScreen";
+import {
+  OPERATION_DEFINITIONS,
+  OperationId,
+  loadCampaignProgress,
+  isOperationUnlocked,
+  isOperationCompleted,
+  getEffectiveFloors,
+  calculateRecommendedPower,
+} from "../../core/campaign";
+import { startOperationRun } from "../../core/campaignManager";
+import { activeRunToOperationRun } from "../../core/campaignManager";
 
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
-import { getGameState, updateGameState } from "../../state/gameStore";
+// ----------------------------------------------------------------------------
+// STATE
+// ----------------------------------------------------------------------------
 
+let customOperationConfig = {
+  floors: 3,
+  difficulty: "normal" as "easy" | "normal" | "hard",
+  enemyDensity: "normal" as "low" | "normal" | "high",
+};
 
-export function renderOperationSelectScreen(): void {
+// ----------------------------------------------------------------------------
+// RENDER
+// ----------------------------------------------------------------------------
+
+export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const state = getGameState();
-  const op = state.operation;
+  const progress = loadCampaignProgress();
+
+  // Story operations (exclude custom)
+  const storyOperationIds: OperationId[] = [
+    "op_iron_gate",
+    "op_black_spire",
+    "op_ghost_run",
+    "op_ember_siege",
+    "op_final_dawn",
+  ];
 
   root.innerHTML = `
-    <div class="opselect-root">
-
-      <div class="opselect-header">
-        <div class="opselect-title">SELECT OPERATION</div>
-      </div>
-
-      <div class="opselect-section">
-
-        <div class="op-card">
-          <div class="op-card-title">MAIN STORY OPERATION</div>
-          <div class="op-card-desc">${op.description}</div>
-          <button class="opstart-story-btn">BEGIN STORY OPERATION</button>
-        </div>
-
-        <div class="op-card">
-          <div class="op-card-title">CUSTOM OPERATION</div>
-          <div class="op-card-desc">
-            Create a custom layout, difficulty, and rewards.<br/>
-            (Full customization coming in 11c/11d)
+    <div class="opselect-root ard-noise">
+      <div class="opselect-card">
+        <!-- Header - Adventure Gothic Panel -->
+        <div class="opselect-header">
+          <div class="opselect-header-left">
+            <h1 class="opselect-title">SELECT OPERATION</h1>
+            <div class="opselect-subtitle">S/COM_OS // OPERATION_SELECT</div>
           </div>
-          <button class="opstart-custom-btn">BEGIN CUSTOM OP (placeholder)</button>
+          <div class="opselect-header-right">
+            <button class="opselect-back-btn" data-return-to="${returnTo}">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
+          </div>
         </div>
 
-      </div>
+        <div class="opselect-body">
+          <div class="opselect-info">
+            Choose an operation to deploy. Complete operations sequentially to unlock new ones.
+          </div>
 
-      <button class="opselect-back-btn">BACK TO BASE CAMP</button>
+          <div class="opselect-operations">
+            ${storyOperationIds.map(opId => {
+              const opDef = OPERATION_DEFINITIONS[opId];
+              const unlocked = isOperationUnlocked(opId, progress);
+              const completed = isOperationCompleted(opId, progress);
+              
+              let statusBadge = "";
+              if (completed) {
+                statusBadge = '<span class="opselect-status-badge opselect-status--completed">✓ COMPLETED</span>';
+              } else if (unlocked) {
+                statusBadge = '<span class="opselect-status-badge opselect-status--available">AVAILABLE</span>';
+              } else {
+                statusBadge = '<span class="opselect-status-badge opselect-status--locked">🔒 LOCKED</span>';
+              }
+              
+              // Calculate values before template string to ensure functions are in scope
+              const effectiveFloors = unlocked ? getEffectiveFloors(opDef) : 0;
+              const recommendedPWR = unlocked ? calculateRecommendedPower(0, opDef.recommendedPower) : 0;
+              
+              return `
+                <div class="opselect-op-card ${!unlocked ? 'opselect-op-card--locked' : ''}" data-op-id="${opId}">
+                  <div class="opselect-op-header">
+                    <div class="opselect-op-codename">${unlocked ? opDef.name : '???'}</div>
+                    ${statusBadge}
+                  </div>
+
+                  <div class="opselect-op-description">
+                    ${unlocked ? opDef.description : 'Complete previous operations to unlock this mission.'}
+                  </div>
+
+                  ${unlocked ? `
+                    <div class="opselect-op-details">
+                      <div class="opselect-op-detail">
+                        <span class="opselect-op-detail-label">Floors:</span>
+                        <span class="opselect-op-detail-value">${effectiveFloors}</span>
+                      </div>
+                      <div class="opselect-op-detail">
+                        <span class="opselect-op-detail-label">Recommended Power:</span>
+                        <span class="opselect-op-detail-value">${recommendedPWR}</span>
+                      </div>
+                    </div>
+                  ` : `
+                    <div class="opselect-op-details opselect-op-details--locked">
+                      <div class="opselect-op-detail opselect-op-detail--locked">
+                        <span class="opselect-op-detail-label">Floors:</span>
+                        <span class="opselect-op-detail-value">???</span>
+                      </div>
+                      <div class="opselect-op-detail opselect-op-detail--locked">
+                        <span class="opselect-op-detail-label">Recommended Power:</span>
+                        <span class="opselect-op-detail-value">???</span>
+                      </div>
+                    </div>
+                  `}
+
+                  <button class="opselect-deploy-btn" 
+                          data-op-id="${opId}" 
+                          ${!unlocked ? 'disabled' : ''}>
+                    ${unlocked ? 'DEPLOY →' : 'LOCKED'}
+                  </button>
+                </div>
+              `;
+            }).join('')}
+            
+            <!-- Custom Operation Card -->
+            <div class="opselect-op-card opselect-op-card--custom" id="customOpCard">
+              <div class="opselect-op-header">
+                <div class="opselect-op-codename">CUSTOM OPERATION</div>
+                <span class="opselect-status-badge opselect-status--available">CUSTOM</span>
+              </div>
+
+              <div class="opselect-op-description">
+                Create a custom operation with your own parameters.
+              </div>
+
+              <div class="opselect-custom-config">
+                <div class="opselect-custom-row">
+                  <label>Floors:</label>
+                  <input type="number" 
+                         id="customFloors" 
+                         min="1" 
+                         max="10" 
+                         value="${customOperationConfig.floors}"
+                         class="opselect-custom-input">
+                </div>
+                
+                <div class="opselect-custom-row">
+                  <label>Difficulty:</label>
+                  <select id="customDifficulty" class="opselect-custom-select">
+                    <option value="easy" ${customOperationConfig.difficulty === "easy" ? "selected" : ""}>Easy</option>
+                    <option value="normal" ${customOperationConfig.difficulty === "normal" ? "selected" : ""}>Normal</option>
+                    <option value="hard" ${customOperationConfig.difficulty === "hard" ? "selected" : ""}>Hard</option>
+                  </select>
+                </div>
+                
+                <div class="opselect-custom-row">
+                  <label>Enemy Density:</label>
+                  <select id="customDensity" class="opselect-custom-select">
+                    <option value="low" ${customOperationConfig.enemyDensity === "low" ? "selected" : ""}>Low</option>
+                    <option value="normal" ${customOperationConfig.enemyDensity === "normal" ? "selected" : ""}>Normal</option>
+                    <option value="high" ${customOperationConfig.enemyDensity === "high" ? "selected" : ""}>High</option>
+                  </select>
+                </div>
+              </div>
+
+              <button class="opselect-deploy-btn" id="customDeployBtn">
+                START CUSTOM RUN →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
-  // Story OP
-  root.querySelector(".opstart-story-btn")?.addEventListener("click", () => {
-    updateGameState((prev) => ({
-      ...prev,
-      phase: "map",
-    }));
-    renderOperationMap();
-  });
-
-  // Custom OP – placeholder: just load the same operation for now
-  root.querySelector(".opstart-custom-btn")?.addEventListener("click", () => {
-    updateGameState((prev) => ({
-      ...prev,
-      phase: "map",
-    }));
-    renderOperationMap();
-  });
-
+  // Event listeners
   root.querySelector(".opselect-back-btn")?.addEventListener("click", () => {
-    renderBaseCampScreen();
+    const btn = root.querySelector(".opselect-back-btn") as HTMLElement;
+    const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
+    if (returnDestination === "field") {
+      renderFieldScreen("base_camp");
+    } else {
+      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("base_camp");
+      });
+    }
   });
+
+  // Story operation buttons
+  root.querySelectorAll(".opselect-deploy-btn[data-op-id]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const opId = (e.target as HTMLElement).getAttribute("data-op-id") as OperationId;
+      if (opId && isOperationUnlocked(opId, progress)) {
+        startOperation(opId, "normal");
+      }
+    });
+  });
+
+  // Custom operation button
+  const customDeployBtn = document.getElementById("customDeployBtn");
+  if (customDeployBtn) {
+    customDeployBtn.addEventListener("click", () => {
+      const floorsInput = document.getElementById("customFloors") as HTMLInputElement;
+      const difficultySelect = document.getElementById("customDifficulty") as HTMLSelectElement;
+      const densitySelect = document.getElementById("customDensity") as HTMLSelectElement;
+      
+      const floors = parseInt(floorsInput.value) || 3;
+      const difficulty = difficultySelect.value as "easy" | "normal" | "hard";
+      
+      customOperationConfig = {
+        floors: Math.max(1, Math.min(10, floors)),
+        difficulty,
+        enemyDensity: densitySelect.value as "low" | "normal" | "high",
+      };
+      
+      startOperation("op_custom", difficulty, floors);
+    });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// OPERATION START
+// ----------------------------------------------------------------------------
+
+function startOperation(
+  operationId: OperationId,
+  difficulty: "easy" | "normal" | "hard" = "normal",
+  customFloors?: number
+): void {
+  console.log("[OPSELECT] Starting operation:", operationId, difficulty, customFloors);
+  
+  try {
+    // Start campaign run
+    const progress = startOperationRun(operationId, difficulty, customFloors);
+    const activeRun = progress.activeRun;
+    
+    if (!activeRun) {
+      console.error("[OPSELECT] Failed to start run");
+      return;
+    }
+    
+    // Convert to OperationRun format for existing UI
+    const operation = activeRunToOperationRun(activeRun);
+    
+    // Store in game state
+    updateGameState(prev => ({
+      ...prev,
+      operation: operation as any,
+      phase: "loadout", // Go to loadout first
+    }));
+    
+    // Navigate to loadout screen
+    renderLoadoutScreen();
+  } catch (error) {
+    console.error("[OPSELECT] Error starting operation:", error);
+    alert(`Failed to start operation: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
 }

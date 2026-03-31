@@ -1,0 +1,3336 @@
+{
+  "schemaVersion": 1,
+  "source": "CC full index.txt",
+  "gear": {
+    "mechanicalWeapons": [
+      {
+        "id": "MW001",
+        "name": "Emberclaw Repeater",
+        "type": "Repeating Rifle",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Emberclaw Repeater (Repeating Rifle) – Gear ID: MW001",
+          "Heat Capacity: 8",
+          "Heat Zones: 0–3 Stable | 4–6 Barrel Glow (ACC –1) | 7–8 Critical (next shot overheats)",
+          "Overheat Behavior: Locks for 1 turn; takes 2 strain to clear.",
+          "Passive Heat Decay: 2 per turn.",
+          "Heat Conversion Ability: Discharge excess heat to deal 1 unblockable damage to all adjacent enemies.",
+          "Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggle: Piercing Volley — Ignore target’s DEF for next attack."
+        ],
+        "heatCapacity": 8,
+        "heatZones": "0–3 Stable | 4–6 Barrel Glow (ACC –1) | 7–8 Critical (next shot overheats)",
+        "overheatBehavior": "Locks for 1 turn; takes 2 strain to clear.",
+        "passiveHeatDecayPerTurn": 2,
+        "heatConversionAbility": "Discharge excess heat to deal 1 unblockable damage to all adjacent enemies.",
+        "ammoMax": 6,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Piercing Volley — Ignore target’s DEF for next attack."
+        ]
+      },
+      {
+        "id": "MW002",
+        "name": "Steamburst Pike",
+        "type": "Pneumatic Lance",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Steamburst Pike (Pneumatic Lance) – Gear ID: MW002",
+          "Heat Capacity: 5",
+          "Heat Zones: 0–2 Stable | 3–4 Pressure Surge (+1 damage, risk self-hit) | 5 Overload (forced exhaust)",
+          "Overheat Behavior: Pushes the user back 1 tile and deals 2 self-damage.",
+          "Passive Heat Decay: 1 per turn.",
+          "Heat Conversion Ability: Release steam to create a 2×2 smoke screen.",
+          "Clutch Toggle: Pierce & Pin — Attack prevents target movement next turn."
+        ],
+        "heatCapacity": 5,
+        "heatZones": "0–2 Stable | 3–4 Pressure Surge (+1 damage, risk self-hit) | 5 Overload (forced exhaust)",
+        "overheatBehavior": "Pushes the user back 1 tile and deals 2 self-damage.",
+        "passiveHeatDecayPerTurn": 1,
+        "heatConversionAbility": "Release steam to create a 2×2 smoke screen.",
+        "clutchToggles": [
+          "Pierce & Pin — Attack prevents target movement next turn."
+        ]
+      },
+      {
+        "id": "MW003",
+        "name": "Vulcan Coilgun",
+        "type": "Gauss Rifle",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Vulcan Coilgun (Gauss Rifle) – Gear ID: MW003",
+          "Heat Capacity: 10",
+          "Heat Zones: 0–4 Stable | 5–7 Coil Strain (MOV –1) | 8–10 Overcharge (next shot doubles damage, forces exhaust)",
+          "Overheat Behavior: Cards tied to this weapon are disabled for 2 turns.",
+          "Passive Heat Decay: 3 per turn.",
+          "Heat Conversion Ability: Redirect heat to self-heal 1 HP.",
+          "Ammo: Max 4 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggles: Power Shot — +2 damage; Magnetic Pull — Pull target 1 tile closer."
+        ],
+        "heatCapacity": 10,
+        "heatZones": "0–4 Stable | 5–7 Coil Strain (MOV –1) | 8–10 Overcharge (next shot doubles damage, forces exhaust)",
+        "overheatBehavior": "Cards tied to this weapon are disabled for 2 turns.",
+        "passiveHeatDecayPerTurn": 3,
+        "heatConversionAbility": "Redirect heat to self-heal 1 HP.",
+        "ammoMax": 4,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Power Shot — +2 damage",
+          "Magnetic Pull — Pull target 1 tile closer."
+        ]
+      },
+      {
+        "id": "MW004",
+        "name": "Brassback Scattergun",
+        "type": "Steam Shotgun",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Brassback Scattergun (Steam Shotgun) – Gear ID: MW004",
+          "Heat Capacity: 6",
+          "Heat Zones: 0–2 Stable | 3–4 Spread Boost (+1 range) | 5–6 Jammed (must exhaust to clear)",
+          "Overheat Behavior: Skips next attack phase.",
+          "Passive Heat Decay: 1 per turn.",
+          "Heat Conversion Ability: Shunt heat into a cone blast knockback.",
+          "Ammo: Max 2 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggle: Slug Round — Range 1 but damage doubled."
+        ],
+        "heatCapacity": 6,
+        "heatZones": "0–2 Stable | 3–4 Spread Boost (+1 range) | 5–6 Jammed (must exhaust to clear)",
+        "overheatBehavior": "Skips next attack phase.",
+        "passiveHeatDecayPerTurn": 1,
+        "heatConversionAbility": "Shunt heat into a cone blast knockback.",
+        "ammoMax": 2,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Slug Round — Range 1 but damage doubled."
+        ]
+      },
+      {
+        "id": "MW005",
+        "name": "Ironwhisper Crossbow",
+        "type": "Steam-Drawn Crossbow",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Ironwhisper Crossbow (Steam-Drawn Crossbow) – Gear ID: MW005",
+          "Heat Capacity: 4",
+          "Heat Zones: 0–1 Stable | 2–3 Draw Assist (+1 ACC) | 4 Burnout (lose next turn)",
+          "Overheat Behavior: Destroys current loaded bolt (waste card).",
+          "Passive Heat Decay: 2 per turn.",
+          "Heat Conversion Ability: Convert heat into explosive bolt (+2 damage).",
+          "Ammo: Max 1 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggle: Silenced Shot — Cannot be countered or alert enemies."
+        ],
+        "heatCapacity": 4,
+        "heatZones": "0–1 Stable | 2–3 Draw Assist (+1 ACC) | 4 Burnout (lose next turn)",
+        "overheatBehavior": "Destroys current loaded bolt (waste card).",
+        "passiveHeatDecayPerTurn": 2,
+        "heatConversionAbility": "Convert heat into explosive bolt (+2 damage).",
+        "ammoMax": 1,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Silenced Shot — Cannot be countered or alert enemies."
+        ]
+      },
+      {
+        "id": "MW006",
+        "name": "Stormlash Arcstaff",
+        "type": "Electro-Steampunk Staff",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Stormlash Arcstaff (Electro-Steampunk Staff) – Gear ID: MW006",
+          "Heat Capacity: 9",
+          "Heat Zones: 0–4 Stable | 5–6 Spark Chain (AOE +1 radius) | 7–9 Surge (randomly target friend or foe)",
+          "Overheat Behavior: Stuns the wielder for 1 turn.",
+          "Passive Heat Decay: 1 per turn.",
+          "Heat Conversion Ability: Discharge into ground to clear traps.",
+          "Clutch Toggle: Overload Blast — All targets in range take 1 electric damage."
+        ],
+        "heatCapacity": 9,
+        "heatZones": "0–4 Stable | 5–6 Spark Chain (AOE +1 radius) | 7–9 Surge (randomly target friend or foe)",
+        "overheatBehavior": "Stuns the wielder for 1 turn.",
+        "passiveHeatDecayPerTurn": 1,
+        "heatConversionAbility": "Discharge into ground to clear traps.",
+        "clutchToggles": [
+          "Overload Blast — All targets in range take 1 electric damage."
+        ]
+      },
+      {
+        "id": "MW007",
+        "name": "Blazefang Saber",
+        "type": "Steam-Heated Sword",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Blazefang Saber (Steam-Heated Sword) – Gear ID: MW007",
+          "Heat Capacity: 5",
+          "Heat Zones: 0–2 Stable | 3–4 Blade Sear (+1 damage) | 5 Blade Warp (damage –2 until repaired)",
+          "Overheat Behavior: Permanently reduces max capacity by 1 for the match.",
+          "Passive Heat Decay: 1 per turn.",
+          "Heat Conversion Ability: Transfer heat to ignite ground for 1 turn.",
+          "Clutch Toggles: Searing Slash — Inflict Burn; Quick Draw — Attack without consuming movement."
+        ],
+        "heatCapacity": 5,
+        "heatZones": "0–2 Stable | 3–4 Blade Sear (+1 damage) | 5 Blade Warp (damage –2 until repaired)",
+        "overheatBehavior": "Permanently reduces max capacity by 1 for the match.",
+        "passiveHeatDecayPerTurn": 1,
+        "heatConversionAbility": "Transfer heat to ignite ground for 1 turn.",
+        "clutchToggles": [
+          "Searing Slash — Inflict Burn",
+          "Quick Draw — Attack without consuming movement."
+        ]
+      },
+      {
+        "id": "MW008",
+        "name": "Gearspike Mortar",
+        "type": "Steam Mortar",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Gearspike Mortar (Steam Mortar) – Gear ID: MW008",
+          "Heat Capacity: 7",
+          "Heat Zones: 0–3 Stable | 4–6 Blast Boost (+1 tile radius) | 7 Overpressure (self-hit if in range)",
+          "Overheat Behavior: Self-damage 3.",
+          "Passive Heat Decay: 2 per turn.",
+          "Heat Conversion Ability: Fire smoke rounds to obscure vision.",
+          "Ammo: Max 2 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggle: Bunker Buster — Ignores cover and destroys obstacles."
+        ],
+        "heatCapacity": 7,
+        "heatZones": "0–3 Stable | 4–6 Blast Boost (+1 tile radius) | 7 Overpressure (self-hit if in range)",
+        "overheatBehavior": "Self-damage 3.",
+        "passiveHeatDecayPerTurn": 2,
+        "heatConversionAbility": "Fire smoke rounds to obscure vision.",
+        "ammoMax": 2,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Bunker Buster — Ignores cover and destroys obstacles."
+        ]
+      },
+      {
+        "id": "MW009",
+        "name": "Emberdrake Harpooner",
+        "type": "Steam Harpoon Gun",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Emberdrake Harpooner (Steam Harpoon Gun) – Gear ID: MW009",
+          "Heat Capacity: 6",
+          "Heat Zones: 0–2 Stable | 3–5 Reel Boost (pull +1 tile) | 6 Snapback (stuns wielder)",
+          "Overheat Behavior: Cord breaks, weapon disabled for 2 turns.",
+          "Passive Heat Decay: 1 per turn.",
+          "Heat Conversion Ability: Reel heat into cord to set it alight.",
+          "Ammo: Max 1 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+          "Clutch Toggle: Anchor Pull — Pull self to target."
+        ],
+        "heatCapacity": 6,
+        "heatZones": "0–2 Stable | 3–5 Reel Boost (pull +1 tile) | 6 Snapback (stuns wielder)",
+        "overheatBehavior": "Cord breaks, weapon disabled for 2 turns.",
+        "passiveHeatDecayPerTurn": 1,
+        "heatConversionAbility": "Reel heat into cord to set it alight.",
+        "ammoMax": 1,
+        "quickReloadStrain": 1,
+        "fullReloadStrain": 0,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Anchor Pull — Pull self to target."
+        ]
+      },
+      {
+        "id": "MW010",
+        "name": "Thunderjaw Cannon",
+        "type": "Rotary Steam Cannon",
+        "category": "mechanical_weapon",
+        "raw": [
+          "Thunderjaw Cannon (Rotary Steam Cannon) – Gear ID: MW010",
+          "Heat Capacity: 12",
+          "Heat Zones: 0–5 Stable | 6–9 Firestorm (AOE bonus damage) | 10–12 Critical Overdrive (massive damage, then exhaust)",
+          "Overheat Behavior: Deck loses 1 random weapon card permanently for battle.",
+          "Passive Heat Decay: 2 per turn.",
+          "Heat Conversion Ability: Vent heat as damaging shockwave to all adjacent units.",
+          "Ammo: Max 3 | Quick Reload (Strain) 2 | Full Reload (Strain) 1 | Core/Overwatch: AM1",
+          "Clutch Toggles: Full Barrage — Extra attack at –2 ACC; Suppressive Fire — Targets lose 1 MOV next turn."
+        ],
+        "heatCapacity": 12,
+        "heatZones": "0–5 Stable | 6–9 Firestorm (AOE bonus damage) | 10–12 Critical Overdrive (massive damage, then exhaust)",
+        "overheatBehavior": "Deck loses 1 random weapon card permanently for battle.",
+        "passiveHeatDecayPerTurn": 2,
+        "heatConversionAbility": "Vent heat as damaging shockwave to all adjacent units.",
+        "ammoMax": 3,
+        "quickReloadStrain": 2,
+        "fullReloadStrain": 1,
+        "coreOverwatch": "AM1",
+        "clutchToggles": [
+          "Full Barrage — Extra attack at –2 ACC",
+          "Suppressive Fire — Targets lose 1 MOV next turn."
+        ]
+      }
+    ],
+    "nonMechanicalWeapons": {
+      "swords": [
+        {
+          "name": "Iron Longsword",
+          "index": 11,
+          "stats": {
+            "atk": 2,
+            "def": 1,
+            "agi": 0,
+            "acc": 1,
+            "hp": 0
+          },
+          "raw": [
+            "11. Iron Longsword — ATK +2, DEF +1, AGI 0, ACC +1, HP 0",
+            "Clutch Toggle: Edge Focus — Gain +2 ACC for the attack, but -1 DEF until your next turn."
+          ],
+          "clutchToggles": [
+            "Edge Focus — Gain +2 ACC for the attack, but -1 DEF until your next turn."
+          ]
+        },
+        {
+          "name": "Runed Shortsword",
+          "index": null,
+          "stats": {
+            "atk": 1,
+            "def": 0,
+            "agi": 2,
+            "acc": 2,
+            "hp": -1
+          },
+          "raw": [
+            "Runed Shortsword — ATK +1, DEF 0, AGI +2, ACC +2, HP -1",
+            "Clutch Toggle: Quick Strike — Attack first this round regardless of initiative, but suffer -2 ACC on the attack."
+          ],
+          "clutchToggles": [
+            "Quick Strike — Attack first this round regardless of initiative, but suffer -2 ACC on the attack."
+          ]
+        },
+        {
+          "name": "Scissor Sword",
+          "index": null,
+          "stats": {
+            "atk": 3,
+            "def": 1,
+            "agi": -1,
+            "acc": 0,
+            "hp": 0
+          },
+          "raw": [
+            "Scissor Sword — ATK +3, DEF +1, AGI -1, ACC 0, HP 0",
+            "Clutch Toggles: Overhand Smash — Deal +3 ATK damage, but suffer -3 AGI until your next turn. Defensive Guard — +2 DEF until your next turn, but -2 ATK."
+          ],
+          "clutchToggles": [
+            "Overhand Smash — Deal +3 ATK damage, but suffer -3 AGI until your next turn",
+            "Defensive Guard — +2 DEF until your next turn, but -2 ATK."
+          ]
+        }
+      ],
+      "bows": [
+        {
+          "name": "Elm Recurve Bow",
+          "index": 14,
+          "stats": {
+            "atk": 2,
+            "def": 0,
+            "agi": 1,
+            "acc": 2,
+            "hp": -1
+          },
+          "raw": [
+            "14. Elm Recurve Bow — ATK +2, DEF 0, AGI +1, ACC +2, HP -1",
+            "Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+            "Clutch Toggle: Piercing Arrow — Ignore 2 DEF for this shot, but -1 ACC."
+          ],
+          "ammoMax": 6,
+          "quickReloadStrain": 1,
+          "fullReloadStrain": 0,
+          "coreOverwatch": "AM1",
+          "clutchToggles": [
+            "Piercing Arrow — Ignore 2 DEF for this shot, but -1 ACC."
+          ]
+        },
+        {
+          "name": "Composite Greatbow",
+          "index": null,
+          "stats": {
+            "atk": 4,
+            "def": 0,
+            "agi": -2,
+            "acc": 1,
+            "hp": 0
+          },
+          "raw": [
+            "Composite Greatbow — ATK +4, DEF 0, AGI -2, ACC +1, HP 0",
+            "Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+            "Clutch Toggle: Volley — Fire twice at -3 ACC each shot."
+          ],
+          "ammoMax": 6,
+          "quickReloadStrain": 1,
+          "fullReloadStrain": 0,
+          "coreOverwatch": "AM1",
+          "clutchToggles": [
+            "Volley — Fire twice at -3 ACC each shot."
+          ]
+        },
+        {
+          "name": "Willow Shortbow",
+          "index": null,
+          "stats": {
+            "atk": 1,
+            "def": 0,
+            "agi": 3,
+            "acc": 2,
+            "hp": -2
+          },
+          "raw": [
+            "Willow Shortbow — ATK +1, DEF 0, AGI +3, ACC +2, HP -2",
+            "Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1",
+            "Clutch Toggles: Armor Breaker — Ignore 4 DEF on the attack. Heavy Draw — +4 ATK damage but skip your next move action."
+          ],
+          "ammoMax": 6,
+          "quickReloadStrain": 1,
+          "fullReloadStrain": 0,
+          "coreOverwatch": "AM1",
+          "clutchToggles": [
+            "Armor Breaker — Ignore 4 DEF on the attack",
+            "Heavy Draw — +4 ATK damage but skip your next move action."
+          ]
+        }
+      ],
+      "staves": [
+        {
+          "name": "Oak Battlestaff",
+          "index": 17,
+          "stats": {
+            "atk": 1,
+            "def": 2,
+            "agi": 0,
+            "acc": 1,
+            "hp": 1
+          },
+          "raw": [
+            "17. Oak Battlestaff — ATK +1, DEF +2, AGI 0, ACC +1, HP +1                                            Clutch Toggle: Channel Power — Next skill costs 1 less strain, but suffer -1 DEF until your next turn."
+          ]
+        },
+        {
+          "name": "Silver Channeling Rod",
+          "index": 18,
+          "stats": {
+            "atk": 2,
+            "def": 0,
+            "agi": 1,
+            "acc": 3,
+            "hp": -1
+          },
+          "raw": [
+            "18. Silver Channeling Rod — ATK +2, DEF 0, AGI +1, ACC +3, HP -1",
+            "Clutch Toggle: Focus Shot — +3 ACC to next skill card this turn, but -1 AGI next turn."
+          ],
+          "clutchToggles": [
+            "Focus Shot — +3 ACC to next skill card this turn, but -1 AGI next turn."
+          ]
+        },
+        {
+          "name": "Blackwood Greatstaff",
+          "index": 19,
+          "stats": {
+            "atk": 3,
+            "def": 1,
+            "agi": -1,
+            "acc": 2,
+            "hp": 0
+          },
+          "raw": [
+            "19. Blackwood Greatstaff — ATK +3, DEF +1, AGI -1, ACC +2, HP 0",
+            "Clutch Toggles: Ward Pulse — Gain +3 DEF until next turn. Crush Swing — +3 ATK but -3 ACC."
+          ],
+          "clutchToggles": [
+            "Ward Pulse — Gain +3 DEF until next turn",
+            "Crush Swing — +3 ATK but -3 ACC."
+          ]
+        }
+      ],
+      "daggers": [
+        {
+          "name": "Steel Dagger",
+          "index": 20,
+          "stats": {
+            "atk": 1,
+            "def": 0,
+            "agi": 3,
+            "acc": 2,
+            "hp": -1
+          },
+          "raw": [
+            "20. Steel Dagger — ATK +1, DEF 0, AGI +3, ACC +2, HP -1                                                Clutch Toggle: Lunge — Move 2 tiles before striking without provoking attacks, but -2 ACC."
+          ]
+        },
+        {
+          "name": "Ivory Fangblade",
+          "index": 21,
+          "stats": {
+            "atk": 2,
+            "def": 0,
+            "agi": 2,
+            "acc": 3,
+            "hp": -2
+          },
+          "raw": [
+            "21. Ivory Fangblade — ATK +2, DEF 0, AGI +2, ACC +3, HP -2",
+            "Clutch Toggle: Flurry — Attack twice at -2 ATK per hit."
+          ],
+          "clutchToggles": [
+            "Flurry — Attack twice at -2 ATK per hit."
+          ]
+        },
+        {
+          "name": "Weighted Dagger",
+          "index": 22,
+          "stats": {
+            "atk": 2,
+            "def": 1,
+            "agi": 1,
+            "acc": 2,
+            "hp": 0
+          },
+          "raw": [
+            "22. Weighted Dagger — ATK +2, DEF +1, AGI +1, ACC +2, HP 0",
+            "Clutch Toggles: Precision Cut — Ignore 3 DEF. Feint — Cancel the enemy’s counterattack if the attack misses."
+          ],
+          "clutchToggles": [
+            "Precision Cut — Ignore 3 DEF",
+            "Feint — Cancel the enemy’s counterattack if the attack misses."
+          ]
+        }
+      ]
+    },
+    "armor": {
+      "helmets": [
+        {
+          "index": 23,
+          "name": "Ironguard Helm",
+          "category": "helmet",
+          "stats": {
+            "def": 2,
+            "hp": 1
+          },
+          "raw": "23. Ironguard Helm — DEF +2, HP +1"
+        },
+        {
+          "index": 24,
+          "name": "Ranger’s Hood",
+          "category": "helmet",
+          "stats": {
+            "agi": 2,
+            "acc": 1
+          },
+          "raw": "24. Ranger’s Hood — AGI +2, ACC +1"
+        },
+        {
+          "index": 25,
+          "name": "Mystic Circlet",
+          "category": "helmet",
+          "stats": {
+            "acc": 2,
+            "atk": 1
+          },
+          "raw": "25. Mystic Circlet — ACC +2, ATK +1"
+        },
+        {
+          "index": 26,
+          "name": "Thief’s Bandana",
+          "category": "helmet",
+          "stats": {
+            "agi": 3
+          },
+          "raw": "26. Thief’s Bandana — AGI +3"
+        },
+        {
+          "index": 27,
+          "name": "Scholar’s Cap",
+          "category": "helmet",
+          "stats": {
+            "luk": 2,
+            "def": 1
+          },
+          "raw": "27. Scholar’s Cap — LUK +2, DEF +1"
+        },
+        {
+          "index": 28,
+          "name": "Brass Visor",
+          "category": "helmet",
+          "stats": {
+            "def": 1,
+            "acc": 2
+          },
+          "raw": "28. Brass Visor — DEF +1, ACC +2"
+        },
+        {
+          "index": 29,
+          "name": "Hunter’s Coif",
+          "category": "helmet",
+          "stats": {
+            "acc": 1,
+            "atk": 1,
+            "agi": 1
+          },
+          "raw": "29. Hunter’s Coif — ACC +1, ATK +1, AGI +1"
+        },
+        {
+          "index": 30,
+          "name": "Steamweld Goggles",
+          "category": "helmet",
+          "stats": {
+            "acc": 3
+          },
+          "raw": "30. Steamweld Goggles — ACC +3"
+        },
+        {
+          "index": 31,
+          "name": "Battle Mask",
+          "category": "helmet",
+          "stats": {
+            "def": 1,
+            "hp": 2
+          },
+          "raw": "31. Battle Mask — DEF +1, HP +2"
+        },
+        {
+          "index": 32,
+          "name": "Arcane Hood",
+          "category": "helmet",
+          "stats": {
+            "acc": 1,
+            "luk": 2
+          },
+          "raw": "32. Arcane Hood — ACC +1, LUK +2"
+        },
+        {
+          "index": 33,
+          "name": "Marksman’s Scope Visor",
+          "category": "helmet",
+          "stats": {
+            "acc": 3,
+            "def": -1
+          },
+          "raw": "33. Marksman’s Scope Visor — ACC +3, DEF -1"
+        },
+        {
+          "index": 34,
+          "name": "Warrior’s Crest",
+          "category": "helmet",
+          "stats": {
+            "atk": 2,
+            "hp": 1
+          },
+          "raw": "34. Warrior’s Crest — ATK +2, HP +1"
+        }
+      ],
+      "chestpieces": [
+        {
+          "index": 35,
+          "name": "Steelplate Cuirass",
+          "category": "chestpiece",
+          "stats": {
+            "def": 3,
+            "hp": 2
+          },
+          "raw": "35. Steelplate Cuirass — DEF +3, HP +2"
+        },
+        {
+          "index": 36,
+          "name": "Leather Jerkin",
+          "category": "chestpiece",
+          "stats": {
+            "agi": 1,
+            "def": 1
+          },
+          "raw": "36. Leather Jerkin — AGI +1, DEF +1"
+        },
+        {
+          "index": 37,
+          "name": "Mage’s Robe",
+          "category": "chestpiece",
+          "stats": {
+            "acc": 2,
+            "luk": 1
+          },
+          "raw": "37. Mage’s Robe — ACC +2, LUK +1"
+        },
+        {
+          "index": 38,
+          "name": "Shadow Cloak",
+          "category": "chestpiece",
+          "stats": {
+            "agi": 2,
+            "def": -1,
+            "luk": 1
+          },
+          "raw": "38. Shadow Cloak — AGI +2, DEF -1, LUK +1"
+        },
+        {
+          "index": 39,
+          "name": "Scholar’s Vest",
+          "category": "chestpiece",
+          "stats": {
+            "luk": 2,
+            "def": 1
+          },
+          "raw": "39. Scholar’s Vest — LUK +2, DEF +1"
+        },
+        {
+          "index": 40,
+          "name": "Chainmail Hauberk",
+          "category": "chestpiece",
+          "stats": {
+            "def": 2,
+            "hp": 1
+          },
+          "raw": "40. Chainmail Hauberk — DEF +2, HP +1"
+        },
+        {
+          "index": 41,
+          "name": "Steamline Armor",
+          "category": "chestpiece",
+          "stats": {
+            "def": 1,
+            "agi": 2
+          },
+          "raw": "41. Steamline Armor — DEF +1, AGI +2"
+        },
+        {
+          "index": 42,
+          "name": "Hunter’s Vest",
+          "category": "chestpiece",
+          "stats": {
+            "acc": 1,
+            "agi": 2
+          },
+          "raw": "42. Hunter’s Vest — ACC +1, AGI +2"
+        },
+        {
+          "index": 43,
+          "name": "Reinforced Gambeson",
+          "category": "chestpiece",
+          "stats": {
+            "def": 2,
+            "hp": 1
+          },
+          "raw": "43. Reinforced Gambeson — DEF +2, HP +1"
+        },
+        {
+          "index": 44,
+          "name": "Battle Harness",
+          "category": "chestpiece",
+          "stats": {
+            "atk": 2,
+            "def": 1
+          },
+          "raw": "44. Battle Harness — ATK +2, DEF +1"
+        },
+        {
+          "index": 45,
+          "name": "Arcane Tunic",
+          "category": "chestpiece",
+          "stats": {
+            "acc": 1,
+            "luk": 2
+          },
+          "raw": "45. Arcane Tunic — ACC +1, LUK +2"
+        },
+        {
+          "index": 46,
+          "name": "Marksman’s Brigandine",
+          "category": "chestpiece",
+          "stats": {
+            "acc": 3,
+            "def": -1
+          },
+          "raw": "46. Marksman’s Brigandine — ACC +3, DEF -1"
+        }
+      ]
+    },
+    "accessories": [
+      {
+        "index": 47,
+        "name": "Steel Signet Ring",
+        "category": "accessory",
+        "stats": {
+          "def": 1,
+          "luk": 1
+        },
+        "raw": "47. Steel Signet Ring — DEF +1, LUK +1"
+      },
+      {
+        "index": 48,
+        "name": "Eagle Eye Lens",
+        "category": "accessory",
+        "stats": {
+          "acc": 2
+        },
+        "raw": "48. Eagle Eye Lens — ACC +2"
+      },
+      {
+        "index": 49,
+        "name": "Fleetfoot Anklet",
+        "category": "accessory",
+        "stats": {
+          "agi": 2
+        },
+        "raw": "49. Fleetfoot Anklet — AGI +2"
+      },
+      {
+        "index": 50,
+        "name": "Rune Pendant",
+        "category": "accessory",
+        "stats": {
+          "luk": 3
+        },
+        "raw": "50. Rune Pendant — LUK +3"
+      },
+      {
+        "index": 51,
+        "name": "Power Bracer",
+        "category": "accessory",
+        "stats": {
+          "atk": 2
+        },
+        "raw": "51. Power Bracer — ATK +2"
+      },
+      {
+        "index": 52,
+        "name": "Vitality Charm",
+        "category": "accessory",
+        "stats": {
+          "hp": 2
+        },
+        "raw": "52. Vitality Charm — HP +2"
+      },
+      {
+        "index": 53,
+        "name": "Steam Valve Wristguard",
+        "category": "accessory",
+        "stats": {
+          "def": 1,
+          "acc": 1
+        },
+        "raw": "53. Steam Valve Wristguard — DEF +1, ACC +1"
+      },
+      {
+        "index": 54,
+        "name": "Hunter’s Talisman",
+        "category": "accessory",
+        "stats": {
+          "acc": 1,
+          "agi": 1
+        },
+        "raw": "54. Hunter’s Talisman — ACC +1, AGI +1"
+      },
+      {
+        "index": 55,
+        "name": "Scholar’s Quill Pendant",
+        "category": "accessory",
+        "stats": {
+          "luk": 2,
+          "acc": 1
+        },
+        "raw": "55. Scholar’s Quill Pendant — LUK +2, ACC +1"
+      },
+      {
+        "index": 56,
+        "name": "Smoke Bomb Satchel",
+        "category": "accessory",
+        "stats": {
+          "agi": 1,
+          "def": -1
+        },
+        "raw": "56. Smoke Bomb Satchel — AGI +1, DEF -1, special escape ability"
+      },
+      {
+        "index": 57,
+        "name": "Warrior’s Belt",
+        "category": "accessory",
+        "stats": {
+          "atk": 1,
+          "hp": 1
+        },
+        "raw": "57. Warrior’s Belt — ATK +1, HP +1"
+      },
+      {
+        "index": 58,
+        "name": "Arcane Crystal Brooch",
+        "category": "accessory",
+        "stats": {
+          "acc": 1,
+          "luk": 1,
+          "def": -1
+        },
+        "raw": "58. Arcane Crystal Brooch — ACC +1, LUK +1, DEF -1"
+      }
+    ]
+  },
+  "enemies": {
+    "operations": [
+      {
+        "name": "Iron Gate",
+        "description": "Secure the Chaos Rift entrance (introductory foes)",
+        "tiers": {
+          "Light": [
+            {
+              "name": "Pudding",
+              "description": "Small, chaotic blobs of Dynara energy."
+            },
+            {
+              "name": "Skootler",
+              "description": "Mutated spiders gnawing at supply caches."
+            },
+            {
+              "name": "Detachable Heads",
+              "description": "Rabid, mechanical-dynara hybrids."
+            }
+          ],
+          "Medium": [
+            {
+              "name": "Chaos Knight",
+              "description": "Bat-like humanoids."
+            },
+            {
+              "name": "Chaos Militia",
+              "description": "Lightly armed human cultists."
+            },
+            {
+              "name": "Goo",
+              "description": "Big, chaotic blobs of Dynara energy."
+            },
+            {
+              "name": "Heavy (boss, 4x4)",
+              "description": ""
+            },
+            {
+              "name": "Rift Guardian",
+              "description": "A hulking crystal-imbued beast blocking the gate."
+            }
+          ],
+          "Heavy": []
+        },
+        "raw": [
+          "Operation Iron Gate – Secure the Chaos Rift entrance (introductory foes)",
+          "Light",
+          "Pudding – Small, chaotic blobs of Dynara energy.",
+          "Skootler – Mutated spiders gnawing at supply caches.",
+          "Detachable Heads – Rabid, mechanical-dynara hybrids.",
+          "Medium",
+          "Chaos Knight - Bat-like humanoids.",
+          "Chaos Militia – Lightly armed human cultists.",
+          "Goo - Big, chaotic blobs of Dynara energy.",
+          "Heavy (boss, 4x4)",
+          "Rift Guardian – A hulking crystal-imbued beast blocking the gate."
+        ]
+      },
+      {
+        "name": "Black Spire",
+        "description": "Capture enemy artillery positions (siege escalation)",
+        "tiers": {
+          "Light": [
+            {
+              "name": "Watcher",
+              "description": "Winged pyromancers that harass from range."
+            },
+            {
+              "name": "Sapper Gremlins",
+              "description": "Plant mines and sabotage devices."
+            },
+            {
+              "name": "Chaos Bub",
+              "description": "Stalk through low-visibility areas."
+            }
+          ],
+          "Medium": [
+            {
+              "name": "Artillery Crewmen",
+              "description": "Operate cannons and call bombardments."
+            },
+            {
+              "name": "Rober",
+              "description": ""
+            },
+            {
+              "name": "Skulta Shaman",
+              "description": "Buff nearby enemies, weaken player units."
+            }
+          ],
+          "Heavy": [
+            {
+              "name": "Siege Behemoth",
+              "description": "A living artillery engine fused with cannons."
+            }
+          ]
+        },
+        "raw": [
+          "Operation Black Spire – Capture enemy artillery positions (siege escalation)",
+          "Light",
+          "Watcher – Winged pyromancers that harass from range.",
+          "Sapper Gremlins – Plant mines and sabotage devices.",
+          "Chaos Bub – Stalk through low-visibility areas.",
+          "Medium",
+          "Artillery Crewmen – Operate cannons and call bombardments.",
+          "Rober -",
+          "Skulta Shaman – Buff nearby enemies, weaken player units.",
+          "Heavy",
+          "Siege Behemoth – A living artillery engine fused with cannons."
+        ]
+      },
+      {
+        "name": "Ghost Run",
+        "description": "Disrupt enemy supply lines (mobility & ambush heavy)",
+        "tiers": {
+          "Light": [
+            {
+              "name": "Carrion Crows",
+              "description": "Bird swarms that dive and peck."
+            },
+            {
+              "name": "Marauder Scouts",
+              "description": "Hit-and-run skirmishers."
+            },
+            {
+              "name": "Dynara Wisps",
+              "description": "Blink across tiles and harass with magic."
+            }
+          ],
+          "Medium": [
+            {
+              "name": "Supply Raiders",
+              "description": "Dual-blade fighters guarding stolen goods."
+            },
+            {
+              "name": "Chess Knights",
+              "description": ""
+            },
+            {
+              "name": "Rift Juggernauts",
+              "description": "Shieldbearers that block chokepoints."
+            }
+          ],
+          "Heavy": [
+            {
+              "name": "Phantom Stalker",
+              "description": "A massive cloaked predator that phases in and out."
+            }
+          ]
+        },
+        "raw": [
+          "Operation Ghost Run – Disrupt enemy supply lines (mobility & ambush heavy)",
+          "Light",
+          "Carrion Crows – Bird swarms that dive and peck.",
+          "Marauder Scouts – Hit-and-run skirmishers.",
+          "Dynara Wisps – Blink across tiles and harass with magic.",
+          "Medium",
+          "Supply Raiders – Dual-blade fighters guarding stolen goods.",
+          "Chess Knights –",
+          "Rift Juggernauts – Shieldbearers that block chokepoints.",
+          "Heavy",
+          "Phantom Stalker – A massive cloaked predator that phases in and out."
+        ]
+      },
+      {
+        "name": "Ember Siege",
+        "description": "Destroy key enemy fortifications (fortress defenders)",
+        "tiers": {
+          "Light": [
+            {
+              "name": "Emberlings",
+              "description": "Fire-spitting salamanders crawling on walls."
+            },
+            {
+              "name": "Bomb Drones",
+              "description": "Mechanical drones that divebomb fortifications."
+            },
+            {
+              "name": "Chaos Slaves",
+              "description": "Shackled, unstable fighters forced into battle."
+            }
+          ],
+          "Medium": [
+            {
+              "name": "Scuttler",
+              "description": ""
+            },
+            {
+              "name": "Chaos Wraith",
+              "description": "Area-denial mages creating fire zones."
+            },
+            {
+              "name": "Chaos Golems",
+              "description": "Medium constructs patrolling fortress walls."
+            }
+          ],
+          "Heavy": [
+            {
+              "name": "Infernal Colossus",
+              "description": "A towering construct fused into the fortress wall."
+            }
+          ]
+        },
+        "raw": [
+          "Operation Ember Siege – Destroy key enemy fortifications (fortress defenders)",
+          "Light",
+          "Emberlings – Fire-spitting salamanders crawling on walls.",
+          "Bomb Drones – Mechanical drones that divebomb fortifications.",
+          "Chaos Slaves – Shackled, unstable fighters forced into battle.",
+          "Medium",
+          "Scuttler",
+          "Chaos Wraith – Area-denial mages creating fire zones.",
+          "Chaos Golems – Medium constructs patrolling fortress walls.",
+          "Heavy",
+          "Infernal Colossus – A towering construct fused into the fortress wall."
+        ]
+      },
+      {
+        "name": "Final Dawn",
+        "description": "Assault the enemy command center (endgame threats)",
+        "tiers": {
+          "Light": [
+            {
+              "name": "Rift Shades",
+              "description": "Shadow duplicates of the player’s team."
+            },
+            {
+              "name": "Goylej",
+              "description": ""
+            },
+            {
+              "name": "Void Drones",
+              "description": "Machine overseers of the command chamber."
+            }
+          ],
+          "Medium": [
+            {
+              "name": "Rift Warlocks",
+              "description": "High-ranking dynara sorcerers."
+            },
+            {
+              "name": "Commander’s Guard",
+              "description": "Elite human warriors with mixed gear."
+            },
+            {
+              "name": "Screecher",
+              "description": ""
+            }
+          ],
+          "Heavy": [
+            {
+              "name": "The Rift Tyrant",
+              "description": "Command center’s final guardian, a 4x4 nightmare."
+            }
+          ]
+        },
+        "raw": [
+          "Operation Final Dawn – Assault the enemy command center (endgame threats)",
+          "Light",
+          "Rift Shades – Shadow duplicates of the player’s team.",
+          "Goylej",
+          "Void Drones – Machine overseers of the command chamber.",
+          "Medium",
+          "Rift Warlocks – High-ranking dynara sorcerers.",
+          "Commander’s Guard – Elite human warriors with mixed gear.",
+          "Screecher",
+          "Heavy",
+          "The Rift Tyrant – Command center’s final guardian, a 4x4 nightmare."
+        ]
+      }
+    ],
+    "designNotesRaw": "(Free-Move Zones)\nPurpose: Quick skirmishes, resource drops, introduce mechanics without overwhelming the player.\nCount for Base Game: 10–12 types\nBreakdown:\n2–3 melee humanoids (bandits, militia, cultists)\n2–3 ranged humanoids (archers, slingers, tinkers)\n2–3 beasts (wolves, boars, swamp lizards)\n2–3 mechanical units (small drones, clockwork beetles, steam spiders)\nTactical Encounter Enemies (Battle Rooms)\nPurpose: Core battle challenges; varied enough to keep procedural runs fresh.\nCount for Base Game: 15–18 types \nBreakdown:\n4–5 basic infantry\n3–4 ranged/aoe units\n3–4 support/debuffer units\n2–3 elite melee units\n3–4 heavy mechanicals\nBoss / Elite Enemies\nPurpose: End-of-floor encounters or key operation milestones.\nCount for Base Game: 5 bosses (1 per operation)"
+  },
+  "cards": {
+    "core": [
+      {
+        "id": 0,
+        "name": "Move+",
+        "raw": "000 — Move+ — Move 2 extra tiles this turn. Strain: 1. Range: R(0–0), V0, N/A",
+        "text": "Move 2 extra tiles this turn. Strain: 1. Range: R(0–0), V0, N/A",
+        "strain": 1,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 1,
+        "name": "Basic Attack",
+        "raw": "001 — Basic Attack — Standard attack on enemy. Strain: 0. Range: R(1–1), V1, Direct",
+        "text": "Standard attack on enemy. Strain: 0. Range: R(1–1), V1, Direct",
+        "strain": 0,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 2,
+        "name": "Aid",
+        "raw": "002 — Aid — Restore small amount of HP to ally. Strain: 1. Range: R(1–2), V1, Direct",
+        "text": "Restore small amount of HP to ally. Strain: 1. Range: R(1–2), V1, Direct",
+        "strain": 1,
+        "range": "1–2",
+        "vision": 1
+      },
+      {
+        "id": 3,
+        "name": "Overwatch",
+        "raw": "003 — Overwatch — Attack enemy that enters range. Strain: 1. Range: R(2–5), V2, Direct",
+        "text": "Attack enemy that enters range. Strain: 1. Range: R(2–5), V2, Direct",
+        "strain": 1,
+        "range": "2–5",
+        "vision": 2
+      }
+    ],
+    "class": [
+      {
+        "id": 4,
+        "name": "Squire: Power Slash",
+        "raw": "004 — Squire: Power Slash — Deal heavy melee damage to one enemy. Strain: 2. Range: R(1–1), V1, Direct",
+        "text": "Deal heavy melee damage to one enemy. Strain: 2. Range: R(1–1), V1, Direct",
+        "strain": 2,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 5,
+        "name": "Squire: Shield Wall",
+        "raw": "005 — Squire: Shield Wall — Reduce damage taken by all allies for 1 turn. Strain: 3. Range: R(0–0), V0, N/A",
+        "text": "Reduce damage taken by all allies for 1 turn. Strain: 3. Range: R(0–0), V0, N/A",
+        "strain": 3,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 6,
+        "name": "Squire: Rally Cry",
+        "raw": "006 — Squire: Rally Cry — Boost ATK of all allies for 2 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "text": "Boost ATK of all allies for 2 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "strain": 2,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 7,
+        "name": "Ranger: Pinning Shot",
+        "raw": "007 — Ranger: Pinning Shot — Immobilize an enemy for 1 turn. Strain: 2. Range: R(2–5), V2, Direct",
+        "text": "Immobilize an enemy for 1 turn. Strain: 2. Range: R(2–5), V2, Direct",
+        "strain": 2,
+        "range": "2–5",
+        "vision": 2
+      },
+      {
+        "id": 8,
+        "name": "Ranger: Volley",
+        "raw": "008 — Ranger: Volley — Deal light damage to all enemies in range. Strain: 3. Range: R(3–6), V2, Indirect, AoE",
+        "text": "Deal light damage to all enemies in range. Strain: 3. Range: R(3–6), V2, Indirect, AoE",
+        "strain": 3,
+        "range": "3–6",
+        "vision": 2
+      },
+      {
+        "id": 9,
+        "name": "Ranger: Scout’s Mark",
+        "raw": "009 — Ranger: Scout’s Mark — Reveal all enemies and traps in range. Strain: 1. Range: R(0–6), V3, N/A",
+        "text": "Reveal all enemies and traps in range. Strain: 1. Range: R(0–6), V3, N/A",
+        "strain": 1,
+        "range": "0–6",
+        "vision": 3
+      },
+      {
+        "id": 10,
+        "name": "Magician: Arcane Bolt",
+        "raw": "010 — Magician: Arcane Bolt — Deal moderate magic damage to an enemy. Strain: 2. Range: R(2–6), V3, Direct",
+        "text": "Deal moderate magic damage to an enemy. Strain: 2. Range: R(2–6), V3, Direct",
+        "strain": 2,
+        "range": "2–6",
+        "vision": 3
+      },
+      {
+        "id": 11,
+        "name": "Magician: Mana Burst",
+        "raw": "011 — Magician: Mana Burst — Deal heavy AoE magic damage. Strain: 3. Range: R(2–4), V2, Indirect, AoE",
+        "text": "Deal heavy AoE magic damage. Strain: 3. Range: R(2–4), V2, Indirect, AoE",
+        "strain": 3,
+        "range": "2–4",
+        "vision": 2
+      },
+      {
+        "id": 12,
+        "name": "Magician: Barrier",
+        "raw": "012 — Magician: Barrier — Grant magic shield to an ally. Strain: 2. Range: R(1–3), V2, Direct",
+        "text": "Grant magic shield to an ally. Strain: 2. Range: R(1–3), V2, Direct",
+        "strain": 2,
+        "range": "1–3",
+        "vision": 2
+      },
+      {
+        "id": 13,
+        "name": "Thief: Steal",
+        "raw": "013 — Thief: Steal — Take an item from the target. Strain: 1. Range: R(1–1), V1, Direct",
+        "text": "Take an item from the target. Strain: 1. Range: R(1–1), V1, Direct",
+        "strain": 1,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 14,
+        "name": "Thief: Backstab",
+        "raw": "014 — Thief: Backstab — Deal high damage if behind enemy. Strain: 2. Range: R(1–1), V1, Direct",
+        "text": "Deal high damage if behind enemy. Strain: 2. Range: R(1–1), V1, Direct",
+        "strain": 2,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 15,
+        "name": "Thief: Smoke Bomb",
+        "raw": "015 — Thief: Smoke Bomb — Reduce enemy accuracy for 2 turns. Strain: 2. Range: R(0–2), V1, Indirect, AoE",
+        "text": "Reduce enemy accuracy for 2 turns. Strain: 2. Range: R(0–2), V1, Indirect, AoE",
+        "strain": 2,
+        "range": "0–2",
+        "vision": 1
+      },
+      {
+        "id": 16,
+        "name": "Academic: Analyze",
+        "raw": "016 — Academic: Analyze — Reveal enemy stats and weaknesses. Strain: 1. Range: R(0–6), V3, N/A",
+        "text": "Reveal enemy stats and weaknesses. Strain: 1. Range: R(0–6), V3, N/A",
+        "strain": 1,
+        "range": "0–6",
+        "vision": 3
+      },
+      {
+        "id": 17,
+        "name": "Academic: Tactics Shift",
+        "raw": "017 — Academic: Tactics Shift — Reposition an ally instantly. Strain: 2. Range: R(1–4), V2, Direct",
+        "text": "Reposition an ally instantly. Strain: 2. Range: R(1–4), V2, Direct",
+        "strain": 2,
+        "range": "1–4",
+        "vision": 2
+      },
+      {
+        "id": 18,
+        "name": "Academic: Inspire",
+        "raw": "018 — Academic: Inspire — Reduce strain of all allies by 1. Strain: 2. Range: R(0–0), V0, N/A",
+        "text": "Reduce strain of all allies by 1. Strain: 2. Range: R(0–0), V0, N/A",
+        "strain": 2,
+        "range": "0–0",
+        "vision": 0
+      }
+    ],
+    "equipment": [
+      {
+        "id": 19,
+        "name": "Iron Longsword: Cleave",
+        "raw": "019 — Iron Longsword: Cleave — R(1), V1, Arc — Deal 3 damage to up to 3 adjacent enemies.",
+        "text": "R(1), V1, Arc—Deal 3 damage to up to 3 adjacent enemies.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Arc",
+        "effect": "Deal 3 damage to up to 3 adjacent enemies."
+      },
+      {
+        "id": 20,
+        "name": "Iron Longsword: Parry Readiness",
+        "raw": "020 — Iron Longsword: Parry Readiness — R(1), V1, Direct — If attacked before your next turn, cancel 1 attack.",
+        "text": "R(1), V1, Direct—If attacked before your next turn, cancel 1 attack.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "If attacked before your next turn, cancel 1 attack."
+      },
+      {
+        "id": 21,
+        "name": "Iron Longsword: Guarded Stance",
+        "raw": "021 — Iron Longsword: Guarded Stance — R(Self) — +2 DEF until your next turn.",
+        "text": "R(Self)—+2 DEF until your next turn.",
+        "range": "Self",
+        "effect": "+2 DEF until your next turn."
+      },
+      {
+        "id": 22,
+        "name": "Runed Shortsword: Twin Cut",
+        "raw": "022 — Runed Shortsword: Twin Cut — R(1), V1, Direct — Two attacks, each dealing 2 damage.",
+        "text": "R(1), V1, Direct—Two attacks, each dealing 2 damage.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Two attacks, each dealing 2 damage."
+      },
+      {
+        "id": 23,
+        "name": "Runed Shortsword: Quick Reposition",
+        "raw": "023 — Runed Shortsword: Quick Reposition — R(Self) — Move up to 3 tiles ignoring engagement.",
+        "text": "R(Self)—Move up to 3 tiles ignoring engagement.",
+        "range": "Self",
+        "effect": "Move up to 3 tiles ignoring engagement."
+      },
+      {
+        "id": 24,
+        "name": "Runed Shortsword: Arcane Guard",
+        "raw": "024 — Runed Shortsword: Arcane Guard — R(Self) — Gain +2 DEF against magic attacks for 1 turn.",
+        "text": "R(Self)—Gain +2 DEF against magic attacks for 1 turn.",
+        "range": "Self",
+        "effect": "Gain +2 DEF against magic attacks for 1 turn."
+      },
+      {
+        "id": 25,
+        "name": "Scissor Sword: Breaker Chop",
+        "raw": "025 — Scissor Sword: Breaker Chop — R(1), V1, Direct — Deal 5 damage and reduce target DEF by 1 for 1 turn.",
+        "text": "R(1), V1, Direct—Deal 5 damage and reduce target DEF by 1 for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 5 damage and reduce target DEF by 1 for 1 turn."
+      },
+      {
+        "id": 26,
+        "name": "Scissor Sword: Guard Break",
+        "raw": "026 — Scissor Sword: Guard Break — R(1), V1, Direct — Reduce target DEF by 2 for 1 turn.",
+        "text": "R(1), V1, Direct—Reduce target DEF by 2 for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Reduce target DEF by 2 for 1 turn."
+      },
+      {
+        "id": 27,
+        "name": "Scissor Sword: Counter Brace",
+        "raw": "027 — Scissor Sword: Counter Brace — R(Self) — If attacked, make a counterattack at –2 ATK.",
+        "text": "R(Self)—If attacked, make a counterattack at –2 ATK.",
+        "range": "Self",
+        "effect": "If attacked, make a counterattack at –2 ATK."
+      },
+      {
+        "id": 28,
+        "name": "Elm Recurve Bow: Pinpoint Shot",
+        "raw": "028 — Elm Recurve Bow: Pinpoint Shot — R(3–6), V1, Direct — Deal 4 damage; +1 ACC for this attack.",
+        "text": "R(3–6), V1, Direct—Deal 4 damage; +1 ACC for this attack.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage; +1 ACC for this attack."
+      },
+      {
+        "id": 29,
+        "name": "Elm Recurve Bow: Warning Shot",
+        "raw": "029 — Elm Recurve Bow: Warning Shot — R(3–6), V1, Direct — Target suffers –2 ACC for 1 turn.",
+        "text": "R(3–6), V1, Direct—Target suffers –2 ACC for 1 turn.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "Direct",
+        "effect": "Target suffers –2 ACC for 1 turn."
+      },
+      {
+        "id": 30,
+        "name": "Elm Recurve Bow: Defensive Draw",
+        "raw": "030 — Elm Recurve Bow: Defensive Draw — R(Self) — +1 DEF and +1 ACC until your next attack.",
+        "text": "R(Self)—+1 DEF and +1 ACC until your next attack.",
+        "range": "Self",
+        "effect": "+1 DEF and +1 ACC until your next attack."
+      },
+      {
+        "id": 31,
+        "name": "Composite Greatbow: Overdraw",
+        "raw": "031 — Composite Greatbow: Overdraw — R(4–7), V1, Direct — Deal 5 damage; –2 ACC for this attack.",
+        "text": "R(4–7), V1, Direct—Deal 5 damage; –2 ACC for this attack.",
+        "vision": 1,
+        "range": "4–7",
+        "targeting": "Direct",
+        "effect": "Deal 5 damage; –2 ACC for this attack."
+      },
+      {
+        "id": 32,
+        "name": "Composite Greatbow: Pin Down",
+        "raw": "032 — Composite Greatbow: Pin Down — R(4–7), V1, Direct — Target cannot move more than 2 tiles next turn.",
+        "text": "R(4–7), V1, Direct—Target cannot move more than 2 tiles next turn.",
+        "vision": 1,
+        "range": "4–7",
+        "targeting": "Direct",
+        "effect": "Target cannot move more than 2 tiles next turn."
+      },
+      {
+        "id": 33,
+        "name": "Composite Greatbow: Long Sight Guard",
+        "raw": "033 — Composite Greatbow: Long Sight Guard — R(Self) — Ignore first overwatch attack against you this turn.",
+        "text": "R(Self)—Ignore first overwatch attack against you this turn.",
+        "range": "Self",
+        "effect": "Ignore first overwatch attack against you this turn."
+      },
+      {
+        "id": 34,
+        "name": "Willow Shortbow: Rapid Shot",
+        "raw": "034 — Willow Shortbow: Rapid Shot — R(3–5), V1, Direct — Three attacks, each dealing 2 damage.",
+        "text": "R(3–5), V1, Direct—Three attacks, each dealing 2 damage.",
+        "vision": 1,
+        "range": "3–5",
+        "targeting": "Direct",
+        "effect": "Three attacks, each dealing 2 damage."
+      },
+      {
+        "id": 35,
+        "name": "Willow Shortbow: Tag Mark",
+        "raw": "035 — Willow Shortbow: Tag Mark — R(3–5), V1, Direct — Mark target; allies gain +2 ACC when attacking them for 1 turn.",
+        "text": "R(3–5), V1, Direct—Mark target; allies gain +2 ACC when attacking them for 1 turn.",
+        "vision": 1,
+        "range": "3–5",
+        "targeting": "Direct",
+        "effect": "Mark target; allies gain +2 ACC when attacking them for 1 turn."
+      },
+      {
+        "id": 36,
+        "name": "Willow Shortbow: Quick Cover",
+        "raw": "036 — Willow Shortbow: Quick Cover — R(Self) — Gain +2 DEF if you move at least 2 tiles this turn.",
+        "text": "R(Self)—Gain +2 DEF if you move at least 2 tiles this turn.",
+        "range": "Self",
+        "effect": "Gain +2 DEF if you move at least 2 tiles this turn."
+      },
+      {
+        "id": 37,
+        "name": "Oak Battlestaff: Blunt Sweep",
+        "raw": "037 — Oak Battlestaff: Blunt Sweep — R(1–2), V1, Arc — Deal 3 damage to all enemies in a 90° arc.",
+        "text": "R(1–2), V1, Arc—Deal 3 damage to all enemies in a 90° arc.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Arc",
+        "effect": "Deal 3 damage to all enemies in a 90° arc."
+      },
+      {
+        "id": 38,
+        "name": "Oak Battlestaff: Deflective Spin",
+        "raw": "038 — Oak Battlestaff: Deflective Spin — R(1), V1, Arc — Block next ranged attack from enemies in arc.",
+        "text": "R(1), V1, Arc—Block next ranged attack from enemies in arc.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Arc",
+        "effect": "Block next ranged attack from enemies in arc."
+      },
+      {
+        "id": 39,
+        "name": "Oak Battlestaff: Ward Spin",
+        "raw": "039 — Oak Battlestaff: Ward Spin — R(Self) — Block first melee hit until next turn.",
+        "text": "R(Self)—Block first melee hit until next turn.",
+        "range": "Self",
+        "effect": "Block first melee hit until next turn."
+      },
+      {
+        "id": 40,
+        "name": "Silver Channeling Rod: Piercing Ray",
+        "raw": "040 — Silver Channeling Rod: Piercing Ray — R(2–4), V2, Direct — Deal 4 damage; ignores 1 DEF.",
+        "text": "R(2–4), V2, Direct—Deal 4 damage; ignores 1 DEF.",
+        "vision": 2,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage; ignores 1 DEF."
+      },
+      {
+        "id": 41,
+        "name": "Silver Channeling Rod: Magic Echo",
+        "raw": "041 — Silver Channeling Rod: Magic Echo — R(2–4), V2, Direct — Target takes +1 magic damage from all sources for 2 turns.",
+        "text": "R(2–4), V2, Direct—Target takes +1 magic damage from all sources for 2 turns.",
+        "vision": 2,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Target takes +1 magic damage from all sources for 2 turns."
+      },
+      {
+        "id": 42,
+        "name": "Silver Channeling Rod: Barrier Pulse",
+        "raw": "042 — Silver Channeling Rod: Barrier Pulse — R(1–2), V1, Direct — Grant +2 DEF to ally.",
+        "text": "R(1–2), V1, Direct—Grant +2 DEF to ally.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Grant +2 DEF to ally."
+      },
+      {
+        "id": 43,
+        "name": "Blackwood Greatstaff: Crushing End",
+        "raw": "043 — Blackwood Greatstaff: Crushing End — R(1), V1, Direct — Deal 6 damage but –2 AGI next turn.",
+        "text": "R(1), V1, Direct—Deal 6 damage but –2 AGI next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 6 damage but –2 AGI next turn."
+      },
+      {
+        "id": 44,
+        "name": "Blackwood Greatstaff: Zone Control",
+        "raw": "044 — Blackwood Greatstaff: Zone Control — R(1–3), V1, AoE(1) — Difficult terrain for enemies for 1 turn.",
+        "text": "R(1–3), V1, AoE(1)—Difficult terrain for enemies for 1 turn.",
+        "vision": 1,
+        "range": "1–3",
+        "targeting": "AoE(1)",
+        "effect": "Difficult terrain for enemies for 1 turn."
+      },
+      {
+        "id": 45,
+        "name": "Blackwood Greatstaff: Earth Ward",
+        "raw": "045 — Blackwood Greatstaff: Earth Ward — R(Self) — Cannot be knocked down or moved until next turn.",
+        "text": "R(Self)—Cannot be knocked down or moved until next turn.",
+        "range": "Self",
+        "effect": "Cannot be knocked down or moved until next turn."
+      },
+      {
+        "id": 46,
+        "name": "Steel Dagger: Throat Jab",
+        "raw": "046 — Steel Dagger: Throat Jab — R(1), V1, Direct — Deal 3 damage and reduce target ACC by 2 next turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage and reduce target ACC by 2 next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage and reduce target ACC by 2 next turn."
+      },
+      {
+        "id": 47,
+        "name": "Steel Dagger: Hamstring",
+        "raw": "047 — Steel Dagger: Hamstring — R(1), V1, Direct — Target loses 2 movement next turn.",
+        "text": "R(1), V1, Direct—Target loses 2 movement next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Target loses 2 movement next turn."
+      },
+      {
+        "id": 48,
+        "name": "Steel Dagger: Sidestep",
+        "raw": "048 — Steel Dagger: Sidestep — R(Self) — Gain +3 AGI until end of turn.",
+        "text": "R(Self)—Gain +3 AGI until end of turn.",
+        "range": "Self",
+        "effect": "Gain +3 AGI until end of turn."
+      },
+      {
+        "id": 49,
+        "name": "Ivory Fangblade: Frenzy Stab",
+        "raw": "049 — Ivory Fangblade: Frenzy Stab — R(1), V1, Direct — Deal 4 damage; you suffer 1 self-damage.",
+        "text": "R(1), V1, Direct—Deal 4 damage; you suffer 1 self-damage.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage; you suffer 1 self-damage."
+      },
+      {
+        "id": 50,
+        "name": "Ivory Fangblade: Disarm Flick",
+        "raw": "050 — Ivory Fangblade: Disarm Flick — R(1), V1, Direct — Target cannot use weapon cards next turn.",
+        "text": "R(1), V1, Direct—Target cannot use weapon cards next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Target cannot use weapon cards next turn."
+      },
+      {
+        "id": 51,
+        "name": "Ivory Fangblade: Retreat Guard",
+        "raw": "051 — Ivory Fangblade: Retreat Guard — R(Self) — Gain +2 DEF if you move this turn.",
+        "text": "R(Self)—Gain +2 DEF if you move this turn.",
+        "range": "Self",
+        "effect": "Gain +2 DEF if you move this turn."
+      },
+      {
+        "id": 52,
+        "name": "Weighted Dagger: Pommel Smash",
+        "raw": "052 — Weighted Dagger: Pommel Smash — R(1), V1, Direct — Deal 3 damage; target loses movement next turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage; target loses movement next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; target loses movement next turn."
+      },
+      {
+        "id": 53,
+        "name": "Weighted Dagger: Feint Draw",
+        "raw": "053 — Weighted Dagger: Feint Draw — R(Self) — Gain +2 AGI for 1 turn.",
+        "text": "R(Self)—Gain +2 AGI for 1 turn.",
+        "range": "Self",
+        "effect": "Gain +2 AGI for 1 turn."
+      },
+      {
+        "id": 54,
+        "name": "Weighted Dagger: Deflect Grip",
+        "raw": "054 — Weighted Dagger: Deflect Grip — R(Self) — Ignore first melee attack this turn.",
+        "text": "R(Self)—Ignore first melee attack this turn.",
+        "range": "Self",
+        "effect": "Ignore first melee attack this turn."
+      },
+      {
+        "id": 55,
+        "name": "Ironguard Helm: Headbutt",
+        "raw": "055 — Ironguard Helm: Headbutt — R(1), V1, Direct — Deal 2 damage and stun for 1 turn.",
+        "text": "R(1), V1, Direct—Deal 2 damage and stun for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 2 damage and stun for 1 turn."
+      },
+      {
+        "id": 56,
+        "name": "Ironguard Helm: Shield Sight",
+        "raw": "056 — Ironguard Helm: Shield Sight — R(Self) — Ignore flanking penalties until your next turn.",
+        "text": "R(Self)—Ignore flanking penalties until your next turn.",
+        "range": "Self",
+        "effect": "Ignore flanking penalties until your next turn."
+      },
+      {
+        "id": 57,
+        "name": "Ironguard Helm: Shield Headbutt",
+        "raw": "057 — Ironguard Helm: Shield Headbutt — R(1), V1, Direct — Stun target for 1 turn.",
+        "text": "R(1), V1, Direct—Stun target for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Stun target for 1 turn."
+      },
+      {
+        "id": 58,
+        "name": "Ranger’s Hood: Aimed Strike",
+        "raw": "058 — Ranger’s Hood: Aimed Strike — R(2–4), V1, Direct — Deal 3 damage with +1 ACC.",
+        "text": "R(2–4), V1, Direct—Deal 3 damage with +1 ACC.",
+        "vision": 1,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage with +1 ACC."
+      },
+      {
+        "id": 59,
+        "name": "Ranger’s Hood: Hunter’s Mark",
+        "raw": "059 — Ranger’s Hood: Hunter’s Mark — R(3–5), V1, Direct — Mark target; next ranged attack deals +2 damage.",
+        "text": "R(3–5), V1, Direct—Mark target; next ranged attack deals +2 damage.",
+        "vision": 1,
+        "range": "3–5",
+        "targeting": "Direct",
+        "effect": "Mark target; next ranged attack deals +2 damage."
+      },
+      {
+        "id": 60,
+        "name": "Ranger’s Hood: Hide in Shadows",
+        "raw": "060 — Ranger’s Hood: Hide in Shadows — R(Self) — Gain +2 AGI and untargetable at range for 1 turn.",
+        "text": "R(Self)—Gain +2 AGI and untargetable at range for 1 turn.",
+        "range": "Self",
+        "effect": "Gain +2 AGI and untargetable at range for 1 turn."
+      },
+      {
+        "id": 61,
+        "name": "Mystic Circlet: Mind Spike",
+        "raw": "061 — Mystic Circlet: Mind Spike — R(2–3), V2, Direct — Deal 4 magic damage.",
+        "text": "R(2–3), V2, Direct—Deal 4 magic damage.",
+        "vision": 2,
+        "range": "2–3",
+        "targeting": "Direct",
+        "effect": "Deal 4 magic damage."
+      },
+      {
+        "id": 62,
+        "name": "Mystic Circlet: Spell Focus",
+        "raw": "062 — Mystic Circlet: Spell Focus — R(Self) — Your next magic skill gains +3 ACC.",
+        "text": "R(Self)—Your next magic skill gains +3 ACC.",
+        "range": "Self",
+        "effect": "Your next magic skill gains +3 ACC."
+      },
+      {
+        "id": 63,
+        "name": "Mystic Circlet: Mana Barrier",
+        "raw": "063 — Mystic Circlet: Mana Barrier — R(Self) — Reduce incoming magic damage by 2 until next turn.",
+        "text": "R(Self)—Reduce incoming magic damage by 2 until next turn.",
+        "range": "Self",
+        "effect": "Reduce incoming magic damage by 2 until next turn."
+      },
+      {
+        "id": 64,
+        "name": "Thief’s Bandana: Neck Slash",
+        "raw": "064 — Thief’s Bandana: Neck Slash — R(1), V1, Direct — Deal 4 damage if attacking from side or rear.",
+        "text": "R(1), V1, Direct—Deal 4 damage if attacking from side or rear.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage if attacking from side or rear."
+      },
+      {
+        "id": 65,
+        "name": "Thief’s Bandana: Blind Step",
+        "raw": "065 — Thief’s Bandana: Blind Step — R(Self) — Move 2 tiles without provoking overwatch.",
+        "text": "R(Self)—Move 2 tiles without provoking overwatch.",
+        "range": "Self",
+        "effect": "Move 2 tiles without provoking overwatch."
+      },
+      {
+        "id": 66,
+        "name": "Thief’s Bandana: Evasive Step",
+        "raw": "066 — Thief’s Bandana: Evasive Step — R(Self) — Gain +3 AGI until your next turn.",
+        "text": "R(Self)—Gain +3 AGI until your next turn.",
+        "range": "Self",
+        "effect": "Gain +3 AGI until your next turn."
+      },
+      {
+        "id": 67,
+        "name": "Scholar’s Cap: Book Slam",
+        "raw": "067 — Scholar’s Cap: Book Slam — R(1), V1, Direct — Deal 3 damage and reduce enemy LUK by 2.",
+        "text": "R(1), V1, Direct—Deal 3 damage and reduce enemy LUK by 2.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage and reduce enemy LUK by 2."
+      },
+      {
+        "id": 68,
+        "name": "Scholar’s Cap: Quick Study",
+        "raw": "068 — Scholar’s Cap: Quick Study — R(Self) — Reveal one hidden trap within 4 tiles.",
+        "text": "R(Self)—Reveal one hidden trap within 4 tiles.",
+        "range": "Self",
+        "effect": "Reveal one hidden trap within 4 tiles."
+      },
+      {
+        "id": 69,
+        "name": "Scholar’s Cap: Insight Guard",
+        "raw": "069 — Scholar’s Cap: Insight Guard — R(Self) — Ignore first negative status effect this turn.",
+        "text": "R(Self)—Ignore first negative status effect this turn.",
+        "range": "Self",
+        "effect": "Ignore first negative status effect this turn."
+      },
+      {
+        "id": 70,
+        "name": "Brass Visor: Flash Flare",
+        "raw": "070 — Brass Visor: Flash Flare — R(2–3), V1, Cone — Deal 2 damage to all in cone; blind 1 turn.",
+        "text": "R(2–3), V1, Cone—Deal 2 damage to all in cone; blind 1 turn.",
+        "vision": 1,
+        "range": "2–3",
+        "targeting": "Cone",
+        "effect": "Deal 2 damage to all in cone; blind 1 turn."
+      },
+      {
+        "id": 71,
+        "name": "Brass Visor: Glint Distraction",
+        "raw": "071 — Brass Visor: Glint Distraction — R(2–3), V1, Cone — Enemies in cone have –1 ACC for 1 turn.",
+        "text": "R(2–3), V1, Cone—Enemies in cone have –1 ACC for 1 turn.",
+        "vision": 1,
+        "range": "2–3",
+        "targeting": "Cone",
+        "effect": "Enemies in cone have –1 ACC for 1 turn."
+      },
+      {
+        "id": 72,
+        "name": "Brass Visor: Glare Shield",
+        "raw": "072 — Brass Visor: Glare Shield — R(Self) — Melee attackers suffer –1 ACC for 1 turn.",
+        "text": "R(Self)—Melee attackers suffer –1 ACC for 1 turn.",
+        "range": "Self",
+        "effect": "Melee attackers suffer –1 ACC for 1 turn."
+      },
+      {
+        "id": 73,
+        "name": "Hunter’s Coif: Quick Shot",
+        "raw": "073 — Hunter’s Coif: Quick Shot — R(2–5), V1, Direct — Deal 3 damage.",
+        "text": "R(2–5), V1, Direct—Deal 3 damage.",
+        "vision": 1,
+        "range": "2–5",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage."
+      },
+      {
+        "id": 74,
+        "name": "Hunter’s Coif: Tracking Shot",
+        "raw": "074 — Hunter’s Coif: Tracking Shot — R(2–4), V1, Direct — Reveals target’s movement path for 1 turn.",
+        "text": "R(2–4), V1, Direct—Reveals target’s movement path for 1 turn.",
+        "vision": 1,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Reveals target’s movement path for 1 turn."
+      },
+      {
+        "id": 75,
+        "name": "Hunter’s Coif: Predator’s Brace",
+        "raw": "075 — Hunter’s Coif: Predator’s Brace — R(Self) — First enemy to attack you loses 1 DEF.",
+        "text": "R(Self)—First enemy to attack you loses 1 DEF.",
+        "range": "Self",
+        "effect": "First enemy to attack you loses 1 DEF."
+      },
+      {
+        "id": 76,
+        "name": "Steamweld Goggles: Scald Burst",
+        "raw": "076 — Steamweld Goggles: Scald Burst — R(1–2), V1, Cone — Deal 3 damage and inflict Burn 1 turn.",
+        "text": "R(1–2), V1, Cone—Deal 3 damage and inflict Burn 1 turn.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Cone",
+        "effect": "Deal 3 damage and inflict Burn 1 turn."
+      },
+      {
+        "id": 77,
+        "name": "Steamweld Goggles: Steam Flash",
+        "raw": "077 — Steamweld Goggles: Steam Flash — R(1–2), V1, Cone — Blind enemies in cone for 1 turn.",
+        "text": "R(1–2), V1, Cone—Blind enemies in cone for 1 turn.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Cone",
+        "effect": "Blind enemies in cone for 1 turn."
+      },
+      {
+        "id": 78,
+        "name": "Steamweld Goggles: Flash Shield",
+        "raw": "078 — Steamweld Goggles: Flash Shield — R(Self) — Blind melee attacker for 1 turn when hit.",
+        "text": "R(Self)—Blind melee attacker for 1 turn when hit.",
+        "range": "Self",
+        "effect": "Blind melee attacker for 1 turn when hit."
+      },
+      {
+        "id": 79,
+        "name": "Battle Mask: War Cry Strike",
+        "raw": "079 — Battle Mask: War Cry Strike — R(1), V1, Direct — Deal 3 damage; gain +1 ATK for 1 turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage; gain +1 ATK for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; gain +1 ATK for 1 turn."
+      },
+      {
+        "id": 80,
+        "name": "Battle Mask: War Chant",
+        "raw": "080 — Battle Mask: War Chant — R(Self) — Allies within 2 tiles gain +1 ATK for 1 turn.",
+        "text": "R(Self)—Allies within 2 tiles gain +1 ATK for 1 turn.",
+        "range": "Self",
+        "effect": "Allies within 2 tiles gain +1 ATK for 1 turn."
+      },
+      {
+        "id": 81,
+        "name": "Battle Mask: Rally Shout",
+        "raw": "081 — Battle Mask: Rally Shout — R(Self) — All allies within 2 tiles gain +1 DEF for 1 turn.",
+        "text": "R(Self)—All allies within 2 tiles gain +1 DEF for 1 turn.",
+        "range": "Self",
+        "effect": "All allies within 2 tiles gain +1 DEF for 1 turn."
+      },
+      {
+        "id": 82,
+        "name": "Arcane Hood: Mystic Lash",
+        "raw": "082 — Arcane Hood: Mystic Lash — R(2–4), V2, Direct — Deal 3 magic damage.",
+        "text": "R(2–4), V2, Direct—Deal 3 magic damage.",
+        "vision": 2,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Deal 3 magic damage."
+      },
+      {
+        "id": 83,
+        "name": "Arcane Hood: Rune Sense",
+        "raw": "083 — Arcane Hood: Rune Sense — R(Self) — Next magic attack ignores LoS.",
+        "text": "R(Self)—Next magic attack ignores LoS.",
+        "range": "Self",
+        "effect": "Next magic attack ignores LoS."
+      },
+      {
+        "id": 84,
+        "name": "Arcane Hood: Rune Shield",
+        "raw": "084 — Arcane Hood: Rune Shield — R(Self) — Gain +2 DEF and immunity to magic debuffs this turn.",
+        "text": "R(Self)—Gain +2 DEF and immunity to magic debuffs this turn.",
+        "range": "Self",
+        "effect": "Gain +2 DEF and immunity to magic debuffs this turn."
+      },
+      {
+        "id": 85,
+        "name": "Marksman’s Scope Visor: Sniper Shot",
+        "raw": "085 — Marksman’s Scope Visor: Sniper Shot — R(4–8), V1, Direct — Deal 5 damage; –3 ACC next turn.",
+        "text": "R(4–8), V1, Direct—Deal 5 damage; –3 ACC next turn.",
+        "vision": 1,
+        "range": "4–8",
+        "targeting": "Direct",
+        "effect": "Deal 5 damage; –3 ACC next turn."
+      },
+      {
+        "id": 86,
+        "name": "Marksman’s Scope Visor: Precision Call",
+        "raw": "086 — Marksman’s Scope Visor: Precision Call — R(Self) — Next attack ignores range penalties.",
+        "text": "R(Self)—Next attack ignores range penalties.",
+        "range": "Self",
+        "effect": "Next attack ignores range penalties."
+      },
+      {
+        "id": 87,
+        "name": "Marksman’s Scope Visor: Head Tilt Guard",
+        "raw": "087 — Marksman’s Scope Visor: Head Tilt Guard — R(Self) — Ignore critical hits until your next turn.",
+        "text": "R(Self)—Ignore critical hits until your next turn.",
+        "range": "Self",
+        "effect": "Ignore critical hits until your next turn."
+      },
+      {
+        "id": 88,
+        "name": "Warrior’s Crest: Overhead Smash",
+        "raw": "088 — Warrior’s Crest: Overhead Smash — R(1), V1, Direct — Deal 4 damage; +1 DEF next turn.",
+        "text": "R(1), V1, Direct—Deal 4 damage; +1 DEF next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage; +1 DEF next turn."
+      },
+      {
+        "id": 89,
+        "name": "Warrior’s Crest: Intimidate",
+        "raw": "089 — Warrior’s Crest: Intimidate — R(1–2), V1, Direct — Target suffers –1 ATK for 1 turn.",
+        "text": "R(1–2), V1, Direct—Target suffers –1 ATK for 1 turn.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Target suffers –1 ATK for 1 turn."
+      },
+      {
+        "id": 90,
+        "name": "Warrior’s Crest: Crest Stand",
+        "raw": "090 — Warrior’s Crest: Crest Stand — R(Self) — If HP < 50%, gain +2 DEF and +1 ATK.",
+        "text": "R(Self)—If HP < 50%, gain +2 DEF and +1 ATK.",
+        "range": "Self",
+        "effect": "If HP < 50%, gain +2 DEF and +1 ATK."
+      },
+      {
+        "id": 91,
+        "name": "Steelplate Cuirass: Shoulder Charge",
+        "raw": "091 — Steelplate Cuirass: Shoulder Charge — R(1), V1, Direct — Deal 3 damage; push target 1 tile.",
+        "text": "R(1), V1, Direct—Deal 3 damage; push target 1 tile.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; push target 1 tile."
+      },
+      {
+        "id": 92,
+        "name": "Steelplate Cuirass: Fortify",
+        "raw": "092 — Steelplate Cuirass: Fortify — R(Self) — Gain immunity to knockback until next turn.",
+        "text": "R(Self)—Gain immunity to knockback until next turn.",
+        "range": "Self",
+        "effect": "Gain immunity to knockback until next turn."
+      },
+      {
+        "id": 93,
+        "name": "Steelplate Cuirass: Fortress Form",
+        "raw": "093 — Steelplate Cuirass: Fortress Form — R(Self) — Gain +3 DEF but movement –1 this turn.",
+        "text": "R(Self)—Gain +3 DEF but movement –1 this turn.",
+        "range": "Self",
+        "effect": "Gain +3 DEF but movement –1 this turn."
+      },
+      {
+        "id": 94,
+        "name": "Leather Jerkin: Knife Toss",
+        "raw": "094 — Leather Jerkin: Knife Toss — R(2–3), V1, Direct — Deal 2 damage; +1 AGI next turn.",
+        "text": "R(2–3), V1, Direct—Deal 2 damage; +1 AGI next turn.",
+        "vision": 1,
+        "range": "2–3",
+        "targeting": "Direct",
+        "effect": "Deal 2 damage; +1 AGI next turn."
+      },
+      {
+        "id": 95,
+        "name": "Leather Jerkin: Quick Roll",
+        "raw": "095 — Leather Jerkin: Quick Roll — R(Self) — Move 1 tile as a free action.",
+        "text": "R(Self)—Move 1 tile as a free action.",
+        "range": "Self",
+        "effect": "Move 1 tile as a free action."
+      },
+      {
+        "id": 96,
+        "name": "Leather Jerkin: Light Guard",
+        "raw": "096 — Leather Jerkin: Light Guard — R(Self) — +1 DEF and +1 AGI until next turn.",
+        "text": "R(Self)—+1 DEF and +1 AGI until next turn.",
+        "range": "Self",
+        "effect": "+1 DEF and +1 AGI until next turn."
+      },
+      {
+        "id": 97,
+        "name": "Mage’s Robe: Mana Surge Strike",
+        "raw": "097 — Mage’s Robe: Mana Surge Strike — R(2–3), V2, Direct — Deal 4 magic damage.",
+        "text": "R(2–3), V2, Direct—Deal 4 magic damage.",
+        "vision": 2,
+        "range": "2–3",
+        "targeting": "Direct",
+        "effect": "Deal 4 magic damage."
+      },
+      {
+        "id": 98,
+        "name": "Mage’s Robe: Mana Shift",
+        "raw": "098 — Mage’s Robe: Mana Shift — R(Self) — Recover 1 strain.",
+        "text": "R(Self)—Recover 1 strain.",
+        "range": "Self",
+        "effect": "Recover 1 strain."
+      },
+      {
+        "id": 99,
+        "name": "Mage’s Robe: Arcane Veil",
+        "raw": "099 — Mage’s Robe: Arcane Veil — R(Self) — Gain +2 DEF vs magic for 1 turn.",
+        "text": "R(Self)—Gain +2 DEF vs magic for 1 turn.",
+        "range": "Self",
+        "effect": "Gain +2 DEF vs magic for 1 turn."
+      },
+      {
+        "id": 100,
+        "name": "Shadow Cloak: Ambush Slash",
+        "raw": "100 — Shadow Cloak: Ambush Slash — R(1), V1, Direct — Deal 5 damage if undetected at start of turn.",
+        "text": "R(1), V1, Direct—Deal 5 damage if undetected at start of turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 5 damage if undetected at start of turn."
+      },
+      {
+        "id": 101,
+        "name": "Shadow Cloak: Fade",
+        "raw": "101 — Shadow Cloak: Fade — R(Self) — Become untargetable by ranged attacks until next turn.",
+        "text": "R(Self)—Become untargetable by ranged attacks until next turn.",
+        "range": "Self",
+        "effect": "Become untargetable by ranged attacks until next turn."
+      },
+      {
+        "id": 102,
+        "name": "Shadow Cloak: Shade Guard",
+        "raw": "102 — Shadow Cloak: Shade Guard — R(Self) — Untargetable if you don’t move this turn.",
+        "text": "R(Self)—Untargetable if you don’t move this turn.",
+        "range": "Self",
+        "effect": "Untargetable if you don’t move this turn."
+      },
+      {
+        "id": 103,
+        "name": "Scholar’s Vest: Scroll Slam",
+        "raw": "103 — Scholar’s Vest: Scroll Slam — R(1), V1, Direct — Deal 2 damage and reduce target ACC by 1.",
+        "text": "R(1), V1, Direct—Deal 2 damage and reduce target ACC by 1.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 2 damage and reduce target ACC by 1."
+      },
+      {
+        "id": 104,
+        "name": "Scholar’s Vest: Study Mark",
+        "raw": "104 — Scholar’s Vest: Study Mark — R(3), V1, Direct — Reveal target’s DEF and HP to all allies.",
+        "text": "R(3), V1, Direct—Reveal target’s DEF and HP to all allies.",
+        "vision": 1,
+        "range": "3",
+        "targeting": "Direct",
+        "effect": "Reveal target’s DEF and HP to all allies."
+      },
+      {
+        "id": 105,
+        "name": "Scholar’s Vest: Knowledge Shield",
+        "raw": "105 — Scholar’s Vest: Knowledge Shield — R(Self) — Ignore first status effect this turn.",
+        "text": "R(Self)—Ignore first status effect this turn.",
+        "range": "Self",
+        "effect": "Ignore first status effect this turn."
+      },
+      {
+        "id": 106,
+        "name": "Chainmail Hauberk: Chain Sweep",
+        "raw": "106 — Chainmail Hauberk: Chain Sweep — R(1–2), V1, Arc — Deal 3 damage to up to 3 enemies.",
+        "text": "R(1–2), V1, Arc—Deal 3 damage to up to 3 enemies.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Arc",
+        "effect": "Deal 3 damage to up to 3 enemies."
+      },
+      {
+        "id": 107,
+        "name": "Chainmail Hauberk: Hold the Line",
+        "raw": "107 — Chainmail Hauberk: Hold the Line — R(Self) — Allies adjacent gain +1 DEF.",
+        "text": "R(Self)—Allies adjacent gain +1 DEF.",
+        "range": "Self",
+        "effect": "Allies adjacent gain +1 DEF."
+      },
+      {
+        "id": 108,
+        "name": "Chainmail Hauberk: Linked Brace",
+        "raw": "108 — Chainmail Hauberk: Linked Brace — R(Self) — Adjacent allies gain +1 DEF.",
+        "text": "R(Self)—Adjacent allies gain +1 DEF.",
+        "range": "Self",
+        "effect": "Adjacent allies gain +1 DEF."
+      },
+      {
+        "id": 109,
+        "name": "Steamline Armor: Steam Bash",
+        "raw": "109 — Steamline Armor: Steam Bash — R(1–2), V1, Direct — Deal 3 damage and +1 heat to target mech.",
+        "text": "R(1–2), V1, Direct—Deal 3 damage and +1 heat to target mech.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage and +1 heat to target mech."
+      },
+      {
+        "id": 110,
+        "name": "Steamline Armor: Steam Vent",
+        "raw": "110 — Steamline Armor: Steam Vent — R(Self) — Push adjacent enemies back 1 tile.",
+        "text": "R(Self)—Push adjacent enemies back 1 tile.",
+        "range": "Self",
+        "effect": "Push adjacent enemies back 1 tile."
+      },
+      {
+        "id": 111,
+        "name": "Steamline Armor: Pressure Guard",
+        "raw": "111 — Steamline Armor: Pressure Guard — R(Self) — Push back melee attacker 1 tile.",
+        "text": "R(Self)—Push back melee attacker 1 tile.",
+        "range": "Self",
+        "effect": "Push back melee attacker 1 tile."
+      },
+      {
+        "id": 112,
+        "name": "Hunter’s Vest: Quiver Barrage",
+        "raw": "112 — Hunter’s Vest: Quiver Barrage — R(2–4), V1, Direct — Three attacks, each dealing 2 damage.",
+        "text": "R(2–4), V1, Direct—Three attacks, each dealing 2 damage.",
+        "vision": 1,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Three attacks, each dealing 2 damage."
+      },
+      {
+        "id": 113,
+        "name": "Hunter’s Vest: Camouflage",
+        "raw": "113 — Hunter’s Vest: Camouflage — R(Self) — +3 ACC on next ranged attack.",
+        "text": "R(Self)—+3 ACC on next ranged attack.",
+        "range": "Self",
+        "effect": "+3 ACC on next ranged attack."
+      },
+      {
+        "id": 114,
+        "name": "Hunter’s Vest: Camouflage Guard",
+        "raw": "114 — Hunter’s Vest: Camouflage Guard — R(Self) — Gain +2 DEF if attacked at range.",
+        "text": "R(Self)—Gain +2 DEF if attacked at range.",
+        "range": "Self",
+        "effect": "Gain +2 DEF if attacked at range."
+      },
+      {
+        "id": 115,
+        "name": "Reinforced Gambeson: Body Slam",
+        "raw": "115 — Reinforced Gambeson: Body Slam — R(1), V1, Direct — Deal 3 damage; target cannot move next turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage; target cannot move next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; target cannot move next turn."
+      },
+      {
+        "id": 116,
+        "name": "Reinforced Gambeson: Holdfast",
+        "raw": "116 — Reinforced Gambeson: Holdfast — R(Self) — Cannot be moved by enemy effects until next turn.",
+        "text": "R(Self)—Cannot be moved by enemy effects until next turn.",
+        "range": "Self",
+        "effect": "Cannot be moved by enemy effects until next turn."
+      },
+      {
+        "id": 117,
+        "name": "Reinforced Gambeson: Stand Fast",
+        "raw": "117 — Reinforced Gambeson: Stand Fast — R(Self) — Cannot be knocked back until next turn.",
+        "text": "R(Self)—Cannot be knocked back until next turn.",
+        "range": "Self",
+        "effect": "Cannot be knocked back until next turn."
+      },
+      {
+        "id": 118,
+        "name": "Battle Harness: Lance Thrust",
+        "raw": "118 — Battle Harness: Lance Thrust — R(1–2), V2, Direct — Deal 4 damage ignoring 1 DEF.",
+        "text": "R(1–2), V2, Direct—Deal 4 damage ignoring 1 DEF.",
+        "vision": 2,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage ignoring 1 DEF."
+      },
+      {
+        "id": 119,
+        "name": "Battle Harness: Adrenal Surge",
+        "raw": "119 — Battle Harness: Adrenal Surge — R(Self) — Gain +1 movement this turn.",
+        "text": "R(Self)—Gain +1 movement this turn.",
+        "range": "Self",
+        "effect": "Gain +1 movement this turn."
+      },
+      {
+        "id": 120,
+        "name": "Battle Harness: Adrenal Guard",
+        "raw": "120 — Battle Harness: Adrenal Guard — R(Self) — If attacked, gain +1 movement next turn.",
+        "text": "R(Self)—If attacked, gain +1 movement next turn.",
+        "range": "Self",
+        "effect": "If attacked, gain +1 movement next turn."
+      },
+      {
+        "id": 121,
+        "name": "Arcane Tunic: Energy Bolt",
+        "raw": "121 — Arcane Tunic: Energy Bolt — R(2–4), V2, Direct — Deal 3 magic damage; ignore LoS.",
+        "text": "R(2–4), V2, Direct—Deal 3 magic damage; ignore LoS.",
+        "vision": 2,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Deal 3 magic damage; ignore LoS."
+      },
+      {
+        "id": 122,
+        "name": "Arcane Tunic: Glyph Recall",
+        "raw": "122 — Arcane Tunic: Glyph Recall — R(Self) — Refresh 1 magic card from discard pile.",
+        "text": "R(Self)—Refresh 1 magic card from discard pile.",
+        "range": "Self",
+        "effect": "Refresh 1 magic card from discard pile."
+      },
+      {
+        "id": 123,
+        "name": "Arcane Tunic: Sigil Ward",
+        "raw": "123 — Arcane Tunic: Sigil Ward — R(Self) — Magic attacks deal –1 damage to you until next turn.",
+        "text": "R(Self)—Magic attacks deal –1 damage to you until next turn.",
+        "range": "Self",
+        "effect": "Magic attacks deal –1 damage to you until next turn."
+      },
+      {
+        "id": 124,
+        "name": "Marksman’s Brigandine: Precision Volley",
+        "raw": "124 — Marksman’s Brigandine: Precision Volley — R(3–5), V1, Direct — Two attacks, each dealing 3 damage.",
+        "text": "R(3–5), V1, Direct—Two attacks, each dealing 3 damage.",
+        "vision": 1,
+        "range": "3–5",
+        "targeting": "Direct",
+        "effect": "Two attacks, each dealing 3 damage."
+      },
+      {
+        "id": 125,
+        "name": "Marksman’s Brigandine: Steady Aim",
+        "raw": "125 — Marksman’s Brigandine: Steady Aim — R(Self) — +2 ACC if you don’t move this turn.",
+        "text": "R(Self)—+2 ACC if you don’t move this turn.",
+        "range": "Self",
+        "effect": "+2 ACC if you don’t move this turn."
+      },
+      {
+        "id": 126,
+        "name": "Marksman’s Brigandine: Stagger Guard",
+        "raw": "126 — Marksman’s Brigandine: Stagger Guard — R(Self) — If hit, attacker suffers –1 AGI until next turn.",
+        "text": "R(Self)—If hit, attacker suffers –1 AGI until next turn.",
+        "range": "Self",
+        "effect": "If hit, attacker suffers –1 AGI until next turn."
+      },
+      {
+        "id": 127,
+        "name": "Steel Signet Ring: Knuckle Jab",
+        "raw": "127 — Steel Signet Ring: Knuckle Jab — R(1), V1, Direct — Deal 2 damage and push target 1 tile.",
+        "text": "R(1), V1, Direct—Deal 2 damage and push target 1 tile.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 2 damage and push target 1 tile."
+      },
+      {
+        "id": 128,
+        "name": "Steel Signet Ring: Mark of Command",
+        "raw": "128 — Steel Signet Ring: Mark of Command — R(Self) — All allies gain +1 ACC next turn.",
+        "text": "R(Self)—All allies gain +1 ACC next turn.",
+        "range": "Self",
+        "effect": "All allies gain +1 ACC next turn."
+      },
+      {
+        "id": 129,
+        "name": "Steel Signet Ring: Signet Shield",
+        "raw": "129 — Steel Signet Ring: Signet Shield — R(Self) — Gain +1 DEF and +1 LUK until next turn.",
+        "text": "R(Self)—Gain +1 DEF and +1 LUK until next turn.",
+        "range": "Self",
+        "effect": "Gain +1 DEF and +1 LUK until next turn."
+      },
+      {
+        "id": 130,
+        "name": "Eagle Eye Lens: Spotter’s Shot",
+        "raw": "130 — Eagle Eye Lens: Spotter’s Shot — R(3–6), V1, Direct — Deal 4 damage; target is marked for +1 damage from all sources next turn.",
+        "text": "R(3–6), V1, Direct—Deal 4 damage; target is marked for +1 damage from all sources next turn.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage; target is marked for +1 damage from all sources next turn."
+      },
+      {
+        "id": 131,
+        "name": "Eagle Eye Lens: Target Paint",
+        "raw": "131 — Eagle Eye Lens: Target Paint — R(3–6), V1, Direct — Allies gain +1 damage to target this turn.",
+        "text": "R(3–6), V1, Direct—Allies gain +1 damage to target this turn.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "Direct",
+        "effect": "Allies gain +1 damage to target this turn."
+      },
+      {
+        "id": 132,
+        "name": "Eagle Eye Lens: Farsight Guard",
+        "raw": "132 — Eagle Eye Lens: Farsight Guard — R(Self) — Ignore overwatch this turn.",
+        "text": "R(Self)—Ignore overwatch this turn.",
+        "range": "Self",
+        "effect": "Ignore overwatch this turn."
+      },
+      {
+        "id": 133,
+        "name": "Fleetfoot Anklet: Flying Kick",
+        "raw": "133 — Fleetfoot Anklet: Flying Kick — R(1–2), V1, Direct — Deal 3 damage; move through target’s tile.",
+        "text": "R(1–2), V1, Direct—Deal 3 damage; move through target’s tile.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; move through target’s tile."
+      },
+      {
+        "id": 134,
+        "name": "Fleetfoot Anklet: Speed Burst",
+        "raw": "134 — Fleetfoot Anklet: Speed Burst — R(Self) — +2 movement this turn.",
+        "text": "R(Self)—+2 movement this turn.",
+        "range": "Self",
+        "effect": "+2 movement this turn."
+      },
+      {
+        "id": 135,
+        "name": "Fleetfoot Anklet: Swift Guard",
+        "raw": "135 — Fleetfoot Anklet: Swift Guard — R(Self) — Move +2 and gain +1 DEF this turn.",
+        "text": "R(Self)—Move +2 and gain +1 DEF this turn.",
+        "range": "Self",
+        "effect": "Move +2 and gain +1 DEF this turn."
+      },
+      {
+        "id": 136,
+        "name": "Rune Pendant: Arcane Surge",
+        "raw": "136 — Rune Pendant: Arcane Surge — R(2–3), V2, Direct — Deal 3 magic damage and ignore 2 DEF.",
+        "text": "R(2–3), V2, Direct—Deal 3 magic damage and ignore 2 DEF.",
+        "vision": 2,
+        "range": "2–3",
+        "targeting": "Direct",
+        "effect": "Deal 3 magic damage and ignore 2 DEF."
+      },
+      {
+        "id": 137,
+        "name": "Rune Pendant: Rune Recall",
+        "raw": "137 — Rune Pendant: Rune Recall — R(Self) — Refresh 1 used magic card.",
+        "text": "R(Self)—Refresh 1 used magic card.",
+        "range": "Self",
+        "effect": "Refresh 1 used magic card."
+      },
+      {
+        "id": 138,
+        "name": "Rune Pendant: Rune Shield",
+        "raw": "138 — Rune Pendant: Rune Shield — R(Self) — Block next magic attack.",
+        "text": "R(Self)—Block next magic attack.",
+        "range": "Self",
+        "effect": "Block next magic attack."
+      },
+      {
+        "id": 139,
+        "name": "Power Bracer: Crushing Punch",
+        "raw": "139 — Power Bracer: Crushing Punch — R(1), V1, Direct — Deal 4 damage.",
+        "text": "R(1), V1, Direct—Deal 4 damage.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage."
+      },
+      {
+        "id": 140,
+        "name": "Power Bracer: Overgrip",
+        "raw": "140 — Power Bracer: Overgrip — R(Self) — Next melee attack ignores 2 DEF.",
+        "text": "R(Self)—Next melee attack ignores 2 DEF.",
+        "range": "Self",
+        "effect": "Next melee attack ignores 2 DEF."
+      },
+      {
+        "id": 141,
+        "name": "Power Bracer: Brace Block",
+        "raw": "141 — Power Bracer: Brace Block — R(Self) — Gain +1 DEF and +1 ATK until next turn.",
+        "text": "R(Self)—Gain +1 DEF and +1 ATK until next turn.",
+        "range": "Self",
+        "effect": "Gain +1 DEF and +1 ATK until next turn."
+      },
+      {
+        "id": 142,
+        "name": "Vitality Charm: Bulwark Bash",
+        "raw": "142 — Vitality Charm: Bulwark Bash — R(1), V1, Direct — Deal 3 damage; gain +1 HP.",
+        "text": "R(1), V1, Direct—Deal 3 damage; gain +1 HP.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; gain +1 HP."
+      },
+      {
+        "id": 143,
+        "name": "Vitality Charm: Second Wind",
+        "raw": "143 — Vitality Charm: Second Wind — R(Self) — Restore 1 HP.",
+        "text": "R(Self)—Restore 1 HP.",
+        "range": "Self",
+        "effect": "Restore 1 HP."
+      },
+      {
+        "id": 144,
+        "name": "Vitality Charm: Life Guard",
+        "raw": "144 — Vitality Charm: Life Guard — R(Self) — Heal 1 HP and gain +1 DEF.",
+        "text": "R(Self)—Heal 1 HP and gain +1 DEF.",
+        "range": "Self",
+        "effect": "Heal 1 HP and gain +1 DEF."
+      },
+      {
+        "id": 145,
+        "name": "Steam Valve Wristguard: Steam Jet Strike",
+        "raw": "145 — Steam Valve Wristguard: Steam Jet Strike — R(1–2), V1, Direct — Deal 3 damage; +1 heat to self.",
+        "text": "R(1–2), V1, Direct—Deal 3 damage; +1 heat to self.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; +1 heat to self."
+      },
+      {
+        "id": 146,
+        "name": "Steam Valve Wristguard: Steam Push",
+        "raw": "146 — Steam Valve Wristguard: Steam Push — R(1–2), V1, Direct — Push target back 1 tile.",
+        "text": "R(1–2), V1, Direct—Push target back 1 tile.",
+        "vision": 1,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Push target back 1 tile."
+      },
+      {
+        "id": 147,
+        "name": "Steam Valve Wristguard: Steam Shield",
+        "raw": "147 — Steam Valve Wristguard: Steam Shield — R(Self) — Adjacent enemies suffer –1 ACC for 1 turn.",
+        "text": "R(Self)—Adjacent enemies suffer –1 ACC for 1 turn.",
+        "range": "Self",
+        "effect": "Adjacent enemies suffer –1 ACC for 1 turn."
+      },
+      {
+        "id": 148,
+        "name": "Hunter’s Talisman: Hunter’s Pounce",
+        "raw": "148 — Hunter’s Talisman: Hunter’s Pounce — R(2), V1, Direct — Deal 4 damage if target has moved this turn.",
+        "text": "R(2), V1, Direct—Deal 4 damage if target has moved this turn.",
+        "vision": 1,
+        "range": "2",
+        "targeting": "Direct",
+        "effect": "Deal 4 damage if target has moved this turn."
+      },
+      {
+        "id": 149,
+        "name": "Hunter’s Talisman: Scent Mark",
+        "raw": "149 — Hunter’s Talisman: Scent Mark — R(2–4), V1, Direct — Reveal target’s location even if hidden for 2 turns.",
+        "text": "R(2–4), V1, Direct—Reveal target’s location even if hidden for 2 turns.",
+        "vision": 1,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Reveal target’s location even if hidden for 2 turns."
+      },
+      {
+        "id": 150,
+        "name": "Hunter’s Talisman: Tracker’s Guard",
+        "raw": "150 — Hunter’s Talisman: Tracker’s Guard — R(Self) — First enemy to attack you is revealed on map.",
+        "text": "R(Self)—First enemy to attack you is revealed on map.",
+        "range": "Self",
+        "effect": "First enemy to attack you is revealed on map."
+      },
+      {
+        "id": 151,
+        "name": "Scholar’s Quill Pendant: Ink Slash",
+        "raw": "151 — Scholar’s Quill Pendant: Ink Slash — R(1), V1, Direct — Deal 3 damage and blind for 1 turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage and blind for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage and blind for 1 turn."
+      },
+      {
+        "id": 152,
+        "name": "Scholar’s Quill Pendant: Quick Notes",
+        "raw": "152 — Scholar’s Quill Pendant: Quick Notes — R(Self) — Reduce strain of next card by 1.",
+        "text": "R(Self)—Reduce strain of next card by 1.",
+        "range": "Self",
+        "effect": "Reduce strain of next card by 1."
+      },
+      {
+        "id": 153,
+        "name": "Scholar’s Quill Pendant: Quick Guard",
+        "raw": "153 — Scholar’s Quill Pendant: Quick Guard — R(Self) — Reduce strain of next defensive card by 1.",
+        "text": "R(Self)—Reduce strain of next defensive card by 1.",
+        "range": "Self",
+        "effect": "Reduce strain of next defensive card by 1."
+      },
+      {
+        "id": 154,
+        "name": "Smoke Bomb Satchel: Ashen Cut",
+        "raw": "154 — Smoke Bomb Satchel: Ashen Cut — R(1), V1, Direct — Deal 3 damage; target suffers –2 ACC next turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage; target suffers –2 ACC next turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; target suffers –2 ACC next turn."
+      },
+      {
+        "id": 155,
+        "name": "Smoke Bomb Satchel: Cover Retreat",
+        "raw": "155 — Smoke Bomb Satchel: Cover Retreat — R(Self) — Create smoke on your tile; cannot be targeted until next turn.",
+        "text": "R(Self)—Create smoke on your tile; cannot be targeted until next turn.",
+        "range": "Self",
+        "effect": "Create smoke on your tile; cannot be targeted until next turn."
+      },
+      {
+        "id": 156,
+        "name": "Smoke Bomb Satchel: Escape Guard",
+        "raw": "156 — Smoke Bomb Satchel: Escape Guard — R(Self) — Become untargetable for 1 turn after being hit.",
+        "text": "R(Self)—Become untargetable for 1 turn after being hit.",
+        "range": "Self",
+        "effect": "Become untargetable for 1 turn after being hit."
+      },
+      {
+        "id": 157,
+        "name": "Warrior’s Belt: Hip Smash",
+        "raw": "157 — Warrior’s Belt: Hip Smash — R(1), V1, Direct — Deal 3 damage; +1 DEF for 1 turn.",
+        "text": "R(1), V1, Direct—Deal 3 damage; +1 DEF for 1 turn.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Deal 3 damage; +1 DEF for 1 turn."
+      },
+      {
+        "id": 158,
+        "name": "Warrior’s Belt: Berserk Prep",
+        "raw": "158 — Warrior’s Belt: Berserk Prep — R(Self) — Next attack deals +2 damage but you take +1 damage until next turn.",
+        "text": "R(Self)—Next attack deals +2 damage but you take +1 damage until next turn.",
+        "range": "Self",
+        "effect": "Next attack deals +2 damage but you take +1 damage until next turn."
+      },
+      {
+        "id": 159,
+        "name": "Warrior’s Belt: Belt Brace",
+        "raw": "159 — Warrior’s Belt: Belt Brace — R(Self) — Gain +1 DEF and +1 HP until next turn.",
+        "text": "R(Self)—Gain +1 DEF and +1 HP until next turn.",
+        "range": "Self",
+        "effect": "Gain +1 DEF and +1 HP until next turn."
+      },
+      {
+        "id": 160,
+        "name": "Arcane Crystal Brooch: Crystal Beam",
+        "raw": "160 — Arcane Crystal Brooch: Crystal Beam — R(2–4), V2, Direct — Deal 4 magic damage.",
+        "text": "R(2–4), V2, Direct—Deal 4 magic damage.",
+        "vision": 2,
+        "range": "2–4",
+        "targeting": "Direct",
+        "effect": "Deal 4 magic damage."
+      },
+      {
+        "id": 161,
+        "name": "Arcane Crystal Brooch: Focus Crystal",
+        "raw": "161 — Arcane Crystal Brooch: Focus Crystal — R(Self) — Next magic attack gains +1 AoE radius.",
+        "text": "R(Self)—Next magic attack gains +1 AoE radius.",
+        "range": "Self",
+        "effect": "Next magic attack gains +1 AoE radius."
+      },
+      {
+        "id": 162,
+        "name": "Arcane Crystal Brooch: Crystal Shield",
+        "raw": "162 — Arcane Crystal Brooch: Crystal Shield — R(Self) — Reflect 1 magic damage back to attacker.",
+        "text": "R(Self)—Reflect 1 magic damage back to attacker.",
+        "range": "Self",
+        "effect": "Reflect 1 magic damage back to attacker."
+      },
+      {
+        "id": 163,
+        "name": "Emberclaw Repeater: Piercing Volley",
+        "raw": "163 — Emberclaw Repeater: Piercing Volley — R(2–5), V1, Direct — Ignore target’s DEF for next attack. Gain +1 heat.",
+        "text": "R(2–5), V1, Direct—Ignore target’s DEF for next attack. Gain +1 heat.",
+        "vision": 1,
+        "range": "2–5",
+        "targeting": "Direct",
+        "effect": "Ignore target’s DEF for next attack. Gain +1 heat."
+      },
+      {
+        "id": 164,
+        "name": "Emberclaw Repeater: Suppressive Spray",
+        "raw": "164 — Emberclaw Repeater: Suppressive Spray — R(2–5), V1, Direct — Target suffers –2 ACC and –1 movement next turn. Gain +1 heat.",
+        "text": "R(2–5), V1, Direct—Target suffers –2 ACC and –1 movement next turn. Gain +1 heat.",
+        "vision": 1,
+        "range": "2–5",
+        "targeting": "Direct",
+        "effect": "Target suffers –2 ACC and –1 movement next turn. Gain +1 heat."
+      },
+      {
+        "id": 165,
+        "name": "Emberclaw Repeater: Cooling Discipline",
+        "raw": "165 — Emberclaw Repeater: Cooling Discipline — R(Self) — Remove 2 heat from this weapon and gain +1 DEF until next turn.",
+        "text": "R(Self)—Remove 2 heat from this weapon and gain +1 DEF until next turn.",
+        "range": "Self",
+        "effect": "Remove 2 heat from this weapon and gain +1 DEF until next turn."
+      },
+      {
+        "id": 166,
+        "name": "Steamburst Pike: Pierce & Pin",
+        "raw": "166 — Steamburst Pike: Pierce & Pin — R(1–2), V2, Direct — Attack prevents target movement next turn. (Gain +1 heat if used as a weapon skill.)",
+        "text": "R(1–2), V2, Direct—Attack prevents target movement next turn. (Gain +1 heat if used as a weapon skill.)",
+        "vision": 2,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Attack prevents target movement next turn. (Gain +1 heat if used as a weapon skill.)"
+      },
+      {
+        "id": 167,
+        "name": "Steamburst Pike: Pierce Anchor",
+        "raw": "167 — Steamburst Pike: Pierce Anchor — R(1–2), V2, Direct — Pin target in place; cannot move next turn. Gain +1 heat.",
+        "text": "R(1–2), V2, Direct—Pin target in place; cannot move next turn. Gain +1 heat.",
+        "vision": 2,
+        "range": "1–2",
+        "targeting": "Direct",
+        "effect": "Pin target in place; cannot move next turn. Gain +1 heat."
+      },
+      {
+        "id": 168,
+        "name": "Steamburst Pike: Steam Guard",
+        "raw": "168 — Steamburst Pike: Steam Guard — R(Self) — Remove 1 heat; gain immunity to push/pull effects until next turn.",
+        "text": "R(Self)—Remove 1 heat; gain immunity to push/pull effects until next turn.",
+        "range": "Self",
+        "effect": "Remove 1 heat; gain immunity to push/pull effects until next turn."
+      },
+      {
+        "id": 169,
+        "name": "Vulcan Coilgun: Power Shot",
+        "raw": "169 — Vulcan Coilgun: Power Shot — R(3–7), V1, Direct — +2 damage. (Gain heat per your weapon rules.)",
+        "text": "R(3–7), V1, Direct—+2 damage. (Gain heat per your weapon rules.)",
+        "vision": 1,
+        "range": "3–7",
+        "targeting": "Direct",
+        "effect": "+2 damage. (Gain heat per your weapon rules.)"
+      },
+      {
+        "id": 170,
+        "name": "Vulcan Coilgun: Magnetic Pull",
+        "raw": "170 — Vulcan Coilgun: Magnetic Pull — R(3–7), V1, Direct — Pull target 2 tiles toward you. Gain +2 heat.",
+        "text": "R(3–7), V1, Direct—Pull target 2 tiles toward you. Gain +2 heat.",
+        "vision": 1,
+        "range": "3–7",
+        "targeting": "Direct",
+        "effect": "Pull target 2 tiles toward you. Gain +2 heat."
+      },
+      {
+        "id": 171,
+        "name": "Vulcan Coilgun: Magnetic Guard",
+        "raw": "171 — Vulcan Coilgun: Magnetic Guard — R(Self) — Remove 2 heat; ranged attacks against you suffer –2 ACC until next turn.",
+        "text": "R(Self)—Remove 2 heat; ranged attacks against you suffer –2 ACC until next turn.",
+        "range": "Self",
+        "effect": "Remove 2 heat; ranged attacks against you suffer –2 ACC until next turn."
+      },
+      {
+        "id": 172,
+        "name": "Brassback Scattergun: Slug Round",
+        "raw": "172 — Brassback Scattergun: Slug Round — R(1), V1, Direct — Damage doubled for this shot. (Usually –range.)",
+        "text": "R(1), V1, Direct—Damage doubled for this shot. (Usually –range.)",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Damage doubled for this shot. (Usually –range.)"
+      },
+      {
+        "id": 173,
+        "name": "Brassback Scattergun: Warning Blast",
+        "raw": "173 — Brassback Scattergun: Warning Blast — R(1–3), V1, Cone — Push all enemies in cone back 1 tile. Gain +1 heat.",
+        "text": "R(1–3), V1, Cone—Push all enemies in cone back 1 tile. Gain +1 heat.",
+        "vision": 1,
+        "range": "1–3",
+        "targeting": "Cone",
+        "effect": "Push all enemies in cone back 1 tile. Gain +1 heat."
+      },
+      {
+        "id": 174,
+        "name": "Brassback Scattergun: Blast Shield",
+        "raw": "174 — Brassback Scattergun: Blast Shield — R(Self) — Remove 1 heat; ignore first incoming ranged attack.",
+        "text": "R(Self)—Remove 1 heat; ignore first incoming ranged attack.",
+        "range": "Self",
+        "effect": "Remove 1 heat; ignore first incoming ranged attack."
+      },
+      {
+        "id": 175,
+        "name": "Ironwhisper Crossbow: Silenced Shot",
+        "raw": "175 — Ironwhisper Crossbow: Silenced Shot — R(2–6), V1, Direct — Cannot be countered or alert nearby enemies.",
+        "text": "R(2–6), V1, Direct—Cannot be countered or alert nearby enemies.",
+        "vision": 1,
+        "range": "2–6",
+        "targeting": "Direct",
+        "effect": "Cannot be countered or alert nearby enemies."
+      },
+      {
+        "id": 176,
+        "name": "Ironwhisper Crossbow: Tether Bolt",
+        "raw": "176 — Ironwhisper Crossbow: Tether Bolt — R(2–6), V1, Direct — Target cannot move more than 2 tiles from current position for 2 turns. Gain +1 heat.",
+        "text": "R(2–6), V1, Direct—Target cannot move more than 2 tiles from current position for 2 turns. Gain +1 heat.",
+        "vision": 1,
+        "range": "2–6",
+        "targeting": "Direct",
+        "effect": "Target cannot move more than 2 tiles from current position for 2 turns. Gain +1 heat."
+      },
+      {
+        "id": 177,
+        "name": "Ironwhisper Crossbow: Cover Reload",
+        "raw": "177 — Ironwhisper Crossbow: Cover Reload — R(Self) — Remove 1 heat; gain +2 DEF until your next attack.",
+        "text": "R(Self)—Remove 1 heat; gain +2 DEF until your next attack.",
+        "range": "Self",
+        "effect": "Remove 1 heat; gain +2 DEF until your next attack."
+      },
+      {
+        "id": 178,
+        "name": "Stormlash Arcstaff: Overload Blast",
+        "raw": "178 — Stormlash Arcstaff: Overload Blast — R(1–3), V2, AoE(1) — All targets in range take 1 electric damage.",
+        "text": "R(1–3), V2, AoE(1)—All targets in range take 1 electric damage.",
+        "vision": 2,
+        "range": "1–3",
+        "targeting": "AoE(1)",
+        "effect": "All targets in range take 1 electric damage."
+      },
+      {
+        "id": 179,
+        "name": "Stormlash Arcstaff: Static Field",
+        "raw": "179 — Stormlash Arcstaff: Static Field — R(1–3), V2, AoE(1) — Enemies in area suffer –2 AGI for 1 turn. Gain +2 heat.",
+        "text": "R(1–3), V2, AoE(1)—Enemies in area suffer –2 AGI for 1 turn. Gain +2 heat.",
+        "vision": 2,
+        "range": "1–3",
+        "targeting": "AoE(1)",
+        "effect": "Enemies in area suffer –2 AGI for 1 turn. Gain +2 heat."
+      },
+      {
+        "id": 180,
+        "name": "Stormlash Arcstaff: Grounding Stance",
+        "raw": "180 — Stormlash Arcstaff: Grounding Stance — R(Self) — Remove 2 heat; immune to stun until next turn.",
+        "text": "R(Self)—Remove 2 heat; immune to stun until next turn.",
+        "range": "Self",
+        "effect": "Remove 2 heat; immune to stun until next turn."
+      },
+      {
+        "id": 181,
+        "name": "Blazefang Saber: Searing Slash",
+        "raw": "181 — Blazefang Saber: Searing Slash — R(1), V1, Direct — Inflict Burn status.",
+        "text": "R(1), V1, Direct—Inflict Burn status.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Inflict Burn status."
+      },
+      {
+        "id": 182,
+        "name": "Blazefang Saber: Molten Mark",
+        "raw": "182 — Blazefang Saber: Molten Mark — R(1), V1, Direct — Mark target; next attack from any ally deals +2 damage. Gain +1 heat.",
+        "text": "R(1), V1, Direct—Mark target; next attack from any ally deals +2 damage. Gain +1 heat.",
+        "vision": 1,
+        "range": "1",
+        "targeting": "Direct",
+        "effect": "Mark target; next attack from any ally deals +2 damage. Gain +1 heat."
+      },
+      {
+        "id": 183,
+        "name": "Blazefang Saber: Heat Parry",
+        "raw": "183 — Blazefang Saber: Heat Parry — R(Self) — Remove 1 heat; block the next melee attack.",
+        "text": "R(Self)—Remove 1 heat; block the next melee attack.",
+        "range": "Self",
+        "effect": "Remove 1 heat; block the next melee attack."
+      },
+      {
+        "id": 184,
+        "name": "Gearspike Mortar: Bunker Buster",
+        "raw": "184 — Gearspike Mortar: Bunker Buster — R(3–6), V1, AoE — Ignores cover and destroys obstacles in target area.",
+        "text": "R(3–6), V1, AoE—Ignores cover and destroys obstacles in target area.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "AoE",
+        "effect": "Ignores cover and destroys obstacles in target area."
+      },
+      {
+        "id": 185,
+        "name": "Gearspike Mortar: Smoke Shell",
+        "raw": "185 — Gearspike Mortar: Smoke Shell — R(3–6), V1, AoE(2) — Create smoke area; enemies in area have –3 ACC for 1 turn. Gain +2 heat.",
+        "text": "R(3–6), V1, AoE(2)—Create smoke area; enemies in area have –3 ACC for 1 turn. Gain +2 heat.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "AoE(2)",
+        "effect": "Create smoke area; enemies in area have –3 ACC for 1 turn. Gain +2 heat."
+      },
+      {
+        "id": 186,
+        "name": "Gearspike Mortar: Fortified Position",
+        "raw": "186 — Gearspike Mortar: Fortified Position — R(Self) — Remove 2 heat; gain +1 DEF and ignore AoE damage until next turn.",
+        "text": "R(Self)—Remove 2 heat; gain +1 DEF and ignore AoE damage until next turn.",
+        "range": "Self",
+        "effect": "Remove 2 heat; gain +1 DEF and ignore AoE damage until next turn."
+      },
+      {
+        "id": 187,
+        "name": "Emberdrake Harpooner: Anchor Pull",
+        "raw": "187 — Emberdrake Harpooner: Anchor Pull — R(2–5), V1, Direct — Pull self to target instead of target to self.",
+        "text": "R(2–5), V1, Direct—Pull self to target instead of target to self.",
+        "vision": 1,
+        "range": "2–5",
+        "targeting": "Direct",
+        "effect": "Pull self to target instead of target to self."
+      },
+      {
+        "id": 188,
+        "name": "Emberdrake Harpooner: Tether Reel",
+        "raw": "188 — Emberdrake Harpooner: Tether Reel — R(2–5), V1, Direct — Pull target 1 tile and immobilize for 1 turn. Gain +1 heat.",
+        "text": "R(2–5), V1, Direct—Pull target 1 tile and immobilize for 1 turn. Gain +1 heat.",
+        "vision": 1,
+        "range": "2–5",
+        "targeting": "Direct",
+        "effect": "Pull target 1 tile and immobilize for 1 turn. Gain +1 heat."
+      },
+      {
+        "id": 189,
+        "name": "Emberdrake Harpooner: Anchor Brace",
+        "raw": "189 — Emberdrake Harpooner: Anchor Brace — R(Self) — Remove 1 heat; cannot be moved by enemy effects until next turn.",
+        "text": "R(Self)—Remove 1 heat; cannot be moved by enemy effects until next turn.",
+        "range": "Self",
+        "effect": "Remove 1 heat; cannot be moved by enemy effects until next turn."
+      },
+      {
+        "id": 190,
+        "name": "Thunderjaw Cannon: Full Barrage",
+        "raw": "190 — Thunderjaw Cannon: Full Barrage — R(3–6), V1, Direct — Make an additional attack at –2 accuracy.",
+        "text": "R(3–6), V1, Direct—Make an additional attack at –2 accuracy.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "Direct",
+        "effect": "Make an additional attack at –2 accuracy."
+      },
+      {
+        "id": 191,
+        "name": "Thunderjaw Cannon: Suppressive Fire",
+        "raw": "191 — Thunderjaw Cannon: Suppressive Fire — R(3–6), V1, AoE(1) — Reduce enemy movement by 2 for 1 turn. Gain +2 heat.",
+        "text": "R(3–6), V1, AoE(1)—Reduce enemy movement by 2 for 1 turn. Gain +2 heat.",
+        "vision": 1,
+        "range": "3–6",
+        "targeting": "AoE(1)",
+        "effect": "Reduce enemy movement by 2 for 1 turn. Gain +2 heat."
+      },
+      {
+        "id": 192,
+        "name": "Thunderjaw Cannon: Full Vent",
+        "raw": "192 — Thunderjaw Cannon: Full Vent — R(Self) — Remove all heat; gain +3 DEF until your next turn.",
+        "text": "R(Self)—Remove all heat; gain +3 DEF until your next turn.",
+        "range": "Self",
+        "effect": "Remove all heat; gain +3 DEF until your next turn."
+      }
+    ],
+    "gambit": [
+      {
+        "id": 193,
+        "name": "Last Stand",
+        "raw": "193 — Last Stand — Double ATK below 50% HP. Strain: 3. Range: R(0–0), V0, N/A",
+        "text": "Double ATK below 50% HP. Strain: 3. Range: R(0–0), V0, N/A",
+        "strain": 3,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 194,
+        "name": "Perfect Strike",
+        "raw": "194 — Perfect Strike — Guaranteed hit and crit. Strain: 3. Range: R(1–1), V1, Direct",
+        "text": "Guaranteed hit and crit. Strain: 3. Range: R(1–1), V1, Direct",
+        "strain": 3,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 195,
+        "name": "Vengeance",
+        "raw": "195 — Vengeance — Deal damage equal to HP lost. Strain: 3. Range: R(1–3), V1, Direct",
+        "text": "Deal damage equal to HP lost. Strain: 3. Range: R(1–3), V1, Direct",
+        "strain": 3,
+        "range": "1–3",
+        "vision": 1
+      },
+      {
+        "id": 196,
+        "name": "Battle Frenzy",
+        "raw": "196 — Battle Frenzy — Act twice this turn. Strain: 4. Range: R(0–0), V0, N/A",
+        "text": "Act twice this turn. Strain: 4. Range: R(0–0), V0, N/A",
+        "strain": 4,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 197,
+        "name": "Ambush",
+        "raw": "197 — Ambush — First attack of battle deals double damage. Strain: 2. Range: R(1–1), V1, Direct",
+        "text": "First attack of battle deals double damage. Strain: 2. Range: R(1–1), V1, Direct",
+        "strain": 2,
+        "range": "1–1",
+        "vision": 1
+      },
+      {
+        "id": 198,
+        "name": "Unyielding",
+        "raw": "198 — Unyielding — Survive fatal hit with 1 HP. Strain: 3. Range: R(0–0), V0, N/A",
+        "text": "Survive fatal hit with 1 HP. Strain: 3. Range: R(0–0), V0, N/A",
+        "strain": 3,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 199,
+        "name": "Rapid Fire",
+        "raw": "199 — Rapid Fire — Attack three times in one turn. Strain: 3. Range: R(2–4), V1, Direct",
+        "text": "Attack three times in one turn. Strain: 3. Range: R(2–4), V1, Direct",
+        "strain": 3,
+        "range": "2–4",
+        "vision": 1
+      },
+      {
+        "id": 200,
+        "name": "Chain Reaction",
+        "raw": "200 — Chain Reaction — AOE damage if enemy defeated. Strain: 4. Range: R(1–2), V1, Indirect, AoE",
+        "text": "AOE damage if enemy defeated. Strain: 4. Range: R(1–2), V1, Indirect, AoE",
+        "strain": 4,
+        "range": "1–2",
+        "vision": 1
+      },
+      {
+        "id": 201,
+        "name": "Blood Pact",
+        "raw": "201 — Blood Pact — Lose HP to gain ATK for 3 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "text": "Lose HP to gain ATK for 3 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "strain": 2,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 202,
+        "name": "Final Gambit",
+        "raw": "202 — Final Gambit — Massive AoE, self‑KO. Strain: 5. Range: R(1–3), V1, Indirect, AoE",
+        "text": "Massive AoE, self‑KO. Strain: 5. Range: R(1–3), V1, Indirect, AoE",
+        "strain": 5,
+        "range": "1–3",
+        "vision": 1
+      },
+      {
+        "id": 203,
+        "name": "Heroic Rally",
+        "raw": "203 — Heroic Rally — Fully restore ally strain. Strain: 2. Range: R(0–0), V0, N/A",
+        "text": "Fully restore ally strain. Strain: 2. Range: R(0–0), V0, N/A",
+        "strain": 2,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 204,
+        "name": "Piercing Lunge",
+        "raw": "204 — Piercing Lunge — Ignore armor, double damage. Strain: 3. Range: R(2–3), V1, Direct",
+        "text": "Ignore armor, double damage. Strain: 3. Range: R(2–3), V1, Direct",
+        "strain": 3,
+        "range": "2–3",
+        "vision": 1
+      },
+      {
+        "id": 205,
+        "name": "Suppressing Fire",
+        "raw": "205 — Suppressing Fire — Reduce enemy movement by 2. Strain: 2. Range: R(3–5), V1, Direct",
+        "text": "Reduce enemy movement by 2. Strain: 2. Range: R(3–5), V1, Direct",
+        "strain": 2,
+        "range": "3–5",
+        "vision": 1
+      },
+      {
+        "id": 206,
+        "name": "Arcane Overload",
+        "raw": "206 — Arcane Overload — Magic attacks deal double damage. Strain: 3. Range: R(0–0), V0, N/A",
+        "text": "Magic attacks deal double damage. Strain: 3. Range: R(0–0), V0, N/A",
+        "strain": 3,
+        "range": "0–0",
+        "vision": 0
+      },
+      {
+        "id": 207,
+        "name": "Smoke Veil",
+        "raw": "207 — Smoke Veil — All allies gain evasion for 2 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "text": "All allies gain evasion for 2 turns. Strain: 2. Range: R(0–0), V0, N/A",
+        "strain": 2,
+        "range": "0–0",
+        "vision": 0
+      }
+    ]
+  },
+  "items": {
+    "craftingMaterials": [
+      {
+        "id": "sm",
+        "name": "Scrap Metal",
+        "abbr": "SM"
+      },
+      {
+        "id": "cs",
+        "name": "Chaos Shards",
+        "abbr": "CS"
+      },
+      {
+        "id": "mh",
+        "name": "Medic Herbs",
+        "abbr": "MH"
+      },
+      {
+        "id": "tl",
+        "name": "Treated Leather",
+        "abbr": "TL"
+      },
+      {
+        "id": "pf",
+        "name": "Processed Fuel",
+        "abbr": "PF"
+      },
+      {
+        "id": "cr",
+        "name": "Crystals",
+        "abbr": "CR"
+      }
+    ],
+    "consumables": [
+      {
+        "id": "field_ration",
+        "name": "Field Ration",
+        "effect": "Restore 2 HP to unit",
+        "sellPriceWad": 15,
+        "buyPriceWad": 30,
+        "craftingRecipe": "2 MH + 1 TL",
+        "raw": [
+          "Field Ration",
+          "Restore 2 HP to unit",
+          "15g",
+          "30g",
+          "2 MH + 1 TL"
+        ]
+      },
+      {
+        "id": "medkit",
+        "name": "Medkit",
+        "effect": "Restore 5 HP to unit",
+        "sellPriceWad": 40,
+        "buyPriceWad": 80,
+        "craftingRecipe": "4 MH + 1 TL",
+        "raw": [
+          "Medkit",
+          "Restore 5 HP to unit",
+          "40g",
+          "80g",
+          "4 MH + 1 TL"
+        ]
+      },
+      {
+        "id": "repair_kit",
+        "name": "Repair Kit",
+        "effect": "Restore 3 HP to mechanical unit",
+        "sellPriceWad": 20,
+        "buyPriceWad": 40,
+        "craftingRecipe": "2 SM + 1 PF",
+        "raw": [
+          "Repair Kit",
+          "Restore 3 HP to mechanical unit",
+          "20g",
+          "40g",
+          "2 SM + 1 PF"
+        ]
+      },
+      {
+        "id": "overcharge_cell",
+        "name": "Overcharge Cell",
+        "effect": "Add +3 Heat instantly to mechanical weapon, gain +3 ATK next attack",
+        "sellPriceWad": 25,
+        "buyPriceWad": 50,
+        "craftingRecipe": "2 PF + 1 CR",
+        "raw": [
+          "Overcharge Cell",
+          "Add +3 Heat instantly to mechanical weapon, gain +3 ATK next attack",
+          "25g",
+          "50g",
+          "2 PF + 1 CR"
+        ]
+      },
+      {
+        "id": "coolant_flask",
+        "name": "Coolant Flask",
+        "effect": "Remove 3 Heat from mechanical weapon",
+        "sellPriceWad": 30,
+        "buyPriceWad": 60,
+        "craftingRecipe": "3 PF + 1 CR",
+        "raw": [
+          "Coolant Flask",
+          "Remove 3 Heat from mechanical weapon",
+          "30g",
+          "60g",
+          "3 PF + 1 CR"
+        ]
+      },
+      {
+        "id": "smoke_canister",
+        "name": "Smoke Canister",
+        "effect": "Create smoke on target tile (block LoS for 1 turn)",
+        "sellPriceWad": 25,
+        "buyPriceWad": 50,
+        "craftingRecipe": "2 PF + 2 TL",
+        "raw": [
+          "Smoke Canister",
+          "Create smoke on target tile (block LoS for 1 turn)",
+          "25g",
+          "50g",
+          "2 PF + 2 TL"
+        ]
+      },
+      {
+        "id": "throwing_knife",
+        "name": "Throwing Knife",
+        "effect": "R(1–3), V1, Direct — Deal 2 damage ignoring DEF",
+        "sellPriceWad": 10,
+        "buyPriceWad": 20,
+        "craftingRecipe": "1 SM + 1 TL",
+        "raw": [
+          "Throwing Knife",
+          "R(1–3), V1, Direct — Deal 2 damage ignoring DEF",
+          "10g",
+          "20g",
+          "1 SM + 1 TL"
+        ]
+      },
+      {
+        "id": "firebomb",
+        "name": "Firebomb",
+        "effect": "AoE(1) — Deal 3 Fire damage and apply Burn",
+        "sellPriceWad": 35,
+        "buyPriceWad": 70,
+        "craftingRecipe": "3 PF + 1 TL + 1 CR",
+        "raw": [
+          "Firebomb",
+          "AoE(1) — Deal 3 Fire damage and apply Burn",
+          "35g",
+          "70g",
+          "3 PF + 1 TL + 1 CR"
+        ]
+      },
+      {
+        "id": "shock_charge",
+        "name": "Shock Charge",
+        "effect": "R(1–2) AoE(1) — Deal 2 Electric damage, stun 1 turn",
+        "sellPriceWad": 40,
+        "buyPriceWad": 80,
+        "craftingRecipe": "2 PF + 1 SM + 1 CR",
+        "raw": [
+          "Shock Charge",
+          "R(1–2) AoE(1) — Deal 2 Electric damage, stun 1 turn",
+          "40g",
+          "80g",
+          "2 PF + 1 SM + 1 CR"
+        ]
+      },
+      {
+        "id": "arcane_elixir",
+        "name": "Arcane Elixir",
+        "effect": "Restore 2 strain to target",
+        "sellPriceWad": 30,
+        "buyPriceWad": 60,
+        "craftingRecipe": "2 AD + 1 CR",
+        "raw": [
+          "Arcane Elixir",
+          "Restore 2 strain to target",
+          "30g",
+          "60g",
+          "2 AD + 1 CR"
+        ]
+      },
+      {
+        "id": "focus_draught",
+        "name": "Focus Draught",
+        "effect": "Next attack gains +2 ACC",
+        "sellPriceWad": 15,
+        "buyPriceWad": 30,
+        "craftingRecipe": "1 AD + 1 MH",
+        "raw": [
+          "Focus Draught",
+          "Next attack gains +2 ACC",
+          "15g",
+          "30g",
+          "1 AD + 1 MH"
+        ]
+      },
+      {
+        "id": "battle_banner",
+        "name": "Battle Banner",
+        "effect": "All allies within 2 tiles gain +1 ATK for 1 turn",
+        "sellPriceWad": 45,
+        "buyPriceWad": 90,
+        "craftingRecipe": "3 TL + 2 MH",
+        "raw": [
+          "Battle Banner",
+          "All allies within 2 tiles gain +1 ATK for 1 turn",
+          "45g",
+          "90g",
+          "3 TL + 2 MH"
+        ]
+      }
+    ],
+    "notes": "Prices are in WAD; recipes keep abbreviations as written."
+  },
+  "npcs": {
+    "coreFunctional": [
+      {
+        "id": "quartermaster_garrick",
+        "name": "Quartermaster Garrick",
+        "description": "Sells and buys gear, consumables, and crafting materials. Handles bulk supply orders."
+      },
+      {
+        "id": "engineer_mara_vance",
+        "name": "Engineer Mara Vance",
+        "description": "Upgrades mechanical weapons, repairs damaged gear, and improves heat capacity or clutch toggles."
+      },
+      {
+        "id": "blacksmith_rulfen",
+        "name": "Blacksmith Rulfen",
+        "description": "Crafts and upgrades non-mechanical weapons, armor, and accessories."
+      },
+      {
+        "id": "tactician_orren",
+        "name": "Tactician Orren",
+        "description": "Manages squad formations, deck building, and multi-weapon loadouts. Provides training simulations."
+      },
+      {
+        "id": "recruiter_elayne",
+        "name": "Recruiter Elayne",
+        "description": "Allows hiring of new units, manages barracks, and handles troop dismissals."
+      },
+      {
+        "id": "medic_selka",
+        "name": "Medic Selka",
+        "description": "Heals injured units, cures status effects, and sells medical supplies."
+      },
+      {
+        "id": "crafter_juno",
+        "name": "Crafter Juno",
+        "description": "Handles crafting consumable items from gathered resources."
+      },
+      {
+        "id": "mapwright_thalos",
+        "name": "Mapwright Thalos",
+        "description": "Unlocks and updates dungeon navigation tools, adds map modifiers, and marks hidden routes."
+      }
+    ],
+    "narrativeLore": [
+      {
+        "id": "archivist_liora",
+        "name": "Archivist Liora",
+        "description": "Keeps records of enemy types, lore entries, and past operations. Updates bestiary entries."
+      },
+      {
+        "id": "courier_dren",
+        "name": "Courier Dren",
+        "description": "Brings letters, parcels, and “off-world” packages from Fairhaven. Sometimes delivers side-quests."
+      },
+      {
+        "id": "bard_corin",
+        "name": "Bard Corin",
+        "description": "Provides rumors, flavor text, and camp atmosphere through songs and stories. May hint at hidden mechanics."
+      },
+      {
+        "id": "mysterious_stranger",
+        "name": "Mysterious Stranger",
+        "description": "Appears randomly with rare trade offers or cryptic intel about enemy activity."
+      }
+    ],
+    "ambientFlavor": [
+      {
+        "id": "mess_hall_cook_big_tova",
+        "name": "Mess Hall Cook “Big Tova”",
+        "description": "Provides morale boosts, sells rations, and offers temporary buff meals."
+      },
+      {
+        "id": "mechanic_s_apprentice_pip",
+        "name": "Mechanic’s Apprentice Pip",
+        "description": "A flavor NPC who comments on player progress and occasionally offers a small crafting discount."
+      },
+      {
+        "id": "gate_guard_fenric",
+        "name": "Gate Guard Fenric",
+        "description": "Controls entry and exit from the base camp, gives daily operational briefings."
+      }
+    ]
+  }
+}

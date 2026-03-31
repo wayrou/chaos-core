@@ -7,10 +7,10 @@ import { getStarterRecipeIds } from "./crafting";
 import { GameState } from "./types";
 import { getSettings } from "./settings";
 
-import { 
-  getStarterCardLibrary, 
+import {
+  getStarterCardLibrary,
   getDefaultGearSlots,
-  GearSlotData 
+  GearSlotData
 } from "./gearWorkbench";
 
 import {
@@ -43,18 +43,20 @@ import {
   STARTER_CHESTPIECES,
   STARTER_ACCESSORIES,
 } from "./equipment";
+import { calculatePWR } from "./pwr";
+import { createDefaultAffinities } from "./affinity";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
  */
 function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
   const desc = eqCard.description.toLowerCase();
-  
+
   // Determine target type based on card properties
   let targetType: "enemy" | "self" | "tile" | "ally" = "self";
-  
+
   // Check for enemy-targeting indicators
-  const isOffensive = 
+  const isOffensive =
     (eqCard.damage && eqCard.damage > 0) ||
     desc.includes("deal") && desc.includes("damage") ||
     desc.includes("attack") ||
@@ -65,18 +67,18 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
     desc.includes("stab") ||
     desc.includes("push target") ||
     desc.includes("pull target");
-  
+
   // Check for ally-targeting
-  const isAllyTarget = 
+  const isAllyTarget =
     desc.includes("ally") ||
     desc.includes("restore") && desc.includes("ally") ||
     desc.includes("heal ally");
-  
+
   // Check for movement/tile targeting
   const isTileTarget =
     desc.includes("move") && desc.includes("tile") ||
     desc.includes("reposition");
-  
+
   if (isOffensive) {
     targetType = "enemy";
   } else if (isAllyTarget) {
@@ -84,7 +86,7 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
   } else if (isTileTarget) {
     targetType = "tile";
   }
-  
+
   // Parse range from string like "R(1-2)" or "R(1)" or "R(Self)"
   let range = 1;
   if (eqCard.range) {
@@ -98,10 +100,10 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
       }
     }
   }
-  
+
   // Build effects array with all detected effects
   const effects: CardEffect[] = [];
-  
+
   // Damage
   if (eqCard.damage && eqCard.damage > 0) {
     effects.push({ type: "damage", amount: eqCard.damage });
@@ -111,58 +113,58 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
       effects.push({ type: "damage", amount: parseInt(dmgMatch[1], 10) });
     }
   }
-  
+
   // Healing
   const healMatch = desc.match(/(?:restore|heal|recover)\s+(\d+)\s+hp/i);
   if (healMatch) {
     effects.push({ type: "heal", amount: parseInt(healMatch[1], 10) });
   }
-  
+
   // DEF buff
   const defMatch = desc.match(/\+(\d+)\s+def/i) || desc.match(/gain\s+\+?(\d+)\s+def/i);
   if (defMatch) {
     effects.push({ type: "def_up", amount: parseInt(defMatch[1], 10), duration: 1 });
   }
-  
+
   // ATK buff  
   const atkMatch = desc.match(/\+(\d+)\s+atk/i) || desc.match(/gain\s+\+?(\d+)\s+atk/i);
   if (atkMatch) {
     effects.push({ type: "atk_up", amount: parseInt(atkMatch[1], 10), duration: 1 });
   }
-  
+
   // AGI buff
   const agiMatch = desc.match(/\+(\d+)\s+agi/i) || desc.match(/gain\s+\+?(\d+)\s+agi/i);
   if (agiMatch) {
     effects.push({ type: "agi_up", amount: parseInt(agiMatch[1], 10), duration: 1 });
   }
-  
+
   // ACC buff
   const accMatch = desc.match(/\+(\d+)\s+acc/i) || desc.match(/gain\s+\+?(\d+)\s+acc/i);
   if (accMatch) {
     effects.push({ type: "acc_up", amount: parseInt(accMatch[1], 10), duration: 1 });
   }
-  
+
   // Stun
   if (desc.includes("stun")) {
     effects.push({ type: "stun", duration: 1 });
   }
-  
+
   // Burn
   if (desc.includes("burn") || desc.includes("inflict burn")) {
     effects.push({ type: "burn", duration: 2 });
   }
-  
+
   // Push
   const pushMatch = desc.match(/push\s+(?:target\s+)?(?:back\s+)?(\d+)\s+tile/i);
   if (pushMatch) {
     effects.push({ type: "push", amount: parseInt(pushMatch[1], 10) });
   }
-  
+
   // End turn (for Wait card)
   if (eqCard.id === "core_wait" || eqCard.name.toLowerCase() === "wait") {
     effects.push({ type: "end_turn" });
   }
-  
+
   return {
     id: eqCard.id,
     name: eqCard.name,
@@ -179,7 +181,7 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
  */
 function createAllCards(): Record<CardId, Card> {
   const cards: Record<CardId, Card> = {};
-  
+
   // Add legacy cards for backwards compatibility
   const legacyCards: Card[] = [
     {
@@ -210,17 +212,17 @@ function createAllCards(): Record<CardId, Card> {
       effects: [],
     },
   ];
-  
+
   for (const card of legacyCards) {
     cards[card.id] = card;
   }
-  
+
   // Add all equipment-based cards
   const equipmentCards = getAllEquipmentCards();
   for (const [id, eqCard] of Object.entries(equipmentCards)) {
     cards[id] = equipmentCardToGameCard(eqCard);
   }
-  
+
   return cards;
 }
 
@@ -239,6 +241,9 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   // Legacy deck no longer used - decks are built from equipment
   const baseDeck: CardId[] = [];
 
+  const equipmentById = getAllStarterEquipment();
+  const modulesById = getAllModules();
+
   const units: UnitWithEquipment[] = [
     {
       id: "unit_aeriss",
@@ -246,20 +251,21 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       classId: "vanguard" as UnitClassId,
       unitClass: "squire",
       stats: {
-        maxHp: 30,
+        maxHp: 9,
         atk: 7,
         def: 3,
-        agi: 5,
+        agi: 3,
         acc: 90,
       },
       deck: baseDeck,
       loadout: {
-        weapon: "weapon_iron_longsword",
+        weapon: "weapon_emberclaw_repeater", // Mechanical weapon for testing
         helmet: "armor_ironguard_helm",
         chestpiece: "armor_steelplate_cuirass",
         accessory1: "accessory_steel_signet_ring",
         accessory2: null,
       },
+      affinities: createDefaultAffinities(),
     },
     {
       id: "unit_marksman_1",
@@ -267,10 +273,10 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       classId: "marksman" as UnitClassId,
       unitClass: "ranger",
       stats: {
-        maxHp: 22,
+        maxHp: 13,
         atk: 6,
         def: 2,
-        agi: 6,
+        agi: 3,
         acc: 95,
       },
       deck: baseDeck,
@@ -281,10 +287,43 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         accessory1: "accessory_eagle_eye_lens",
         accessory2: null,
       },
+      affinities: createDefaultAffinities(),
+    },
+    {
+      id: "unit_mage_1",
+      name: "Field Mage",
+      classId: "caster" as UnitClassId,
+      unitClass: "magician",
+      stats: {
+        maxHp: 10,
+        atk: 5,
+        def: 1,
+        agi: 2,
+        acc: 85,
+      },
+      deck: baseDeck,
+      loadout: {
+        weapon: "weapon_oak_battlestaff",
+        helmet: "armor_mystic_circlet",
+        chestpiece: "armor_mages_robe",
+        accessory1: "accessory_vitality_charm",
+        accessory2: null,
+      },
+      affinities: createDefaultAffinities(),
     },
   ];
 
-  return Object.fromEntries(units.map((u) => [u.id, u])) as Record<
+  // Calculate PWR for each unit
+  const unitsWithPWR = units.map((u) => {
+    const pwr = calculatePWR({
+      unit: u,
+      equipmentById,
+      modulesById,
+    });
+    return { ...u, pwr, controller: "P1" as const }; // Default all units to P1
+  });
+
+  return Object.fromEntries(unitsWithPWR.map((u) => [u.id, u])) as Record<
     UnitId,
     UnitWithEquipment
   >;
@@ -351,15 +390,13 @@ function createDefaultProfile(rosterUnitIds: UnitId[]): PlayerProfile {
 
 function createInitialInventory(): InventoryState {
   const muleClass: MuleWeightClass = "E";
-  const capacityMassKg = 100;
-  const capacityBulkBu = 70;
-  const capacityPowerW = 300;
+  const caps = MULE_CLASS_CAPS[muleClass];
 
   return {
     muleClass,
-    capacityMassKg,
-    capacityBulkBu,
-    capacityPowerW,
+    capacityMassKg: caps.massKg,
+    capacityBulkBu: caps.bulkBu,
+    capacityPowerW: caps.powerW,
     forwardLocker: [],
     baseStorage: [],
   };
@@ -409,9 +446,9 @@ export function createNewGameState(): GameStateWithEquipment {
   const equipmentById = getAllStarterEquipment();
   const modulesById = getAllModules();
   const equipmentPool = createEquipmentPool();
-  
- 
-  
+
+
+
 
 
   const state: GameStateWithEquipment = {
@@ -420,7 +457,7 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-    partyUnitIds: ["unit_aeriss", "unit_marksman_1"],
+    partyUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
 
     wad: 0,
     resources: {
@@ -429,26 +466,26 @@ export function createNewGameState(): GameStateWithEquipment {
       chaosShards: 0,
       steamComponents: 0,
     },
-	
-	 // Starter card library
-  cardLibrary: getStarterCardLibrary(),
-  
-  // Gear slots - will be populated as equipment is acquired
-  gearSlots: {},
-	
-	   // Crafting - starter recipes are known by default
-  knownRecipeIds: getStarterRecipeIds(),
-  
-  // Consumables pouch - starts empty
-consumables: {},
+
+    // Starter card library
+    cardLibrary: getStarterCardLibrary(),
+
+    // Gear slots - will be populated as equipment is acquired
+    gearSlots: {},
+
+    // Crafting - starter recipes are known by default
+    knownRecipeIds: getStarterRecipeIds(),
+
+    // Consumables pouch - starts empty
+    consumables: {},
 
     currentBattle: null,
 
     inventory: {
       muleClass: "E",
-      capacityMassKg: 100,
-      capacityBulkBu: 70,
-      capacityPowerW: 300,
+      capacityMassKg: 50,
+      capacityBulkBu: 35,
+      capacityPowerW: 150,
       forwardLocker: [],
       baseStorage: [],
     },
@@ -457,7 +494,68 @@ consumables: {},
     equipmentById,
     modulesById,
     equipmentPool,
+
+    // Quest System
+    quests: {
+      availableQuests: [],
+      activeQuests: [],
+      completedQuests: [],
+      failedQuests: [],
+      maxActiveQuests: 5,
+    },
+
+    // Unit Recruitment System (Headline 14az)
+    recruitmentCandidates: undefined, // Will be generated when Tavern is opened
+
+    // Local Co-op System - Initialize players
+    players: {
+      P1: {
+        id: "P1",
+        active: true,
+        color: "#ff8a00", // Orange for P1
+        inputSource: "keyboard1",
+        avatar: null, // Will be set when entering field mode
+        controlledUnitIds: [], // Will be populated when entering battle
+      },
+      P2: {
+        id: "P2",
+        active: false,
+        color: "#6849c2", // Purple for P2
+        inputSource: "none",
+        avatar: null,
+        controlledUnitIds: [],
+      },
+    },
+
+    // Port System
+    baseCampVisitIndex: 0,
+    portManifest: undefined,
+    portTradesRemaining: 2,
+
+    // Gear Builder System - Starter unlocks
+    unlockedChassisIds: [
+      "chassis_standard_rifle",
+      "chassis_standard_helmet",
+      "chassis_standard_chest",
+      "chassis_utility_module",
+    ],
+    unlockedDoctrineIds: [
+      "doctrine_balanced",
+      "doctrine_skirmish",
+      "doctrine_sustain",
+    ],
+
+    unlockedCodexEntries: [],
   };
+
+  // Initialize unit controllers to P1 by default
+  for (const unitId of state.partyUnitIds) {
+    const unit = state.unitsById[unitId];
+    if (unit && !unit.isEnemy) {
+      unit.controller = "P1";
+      state.players.P1.controlledUnitIds.push(unitId);
+    }
+  }
 
   return state;
 }
