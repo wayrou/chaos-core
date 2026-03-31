@@ -110,7 +110,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
       <div class="port-header town-screen__header">
         <div class="port-header-left town-screen__titleblock">
           <h1 class="port-title">PORT</h1>
-          <div class="port-subtitle">SUPPLY MANIFEST TERMINAL</div>
+          <div class="port-subtitle">S/COM_OS // SUPPLY_MANIFEST</div>
         </div>
         <div class="port-header-right town-screen__header-right">
           <button class="port-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
@@ -123,7 +123,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
       <!-- Main Content: Two Column Layout -->
       <div class="port-content town-screen__content-panel">
         <!-- Left Column: Main Window -->
-        <div class="port-main-window">
+        <div class="port-main-window town-screen__panel ard-panel--inset">
           <!-- Manifest Updated Stamp -->
           <div class="port-stamp-container" id="manifestStampContainer">
             <div class="port-stamp ${manifestUpdatedStampVisible ? 'port-stamp--visible' : ''}" id="manifestStamp">
@@ -180,7 +180,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
         </div>
         
         <!-- Right Column: NPC Flavor Text -->
-        <div class="port-npc-panel">
+        <div class="port-npc-panel town-screen__panel ard-panel--inset">
           ${renderNpcFlavorText()}
         </div>
       </div>

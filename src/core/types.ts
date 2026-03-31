@@ -169,6 +169,18 @@ export interface Player {
   controlledUnitIds: UnitId[];
 }
 
+export interface BaseCampItemSize {
+  colSpan: number;
+  minHeight: number;
+}
+
+export interface UILayoutState {
+  baseCampNodeOrder?: string[];
+  baseCampItemOrder?: string[];
+  baseCampMinimizedItems?: string[];
+  baseCampItemSizes?: Record<string, BaseCampItemSize>;
+}
+
 // ============================================================================
 // UNIT RECRUITMENT & PERFORMANCE SYSTEM (Headline 14a/14az)
 // ============================================================================
@@ -431,6 +443,9 @@ export interface GameState {
 
   // Mount/Stable System
   stable?: StableState;
+
+  // Lightweight UI persistence for shell/menu layout customizations
+  uiLayout?: UILayoutState;
 }
 
 interface GearSlotData {

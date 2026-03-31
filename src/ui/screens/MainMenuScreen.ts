@@ -26,6 +26,22 @@ import { initControllerSupport, updateFocusableElements } from "../../core/contr
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
 import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
 
+const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
+const FLOATING_TERMINAL_TITLES = [
+  "S/COM_OS // AUX_CONSOLE",
+  "S/COM_OS // SIGNAL_MONITOR",
+  "S/COM_OS // OPS_RELAY",
+  "S/COM_OS // ARCHIVE_NODE",
+];
+
+let floatingTerminalCount = 0;
+let floatingTerminalZIndex = 220;
+
+type TerminalElements = {
+  body: HTMLElement;
+  output: HTMLElement;
+};
+
 // ----------------------------------------------------------------------------
 // INITIALIZATION
 // ----------------------------------------------------------------------------
@@ -121,7 +137,6 @@ export async function renderMainMenu(): Promise<void> {
               <div id="logoFallback" class="mainmenu-logo-fallback" style="display: none;">CHAOS CORE</div>
               <div class="mainmenu-logo-glow"></div>
             </div>
-            <div class="mainmenu-subtitle">COMPANY OF QUILLS TACTICAL INTERFACE</div>
           </div>
           
           <!-- Menu buttons below logo -->
@@ -180,6 +195,18 @@ export async function renderMainMenu(): Promise<void> {
           </div>
         </div>
       </div>
+
+      <button
+        class="mainmenu-terminal-fab"
+        type="button"
+        data-action="new-terminal"
+        aria-label="Open new S/COM_OS window"
+        title="Open new S/COM_OS window"
+      >
+        +
+      </button>
+
+      <div class="mainmenu-floating-layer" id="mainmenuFloatingLayer" aria-live="polite"></div>
       
       <div class="mainmenu-modal" id="loadModal" style="display: none;">
         <div class="mainmenu-modal-content">
@@ -210,18 +237,33 @@ export async function renderMainMenu(): Promise<void> {
   updateFocusableElements();
   
   // Start terminal animation
-  startTerminalAnimation(flavorLines);
+  startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
 }
 
 // ----------------------------------------------------------------------------
 // TERMINAL ANIMATION
 // ----------------------------------------------------------------------------
 
-function startTerminalAnimation(flavorLines: string[]): void {
-  const terminalOutput = document.getElementById("terminalOutput");
-  const terminalBody = document.getElementById("terminalBody");
-  
-  if (!terminalOutput || !terminalBody) return;
+function getTerminalElements(bodyId: string, outputId: string): TerminalElements | null {
+  const body = document.getElementById(bodyId);
+  const output = document.getElementById(outputId);
+
+  if (!body || !output) {
+    return null;
+  }
+
+  return { body, output };
+}
+
+function isTerminalPromptLine(line: string): boolean {
+  return line.startsWith(TERMINAL_PROMPT_PREFIX);
+}
+
+function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): void {
+  const elements = getTerminalElements(bodyId, outputId);
+  if (!elements) return;
+
+  const { body: terminalBody, output: terminalOutput } = elements;
   
   let currentLineIndex = 0;
   
@@ -242,8 +284,8 @@ function startTerminalAnimation(flavorLines: string[]): void {
         });
       }, initialDelay);
       // Estimate delay: prompt + text characters * typing speed
-      const promptLength = line.startsWith('SLK&gt;') ? line.split('::')[0].length : 0;
-      const textLength = line.startsWith('SLK&gt;') ? line.split('::').slice(1).join('::').length : line.length;
+      const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
+      const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
       initialDelay += (promptLength + textLength) * 30 + 500; // 30ms per char + 500ms pause
     }
   });
@@ -264,8 +306,8 @@ function startTerminalAnimation(flavorLines: string[]): void {
       typeTerminalLine(terminalOutput, terminalBody, line, () => {
         autoScrollTerminal(terminalBody);
         // Schedule next line after typing completes
-        const promptLength = line.startsWith('SLK&gt;') ? line.split('::')[0].length : 0;
-        const textLength = line.startsWith('SLK&gt;') ? line.split('::').slice(1).join('::').length : line.length;
+        const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
+        const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
         const typingTime = (promptLength + textLength) * 30;
         setTimeout(addNextLine, typingTime + 800); // Add pause after line completes
       });
@@ -279,6 +321,10 @@ function startTerminalAnimation(flavorLines: string[]): void {
 }
 
 function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, line: string, onComplete: () => void): void {
+  if (!container.isConnected || !terminalBody.isConnected) {
+    return;
+  }
+
   const lineDiv = document.createElement("div");
   lineDiv.className = "terminal-line";
   container.appendChild(lineDiv);
@@ -298,7 +344,7 @@ function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, lin
   let promptSpan: HTMLSpanElement | null = null;
   let textSpan: HTMLSpanElement | null = null;
   
-  if (line.startsWith('SLK&gt;')) {
+  if (isTerminalPromptLine(line)) {
     const parts = line.split('::');
     const prompt = parts[0];
     const text = parts.slice(1).join('::');
@@ -348,6 +394,10 @@ function typeText(element: HTMLElement, text: string, delay: number, onComplete:
   let index = 0;
   
   const typeChar = () => {
+    if (!element.isConnected) {
+      return;
+    }
+
     if (index < text.length) {
       element.textContent = text.substring(0, index + 1);
       index++;
@@ -368,6 +418,10 @@ function addEmptyTerminalLine(container: HTMLElement): void {
 }
 
 function addCursorLine(container: HTMLElement): void {
+  if (!container.isConnected) {
+    return;
+  }
+
   // Remove existing cursor line
   const existingCursor = container.querySelector('.terminal-cursor-line');
   if (existingCursor) {
@@ -377,7 +431,7 @@ function addCursorLine(container: HTMLElement): void {
   const cursorLine = document.createElement("div");
   cursorLine.className = "terminal-line terminal-cursor-line";
   cursorLine.innerHTML = `
-    <span class="terminal-prompt">SLK&gt;</span>
+    <span class="terminal-prompt">S/COM&gt;</span>
     <span class="terminal-text"><span class="terminal-cursor">_</span></span>
   `;
   container.appendChild(cursorLine);
@@ -503,6 +557,13 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       renderSettingsScreen("menu");
     });
   }
+
+  const newTerminalBtn = root.querySelector<HTMLButtonElement>('button[data-action="new-terminal"]');
+  if (newTerminalBtn) {
+    newTerminalBtn.addEventListener("click", () => {
+      createFloatingTerminalWindow();
+    });
+  }
   
   // Exit button
   const exitBtn = root.querySelector<HTMLButtonElement>('button[data-action="exit"]');
@@ -547,6 +608,72 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       (e.target as HTMLElement).style.display = "none";
     }
   });
+}
+
+function createFloatingTerminalWindow(): void {
+  const floatingLayer = document.getElementById("mainmenuFloatingLayer");
+  if (!floatingLayer) return;
+
+  floatingTerminalCount += 1;
+  const terminalId = `mainmenuFloatingTerminal${floatingTerminalCount}`;
+  const terminalBodyId = `${terminalId}Body`;
+  const terminalOutputId = `${terminalId}Output`;
+  const title = FLOATING_TERMINAL_TITLES[(floatingTerminalCount - 1) % FLOATING_TERMINAL_TITLES.length];
+  const offsetIndex = floatingTerminalCount - 1;
+  const left = Math.min(480 + offsetIndex * 28, Math.max(480, window.innerWidth - 420));
+  const top = Math.min(72 + offsetIndex * 22, Math.max(24, window.innerHeight - 360));
+
+  const windowEl = document.createElement("div");
+  windowEl.className = "mainmenu-terminal-window mainmenu-terminal-window--floating";
+  windowEl.id = terminalId;
+  windowEl.style.left = `${left}px`;
+  windowEl.style.top = `${top}px`;
+  windowEl.style.zIndex = String(++floatingTerminalZIndex);
+  windowEl.innerHTML = `
+    <div class="mainmenu-terminal-header">
+      <span class="terminal-window-title">${title}</span>
+      <div class="mainmenu-terminal-controls">
+        <span class="terminal-window-status">[ACTIVE]</span>
+        <button
+          class="mainmenu-terminal-close"
+          type="button"
+          aria-label="Close terminal window"
+          data-close-terminal="${terminalId}"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+    <div class="mainmenu-terminal-body" id="${terminalBodyId}">
+      <div class="mainmenu-terminal-output" id="${terminalOutputId}"></div>
+    </div>
+  `;
+
+  floatingLayer.appendChild(windowEl);
+
+  windowEl.addEventListener("pointerdown", () => {
+    windowEl.style.zIndex = String(++floatingTerminalZIndex);
+  });
+
+  const closeBtn = windowEl.querySelector<HTMLButtonElement>(`button[data-close-terminal="${terminalId}"]`);
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      windowEl.remove();
+    });
+  }
+
+  const floatingFlavorLines = [
+    `${TERMINAL_PROMPT_PREFIX} WINDOW_STATUS   :: Auxiliary console online.`,
+    `${TERMINAL_PROMPT_PREFIX} NODE_ID         :: ${terminalId.toUpperCase()}`,
+    `${TERMINAL_PROMPT_PREFIX} QUAC_BRIDGE     :: Listening for local shell requests.`,
+    "",
+    `${TERMINAL_PROMPT_PREFIX} DIAGNOSTICS     :: Memory lattice stable.`,
+    `${TERMINAL_PROMPT_PREFIX} DIAGNOSTICS     :: Riftwatch telemetry buffered.`,
+    `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Drag this header to reposition.`,
+    `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Use ✕ to dismiss the pane.`,
+  ];
+
+  startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
 }
 
 // ----------------------------------------------------------------------------

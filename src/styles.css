@@ -4636,6 +4636,112 @@ body {
   opacity: 0.95;
 }
 
+.mainmenu-terminal-fab {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(155, 127, 255, 0.42);
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(196, 167, 255, 0.85), rgba(122, 84, 219, 0.92));
+  color: #f6eeff;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 210;
+  box-shadow:
+    0 12px 28px rgba(18, 10, 42, 0.45),
+    0 0 24px rgba(155, 127, 255, 0.42);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.mainmenu-terminal-fab:hover {
+  transform: translateY(-2px) scale(1.04);
+  background: radial-gradient(circle at 30% 30%, rgba(214, 192, 255, 0.95), rgba(144, 98, 244, 0.98));
+  box-shadow:
+    0 16px 36px rgba(18, 10, 42, 0.5),
+    0 0 28px rgba(171, 141, 255, 0.55);
+}
+
+.mainmenu-terminal-fab:active {
+  transform: scale(0.97);
+}
+
+.mainmenu-floating-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 180;
+}
+
+.mainmenu-terminal-window--floating {
+  position: fixed;
+  width: min(420px, calc(100vw - 32px));
+  height: 290px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.mainmenu-terminal-window--floating .mainmenu-terminal-header {
+  cursor: grab;
+}
+
+.mainmenu-terminal-window--floating.ez-drag-window--dragging .mainmenu-terminal-header {
+  cursor: grabbing;
+}
+
+.mainmenu-terminal-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.mainmenu-terminal-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(155, 127, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(155, 127, 255, 0.08);
+  color: #d4c5ff;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.mainmenu-terminal-close:hover {
+  background: rgba(195, 19, 44, 0.18);
+  border-color: rgba(195, 19, 44, 0.45);
+  color: #ffd8dd;
+}
+
+@media (max-width: 1024px) {
+  .mainmenu-terminal-fab {
+    top: 1rem;
+    right: 1rem;
+    width: 46px;
+    height: 46px;
+    font-size: 1.7rem;
+  }
+
+  .mainmenu-floating-layer {
+    z-index: 220;
+  }
+
+  .mainmenu-terminal-window--floating {
+    width: min(360px, calc(100vw - 24px));
+    height: 240px;
+  }
+}
+
 /* ===========================
    GLOBAL RESET & ROOT
    =========================== */
@@ -4947,6 +5053,17 @@ button {
   background: rgba(155, 127, 255, 0.1);
   border-bottom: 1px solid rgba(155, 127, 255, 0.3);
   flex-shrink: 0;
+}
+
+.boot-window .boot-header,
+.boot-window .boot-window-header {
+  cursor: grab;
+  user-select: none;
+}
+
+.boot-window.ez-drag-window--dragging .boot-header,
+.boot-window.ez-drag-window--dragging .boot-window-header {
+  cursor: grabbing;
 }
 
 .boot-window-header {

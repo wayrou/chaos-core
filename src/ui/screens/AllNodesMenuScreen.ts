@@ -3,14 +3,44 @@
 // An independent screen (not an overlay) containing all base camp nodes
 // ============================================================================
 
-import "../../field/field.css"; // Import styles for the menu screen
+import "../../field/field.css";
 import { getGameState, updateGameState } from "../../state/gameStore";
-// BaseCampScreen removed - using AllNodesMenuScreen instead
 import { renderFieldScreen } from "../../field/FieldScreen";
 
-// Track last field map for returning to field mode
 let lastFieldMap: string = "base_camp";
 let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+let suppressNodeClickUntil = 0;
+
+type NodeDefinition = {
+  action: string;
+  icon: string;
+  label: string;
+  desc: string;
+  variant?: string;
+};
+
+const QUAC_LAYOUT_ID = "quac-terminal";
+const DRAG_THRESHOLD_PX = 8;
+const MIN_ITEM_HEIGHT = 104;
+
+const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
+  { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
+  { action: "roster", icon: "RST", label: "UNIT ROSTER", desc: "Manage your units" },
+  { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
+  { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
+  { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
+  { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
+  { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
+  { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
+  { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
+  { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
+  { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
+  { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
+  { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
+  { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
+];
+
+const DEFAULT_LAYOUT_ORDER = [...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID];
 
 const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
@@ -52,15 +82,173 @@ function resolveQuacCommand(input: string): string | null {
   return null;
 }
 
-/**
- * Render the All Nodes Menu Screen
- * This is a standalone screen that shows all available nodes as clickable buttons
- */
+function readNodeLayout(): NodeDefinition[] {
+  const state = getGameState();
+  const savedOrder = state.uiLayout?.baseCampNodeOrder;
+  if (!savedOrder || savedOrder.length === 0) {
+    return [...DEFAULT_NODE_LAYOUT];
+  }
+
+  const nodeMap = new Map(DEFAULT_NODE_LAYOUT.map((node) => [node.action, node]));
+  const ordered = savedOrder.map((action) => nodeMap.get(action)).filter((node): node is NodeDefinition => Boolean(node));
+  const missing = DEFAULT_NODE_LAYOUT.filter((node) => !savedOrder.includes(node.action));
+  return [...ordered, ...missing];
+}
+
+function readLayoutOrder(): string[] {
+  const state = getGameState();
+  const savedOrder = state.uiLayout?.baseCampItemOrder;
+  const validIds = new Set(DEFAULT_LAYOUT_ORDER);
+
+  if (!savedOrder || savedOrder.length === 0) {
+    return [...readNodeLayout().map((node) => node.action), QUAC_LAYOUT_ID];
+  }
+
+  const ordered = savedOrder.filter((id) => validIds.has(id));
+  const missing = DEFAULT_LAYOUT_ORDER.filter((id) => !ordered.includes(id));
+  return [...ordered, ...missing];
+}
+
+function persistLayoutOrder(order: string[]): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampItemOrder: order,
+      baseCampNodeOrder: order.filter((id) => id !== QUAC_LAYOUT_ID),
+    },
+  }));
+}
+
+function readMinimizedItems(): string[] {
+  const state = getGameState();
+  return state.uiLayout?.baseCampMinimizedItems ?? [];
+}
+
+function persistMinimizedItems(ids: string[]): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampMinimizedItems: ids,
+    },
+  }));
+}
+
+function readItemSizes(): Record<string, { colSpan: number; minHeight: number }> {
+  return getGameState().uiLayout?.baseCampItemSizes ?? {};
+}
+
+function persistItemSizes(sizes: Record<string, { colSpan: number; minHeight: number }>): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampItemSizes: sizes,
+    },
+  }));
+}
+
+function resetBaseCampView(): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampItemOrder: [...DEFAULT_LAYOUT_ORDER],
+      baseCampNodeOrder: DEFAULT_NODE_LAYOUT.map((node) => node.action),
+      baseCampMinimizedItems: [],
+      baseCampItemSizes: {},
+    },
+  }));
+}
+
+function mergeLayoutOrder(activeOrder: string[], fullOrder: string[], minimized: Set<string>): string[] {
+  const nextActive = [...activeOrder];
+  return fullOrder.map((id) => (minimized.has(id) ? id : nextActive.shift() ?? id));
+}
+
+function getItemStyle(itemId: string, sizes: Record<string, { colSpan: number; minHeight: number }>): string {
+  const size = sizes[itemId];
+  if (!size) {
+    return "";
+  }
+
+  return `style="grid-column: span ${size.colSpan}; min-height: ${size.minHeight}px;"`;
+}
+
+function renderNodeContent(node: NodeDefinition): string {
+  const variantClass = node.variant ? ` ${node.variant}` : "";
+  return `
+    <div class="all-nodes-item-shell">
+      <div class="all-nodes-item-toolbar">
+        <span class="all-nodes-item-grip" aria-hidden="true">::</span>
+        <button class="all-nodes-item-minimize" type="button" data-minimize-id="${node.action}" aria-label="Minimize ${node.label}">_</button>
+      </div>
+      <button class="all-nodes-node-btn${variantClass}" data-action="${node.action}">
+        <span class="node-icon">${node.icon}</span>
+        <span class="node-label">${node.label}</span>
+        <span class="node-desc">${node.desc}</span>
+      </button>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${node.action}" aria-label="Resize ${node.label}"></button>
+    </div>
+  `;
+}
+
+function renderQuacContent(): string {
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--quac">
+      <div class="all-nodes-item-toolbar all-nodes-item-toolbar--quac">
+        <span class="all-nodes-item-grip" aria-hidden="true">::</span>
+        <button class="all-nodes-item-minimize" type="button" data-minimize-id="${QUAC_LAYOUT_ID}" aria-label="Minimize QUAC terminal">_</button>
+      </div>
+      <section class="all-nodes-cli-panel" aria-label="Quick User Access Console" data-ez-drag-disable="true">
+        <div class="all-nodes-cli-header">
+          <div class="all-nodes-cli-title">Q.U.A.C. TERMINAL</div>
+        </div>
+        <form class="all-nodes-cli-form" id="quacForm">
+          <label class="all-nodes-cli-prompt" for="quacInput">S/COM://QUAC&gt;</label>
+          <input
+            class="all-nodes-cli-input"
+            id="quacInput"
+            name="quacInput"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder='Enter command: "unit roster", "loadout", "inventory"...'
+          />
+          <button class="all-nodes-cli-submit" type="submit">EXECUTE</button>
+        </form>
+        <div class="all-nodes-cli-status" id="quacStatus">${quacLastFeedback}</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): string {
+  if (itemId === QUAC_LAYOUT_ID) {
+    return `
+      <button class="all-nodes-dock-item all-nodes-dock-item--quac" type="button" data-restore-id="${itemId}" aria-label="Restore QUAC terminal">
+        <span class="dock-icon">Q</span>
+        <span class="dock-label">QUAC</span>
+      </button>
+    `;
+  }
+
+  const node = nodeMap.get(itemId);
+  if (!node) return "";
+
+  return `
+    <button class="all-nodes-dock-item" type="button" data-restore-id="${itemId}" aria-label="Restore ${node.label}">
+      <span class="dock-icon">${node.icon}</span>
+      <span class="dock-label">${node.label}</span>
+    </button>
+  `;
+}
+
 export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  // Remember where we came from
   if (fromFieldMap) {
     lastFieldMap = fromFieldMap;
   }
@@ -74,19 +262,30 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
     steamComponents: 0,
   };
 
+  const nodeLayout = readNodeLayout();
+  const nodeMap = new Map(nodeLayout.map((node) => [node.action, node]));
+  const fullOrder = readLayoutOrder();
+  const minimized = new Set(readMinimizedItems());
+  const itemSizes = readItemSizes();
+  const activeOrder = fullOrder.filter((id) => !minimized.has(id));
+  const dockOrder = fullOrder.filter((id) => minimized.has(id));
+
   root.innerHTML = `
     <div class="all-nodes-menu-screen town-screen town-screen--hub ard-noise">
-      <!-- Terminal Header (S/COM_OS) -->
       <header class="all-nodes-menu-header town-screen__hero">
-        <div class="all-nodes-terminal-bar">
-          <span class="terminal-indicator"></span>
-          <span class="terminal-text">S/COM_OS // BASE_CAMP.SYS</span>
+        <div class="all-nodes-header-copy">
+          <div class="all-nodes-terminal-bar">
+            <span class="terminal-indicator"></span>
+            <span class="terminal-text">S/COM_OS // BASE_CAMP.SYS</span>
+          </div>
+          <h1 class="all-nodes-menu-title">BASE CAMP</h1>
+          <p class="all-nodes-menu-subtitle">AERISS // PROFILE</p>
         </div>
-        <h1 class="all-nodes-menu-title">BASE CAMP</h1>
-        <p class="all-nodes-menu-subtitle">Q.U.A.C. // QUICK USER ACCESS CONSOLE</p>
+        <div class="all-nodes-header-actions">
+          <button class="all-nodes-reset-btn" type="button" id="allNodesResetViewBtn">RESET VIEW</button>
+        </div>
       </header>
 
-      <!-- Mode Toggle (FFTA-style tabs) -->
       <nav class="all-nodes-menu-mode-toggle">
         <button class="all-nodes-mode-tab all-nodes-mode-tab--active" data-mode="menu">
           <span class="mode-icon">[CMD]</span>
@@ -94,7 +293,6 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         </button>
       </nav>
 
-      <!-- Resources Bar (Adventure Gothic panel) -->
       <div class="all-nodes-menu-resources town-screen__resource-strip ard-panel--inset">
         <div class="all-nodes-resource">
           <span class="resource-icon">W</span>
@@ -123,103 +321,31 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         </div>
       </div>
 
-      <section class="all-nodes-cli-panel" aria-label="Quick User Access Console">
-        <div class="all-nodes-cli-header">
-          <div class="all-nodes-cli-title">Q.U.A.C. TERMINAL</div>
-          <div class="all-nodes-cli-hint">Direct command access to all town nodes</div>
-        </div>
-        <form class="all-nodes-cli-form" id="quacForm">
-          <label class="all-nodes-cli-prompt" for="quacInput">S/COM://QUAC&gt;</label>
-          <input
-            class="all-nodes-cli-input"
-            id="quacInput"
-            name="quacInput"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder='Enter command: "unit roster", "loadout", "inventory"...'
-          />
-          <button class="all-nodes-cli-submit" type="submit">EXECUTE</button>
-        </form>
-        <div class="all-nodes-cli-status" id="quacStatus">${quacLastFeedback}</div>
-      </section>
+      <div class="all-nodes-menu-grid town-screen__grid" id="allNodesMenuGrid">
+        ${activeOrder.map((itemId) => {
+          if (itemId === QUAC_LAYOUT_ID) {
+            return `
+              <div class="all-nodes-grid-item all-nodes-grid-item--quac" data-layout-id="${itemId}" ${getItemStyle(itemId, itemSizes)}>
+                ${renderQuacContent()}
+              </div>
+            `;
+          }
 
-      <!-- Node Grid (World Panels) -->
-      <div class="all-nodes-menu-grid town-screen__grid">
-        <button class="all-nodes-node-btn all-nodes-node-btn--primary" data-action="ops-terminal">
-          <span class="node-icon">OPS</span>
-          <span class="node-label">OPS TERMINAL</span>
-          <span class="node-desc">Deploy on operations</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="roster">
-          <span class="node-icon">RST</span>
-          <span class="node-label">UNIT ROSTER</span>
-          <span class="node-desc">Manage your units</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="loadout">
-          <span class="node-icon">LDT</span>
-          <span class="node-label">LOADOUT</span>
-          <span class="node-desc">Equipment & inventory</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="inventory">
-          <span class="node-icon">INV</span>
-          <span class="node-label">INVENTORY</span>
-          <span class="node-desc">View all owned items</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="gear-workbench">
-          <span class="node-icon">WKS</span>
-          <span class="node-label">WORKSHOP</span>
-          <span class="node-desc">Craft, upgrade & tinker</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="shop">
-          <span class="node-icon">SHP</span>
-          <span class="node-label">SHOP</span>
-          <span class="node-desc">Buy items & PAKs</span>
-        </button>
+          const node = nodeMap.get(itemId);
+          if (!node) return "";
 
-        <button class="all-nodes-node-btn" data-action="tavern">
-          <span class="node-icon">TAV</span>
-          <span class="node-label">TAVERN</span>
-          <span class="node-desc">Recruit new units</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="quest-board">
-          <span class="node-icon">QST</span>
-          <span class="node-label">QUEST BOARD</span>
-          <span class="node-desc">View active quests</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="port">
-          <span class="node-icon">PRT</span>
-          <span class="node-label">PORT</span>
-          <span class="node-desc">Trade resources</span>
-        </button>
-        <button class="all-nodes-node-btn" data-action="quarters">
-          <span class="node-icon">QTR</span>
-          <span class="node-label">QUARTERS</span>
-          <span class="node-desc">Rest & heal units</span>
-        </button>
-        <button class="all-nodes-node-btn all-nodes-node-btn--stable" data-action="stable">
-          <span class="node-icon">STB</span>
-          <span class="node-label">STABLE</span>
-          <span class="node-desc">Manage mounts</span>
-        </button>
-        <button class="all-nodes-node-btn all-nodes-node-btn--utility" data-action="codex">
-          <span class="node-icon">CDX</span>
-          <span class="node-label">CODEX</span>
-          <span class="node-desc">Archives & bestiary</span>
-        </button>
-        <button class="all-nodes-node-btn all-nodes-node-btn--utility" data-action="settings">
-          <span class="node-icon">CFG</span>
-          <span class="node-label">SETTINGS</span>
-          <span class="node-desc">Game options</span>
-        </button>
-        <button class="all-nodes-node-btn all-nodes-node-btn--utility" data-action="comms-array">
-          <span class="node-icon">COM</span>
-          <span class="node-label">COMMS ARRAY</span>
-          <span class="node-desc">Training & multiplayer</span>
-        </button>
+          return `
+            <div class="all-nodes-grid-item" data-layout-id="${itemId}" ${getItemStyle(itemId, itemSizes)}>
+              ${renderNodeContent(node)}
+            </div>
+          `;
+        }).join("")}
       </div>
 
-      <!-- Footer with Debug Section -->
+      <div class="all-nodes-minimized-dock" id="allNodesMinimizedDock">
+        ${dockOrder.map((itemId) => renderDockItem(itemId, nodeMap)).join("")}
+      </div>
+
       <footer class="all-nodes-menu-footer town-screen__footer">
         <div class="all-nodes-debug-section">
           <span class="debug-label">[DEV]</span>
@@ -242,12 +368,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         </div>
       </footer>
 
-      <!-- Ghost Text Watermark -->
       <div class="ard-ghost-text all-nodes-ghost">CHAOS_CORE.v0.12</div>
     </div>
   `;
 
-  // Attach event listeners
   attachAllNodesMenuListeners();
 }
 
@@ -255,9 +379,7 @@ function attachAllNodesMenuListeners(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  // Mode toggle buttons (tabs)
-  const modeButtons = root.querySelectorAll(".all-nodes-mode-tab");
-  modeButtons.forEach((btn) => {
+  root.querySelectorAll(".all-nodes-mode-tab").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       const mode = (btn as HTMLElement).dataset.mode;
@@ -265,11 +387,12 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
-  // Node action buttons
-  const actionButtons = root.querySelectorAll(".all-nodes-node-btn[data-action]");
-  actionButtons.forEach((btn) => {
+  root.querySelectorAll(".all-nodes-node-btn[data-action]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      e.preventDefault();
+      if (Date.now() < suppressNodeClickUntil) {
+        e.preventDefault();
+        return;
+      }
       const action = (btn as HTMLElement).dataset.action;
       if (action) {
         handleNodeAction(action);
@@ -277,9 +400,41 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
-  // Debug buttons
-  const debugButtons = root.querySelectorAll(".all-nodes-debug-btn[data-action]");
-  debugButtons.forEach((btn) => {
+  root.querySelector<HTMLButtonElement>("#allNodesResetViewBtn")?.addEventListener("click", () => {
+    resetBaseCampView();
+    renderAllNodesMenuScreen();
+  });
+
+  root.querySelectorAll<HTMLElement>(".all-nodes-item-minimize[data-minimize-id]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const itemId = btn.dataset.minimizeId;
+      if (!itemId) return;
+
+      const minimized = new Set(readMinimizedItems());
+      minimized.add(itemId);
+      persistMinimizedItems(Array.from(minimized));
+      renderAllNodesMenuScreen();
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(".all-nodes-dock-item[data-restore-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const itemId = btn.dataset.restoreId;
+      if (!itemId) return;
+
+      const minimized = new Set(readMinimizedItems());
+      minimized.delete(itemId);
+      persistMinimizedItems(Array.from(minimized));
+      renderAllNodesMenuScreen();
+    });
+  });
+
+  attachPointerGridDrag(root);
+  attachPointerResize(root);
+
+  root.querySelectorAll(".all-nodes-debug-btn[data-action]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       const action = (btn as HTMLElement).dataset.action;
@@ -323,7 +478,6 @@ function attachAllNodesMenuListeners(): void {
     setTimeout(() => quacInput.focus(), 0);
   }
 
-  // ESC key to go to field mode
   const escHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -334,16 +488,271 @@ function attachAllNodesMenuListeners(): void {
   window.addEventListener("keydown", escHandler);
 }
 
+function attachPointerGridDrag(root: HTMLElement): void {
+  const grid = root.querySelector<HTMLElement>("#allNodesMenuGrid");
+  if (!grid) return;
+
+  const wrappers = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"));
+  wrappers.forEach((wrapper) => {
+    wrapper.addEventListener("pointerdown", (event: PointerEvent) => {
+      if (event.button !== 0) return;
+
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt")) {
+        return;
+      }
+
+      const pressedAction = target.closest<HTMLElement>(".all-nodes-node-btn[data-action]")?.dataset.action ?? null;
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const draggedItem = wrapper;
+      const draggedId = draggedItem.dataset.layoutId;
+      if (!draggedId) return;
+
+      const initialOrder = readLayoutOrder();
+      const minimized = new Set(readMinimizedItems());
+      let started = false;
+      let ghost: HTMLElement | null = null;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+        try {
+          if (draggedItem.hasPointerCapture(pointerId)) {
+            draggedItem.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // Ignore release failures.
+        }
+
+        if (ghost) {
+          ghost.remove();
+        }
+
+        draggedItem.classList.remove("all-nodes-grid-item--dragging", "all-nodes-grid-item--placeholder");
+        clearLayoutDropTargets(grid);
+      };
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+
+        if (!started) {
+          if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+            return;
+          }
+
+          started = true;
+          suppressNodeClickUntil = Date.now() + 250;
+
+          const rect = draggedItem.getBoundingClientRect();
+          offsetX = startX - rect.left;
+          offsetY = startY - rect.top;
+
+          ghost = draggedItem.cloneNode(true) as HTMLElement;
+          ghost.classList.add("all-nodes-grid-item--ghost");
+          ghost.style.width = `${rect.width}px`;
+          ghost.style.height = `${rect.height}px`;
+          ghost.style.left = `${rect.left}px`;
+          ghost.style.top = `${rect.top}px`;
+          document.body.appendChild(ghost);
+
+          try {
+            draggedItem.setPointerCapture(pointerId);
+          } catch {
+            // Ignore capture failures and keep dragging with window listeners.
+          }
+
+          draggedItem.classList.add("all-nodes-grid-item--dragging", "all-nodes-grid-item--placeholder");
+        }
+
+        if (ghost) {
+          ghost.style.left = `${moveEvent.clientX - offsetX}px`;
+          ghost.style.top = `${moveEvent.clientY - offsetY}px`;
+        }
+
+        const hovered = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(".all-nodes-grid-item") as HTMLElement | null;
+        clearLayoutDropTargets(grid);
+
+        if (hovered && hovered !== draggedItem) {
+          hovered.classList.add("all-nodes-grid-item--drop-target");
+          const rect = hovered.getBoundingClientRect();
+          const insertBefore = moveEvent.clientY < rect.top + rect.height / 2 ||
+            (Math.abs(moveEvent.clientY - (rect.top + rect.height / 2)) < rect.height * 0.2 &&
+              moveEvent.clientX < rect.left + rect.width / 2);
+
+          if (insertBefore) {
+            grid.insertBefore(draggedItem, hovered);
+          } else if (hovered.nextSibling !== draggedItem) {
+            grid.insertBefore(draggedItem, hovered.nextSibling);
+          }
+        } else if (!hovered && isPointInsideRect(grid.getBoundingClientRect(), moveEvent.clientX, moveEvent.clientY)) {
+          grid.appendChild(draggedItem);
+        }
+      };
+
+      const onPointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
+
+        if (started) {
+          const activeOrder = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item")).map((item) => item.dataset.layoutId ?? "").filter(Boolean);
+          const nextOrder = mergeLayoutOrder(activeOrder, initialOrder, minimized);
+          persistLayoutOrder(nextOrder);
+          cleanup();
+          renderAllNodesMenuScreen();
+          return;
+        }
+
+        cleanup();
+
+        if (
+          pressedAction &&
+          Date.now() >= suppressNodeClickUntil &&
+          isPointInsideRect(draggedItem.getBoundingClientRect(), upEvent.clientX, upEvent.clientY)
+        ) {
+          suppressNodeClickUntil = Date.now() + 250;
+          handleNodeAction(pressedAction);
+        }
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+  });
+}
+
+function attachPointerResize(root: HTMLElement): void {
+  const grid = root.querySelector<HTMLElement>("#allNodesMenuGrid");
+  if (!grid) return;
+
+  const handles = root.querySelectorAll<HTMLElement>(".all-nodes-item-resize[data-resize-id]");
+  handles.forEach((handle) => {
+    handle.addEventListener("pointerdown", (event: PointerEvent) => {
+      if (event.button !== 0) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const itemId = handle.dataset.resizeId;
+      const wrapper = handle.closest<HTMLElement>(".all-nodes-grid-item");
+      if (!itemId || !wrapper) return;
+
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startRect = wrapper.getBoundingClientRect();
+      const metrics = getGridMetrics(grid);
+      const sizes = { ...readItemSizes() };
+      const existingSize = sizes[itemId];
+      const initialSpan = existingSize?.colSpan ?? (wrapper.classList.contains("all-nodes-grid-item--quac") ? 2 : 1);
+      const initialHeight = existingSize?.minHeight ?? Math.max(MIN_ITEM_HEIGHT, Math.round(startRect.height));
+      let resizing = false;
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+        try {
+          handle.releasePointerCapture(pointerId);
+        } catch {
+          // Ignore release failures.
+        }
+        wrapper.classList.remove("all-nodes-grid-item--resizing");
+      };
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+
+        if (!resizing && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+          return;
+        }
+
+        resizing = true;
+        suppressNodeClickUntil = Date.now() + 250;
+        wrapper.classList.add("all-nodes-grid-item--resizing");
+
+        const nextWidth = Math.max(metrics.trackWidth, startRect.width + dx);
+        const nextHeight = Math.max(MIN_ITEM_HEIGHT, startRect.height + dy);
+        const nextSpan = clamp(Math.round((nextWidth + metrics.gap) / (metrics.trackWidth + metrics.gap)), 1, metrics.columnCount);
+
+        wrapper.style.gridColumn = `span ${nextSpan}`;
+        wrapper.style.minHeight = `${Math.round(nextHeight)}px`;
+      };
+
+      const onPointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
+
+        if (resizing) {
+          const finalRect = wrapper.getBoundingClientRect();
+          const finalSpan = clamp(Math.round((finalRect.width + metrics.gap) / (metrics.trackWidth + metrics.gap)), 1, metrics.columnCount);
+          sizes[itemId] = {
+            colSpan: finalSpan || initialSpan,
+            minHeight: Math.max(MIN_ITEM_HEIGHT, Math.round(finalRect.height || initialHeight)),
+          };
+          persistItemSizes(sizes);
+        }
+
+        cleanup();
+        if (resizing) {
+          renderAllNodesMenuScreen();
+        }
+      };
+
+      handle.setPointerCapture(pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+  });
+}
+
+function clearLayoutDropTargets(grid: HTMLElement): void {
+  grid.querySelectorAll(".all-nodes-grid-item--drop-target").forEach((element) => {
+    element.classList.remove("all-nodes-grid-item--drop-target");
+  });
+}
+
+function getGridMetrics(grid: HTMLElement): { columnCount: number; trackWidth: number; gap: number } {
+  const computed = window.getComputedStyle(grid);
+  const gap = parseFloat(computed.columnGap || "0") || 0;
+  const trackWidths = computed.gridTemplateColumns
+    .split(" ")
+    .map((token) => parseFloat(token))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const columnCount = Math.max(trackWidths.length, 1);
+  const trackWidth = trackWidths[0] ?? 180;
+  return { columnCount, trackWidth, gap };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function isPointInsideRect(rect: DOMRect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 function handleModeSwitch(mode: string | undefined): void {
   switch (mode) {
     case "field":
       renderFieldScreen(lastFieldMap as any);
       break;
     case "classic":
-      // Already on AllNodesMenuScreen, do nothing
       break;
     case "menu":
-      // Already on menu, do nothing
       break;
   }
 }
@@ -356,7 +765,6 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "workshop":
-      // Redirect legacy workshop action to gear workbench
       import("./GearWorkbenchScreen").then(({ renderGearWorkbenchScreen }) => {
         renderGearWorkbenchScreen(undefined, undefined, "basecamp");
       });
@@ -410,7 +818,6 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "quarters":
-      // Go to quarters in field mode
       renderFieldScreen("quarters");
       break;
     case "stable":
@@ -455,7 +862,6 @@ function handleNodeAction(action: string): void {
           steamComponents: 99999,
         },
       }));
-      // Re-render to show updated wad and resources
       renderAllNodesMenuScreen();
       break;
   }

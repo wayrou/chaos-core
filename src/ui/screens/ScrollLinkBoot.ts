@@ -10,7 +10,7 @@ export function renderScrollLinkBoot() {
 
   root.innerHTML = `
     <div class="scrolllink-boot">
-      <div class="boot-inner">
+      <div class="boot-inner boot-window">
         <div class="boot-header">
           <div class="boot-window-header">
             <span class="boot-window-title">S/COM_OS // SYSTEM_BOOT</span>
@@ -20,7 +20,7 @@ export function renderScrollLinkBoot() {
         </div>
         <div class="boot-body">
           <div class="boot-logo">S/COM_OS</div>
-          <div class="boot-subtitle">ARDCYTECH TERMINAL INTERFACE</div>
+          <div class="boot-subtitle">SOLARIS TERMINAL INTERFACE</div>
           <div class="boot-log"></div>
           <div class="boot-progress">
             <div class="boot-progress-bar"></div>
