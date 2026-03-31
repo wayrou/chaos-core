@@ -33,6 +33,7 @@ import {
 } from "../../core/battle";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getAllStarterEquipment } from "../../core/equipment";
+import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
@@ -41,6 +42,9 @@ import { BattleGridRenderer } from "./BattleGridRenderer";
 // Mount system imports
 import { getMountById, isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
+import { handleCardPlay } from "../../core/cardHandler";
+
+let isAnimatingEnemyTurn = false;
 
 // Card type definition
 interface Card {
@@ -55,6 +59,7 @@ interface Card {
   healing?: number;
   defBuff?: number;
   atkBuff?: number;
+  effects?: any[];
 }
 
 // CARD DATABASE - Based on GDD
@@ -66,77 +71,77 @@ const CARD_DATABASE: Record<string, Card> = {
   "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 3, range: 0, description: "Attack enemy that enters range." },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
   "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 1." },
-  
+
   // ELM RECURVE BOW (Range 3-6)
   "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
   "card_warning_shot": { id: "card_warning_shot", name: "Warning Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Target suffers -2 ACC for 1 turn.", damage: 1 },
   "card_defensive_draw": { id: "card_defensive_draw", name: "Defensive Draw", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 ACC until next attack.", defBuff: 1 },
-  
+
   // HUNTER'S COIF
   "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Deal 3 damage.", damage: 3 },
   "card_tracking_shot": { id: "card_tracking_shot", name: "Tracking Shot", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target movement for 1 turn.", damage: 2 },
   "card_predators_brace": { id: "card_predators_brace", name: "Predator's Brace", type: "equipment", target: "self", strainCost: 3, range: 0, description: "First attacker loses 1 DEF.", defBuff: 1 },
-  
+
   // HUNTER'S VEST
   "card_quiver_barrage": { id: "card_quiver_barrage", name: "Quiver Barrage", type: "equipment", target: "enemy", strainCost: 2, range: 4, description: "Three attacks, 2 damage each.", damage: 6 },
   "card_camouflage": { id: "card_camouflage", name: "Camouflage", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+3 ACC on next ranged attack." },
   "card_camouflage_guard": { id: "card_camouflage_guard", name: "Camouflage Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF if attacked at range.", defBuff: 2 },
-  
+
   // HUNTER'S TALISMAN
   "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 4 damage if target moved this turn.", damage: 4 },
   "card_scent_mark": { id: "card_scent_mark", name: "Scent Mark", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target location for 2 turns.", damage: 1 },
   "card_trackers_guard": { id: "card_trackers_guard", name: "Tracker's Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Reveal first attacker on map.", defBuff: 1 },
-  
+
   // EAGLE EYE LENS
   "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; mark for +1 damage.", damage: 4 },
   "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Allies deal +1 damage to target this turn.", damage: 1 },
   "card_farsight_guard": { id: "card_farsight_guard", name: "Farsight Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore overwatch this turn." },
-  
+
   // FLEETFOOT ANKLET
   "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 3 damage; pass through target tile.", damage: 3 },
   "card_speed_burst": { id: "card_speed_burst", name: "Speed Burst", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement this turn." },
   "card_swift_guard": { id: "card_swift_guard", name: "Swift Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement and +1 DEF this turn.", defBuff: 1 },
-  
+
   // RANGER'S HOOD
   "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Deal 3 damage with +1 ACC.", damage: 3 },
   "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Mark target; next ranged attack deals +2 damage.", damage: 1 },
   "card_hide_in_shadows": { id: "card_hide_in_shadows", name: "Hide in Shadows", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 AGI, untargetable at range for 1 turn." },
-  
+
   // LEATHER JERKIN
   "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 3, range: 3, description: "Deal 2 damage; +1 AGI next turn.", damage: 2 },
   "card_quick_roll": { id: "card_quick_roll", name: "Quick Roll", type: "equipment", target: "self", strainCost: 2, range: 0, description: "Move 1 tile as free action." },
   "card_light_guard": { id: "card_light_guard", name: "Light Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 AGI until next turn.", defBuff: 1 },
-  
+
   // SHADOW CLOAK
   "card_ambush_slash": { id: "card_ambush_slash", name: "Ambush Slash", type: "equipment", target: "enemy", strainCost: 2, range: 1, description: "Deal 5 damage if undetected at turn start.", damage: 5 },
   "card_fade": { id: "card_fade", name: "Fade", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable by ranged attacks until next turn." },
   "card_shade_guard": { id: "card_shade_guard", name: "Shade Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable if you don't move this turn." },
-  
+
   // CLASS - RANGER
   "class_pinning_shot": { id: "class_pinning_shot", name: "Pinning Shot", type: "class", target: "enemy", strainCost: 2, range: 5, description: "Immobilize enemy for 1 turn.", damage: 2 },
   "class_volley": { id: "class_volley", name: "Volley", type: "class", target: "enemy", strainCost: 3, range: 6, description: "Deal light damage to all enemies in range.", damage: 3 },
   "class_scouts_mark": { id: "class_scouts_mark", name: "Scout's Mark", type: "class", target: "self", strainCost: 3, range: 0, description: "Reveal all enemies and traps in range." },
-  
+
   // CLASS - SQUIRE
   "class_power_slash": { id: "class_power_slash", name: "Power Slash", type: "class", target: "enemy", strainCost: 2, range: 1, description: "Deal heavy melee damage.", damage: 6 },
   "class_shield_wall": { id: "class_shield_wall", name: "Shield Wall", type: "class", target: "self", strainCost: 3, range: 0, description: "All allies gain +2 DEF for 1 turn.", defBuff: 2 },
   "class_rally_cry": { id: "class_rally_cry", name: "Rally Cry", type: "class", target: "self", strainCost: 2, range: 0, description: "All allies gain +2 ATK for 2 turns.", atkBuff: 2 },
-  
+
   // IRON LONGSWORD
   "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage to up to 3 adjacent enemies.", damage: 3 },
   "card_parry_readiness": { id: "card_parry_readiness", name: "Parry Readiness", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Cancel next attack against you.", defBuff: 3 },
   "card_guarded_stance": { id: "card_guarded_stance", name: "Guarded Stance", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF until your next turn.", defBuff: 2 },
-  
+
   // STEEL SIGNET RING
   "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and push target 1 tile.", damage: 2 },
   "card_mark_of_command": { id: "card_mark_of_command", name: "Mark of Command", type: "equipment", target: "self", strainCost: 3, range: 0, description: "All allies gain +1 ACC next turn." },
   "card_signet_shield": { id: "card_signet_shield", name: "Signet Shield", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 LUK until next turn.", defBuff: 1 },
-  
+
   // IRONGUARD HELM
   "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and stun for 1 turn.", damage: 2 },
   "card_shield_sight": { id: "card_shield_sight", name: "Shield Sight", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore flanking penalties until next turn." },
   "card_shield_headbutt": { id: "card_shield_headbutt", name: "Shield Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Stun target for 1 turn.", damage: 1 },
-  
+
   // STEELPLATE CUIRASS
   "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage; push target 1 tile.", damage: 3 },
   "card_fortify": { id: "card_fortify", name: "Fortify", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Immunity to knockback until next turn.", defBuff: 1 },
@@ -144,9 +149,42 @@ const CARD_DATABASE: Record<string, Card> = {
 };
 
 function getCardById(id: string): Card | null {
-  if (CARD_DATABASE[id]) return CARD_DATABASE[id];
+  const directDbCard = CARD_DATABASE[id];
   const normalized = id.toLowerCase().replace(/-/g, "_");
-  if (CARD_DATABASE[normalized]) return CARD_DATABASE[normalized];
+  const normalizedDbCard = CARD_DATABASE[normalized];
+  const resolvedCatalogCard = getResolvedBattleCard(id);
+  const dbCard = directDbCard || normalizedDbCard || null;
+
+  if (resolvedCatalogCard && dbCard) {
+    const mergedEffects = [...(resolvedCatalogCard.effects || [])];
+    if (typeof dbCard.damage === "number" && dbCard.damage > 0 && !mergedEffects.some((effect: any) => effect.type === "damage")) {
+      mergedEffects.push({ type: "damage", amount: dbCard.damage });
+    }
+    if (typeof dbCard.healing === "number" && dbCard.healing > 0 && !mergedEffects.some((effect: any) => effect.type === "heal")) {
+      mergedEffects.push({ type: "heal", amount: dbCard.healing });
+    }
+    if (typeof dbCard.defBuff === "number" && dbCard.defBuff > 0 && !mergedEffects.some((effect: any) => effect.type === "def_up")) {
+      mergedEffects.push({ type: "def_up", amount: dbCard.defBuff, duration: 1 });
+    }
+    if (typeof dbCard.atkBuff === "number" && dbCard.atkBuff > 0 && !mergedEffects.some((effect: any) => effect.type === "atk_up")) {
+      mergedEffects.push({ type: "atk_up", amount: dbCard.atkBuff, duration: 1 });
+    }
+
+    return {
+      ...resolvedCatalogCard,
+      ...dbCard,
+      description: resolvedCatalogCard.description,
+      effects: mergedEffects,
+    };
+  }
+
+  if (resolvedCatalogCard) {
+    return {
+      ...resolvedCatalogCard,
+      effects: resolvedCatalogCard.effects,
+    };
+  }
+  if (dbCard) return dbCard;
   return null;
 }
 
@@ -172,120 +210,137 @@ function fallbackGetCardById(id: string): Card {
   } else if (lower.includes("slash") || lower.includes("strike") || lower.includes("attack") || lower.includes("stab") || lower.includes("jab") || lower.includes("charge") || lower.includes("headbutt")) {
     range = 1;
   }
-  return { id, name, type, target, strainCost: 3, range, damage, description: `Use ${name}.` };
+  const description =
+    target === "self"
+      ? "Gain +2 DEF until next turn."
+      : target === "ally"
+        ? "Restore 3 HP to an ally."
+        : `Deal ${damage ?? 3} damage.`;
+  return { id, name, type, target, strainCost: 3, range, damage, description };
 }
 
 function renderWeaponWindow(unit: BattleUnitState | undefined): string {
-  if (!unit || !unit.equippedWeaponId) {
-    return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
-  }
+  try {
+    if (!unit || !unit.equippedWeaponId) {
+      return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
+    }
 
-  // Pull weapon data from equipment for accurate mechanical flags and stats
-  const state = getGameState();
-  const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-  const weapon = getEquippedWeapon(unit, equipmentById);
+    // Pull weapon data from equipment for accurate mechanical flags and stats
+    const state = getGameState();
+    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+    const weapon = getEquippedWeapon(unit, equipmentById);
 
-  if (!weapon) {
-    return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`;
-  }
+    if (!weapon) {
+      return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`;
+    }
 
-  const weaponName = weapon.name || unit.equippedWeaponId.replace(/^weapon_/, "").replace(/_/g, " ").toUpperCase();
-  const isMechanical = weapon.isMechanical ?? false;
+    const weaponName = weapon.name || unit.equippedWeaponId.replace(/^weapon_/, "").replace(/_/g, " ").toUpperCase();
+    const isMechanical = weapon.isMechanical ?? false;
 
-  // Prefer weaponState for runtime values; fall back to legacy fields
-  const heat = unit.weaponState?.currentHeat ?? unit.weaponHeat ?? 0;
-  const maxHeat = weapon.heatCapacity ?? 6;
-  const wear = unit.weaponState?.wear ?? unit.weaponWear ?? 0;
-  const clutchActive = unit.weaponState?.clutchActive ?? unit.clutchActive ?? false;
-  const ammo = unit.weaponState?.currentAmmo ?? weapon.ammoMax ?? 0;
-  const ammoMax = weapon.ammoMax ?? 0;
-  const nodes: Record<number, string> = unit.weaponState?.nodes ?? {
-    1: "ok", 2: "ok", 3: "ok", 4: "ok", 5: "ok", 6: "ok"
-  };
-  
-  const nodeNames: Record<number, string> = {
-    1: "BARREL", 2: "TRIGGER", 3: "STOCK", 4: "SCOPE", 5: "COOLING", 6: "CORE"
-  };
-  
-  // Build stats HTML
-  let statsHtml = '';
-  if (isMechanical) {
-    const heatPct = (heat / maxHeat) * 100;
-    let heatColor = "#84c1e6";
-    if (heatPct > 80) heatColor = "#c3132c";
-    else if (heatPct > 60) heatColor = "#f06b58";
-    else if (heatPct > 40) heatColor = "#f3a310";
-    
-    statsHtml += `
-      <div class="weapon-stat-row">
-        <span class="weapon-stat-label">HEAT</span>
-        <div class="weapon-stat-bar">
-          <div class="weapon-stat-bar-track">
-            <div class="weapon-stat-bar-fill" style="width:${heatPct}%; background:${heatColor}"></div>
-          </div>
-          <span class="weapon-stat-value">${heat}/${maxHeat}</span>
-        </div>
-      </div>
-    `;
-  }
-  
-  if (wear > 0) {
-    statsHtml += `
-      <div class="weapon-stat-row">
-        <span class="weapon-stat-label">WEAR</span>
-        <div class="weapon-wear-pips">
-          ${[0,1,2,3,4].map(i => `<div class="weapon-wear-pip ${i < wear ? 'weapon-wear-pip--filled' : ''}"></div>`).join('')}
-        </div>
-        <span class="weapon-stat-value">${wear}/5</span>
-      </div>
-    `;
-  }
-  
-  // Build node diagram
-  const nodeDiagramHtml = `
-    <div class="weapon-node-diagram">
-      <div class="weapon-node-title">SYSTEM STATUS</div>
-      <div class="weapon-node-grid">
-        ${[1,2,3,4,5,6].map(id => {
-          const status = nodes[id] ?? "ok";
-          return `
-            <div class="weapon-node weapon-node--${status}" data-node="${id}">
-              <div class="weapon-node-id">${id}</div>
-              <div class="weapon-node-name">${nodeNames[id]}</div>
-              <div class="weapon-node-status">${status.toUpperCase()}</div>
+    // Prefer weaponState for runtime values; fall back to legacy fields
+    const heat = unit.weaponState?.currentHeat ?? unit.weaponHeat ?? 0;
+    const maxHeat = weapon.heatCapacity ?? 6;
+    const wear = unit.weaponState?.wear ?? unit.weaponWear ?? 0;
+    const clutchActive = unit.weaponState?.clutchActive ?? unit.clutchActive ?? false;
+    const ammo = unit.weaponState?.currentAmmo ?? weapon.ammoMax ?? 0;
+    const ammoMax = weapon.ammoMax ?? 0;
+    const nodes: Record<number, string> = unit.weaponState?.nodes ?? {
+      1: "ok", 2: "ok", 3: "ok", 4: "ok", 5: "ok", 6: "ok"
+    };
+
+    const nodeNames: Record<number, string> = {
+      1: "BARREL", 2: "TRIGGER", 3: "STOCK", 4: "SCOPE", 5: "COOLING", 6: "CORE"
+    };
+
+    // Build stats HTML
+    let statsHtml = '';
+    if (isMechanical) {
+      const heatPct = (heat / maxHeat) * 100;
+      let heatColor = "#84c1e6";
+      if (heatPct > 80) heatColor = "#c3132c";
+      else if (heatPct > 60) heatColor = "#f06b58";
+      else if (heatPct > 40) heatColor = "#f3a310";
+
+      statsHtml += `
+        <div class="weapon-stat-row">
+          <span class="weapon-stat-label">HEAT</span>
+          <div class="weapon-stat-bar">
+            <div class="weapon-stat-bar-track">
+              <div class="weapon-stat-bar-fill" style="width:${heatPct}%; background:${heatColor}"></div>
             </div>
-          `;
-        }).join('')}
-      </div>
-    </div>
-  `;
-  
-  return `
-    <div class="weapon-window">
-      <div class="weapon-window-header">
-        <span class="weapon-window-title">${weaponName}</span>
-        <span class="weapon-window-type">${isMechanical ? 'MECHANICAL' : 'STANDARD'}</span>
-      </div>
-      <div class="weapon-window-body">
-        <div class="weapon-stats-panel">${statsHtml}</div>
-        
-        ${isMechanical ? `
-          <div class="weapon-clutch-section">
-            <button class="weapon-clutch-btn ${clutchActive ? 'weapon-clutch-btn--active' : ''}" id="clutchToggleBtn">
-              <span class="clutch-dot ${clutchActive ? 'clutch-dot--active' : ''}"></span>
-              <span class="clutch-label">CLUTCH ${clutchActive ? '[ENGAGED]' : '[OFF]'}</span>
-            </button>
+            <span class="weapon-stat-value">${heat}/${maxHeat}</span>
           </div>
-          
-          ${nodeDiagramHtml}
-          
-          <div class="weapon-actions">
-            <button class="weapon-action-btn weapon-action-btn--vent" id="ventBtn">VENT (10% HP)</button>
+        </div>
+      `;
+    }
+
+    if (wear > 0) {
+      statsHtml += `
+        <div class="weapon-stat-row">
+          <span class="weapon-stat-label">WEAR</span>
+          <div class="weapon-wear-pips">
+            ${[0, 1, 2, 3, 4].map(i => `<div class="weapon-wear-pip ${i < wear ? 'weapon-wear-pip--filled' : ''}"></div>`).join('')}
           </div>
-        ` : ''}
+          <span class="weapon-stat-value">${wear}/5</span>
+        </div>
+      `;
+    }
+
+    // Build node diagram
+    const nodeDiagramHtml = `
+      <div class="weapon-node-diagram">
+        <div class="weapon-node-title">SYSTEM STATUS</div>
+        <div class="weapon-node-grid">
+          ${[1, 2, 3, 4, 5, 6].map(id => {
+      const status = nodes[id] ?? "ok";
+      return `
+              <div class="weapon-node weapon-node--${status}" data-node="${id}">
+                <div class="weapon-node-id">${id}</div>
+                <div class="weapon-node-name">${nodeNames[id]}</div>
+                <div class="weapon-node-status">${status.toUpperCase()}</div>
+              </div>
+            `;
+    }).join('')}
+        </div>
       </div>
-    </div>
-  `;
+    `;
+
+    return `
+      <div class="weapon-window" style="height: 100%; display: flex; flex-direction: column;">
+        <div class="weapon-window-header" style="padding: 8px 10px; border-bottom: 1px solid var(--bronze-dark);">
+          <span class="weapon-window-title" style="font-size: 0.75rem;">${weaponName}</span>
+          <span class="weapon-window-type" style="font-size: 0.55rem; opacity: 0.7;">${isMechanical ? 'MECH' : 'STD'}</span>
+        </div>
+        <div class="weapon-window-body" style="padding: 8px; flex: 1; display: flex; flex-direction: column; gap: 6px; overflow-y: auto;">
+          <div class="weapon-stats-panel">${statsHtml}</div>
+          
+          ${isMechanical ? `
+            <div class="weapon-clutch-section">
+              <button class="weapon-clutch-btn ${clutchActive ? 'weapon-clutch-btn--active' : ''}" id="clutchToggleBtn" style="padding: 4px 8px; font-size: 0.55rem; width: 100%;">
+                <span class="clutch-dot ${clutchActive ? 'clutch-dot--active' : ''}"></span>
+                CLUTCH ${clutchActive ? '[ON]' : '[OFF]'}
+              </button>
+            </div>
+            
+            <div style="flex: 1; overflow-y: auto;">
+              ${nodeDiagramHtml}
+            </div>
+            
+            <div class="weapon-actions">
+              <button class="weapon-action-btn weapon-action-btn--vent" id="ventBtn" style="width: 100%; padding: 4px; font-size: 0.5rem;">VENT</button>
+            </div>
+          ` : `
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; opacity: 0.4;">
+               <div style="font-size: 0.6rem; text-align: center;">STANDARD WEAPON</div>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error(`[RENDER] Error in renderWeaponWindow:`, err);
+    return `<div class="weapon-window-error">ERROR: ${err}</div>`;
+  }
 }
 
 // ============================================================================
@@ -295,6 +350,7 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
 let localBattleState: BattleState | null = null;
 let selectedCardIndex: number | null = null;
 let pendingMoveOrigin: { x: number; y: number } | null = null;
+let hoveredTile: { x: number; y: number } | null = null;
 
 // Zoom state for the battle grid
 let battleZoom = 1.3; // Increased default zoom for better visibility
@@ -337,14 +393,14 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
   if (persistentAnimationContainer && document.body.contains(persistentAnimationContainer)) {
     return persistentAnimationContainer;
   }
-  
+
   // Find the battle grid container
   const gridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
   if (!gridContainer) {
     console.error(`[ANIMATION] Grid container not found for animation container`);
     return null;
   }
-  
+
   // Create or find animation container
   let animContainer = gridContainer.querySelector('.battle-animation-container') as HTMLElement;
   if (!animContainer) {
@@ -362,7 +418,7 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
     `;
     gridContainer.appendChild(animContainer);
   }
-  
+
   persistentAnimationContainer = animContainer;
   return animContainer;
 }
@@ -446,64 +502,67 @@ function cleanupBattlePanHandlers(): void {
 
 function setupBattlePanHandlers(): void {
   cleanupBattlePanHandlers();
-  
+
   // Reset pan position
   battlePanState = { x: 0, y: 0, keysPressed: new Set(), shiftPressed: false };
 
   battleKeydownHandler = (e: KeyboardEvent) => {
     // Update player input system
     handlePlayerInputKeyDown(e);
-    
+
     // Track shift key for speed boost
     if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
       battlePanState.shiftPressed = true;
     }
-    
+
     // Handle facing selection first (if active, arrow keys select facing instead of panning)
-    if (turnState.isFacingSelection && localBattleState && activeUnit) {
-      // Check if current player can control this unit
-      const state = getGameState();
-      const activeController = activeUnit.controller || "P1";
-      const currentPlayer = state.players[activeController as PlayerId];
-      
-      if (currentPlayer?.active) {
-        const playerInput = getPlayerInput(activeController as PlayerId);
-        let newFacing: "north" | "south" | "east" | "west" | null = null;
-        
-        if (playerInput.up) {
-          newFacing = "north";
-        } else if (playerInput.down) {
-          newFacing = "south";
-        } else if (playerInput.left) {
-          newFacing = "west";
-        } else if (playerInput.right) {
-          newFacing = "east";
-        }
-        
-        if (newFacing) {
-          e.preventDefault();
-          // Update facing and exit facing selection phase
-          const newUnits = { ...localBattleState.units };
-          newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
-          const newState = { ...localBattleState, units: newUnits };
-          setBattleState(newState);
-          turnState.isFacingSelection = false;
-          renderBattleScreen();
-          return;
+    if (turnState.isFacingSelection && localBattleState) {
+      const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
+      if (activeUnit) {
+        // Check if current player can control this unit
+        const state = getGameState();
+        const activeController = activeUnit.controller || "P1";
+        const currentPlayer = state.players[activeController as PlayerId];
+
+        if (currentPlayer?.active) {
+          const playerInput = getPlayerInput(activeController as PlayerId);
+          let newFacing: "north" | "south" | "east" | "west" | null = null;
+
+          if (playerInput.up) {
+            newFacing = "north";
+          } else if (playerInput.down) {
+            newFacing = "south";
+          } else if (playerInput.left) {
+            newFacing = "west";
+          } else if (playerInput.right) {
+            newFacing = "east";
+          }
+
+          if (newFacing) {
+            e.preventDefault();
+            // Update facing and exit facing selection phase
+            const newUnits = { ...localBattleState.units };
+            newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+            const newState = { ...localBattleState, units: newUnits };
+            setBattleState(newState);
+            turnState.isFacingSelection = false;
+            renderBattleScreen();
+            return;
+          }
         }
       }
     }
-    
+
     if (!BATTLE_PAN_KEYS.has(e.key)) return;
-    
+
     // Don't pan if typing in an input
     if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
       return;
     }
-    
+
     e.preventDefault();
     battlePanState.keysPressed.add(e.key.toLowerCase());
-    
+
     if (!battlePanAnimationFrame) {
       startBattlePanLoop();
     }
@@ -512,18 +571,18 @@ function setupBattlePanHandlers(): void {
   battleKeyupHandler = (e: KeyboardEvent) => {
     // Update player input system
     handlePlayerInputKeyUp(e);
-    
+
     // Track shift key release
     if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
       battlePanState.shiftPressed = false;
     }
-    
+
     battlePanState.keysPressed.delete(e.key.toLowerCase());
-    
+
     // Also handle arrow keys
     const arrowToWasd: Record<string, string> = {
       "arrowup": "w",
-      "arrowleft": "a", 
+      "arrowleft": "a",
       "arrowdown": "s",
       "arrowright": "d",
     };
@@ -541,7 +600,7 @@ function startBattlePanLoop(): void {
   const update = () => {
     let dx = 0;
     let dy = 0;
-    
+
     // Apply speed multiplier when shift is held
     const speedMultiplier = battlePanState.shiftPressed ? 2.5 : 1;
     const currentSpeed = BATTLE_PAN_SPEED * speedMultiplier;
@@ -554,7 +613,7 @@ function startBattlePanLoop(): void {
     if (dx !== 0 || dy !== 0) {
       battlePanState.x += dx;
       battlePanState.y += dy;
-      
+
       // Apply transform to battle grid pan wrapper
       const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
       if (panWrapper) {
@@ -583,55 +642,122 @@ function resetBattlePan(): void {
 
 function toggleUiPanels(): void {
   uiPanelsMinimized = !uiPanelsMinimized;
-  
-  const bottomOverlay = document.querySelector(".battle-bottom-overlay") as HTMLElement;
+
+  const unitPanel = document.querySelector(".battle-unit-panel") as HTMLElement;
+  const weaponPanel = document.querySelector(".battle-weapon-panel") as HTMLElement;
   const handFloating = document.querySelector(".battle-hand-floating") as HTMLElement;
   const consoleOverlay = document.querySelector(".scrollink-console-overlay") as HTMLElement;
   const toggleBtn = document.getElementById("toggleUiBtn");
-  
-  if (bottomOverlay) {
-    bottomOverlay.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    bottomOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
-    bottomOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+
+  if (unitPanel) {
+    unitPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
+    unitPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
+    unitPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
   }
-  
+
+  if (weaponPanel) {
+    weaponPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
+    weaponPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
+    weaponPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+  }
+
   if (handFloating) {
     handFloating.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
     handFloating.style.opacity = uiPanelsMinimized ? "0" : "1";
     handFloating.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
   }
-  
+
   if (consoleOverlay) {
     consoleOverlay.style.transform = uiPanelsMinimized ? "translateX(-100%)" : "translateX(0)";
     consoleOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
     consoleOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
   }
-  
+
   if (toggleBtn) {
     toggleBtn.textContent = uiPanelsMinimized ? "👁 SHOW UI" : "👁 HIDE UI";
     toggleBtn.classList.toggle("battle-toggle-btn--active", uiPanelsMinimized);
   }
 }
 
+function triggerScreenShake() {
+  const container = document.querySelector(".battle-root");
+  if (!container) return;
+
+  container.classList.remove("screen-shake");
+  // Force browser reflow to restart animation
+  void (container as HTMLElement).offsetWidth;
+  container.classList.add("screen-shake");
+
+  setTimeout(() => {
+    if (container) container.classList.remove("screen-shake");
+  }, 400);
+}
+
+function showFloatingText(text: string, type: "damage" | "heal" | "crit", x: number, y: number) {
+  const grid = document.querySelector(".battle-grid") as HTMLElement;
+  if (!grid) return;
+
+  const tile = grid.querySelector(`.battle-tile[data-x="${x}"][data-y="${y}"]`) as HTMLElement;
+  if (!tile) return;
+
+  const el = document.createElement("div");
+  el.className = `floating-combat-text floating-combat-text--${type}`;
+  el.textContent = text;
+
+  // Ensure the grid limits absolute positioning correctly
+  grid.style.position = "relative";
+
+  el.style.left = `${tile.offsetLeft + (tile.offsetWidth / 2)}px`;
+  el.style.top = `${tile.offsetTop + (tile.offsetHeight / 2)}px`;
+
+  grid.appendChild(el);
+
+  setTimeout(() => {
+    if (el.parentNode === grid) {
+      grid.removeChild(el);
+    }
+  }, 1500);
+}
+
 function setBattleState(newState: BattleState) {
+  // Visual feedback: compare old state directly with new state to spawn floating numbers
+  if (localBattleState) {
+    for (const [unitId, newUnit] of Object.entries(newState.units)) {
+      const oldUnit = localBattleState.units[unitId];
+      if (oldUnit && newUnit && oldUnit.hp !== newUnit.hp && newUnit.pos) {
+        const hpDiff = newUnit.hp - oldUnit.hp;
+        if (hpDiff < 0) {
+          const dmg = Math.abs(hpDiff);
+          showFloatingText(`-${dmg}`, "damage", newUnit.pos.x, newUnit.pos.y);
+          // Trigger shake on heavy damage (e.g., >= 15)
+          if (dmg >= 15) {
+            triggerScreenShake();
+          }
+        } else if (hpDiff > 0) {
+          showFloatingText(`+${hpDiff}`, "heal", newUnit.pos.x, newUnit.pos.y);
+        }
+      }
+    }
+  }
+
   // Validate all unit positions before setting state
   const validatedUnits: Record<string, BattleUnitState> = {};
-  
+
   for (const [unitId, unit] of Object.entries(newState.units)) {
     if (unit.pos) {
       // Validate position is within bounds
       if (unit.pos.x < 0 || unit.pos.x >= newState.gridWidth ||
-          unit.pos.y < 0 || unit.pos.y >= newState.gridHeight) {
+        unit.pos.y < 0 || unit.pos.y >= newState.gridHeight) {
         console.error("[BATTLE_STATE] Invalid unit position detected!", {
           unitId,
           pos: unit.pos,
           bounds: { width: newState.gridWidth, height: newState.gridHeight }
         });
         // Remove invalid position (unit will need to be repositioned)
-        validatedUnits[unitId] = { ...unit, pos: undefined };
+        validatedUnits[unitId] = { ...unit, pos: null };
         continue;
       }
-      
+
       // Validate position is an integer
       if (!Number.isInteger(unit.pos.x) || !Number.isInteger(unit.pos.y)) {
         console.error("[BATTLE_STATE] Non-integer unit position!", {
@@ -649,10 +775,10 @@ function setBattleState(newState: BattleState) {
         continue;
       }
     }
-    
+
     validatedUnits[unitId] = unit;
   }
-  
+
   // Check for duplicate positions
   const positionMap = new Map<string, string>();
   for (const [unitId, unit] of Object.entries(validatedUnits)) {
@@ -666,16 +792,24 @@ function setBattleState(newState: BattleState) {
           pos: unit.pos
         });
         // Keep the first unit, remove position from the second
-        validatedUnits[unitId] = { ...unit, pos: undefined };
+        validatedUnits[unitId] = { ...unit, pos: null };
       } else {
         positionMap.set(key, unitId);
       }
     }
   }
-  
+
+  // Re-sync turn order: Only units that have a position (and HP > 0) should be in the turn order
+  // This ensures that if we stripped a position above, the unit won't cause AI loops
+  const validatedTurnOrder = newState.turnOrder.filter(unitId => {
+    const unit = validatedUnits[unitId];
+    return unit && unit.pos && unit.hp > 0;
+  });
+
   localBattleState = {
     ...newState,
-    units: validatedUnits
+    units: validatedUnits,
+    turnOrder: validatedTurnOrder
   };
 }
 
@@ -693,10 +827,10 @@ function resetTurnStateForUnit(unit: BattleUnitState | null) {
 /**
  * Get elevation for a tile from battle state
  */
-function getTileElevation(battle: BattleState, x: number, y: number): number {
-  const tile = battle.tiles.find(t => t.pos.x === x && t.pos.y === y);
-  return tile?.elevation ?? 0;
-}
+// function getTileElevation(battle: BattleState, x: number, y: number): number {
+//   const tile = battle.tiles.find(t => t.pos.x === x && t.pos.y === y);
+//   return tile?.elevation ?? 0;
+// }
 
 // Removed calculateOriginOffset - no longer needed for simple grid
 
@@ -764,12 +898,12 @@ function startMovementAnimation(
   movingUnit.className = 'battle-unit battle-unit--moving';
   movingUnit.setAttribute('data-unit-id', unitId);
   movingUnit.setAttribute('data-animating', 'true');
-  
+
   // Get unit portrait path
   const portraitPath = getBattleUnitPortraitPath(unit.id, unit.baseUnitId);
   const side = unit.isEnemy ? "battle-unit--enemy" : "battle-unit--ally";
   const truncName = unit.name.length > 8 ? unit.name.slice(0, 8) + "…" : unit.name;
-  
+
   // Build unit HTML
   movingUnit.innerHTML = `
     <div class="battle-unit-portrait-wrapper">
@@ -782,7 +916,7 @@ function startMovementAnimation(
       </div>
     </div>
   `;
-  
+
   // Set up moving unit styles
   movingUnit.style.position = 'absolute';
   movingUnit.style.pointerEvents = 'none';
@@ -886,7 +1020,7 @@ function animateMovement(battle: BattleState, onComplete: () => void): void {
   while (anim.progress >= 1.0 && anim.currentStep < anim.path.length - 1) {
     anim.progress -= 1.0;
     anim.currentStep++;
-    
+
     if (DEBUG_MOVEMENT && anim.currentStep < anim.path.length) {
       const tile = anim.path[anim.currentStep];
       console.log(`[MOVEMENT] Entered tile (${tile.x}, ${tile.y})`);
@@ -908,11 +1042,11 @@ function animateMovement(battle: BattleState, onComplete: () => void): void {
   // Calculate current position
   const from = anim.path[anim.currentStep];
   const to = anim.path[anim.currentStep + 1];
-  
+
   const TILE_SIZE = 75;
   const GRID_PADDING = 12;
   const GAP = 4;
-  
+
   const fromX = GRID_PADDING + from.x * (TILE_SIZE + GAP) + TILE_SIZE / 2;
   const fromY = GRID_PADDING + from.y * (TILE_SIZE + GAP) + TILE_SIZE / 2;
   const toX = GRID_PADDING + to.x * (TILE_SIZE + GAP) + TILE_SIZE / 2;
@@ -951,11 +1085,11 @@ function stopMovementAnimation(): void {
 
   if (activeMovementAnim) {
     const unitId = activeMovementAnim.unitId;
-    
+
     if (DEBUG_MOVEMENT) {
       console.log(`[MOVEMENT] Stopping animation for ${unitId}`);
     }
-    
+
     // Remove moving unit element using stored reference
     if (activeMovementAnim.movingElement) {
       try {
@@ -965,7 +1099,7 @@ function stopMovementAnimation(): void {
       }
       activeMovementAnim.movingElement = null;
     }
-    
+
     // Also try to find and remove from animation container
     const animContainer = getOrCreateAnimationContainer();
     if (animContainer) {
@@ -1006,6 +1140,14 @@ function getUnitsArray(battle: BattleState): BattleUnitState[] {
   return Object.values(battle.units);
 }
 
+function getHiddenAnimatedUnitIds(): Set<string> {
+  if (activeMovementAnim && activeMovementAnim.active) {
+    return new Set([activeMovementAnim.unitId]);
+  }
+
+  return new Set();
+}
+
 function resolveCard(cardId: string | Card): Card {
   if (typeof cardId !== "string") return cardId as Card;
   return getCardById(cardId) ?? fallbackGetCardById(cardId);
@@ -1020,26 +1162,26 @@ function resolveHandCards(hand: (string | Card)[]): Card[] {
  */
 function getEffectiveCardRange(card: Card, unit: BattleUnitState): number {
   let range = card.range ?? 1;
-  
+
   // Apply Far Shot ability: Rangers get +1 range on bow attack cards
   // Check both target (from BattleScreen Card type) and targetType (from core Card type) for compatibility
   // Also check card name/ID to catch basic attack and other attack cards
-  const isAttackCard = 
-    card.target === "enemy" || 
+  const isAttackCard =
+    card.target === "enemy" ||
     (card as any).targetType === "enemy" ||
     card.id === "core_basic_attack" ||
     card.name.toLowerCase().includes("attack") ||
     card.name.toLowerCase().includes("shot") ||
     card.name.toLowerCase().includes("strike");
-  
-  if (unit && unit.unitClass === "ranger" && isAttackCard) {
+
+  if (unit && unit.classId === "ranger" && isAttackCard) {
     const equipmentById = getAllStarterEquipment();
     const weapon = getEquippedWeapon(unit, equipmentById);
     if (weapon && weapon.weaponType === "bow") {
       range += 1;
     }
   }
-  
+
   return range;
 }
 
@@ -1069,115 +1211,23 @@ function playCardFromScreen(
     return { ...state, log: [...state.log, "SLK//ERROR :: No card at index " + cardIndex] };
   }
 
-  // Resolve card from our database
   const card = resolveCard(cardIdOrObj);
+  const coreCard = toCoreCard({
+    ...card,
+    effects: card.effects || [],
+  } as any);
 
-  // Create new hand without the played card
-  const newHand = [...unit.hand];
-  newHand.splice(cardIndex, 1);
-  
-  // Create new discard with the played card
-  const newDiscard = [...unit.discardPile, cardIdOrObj];
-
-  // Apply strain
-  const newStrain = unit.strain + card.strainCost;
-
-  // Start building the new unit
-  let updatedUnit: BattleUnitState = {
-    ...unit,
-    hand: newHand,
-    discardPile: newDiscard,
-    strain: newStrain,
-  };
-
-  // Start building updated target
-  let updatedTarget: BattleUnitState = targetId === unitId ? updatedUnit : { ...target };
-
-  // Log the card play
-  let newLog = [...state.log, `SLK//CARD :: ${unit.name} plays ${card.name} on ${target.name}.`];
-
-  // Process damage
-  if (card.damage !== undefined && card.damage > 0 && targetId !== unitId) {
-    const finalDamage = Math.max(1, card.damage + unit.atk - target.def);
-    const newHp = Math.max(0, target.hp - finalDamage);
-    updatedTarget = { ...updatedTarget, hp: newHp };
-    newLog.push(`SLK//DMG :: ${target.name} takes ${finalDamage} damage. (HP: ${newHp}/${target.maxHp})`);
-    if (newHp <= 0) {
-      newLog.push(`SLK//KILL :: ${target.name} has been eliminated!`);
-    }
-  } else if (card.damage === 0 && card.name.toLowerCase().includes("basic attack") && targetId !== unitId) {
-    // Basic attack uses weapon damage (unit ATK)
-    const finalDamage = Math.max(1, unit.atk - target.def);
-    const newHp = Math.max(0, target.hp - finalDamage);
-    updatedTarget = { ...updatedTarget, hp: newHp };
-    newLog.push(`SLK//DMG :: ${target.name} takes ${finalDamage} damage. (HP: ${newHp}/${target.maxHp})`);
-    if (newHp <= 0) {
-      newLog.push(`SLK//KILL :: ${target.name} has been eliminated!`);
-    }
+  const targetPos = target.pos ?? unit.pos;
+  if (!targetPos) {
+    return { ...state, log: [...state.log, "SLK//ERROR :: Target has no valid position."] };
   }
 
-  // Process healing
-  if (card.healing && card.healing > 0) {
-    const oldHp = updatedTarget.hp;
-    const newHp = Math.min(updatedTarget.maxHp, oldHp + card.healing);
-    const actualHeal = newHp - oldHp;
-    if (actualHeal > 0) {
-      updatedTarget = { ...updatedTarget, hp: newHp };
-      newLog.push(`SLK//HEAL :: ${target.name} restores ${actualHeal} HP. (HP: ${newHp}/${target.maxHp})`);
-    }
+  const resolvedState = handleCardPlay(state, coreCard, unit, targetPos, target);
+  if (!resolvedState) {
+    return { ...state, log: [...state.log, `SLK//ERROR :: ${card.name} could not be resolved.`] };
   }
 
-  // Process DEF buff
-  if (card.defBuff && card.defBuff > 0) {
-    const newBuffs = [...(updatedTarget.buffs || []), { stat: "def" as const, amount: card.defBuff, duration: 1 }];
-    updatedTarget = { ...updatedTarget, buffs: newBuffs };
-    newLog.push(`SLK//BUFF :: ${target.name} gains +${card.defBuff} DEF for 1 turn.`);
-  }
-
-  // Process ATK buff
-  if (card.atkBuff && card.atkBuff > 0) {
-    const newBuffs = [...(updatedTarget.buffs || []), { stat: "atk" as const, amount: card.atkBuff, duration: 1 }];
-    updatedTarget = { ...updatedTarget, buffs: newBuffs };
-    newLog.push(`SLK//BUFF :: ${target.name} gains +${card.atkBuff} ATK for 1 turn.`);
-  }
-
-  // Build new units Record
-  const newUnits = { ...state.units };
-  if (targetId === unitId) {
-    // Self-target: if unit died, delete it; otherwise update it
-    if (updatedTarget.hp <= 0) {
-      delete newUnits[unitId];
-    } else {
-      newUnits[unitId] = updatedTarget;
-    }
-  } else {
-    newUnits[unitId] = updatedUnit;
-    // If target died, delete it from units Record; otherwise update it
-    if (updatedTarget.hp <= 0) {
-      delete newUnits[targetId];
-    } else {
-      newUnits[targetId] = updatedTarget;
-    }
-  }
-
-  // Remove dead units from turn order
-  let newTurnOrder = [...state.turnOrder];
-  if (updatedTarget.hp <= 0) {
-    newTurnOrder = newTurnOrder.filter(id => id !== targetId);
-  }
-
-  // Build new state
-  let newState: BattleState = {
-    ...state,
-    units: newUnits,
-    turnOrder: newTurnOrder,
-    log: newLog,
-  };
-
-  // Check for battle outcome
-  newState = evaluateBattleOutcome(newState);
-
-  return newState;
+  return resolvedState;
 }
 
 // ============================================================================
@@ -1187,9 +1237,9 @@ function playCardFromScreen(
 export function renderBattleScreen() {
   const app = document.getElementById("app");
   if (!app) return;
-  
+
   const state = getGameState();
-  
+
   // CRITICAL: If animation is active, preserve the animation container
   // We'll restore it after rendering
   let preservedAnimationContainer: HTMLElement | null = null;
@@ -1201,13 +1251,13 @@ export function renderBattleScreen() {
       console.log(`[RENDER] Preserving animation container during render for ${activeMovementAnim.unitId}`);
     }
   }
-  
+
   // Initialize battle if needed
   if (!localBattleState) {
     // PRIORITY: Use currentBattle from state if available (from encounter generator)
     // This is the proper flow from OperationMapScreen -> createBattleFromEncounter
     if (state.currentBattle) {
-      localBattleState = state.currentBattle as BattleState;
+      localBattleState = (state.currentBattle as unknown) as BattleState;
       console.log(`[BATTLE] Using encounter-based battle with ${Object.values(state.currentBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
     } else {
       // Fallback to test battle (legacy/debug path)
@@ -1223,18 +1273,25 @@ export function renderBattleScreen() {
     // Initialize turn state for first unit
     const firstUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
     resetTurnStateForUnit(firstUnit);
+
+    // Initial trigger for enemy turn if starting unit is an enemy
+    if (localBattleState.activeUnitId && localBattleState.units[localBattleState.activeUnitId]?.isEnemy) {
+      console.log("[BATTLE] Starting enemy turn sequence on initialization");
+      requestAnimationFrame(() => runEnemyTurnsAnimated(localBattleState!));
+    }
   }
-  
-  const battle = localBattleState;
+
+  const battle = localBattleState as BattleState;
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
   const isPlacementPhase = battle.phase === "placement";
-  const roomLabel = isEndlessBattleMode 
-    ? `ENDLESS MODE — BATTLE ${endlessBattleCount}` 
+  const phase = battle.phase;
+  const roomLabel = isEndlessBattleMode
+    ? `ENDLESS MODE — BATTLE ${endlessBattleCount}`
     : (state.operation?.currentRoomId ?? "ROOM_START");
 
   app.innerHTML = `
-    <div class="battle-root">
+    <div class="battle-root battle-root--${phase}">
       <!-- Battle grid as full-screen background -->
       <div class="battle-grid-background">
         ${renderBattleGrid(battle, selectedCardIndex, activeUnit, isPlacementPhase)}
@@ -1270,20 +1327,22 @@ export function renderBattleScreen() {
       </div>
       
       <!-- Console overlay -->
-      <div class="scrollink-console-overlay">
+      <div class="scrollink-console-overlay" style="${uiPanelsMinimized ? 'transform: translateX(-100%); opacity: 0; pointer-events: none;' : ''}">
         <div class="scrollink-console-header">SCROLLINK OS // ENGAGEMENT_FEED</div>
         <div class="scrollink-console-body" id="battleLog">${battle.log.slice(-8).map(l => `<div class="scrollink-console-line">${l}</div>`).join("")}</div>
       </div>
       
       ${isPlacementPhase ? renderPlacementUI(battle) : `
-        <!-- Bottom UI panels overlay -->
-        <div class="battle-bottom-overlay">
-          <div class="battle-unit-panel">${renderUnitPanel(activeUnit)}</div>
-          <div class="battle-weapon-panel">${renderWeaponWindow(activeUnit)}</div>
+        <!-- Bottom UI panels independent (No wrapping container to prevent cutoff) -->
+        <div class="battle-unit-panel" style="${uiPanelsMinimized ? 'transform: translateY(100%); opacity: 0; pointer-events: none;' : ''}">
+          ${renderUnitPanel(activeUnit)}
+        </div>
+        <div class="battle-weapon-panel" style="${uiPanelsMinimized ? 'transform: translateY(100%); opacity: 0; pointer-events: none;' : ''}">
+          ${renderWeaponWindow(activeUnit)}
         </div>
         
         <!-- Floating hand overlay (independent of bottom panel) -->
-        <div class="battle-hand-floating ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}" id="battleHandContainer">
+        <div class="battle-hand-floating ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand--strained" : ""}" id="battleHandContainer" style="${uiPanelsMinimized ? 'transform: translateY(100%); opacity: 0; pointer-events: none;' : ''}">
           ${renderHandPanel(activeUnit, isPlayerTurn)}
         </div>
       `}
@@ -1291,7 +1350,7 @@ export function renderBattleScreen() {
       ${renderBattleResultOverlay(battle)}
     </div>
   `;
-  
+
   // CRITICAL: Restore animation container if it was preserved
   if (preservedAnimationContainer && preservedGridContainer) {
     // Find the new grid container
@@ -1299,7 +1358,7 @@ export function renderBattleScreen() {
     if (newGridContainer) {
       // Check if container already exists in new DOM
       let existingContainer = newGridContainer.querySelector('.battle-animation-container') as HTMLElement;
-      
+
       if (existingContainer) {
         // Move preserved children to existing container
         while (preservedAnimationContainer.firstChild) {
@@ -1329,7 +1388,7 @@ export function renderBattleScreen() {
         persistentAnimationContainer = animContainer;
       }
     }
-    
+
     // Clear reference if animation is not active and container is empty
     if (!activeMovementAnim || !activeMovementAnim.active) {
       const animContainer = getOrCreateAnimationContainer();
@@ -1339,21 +1398,21 @@ export function renderBattleScreen() {
       }
     }
   }
-  
+
   // Setup pan handlers and attach event listeners
   setupBattlePanHandlers();
   // Use requestAnimationFrame to ensure DOM is fully ready, especially for victory overlay
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       attachBattleListeners();
-      
+
       // Check for auto-battle (15a)
       if (localBattleState && activeUnit && !activeUnit.isEnemy && activeUnit.autoBattle) {
         // Delay auto-battle slightly to allow UI to update
         setTimeout(() => {
           if (!localBattleState) return;
-          const currentActive = localBattleState.activeUnitId 
-            ? localBattleState.units[localBattleState.activeUnitId] 
+          const currentActive = localBattleState.activeUnitId
+            ? localBattleState.units[localBattleState.activeUnitId]
             : null;
           // Only trigger if this is still the active unit and it's still auto-battle
           if (currentActive && currentActive.id === activeUnit.id && currentActive.autoBattle && !currentActive.isEnemy) {
@@ -1361,7 +1420,7 @@ export function renderBattleScreen() {
             setBattleState(newState);
             // Only re-render if the battle is still active and it's still this unit's turn
             // This prevents infinite loops
-            if (newState.phase === "battle" && newState.activeUnitId === activeUnit.id && newState.units[activeUnit.id]?.autoBattle) {
+            if (newState.phase !== "victory" && newState.phase !== "defeat" && newState.activeUnitId === activeUnit.id && newState.units[activeUnit.id]?.autoBattle) {
               // If it's still the same unit's turn after auto-battle, it means the turn didn't advance
               // This could happen if auto-battle couldn't take any action
               // In that case, manually advance the turn to prevent infinite loop
@@ -1374,6 +1433,7 @@ export function renderBattleScreen() {
           }
         }, 250);
       }
+
     });
   });
 }
@@ -1400,213 +1460,184 @@ function getMountIconForType(mountType: string): string {
 /**
  * Render segmented strain ring SVG around portrait
  */
-function renderStrainRing(currentStrain: number, maxStrain: number): string {
-  const filled = Math.max(0, Math.min(currentStrain, maxStrain));
-  const overflow = Math.max(0, currentStrain - maxStrain);
-  
-  // Determine tier based on overflow
-  const tier = overflow <= 0 ? 0 : overflow === 1 ? 1 : overflow === 2 ? 2 : 3;
-  
-  // SVG parameters
-  const centerX = 50;
-  const centerY = 50;
-  const radius = 45; // Ring radius - make it larger to be more visible
-  const strokeWidth = 5; // Thicker stroke for visibility
-  const gapAngle = 2; // Degrees gap between segments
-  
-  // Calculate segment angle
-  const totalAngle = 360 - (gapAngle * maxStrain); // Total angle for all segments
-  const segmentAngle = totalAngle / maxStrain; // Angle per segment
-  
-  // Build SVG path segments
-  let segmentsHtml = '';
-  for (let i = 0; i < maxStrain; i++) {
-    const startAngle = (i * (segmentAngle + gapAngle)) - 90; // Start at top (-90 degrees)
-    const endAngle = startAngle + segmentAngle;
-    
-    const startRad = (startAngle * Math.PI) / 180;
-    const endRad = (endAngle * Math.PI) / 180;
-    
-    const x1 = centerX + radius * Math.cos(startRad);
-    const y1 = centerY + radius * Math.sin(startRad);
-    const x2 = centerX + radius * Math.cos(endRad);
-    const y2 = centerY + radius * Math.sin(endRad);
-    
-    const largeArc = segmentAngle > 180 ? 1 : 0;
-    
-    const isFilled = i < filled;
-    const segmentClass = isFilled ? 'strain-seg is-filled' : 'strain-seg is-empty';
-    
-    segmentsHtml += `
-      <path class="${segmentClass}" 
-            d="M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}"
-            stroke-width="${strokeWidth}"
-            fill="none"
-            stroke-linecap="round" />
-    `;
-  }
-  
-  // Overflow counter
-  const overflowHtml = overflow > 0 
-    ? `<div class="strain-ring__overflow">+${overflow}</div>`
-    : '';
-  
-  return `
-    <div class="strain-ring strain-tier-${tier}">
-      <svg class="strain-ring__svg" viewBox="0 0 100 100" aria-hidden="true">
-        ${segmentsHtml}
-      </svg>
-      ${overflowHtml}
-    </div>
-  `;
-}
+// function renderStrainRing(currentStrain: number, maxStrain: number): string {
+//   ... (commented out as unused)
+// }
 
 function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
-  if (!activeUnit || activeUnit.isEnemy) {
-    return `<div class="unit-panel-empty"><div class="unit-panel-empty-text">NO ACTIVE UNIT</div></div>`;
-  }
-  const hp = activeUnit.hp ?? 0;
-  const maxHp = activeUnit.maxHp ?? 1;
-  
-  // Use maxStrain if available, otherwise fallback to BASE_STRAIN_THRESHOLD
-  const maxStrain = (activeUnit as any).maxStrain ?? BASE_STRAIN_THRESHOLD;
-  const currentStrain = activeUnit.strain ?? 0;
-  
-  const strainPct = Math.min(100, (currentStrain / maxStrain) * 100);
-  const isOver = currentStrain > maxStrain;
-  const maxMove = activeUnit.agi || 1;
-  const movePct = (turnState.movementRemaining / maxMove) * 100;
-  const portraitPath = getBattleUnitPortraitPath(activeUnit.id, activeUnit.baseUnitId);
-  
-  // Show which player controls this unit
-  const controller = activeUnit.controller || "P1";
-  const state = getGameState();
-  const player = state.players[controller as PlayerId];
-  const controllerColor = player?.color || "#ff8a00";
-  const controllerLabel = controller === "P1" ? "PLAYER 1" : "PLAYER 2";
-  
-  // Check if unit is mounted and get mount info
-  const isMounted = isUnitMounted(activeUnit);
-  const mountDef = isMounted && activeUnit.mountId ? getMountDefinition(activeUnit.mountId) : null;
-  const mountIcon = mountDef ? getMountIconForType(mountDef.mountType) : "";
+  try {
+    if (!activeUnit || activeUnit.isEnemy) {
+      return `<div class="unit-panel-empty"><div class="unit-panel-empty-text">NO ACTIVE UNIT</div></div>`;
+    }
+    const hp = activeUnit.hp ?? 0;
+    const maxHp = activeUnit.maxHp ?? 1;
 
-  return `
-    <div class="unit-panel-header">
-      <div class="unit-panel-portrait">
-        ${renderStrainRing(currentStrain, maxStrain)}
-        <img src="${portraitPath}" alt="${activeUnit.name}" class="unit-panel-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
-        ${isMounted ? `<span class="unit-panel-mount-badge" title="${mountDef?.name || 'Mounted'}">${mountIcon}</span>` : ""}
-      </div>
-      <div class="unit-panel-header-text">
-        <div class="unit-panel-label">ACTIVE UNIT</div>
-        <div class="unit-panel-name">${activeUnit.name}</div>
-        ${isMounted && mountDef ? `
-          <div class="unit-panel-mount-info">
-            <span class="unit-mount-icon">${mountIcon}</span>
-            <span class="unit-mount-name">${mountDef.name}</span>
-          </div>
-        ` : ""}
-        <div class="unit-panel-controller" style="color: ${controllerColor}; border-color: ${controllerColor};">
-          ${controllerLabel}
+    // Use maxStrain if available, otherwise fallback to BASE_STRAIN_THRESHOLD
+    const maxStrain = (activeUnit as any).maxStrain ?? BASE_STRAIN_THRESHOLD;
+    const currentStrain = activeUnit.strain ?? 0;
+
+    const strainPct = Math.min(100, (currentStrain / maxStrain) * 100);
+    const isOver = currentStrain > maxStrain;
+    const maxMove = activeUnit.agi || 1;
+    const movePct = (turnState.movementRemaining / maxMove) * 100;
+    // const portraitSize = 160; // Doubled size
+    const _portraitPath = getBattleUnitPortraitPath(activeUnit.id, activeUnit.baseUnitId);
+
+    // Show which player controls this unit
+    // const controller = activeUnit.controller || "P1";
+    // const state = getGameState();
+    // const player = state.players[controller as PlayerId];
+    // const controllerColor = player?.color || "#ff8a00";
+    // const controllerLabel = controller === "P1" ? "PLAYER 1" : "PLAYER 2";
+
+    // Check if unit is mounted and get mount info
+    const isMounted = isUnitMounted(activeUnit);
+    const mountDef = isMounted && activeUnit.mountId ? getMountDefinition(activeUnit.mountId) : null;
+    const mountIcon = mountDef ? getMountIconForType(mountDef.mountType) : "";
+
+    return `
+      <div class="unit-panel-header">
+        <div class="unit-panel-portrait" style="width: 48px; height: 48px; flex-shrink: 0; position: relative; border: 1px solid var(--bronze-dark); border-radius: 3px; background: rgba(0,0,0,0.3);">
+          <img src="${_portraitPath}" alt="${activeUnit.name}" class="unit-panel-portrait-img" style="width: 100%; height: 100%; object-fit: cover; display: block;" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+          ${isMounted ? `<span class="unit-panel-mount-badge" title="${mountDef?.name || 'Mounted'}" style="font-size: 0.6rem;">${mountIcon}</span>` : ""}
         </div>
-        <button class="unit-auto-battle-toggle ${activeUnit.autoBattle ? 'unit-auto-battle-toggle--active' : ''}" id="toggleAutoBattleBtn" data-unit-id="${activeUnit.id}">
-          AUTO: ${activeUnit.autoBattle ? 'ON' : 'OFF'}
-        </button>
-      </div>
-    </div>
-    <div class="unit-panel-stats">
-      <div class="unit-stat-row">
-        <span class="unit-stat-label">HP</span>
-        <div class="unit-stat-bar">
-          <div class="unit-stat-bar-track">
-            <div class="unit-stat-bar-fill unit-stat-bar-fill--hp" style="width:${(hp/maxHp)*100}%"></div>
-          </div>
-          <span class="unit-stat-value">${hp}/${maxHp}</span>
-        </div>
-      </div>
-      <div class="unit-stat-row unit-stat-row--strain">
-        <span class="unit-stat-label unit-stat-label--strain">STRAIN</span>
-        <div class="unit-stat-bar unit-stat-bar--strain">
-          <div class="unit-stat-bar-track ${isOver ? "unit-stat-bar-track--danger" : ""}">
-            <div class="unit-stat-bar-fill unit-stat-bar-fill--strain ${isOver ? "unit-stat-bar-fill--over" : ""}" style="width:${strainPct}%"></div>
-          </div>
-          <span class="unit-stat-value ${isOver ? "unit-stat-value--danger" : ""}">${currentStrain}/${maxStrain}</span>
+        <div class="unit-panel-header-text">
+          <div class="unit-panel-label">ACTIVE UNIT</div>
+          <div class="unit-panel-name">${activeUnit.name}</div>
+          <div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.6;">${(activeUnit as any).classId?.toUpperCase() || "UNIT"}</div>
         </div>
       </div>
-      <div class="unit-stat-row">
-        <span class="unit-stat-label">MOVE</span>
-        <div class="unit-stat-bar">
-          <div class="unit-stat-bar-track">
-            <div class="unit-stat-bar-fill unit-stat-bar-fill--move" style="width:${movePct}%"></div>
+      <div class="unit-panel-stats">
+        <div class="unit-stat-row">
+          <span class="unit-stat-label">HP</span>
+          <div class="unit-stat-bar">
+            <div class="unit-stat-bar-track">
+              <div class="unit-stat-bar-fill unit-stat-bar-fill--hp" style="width:${(hp / maxHp) * 100}%;"></div>
+            </div>
+            <span class="unit-stat-value" style="color: var(--slk-green);">${hp}/${maxHp}</span>
           </div>
-          <span class="unit-stat-value">${turnState.movementRemaining}/${maxMove}</span>
         </div>
+        <div class="unit-stat-row unit-stat-row--strain">
+          <span class="unit-stat-label">STN</span>
+          <div class="unit-stat-bar unit-stat-bar--strain">
+            <div class="unit-stat-bar-track ${isOver ? "unit-stat-bar-track--danger" : ""}">
+              <div class="unit-stat-bar-fill unit-stat-bar-fill--strain ${isOver ? "unit-stat-bar-fill--over" : ""}" style="width:${strainPct}%"></div>
+            </div>
+            <span class="unit-stat-value ${isOver ? "unit-stat-value--danger" : ""}">${currentStrain}/${maxStrain}</span>
+          </div>
+        </div>
+        <div class="unit-stat-row">
+          <span class="unit-stat-label">MOV</span>
+          <div class="unit-stat-bar">
+            <div class="unit-stat-bar-track">
+              <div class="unit-stat-bar-fill unit-stat-bar-fill--move" style="width:${movePct}%"></div>
+            </div>
+            <span class="unit-stat-value" style="color: var(--slk-teal);">${turnState.movementRemaining}/${maxMove}</span>
+          </div>
+        </div>
+        <div class="unit-stat-row unit-stat-row--inline" style="gap: 4px; margin-top: 4px; flex-wrap: wrap;">
+          <div class="unit-stat-chip" style="font-size: 0.55rem; padding: 2px 6px; background: rgba(0,0,0,0.3); border: 1px solid var(--bronze-dark); border-radius: 2px; color: var(--slk-amber);">ATK ${activeUnit.atk}</div>
+          <div class="unit-stat-chip" style="font-size: 0.55rem; padding: 2px 6px; background: rgba(0,0,0,0.3); border: 1px solid var(--bronze-dark); border-radius: 2px; color: var(--slk-sky);">DEF ${activeUnit.def}</div>
+          <div class="unit-stat-chip" style="font-size: 0.55rem; padding: 2px 6px; background: rgba(0,0,0,0.3); border: 1px solid var(--bronze-dark); border-radius: 2px; color: var(--slk-violet);">AGI ${activeUnit.agi}</div>
+        </div>
+        ${activeUnit.statuses && activeUnit.statuses.length > 0 ? `
+        <div class="unit-status-effects" style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;">
+          ${activeUnit.statuses.map((s: any) => `
+            <div class="unit-status-chip" title="${s.type.toUpperCase()} (${s.duration}T)" style="font-size: 0.5rem; padding: 1px 4px; background: var(--bg-surface-elevated); border: 1px solid var(--slk-neon-red); color: var(--slk-neon-red); border-radius: 2px;">
+              ${s.type.toUpperCase()} ${s.duration}
+            </div>
+          `).join('')}
+        </div>
+        ` : ''}
       </div>
-      <div class="unit-stat-row unit-stat-row--inline">
-        <span class="unit-stat-chip">ATK ${activeUnit.atk}</span>
-        <span class="unit-stat-chip">DEF ${activeUnit.def}</span>
-        <span class="unit-stat-chip">AGI ${activeUnit.agi}</span>
-        <span class="unit-stat-chip">ACC ${activeUnit.acc}</span>
-      </div>
-    </div>
-  `;
+    `;
+  } catch (err) {
+    console.error(`[RENDER] Error in renderUnitPanel:`, err);
+    return `<div class="unit-panel-error">ERROR: ${err}</div>`;
+  }
 }
 
 function renderHandPanel(activeUnit: BattleUnitState | undefined, isPlayerTurn: boolean | undefined): string {
-  const hand = resolveHandCards(activeUnit?.hand ?? []);
-  return `
-    <div class="hand-header-floating">
-      <div class="hand-info">
-        <span class="hand-label">HAND</span>
-        <span class="hand-count">${hand.length} CARDS</span>
-      </div>
-      <div class="hand-meters">
-        <div class="hand-counter">
-          <span class="hand-counter-label">Deck:</span>
-          <span class="hand-counter-value">${activeUnit?.drawPile?.length ?? 0}</span>
+  try {
+    const hand = resolveHandCards(activeUnit?.hand ?? []);
+    return `
+      <div class="hand-header-floating">
+        <div class="hand-info">
+          <span class="hand-label">HAND</span>
+          <span class="hand-count">${hand.length} CARDS</span>
         </div>
-        <div class="hand-counter">
-          <span class="hand-counter-label">Discard:</span>
-          <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
+        <div class="hand-meters">
+          <div class="hand-counter">
+            <span class="hand-counter-label">Deck:</span>
+            <span class="hand-counter-value">${activeUnit?.drawPile?.length ?? 0}</span>
+          </div>
+          <div class="hand-counter">
+            <span class="hand-counter-label">Discard:</span>
+            <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
+          </div>
+        </div>
+        <div class="hand-actions">
+          <button class="battle-undo-btn" id="undoMoveBtn" ${!turnState.hasCommittedMove ? "disabled" : ""}>UNDO MOVE</button>
+          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn ? "disabled" : ""}>END TURN</button>
+          <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
         </div>
       </div>
-      <div class="hand-actions">
-        <button class="battle-undo-btn" id="undoMoveBtn" ${!turnState.hasCommittedMove ? "disabled" : ""}>UNDO MOVE</button>
-        <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn ? "disabled" : ""}>END TURN</button>
-        <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
-      </div>
-    </div>
-    <div class="hand-cards-row-floating">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
-  `;
+      <div class="hand-cards-row-floating">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
+    `;
+  } catch (err) {
+    console.error(`[RENDER] Error in renderHandPanel:`, err);
+    return `<div class="hand-panel-error">ERROR: ${err}</div>`;
+  }
 }
 
 function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, activeUnit: BattleUnitState | undefined): string {
   if (hand.length === 0) return `<div class="hand-empty">No cards in hand</div>`;
-  
+
   const total = hand.length;
   const maxAngle = Math.min(total * 4, 20);
-  
+
   return hand.map((card, i) => {
     const sel = selectedCardIndex === i;
     const step = total > 1 ? maxAngle / (total - 1) : 0;
     const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
     const yOff = Math.abs(angle) * 0.5;
+
+    // Card type icon
     const icon = card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
-    
+
+    // Card type label for badge
+    const typeLabel = card.type === "core" ? "CORE" : card.type === "class" ? "CLASS" : card.type === "gambit" ? "GAMBIT" : "ATK";
+
     // Calculate effective range for display (includes Far Shot bonus)
     const effectiveRange = activeUnit ? getEffectiveCardRange(card, activeUnit) : card.range ?? 1;
-    
+
     return `
-      <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i+1};" data-card-index="${i}">
+      <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
         <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${!isPlayerTurn ? "battle-cardui--disabled" : ""}" data-card-index="${i}">
-          <div class="card-cost-circle">${card.strainCost}</div>
-          <div class="card-icon-top">${icon}</div>
-          <div class="card-art-placeholder">
-            <span class="card-art-glyph">✶</span>
+          <!-- Strain Cost Circle - Top Left -->
+          <div class="hs-card-cost">${card.strainCost}</div>
+          
+          <!-- Card Type Badge - Top Right -->
+          <div class="hs-card-type">${typeLabel}</div>
+          
+          <!-- Card Art Frame -->
+          <div class="hs-card-art">
+            <span class="hs-card-art-glyph">${icon}</span>
           </div>
-          <div class="card-name">${card.name}</div>
-          <div class="card-tag">${card.target.toUpperCase()}${effectiveRange > 0 ? ` R${effectiveRange}` : ""}</div>
-          <div class="card-desc">${card.description}</div>
+          
+          <!-- Card Name Banner -->
+          <div class="hs-card-name-banner">
+            <div class="hs-card-name">${card.name}</div>
+          </div>
+          
+          <!-- Card Description -->
+          <div class="hs-card-desc">${card.description}</div>
+          
+          <!-- Card Footer - Target/Range -->
+          <div class="hs-card-footer">
+            <span class="hs-card-stat">${card.target.toUpperCase()}</span>
+            ${effectiveRange > 0 ? `<span class="hs-card-stat">R${effectiveRange}</span>` : ""}
+          </div>
         </div>
       </div>
     `;
@@ -1626,52 +1657,52 @@ function getReachableTiles(
   const visited = new Map<string, number>(); // tile -> cost to reach
   const queue: { x: number; y: number; cost: number }[] = [{ x: startX, y: startY, cost: 0 }];
   visited.set(`${startX},${startY}`, 0);
-  
-  const dirs = [{x:0,y:-1}, {x:0,y:1}, {x:-1,y:0}, {x:1,y:0}];
-  
+
+  const dirs = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
+
   while (queue.length > 0) {
     const current = queue.shift()!;
-    
+
     for (const d of dirs) {
       const nx = current.x + d.x;
       const ny = current.y + d.y;
       const newCost = current.cost + 1;
       const key = `${nx},${ny}`;
-      
+
       // Check bounds
       if (nx < 0 || nx >= gridWidth || ny < 0 || ny >= gridHeight) continue;
-      
+
       // Check if we can reach it with remaining movement
       if (newCost > movement) continue;
-      
+
       // Check if already visited with lower cost
       if (visited.has(key) && visited.get(key)! <= newCost) continue;
-      
+
       // Check if occupied by a unit
       const occupied = units.some(u => u.pos?.x === nx && u.pos?.y === ny && u.hp > 0);
       if (occupied) continue;
-      
+
       // Valid tile to move to
       visited.set(key, newCost);
       reachable.add(key);
       queue.push({ x: nx, y: ny, cost: newCost });
     }
   }
-  
+
   return reachable;
 }
 
 function renderPlacementUI(battle: BattleState): string {
   const placementState = battle.placementState;
   if (!placementState) return "";
-  
+
   const friendlyUnits = Object.values(battle.units).filter(u => !u.isEnemy);
   const unplacedUnits = friendlyUnits.filter(
     u => !placementState.placedUnitIds.includes(u.id) && !u.pos
   );
   const placedCount = placementState.placedUnitIds.length;
   const canConfirm = placedCount > 0; // Allow confirming with any placed units
-  
+
   return `
     <div class="battle-placement-overlay">
       <div class="battle-placement-panel">
@@ -1687,9 +1718,9 @@ function renderPlacementUI(battle: BattleState): string {
           <div class="placement-units-list">
             <div class="placement-units-label">Party Units (click to select, then place on grid):</div>
             ${friendlyUnits.map(u => {
-              const isPlaced = placementState.placedUnitIds.includes(u.id);
-              const isSelected = placementState.selectedUnitId === u.id;
-              return `
+    const isPlaced = placementState.placedUnitIds.includes(u.id);
+    const isSelected = placementState.selectedUnitId === u.id;
+    return `
                 <div class="placement-unit-item ${isPlaced ? 'placement-unit-item--placed' : ''} ${isSelected ? 'placement-unit-item--selected' : ''}" 
                      data-unit-id="${u.id}" 
                      data-placed="${isPlaced}">
@@ -1698,7 +1729,7 @@ function renderPlacementUI(battle: BattleState): string {
                   ${isSelected ? '<span class="placement-selected-indicator">→ SELECTED</span>' : ''}
                 </div>
               `;
-            }).join("")}
+  }).join("")}
           </div>
         </div>
         <div class="placement-actions">
@@ -1713,23 +1744,23 @@ function renderPlacementUI(battle: BattleState): string {
 function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined, isPlacementPhase: boolean = false): string {
   const { gridWidth, gridHeight } = battle;
   const units = getUnitsArray(battle);
-  
+
   // Calculate move/attack tiles if needed
   const moveOpts = new Set<string>();
   const atkOpts = new Set<string>();
-  
+
   if (activeUnit && !activeUnit.isEnemy && activeUnit.pos && !isPlacementPhase) {
     const ux = activeUnit.pos.x;
     const uy = activeUnit.pos.y;
-    
+
     let selectedCard: Card | null = null;
     if (selectedCardIdx !== null && activeUnit.hand[selectedCardIdx]) {
       selectedCard = resolveCard(activeUnit.hand[selectedCardIdx]);
     }
-    
+
     if (selectedCard) {
       const cardRange = selectedCard.range;
-      
+
       if (selectedCard.target === "enemy") {
         units.filter(u => u.isEnemy && u.hp > 0 && u.pos).forEach(e => {
           const dist = getDistance(ux, uy, e.pos!.x, e.pos!.y);
@@ -1755,7 +1786,7 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
       reachable.forEach(key => moveOpts.add(key));
     }
   }
-  
+
   // Calculate facing selection tiles if in facing selection phase
   const facingTiles = new Set<string>();
   if (turnState.isFacingSelection && activeUnit && activeUnit.pos) {
@@ -1766,9 +1797,20 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
     if (y > 0) facingTiles.add(`${x},${y - 1}`); // north
     if (y < battle.gridHeight - 1) facingTiles.add(`${x},${y + 1}`); // south
   }
-  
+
   // Use the new simple renderer - it uses unit.pos as single source of truth
-  return BattleGridRenderer.render(battle, selectedCardIdx, activeUnit, isPlacementPhase, battleZoom, moveOpts, atkOpts, facingTiles);
+  return BattleGridRenderer.render(
+    battle,
+    selectedCardIdx,
+    activeUnit,
+    isPlacementPhase,
+    battleZoom,
+    moveOpts,
+    atkOpts,
+    facingTiles,
+    hoveredTile,
+    getHiddenAnimatedUnitIds()
+  );
 }
 
 /**
@@ -1792,7 +1834,7 @@ function renderDefenseObjectiveHeader(objective: NonNullable<BattleState["defens
 function renderBattleResultOverlay(battle: BattleState): string {
   // Check if this is a training battle
   const isTraining = (battle as any).isTraining === true;
-  
+
   if (isTraining && battle.phase === "victory") {
     // Training battles show a simplified overlay
     return `
@@ -1805,12 +1847,12 @@ function renderBattleResultOverlay(battle: BattleState): string {
       </div>
     `;
   }
-  
+
   // Normal battle overlay
   if (battle.phase === "victory") {
     const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
-    
+
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
     let unlockableName = "";
@@ -1852,11 +1894,11 @@ function renderBattleResultOverlay(battle: BattleState): string {
       </div>
     `;
   }
-  
+
   if (battle.phase === "defeat") {
     // Check if in campaign run (for retry option)
     const isCampaignRun = (window as any).__isCampaignRun || false;
-    
+
     return `
       <div class="battle-result-overlay battle-result-overlay--defeat">
         <div class="battle-result-card">
@@ -1874,7 +1916,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
       </div>
     `;
   }
-  
+
   return "";
 }
 
@@ -1890,21 +1932,21 @@ function animateHandDraw(container: HTMLElement, onComplete: () => void) {
     onComplete();
     return;
   }
-  
+
   isHandAnimating = true;
   const cards = container.querySelectorAll(".battle-card-slot");
-  
+
   // Set initial state (invisible, below)
-  cards.forEach((card, i) => {
+  cards.forEach((card) => {
     const el = card as HTMLElement;
     el.style.opacity = "0";
     el.style.transform = "translateY(50px)";
     el.style.transition = "none";
   });
-  
+
   // Force reflow
   void container.offsetHeight;
-  
+
   // Animate each card in with stagger
   cards.forEach((card, i) => {
     const el = card as HTMLElement;
@@ -1914,7 +1956,7 @@ function animateHandDraw(container: HTMLElement, onComplete: () => void) {
       el.style.transform = "";
     }, i * 50);
   });
-  
+
   // Complete after all animations
   setTimeout(() => {
     isHandAnimating = false;
@@ -1927,10 +1969,10 @@ function animateHandDiscard(container: HTMLElement, onComplete: () => void) {
     onComplete();
     return;
   }
-  
+
   isHandAnimating = true;
   const cards = container.querySelectorAll(".battle-card-slot");
-  
+
   // Animate cards out
   cards.forEach((card, i) => {
     const el = card as HTMLElement;
@@ -1940,7 +1982,7 @@ function animateHandDiscard(container: HTMLElement, onComplete: () => void) {
       el.style.transform = "translateY(50px) scale(0.8)";
     }, i * 30);
   });
-  
+
   // Complete after animations
   setTimeout(() => {
     isHandAnimating = false;
@@ -1950,19 +1992,19 @@ function animateHandDiscard(container: HTMLElement, onComplete: () => void) {
 
 function attachBattleListeners() {
   if (!localBattleState) return;
-  
+
   const battle = localBattleState;
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
-  const units = getUnitsArray(battle);
   const isPlacementPhase = battle.phase === "placement";
 
   // Zoom controls - mouse wheel only
   const zoomViewport = document.querySelector(".battle-grid-zoom-viewport");
   if (zoomViewport) {
-    zoomViewport.addEventListener("wheel", (e) => {
+    zoomViewport.addEventListener("wheel", (e: Event) => {
       e.preventDefault();
-      if (e.deltaY < 0) zoomIn();
+      const wheelEvent = e as WheelEvent;
+      if (wheelEvent.deltaY < 0) zoomIn();
       else zoomOut();
     }, { passive: false });
   }
@@ -1976,14 +2018,14 @@ function attachBattleListeners() {
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
       uiPanelsMinimized = false; // Reset UI visibility
-      
+
       // If in endless mode, exit to base camp with summary
       if (isEndlessBattleMode) {
         console.log(`[ENDLESS BATTLE] Exiting after ${endlessBattleCount} battles`);
         const finalCount = endlessBattleCount;
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
-        
+
         // Show summary and return to base camp
         alert(`Endless Battle Mode Exited!\nBattles Completed: ${finalCount - 1}`);
         import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
@@ -1994,7 +2036,7 @@ function attachBattleListeners() {
       }
     };
   }
-  
+
   // Toggle UI panels button
   const toggleUiBtn = document.getElementById("toggleUiBtn");
   if (toggleUiBtn) {
@@ -2002,7 +2044,7 @@ function attachBattleListeners() {
       toggleUiPanels();
     };
   }
-  
+
   // Reset pan button
   const resetPanBtn = document.getElementById("resetBattlePanBtn");
   if (resetPanBtn) {
@@ -2017,7 +2059,7 @@ function attachBattleListeners() {
     (el as HTMLElement).onclick = (e) => {
       e.stopPropagation();
       if (!isPlayerTurn) return;
-      
+
       // Check if current player can control this unit
       if (activeUnit) {
         const state = getGameState();
@@ -2036,7 +2078,7 @@ function attachBattleListeners() {
   // Placement phase handlers
   if (isPlacementPhase) {
     console.log("[BATTLE] Setting up placement phase handlers");
-    
+
     // Quick Place button
     const quickPlaceBtn = document.getElementById("quickPlaceBtn");
     if (quickPlaceBtn) {
@@ -2053,7 +2095,7 @@ function attachBattleListeners() {
     } else {
       console.warn("[BATTLE] Quick Place button NOT found");
     }
-    
+
     // Confirm button
     const confirmBtn = document.getElementById("confirmPlacementBtn");
     if (confirmBtn) {
@@ -2070,45 +2112,41 @@ function attachBattleListeners() {
           const firstUnit = newState.units[newState.activeUnitId];
           resetTurnStateForUnit(firstUnit);
         }
+        // Run enemy turns if starting unit is enemy
+        if (newState.activeUnitId && newState.units[newState.activeUnitId]?.isEnemy) {
+          console.log("[BATTLE] Starting enemy turn sequence after placement");
+          runEnemyTurnsAnimated(newState);
+        }
+
         renderBattleScreen();
-        
-        // Trigger hand draw animation for first unit
-        requestAnimationFrame(() => {
-          const handContainer = document.getElementById("battleHandContainer");
-          if (handContainer && newState.activeUnitId) {
-            const unit = newState.units[newState.activeUnitId];
-            if (unit && !unit.isEnemy) {
-              animateHandDraw(handContainer, () => {});
-            }
-          }
-        });
       });
     } else {
       console.warn("[BATTLE] Confirm button NOT found");
     }
-    
+
     // Simple placement click handler using data attributes
-    const gridContainer = document.getElementById("battleGridContainer") || 
-                          document.querySelector(".battle-grid-container--simple");
+    const gridContainer = document.getElementById("battleGridContainer") ||
+      document.querySelector(".battle-grid-container--simple");
     if (gridContainer) {
       // Remove old handler
       const oldHandler = (gridContainer as any).__placementHandler;
       if (oldHandler) {
         gridContainer.removeEventListener("click", oldHandler);
       }
-      
+
       // Create new handler
-      const placementHandler = (e: MouseEvent) => {
+      const placementHandler = (e: Event) => {
+        const mouseEvent = e as MouseEvent;
         // Check if clicking on a placed unit (to remove it) - prioritize unit clicks
-        const placedUnitEl = (e.target as HTMLElement).closest(".battle-unit[data-unit-id]") as HTMLElement;
+        const placedUnitEl = (mouseEvent.target as HTMLElement).closest(".battle-unit[data-unit-id]") as HTMLElement;
         if (placedUnitEl && localBattleState && localBattleState.placementState) {
           const unitId = placedUnitEl.getAttribute("data-unit-id");
           if (unitId) {
             const unit = localBattleState.units[unitId];
             if (unit && !unit.isEnemy && localBattleState.placementState.placedUnitIds.includes(unitId)) {
               // Remove placed unit
-              e.preventDefault();
-              e.stopPropagation();
+              mouseEvent.preventDefault();
+              mouseEvent.stopPropagation();
               let newState = removePlacedUnit(localBattleState, unitId);
               setBattleState(newState);
               renderBattleScreen();
@@ -2116,51 +2154,53 @@ function attachBattleListeners() {
             }
           }
         }
-        
+
         // Otherwise, try to place selected unit
-        const tile = (e.target as HTMLElement).closest(".battle-tile--placement-option") as HTMLElement;
+        const tile = (mouseEvent.target as HTMLElement).closest(".battle-tile--placement-option") as HTMLElement;
         if (!tile) return;
-        
+
         const coords = BattleGridRenderer.getTileCoordinates(tile);
         if (!coords) return;
-        
+
         const { x, y } = coords;
-        
+
         if (!localBattleState || !localBattleState.placementState) return;
         if (x !== 0) return;
         if (y < 0 || y >= localBattleState.gridHeight) return;
-        
+
         const occupied = Object.values(localBattleState.units).some(
           u => u.pos && u.pos.x === x && u.pos.y === y && u.hp > 0
         );
         if (occupied) return;
-        
+
         // Use selected unit if available, otherwise use first unplaced
         const selectedUnitId = localBattleState.placementState.selectedUnitId;
         let unitToPlace = null;
-        
+
         if (selectedUnitId) {
           const selectedUnit = localBattleState.units[selectedUnitId];
-          if (selectedUnit && !selectedUnit.isEnemy && 
-              !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
+          if (selectedUnit && !selectedUnit.isEnemy &&
+            !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
             unitToPlace = selectedUnit;
           }
         }
-        
+
+        if (!localBattleState || !localBattleState.placementState) return;
+
         if (!unitToPlace) {
           const friendlyUnits = Object.values(localBattleState.units).filter(u => !u.isEnemy);
           unitToPlace = friendlyUnits.find(
-            u => !localBattleState.placementState!.placedUnitIds.includes(u.id) && !u.pos
+            u => !localBattleState!.placementState!.placedUnitIds.includes(u.id) && !u.pos
           );
         }
-        
-        if (!unitToPlace) return;
-        
+
+        if (!unitToPlace || !localBattleState) return;
+
         let newState = placeUnit(localBattleState, unitToPlace.id, { x, y });
         setBattleState(newState);
         renderBattleScreen();
       };
-      
+
       // Add click handler for unit selection in placement panel
       const placementPanel = document.querySelector(".battle-placement-panel");
       if (placementPanel) {
@@ -2169,16 +2209,17 @@ function attachBattleListeners() {
         if (oldPanelHandler) {
           placementPanel.removeEventListener("click", oldPanelHandler);
         }
-        
-        const placementPanelHandler = (e: MouseEvent) => {
-          const unitItem = (e.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
+
+        const placementPanelHandler = (e: Event) => {
+          const mouseEvent = e as MouseEvent;
+          const unitItem = (mouseEvent.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
           if (unitItem && localBattleState && localBattleState.placementState) {
-            e.preventDefault();
-            e.stopPropagation();
-            
+            mouseEvent.preventDefault();
+            mouseEvent.stopPropagation();
+
             const unitId = unitItem.getAttribute("data-unit-id");
             const isPlaced = unitItem.getAttribute("data-placed") === "true";
-            
+
             if (unitId) {
               if (isPlaced) {
                 // Clicking a placed unit removes it
@@ -2194,67 +2235,69 @@ function attachBattleListeners() {
             }
           }
         };
-        
+
         (placementPanel as any).__placementPanelHandler = placementPanelHandler;
         placementPanel.addEventListener("click", placementPanelHandler);
       }
-      
+
       (gridContainer as any).__placementHandler = placementHandler;
       gridContainer.addEventListener("click", placementHandler);
     }
-    
+
     // Don't attach normal battle listeners during placement
     return;
   }
 
   // Simple click handler for movement and attacks using data attributes
-  const gridContainer = document.getElementById("battleGridContainer") || 
-                        document.querySelector(".battle-grid-container--simple");
+  const gridContainer = document.getElementById("battleGridContainer") ||
+    document.querySelector(".battle-grid-container--simple");
   if (gridContainer && !isPlacementPhase) {
     // Remove old handler
     const oldHandler = (gridContainer as any).__battleHandler;
     if (oldHandler) {
       gridContainer.removeEventListener("click", oldHandler);
     }
-    
+
     // Create new handler
-    const battleHandler = (e: MouseEvent) => {
-      // CRITICAL: Block all actions if battle is over
+    const battleHandler = (e: Event) => {
+      const mouseEvent = e as MouseEvent;
+      // CRITICAL: Block all actions if battle is over or enemy is acting
+      if (isAnimatingEnemyTurn) return;
       if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
         return;
       }
-      
-      const tile = (e.target as HTMLElement).closest(".battle-tile") as HTMLElement;
+
+      const tile = (mouseEvent.target as HTMLElement).closest(".battle-tile") as HTMLElement;
       if (!tile) return;
-      
+
       const coords = BattleGridRenderer.getTileCoordinates(tile);
       if (!coords) return;
-      
+
       const { x, y } = coords;
-      
+
       if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-      
+
       // Check if current player can control this unit
       const state = getGameState();
       const activeController = activeUnit.controller || "P1";
       const currentPlayer = state.players[activeController as PlayerId];
       if (!currentPlayer?.active) return; // Player not active, can't control
-      
+
       // Handle facing selection (FFTA-style, after movement)
       if (turnState.isFacingSelection && tile.classList.contains("battle-tile--facing-option")) {
         if (!activeUnit.pos) return;
-        
+
         // Determine facing based on clicked tile position relative to unit
         const dx = x - activeUnit.pos.x;
         const dy = y - activeUnit.pos.y;
         let newFacing: "north" | "south" | "east" | "west";
-        
+
         if (Math.abs(dx) >= Math.abs(dy)) {
           newFacing = dx > 0 ? "east" : "west";
         } else {
           newFacing = dy > 0 ? "south" : "north";
         }
-        
+
         // Update facing and exit facing selection phase
         const newUnits = { ...localBattleState.units };
         newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
@@ -2264,43 +2307,43 @@ function attachBattleListeners() {
         renderBattleScreen();
         return;
       }
-      
+
       // Handle movement
       if (tile.classList.contains("battle-tile--move-option")) {
         if (!isPlayerTurn || !activeUnit || !localBattleState) return;
         if (activeMovementAnim && activeMovementAnim.active) return;
-        
+
         if (!turnState.hasMoved && activeUnit.pos) {
           turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
         }
-        
+
         const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
         const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
         const currentX = activeUnit.pos?.x ?? 0;
         const currentY = activeUnit.pos?.y ?? 0;
         const maxMove = activeUnit.agi;
-        
+
         // Validate destination is within bounds
-        if (x < 0 || x >= localBattleState.gridWidth || 
-            y < 0 || y >= localBattleState.gridHeight) {
+        if (x < 0 || x >= localBattleState.gridWidth ||
+          y < 0 || y >= localBattleState.gridHeight) {
           console.error("[MOVE] Destination out of bounds!", { x, y, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
           return;
         }
-        
+
         // Validate current position
         if (currentX < 0 || currentX >= localBattleState.gridWidth ||
-            currentY < 0 || currentY >= localBattleState.gridHeight) {
+          currentY < 0 || currentY >= localBattleState.gridHeight) {
           console.error("[MOVE] Current position out of bounds!", { currentX, currentY, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
           return;
         }
-        
+
         const path = getMovePath(localBattleState, { x: currentX, y: currentY }, { x, y }, maxMove);
-        
+
         if (path.length < 2) {
           console.warn("[MOVE] No valid path found", { from: { x: currentX, y: currentY }, to: { x, y } });
           return;
         }
-        
+
         // CRITICAL: Validate path ends at destination
         const pathEnd = path[path.length - 1];
         if (pathEnd.x !== x || pathEnd.y !== y) {
@@ -2311,64 +2354,60 @@ function attachBattleListeners() {
           });
           return;
         }
-        
+
         const totalCost = getDistance(originX, originY, x, y);
         if (totalCost > activeUnit.agi) {
           console.warn("[MOVE] Path cost exceeds movement range", { totalCost, agi: activeUnit.agi });
           return;
         }
-        
+
         turnState.movementRemaining = activeUnit.agi - totalCost;
         turnState.hasMoved = true;
         turnState.hasCommittedMove = true;
-        
+
         const finalStep = path[path.length - 1];
         const prevStep = path[path.length - 2];
         const dx = finalStep.x - prevStep.x;
         const dy = finalStep.y - prevStep.y;
-        
+
         let newFacing: "north" | "south" | "east" | "west" = activeUnit.facing ?? "east";
         if (Math.abs(dx) >= Math.abs(dy)) {
           newFacing = dx > 0 ? "east" : "west";
         } else {
           newFacing = dy > 0 ? "south" : "north";
         }
-        
+
         // CRITICAL: Capture current state in closure to avoid stale state
         const currentState = localBattleState;
         const finalPos = path[path.length - 1];
-        
+
         // Validate final position
-        if (finalPos.x < 0 || finalPos.x >= currentState.gridWidth || 
-            finalPos.y < 0 || finalPos.y >= currentState.gridHeight) {
+        if (finalPos.x < 0 || finalPos.x >= currentState.gridWidth ||
+          finalPos.y < 0 || finalPos.y >= currentState.gridHeight) {
           console.error("[MOVE] Invalid final position!", finalPos);
           return;
         }
-        
-        // CRITICAL: Prevent re-rendering during animation
-        // Store a flag to prevent renderBattleScreen from breaking animation
-        const wasAnimating = activeMovementAnim?.active || false;
-        
+
         startMovementAnimation(activeUnit.id, path, currentState, () => {
           // CRITICAL: Check if battle ended during animation
           if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
             renderBattleScreen();
             return;
           }
-          
+
           // Animation complete - now update state and re-render
           // Get fresh state (might have changed during animation)
           const stateAtCompletion = localBattleState || currentState;
-          
+
           // CRITICAL: Check again before moving
           if (stateAtCompletion.phase === "victory" || stateAtCompletion.phase === "defeat") {
             renderBattleScreen();
             return;
           }
-          
+
           // Move unit to final position
           let newState = moveUnit(stateAtCompletion, activeUnit.id, finalPos);
-          
+
           // CRITICAL: Check if battle ended after move (e.g., if move triggered something)
           newState = evaluateBattleOutcome(newState);
           if (newState.phase === "victory" || newState.phase === "defeat") {
@@ -2376,11 +2415,11 @@ function attachBattleListeners() {
             renderBattleScreen();
             return;
           }
-          
+
           // Validate the move succeeded
           const movedUnit = newState.units[activeUnit.id];
-          if (!movedUnit || !movedUnit.pos || 
-              movedUnit.pos.x !== finalPos.x || movedUnit.pos.y !== finalPos.y) {
+          if (!movedUnit || !movedUnit.pos ||
+            movedUnit.pos.x !== finalPos.x || movedUnit.pos.y !== finalPos.y) {
             console.error("[MOVE] Position mismatch after move!", {
               expected: finalPos,
               actual: movedUnit?.pos,
@@ -2394,47 +2433,31 @@ function attachBattleListeners() {
             };
             newState = { ...newState, units: fixedUnits };
           }
-          
+
           // Set default facing based on movement direction, but enter facing selection phase
           const newUnits = { ...newState.units };
           newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
           newState = { ...newState, units: newUnits };
-          
-          // Validate final state
-          const finalUnit = newState.units[activeUnit.id];
-          if (finalUnit.pos && (finalUnit.pos.x !== finalPos.x || finalUnit.pos.y !== finalPos.y)) {
-            console.error("[MOVE] Final validation failed!", {
-              expected: finalPos,
-              actual: finalUnit.pos
-            });
-          }
-          
+
           // Enter facing selection phase (FFTA-style)
           turnState.isFacingSelection = true;
           const facingLog = [...newState.log, `SLK//FACING :: Select facing direction for ${activeUnit.name} (Arrow keys or click adjacent tile).`];
           newState = { ...newState, log: facingLog };
-          
+
           // Update state and re-render AFTER animation completes
           setBattleState(newState);
           // Ensure animation is fully stopped before re-rendering
-          // Use setTimeout to give the browser a chance to complete cleanup
           setTimeout(() => {
-            // Double-check animation is stopped
-            if (!activeMovementAnim || !activeMovementAnim.active) {
-              renderBattleScreen();
-            } else {
-              // If animation is still active, wait a bit more
-              setTimeout(() => renderBattleScreen(), 50);
-            }
+            renderBattleScreen();
           }, 10);
         });
         return;
       }
-      
+
       // Handle attack - check if there's a unit here first, then check card selection
       const units = getUnitsArray(localBattleState);
       const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
-      
+
       // If clicking on an enemy or ally unit, try to attack
       if (tgt && isPlayerTurn && activeUnit && localBattleState) {
         // Check if current player can control this unit
@@ -2442,15 +2465,15 @@ function attachBattleListeners() {
         const activeController = activeUnit.controller || "P1";
         const currentPlayer = state.players[activeController as PlayerId];
         if (!currentPlayer?.active) return; // Player not active, can't control
-        
+
         const ux = activeUnit.pos?.x ?? 0;
         const uy = activeUnit.pos?.y ?? 0;
         const dist = getDistance(ux, uy, x, y);
-        
+
         let cardToPlay: number | null = selectedCardIndex;
         let shouldPlay = false;
         let targetUnitId = "";
-        
+
         // If no card is selected, try to auto-select the first valid attack card
         if (cardToPlay === null && activeUnit.hand.length > 0) {
           // Find first card that can target this unit
@@ -2458,7 +2481,7 @@ function attachBattleListeners() {
             const cardIdOrObj = activeUnit.hand[i];
             const card = resolveCard(cardIdOrObj);
             const effectiveRange = getEffectiveCardRange(card, activeUnit);
-            
+
             if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
               cardToPlay = i;
               shouldPlay = true;
@@ -2481,7 +2504,7 @@ function attachBattleListeners() {
           const cardIdOrObj = activeUnit.hand[cardToPlay];
           const card = resolveCard(cardIdOrObj);
           const effectiveRange = getEffectiveCardRange(card, activeUnit);
-          
+
           if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
             shouldPlay = true;
             targetUnitId = tgt.id;
@@ -2493,11 +2516,11 @@ function attachBattleListeners() {
             targetUnitId = activeUnit.id;
           }
         }
-        
+
         if (shouldPlay && cardToPlay !== null) {
           const targetUnit = units.find(u => u.id === targetUnitId);
           let newFacing = activeUnit.facing ?? "east";
-          
+
           if (targetUnit && targetUnit.pos && activeUnit.pos && targetUnitId !== activeUnit.id) {
             const dx = targetUnit.pos.x - activeUnit.pos.x;
             const dy = targetUnit.pos.y - activeUnit.pos.y;
@@ -2507,49 +2530,43 @@ function attachBattleListeners() {
               newFacing = dy > 0 ? "south" : "north";
             }
           }
-          
+
           let stateWithFacing = localBattleState;
           if (newFacing !== activeUnit.facing) {
             const newUnits = { ...localBattleState.units };
             newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
             stateWithFacing = { ...localBattleState, units: newUnits };
           }
-          
+
           let newState = playCardFromScreen(stateWithFacing, activeUnit.id, cardToPlay, targetUnitId);
           selectedCardIndex = null;
           newState = evaluateBattleOutcome(newState);
           setBattleState(newState);
-          
+
           // CRITICAL: If battle ended, render immediately and block further actions
           if (newState.phase === "victory" || newState.phase === "defeat") {
             renderBattleScreen();
-            return; // Exit early to prevent other handlers
+            return;
           }
-          
+
           renderBattleScreen();
-          return; // Exit early to prevent other handlers
+          return;
         }
       }
-      
-      // Handle attack via attack-option tile (legacy/fallback)
+
+      // Legacy/Fallback attack logic for specific tile states
       if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
         if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-        
-        // Check if current player can control this unit
-        const state = getGameState();
-        const activeController = activeUnit.controller || "P1";
-        const currentPlayer = state.players[activeController as PlayerId];
-        if (!currentPlayer?.active) return; // Player not active, can't control
-        
+
         const cardIdOrObj = activeUnit.hand[selectedCardIndex];
         const card = resolveCard(cardIdOrObj);
         const ux = activeUnit.pos?.x ?? 0;
         const uy = activeUnit.pos?.y ?? 0;
         const dist = getDistance(ux, uy, x, y);
-        
+
         let shouldPlay = false;
         let targetUnitId = "";
-        
+
         const effectiveRange = getEffectiveCardRange(card, activeUnit);
         if (card.target === "enemy" && tgt?.isEnemy && dist <= effectiveRange) {
           shouldPlay = true;
@@ -2561,11 +2578,11 @@ function attachBattleListeners() {
           shouldPlay = true;
           targetUnitId = activeUnit.id;
         }
-        
+
         if (shouldPlay) {
           const targetUnit = units.find(u => u.id === targetUnitId);
           let newFacing = activeUnit.facing ?? "east";
-          
+
           if (targetUnit && targetUnit.pos && activeUnit.pos && targetUnitId !== activeUnit.id) {
             const dx = targetUnit.pos.x - activeUnit.pos.x;
             const dy = targetUnit.pos.y - activeUnit.pos.y;
@@ -2575,34 +2592,70 @@ function attachBattleListeners() {
               newFacing = dy > 0 ? "south" : "north";
             }
           }
-          
+
           let stateWithFacing = localBattleState;
           if (newFacing !== activeUnit.facing) {
             const newUnits = { ...localBattleState.units };
             newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
             stateWithFacing = { ...localBattleState, units: newUnits };
           }
-          
+
           let newState = playCardFromScreen(stateWithFacing, activeUnit.id, selectedCardIndex, targetUnitId);
           selectedCardIndex = null;
           newState = evaluateBattleOutcome(newState);
           setBattleState(newState);
-          
-          // CRITICAL: If battle ended, render immediately and block further actions
+
           if (newState.phase === "victory" || newState.phase === "defeat") {
             renderBattleScreen();
             return;
           }
-          
+
           renderBattleScreen();
         }
       }
     };
-    
+
     (gridContainer as any).__battleHandler = battleHandler;
     gridContainer.addEventListener("click", battleHandler);
+
+    // Hover handler for range previews and target indicators
+    const hoverHandler = (e: MouseEvent) => {
+      const tile = (e.target as HTMLElement).closest(".battle-tile") as HTMLElement;
+      if (!tile) {
+        if (hoveredTile !== null) {
+          hoveredTile = null;
+          renderBattleScreen();
+        }
+        return;
+      }
+
+      const coords = BattleGridRenderer.getTileCoordinates(tile);
+      if (!coords) return;
+
+      if (hoveredTile?.x !== coords.x || hoveredTile?.y !== coords.y) {
+        hoveredTile = coords;
+        renderBattleScreen();
+      }
+    };
+
+    const leaveHandler = () => {
+      if (hoveredTile !== null) {
+        hoveredTile = null;
+        renderBattleScreen();
+      }
+    };
+
+    const oldHoverHandler = (gridContainer as any).__hoverHandler;
+    const oldLeaveHandler = (gridContainer as any).__leaveHandler;
+    if (oldHoverHandler) gridContainer.removeEventListener("mousemove", oldHoverHandler);
+    if (oldLeaveHandler) gridContainer.removeEventListener("mouseleave", oldLeaveHandler);
+
+    (gridContainer as any).__hoverHandler = hoverHandler;
+    (gridContainer as any).__leaveHandler = leaveHandler;
+    gridContainer.addEventListener("mousemove", hoverHandler);
+    gridContainer.addEventListener("mouseleave", leaveHandler);
   }
-  
+
   // OLD TILE CLICK HANDLER - REMOVED (replaced by new grid click handler system above)
 
   // Undo move button
@@ -2613,7 +2666,7 @@ function attachBattleListeners() {
       if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
         return;
       }
-      
+
       if (turnState.hasCommittedMove && turnState.originalPosition && activeUnit && localBattleState) {
         const newUnits = { ...localBattleState.units };
         newUnits[activeUnit.id] = {
@@ -2626,13 +2679,13 @@ function attachBattleListeners() {
           units: newUnits,
           log: newLog
         });
-        
+
         // Reset movement tracking - this shows green tiles again
         turnState.movementRemaining = activeUnit.agi;
         turnState.hasMoved = false;
         turnState.hasCommittedMove = false;
         turnState.originalPosition = null;
-        
+
         renderBattleScreen();
       }
     };
@@ -2646,19 +2699,19 @@ function attachBattleListeners() {
       if (!localBattleState || !activeUnit) return;
       const unitId = toggleAutoBattleBtn.getAttribute("data-unit-id");
       if (!unitId) return;
-      
+
       const unit = localBattleState.units[unitId];
       if (!unit) return;
-      
+
       const newAutoBattle = !unit.autoBattle;
       const newUnits = { ...localBattleState.units };
       newUnits[unitId] = { ...unit, autoBattle: newAutoBattle };
-      
+
       setBattleState({
         ...localBattleState,
         units: newUnits,
       });
-      
+
       renderBattleScreen();
     };
   }
@@ -2670,7 +2723,7 @@ function attachBattleListeners() {
       if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
         return;
       }
-      
+
       // Check if current player can control this unit
       if (activeUnit) {
         const state = getGameState();
@@ -2679,32 +2732,32 @@ function attachBattleListeners() {
         if (!currentPlayer?.active) return; // Player not active, can't control
       }
       if (!isPlayerTurn || !localBattleState) return;
-      
+
       // Animate hand discard first
       const handContainer = document.getElementById("battleHandContainer");
       if (handContainer) {
         animateHandDiscard(handContainer, () => {
           // After discard animation, advance turn
-          let newState = advanceTurn(localBattleState);
+          let newState = advanceTurn(localBattleState!);
           selectedCardIndex = null;
-          
+
           // Trigger hand draw animation for next unit
           requestAnimationFrame(() => {
             const nextHandContainer = document.getElementById("battleHandContainer");
             if (nextHandContainer && newState.activeUnitId) {
-              const nextUnit = newState.units[newState.activeUnitId];
+              const nextUnit = newState.units[newState.activeUnitId!];
               if (nextUnit && !nextUnit.isEnemy) {
-                animateHandDraw(nextHandContainer, () => {});
+                animateHandDraw(nextHandContainer, () => { });
               }
             }
           });
-          
+
           // Run enemy turns with animation
           runEnemyTurnsAnimated(newState);
         });
       } else {
         // Fallback if container not found
-        let newState = advanceTurn(localBattleState);
+        let newState = advanceTurn(localBattleState!);
         selectedCardIndex = null;
         runEnemyTurnsAnimated(newState);
       }
@@ -2717,31 +2770,31 @@ function attachBattleListeners() {
     autoWinBtn.onclick = () => {
       if (!localBattleState) return;
       const newUnits = { ...localBattleState.units };
-      
+
       // Kill all enemies
       Object.keys(newUnits).forEach(id => {
         if (newUnits[id].isEnemy) {
           newUnits[id] = { ...newUnits[id], hp: 0 };
         }
       });
-      
+
       // Remove dead enemies from turn order
       const newTurnOrder = localBattleState.turnOrder.filter(id => {
         const unit = newUnits[id];
         return unit && (!unit.isEnemy || unit.hp > 0);
       });
-      
+
       const newLog = [...localBattleState.log, "SLK//DEBUG :: Auto-win triggered."];
-      let newState: BattleState = { 
-        ...localBattleState, 
-        units: newUnits, 
+      let newState: BattleState = {
+        ...localBattleState,
+        units: newUnits,
         turnOrder: newTurnOrder,
-        log: newLog 
+        log: newLog
       };
-      
+
       // Force evaluate outcome
       newState = evaluateBattleOutcome(newState);
-      
+
       // If still not victory, force it
       if (newState.phase !== "victory") {
         newState = {
@@ -2756,10 +2809,10 @@ function attachBattleListeners() {
           }
         };
       }
-      
+
       setBattleState(newState);
       renderBattleScreen();
-      
+
       // Auto-advance: automatically claim rewards and advance to next encounter
       // Wait a frame for the victory screen to render, then auto-click claim button
       setTimeout(() => {
@@ -2781,35 +2834,35 @@ function attachBattleListeners() {
       }
     };
   }
-  
+
   // Claim rewards button - use both onclick and addEventListener for maximum reliability
   // Only look for button if battle phase is victory or defeat
-  const claimBtn = (battle.phase === "victory" || battle.phase === "defeat") 
-    ? document.getElementById("claimRewardsBtn") 
+  const claimBtn = (battle.phase === "victory" || battle.phase === "defeat")
+    ? document.getElementById("claimRewardsBtn")
     : null;
   if (claimBtn) {
     console.log("[BATTLE] Found claim rewards button, attaching handlers");
-    
+
     // Clear any existing handlers
     claimBtn.onclick = null;
-    
+
     // Use onclick as primary handler (more reliable)
     claimBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       console.log("[BATTLE] Claim rewards button clicked (onclick)");
-      
+
       if (!localBattleState) {
         console.warn("[BATTLE] No battle state when claiming rewards");
         return;
       }
-      
+
       const r = localBattleState.rewards;
       if (!r) {
         console.warn("[BATTLE] No rewards to claim");
         return;
       }
-      
+
       // Block rewards for training battles
       const isTraining = (localBattleState as any).isTraining === true;
       if (isTraining) {
@@ -2818,9 +2871,9 @@ function attachBattleListeners() {
         handleTrainingBattleComplete(localBattleState);
         return;
       }
-      
+
       console.log("[BATTLE] Claiming rewards:", r);
-      
+
       try {
         // Handle recipe reward if present
         let recipeToGrant: string | null = null;
@@ -2857,7 +2910,7 @@ function attachBattleListeners() {
               chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
               steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
             },
-            cardLibrary: r.cards && r.cards.length > 0 
+            cardLibrary: r.cards && r.cards.length > 0
               ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
               : s.cardLibrary,
           };
@@ -2881,13 +2934,13 @@ function attachBattleListeners() {
           const enemyCount = Math.max(1, Math.floor((r.wad || 0) / 10)); // Rough estimate
           updateQuestProgress("kill_enemies", enemyCount, enemyCount);
           updateQuestProgress("complete_battle", "any", 1);
-          
+
           // Update resource collection quests
           if (r.metalScrap) updateQuestProgress("collect_resource", "metalScrap", r.metalScrap);
           if (r.wood) updateQuestProgress("collect_resource", "wood", r.wood);
           if (r.chaosShards) updateQuestProgress("collect_resource", "chaosShards", r.chaosShards);
           if (r.steamComponents) updateQuestProgress("collect_resource", "steamComponents", r.steamComponents);
-          
+
           // Track survival affinity for all units that survived
           trackBattleSurvival(localBattleState, true);
         } else {
@@ -2928,7 +2981,7 @@ function attachBattleListeners() {
         alert(`Error claiming rewards: ${error}`);
         return;
       }
-      
+
       cleanupBattlePanHandlers();
       localBattleState = null;
       selectedCardIndex = null;
@@ -2959,7 +3012,7 @@ function attachBattleListeners() {
         });
         return;
       }
-      
+
       // If in endless mode, start next battle instead of returning to operation map
       if (isEndlessBattleMode) {
         startNextEndlessBattle();
@@ -2973,7 +3026,7 @@ function attachBattleListeners() {
         import("./FieldModRewardScreen").then(m => {
           const activeRun = getActiveRun();
           if (activeRun) {
-            const rewardSeed = `${activeRun.runSeed}_elite_${eliteRoomId}`;
+            const rewardSeed = `${activeRun.rngSeed}_elite_${eliteRoomId}`;
             m.renderFieldModRewardScreen(eliteRoomId, rewardSeed, true); // true = elite weights
           } else {
             renderOperationMap();
@@ -2983,7 +3036,7 @@ function attachBattleListeners() {
         renderOperationMap();
       }
     };
-    
+
     // Ensure button is clickable
     claimBtn.style.pointerEvents = "auto";
     claimBtn.style.cursor = "pointer";
@@ -3039,7 +3092,7 @@ function attachBattleListeners() {
           const battle = createBattleFromEncounter(state, activeRun.pendingBattle.encounterDefinition);
           updateGameState(prev => ({
             ...prev,
-            currentBattle: battle,
+            currentBattle: { ...battle, turnIndex: 0 } as any,
             phase: "battle",
           }));
           renderBattleScreen();
@@ -3047,7 +3100,7 @@ function attachBattleListeners() {
       });
     };
   }
-  
+
   const abandonBtn = document.getElementById("abandonRunBtn");
   if (abandonBtn) {
     abandonBtn.onclick = () => {
@@ -3063,7 +3116,7 @@ function attachBattleListeners() {
       import("../screens/OperationSelectScreen").then(m => m.renderOperationSelectScreen());
     };
   }
-  
+
   const defeatBtn = document.getElementById("defeatReturnBtn");
   if (defeatBtn) {
     defeatBtn.onclick = () => {
@@ -3072,13 +3125,13 @@ function attachBattleListeners() {
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
       uiPanelsMinimized = false;
-      
+
       if (isEndlessBattleMode) {
         console.log(`[ENDLESS BATTLE] Defeated after ${endlessBattleCount} battles`);
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
       }
-      
+
       import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
         renderFieldScreen("base_camp");
       });
@@ -3088,7 +3141,7 @@ function attachBattleListeners() {
   // Scroll battle log to bottom
   const log = document.getElementById("battleLog");
   if (log) log.scrollTop = log.scrollHeight;
-  
+
   // Clutch toggle button
   const clutchBtn = document.getElementById("clutchToggleBtn");
   if (clutchBtn && activeUnit && localBattleState) {
@@ -3096,7 +3149,7 @@ function attachBattleListeners() {
     const state = getGameState();
     const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
     const weapon = getEquippedWeapon(activeUnit, equipmentById);
-    
+
     // Only allow clutch toggle for mechanical weapons
     if (weapon && weapon.isMechanical && weapon.clutchToggle) {
       clutchBtn.onclick = () => {
@@ -3106,7 +3159,7 @@ function attachBattleListeners() {
         // Get current clutch state from weaponState if available, otherwise from unit
         const currentClutch = unit.weaponState?.clutchActive ?? unit.clutchActive ?? false;
         const newClutchState = !currentClutch;
-        
+
         // Update both weaponState and unit for backward compatibility
         if (unit.weaponState) {
           newUnits[activeUnit.id] = {
@@ -3123,7 +3176,7 @@ function attachBattleListeners() {
             clutchActive: newClutchState
           };
         }
-        
+
         const action = newClutchState ? "engages" : "disengages";
         const newLog = [...localBattleState!.log, `SLK//CLUTCH :: ${activeUnit.name} ${action} weapon clutch.`];
         setBattleState({
@@ -3141,17 +3194,15 @@ function attachBattleListeners() {
 // ENEMY TURN HELPER - Runs enemy turns with animation
 // ============================================================================
 
-let isAnimatingEnemyTurn = false;
-
 function runEnemyTurns(state: BattleState): BattleState {
   if (state.phase !== "player_turn" && state.phase !== "enemy_turn") return state;
-  
+
   let currentState = state;
   let safety = 0;
-  
+
   while (safety < 20) {
     const active = currentState.activeUnitId ? currentState.units[currentState.activeUnitId] : null;
-    
+
     if (!active || active.hp <= 0) {
       // Unit is dead, remove it and check for victory
       currentState = advanceTurn(currentState);
@@ -3163,269 +3214,146 @@ function runEnemyTurns(state: BattleState): BattleState {
       safety++;
       continue;
     }
-    
+
     if (!active.isEnemy) {
       // Player's turn - reset their movement
       resetTurnStateForUnit(active);
       break;
     }
-    
-    // For enemies, we need to capture position before and after for animation
-    const beforePos = active.pos ? { ...active.pos } : null;
+
+    // Process exactly ONE enemy turn then exit the function.
+    // The animated loop in runEnemyTurnsAnimated will handle scheduling the next turn
+    // after a delay, creating a "one at a time" sequence.
     currentState = performEnemyTurn(currentState);
     // CRITICAL: Explicitly check for victory/defeat after enemy turn
     // This ensures victory is detected even if evaluateBattleOutcome wasn't called
     currentState = evaluateBattleOutcome(currentState);
-    const afterUnit = currentState.units[active.id];
-    const afterPos = afterUnit?.pos ? { ...afterUnit.pos } : null;
-    
     // Queue animation if position changed (will be handled by re-render for now)
     // The animation will happen on next render cycle
-    
+
     if (currentState.phase === "victory" || currentState.phase === "defeat") {
       console.log(`[BATTLE] Battle ended during enemy turn: ${currentState.phase}`);
       break;
     }
-    
+
     safety++;
+    break;
   }
-  
+
   return currentState;
 }
 
-// Animated enemy turn runner - processes one enemy at a time with delays
-function runEnemyTurnsAnimated(initialState: BattleState) {
+/**
+ * Runs enemy turns with animation and UI updates
+ */
+function runEnemyTurnsAnimated(state: BattleState): void {
   if (isAnimatingEnemyTurn) return;
+  isAnimatingEnemyTurn = true; // Set block immediately
+
+  const activeId = state.activeUnitId;
+  const oldUnit = activeId ? state.units[activeId] : null;
+  const oldPos = oldUnit ? oldUnit.pos : null;
+
+  const newState = runEnemyTurns(state);
   
-  function processNextEnemy(state: BattleState) {
-    if (state.phase !== "player_turn" && state.phase !== "enemy_turn") {
-      isAnimatingEnemyTurn = false;
-      setBattleState(state);
-      renderBattleScreen();
-      return;
-    }
+  const newUnit = activeId ? newState.units[activeId] : null;
+  const newPos = newUnit ? newUnit.pos : null;
+
+  const hasMoved = oldPos && newPos && (oldPos.x !== newPos.x || oldPos.y !== newPos.y);
+
+  if (hasMoved && activeId && oldPos && newPos) {
+    const path: Vec2[] = [oldPos, newPos];
     
-    const active = state.activeUnitId ? state.units[state.activeUnitId] : null;
-    
-    if (!active || active.hp <= 0) {
-      // Unit is dead, remove it and check for victory
-      let newState = advanceTurn(state);
-      // Explicitly check for victory after removing dead unit
-      newState = evaluateBattleOutcome(newState);
-      if (newState.phase === "victory" || newState.phase === "defeat") {
-        console.log(`[BATTLE] Battle ended during turn advance: ${newState.phase}`);
-        isAnimatingEnemyTurn = false;
-        setBattleState(newState);
-        renderBattleScreen();
-        return;
-      }
-      processNextEnemy(newState);
-      return;
-    }
-    
-    if (!active.isEnemy) {
-      // Player's turn
-      isAnimatingEnemyTurn = false;
-      resetTurnStateForUnit(active);
-      setBattleState(state);
-      renderBattleScreen();
-      
-      // Trigger hand draw animation for player unit
-      requestAnimationFrame(() => {
-        const handContainer = document.getElementById("battleHandContainer");
-        if (handContainer && active) {
-          animateHandDraw(handContainer, () => {});
-        }
-      });
-      return;
-    }
-    
-    // Capture position before enemy acts
-    const beforePos = active.pos ? { x: active.pos.x, y: active.pos.y } : null;
-    
-    // Perform enemy turn
-    let newState = performEnemyTurn(state);
-    
-    // CRITICAL: Explicitly check for victory/defeat after enemy turn
-    // This ensures victory is detected even if evaluateBattleOutcome wasn't called
-    newState = evaluateBattleOutcome(newState);
-    
-    // Check if position changed
-    const afterUnit = newState.units[active.id];
-    const afterPos = afterUnit?.pos;
-    
-    const didMove = beforePos && afterPos && 
-      (beforePos.x !== afterPos.x || beforePos.y !== afterPos.y);
-    
-    if (didMove && beforePos && afterPos) {
-      // Animate enemy movement first, then update state
-      console.log(`[ENEMY ANIMATION] Animating enemy ${active.id} from (${beforePos.x}, ${beforePos.y}) to (${afterPos.x}, ${afterPos.y})`);
-      
-      // Compute path for enemy movement
-      // Use the state before the move to compute the path (unit is at beforePos in this state)
-      if (!state) {
-        // Fallback: update state immediately if battle state is missing
-        setBattleState(newState);
-        renderBattleScreen();
-        setTimeout(() => processNextEnemy(newState), 300);
-        return;
-      }
-      
-      // Get movement range (use AGI or a reasonable default)
-      const maxMove = active.agi ?? 10;
-      const path = getMovePath(state, beforePos, afterPos, maxMove);
-      
-      if (path.length < 2) {
-        // No valid path, update state immediately
-        console.warn(`[ENEMY ANIMATION] No valid path found for enemy ${active.id}`);
-        setBattleState(newState);
-        renderBattleScreen();
-        setTimeout(() => processNextEnemy(newState), 300);
-        return;
-      }
-      
-      // CRITICAL: Capture the newState in closure to ensure we use the correct state
-      const capturedNewState = newState;
-      const capturedAfterPos = { ...afterPos };
-      
-      // Validate the captured position
-      if (capturedAfterPos.x < 0 || capturedAfterPos.x >= capturedNewState.gridWidth ||
-          capturedAfterPos.y < 0 || capturedAfterPos.y >= capturedNewState.gridHeight) {
-        console.error("[ENEMY MOVE] Invalid position!", capturedAfterPos);
-        setBattleState(capturedNewState);
-        renderBattleScreen();
-        setTimeout(() => processNextEnemy(capturedNewState), 300);
-        return;
-      }
-      
-      // Start path-based animation
-      // Use state (before move) for pathfinding, but capturedNewState will be applied after animation
-      startMovementAnimation(active.id, path, state, () => {
-        // After animation, update state with the captured state
-        setBattleState(capturedNewState);
-        
-        // Validate the unit is at the correct position
-        const unitAfterMove = capturedNewState.units[active.id];
-        if (unitAfterMove && unitAfterMove.pos) {
-          if (unitAfterMove.pos.x !== capturedAfterPos.x || unitAfterMove.pos.y !== capturedAfterPos.y) {
-            console.error("[ENEMY MOVE] Position mismatch!", {
-              expected: capturedAfterPos,
-              actual: unitAfterMove.pos,
-              unitId: active.id
-            });
-            // Fix it
-            const fixedUnits = { ...capturedNewState.units };
-            fixedUnits[active.id] = {
-              ...fixedUnits[active.id],
-              pos: { ...capturedAfterPos }
-            };
-            const fixedState = { ...capturedNewState, units: fixedUnits };
-            setBattleState(fixedState);
-            renderBattleScreen();
-            setTimeout(() => processNextEnemy(fixedState), 100);
-            return;
-          }
-        }
-        
-        // Check for victory/defeat (double-check after animation)
-        if (capturedNewState.phase === "victory" || capturedNewState.phase === "defeat") {
-          console.log(`[BATTLE] Battle ended: ${capturedNewState.phase}`);
-          isAnimatingEnemyTurn = false;
-          renderBattleScreen();
-          return;
-        }
-        
-        // Re-render to finalize position
-        renderBattleScreen();
-        
-        // Process next enemy after animation
-        setTimeout(() => processNextEnemy(capturedNewState), 100);
-      });
-      return; // Wait for animation to complete
-    } else {
-      // No movement, just update and continue
+    // Animate movement using old state as reference (so initial position is correct)
+    startMovementAnimation(activeId, path, state, () => {
+      // Apply the final state and render after animation
       setBattleState(newState);
-      
-      // Check for victory/defeat immediately
-      if (newState.phase === "victory" || newState.phase === "defeat") {
-        console.log(`[BATTLE] Battle ended: ${newState.phase}`);
-        isAnimatingEnemyTurn = false;
-        renderBattleScreen();
-        return;
-      }
-      
       renderBattleScreen();
       
-      // Small delay between enemy actions
-      setTimeout(() => processNextEnemy(newState), 300);
+      // Schedule next turn
+      if (newState.activeUnitId && newState.units[newState.activeUnitId]?.isEnemy &&
+        newState.phase !== "victory" && newState.phase !== "defeat") {
+        setTimeout(() => {
+          isAnimatingEnemyTurn = false;
+          console.log("[BATTLE] Animating next enemy turn step...");
+          runEnemyTurnsAnimated(newState);
+        }, 500); // Shorter delay since animation took some time
+      } else {
+        isAnimatingEnemyTurn = false;
+        // renderBattleScreen() already called above
+      }
+    });
+  } else {
+    // No movement (e.g., attack or skip) - apply state and wait
+    setBattleState(newState);
+    
+    // If next unit is still an enemy, schedule another turn
+    if (newState.activeUnitId && newState.units[newState.activeUnitId]?.isEnemy &&
+      newState.phase !== "victory" && newState.phase !== "defeat") {
+      setTimeout(() => {
+        isAnimatingEnemyTurn = false; // Clear block briefly for next recursive call
+        console.log("[BATTLE] Animating next enemy turn step...");
+        runEnemyTurnsAnimated(newState);
+      }, 1500); // 1.5s delay per enemy action for clarity
+    } else {
+      isAnimatingEnemyTurn = false; // Final clear
+      renderBattleScreen();
     }
   }
-  
-  isAnimatingEnemyTurn = true;
-  processNextEnemy(initialState);
 }
 
-// ============================================================================
-// ENDLESS BATTLE MODE
-// ============================================================================
-
 /**
- * Start endless battle mode - continuous battles until defeat or exit
+ * Placement helpers
  */
-export function startEndlessBattleMode(): void {
-  console.log("[ENDLESS BATTLE] Starting endless battle mode");
-  isEndlessBattleMode = true;
-  endlessBattleCount = 0;
-  
-  // Reset any stale state
-  localBattleState = null;
-  selectedCardIndex = null;
-  resetTurnStateForUnit(null);
-  uiPanelsMinimized = false;
-  
-  // Start first battle
-  startNextEndlessBattle();
+function removePlacedUnit(battle: BattleState, unitId: string): BattleState {
+  if (!battle.placementState) return battle;
+
+  const placedUnitIds = battle.placementState.placedUnitIds.filter(id => id !== unitId);
+  const units = { ...battle.units };
+  units[unitId] = { ...units[unitId], pos: null };
+
+  return {
+    ...battle,
+    units,
+    placementState: {
+      ...battle.placementState,
+      placedUnitIds
+    }
+  };
+}
+
+function setPlacementSelectedUnit(battle: BattleState, unitId: string): BattleState {
+  if (!battle.placementState) return battle;
+
+  return {
+    ...battle,
+    placementState: {
+      ...battle.placementState,
+      selectedUnitId: unitId
+    }
+  };
 }
 
 /**
- * Start the next battle in endless mode
+ * Endless Mode helper
  */
 function startNextEndlessBattle(): void {
-  if (!isEndlessBattleMode) {
-    console.warn("[ENDLESS BATTLE] Not in endless mode, cannot start next battle");
-    return;
-  }
-  
   endlessBattleCount++;
-  console.log(`[ENDLESS BATTLE] Starting battle ${endlessBattleCount}`);
-  
-  // Get current game state
   const state = getGameState();
-  
-  // Create a new test battle
-  const battle = createTestBattleForCurrentParty(state);
-  
-  if (!battle) {
-    console.error("[ENDLESS BATTLE] Failed to create battle");
-    isEndlessBattleMode = false;
-    endlessBattleCount = 0;
-    import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-      renderFieldScreen("base_camp");
-    });
-    return;
+  const newBattle = createTestBattleForCurrentParty(state);
+  if (newBattle) {
+    setBattleState(newBattle);
+    renderBattleScreen();
+  } else {
+    console.error("[ENDLESS] Failed to create next battle");
+    exitEndlessBattleMode();
   }
-  
-  // Set the battle state
-  // Note: type cast needed due to BattleState interface mismatch between core/battle and core/types
-  updateGameState(prev => ({
-    ...prev,
-    phase: "battle",
-    currentBattle: battle as any,
-  }));
-  
-  // Render the battle screen
-  renderBattleScreen();
 }
+
+
+
+// runEnemyTurnsAnimated was here but seems to be missing or merged - assuming it's managed via runEnemyTurns
+
 
 /**
  * Handle training battle completion - show rematch/change settings/return options
@@ -3433,18 +3361,18 @@ function startNextEndlessBattle(): void {
 function handleTrainingBattleComplete(battle: BattleState): void {
   const trainingConfig = (battle as any).trainingConfig;
   const returnTo = (battle as any).returnTo || "basecamp";
-  
+
   // Cleanup battle state
   cleanupBattlePanHandlers();
   localBattleState = null;
   selectedCardIndex = null;
   resetTurnStateForUnit(null);
   uiPanelsMinimized = false;
-  
+
   // Show training completion screen
   const app = document.getElementById("app");
   if (!app) return;
-  
+
   app.innerHTML = `
     <div class="training-complete-screen">
       <div class="training-complete-header">
@@ -3471,7 +3399,7 @@ function handleTrainingBattleComplete(battle: BattleState): void {
       </div>
     </div>
   `;
-  
+
   // Attach handlers
   const rematchBtn = document.getElementById("rematchBtn");
   if (rematchBtn) {
@@ -3514,7 +3442,7 @@ function handleTrainingBattleComplete(battle: BattleState): void {
       });
     };
   }
-  
+
   const changeSettingsBtn = document.getElementById("changeSettingsBtn");
   if (changeSettingsBtn) {
     changeSettingsBtn.onclick = () => {
@@ -3523,7 +3451,7 @@ function handleTrainingBattleComplete(battle: BattleState): void {
       });
     };
   }
-  
+
   const returnToBaseBtn = document.getElementById("returnToBaseBtn");
   if (returnToBaseBtn) {
     returnToBaseBtn.onclick = () => {
@@ -3540,20 +3468,20 @@ function handleTrainingBattleComplete(battle: BattleState): void {
  */
 export function exitEndlessBattleMode(): void {
   console.log(`[ENDLESS BATTLE] Exiting after ${endlessBattleCount} battles`);
-  
+
   cleanupBattlePanHandlers();
   localBattleState = null;
   selectedCardIndex = null;
   resetTurnStateForUnit(null);
   uiPanelsMinimized = false;
   isEndlessBattleMode = false;
-  
+
   const finalCount = endlessBattleCount;
   endlessBattleCount = 0;
-  
+
   // Show exit message
   alert(`Endless Battle Mode Complete!\nBattles Won: ${finalCount}`);
-  
+
   import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
     renderFieldScreen("base_camp");
   });

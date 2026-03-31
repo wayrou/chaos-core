@@ -30,8 +30,11 @@ export type WeaponType =
 import { getStarterRecipeIds } from "../core/crafting";
 
 export interface CardEffect {
-  type: "damage" | "heal" | "move" | "buff";
+  type: string;
   amount?: number;
+  duration?: number;
+  stat?: string;
+  tiles?: number;
 }
 
 export interface Card {
@@ -39,7 +42,7 @@ export interface Card {
   name: string;
   description: string;
   strainCost: number;
-  targetType: "enemy" | "self" | "tile";
+  targetType: "enemy" | "self" | "tile" | "ally";
   range?: number;
   effects: CardEffect[];
 }
@@ -57,13 +60,14 @@ export interface Unit {
   discardPile: CardId[];
   strain: number;
   unitClass?: string;
-loadout?: {
-  weapon: string | null;
-  helmet: string | null;
-  chestpiece: string | null;
-  accessory1: string | null;
-  accessory2: string | null;
-};
+  loadout?: {
+    primaryWeapon: string | null;
+    secondaryWeapon: string | null;
+    helmet: string | null;
+    chestpiece: string | null;
+    accessory1: string | null;
+    accessory2: string | null;
+  };
   buffs?: Array<{
     id: string;
     type: "def_up" | "atk_up" | "agi_up" | string;
@@ -359,20 +363,20 @@ export interface GameState {
   unitsById: Record<UnitId, Unit>;
   cardsById: Record<CardId, Card>;
   partyUnitIds: UnitId[];
-  
-   // Card Library - all cards the player owns (Headline 11da)
+
+  // Card Library - all cards the player owns (Headline 11da)
   cardLibrary: Record<string, number>;  // cardId -> count owned
-  
+
   // Gear Slots - card configurations for each piece of equipment
   gearSlots: Record<string, GearSlotData>;  // equipmentId -> slot config
-  
+
   equipmentById?: Record<string, any>;
-modulesById?: Record<string, any>;
-equipmentPool?: string[];
+  modulesById?: Record<string, any>;
+  equipmentPool?: string[];
 
   wad: number;
 
- knownRecipeIds: string[];           // Recipe IDs the player knows
+  knownRecipeIds: string[];           // Recipe IDs the player knows
   consumables: Record<string, number>; // Consumable ID -> quantity
 
   // Legacy numeric counters (kept for compatibility but not used in UI)
@@ -417,10 +421,13 @@ equipmentPool?: string[];
   };
   // Field Mods System - Run inventory (synced from ActiveRunState)
   runFieldModInventory?: import("./fieldMods").FieldModInstance[];
-  
+
   // Gear Builder System - Unlock flags
   unlockedChassisIds?: string[];
   unlockedDoctrineIds?: string[];
+
+  // Codex System - Meta progression
+  unlockedCodexEntries?: string[];
 
   // Mount/Stable System
   stable?: StableState;

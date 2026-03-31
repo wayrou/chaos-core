@@ -218,19 +218,19 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
   const backButtonText = returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "DUNGEON MAP" : "BASE CAMP";
   
   app.innerHTML = `
-    <div class="shop-root">
+    <div class="shop-root town-screen town-screen--shop">
       <!-- Header -->
-      <div class="shop-header">
-        <div class="shop-header-left">
+      <div class="shop-header town-screen__header">
+        <div class="shop-header-left town-screen__titleblock">
           <h1 class="shop-title">QUARTERMASTER</h1>
           <div class="shop-subtitle">SCROLLINK SUPPLY TERMINAL</div>
         </div>
-        <div class="shop-header-right">
+        <div class="shop-header-right town-screen__header-right">
           <div class="shop-wallet">
             <span class="wallet-label">AVAILABLE WAD</span>
             <span class="wallet-value">${state.wad.toLocaleString()}</span>
           </div>
-          <button class="shop-back-btn" id="backBtn" data-return-to="${returnTo}">
+          <button class="shop-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
             <span class="btn-text">${backButtonText}</span>
           </button>
@@ -238,7 +238,7 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
       </div>
       
       <!-- Tabs -->
-      <div class="shop-tabs">
+      <div class="shop-tabs town-screen__subnav">
         <button class="shop-tab ${currentTab === 'paks' ? 'shop-tab--active' : ''}" data-tab="paks">
           <span class="tab-icon">📦</span>
           <span class="tab-text">DATA PACKS</span>
@@ -266,7 +266,7 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
       </div>
       
       <!-- Content -->
-      <div class="shop-content">
+      <div class="shop-content town-screen__content-panel">
         ${renderShopContent(state)}
       </div>
       

@@ -7,10 +7,10 @@ import { getStarterRecipeIds } from "./crafting";
 import { GameState } from "./types";
 import { getSettings } from "./settings";
 
-import { 
-  getStarterCardLibrary, 
+import {
+  getStarterCardLibrary,
   getDefaultGearSlots,
-  GearSlotData 
+  GearSlotData
 } from "./gearWorkbench";
 
 import {
@@ -51,12 +51,12 @@ import { createDefaultAffinities } from "./affinity";
  */
 function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
   const desc = eqCard.description.toLowerCase();
-  
+
   // Determine target type based on card properties
   let targetType: "enemy" | "self" | "tile" | "ally" = "self";
-  
+
   // Check for enemy-targeting indicators
-  const isOffensive = 
+  const isOffensive =
     (eqCard.damage && eqCard.damage > 0) ||
     desc.includes("deal") && desc.includes("damage") ||
     desc.includes("attack") ||
@@ -67,18 +67,18 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
     desc.includes("stab") ||
     desc.includes("push target") ||
     desc.includes("pull target");
-  
+
   // Check for ally-targeting
-  const isAllyTarget = 
+  const isAllyTarget =
     desc.includes("ally") ||
     desc.includes("restore") && desc.includes("ally") ||
     desc.includes("heal ally");
-  
+
   // Check for movement/tile targeting
   const isTileTarget =
     desc.includes("move") && desc.includes("tile") ||
     desc.includes("reposition");
-  
+
   if (isOffensive) {
     targetType = "enemy";
   } else if (isAllyTarget) {
@@ -86,7 +86,7 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
   } else if (isTileTarget) {
     targetType = "tile";
   }
-  
+
   // Parse range from string like "R(1-2)" or "R(1)" or "R(Self)"
   let range = 1;
   if (eqCard.range) {
@@ -100,10 +100,10 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
       }
     }
   }
-  
+
   // Build effects array with all detected effects
   const effects: CardEffect[] = [];
-  
+
   // Damage
   if (eqCard.damage && eqCard.damage > 0) {
     effects.push({ type: "damage", amount: eqCard.damage });
@@ -113,58 +113,58 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
       effects.push({ type: "damage", amount: parseInt(dmgMatch[1], 10) });
     }
   }
-  
+
   // Healing
   const healMatch = desc.match(/(?:restore|heal|recover)\s+(\d+)\s+hp/i);
   if (healMatch) {
     effects.push({ type: "heal", amount: parseInt(healMatch[1], 10) });
   }
-  
+
   // DEF buff
   const defMatch = desc.match(/\+(\d+)\s+def/i) || desc.match(/gain\s+\+?(\d+)\s+def/i);
   if (defMatch) {
     effects.push({ type: "def_up", amount: parseInt(defMatch[1], 10), duration: 1 });
   }
-  
+
   // ATK buff  
   const atkMatch = desc.match(/\+(\d+)\s+atk/i) || desc.match(/gain\s+\+?(\d+)\s+atk/i);
   if (atkMatch) {
     effects.push({ type: "atk_up", amount: parseInt(atkMatch[1], 10), duration: 1 });
   }
-  
+
   // AGI buff
   const agiMatch = desc.match(/\+(\d+)\s+agi/i) || desc.match(/gain\s+\+?(\d+)\s+agi/i);
   if (agiMatch) {
     effects.push({ type: "agi_up", amount: parseInt(agiMatch[1], 10), duration: 1 });
   }
-  
+
   // ACC buff
   const accMatch = desc.match(/\+(\d+)\s+acc/i) || desc.match(/gain\s+\+?(\d+)\s+acc/i);
   if (accMatch) {
     effects.push({ type: "acc_up", amount: parseInt(accMatch[1], 10), duration: 1 });
   }
-  
+
   // Stun
   if (desc.includes("stun")) {
     effects.push({ type: "stun", duration: 1 });
   }
-  
+
   // Burn
   if (desc.includes("burn") || desc.includes("inflict burn")) {
     effects.push({ type: "burn", duration: 2 });
   }
-  
+
   // Push
   const pushMatch = desc.match(/push\s+(?:target\s+)?(?:back\s+)?(\d+)\s+tile/i);
   if (pushMatch) {
     effects.push({ type: "push", amount: parseInt(pushMatch[1], 10) });
   }
-  
+
   // End turn (for Wait card)
   if (eqCard.id === "core_wait" || eqCard.name.toLowerCase() === "wait") {
     effects.push({ type: "end_turn" });
   }
-  
+
   return {
     id: eqCard.id,
     name: eqCard.name,
@@ -181,7 +181,7 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
  */
 function createAllCards(): Record<CardId, Card> {
   const cards: Record<CardId, Card> = {};
-  
+
   // Add legacy cards for backwards compatibility
   const legacyCards: Card[] = [
     {
@@ -212,17 +212,17 @@ function createAllCards(): Record<CardId, Card> {
       effects: [],
     },
   ];
-  
+
   for (const card of legacyCards) {
     cards[card.id] = card;
   }
-  
+
   // Add all equipment-based cards
   const equipmentCards = getAllEquipmentCards();
   for (const [id, eqCard] of Object.entries(equipmentCards)) {
     cards[id] = equipmentCardToGameCard(eqCard);
   }
-  
+
   return cards;
 }
 
@@ -446,9 +446,9 @@ export function createNewGameState(): GameStateWithEquipment {
   const equipmentById = getAllStarterEquipment();
   const modulesById = getAllModules();
   const equipmentPool = createEquipmentPool();
-  
- 
-  
+
+
+
 
 
   const state: GameStateWithEquipment = {
@@ -466,18 +466,18 @@ export function createNewGameState(): GameStateWithEquipment {
       chaosShards: 0,
       steamComponents: 0,
     },
-	
-	 // Starter card library
-  cardLibrary: getStarterCardLibrary(),
-  
-  // Gear slots - will be populated as equipment is acquired
-  gearSlots: {},
-	
-	   // Crafting - starter recipes are known by default
-  knownRecipeIds: getStarterRecipeIds(),
-  
-  // Consumables pouch - starts empty
-consumables: {},
+
+    // Starter card library
+    cardLibrary: getStarterCardLibrary(),
+
+    // Gear slots - will be populated as equipment is acquired
+    gearSlots: {},
+
+    // Crafting - starter recipes are known by default
+    knownRecipeIds: getStarterRecipeIds(),
+
+    // Consumables pouch - starts empty
+    consumables: {},
 
     currentBattle: null,
 
@@ -531,7 +531,7 @@ consumables: {},
     baseCampVisitIndex: 0,
     portManifest: undefined,
     portTradesRemaining: 2,
-    
+
     // Gear Builder System - Starter unlocks
     unlockedChassisIds: [
       "chassis_standard_rifle",
@@ -544,6 +544,8 @@ consumables: {},
       "doctrine_skirmish",
       "doctrine_sustain",
     ],
+
+    unlockedCodexEntries: [],
   };
 
   // Initialize unit controllers to P1 by default

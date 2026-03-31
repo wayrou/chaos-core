@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CHAOS CORE - GEAR WORKBENCH STYLES
+   CHAOS CORE - WORKSHOP STYLES
    Ardycia Design System: Card Slotting & Deck Compilation UI
 
    Uses tokens from ardycia-design-system.css
@@ -277,26 +277,20 @@
   align-items: center;
   /* Paper aesthetic for slotted cards */
   background:
-    repeating-linear-gradient(
-      0deg,
+    repeating-linear-gradient(0deg,
       transparent,
       transparent 1px,
       var(--card-paper-line, rgba(220, 210, 195, 0.15)) 1px,
-      var(--card-paper-line, rgba(220, 210, 195, 0.15)) 2px
-    ),
-    repeating-linear-gradient(
-      90deg,
+      var(--card-paper-line, rgba(220, 210, 195, 0.15)) 2px),
+    repeating-linear-gradient(90deg,
       transparent,
       transparent 1px,
       var(--card-paper-line-alt, rgba(220, 210, 195, 0.1)) 1px,
-      var(--card-paper-line-alt, rgba(220, 210, 195, 0.1)) 2px
-    ),
-    linear-gradient(
-      145deg,
+      var(--card-paper-line-alt, rgba(220, 210, 195, 0.1)) 2px),
+    linear-gradient(145deg,
       var(--card-paper-light, #f5f0e8) 0%,
       var(--card-paper-mid, #ede8e0) 50%,
-      var(--card-paper-light, #f5f0e8) 100%
-    ),
+      var(--card-paper-light, #f5f0e8) 100%),
     linear-gradient(90deg, var(--tech-crt-15, rgba(53, 255, 149, 0.15)) 0%, transparent 100%);
   border: var(--stroke-2, 2px) solid var(--tech-crt-50, rgba(53, 255, 149, 0.5));
   box-shadow:
@@ -599,36 +593,28 @@
     /* Subtle noise texture for paper grain */
     url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E"),
     /* Paper fiber texture - subtle vertical lines */
-    repeating-linear-gradient(
-      0deg,
+    repeating-linear-gradient(0deg,
       transparent,
       transparent 2px,
       var(--card-fiber-v, rgba(200, 190, 175, 0.12)) 2px,
-      var(--card-fiber-v, rgba(200, 190, 175, 0.12)) 3px
-    ),
+      var(--card-fiber-v, rgba(200, 190, 175, 0.12)) 3px),
     /* Paper fiber texture - subtle horizontal lines */
-    repeating-linear-gradient(
-      90deg,
+    repeating-linear-gradient(90deg,
       transparent,
       transparent 2px,
       var(--card-fiber-h, rgba(200, 190, 175, 0.08)) 2px,
-      var(--card-fiber-h, rgba(200, 190, 175, 0.08)) 3px
-    ),
+      var(--card-fiber-h, rgba(200, 190, 175, 0.08)) 3px),
     /* Subtle vignette toward edges */
-    radial-gradient(
-      ellipse at center,
+    radial-gradient(ellipse at center,
       transparent 0%,
       transparent 60%,
-      var(--card-vignette, rgba(180, 170, 155, 0.15)) 100%
-    ),
+      var(--card-vignette, rgba(180, 170, 155, 0.15)) 100%),
     /* Warm ivory/parchment base - warmer, more yellow-brown */
-    linear-gradient(
-      145deg,
+    linear-gradient(145deg,
       var(--card-paper-warm, #f0e8d8) 0%,
       var(--card-paper-mid, #e8dcc8) 30%,
       var(--card-paper-warm, #f0e8d8) 60%,
-      var(--card-paper-mid, #e8dcc8) 100%
-    );
+      var(--card-paper-mid, #e8dcc8) 100%);
   border: var(--stroke-2, 2px) solid var(--card-border, rgba(160, 145, 130, 0.7));
   border-radius: var(--radius-md, 6px);
   overflow: hidden;
@@ -677,6 +663,7 @@
 .library-card--common .card-frame {
   border-color: var(--rarity-common-60, rgba(100, 100, 100, 0.6));
 }
+
 .library-card--common:hover .card-frame {
   border-color: var(--rarity-common-80, rgba(136, 136, 136, 0.8));
   box-shadow:
@@ -689,6 +676,7 @@
 .library-card--uncommon .card-frame {
   border-color: var(--tech-crt-60, rgba(53, 255, 149, 0.6));
 }
+
 .library-card--uncommon:hover .card-frame {
   border-color: var(--tech-crt-80, rgba(95, 255, 175, 0.8));
   box-shadow:
@@ -701,6 +689,7 @@
 .library-card--rare .card-frame {
   border-color: var(--tech-teal-60, rgba(140, 230, 255, 0.6));
 }
+
 .library-card--rare:hover .card-frame {
   border-color: var(--tech-teal-80, rgba(176, 238, 255, 0.8));
   box-shadow:
@@ -713,6 +702,7 @@
 .library-card--epic .card-frame {
   border-color: var(--tech-violet-60, rgba(192, 179, 255, 0.6));
 }
+
 .library-card--epic:hover .card-frame {
   border-color: var(--tech-violet-80, rgba(216, 207, 255, 0.8));
   box-shadow:
@@ -725,6 +715,7 @@
 .library-card--legendary .card-frame {
   border-color: var(--tech-amber-60, rgba(255, 204, 110, 0.6));
 }
+
 .library-card--legendary:hover .card-frame {
   border-color: var(--tech-amber-80, rgba(255, 216, 138, 0.8));
   box-shadow:
@@ -749,7 +740,8 @@
 .card-name {
   font-size: var(--text-sm, 0.7rem);
   font-weight: var(--weight-semibold, 600);
-  color: var(--card-ink-dark, #1a1612); /* Near-black ink color - printed into paper */
+  color: var(--card-ink-dark, #1a1612);
+  /* Near-black ink color - printed into paper */
   text-shadow:
     0 0.5px 1px rgba(255, 255, 255, 0.2),
     0 1px 2px rgba(0, 0, 0, 0.15);
@@ -779,7 +771,8 @@
 .strain-value {
   font-size: var(--text-sm, 0.75rem);
   font-weight: var(--weight-bold, 700);
-  color: var(--card-ink-dark, #1a1612); /* Dark ink */
+  color: var(--card-ink-dark, #1a1612);
+  /* Dark ink */
   line-height: 1;
   text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.2);
 }
@@ -787,7 +780,8 @@
 .strain-label {
   font-size: var(--text-xxs, 0.4rem);
   font-family: var(--font-terminal, 'JetBrains Mono', monospace);
-  color: var(--card-ink-brown, #3a3028); /* Dark brown ink */
+  color: var(--card-ink-brown, #3a3028);
+  /* Dark brown ink */
   letter-spacing: var(--tracking-wide, 0.05em);
 }
 
@@ -824,7 +818,8 @@
 .card-category {
   font-size: var(--text-xxs, 0.45rem);
   font-family: var(--font-terminal, 'JetBrains Mono', monospace);
-  color: var(--card-category-ink, #2a4a6b); /* Darker, more muted blue - printed ink, not neon */
+  color: var(--card-category-ink, #2a4a6b);
+  /* Darker, more muted blue - printed ink, not neon */
   letter-spacing: var(--tracking-wide, 0.05em);
   text-shadow: 0 0.5px 1px rgba(255, 255, 255, 0.15);
 }
@@ -836,11 +831,25 @@
 }
 
 /* Rarity text colors */
-.library-card--common .card-rarity { color: var(--rarity-common, #888); }
-.library-card--uncommon .card-rarity { color: var(--tech-crt, #35ff95); }
-.library-card--rare .card-rarity { color: var(--tech-teal, #8ce6ff); }
-.library-card--epic .card-rarity { color: var(--tech-violet, #c0b3ff); }
-.library-card--legendary .card-rarity { color: var(--tech-amber, #ffcc6e); }
+.library-card--common .card-rarity {
+  color: var(--rarity-common, #888);
+}
+
+.library-card--uncommon .card-rarity {
+  color: var(--tech-crt, #35ff95);
+}
+
+.library-card--rare .card-rarity {
+  color: var(--tech-teal, #8ce6ff);
+}
+
+.library-card--epic .card-rarity {
+  color: var(--tech-violet, #c0b3ff);
+}
+
+.library-card--legendary .card-rarity {
+  color: var(--tech-amber, #ffcc6e);
+}
 
 /* Card Text */
 .card-text {
@@ -850,7 +859,8 @@
 
 .card-description {
   font-size: var(--text-xxs, 0.55rem);
-  color: var(--card-ink-brown, #2a2520); /* Dark brown ink - printed into paper, not floating */
+  color: var(--card-ink-brown, #2a2520);
+  /* Dark brown ink - printed into paper, not floating */
   line-height: 1.35;
   margin: 0;
   position: relative;
@@ -874,7 +884,8 @@
 .card-owned {
   font-size: var(--text-xxs, 0.55rem);
   font-family: var(--font-terminal, 'JetBrains Mono', monospace);
-  color: var(--card-ink-brown, #2a2520); /* Dark ink */
+  color: var(--card-ink-brown, #2a2520);
+  /* Dark ink */
   background: var(--card-owned-bg, rgba(200, 190, 175, 0.5));
   padding: var(--space-1, 0.1rem) var(--space-1, 0.3rem);
   border-radius: var(--radius-xs, 2px);
@@ -900,8 +911,13 @@
 }
 
 @keyframes compile-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .compile-window {
@@ -926,8 +942,15 @@
 }
 
 @keyframes compile-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
 }
 
 .compile-messages {
@@ -949,6 +972,7 @@
     opacity: 0;
     transform: translateX(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);

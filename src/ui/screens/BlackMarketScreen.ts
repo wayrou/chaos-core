@@ -80,7 +80,7 @@ const AERISS_RESPONSES: Record<string, string[]> = {
 export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   // Stop any existing NPC window system
   stopNpcWindowSystem();
-  
+
   // Populate initial NPC windows before rendering
   activeNpcWindows = [];
   activeConversations.clear();
@@ -89,23 +89,23 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
   for (let i = 0; i < initialCount; i++) {
     addNpcWindow();
   }
-  
+
   const root = document.getElementById("app");
   if (!root) return;
 
   const state = getGameState();
   const campaignProgress = loadCampaignProgress();
   const activeRun = campaignProgress.activeRun;
-  
+
   // Get current inventory (from active run or game state)
   const currentInventory = activeRun?.runFieldModInventory || state.runFieldModInventory || [];
-  
+
   // Get all available field mod definitions
   const allMods = getAllFieldModDefs();
-  
+
   // Filter to only mods that have a cost (black market items)
   const availableMods = allMods.filter(mod => mod.cost !== undefined && mod.cost > 0);
-  
+
   // Sort by rarity (common, uncommon, rare)
   const rarityOrder: Record<string, number> = { common: 0, uncommon: 1, rare: 2 };
   availableMods.sort((a, b) => {
@@ -151,10 +151,10 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
               <div class="blackmarket-inventory-title">YOUR INVENTORY (${currentInventory.length})</div>
               <div class="blackmarket-inventory-list">
                 ${currentInventory.length > 0
-                  ? currentInventory.map(modInstance => {
-                      const modDef = getFieldModDef(modInstance.defId);
-                      if (!modDef) return "";
-                      return `
+      ? currentInventory.map(modInstance => {
+        const modDef = getFieldModDef(modInstance.defId);
+        if (!modDef) return "";
+        return `
                         <div class="blackmarket-inventory-item">
                           <div class="blackmarket-inventory-item-name">${modDef.name}</div>
                           <div class="blackmarket-inventory-item-rarity blackmarket-inventory-item-rarity--${modDef.rarity}">
@@ -163,9 +163,9 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
                           ${modInstance.stacks > 1 ? `<div class="blackmarket-inventory-item-stacks">x${modInstance.stacks}</div>` : ""}
                         </div>
                       `;
-                    }).join("")
-                  : '<div class="blackmarket-inventory-empty">No field mods in inventory.</div>'
-                }
+      }).join("")
+      : '<div class="blackmarket-inventory-empty">No field mods in inventory.</div>'
+    }
               </div>
             </div>
 
@@ -173,8 +173,8 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
               <div class="blackmarket-catalog-title">AVAILABLE MODS</div>
               <div class="blackmarket-catalog-list">
                 ${availableMods.map(mod => {
-                  const canAfford = wad >= (mod.cost || 0);
-                  return `
+      const canAfford = wad >= (mod.cost || 0);
+      return `
                     <div class="blackmarket-item ${!canAfford ? "blackmarket-item--unaffordable" : ""}" data-mod-id="${mod.id}">
                       <div class="blackmarket-item-header">
                         <div class="blackmarket-item-name">${mod.name}</div>
@@ -196,7 +196,7 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
                       </button>
                     </div>
                   `;
-                }).join("")}
+    }).join("")}
               </div>
             </div>
           </div>
@@ -212,7 +212,7 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
 
   // Event listeners
   attachBlackMarketListeners(root, returnTo);
-  
+
   // Start the NPC window system
   startNpcWindowSystem();
 }
@@ -226,13 +226,48 @@ function attachBlackMarketListeners(root: HTMLElement, returnTo: "basecamp" | "f
   root.querySelector("#backBtn")?.addEventListener("click", () => {
     // Stop NPC window system when leaving
     stopNpcWindowSystem();
-    
+
+    // Remove key listener
+    document.removeEventListener("keydown", handleKeyDown);
+
     if (returnTo === "field") {
       renderFieldScreen("base_camp");
     } else {
       renderAllNodesMenuScreen();
     }
   });
+
+  // Handle keyboard exit (ESC or E)
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+
+    if (key === "escape" || key === "e") {
+      // Don't exit on E if typing
+      if (key === "e") {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+          return;
+        }
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Cleanup
+      stopNpcWindowSystem();
+      document.removeEventListener("keydown", handleKeyDown);
+
+      if (returnTo === "field") {
+        renderFieldScreen("base_camp");
+      } else {
+        renderAllNodesMenuScreen();
+      }
+    }
+  };
+
+  // Add listener (remove first to avoid duplicates if any)
+  document.removeEventListener("keydown", handleKeyDown);
+  document.addEventListener("keydown", handleKeyDown);
 
   // Purchase buttons
   root.querySelectorAll(".blackmarket-item-buy-btn:not(.blackmarket-item-buy-btn--disabled)").forEach((btn) => {
@@ -290,7 +325,7 @@ function purchaseFieldMod(modId: string): void {
     // Add to active run inventory
     const currentInventory = activeRun.runFieldModInventory || [];
     const updatedInventory = [...currentInventory, modInstance];
-    
+
     saveCampaignProgress({
       ...campaignProgress,
       activeRun: {
@@ -322,9 +357,9 @@ function renderNpcFlavorText(): string {
       <h2 class="blackmarket-npc-panel-title">BLACK MARKET CHATTER</h2>
       <div class="blackmarket-npc-windows-container" id="blackmarketNpcWindowsContainer">
         ${activeNpcWindows.map(window => {
-          const conversation = activeConversations.get(window.conversationId || "");
-          const hasConversation = conversation && conversation.length > 0;
-          return `
+    const conversation = activeConversations.get(window.conversationId || "");
+    const hasConversation = conversation && conversation.length > 0;
+    return `
             <div class="blackmarket-npc-window blackmarket-npc-window--visible ${hasConversation ? "blackmarket-npc-window--has-conversation" : ""}" 
                  data-window-id="${window.id}" 
                  data-conversation-id="${window.conversationId || ""}">
@@ -338,7 +373,7 @@ function renderNpcFlavorText(): string {
               `).join("") : ""}
             </div>
           `;
-        }).join('')}
+  }).join('')}
       </div>
     </div>
   `;
@@ -349,7 +384,7 @@ function startNpcWindowSystem(): void {
   if (npcWindowInterval !== null) {
     clearInterval(npcWindowInterval);
   }
-  
+
   // Don't clear windows here - they're already populated before render
   // Just ensure we have windows
   if (activeNpcWindows.length === 0) {
@@ -358,22 +393,22 @@ function startNpcWindowSystem(): void {
       addNpcWindow();
     }
   }
-  
+
   // Update the DOM immediately
   updateNpcWindowsDOM();
-  
+
   // Also update after a short delay to ensure DOM is ready
   setTimeout(() => {
     updateNpcWindowsDOM();
   }, 100);
-  
+
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
     // Random chance to add a new window (60% chance)
     if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
       addNpcWindow();
     }
-    
+
     // Remove old windows (random, but keep at least 1)
     if (activeNpcWindows.length > 1) {
       const now = Date.now();
@@ -391,7 +426,7 @@ function startNpcWindowSystem(): void {
         return true;
       });
     }
-    
+
     // If we have too many windows, remove the oldest
     if (activeNpcWindows.length > 4) {
       const removed = activeNpcWindows.shift();
@@ -399,7 +434,7 @@ function startNpcWindowSystem(): void {
         activeConversations.delete(removed.conversationId);
       }
     }
-    
+
     updateNpcWindowsDOM();
   }, 2000); // Check every 2 seconds
 }
@@ -408,7 +443,7 @@ function addNpcWindow(): void {
   const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
   const windowId = `blackmarket-npc-window-${npcWindowIdCounter++}`;
   const conversationId = `conv-${windowId}`;
-  
+
   activeNpcWindows.push({
     id: windowId,
     name: dialogue.name,
@@ -425,15 +460,15 @@ function updateNpcWindowsDOM(): void {
     setTimeout(() => updateNpcWindowsDOM(), 50);
     return;
   }
-  
+
   // Get current window IDs in DOM
   const currentWindowIds = Array.from(container.querySelectorAll('.blackmarket-npc-window')).map(
     el => el.getAttribute('data-window-id')
   ).filter((id): id is string => id !== null);
-  
+
   // Get active window IDs
   const activeWindowIds = activeNpcWindows.map(w => w.id);
-  
+
   // Remove windows that are no longer active
   currentWindowIds.forEach(windowId => {
     if (!activeWindowIds.includes(windowId)) {
@@ -446,27 +481,27 @@ function updateNpcWindowsDOM(): void {
       }
     }
   });
-  
+
   // Add new windows and update existing ones
   activeNpcWindows.forEach(window => {
     let windowEl = container.querySelector(`[data-window-id="${window.id}"]`) as HTMLElement;
     const conversation = activeConversations.get(window.conversationId || "");
     const hasConversation = conversation && conversation.length > 0;
-    
+
     const isNewWindow = !windowEl;
-    
+
     if (isNewWindow) {
       // Create new window
       windowEl = document.createElement('div');
       windowEl.className = 'blackmarket-npc-window';
       windowEl.setAttribute('data-window-id', window.id);
       windowEl.setAttribute('data-conversation-id', window.conversationId || "");
-      
+
       // Add with animation
       windowEl.classList.add('blackmarket-npc-window--appearing');
       container.appendChild(windowEl);
     }
-    
+
     // Update window content
     windowEl.innerHTML = `
       <div class="blackmarket-npc-name">${window.name}</div>
@@ -478,7 +513,7 @@ function updateNpcWindowsDOM(): void {
         </div>
       `).join("") : ""}
     `;
-    
+
     // Handle visibility for new windows
     if (isNewWindow) {
       // Trigger animation after content is set
@@ -495,14 +530,14 @@ function updateNpcWindowsDOM(): void {
         windowEl.classList.add('blackmarket-npc-window--visible');
       }
     }
-    
+
     if (hasConversation) {
       windowEl.classList.add('blackmarket-npc-window--has-conversation');
     } else {
       windowEl.classList.remove('blackmarket-npc-window--has-conversation');
     }
   });
-  
+
   // Re-attach click handlers after DOM update
   attachNpcWindowClickHandlers();
 }
@@ -510,23 +545,23 @@ function updateNpcWindowsDOM(): void {
 function attachNpcWindowClickHandlers(): void {
   const container = document.getElementById("blackmarketNpcWindowsContainer");
   if (!container) return;
-  
+
   // Remove old handlers and attach new ones
   container.querySelectorAll('.blackmarket-npc-window').forEach(windowEl => {
     // Remove existing click handler
     const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
     windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
-    
+
     // Attach click handler to the main window (not conversation messages)
     newWindowEl.addEventListener('click', (e) => {
       // Don't trigger if clicking on a conversation message
       if ((e.target as HTMLElement).closest('.blackmarket-npc-conversation-message')) {
         return;
       }
-      
+
       const windowId = newWindowEl.getAttribute('data-window-id');
       const conversationId = newWindowEl.getAttribute('data-conversation-id');
-      
+
       if (windowId && conversationId) {
         handleNpcWindowClick(windowId, conversationId);
       }
@@ -537,10 +572,10 @@ function attachNpcWindowClickHandlers(): void {
 function handleNpcWindowClick(windowId: string, conversationId: string): void {
   const window = activeNpcWindows.find(w => w.id === windowId);
   if (!window) return;
-  
+
   // Get or create conversation
   let conversation = activeConversations.get(conversationId) || [];
-  
+
   // Determine response type based on dialogue content
   let responseType = "default";
   const text = window.text.toLowerCase();
@@ -553,23 +588,23 @@ function handleNpcWindowClick(windowId: string, conversationId: string): void {
   } else if (text.includes("experimental") || text.includes("risk") || text.includes("dangerous")) {
     responseType = "experimental";
   }
-  
+
   // Get random Aeriss response
   const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
   const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
-  
+
   // Add Aeriss response to conversation
   conversation.push({
     name: "AERISS",
     text: aerissResponse,
   });
-  
+
   // Store conversation
   activeConversations.set(conversationId, conversation);
-  
+
   // Update the window to show conversation
   window.conversationId = conversationId;
-  
+
   // Update DOM
   updateNpcWindowsDOM();
 }

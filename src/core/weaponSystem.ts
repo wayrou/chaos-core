@@ -192,13 +192,18 @@ export function quickReload(state: WeaponRuntimeState, weapon: WeaponEquipment):
     reloadAmount = Math.max(1, reloadAmount - 1);
   }
 
-  return {
+  const result = {
     state: {
       ...state,
       currentAmmo: Math.min(weapon.ammoMax, state.currentAmmo + reloadAmount),
     },
     strainCost: weapon.quickReloadStrain ?? 1,
   };
+
+  // Synergy Repair: Reloading repairs Node 6 (Feed Path)
+  result.state = repairNode(result.state, 6);
+
+  return result;
 }
 
 export function fullReload(state: WeaponRuntimeState, weapon: WeaponEquipment): { state: WeaponRuntimeState; strainCost: number } {
@@ -213,13 +218,18 @@ export function fullReload(state: WeaponRuntimeState, weapon: WeaponEquipment): 
     reloadAmount = Math.ceil(weapon.ammoMax / 2);
   }
 
-  return {
+  const result = {
     state: {
       ...state,
       currentAmmo: Math.min(weapon.ammoMax, reloadAmount),
     },
     strainCost: weapon.fullReloadStrain ?? 0,
   };
+
+  // Synergy Repair: Reloading repairs Node 6 (Feed Path)
+  result.state = repairNode(result.state, 6);
+
+  return result;
 }
 
 // ----------------------------------------------------------------------------
@@ -232,7 +242,7 @@ export function fullReload(state: WeaponRuntimeState, weapon: WeaponEquipment): 
 export function activateClutch(state: WeaponRuntimeState): WeaponRuntimeState {
   // Only add wear if not already active
   if (state.clutchActive) return state;
-  
+
   return {
     ...state,
     clutchActive: true,
@@ -243,7 +253,7 @@ export function activateClutch(state: WeaponRuntimeState): WeaponRuntimeState {
 export function deactivateClutch(state: WeaponRuntimeState): WeaponRuntimeState {
   // Only refund wear if currently active
   if (!state.clutchActive) return state;
-  
+
   return {
     ...state,
     clutchActive: false,
@@ -254,7 +264,7 @@ export function deactivateClutch(state: WeaponRuntimeState): WeaponRuntimeState 
 export function activateDoubleClutch(state: WeaponRuntimeState): WeaponRuntimeState {
   // Only add wear if not already active
   if (state.doubleClutchActive) return state;
-  
+
   return {
     ...state,
     doubleClutchActive: true,
@@ -265,7 +275,7 @@ export function activateDoubleClutch(state: WeaponRuntimeState): WeaponRuntimeSt
 export function deactivateDoubleClutch(state: WeaponRuntimeState): WeaponRuntimeState {
   // Only refund wear if currently active
   if (!state.doubleClutchActive) return state;
-  
+
   return {
     ...state,
     doubleClutchActive: false,
@@ -278,7 +288,7 @@ export function resetClutches(state: WeaponRuntimeState): WeaponRuntimeState {
   let wearRefund = 0;
   if (state.clutchActive) wearRefund++;
   if (state.doubleClutchActive) wearRefund++;
-  
+
   return {
     ...state,
     clutchActive: false,
@@ -377,6 +387,47 @@ export function repairNode(state: WeaponRuntimeState, nodeId: WeaponNodeId): Wea
       [nodeId]: newStatus,
     },
   };
+}
+
+// ----------------------------------------------------------------------------
+// FIELD PATCH & REPAIRS
+// ----------------------------------------------------------------------------
+
+export function fieldPatch(state: WeaponRuntimeState): { state: WeaponRuntimeState; strainCost: number; repairedNodeId: WeaponNodeId | null } {
+  // Find the first node that is damaged or broken (cannot field patch destroyed)
+  const nodes = [1, 2, 3, 4, 5, 6] as WeaponNodeId[];
+  let targetNode: WeaponNodeId | null = null;
+
+  for (const nodeId of nodes) {
+    if (state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken") {
+      targetNode = nodeId;
+      break;
+    }
+  }
+
+  if (targetNode !== null) {
+    return {
+      state: repairNode(state, targetNode),
+      strainCost: 1, // Field Patch costs 1 strain
+      repairedNodeId: targetNode
+    };
+  }
+
+  return { state, strainCost: 0, repairedNodeId: null };
+}
+
+export function ventWeapon(state: WeaponRuntimeState, weapon: WeaponEquipment): { state: WeaponRuntimeState; hpCostPercent: number } {
+  // Full vent: reset heat to 0, costs 10% HP
+  let newState: WeaponRuntimeState = {
+    ...state,
+    currentHeat: 0,
+    isJammed: false,
+  };
+
+  // Synergy Repair: Venting repairs Node 5 (Heat Sink)
+  newState = repairNode(newState, 5);
+
+  return { state: newState, hpCostPercent: 0.1 };
 }
 
 export function isWeaponDestroyed(state: WeaponRuntimeState): boolean {

@@ -56,7 +56,8 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
   if (state.unitsById) {
     for (const unit of Object.values(state.unitsById)) {
       if (unit.loadout) {
-        if (unit.loadout.weapon) equippedIds.add(unit.loadout.weapon);
+        if (unit.loadout.primaryWeapon) equippedIds.add(unit.loadout.primaryWeapon);
+        if (unit.loadout.secondaryWeapon) equippedIds.add(unit.loadout.secondaryWeapon);
         if (unit.loadout.helmet) equippedIds.add(unit.loadout.helmet);
         if (unit.loadout.chestpiece) equippedIds.add(unit.loadout.chestpiece);
         if (unit.loadout.accessory1) equippedIds.add(unit.loadout.accessory1);
@@ -70,7 +71,7 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     for (const [id, equip] of Object.entries(state.equipmentById)) {
       const equipment = equip as Equipment;
       let sortGroup: string;
-      
+
       if (equipment.slot === "weapon") {
         sortGroup = "weapon";
       } else if (equipment.slot === "helmet" || equipment.slot === "chestpiece") {

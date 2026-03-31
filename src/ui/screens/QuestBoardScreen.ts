@@ -58,14 +58,14 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
   }
 
   app.innerHTML = `
-    <div class="quest-board-root ard-noise">
+    <div class="quest-board-root town-screen ard-noise">
       <!-- Header - Adventure Gothic Panel -->
-      <div class="quest-board-header">
-        <div class="quest-board-header-left">
+      <div class="quest-board-header town-screen__header">
+        <div class="quest-board-header-left town-screen__titleblock">
           <h1 class="quest-board-title">QUEST BOARD</h1>
           <div class="quest-board-subtitle">SCROLLINK OS // OPERATIONS_TERMINAL</div>
         </div>
-        <div class="quest-board-header-right">
+        <div class="quest-board-header-right town-screen__header-right">
           <div class="quest-board-stats-group">
             <div class="quest-board-stats">
               <span class="stats-label">ACTIVE</span>
@@ -76,7 +76,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
               <span class="stats-value">${totalCompleted}</span>
             </div>
           </div>
-          <button class="quest-board-back-btn" id="backBtn" data-return-to="${returnTo}">
+          <button class="quest-board-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
             <span class="btn-text">${backButtonText}</span>
           </button>
@@ -84,7 +84,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
       </div>
       
       <!-- Tabs - FFTA Style -->
-      <div class="quest-board-tabs">
+      <div class="quest-board-tabs town-screen__subnav">
         <button class="quest-board-tab ${currentTab === 'available' ? 'quest-board-tab--active' : ''}" data-tab="available">
           <span class="tab-icon">📋</span>
           <span class="tab-text">AVAILABLE</span>
@@ -98,7 +98,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
       </div>
       
       <!-- Content - World Panel -->
-      <div class="quest-board-content">
+      <div class="quest-board-content town-screen__content-panel">
         ${currentTab === "available" 
           ? renderAvailableQuests(availableQuests) 
           : renderActiveQuests(activeQuests)}

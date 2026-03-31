@@ -317,19 +317,19 @@ export function renderStableScreen(returnTo: "basecamp" | "field" = "basecamp"):
     .join("");
 
   root.innerHTML = `
-    <div class="stable-root">
-      <div class="stable-header">
-        <div class="stable-header-left">
+    <div class="stable-root town-screen">
+      <div class="stable-header town-screen__header">
+        <div class="stable-header-left town-screen__titleblock">
           <div class="stable-title">STABLE</div>
           <div class="stable-subtitle">Manage mounts and assignments</div>
         </div>
-        <div class="stable-header-right">
+        <div class="stable-header-right town-screen__header-right">
           <div class="stable-wad">WAD: ${wad}</div>
-          <button class="stable-back-btn" id="backBtn">${returnTo === "field" ? "FIELD MODE" : "BACK TO BASE CAMP"}</button>
+          <button class="stable-back-btn town-screen__back-btn" id="backBtn">${returnTo === "field" ? "FIELD MODE" : "BACK TO BASE CAMP"}</button>
         </div>
       </div>
 
-      <div class="stable-body">
+      <div class="stable-body town-screen__content-panel">
         <div class="stable-section stable-owned-section">
           <div class="stable-section-header">
             <div class="stable-section-title">YOUR MOUNTS (${ownedMounts.length})</div>

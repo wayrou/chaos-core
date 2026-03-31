@@ -16,7 +16,7 @@ import { PlayerId } from "../../core/types";
  */
 export class BattleGridRenderer {
   private static readonly TILE_SIZE = 75; // pixels per tile
-  
+
   /**
    * Render the entire battle grid
    */
@@ -28,24 +28,27 @@ export class BattleGridRenderer {
     zoom: number,
     moveTiles?: Set<string>,
     attackTiles?: Set<string>,
-    facingTiles?: Set<string>
+    facingTiles?: Set<string>,
+    hoveredTile?: { x: number; y: number } | null,
+    hiddenUnitIds?: Set<string>
   ): string {
     const { gridWidth, gridHeight } = battle;
     const units = Object.values(battle.units).filter(u => u.hp > 0 && u.pos);
-    
+    const hiddenIds = hiddenUnitIds ?? new Set<string>();
+
     // Determine valid move/attack/placement/facing tiles
     const moveTileSet = moveTiles || new Set<string>();
     const attackTileSet = attackTiles || new Set<string>();
     const facingTileSet = facingTiles || new Set<string>();
     const placementTiles = new Set<string>();
-    
+
     if (isPlacementPhase && battle.placementState) {
       // Show all legal placement squares on the left edge (x=0)
       // Highlight all tiles on the left edge so players know where they can place units
       const placementState = battle.placementState;
       const placedCount = placementState.placedUnitIds.length;
       const maxUnits = placementState.maxUnitsPerSide;
-      
+
       // Only show placement options if we haven't reached the max unit limit
       if (placedCount < maxUnits) {
         for (let y = 0; y < gridHeight; y++) {
@@ -57,30 +60,30 @@ export class BattleGridRenderer {
         }
       }
     }
-    
+
     // Build tile HTML - simple grid layout
     let tilesHtml = "";
     const unitsHtml: Array<{ html: string; x: number; y: number }> = [];
-    
+
     // Render tiles in grid order (top to bottom, left to right)
     for (let y = 0; y < gridHeight; y++) {
       for (let x = 0; x < gridWidth; x++) {
         const tile = battle.tiles.find(t => t.pos.x === x && t.pos.y === y);
         const elevation = tile?.elevation ?? 0;
         const key = `${x},${y}`;
-        
+
         // Find unit at this position (CRITICAL: use exact match)
-        const unit = units.find(u => 
-          u.pos && 
-          u.pos.x === x && 
+        const unit = units.find(u =>
+          u.pos &&
+          u.pos.x === x &&
           u.pos.y === y
         );
-        
+
         // Validate unit position matches tile
         if (unit) {
           const unitGridX = unit.pos!.x;
           const unitGridY = unit.pos!.y;
-          
+
           if (unitGridX !== x || unitGridY !== y) {
             console.error("[BATTLE_GRID] Unit position mismatch!", {
               unitId: unit.id,
@@ -92,10 +95,10 @@ export class BattleGridRenderer {
             // Unit is valid, will render it
           }
         }
-        
+
         // Build tile classes
         let classes = "battle-tile";
-        
+
         // Determine terrain class
         if (tile) {
           const terrain = tile.terrain;
@@ -110,13 +113,20 @@ export class BattleGridRenderer {
         } else {
           classes += " battle-tile--floor";
         }
-        
+
         if (moveTileSet.has(key)) classes += " battle-tile--move-option";
         if (attackTileSet.has(key)) classes += " battle-tile--attack-option";
         if (placementTiles.has(key)) classes += " battle-tile--placement-option";
         if (facingTileSet.has(key)) classes += " battle-tile--facing-option";
+        if (hoveredTile && hoveredTile.x === x && hoveredTile.y === y) {
+          classes += " battle-tile--hovered";
+          // If it's an attack tile and we are hovering over an enemy, show target indicator
+          if (attackTileSet.has(key) && unit && unit.hp > 0 && unit.isEnemy) {
+            classes += " battle-tile--target-preview";
+          }
+        }
         if (elevation > 0) classes += ` battle-tile--elevation-${elevation}`;
-        
+
         // Render tile using CSS grid positioning
         tilesHtml += `
           <div class="${classes}" 
@@ -125,9 +135,13 @@ export class BattleGridRenderer {
                style="grid-column: ${x + 1}; grid-row: ${y + 1};">
           </div>
         `;
-        
+
         // Collect unit HTML to render after tiles
         if (unit && unit.pos) {
+          if (hiddenIds.has(unit.id)) {
+            continue;
+          }
+
           // CRITICAL: Validate unit position matches tile position
           if (unit.pos.x !== x || unit.pos.y !== y) {
             console.error("[BATTLE_GRID] Unit position mismatch during rendering!", {
@@ -139,10 +153,10 @@ export class BattleGridRenderer {
             // This prevents visual bugs where units appear in wrong places
             continue;
           }
-          
+
           // Validate position is within bounds
-          if (unit.pos.x < 0 || unit.pos.x >= gridWidth || 
-              unit.pos.y < 0 || unit.pos.y >= gridHeight) {
+          if (unit.pos.x < 0 || unit.pos.x >= gridWidth ||
+            unit.pos.y < 0 || unit.pos.y >= gridHeight) {
             console.error("[BATTLE_GRID] Unit position out of bounds!", {
               unitId: unit.id,
               pos: unit.pos,
@@ -150,12 +164,12 @@ export class BattleGridRenderer {
             });
             continue;
           }
-          
+
           const side = unit.isEnemy ? "battle-unit--enemy" : "battle-unit--ally";
           const act = unit.id === battle.activeUnitId ? "battle-unit--active" : "";
           const truncName = unit.name.length > 8 ? unit.name.slice(0, 8) + "…" : unit.name;
           const facing = unit.facing ?? (unit.isEnemy ? "west" : "east");
-          
+
           // Get controller info for player units
           let controllerBadge = "";
           if (!unit.isEnemy && unit.controller) {
@@ -169,7 +183,7 @@ export class BattleGridRenderer {
               </div>
             `;
           }
-          
+
           // Calculate pixel position for unit
           // CRITICAL: Account for grid padding (12px) and gaps (4px)
           // Grid has 12px padding, then tiles with 4px gaps
@@ -178,7 +192,7 @@ export class BattleGridRenderer {
           const GAP = 4;
           const unitX = GRID_PADDING + unit.pos.x * (this.TILE_SIZE + GAP) + this.TILE_SIZE / 2;
           const unitY = GRID_PADDING + unit.pos.y * (this.TILE_SIZE + GAP) + this.TILE_SIZE / 2;
-          
+
           unitsHtml.push({
             html: `
               <div class="battle-unit battle-unit--simple ${side} ${act}" 
@@ -195,6 +209,13 @@ export class BattleGridRenderer {
                   <div class="battle-unit-info-overlay">
                     <div class="battle-unit-name">${truncName}</div>
                     <div class="battle-unit-hp">HP ${unit.hp}/${unit.maxHp}</div>
+                    ${unit.statuses && unit.statuses.length > 0 ? `
+                    <div class="battle-unit-statuses" style="display: flex; gap: 2px; margin-top: 2px; justify-content: center; flex-wrap: wrap;">
+                      ${unit.statuses.map((s: any) => `
+                        <div class="battle-unit-status-icon" title="${s.type.toUpperCase()}" style="width: 8px; height: 8px; border-radius: 50%; background: var(--slk-neon-red); border: 1px solid var(--bg-surface-elevated);"></div>
+                      `).join('')}
+                    </div>
+                    ` : ''}
                   </div>
                 </div>
               </div>
@@ -205,11 +226,11 @@ export class BattleGridRenderer {
         }
       }
     }
-    
+
     // Calculate grid container size
     const gridWidthPx = gridWidth * this.TILE_SIZE + (gridWidth - 1) * 4 + 24; // tiles + gaps + padding
     const gridHeightPx = gridHeight * this.TILE_SIZE + (gridHeight - 1) * 4 + 24;
-    
+
     return `
       <div class="battle-grid-pan-wrapper">
         <div class="battle-grid-zoom-viewport">
@@ -232,7 +253,7 @@ export class BattleGridRenderer {
       </div>
     `;
   }
-  
+
   /**
    * Get grid coordinates from clicked tile element
    * Simple, direct approach using data attributes
@@ -240,7 +261,7 @@ export class BattleGridRenderer {
   static getTileCoordinates(element: HTMLElement): { x: number; y: number } | null {
     const xStr = element.getAttribute("data-x");
     const yStr = element.getAttribute("data-y");
-    
+
     if (!xStr || !yStr) {
       // Try to find parent tile
       const tile = element.closest(".battle-tile") as HTMLElement;
@@ -249,14 +270,14 @@ export class BattleGridRenderer {
       }
       return null;
     }
-    
+
     const x = parseInt(xStr, 10);
     const y = parseInt(yStr, 10);
-    
+
     if (isNaN(x) || isNaN(y)) {
       return null;
     }
-    
+
     return { x, y };
   }
 }

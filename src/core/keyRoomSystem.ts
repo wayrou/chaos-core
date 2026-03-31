@@ -90,7 +90,7 @@ const DEFENSE_BATTLE_TURNS = 6; // Survive 6 turns
 export function getKeyRoomsForFloor(floorIndex: number): KeyRoomState[] {
   const activeRun = getActiveRun();
   if (!activeRun) return [];
-  
+
   return activeRun.keyRoomsByFloor?.[floorIndex] || [];
 }
 
@@ -102,20 +102,20 @@ export function captureKeyRoom(nodeId: string, facility: FacilityType): Campaign
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
-  
+
   // Initialize keyRoomsByFloor if needed
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   // Check if already captured
   if (floorKeyRooms.some(kr => kr.roomNodeId === nodeId)) {
     console.warn(`[KEYROOM] Room ${nodeId} already captured`);
     return progress;
   }
-  
+
   // Create new Key Room state
   const newKeyRoom: KeyRoomState = {
     roomNodeId: nodeId,
@@ -123,8 +123,13 @@ export function captureKeyRoom(nodeId: string, facility: FacilityType): Campaign
     storedResources: {},
     isUnderAttack: false,
     isDelayed: false,
+    threatLevel: 0,
+    fortificationLevel: 0,
+    distancePenalty: 100,
+    upkeepFailed: false,
+    captureFloorIndex: floorIndex,
   };
-  
+
   const updated = {
     ...progress,
     activeRun: {
@@ -136,7 +141,7 @@ export function captureKeyRoom(nodeId: string, facility: FacilityType): Campaign
       pendingKeyRoomCapture: undefined,
     },
   };
-  
+
   saveCampaignProgress(updated);
   console.log(`[KEYROOM] Captured room ${nodeId} with facility ${facility}`);
   return updated;
@@ -150,47 +155,51 @@ export function generateKeyRoomResources(): CampaignProgress {
   if (!progress.activeRun) {
     return progress;
   }
-  
+
   const activeRun = progress.activeRun;
-  const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
-  if (floorKeyRooms.length === 0) {
-    return progress; // No key rooms captured
+
+  const updatedKeyRoomsByFloor: Record<number, KeyRoomState[]> = {};
+  let hasKeyRooms = false;
+
+  for (const [fIndexStr, floorKeyRooms] of Object.entries(keyRoomsByFloor)) {
+    const fIndex = parseInt(fIndexStr, 10);
+    if (floorKeyRooms.length > 0) hasKeyRooms = true;
+
+    updatedKeyRoomsByFloor[fIndex] = floorKeyRooms.map(keyRoom => {
+      const facilityConfig = FACILITY_CONFIG[keyRoom.facility];
+      const newStoredResources = { ...keyRoom.storedResources };
+
+      // Apply delay penalty (50% output) and distance penalty
+      const delayMultiplier = keyRoom.isDelayed ? 0.5 : 1.0;
+      const distanceMultiplier = (keyRoom.distancePenalty || 100) / 100;
+      const multiplier = delayMultiplier * distanceMultiplier;
+
+      // Add generated resources
+      if (facilityConfig.resourceGeneration) {
+        for (const [resourceType, amount] of Object.entries(facilityConfig.resourceGeneration)) {
+          const currentAmount = newStoredResources[resourceType as ResourceType] || 0;
+          newStoredResources[resourceType as ResourceType] = currentAmount + Math.floor(amount * multiplier);
+        }
+      }
+
+      return {
+        ...keyRoom,
+        storedResources: newStoredResources,
+      };
+    });
   }
-  
-  // Generate resources for each key room
-  const updatedKeyRooms = floorKeyRooms.map(keyRoom => {
-    const facilityConfig = FACILITY_CONFIG[keyRoom.facility];
-    const newStoredResources = { ...keyRoom.storedResources };
-    
-    // Apply delay penalty (50% output)
-    const multiplier = keyRoom.isDelayed ? 0.5 : 1.0;
-    
-    // Add generated resources
-    for (const [resourceType, amount] of Object.entries(facilityConfig.resourceGeneration)) {
-      const currentAmount = newStoredResources[resourceType as ResourceType] || 0;
-      newStoredResources[resourceType as ResourceType] = currentAmount + Math.floor(amount * multiplier);
-    }
-    
-    return {
-      ...keyRoom,
-      storedResources: newStoredResources,
-    };
-  });
-  
+
+  if (!hasKeyRooms) return progress;
+
   const updated = {
     ...progress,
     activeRun: {
       ...activeRun,
-      keyRoomsByFloor: {
-        ...keyRoomsByFloor,
-        [floorIndex]: updatedKeyRooms,
-      },
+      keyRoomsByFloor: updatedKeyRoomsByFloor,
     },
   };
-  
+
   saveCampaignProgress(updated);
   return updated;
 }
@@ -201,41 +210,41 @@ export function generateKeyRoomResources(): CampaignProgress {
 export function applyKeyRoomPassiveEffects(): void {
   const activeRun = getActiveRun();
   if (!activeRun) return;
-  
-  const floorIndex = activeRun.floorIndex;
+
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
-  for (const keyRoom of floorKeyRooms) {
-    if (keyRoom.isDelayed) continue; // Delayed rooms don't provide passive effects
-    
-    const facilityConfig = FACILITY_CONFIG[keyRoom.facility];
-    const effect = facilityConfig.passiveEffect;
-    
-    if (effect === "heal_party_small") {
-      // Heal party by 10% max HP
-      import("../state/gameStore").then(({ updateGameState }) => {
-        updateGameState(prev => {
-          const updated = { ...prev };
-          prev.partyUnitIds.forEach(unitId => {
-            const unit = updated.unitsById[unitId];
-            if (unit) {
-              const healAmount = Math.floor(unit.maxHp * 0.1);
-              updated.unitsById[unitId] = {
-                ...unit,
-                hp: Math.min(unit.maxHp, unit.hp + healAmount),
-              };
-            }
+
+  for (const floorKeyRooms of Object.values(keyRoomsByFloor)) {
+    for (const keyRoom of floorKeyRooms) {
+      if (keyRoom.isDelayed) continue; // Delayed rooms don't provide passive effects
+
+      const facilityConfig = FACILITY_CONFIG[keyRoom.facility];
+      const effect = facilityConfig.passiveEffect;
+
+      if (effect === "heal_party_small") {
+        // Heal party by 10% max HP
+        import("../state/gameStore").then(({ updateGameState }) => {
+          updateGameState(prev => {
+            const updated = { ...prev };
+            prev.partyUnitIds.forEach(unitId => {
+              const unit = updated.unitsById[unitId];
+              if (unit) {
+                const healAmount = Math.floor(unit.maxHp * 0.1);
+                updated.unitsById[unitId] = {
+                  ...unit,
+                  hp: Math.min(unit.maxHp, unit.hp + healAmount),
+                };
+              }
+            });
+            return updated;
           });
-          return updated;
         });
-      });
-    } else if (effect === "field_mod_reroll_token") {
-      // TODO: Add field mod reroll token to run state
-      console.log("[KEYROOM] Field mod reroll token granted (placeholder)");
-    } else if (effect === "reveal_nodes") {
-      // TODO: Reveal additional nodes on map
-      console.log("[KEYROOM] Nodes revealed (placeholder)");
+      } else if (effect === "field_mod_reroll_token") {
+        // TODO: Add field mod reroll token to run state
+        console.log("[KEYROOM] Field mod reroll token granted (placeholder)");
+      } else if (effect === "reveal_nodes") {
+        // TODO: Reveal additional nodes on map
+        console.log("[KEYROOM] Nodes revealed (placeholder)");
+      }
     }
   }
 }
@@ -251,11 +260,16 @@ export function rollKeyRoomAttack(): CampaignProgress | null {
   }
 
   const activeRun = progress.activeRun;
-  const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
 
-  if (floorKeyRooms.length === 0) {
+  // Flatten all key rooms across all floors
+  const allKeyRooms: { kr: KeyRoomState, floorIdx: number, idx: number }[] = [];
+  for (const [fStr, rooms] of Object.entries(keyRoomsByFloor)) {
+    const fIdx = parseInt(fStr, 10);
+    rooms.forEach((kr, idx) => allKeyRooms.push({ kr, floorIdx: fIdx, idx }));
+  }
+
+  if (allKeyRooms.length === 0) {
     return null; // No key rooms to attack
   }
 
@@ -269,10 +283,10 @@ export function rollKeyRoomAttack(): CampaignProgress | null {
 
   // Calculate attack chance
   let attackChance = ATTACK_CONFIG.baseChance;
-  attackChance += floorKeyRooms.length * ATTACK_CONFIG.perRoomBonus;
+  attackChance += allKeyRooms.length * ATTACK_CONFIG.perRoomBonus;
 
   // Check for Mine
-  const hasMine = floorKeyRooms.some(kr => kr.facility === "mine");
+  const hasMine = allKeyRooms.some(r => r.kr.facility === "mine");
   if (hasMine) {
     attackChance += ATTACK_CONFIG.mineBonus;
   }
@@ -288,32 +302,30 @@ export function rollKeyRoomAttack(): CampaignProgress | null {
   }
 
   // Select a random key room to attack (also seeded)
-  const targetIndex = rng.nextInt(0, floorKeyRooms.length - 1);
-  const targetKeyRoom = floorKeyRooms[targetIndex];
-  
-  // Set attack flag
-  const updatedKeyRooms = floorKeyRooms.map((kr, idx) => 
-    idx === targetIndex ? { ...kr, isUnderAttack: true } : kr
+  const targetIndex = rng.nextInt(0, allKeyRooms.length - 1);
+  const target = allKeyRooms[targetIndex];
+
+  // Update that specific floor's array
+  const updatedKeyRoomsByFloor = { ...keyRoomsByFloor };
+  updatedKeyRoomsByFloor[target.floorIdx] = updatedKeyRoomsByFloor[target.floorIdx].map((kr, idx) =>
+    idx === target.idx ? { ...kr, isUnderAttack: true } : kr
   );
-  
+
   const updated = {
     ...progress,
     activeRun: {
       ...activeRun,
-      keyRoomsByFloor: {
-        ...keyRoomsByFloor,
-        [floorIndex]: updatedKeyRooms,
-      },
+      keyRoomsByFloor: updatedKeyRoomsByFloor,
       pendingDefenseDecision: {
-        keyRoomId: targetKeyRoom.roomNodeId,
-        floorIndex,
-        nodeId: targetKeyRoom.roomNodeId,
+        keyRoomId: target.kr.roomNodeId,
+        floorIndex: target.floorIdx,
+        nodeId: target.kr.roomNodeId,
       },
     },
   };
-  
+
   saveCampaignProgress(updated);
-  console.log(`[KEYROOM] Attack triggered on room ${targetKeyRoom.roomNodeId}`);
+  console.log(`[KEYROOM] Attack triggered on room ${target.kr.roomNodeId} on floor ${target.floorIdx}`);
   return updated;
 }
 
@@ -325,17 +337,17 @@ export function defendKeyRoom(keyRoomId: string): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   const keyRoomIndex = floorKeyRooms.findIndex(kr => kr.roomNodeId === keyRoomId);
   if (keyRoomIndex === -1) {
     throw new Error(`Key room ${keyRoomId} not found`);
   }
-  
+
   // Defense battle will be prepared separately
   // Just clear the pending decision flag
   const updated = {
@@ -345,7 +357,7 @@ export function defendKeyRoom(keyRoomId: string): CampaignProgress {
       pendingDefenseDecision: undefined,
     },
   };
-  
+
   saveCampaignProgress(updated);
   return updated;
 }
@@ -358,21 +370,21 @@ export function delayKeyRoomDefense(keyRoomId: string): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   const keyRoomIndex = floorKeyRooms.findIndex(kr => kr.roomNodeId === keyRoomId);
   if (keyRoomIndex === -1) {
     throw new Error(`Key room ${keyRoomId} not found`);
   }
-  
-  const updatedKeyRooms = floorKeyRooms.map((kr, idx) => 
+
+  const updatedKeyRooms = floorKeyRooms.map((kr, idx) =>
     idx === keyRoomIndex ? { ...kr, isDelayed: true, isUnderAttack: false } : kr
   );
-  
+
   const updated = {
     ...progress,
     activeRun: {
@@ -384,7 +396,7 @@ export function delayKeyRoomDefense(keyRoomId: string): CampaignProgress {
       pendingDefenseDecision: undefined,
     },
   };
-  
+
   saveCampaignProgress(updated);
   console.log(`[KEYROOM] Defense delayed for room ${keyRoomId}`);
   return updated;
@@ -398,15 +410,15 @@ export function abandonKeyRoom(keyRoomId: string): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   // Remove the key room
   const updatedKeyRooms = floorKeyRooms.filter(kr => kr.roomNodeId !== keyRoomId);
-  
+
   const updated = {
     ...progress,
     activeRun: {
@@ -418,7 +430,7 @@ export function abandonKeyRoom(keyRoomId: string): CampaignProgress {
       pendingDefenseDecision: undefined,
     },
   };
-  
+
   saveCampaignProgress(updated);
   console.log(`[KEYROOM] Room ${keyRoomId} abandoned`);
   return updated;
@@ -432,21 +444,21 @@ export function clearDefenseBattle(keyRoomId: string): CampaignProgress {
   if (!progress.activeRun) {
     throw new Error("No active run");
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
   const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
+
   const keyRoomIndex = floorKeyRooms.findIndex(kr => kr.roomNodeId === keyRoomId);
   if (keyRoomIndex === -1) {
     throw new Error(`Key room ${keyRoomId} not found`);
   }
-  
-  const updatedKeyRooms = floorKeyRooms.map((kr, idx) => 
+
+  const updatedKeyRooms = floorKeyRooms.map((kr, idx) =>
     idx === keyRoomIndex ? { ...kr, isUnderAttack: false, isDelayed: false } : kr
   );
-  
+
   const updated = {
     ...progress,
     activeRun: {
@@ -457,7 +469,7 @@ export function clearDefenseBattle(keyRoomId: string): CampaignProgress {
       },
     },
   };
-  
+
   saveCampaignProgress(updated);
   console.log(`[KEYROOM] Defense successful for room ${keyRoomId}`);
   return updated;
@@ -471,33 +483,46 @@ export function grantFloorResources(): CampaignProgress {
   if (!progress.activeRun) {
     return progress;
   }
-  
+
   const activeRun = progress.activeRun;
   const floorIndex = activeRun.floorIndex;
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const floorKeyRooms = keyRoomsByFloor[floorIndex] || [];
-  
-  // Sum all stored resources
+
+  // Sum all stored resources across ALL floors
   const totalResources: Partial<Record<ResourceType, number>> = {};
-  
-  for (const keyRoom of floorKeyRooms) {
-    for (const [resourceType, amount] of Object.entries(keyRoom.storedResources)) {
-      const current = totalResources[resourceType as ResourceType] || 0;
-      totalResources[resourceType as ResourceType] = current + amount;
-    }
+
+  const updatedKeyRoomsByFloor: Record<number, KeyRoomState[]> = {};
+
+  for (const [fIndexStr, floorKeyRooms] of Object.entries(keyRoomsByFloor)) {
+    const fIndex = parseInt(fIndexStr, 10);
+    const updatedFloorRooms = floorKeyRooms.map(kr => {
+      // Extract resources
+      for (const [resourceType, amount] of Object.entries(kr.storedResources)) {
+        if (amount > 0) {
+          const current = totalResources[resourceType as ResourceType] || 0;
+          totalResources[resourceType as ResourceType] = current + amount;
+        }
+      }
+      // Reset stores to 0 after granting
+      return {
+        ...kr,
+        storedResources: {}
+      };
+    });
+    updatedKeyRoomsByFloor[fIndex] = updatedFloorRooms;
   }
-  
+
   // Grant resources to player
   if (Object.keys(totalResources).length > 0) {
     import("../state/gameStore").then(({ updateGameState }) => {
       updateGameState(prev => {
         const updated = { ...prev };
-        
+
         // Grant WAD
         if (totalResources.wad) {
           updated.wad = (updated.wad || 0) + totalResources.wad;
         }
-        
+
         // Grant other resources
         if (totalResources.metalScrap) {
           updated.resources.metalScrap = (updated.resources.metalScrap || 0) + totalResources.metalScrap;
@@ -511,26 +536,25 @@ export function grantFloorResources(): CampaignProgress {
         if (totalResources.steamComponents) {
           updated.resources.steamComponents = (updated.resources.steamComponents || 0) + totalResources.steamComponents;
         }
-        
+
         return updated;
       });
     });
   }
-  
-  // Clear key rooms for this floor (lost at floor end)
-  const updatedKeyRoomsByFloor = { ...keyRoomsByFloor };
-  delete updatedKeyRoomsByFloor[floorIndex];
-  
+
+  // According to GDD, Controlled Rooms PERSIST across floors within the same Operation.
+  // We do NOT delete them until the run resets!
+
   const updated = {
     ...progress,
     activeRun: {
       ...activeRun,
-      keyRoomsByFloor: updatedKeyRoomsByFloor,
+      keyRoomsByFloor: updatedKeyRoomsByFloor, // Retain and save reset rooms
     },
   };
-  
+
   saveCampaignProgress(updated);
-  console.log(`[KEYROOM] Floor ${floorIndex} resources granted and key rooms cleared`);
+  console.log(`[KEYROOM] Floor ${floorIndex} resources granted (rooms retained across floors)`);
   return updated;
 }
 
@@ -571,9 +595,9 @@ function createSeededRNG(seed: string): SeededRNG {
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }
-  
+
   let state = Math.abs(hash) || 1;
-  
+
   return {
     nextInt(min: number, max: number): number {
       state = (state * 1103515245 + 12345) & 0x7fffffff;

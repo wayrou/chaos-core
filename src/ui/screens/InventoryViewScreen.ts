@@ -32,26 +32,26 @@ export function renderInventoryViewScreen(returnTo: "basecamp" | "field" = "base
   const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
 
   root.innerHTML = `
-    <div class="inventory-view-root">
+    <div class="inventory-view-root town-screen">
       <!-- Header -->
-      <div class="inventory-view-header">
-        <div class="inventory-view-header-left">
+      <div class="inventory-view-header town-screen__header">
+        <div class="inventory-view-header-left town-screen__titleblock">
           <h1 class="inventory-view-title">INVENTORY</h1>
           <div class="inventory-view-subtitle">SCROLLINK OS // ASSETS_REGISTRY</div>
         </div>
-        <div class="inventory-view-header-right">
+        <div class="inventory-view-header-right town-screen__header-right">
           <div class="inventory-view-wad">
             <span class="wad-label">WAD</span>
             <span class="wad-value">${vm.wad.toLocaleString()}</span>
           </div>
-          <button class="inventory-view-back-btn" id="backBtn" data-return-to="${returnTo}">
+          <button class="inventory-view-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
             <span class="btn-text">${backButtonText}</span>
           </button>
         </div>
       </div>
 
-      <div class="inventory-view-body">
+      <div class="inventory-view-body town-screen__content-panel">
         <!-- Left Sidebar: Categories -->
         <div class="inventory-view-sidebar">
           <div class="inventory-view-section-title">CATEGORIES</div>

@@ -1,0 +1,401 @@
+src/core/__tests__/inventoryViewModel.test.ts(5,28): error TS6133: 'InventoryCategory' is declared but its value is never read.
+src/core/__tests__/inventoryViewModel.test.ts(11,1): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(14,3): error TS2304: Cannot find name 'beforeEach'.
+src/core/__tests__/inventoryViewModel.test.ts(18,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(19,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(22,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(25,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(28,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(32,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(33,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(57,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(58,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(59,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(60,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(63,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(96,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(97,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(100,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(103,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(104,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(108,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(109,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(116,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(118,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(121,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(122,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(125,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(132,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(133,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(134,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(137,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(140,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(144,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(145,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(171,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(173,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(174,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(177,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(203,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(204,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(207,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(210,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(214,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(215,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(222,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(225,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(228,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(232,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(233,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(242,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(244,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(247,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(248,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(251,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(260,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(261,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(262,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(265,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(274,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(278,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(279,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(301,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(302,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(303,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(307,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(308,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(321,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(322,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(323,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(324,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(325,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(326,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/inventoryViewModel.test.ts(330,3): error TS2582: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(331,5): error TS2582: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.
+src/core/__tests__/inventoryViewModel.test.ts(362,7): error TS2304: Cannot find name 'expect'.
+src/core/__tests__/shopSell.test.ts(5,50): error TS2307: Cannot find module '@jest/globals' or its corresponding type declarations.
+src/core/__tests__/shopSell.test.ts(93,9): error TS2304: Cannot find name 'fail'.
+src/core/__tests__/shopSell.test.ts(96,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(97,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(98,21): error TS2339: Property 'wadGained' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'wadGained' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(123,9): error TS2304: Cannot find name 'fail'.
+src/core/__tests__/shopSell.test.ts(126,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(127,33): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(128,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(129,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(177,9): error TS2304: Cannot find name 'fail'.
+src/core/__tests__/shopSell.test.ts(180,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(181,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(190,9): error TS2304: Cannot find name 'fail'.
+src/core/__tests__/shopSell.test.ts(193,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(217,9): error TS2304: Cannot find name 'fail'.
+src/core/__tests__/shopSell.test.ts(221,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(222,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/shopSell.test.ts(223,21): error TS2339: Property 'next' does not exist on type '{ next: GameState; wadGained: number; } | { error: string; }'.
+  Property 'next' does not exist on type '{ error: string; }'.
+src/core/__tests__/trainingEncounter.test.ts(5,50): error TS2307: Cannot find module '@jest/globals' or its corresponding type declarations.
+src/core/battle.ts(51,10): error TS6133: 'getRewardEligibleUnlockables' is declared but its value is never read.
+src/core/battle.ts(1501,33): error TS6133: 'state' is declared but its value is never read.
+src/core/battle.ts(1952,3): error TS6133: 'count' is declared but its value is never read.
+src/core/campaign.ts(6,10): error TS6133: 'OperationRun' is declared but its value is never read.
+src/core/campaign.ts(6,24): error TS6133: 'Floor' is declared but its value is never read.
+src/core/campaign.ts(130,63): error TS6133: 'baseRecommendedPower' is declared but its value is never read.
+src/core/campaignManager.ts(333,35): error TS6133: 'getDefenseBattleTurns' is declared but its value is never read.
+src/core/campaignSync.ts(6,1): error TS6192: All imports in import declaration are unused.
+src/core/cardHandler.ts(8,16): error TS6133: 'CardEffect' is declared but its value is never read.
+src/core/cardHandler.ts(10,1): error TS6192: All imports in import declaration are unused.
+src/core/cardHandler.ts(13,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/cardHandler.ts(14,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/cardHandler.ts(45,12): error TS2339: Property 'unitClass' does not exist on type 'BattleUnitState'.
+src/core/coop.ts(5,31): error TS6133: 'UnitId' is declared but its value is never read.
+src/core/coop.ts(64,9): error TS6133: 'p1' is declared but its value is never read.
+src/core/coop.ts(241,3): error TS6133: 'currentPos' is declared but its value is never read.
+src/core/crafting.ts(9,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/crafting.ts(10,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/endlessGear/__tests__/endlessGear.test.ts(6,38): error TS2307: Cannot find module '@jest/globals' or its corresponding type declarations.
+src/core/endlessGear/__tests__/endlessGear.test.ts(24,20): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/__tests__/endlessGear.test.ts(24,35): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/craftEndlessGear.ts(10,1): error TS6133: 'getDefaultGearSlots' is declared but its value is never read.
+src/core/endlessGear/craftEndlessGear.ts(77,20): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/craftEndlessGear.ts(79,51): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/craftEndlessGear.ts(95,18): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/dismantleEndlessGear.ts(96,34): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/dismantleEndlessGear.ts(99,79): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/dismantleEndlessGear.ts(103,30): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/generateEndlessGear.ts(14,41): error TS6133: 'deriveSeed' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(17,10): error TS6133: 'FIELD_MOD_DEFINITIONS' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(89,9): error TS2322: Type '{ provenance: { kind: "endless_crafted"; recipe: EndlessRecipe; seed: number; bias: BiasReport; }; fieldMods: string[]; lockedCards: string[]; id: string; name: string; ... 19 more ...; builderVersion?: number | undefined; } | { ...; } | { ...; }' is not assignable to type 'GeneratedGear'.
+  Type '{ provenance: { kind: "endless_crafted"; recipe: EndlessRecipe; seed: number; bias: BiasReport; }; fieldMods: string[]; lockedCards: string[]; id: string; name: string; ... 19 more ...; builderVersion?: number; }' is not assignable to type 'GeneratedGear'.
+    Types of property 'chassisId' are incompatible.
+      Type 'string | undefined' is not assignable to type 'string'.
+        Type 'undefined' is not assignable to type 'string'.
+src/core/endlessGear/generateEndlessGear.ts(158,3): error TS6133: 'chassis' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(160,3): error TS6133: 'rng' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(192,58): error TS18048: 'weight' is possibly 'undefined'.
+src/core/endlessGear/generateEndlessGear.ts(241,3): error TS6133: 'chassis' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(275,3): error TS6133: 'ctx' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(383,3): error TS6133: 'chassis' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(384,3): error TS6133: 'ctx' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(418,3): error TS6133: 'fieldMods' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(419,3): error TS6133: 'lockedCards' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(420,3): error TS6133: 'slotsLocked' is declared but its value is never read.
+src/core/endlessGear/generateEndlessGear.ts(499,26): error TS2339: Property 'id' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/generateEndlessGear.ts(500,28): error TS2339: Property 'name' does not exist on type 'GeneratedGear'.
+src/core/endlessGear/types.ts(59,40): error TS2312: An interface can only extend an object type or intersection of object types with statically known members.
+src/core/endlessGear/types.ts(78,54): error TS2694: Namespace '"C:/Users/alexh/Desktop/chaos-core/src/core/fieldModDefinitions"' has no exported member 'FieldModDef'.
+src/core/equipment.ts(7,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/equipment.ts(8,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/gearBuilder.ts(7,10): error TS6133: 'GearChassis' is declared but its value is never read.
+src/core/gearBuilder.ts(8,10): error TS6133: 'GearDoctrine' is declared but its value is never read.
+src/core/gearWorkbench.ts(10,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/gearWorkbench.ts(11,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/gearWorkbench.ts(398,21): error TS2304: Cannot find name 'getChassisById'.
+src/core/initialState.ts(7,10): error TS2300: Duplicate identifier 'GameState'.
+src/core/initialState.ts(8,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/initialState.ts(12,3): error TS6133: 'getDefaultGearSlots' is declared but its value is never read.
+src/core/initialState.ts(13,3): error TS6133: 'GearSlotData' is declared but its value is never read.
+src/core/initialState.ts(21,3): error TS2300: Duplicate identifier 'GameState'.
+src/core/initialState.ts(26,3): error TS2305: Module '"./types"' has no exported member 'UnitClassId'.
+src/core/initialState.ts(126,20): error TS2322: Type '"def_up"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(132,20): error TS2322: Type '"atk_up"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(138,20): error TS2322: Type '"agi_up"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(144,20): error TS2322: Type '"acc_up"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(149,20): error TS2322: Type '"stun"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(154,20): error TS2322: Type '"burn"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(160,20): error TS2322: Type '"push"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(165,20): error TS2322: Type '"end_turn"' is not assignable to type '"heal" | "move" | "damage" | "buff"'.
+src/core/initialState.ts(173,5): error TS2322: Type '"self" | "enemy" | "tile" | "ally"' is not assignable to type '"self" | "enemy" | "tile"'.
+  Type '"ally"' is not assignable to type '"self" | "enemy" | "tile"'.
+src/core/initialState.ts(251,7): error TS2353: Object literal may only specify known properties, and 'classId' does not exist in type 'UnitWithEquipment'.
+src/core/initialState.ts(273,7): error TS2353: Object literal may only specify known properties, and 'classId' does not exist in type 'UnitWithEquipment'.
+src/core/initialState.ts(295,7): error TS2353: Object literal may only specify known properties, and 'classId' does not exist in type 'UnitWithEquipment'.
+src/core/initialState.ts(368,5): error TS2353: Object literal may only specify known properties, and 'startingNodeId' does not exist in type 'Floor'.
+src/core/initialState.ts(391,10): error TS6133: 'createInitialInventory' is declared but its value is never read.
+src/core/initialState.ts(393,16): error TS2304: Cannot find name 'MULE_CLASS_CAPS'.
+src/core/inventory.ts(3,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/inventory.ts(4,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/inventory.ts(7,3): error TS6133: 'InventoryItem' is declared but its value is never read.
+src/core/inventoryViewModel.ts(8,1): error TS6133: 'Module' is declared but its value is never read.
+src/core/inventoryViewModel.ts(9,21): error TS6133: 'getAllRecipes' is declared but its value is never read.
+src/core/inventoryViewModel.ts(231,11): error TS6133: 'accessory' is declared but its value is never read.
+src/core/nodeMapGenerator.ts(344,3): error TS6133: 'connections' is declared but its value is never read.
+src/core/ops.ts(3,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/ops.ts(22,10): error TS18048: 'floor.nodes' is possibly 'undefined'.
+src/core/portManifestGenerator.ts(10,3): error TS6133: 'ResourceAmount' is declared but its value is never read.
+src/core/portManifestGenerator.ts(144,9): error TS6133: 'canTargetRare' is declared but its value is never read.
+src/core/procedural.ts(6,35): error TS6133: 'UnitId' is declared but its value is never read.
+src/core/procedural.ts(348,9): error TS6133: 'eligible' is declared but its value is never read.
+src/core/procedural.ts(390,7): error TS6133: 'nodeIdCounter' is declared but its value is never read.
+src/core/procedural.ts(517,20): error TS2532: Object is possibly 'undefined'.
+src/core/procedural.ts(541,20): error TS18048: 'currentFloor.nodes' is possibly 'undefined'.
+src/core/procedural.ts(541,39): error TS18048: 'currentFloor.nodes' is possibly 'undefined'.
+src/core/procedural.ts(566,20): error TS18048: 'nextFloor.nodes' is possibly 'undefined'.
+src/core/pwr.ts(146,3): error TS6133: 'unitClass' is declared but its value is never read.
+src/core/pwr.ts(156,13): error TS6133: 'equip' is declared but its value is never read.
+src/core/recruitment.ts(17,19): error TS6133: 'CLASS_DEFINITIONS' is declared but its value is never read.
+src/core/recruitment.ts(19,1): error TS6133: 'calculatePWR' is declared but its value is never read.
+src/core/recruitment.ts(20,1): error TS6133: 'getAllStarterEquipment' is declared but its value is never read.
+src/core/recruitment.ts(185,9): error TS2740: Type '{ squire: string[]; ranger: string[]; magician: string[]; thief: string[]; }' is missing the following properties from type 'Record<ClassId, string[]>': sentry, paladin, hunter, bowmaster, and 20 more.
+src/core/recruitment.ts(226,9): error TS2740: Type '{ squire: string[]; ranger: string[]; magician: string[]; thief: string[]; }' is missing the following properties from type 'Record<ClassId, string[]>': sentry, paladin, hunter, bowmaster, and 20 more.
+src/core/supplyChain.ts(325,3): error TS6133: 'nodes' is declared but its value is never read.
+src/core/trainingEncounter.ts(31,3): error TS6133: 'state' is declared but its value is never read.
+src/core/types.ts(30,1): error TS6133: 'getStarterRecipeIds' is declared but its value is never read.
+src/core/weaponSystem.ts(7,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/weaponSystem.ts(8,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/workshop.ts(8,1): error TS6133: 'GameState' is declared but its value is never read.
+src/core/workshop.ts(9,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/core/workshop.ts(28,5): error TS2322: Type '"weapon"' is not assignable to type 'CraftingCategory'.
+src/core/workshop.ts(107,45): error TS2367: This comparison appears to be unintentional because the types 'CraftingCategory' and '"weapon"' have no overlap.
+src/core/workshop.ts(172,10): error TS2678: Type '"weapon"' is not comparable to type 'CraftingCategory'.
+src/core/workshop.ts(329,3): error TS6133: 'state' is declared but its value is never read.
+src/core/workshop.ts(330,3): error TS6133: 'knownRecipeIds' is declared but its value is never read.
+src/core/workshop.ts(332,3): error TS6133: 'consumables' is declared but its value is never read.
+src/core/workshop.ts(378,25): error TS2345: Argument of type '(draft: GameState) => void' is not assignable to parameter of type '(prev: GameState) => GameState'.
+  Type 'void' is not assignable to type 'GameState'.
+src/data/gearDoctrines.ts(81,30): error TS2322: Type '"mobility"' is not assignable to type 'IntentTag'.
+src/field/companion.ts(37,7): error TS6133: 'ATTACK_DAMAGE' is declared but its value is never read.
+src/field/companion.ts(107,7): error TS2322: Type '"attack" | "idle" | "follow" | "fetch"' is not assignable to type '"idle" | "follow"'.
+  Type '"attack"' is not assignable to type '"idle" | "follow"'.
+src/field/companion.ts(163,3): error TS6133: 'player' is declared but its value is never read.
+src/field/companion.ts(236,3): error TS6133: 'player' is declared but its value is never read.
+src/field/companion.ts(310,3): error TS6133: 'player' is declared but its value is never read.
+src/field/companion.ts(355,3): error TS6133: 'player' is declared but its value is never read.
+src/field/FieldScreen.ts(49,5): error TS6133: 'lastSpawnResult' is declared but its value is never read.
+src/field/FieldScreen.ts(90,9): error TS6133: 'state' is declared but its value is never read.
+src/field/FieldScreen.ts(458,14): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(type: keyof ElementEventMap, listener: (this: Element, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '"wheel"' is not assignable to parameter of type 'keyof ElementEventMap'.
+  Overload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '(e: WheelEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.
+      Type '(e: WheelEvent) => void' is not assignable to type 'EventListener'.
+        Types of parameters 'e' and 'evt' are incompatible.
+          Type 'Event' is missing the following properties from type 'WheelEvent': deltaMode, deltaX, deltaY, deltaZ, and 30 more.
+src/field/FieldScreen.ts(764,14): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(type: keyof ElementEventMap, listener: (this: Element, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '"wheel"' is not assignable to parameter of type 'keyof ElementEventMap'.
+  Overload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '(e: WheelEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.
+      Type '(e: WheelEvent) => void' is not assignable to type 'EventListener'.
+        Types of parameters 'e' and 'evt' are incompatible.
+          Type 'Event' is missing the following properties from type 'WheelEvent': deltaMode, deltaX, deltaY, deltaZ, and 30 more.
+src/field/FieldScreen.ts(794,36): error TS6133: 'e' is declared but its value is never read.
+src/field/FieldScreen.ts(1091,52): error TS2339: Property 'startEndlessBattleMode' does not exist on type 'typeof import("C:/Users/alexh/Desktop/chaos-core/src/ui/screens/BattleScreen")'.
+src/field/spawnResolver.ts(260,3): error TS6133: 'preferredZoneIds' is declared but its value is never read.
+src/quests/questData.ts(5,17): error TS6133: 'QuestType' is declared but its value is never read.
+src/quests/questData.ts(5,28): error TS6133: 'QuestDifficultyTier' is declared but its value is never read.
+src/quests/questData.ts(188,39): error TS2552: Cannot find name 'QuestId'. Did you mean 'Quest'?
+src/quests/questGenerator.ts(19,7): error TS6133: 'RESOURCE_NAMES' is declared but its value is never read.
+src/quests/questGenerator.ts(26,7): error TS6133: 'RESOURCE_ICONS' is declared but its value is never read.
+src/quests/questGenerator.ts(352,37): error TS2345: Argument of type 'readonly ["metalScrap", "wood", "chaosShards", "steamComponents"]' is not assignable to parameter of type 'unknown[]'.
+  The type 'readonly ["metalScrap", "wood", "chaosShards", "steamComponents"]' is 'readonly' and cannot be assigned to the mutable type 'unknown[]'.
+src/quests/questGenerator.ts(357,5): error TS2464: A computed property name must be of type 'string', 'number', 'symbol', or 'any'.
+src/quests/questGenerator.ts(462,25): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+src/quests/questRewards.ts(86,47): error TS18048: 'rewards.recipes' is possibly 'undefined'.
+src/state/gameStore.ts(231,5): error TS2322: Type '{ id?: string; codename?: string | undefined; description?: string | undefined; floors?: Floor[] | undefined; currentFloorIndex?: number | undefined; currentRoomId?: string | null | undefined; connections?: Record<string, string[]>; }' is not assignable to type 'OperationRun'.
+  Types of property 'codename' are incompatible.
+    Type 'string | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
+src/ui/components/weaponWindow.ts(6,1): error TS6192: All imports in import declaration are unused.
+src/ui/components/weaponWindow.ts(13,3): error TS6133: 'NodeDamageLevel' is declared but its value is never read.
+src/ui/components/weaponWindow.ts(36,3): error TS6133: 'onClutchToggle' is declared but its value is never read.
+src/ui/components/weaponWindow.ts(37,3): error TS6133: 'onDoubleClutchToggle' is declared but its value is never read.
+src/ui/components/weaponWindow.ts(38,3): error TS6133: 'onQuickReload' is declared but its value is never read.
+src/ui/components/weaponWindow.ts(39,3): error TS6133: 'onFullReload' is declared but its value is never read.
+src/ui/components/weaponWindow.ts(40,3): error TS6133: 'onVent' is declared but its value is never read.
+src/ui/screens/AllNodesMenuScreen.ts(337,40): error TS2339: Property 'startEndlessBattleMode' does not exist on type 'typeof import("C:/Users/alexh/Desktop/chaos-core/src/ui/screens/BattleScreen")'.
+src/ui/screens/BattleGridRenderer.ts(25,5): error TS6133: 'selectedCardIdx' is declared but its value is never read.
+src/ui/screens/BattleGridRenderer.ts(26,5): error TS6133: 'activeUnit' is declared but its value is never read.
+src/ui/screens/BattleGridSystem.ts(6,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/BattleGridSystem.ts(321,11): error TS6133: 'zoomRect' is declared but its value is never read.
+src/ui/screens/BattleGridSystem.ts(423,5): error TS6133: 'unit' is declared but its value is never read.
+src/ui/screens/BattleGridSystem.ts(426,11): error TS6133: 'origin' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(10,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/BattleScreen.ts(11,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/BattleScreen.ts(12,1): error TS6133: 'initControllerSupport' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(28,3): error TS6133: 'calculateMaxUnitsPerSide' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(42,10): error TS2459: Module '"../../core/battle"' declares 'getMountById' locally, but it is not exported.
+src/ui/screens/BattleScreen.ts(42,10): error TS6133: 'getMountById' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(203,11): error TS6133: 'ammo' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(204,11): error TS6133: 'ammoMax' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(310,5): error TS6133: 'pendingMoveOrigin' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(727,10): error TS6133: 'getTileElevation' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(801,9): error TS6133: 'side' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(1164,41): error TS2322: Type '({ id: string; type: string; amount: number; duration: number; } | { stat: "def"; amount: number; duration: number; })[]' is not assignable to type '{ id: string; type: string; amount: number; duration: number; }[]'.
+  Type '{ id: string; type: string; amount: number; duration: number; } | { stat: "def"; amount: number; duration: number; }' is not assignable to type '{ id: string; type: string; amount: number; duration: number; }'.
+    Type '{ stat: "def"; amount: number; duration: number; }' is missing the following properties from type '{ id: string; type: string; amount: number; duration: number; }': id, type
+src/ui/screens/BattleScreen.ts(1171,41): error TS2322: Type '({ id: string; type: string; amount: number; duration: number; } | { stat: "atk"; amount: number; duration: number; })[]' is not assignable to type '{ id: string; type: string; amount: number; duration: number; }[]'.
+  Type '{ id: string; type: string; amount: number; duration: number; } | { stat: "atk"; amount: number; duration: number; }' is not assignable to type '{ id: string; type: string; amount: number; duration: number; }'.
+    Type '{ stat: "atk"; amount: number; duration: number; }' is missing the following properties from type '{ id: string; type: string; amount: number; duration: number; }': id, type
+src/ui/screens/BattleScreen.ts(1241,26): error TS2352: Conversion of type 'import("C:/Users/alexh/Desktop/chaos-core/src/core/types").BattleState' to type 'import("C:/Users/alexh/Desktop/chaos-core/src/core/battle").BattleState' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'BattleState' is missing the following properties from type 'BattleState': id, floorId, activeUnitId
+src/ui/screens/BattleScreen.ts(1404,17): error TS2367: This comparison appears to be unintentional because the types '"victory" | "defeat" | "placement" | "player_turn" | "enemy_turn"' and '"battle"' have no overlap.
+src/ui/screens/BattleScreen.ts(1444,10): error TS6133: 'renderStrainRing' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(1521,11): error TS6133: 'portraitSize' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(1528,11): error TS6133: 'controllerColor' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(1529,11): error TS6133: 'controllerLabel' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(1958,24): error TS6133: 'i' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(2017,9): error TS6133: 'units' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(2025,13): error TS2339: Property 'deltaY' does not exist on type 'Event'.
+src/ui/screens/BattleScreen.ts(2208,19): error TS18047: 'localBattleState' is possibly 'null'.
+src/ui/screens/BattleScreen.ts(2254,24): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(type: keyof ElementEventMap, listener: (this: Element, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '"click"' is not assignable to parameter of type 'keyof ElementEventMap'.
+  Overload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.
+    Argument of type '(e: MouseEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.
+      Type '(e: MouseEvent) => void' is not assignable to type 'EventListener'.
+        Types of parameters 'e' and 'evt' are incompatible.
+          Type 'Event' is missing the following properties from type 'MouseEvent': altKey, button, buttons, clientX, and 23 more.
+src/ui/screens/BattleScreen.ts(2406,15): error TS6133: 'wasAnimating' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(2744,38): error TS2345: Argument of type 'BattleState | null' is not assignable to parameter of type 'BattleState'.
+  Type 'null' is not assignable to type 'BattleState'.
+src/ui/screens/BattleScreen.ts(2882,13): error TS6133: 'recipeToGrant' is declared but its value is never read.
+src/ui/screens/BattleScreen.ts(3032,45): error TS2551: Property 'runSeed' does not exist on type 'ActiveRunState'. Did you mean 'rngSeed'?
+src/ui/screens/BattleScreen.ts(3098,13): error TS2741: Property 'turnIndex' is missing in type 'import("C:/Users/alexh/Desktop/chaos-core/src/core/battle").BattleState' but required in type 'import("C:/Users/alexh/Desktop/chaos-core/src/core/types").BattleState'.
+src/ui/screens/BattleScreen.ts(3235,11): error TS6133: 'afterPos' is declared but its value is never read.
+src/ui/screens/BlackMarketScreen.ts(368,59): error TS6133: 'idx' is declared but its value is never read.
+src/ui/screens/ClassChangeScreen.ts(11,3): error TS6133: 'ClassDefinition' is declared but its value is never read.
+src/ui/screens/ClassChangeScreen.ts(15,3): error TS6133: 'getUnlockableClasses' is declared but its value is never read.
+src/ui/screens/ClassChangeScreen.ts(204,47): error TS6133: 'progress' is declared but its value is never read.
+src/ui/screens/ClassChangeScreen.ts(280,31): error TS2345: Argument of type '"chemist"' is not assignable to parameter of type 'ClassId'.
+src/ui/screens/ClassChangeScreen.ts(281,30): error TS2345: Argument of type '"knight"' is not assignable to parameter of type 'ClassId'.
+src/ui/screens/CommsArrayScreen.ts(31,9): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/CommsArrayScreen.ts(172,9): error TS6133: 'botAutoBattleCheck' is declared but its value is never read.
+src/ui/screens/FieldNodeRoomScreen.ts(173,7): error TS6133: 'PLAYER_KNOCKBACK_DURATION' is declared but its value is never read.
+src/ui/screens/GearWorkbenchScreen.ts(654,3): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/GearWorkbenchScreen.ts(660,3): error TS6133: 'gearSlots' is declared but its value is never read.
+src/ui/screens/GearWorkbenchScreen.ts(1328,3): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/GearWorkbenchScreen.ts(1329,3): error TS6133: 'cardLibrary' is declared but its value is never read.
+src/ui/screens/GearWorkbenchScreen.ts(1330,3): error TS6133: 'gearSlots' is declared but its value is never read.
+src/ui/screens/InventoryScreen.ts(33,9): error TS6133: 'penalties' is declared but its value is never read.
+src/ui/screens/KeyRoomManagementScreen.ts(7,31): error TS6133: 'FACILITY_CONFIG' is declared but its value is never read.
+src/ui/screens/KeyRoomManagementScreen.ts(9,1): error TS6133: 'syncCampaignToGameState' is declared but its value is never read.
+src/ui/screens/KeyRoomReinforceScreen.ts(7,31): error TS6133: 'FACILITY_CONFIG' is declared but its value is never read.
+src/ui/screens/KeyRoomReinforceScreen.ts(9,1): error TS6133: 'syncCampaignToGameState' is declared but its value is never read.
+src/ui/screens/KeyRoomReinforceScreen.ts(10,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/OperationClearScreen.ts(159,19): error TS2339: Property 'disabled' does not exist on type 'HTMLElement'.
+src/ui/screens/PortScreen.ts(5,41): error TS6133: 'addResources' is declared but its value is never read.
+src/ui/screens/PortScreen.ts(797,9): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/QuartersScreen.ts(5,24): error TS6133: 'updateGameState' is declared but its value is never read.
+src/ui/screens/QuartersScreen.ts(61,9): error TS6133: 'mailState' is declared but its value is never read.
+src/ui/screens/QuartersScreen.ts(476,9): error TS6133: 'decorState' is declared but its value is never read.
+src/ui/screens/QuestBoardScreen.ts(43,9): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/RosterScreen.ts(8,40): error TS1261: Already included file name 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/UnitDetailScreen.ts' differs from file name 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/Unitdetailscreen.ts' only in casing.
+  The file is in the program because:
+    Imported via "./UnitDetailScreen" from file 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/RosterScreen.ts'
+    Imported via "./UnitDetailScreen" from file 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/GearWorkbenchScreen.ts'
+    Imported via "./UnitDetailScreen" from file 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/ClassChangeScreen.ts'
+    Imported via "./UnitDetailScreen" from file 'C:/Users/alexh/Desktop/chaos-core/src/ui/screens/RosterScreen.ts'
+    Matched by include pattern 'src' in 'C:/Users/alexh/Desktop/chaos-core/tsconfig.json'
+src/ui/screens/RosterScreen.ts(93,28): error TS2339: Property 'stats' does not exist on type 'Unit'.
+src/ui/screens/RosterScreen.ts(434,21): error TS2345: Argument of type '(draft: GameState) => void' is not assignable to parameter of type '(prev: GameState) => GameState'.
+  Type 'void' is not assignable to type 'GameState'.
+src/ui/screens/RosterScreen.ts(454,21): error TS2769: No overload matches this call.
+  Overload 1 of 4, '(target: {}, source: Record<string, Equipment>): Record<string, Equipment>', gave the following error.
+    Argument of type 'Record<string, any> | undefined' is not assignable to parameter of type '{}'.
+      Type 'undefined' is not assignable to type '{}'.
+  Overload 2 of 4, '(target: object, ...sources: any[]): any', gave the following error.
+    Argument of type 'Record<string, any> | undefined' is not assignable to parameter of type 'object'.
+      Type 'undefined' is not assignable to type 'object'.
+src/ui/screens/ScrollLinkShell.ts(19,18): error TS18047: 'operation' is possibly 'null'.
+src/ui/screens/ScrollLinkShell.ts(20,18): error TS18047: 'operation' is possibly 'null'.
+src/ui/screens/ScrollLinkShell.ts(21,26): error TS18047: 'operation' is possibly 'null'.
+src/ui/screens/ScrollLinkShell.ts(21,63): error TS18047: 'operation' is possibly 'null'.
+src/ui/screens/SettingsScreen.ts(21,3): error TS6133: 'isControllerConnected' is declared but its value is never read.
+src/ui/screens/SettingsScreen.ts(374,34): error TS6133: 'settings' is declared but its value is never read.
+src/ui/screens/SettingsScreen.ts(467,16): error TS2339: Property 'dataset' does not exist on type 'Element'.
+src/ui/screens/SettingsScreen.ts(470,39): error TS2339: Property 'value' does not exist on type 'Element'.
+src/ui/screens/ShopScreen.ts(337,15): error TS6133: 'eligible' is declared but its value is never read.
+src/ui/screens/ShopScreen.ts(499,16): error TS2367: This comparison appears to be unintentional because the types '"consumable" | "equipment" | "recipe" | "pak"' and '"unlockable"' have no overlap.
+src/ui/screens/ShopScreen.ts(570,9): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(10,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/UnitDetailScreen.ts(11,1): error TS6192: All imports in import declaration are unused.
+src/ui/screens/UnitDetailScreen.ts(12,1): error TS6133: 'initControllerSupport' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(26,3): error TS6133: 'EquipmentCard' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(32,26): error TS6133: 'FieldModInstance' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(33,26): error TS6133: 'getAllFieldModDefs' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(34,1): error TS6133: 'getTriggerLabel' is declared but its value is never read.
+src/ui/screens/UnitDetailScreen.ts(177,9): error TS6133: 'autoEquipButton' is declared but its value is never read.
+src/ui/screens/workshop.ts(6,47): error TS2307: Cannot find module '../state/gameStore' or its corresponding type declarations.
+src/ui/screens/workshop.ts(9,1): error TS6133: 'GameState' is declared but its value is never read.
+src/ui/screens/workshop.ts(9,27): error TS2307: Cannot find module './types' or its corresponding type declarations.
+src/ui/screens/workshop.ts(10,1): error TS6133: 'getSettings' is declared but its value is never read.
+src/ui/screens/workshop.ts(10,29): error TS2307: Cannot find module './settings' or its corresponding type declarations.
+src/ui/screens/workshop.ts(23,8): error TS2307: Cannot find module '../core/crafting' or its corresponding type declarations.
+src/ui/screens/workshop.ts(138,37): error TS7006: Parameter 'recipe' implicitly has an 'any' type.
+src/ui/screens/workshop.ts(330,3): error TS6133: 'state' is declared but its value is never read.
+src/ui/screens/workshop.ts(331,3): error TS6133: 'knownRecipeIds' is declared but its value is never read.
+src/ui/screens/workshop.ts(333,3): error TS6133: 'consumables' is declared but its value is never read.
+src/ui/screens/workshop.ts(379,25): error TS7006: Parameter 'draft' implicitly has an 'any' type.

@@ -10,6 +10,47 @@ import { renderFieldScreen } from "../../field/FieldScreen";
 
 // Track last field map for returning to field mode
 let lastFieldMap: string = "base_camp";
+let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+
+const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
+  { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
+  { action: "roster", aliases: ["roster", "unit roster", "units", "party", "manage units"] },
+  { action: "loadout", aliases: ["loadout", "gear", "equipment", "equip", "locker"] },
+  { action: "inventory", aliases: ["inventory", "items", "assets", "storage", "owned items"] },
+  { action: "gear-workbench", aliases: ["workshop", "workbench", "gear workbench", "craft", "crafting", "upgrade gear"] },
+  { action: "shop", aliases: ["shop", "store", "quartermaster", "buy", "market"] },
+  { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
+  { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
+  { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
+  { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
+  { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
+  { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
+  { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
+  { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
+  { action: "endless-field-nodes", aliases: ["endless rooms", "debug endless rooms"] },
+  { action: "endless-battles", aliases: ["endless battles", "debug endless battles"] },
+  { action: "debug-wad", aliases: ["debug wad", "money", "give wad", "add wad"] },
+];
+
+function normalizeQuacCommand(value: string): string {
+  return value.toLowerCase().trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ");
+}
+
+function resolveQuacCommand(input: string): string | null {
+  const normalized = normalizeQuacCommand(input);
+  if (!normalized) return null;
+
+  for (const entry of QUAC_COMMAND_ALIASES) {
+    for (const alias of entry.aliases) {
+      const normalizedAlias = normalizeQuacCommand(alias);
+      if (normalized === normalizedAlias || normalized.includes(normalizedAlias) || normalizedAlias.includes(normalized)) {
+        return entry.action;
+      }
+    }
+  }
+
+  return null;
+}
 
 /**
  * Render the All Nodes Menu Screen
@@ -34,15 +75,15 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   };
 
   root.innerHTML = `
-    <div class="all-nodes-menu-screen ard-noise">
+    <div class="all-nodes-menu-screen town-screen town-screen--hub ard-noise">
       <!-- Terminal Header (ScrollLink OS) -->
-      <header class="all-nodes-menu-header">
+      <header class="all-nodes-menu-header town-screen__hero">
         <div class="all-nodes-terminal-bar">
           <span class="terminal-indicator"></span>
           <span class="terminal-text">SCROLLLINK.OS // BASE_CAMP.SYS</span>
         </div>
         <h1 class="all-nodes-menu-title">BASE CAMP</h1>
-        <p class="all-nodes-menu-subtitle">QUICK ACCESS COMMAND INTERFACE</p>
+        <p class="all-nodes-menu-subtitle">Q.U.A.C. // QUICK USER ACCESS CONSOLE</p>
       </header>
 
       <!-- Mode Toggle (FFTA-style tabs) -->
@@ -54,7 +95,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
       </nav>
 
       <!-- Resources Bar (Adventure Gothic panel) -->
-      <div class="all-nodes-menu-resources ard-panel--inset">
+      <div class="all-nodes-menu-resources town-screen__resource-strip ard-panel--inset">
         <div class="all-nodes-resource">
           <span class="resource-icon">W</span>
           <span class="resource-value">${wad.toLocaleString()}</span>
@@ -82,8 +123,29 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         </div>
       </div>
 
+      <section class="all-nodes-cli-panel" aria-label="Quick User Access Console">
+        <div class="all-nodes-cli-header">
+          <div class="all-nodes-cli-title">Q.U.A.C. TERMINAL</div>
+          <div class="all-nodes-cli-hint">Direct command access to all town nodes</div>
+        </div>
+        <form class="all-nodes-cli-form" id="quacForm">
+          <label class="all-nodes-cli-prompt" for="quacInput">SLK://QUAC&gt;</label>
+          <input
+            class="all-nodes-cli-input"
+            id="quacInput"
+            name="quacInput"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder='Enter command: "unit roster", "loadout", "inventory"...'
+          />
+          <button class="all-nodes-cli-submit" type="submit">EXECUTE</button>
+        </form>
+        <div class="all-nodes-cli-status" id="quacStatus">${quacLastFeedback}</div>
+      </section>
+
       <!-- Node Grid (World Panels) -->
-      <div class="all-nodes-menu-grid">
+      <div class="all-nodes-menu-grid town-screen__grid">
         <button class="all-nodes-node-btn all-nodes-node-btn--primary" data-action="ops-terminal">
           <span class="node-icon">OPS</span>
           <span class="node-label">OPS TERMINAL</span>
@@ -105,20 +167,16 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <span class="node-desc">View all owned items</span>
         </button>
         <button class="all-nodes-node-btn" data-action="gear-workbench">
-          <span class="node-icon">GWB</span>
-          <span class="node-label">GEAR WORKBENCH</span>
-          <span class="node-desc">Upgrade & modify gear</span>
+          <span class="node-icon">WKS</span>
+          <span class="node-label">WORKSHOP</span>
+          <span class="node-desc">Craft, upgrade & tinker</span>
         </button>
         <button class="all-nodes-node-btn" data-action="shop">
           <span class="node-icon">SHP</span>
           <span class="node-label">SHOP</span>
           <span class="node-desc">Buy items & PAKs</span>
         </button>
-        <button class="all-nodes-node-btn" data-action="workshop">
-          <span class="node-icon">WKS</span>
-          <span class="node-label">WORKSHOP</span>
-          <span class="node-desc">Craft new items</span>
-        </button>
+
         <button class="all-nodes-node-btn" data-action="tavern">
           <span class="node-icon">TAV</span>
           <span class="node-label">TAVERN</span>
@@ -144,6 +202,11 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <span class="node-label">STABLE</span>
           <span class="node-desc">Manage mounts</span>
         </button>
+        <button class="all-nodes-node-btn all-nodes-node-btn--utility" data-action="codex">
+          <span class="node-icon">CDX</span>
+          <span class="node-label">CODEX</span>
+          <span class="node-desc">Archives & bestiary</span>
+        </button>
         <button class="all-nodes-node-btn all-nodes-node-btn--utility" data-action="settings">
           <span class="node-icon">CFG</span>
           <span class="node-label">SETTINGS</span>
@@ -157,7 +220,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
       </div>
 
       <!-- Footer with Debug Section -->
-      <footer class="all-nodes-menu-footer">
+      <footer class="all-nodes-menu-footer town-screen__footer">
         <div class="all-nodes-debug-section">
           <span class="debug-label">[DEV]</span>
           <button class="all-nodes-debug-btn" data-action="endless-field-nodes">
@@ -226,6 +289,40 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
+  const quacForm = root.querySelector<HTMLFormElement>("#quacForm");
+  const quacInput = root.querySelector<HTMLInputElement>("#quacInput");
+  const quacStatus = root.querySelector<HTMLElement>("#quacStatus");
+  if (quacForm && quacInput && quacStatus) {
+    quacForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const rawCommand = quacInput.value;
+      const resolvedAction = resolveQuacCommand(rawCommand);
+
+      if (!resolvedAction) {
+        quacLastFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
+        quacStatus.textContent = quacLastFeedback;
+        quacStatus.classList.add("all-nodes-cli-status--error");
+        quacInput.select();
+        return;
+      }
+
+      quacLastFeedback = `Executing ${resolvedAction.toUpperCase()}...`;
+      quacStatus.textContent = quacLastFeedback;
+      quacStatus.classList.remove("all-nodes-cli-status--error");
+      quacInput.value = "";
+      handleNodeAction(resolvedAction);
+    });
+
+    quacInput.addEventListener("input", () => {
+      if (quacStatus.classList.contains("all-nodes-cli-status--error")) {
+        quacStatus.classList.remove("all-nodes-cli-status--error");
+        quacStatus.textContent = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+      }
+    });
+
+    setTimeout(() => quacInput.focus(), 0);
+  }
+
   // ESC key to go to field mode
   const escHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -259,8 +356,9 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "workshop":
-      import("./WorkshopScreen").then(({ renderCraftingScreen }) => {
-        renderCraftingScreen("basecamp");
+      // Redirect legacy workshop action to gear workbench
+      import("./GearWorkbenchScreen").then(({ renderGearWorkbenchScreen }) => {
+        renderGearWorkbenchScreen(undefined, undefined, "basecamp");
       });
       break;
     case "roster":
@@ -284,8 +382,8 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "tavern":
-      import("./RecruitmentScreen").then(({ renderRecruitmentScreen }) => {
-        renderRecruitmentScreen("basecamp");
+      import("./TavernDialogueScreen").then(({ renderTavernDialogueScreen }) => {
+        renderTavernDialogueScreen("base_camp_tavern", "Tavern", "basecamp");
       });
       break;
     case "ops-terminal":
@@ -299,7 +397,7 @@ function handleNodeAction(action: string): void {
         const firstUnitId = state.partyUnitIds?.[0] ?? null;
         if (firstUnitId) {
           const unit = state.unitsById[firstUnitId];
-          const weaponId = (unit as any)?.loadout?.weapon ?? null;
+          const weaponId = (unit as any)?.loadout?.primaryWeapon ?? null;
           renderGearWorkbenchScreen(firstUnitId, weaponId, "basecamp");
         } else {
           renderGearWorkbenchScreen(undefined, undefined, "basecamp");
@@ -318,6 +416,11 @@ function handleNodeAction(action: string): void {
     case "stable":
       import("./StableScreen").then(({ renderStableScreen }) => {
         renderStableScreen("basecamp");
+      });
+      break;
+    case "codex":
+      import("./CodexScreen").then(({ renderCodexScreen }) => {
+        renderCodexScreen("basecamp");
       });
       break;
     case "settings":

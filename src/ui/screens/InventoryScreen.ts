@@ -15,38 +15,6 @@ import { renderFieldScreen } from "../../field/FieldScreen";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
-let inventoryExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-
-function attachInventoryExitHotkey(returnTo: "basecamp" | "field"): void {
-  if (inventoryExitKeyHandler) {
-    window.removeEventListener("keydown", inventoryExitKeyHandler);
-  }
-
-  if (returnTo !== "field") {
-    inventoryExitKeyHandler = null;
-    return;
-  }
-
-  inventoryExitKeyHandler = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
-    if (key === "escape" || key === "e") {
-      if (key === "e") {
-        const target = e.target as HTMLElement;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-          return;
-        }
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      window.removeEventListener("keydown", inventoryExitKeyHandler!);
-      inventoryExitKeyHandler = null;
-      renderFieldScreen("base_camp");
-    }
-  };
-
-  window.addEventListener("keydown", inventoryExitKeyHandler);
-}
-
 export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) {
@@ -126,16 +94,16 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
   }
 
   root.innerHTML = `
-    <div class="inventory-root ard-noise">
-      <div class="inventory-card">
+    <div class="inventory-root town-screen ard-noise">
+      <div class="inventory-card town-screen__panel">
         <!-- Header - Adventure Gothic Panel -->
-        <div class="inventory-header">
-          <div class="inventory-header-left">
+        <div class="inventory-header town-screen__header">
+          <div class="inventory-header-left town-screen__titleblock">
             <h1 class="inventory-title">LOADOUT</h1>
             <div class="inventory-subtitle">SCROLLINK OS // FORWARD_LOCKER • BASE_STORAGE</div>
           </div>
-          <div class="inventory-header-right">
-            <button class="inventory-back-btn" id="backBtn" data-return-to="${returnTo}">
+          <div class="inventory-header-right town-screen__header-right">
+            <button class="inventory-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
               <span class="btn-icon">←</span>
               <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
             </button>
@@ -202,17 +170,12 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
       </div>
     </div>
   `;
-  attachInventoryExitHotkey(returnTo);
 
   // --- BUTTON: BACK ---
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
       const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;
-      if (inventoryExitKeyHandler) {
-        window.removeEventListener("keydown", inventoryExitKeyHandler);
-        inventoryExitKeyHandler = null;
-      }
       if (returnDestination === "field") {
         renderFieldScreen("base_camp");
       } else {

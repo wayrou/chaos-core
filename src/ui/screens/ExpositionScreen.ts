@@ -19,14 +19,14 @@ export function renderExpositionScreen(): void {
     <div class="exposition-screen">
       <div class="exposition-window">
         <div class="exposition-window-header">
-          <span class="window-title">SCROLLINK OS // CLASSIFIED_BRIEFING</span>
+          <span class="window-title">SCROLLINK OS // BRIEFING_01</span>
           <span class="window-status">[SECURE]</span>
         </div>
         <div class="exposition-window-body">
           <div class="exposition-terminal">
             <div class="terminal-line">
               <span class="terminal-prompt">SLK&gt;</span>
-              <span class="terminal-text">ACCESSING CLASSIFIED OPERATION BRIEFING...</span>
+              <span class="terminal-text">ACCESSING BRIEFING_01...</span>
             </div>
             <div class="terminal-line">
               <span class="terminal-prompt">SLK&gt;</span>

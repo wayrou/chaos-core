@@ -4,12 +4,12 @@
 
 import { InteractionZone, FieldMap } from "./types";
 import { renderShopScreen } from "../ui/screens/ShopScreen";
-import { renderCraftingScreen } from "../ui/screens/WorkshopScreen";
+
 import { renderRosterScreen } from "../ui/screens/RosterScreen";
 import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
 import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
 import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
-import { renderRecruitmentScreen } from "../ui/screens/RecruitmentScreen";
+import { renderTavernDialogueScreen } from "../ui/screens/TavernDialogueScreen";
 import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
 import { renderPortScreen } from "../ui/screens/PortScreen";
 import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
@@ -17,38 +17,32 @@ import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
 import { renderStableScreen } from "../ui/screens/StableScreen";
 
 /**
- * Handle interaction action - opens appropriate UI or performs action
- * Note: When UI screens are closed, they should return to Field Mode by calling renderFieldScreen again
+ * Handle interaction with a zone
  */
 export function handleInteraction(
   zone: InteractionZone,
-  _map: FieldMap,
+  map: FieldMap,
   onResume: () => void
 ): void {
-  console.log(`[FIELD] Handling interaction: ${zone.action} (${zone.label})`);
-  
   switch (zone.action) {
     case "shop":
-      // Pass "field" as return destination so back button returns to field mode
       renderShopScreen("field");
       break;
-      
-    case "workshop":
-      renderCraftingScreen("field");
-      break;
-      
+
+
+
     case "roster":
       renderRosterScreen("field");
       break;
-      
+
     case "loadout":
       renderInventoryScreen("field");
       break;
-      
+
     case "ops_terminal":
       renderOperationSelectScreen("field");
       break;
-      
+
     case "quest_board":
       console.log("[FIELD] Quest Board interaction triggered");
       try {
@@ -58,27 +52,27 @@ export function handleInteraction(
         onResume();
       }
       break;
-      
+
     case "tavern":
       // Go directly to recruitment screen (no intro dialogue)
-      renderRecruitmentScreen("field");
+      renderTavernDialogueScreen("base_camp_tavern", "Tavern", "field");
       break;
-      
+
     case "gear_workbench":
       renderGearWorkbenchScreen(undefined, undefined, "field");
       break;
-      
+
     case "port":
       renderPortScreen("field");
       break;
-      
+
     case "quarters":
       // Switch to quarters field map
       import("./FieldScreen").then(({ renderFieldScreen }) => {
         renderFieldScreen("quarters");
       });
       break;
-      
+
     case "black_market":
       renderBlackMarketScreen("field");
       break;
@@ -93,6 +87,11 @@ export function handleInteraction(
       });
       break;
 
+    case "mini_core":
+      console.log("[FIELD] Mini Core interaction triggered");
+      onResume();
+      break;
+
     case "fcp_test":
       // CURSOR_PROOF_FCP_SPAWN_FIX: Open test FCP field map to test spawn bug
       const fcpTestMap = zone.metadata?.targetMap || "keyroom_test_fcp";
@@ -103,10 +102,18 @@ export function handleInteraction(
 
 
     case "base_camp_entry":
+      if (typeof map.id === "string" && map.id.startsWith("keyroom_")) {
+        import("./FieldScreen").then(({ exitFieldMode }) => {
+          exitFieldMode(true);
+        });
+        break;
+      }
+
       // Switch to base camp map
       const baseCampTarget = zone.metadata?.targetMap || "base_camp";
+      const mapRef = map; // Capture map reference to avoid ReferenceError in promise
       import("./FieldScreen").then(({ renderFieldScreen, storeInteractionZonePosition }) => {
-        if (baseCampTarget === "base_camp" && map.id === "quarters") {
+        if (baseCampTarget === "base_camp" && mapRef.id === "quarters") {
           // Spawn beside the quarters interaction on return
           const tileSize = 64;
           const spawnTileX = 23;
@@ -120,7 +127,7 @@ export function handleInteraction(
         renderFieldScreen(baseCampTarget as "base_camp" | "free_zone_1" | "quarters");
       });
       break;
-      
+
     case "free_zone_entry":
       // Switch to different map
       const targetMap = zone.metadata?.targetMap;
@@ -136,7 +143,7 @@ export function handleInteraction(
         });
       }
       break;
-      
+
     case "custom":
       // Custom interactions can be handled via metadata
       const quartersAction = zone.metadata?.quartersAction;
@@ -156,16 +163,14 @@ export function handleInteraction(
         }
       } else if (zone.metadata?.placeholder) {
         // Handle placeholder interactions (coming soon features)
-        const message = zone.metadata?.message || `${zone.label} - Coming soon`;
-        console.log(`[FIELD] Placeholder interaction: ${message}`);
-        // Could show a toast/notification here in the future
+        console.log(`[FIELD] Placeholder interaction: ${zone.label}`);
         onResume();
       } else {
         console.log("[FIELD] Custom interaction:", zone.metadata);
         onResume();
       }
       break;
-      
+
     default:
       console.warn(`[FIELD] Unknown interaction action: ${zone.action}`);
       onResume();
@@ -181,4 +186,3 @@ export function getInteractionZone(
 ): InteractionZone | null {
   return map.interactionZones.find((z) => z.id === zoneId) || null;
 }
-

@@ -20,93 +20,14 @@ import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 // ----------------------------------------------------------------------------
 
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{
-  id: string;
-  name: string;
-  text: string;
-  timestamp: number;
-}> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
+let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+
 
 // ----------------------------------------------------------------------------
-// NPC DIALOGUE DATA
+// DATA
 // ----------------------------------------------------------------------------
-
-// NPC dialogue data - conversations between NPCs in the tavern
-const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
-  {
-    name: "BARTENDER",
-    text: "Another long day, commander? The usual, or something stronger?",
-  },
-  {
-    name: "VETERAN OPERATOR",
-    text: "Been in this war longer than I care to remember. Seen too many good operators not come back.",
-  },
-  {
-    name: "INTEL BROKER",
-    text: "Heard rumors about a new operation zone. Dangerous, but the rewards could be worth it.",
-  },
-  {
-    name: "MERCENARY",
-    text: "Looking for work. Got a squad, got gear, just need a contract. You hiring?",
-  },
-  {
-    name: "TACTICIAN",
-    text: "The key to survival isn't just firepower. It's knowing when to fight and when to run.",
-  },
-  {
-    name: "SCOUT",
-    text: "Scouted the perimeter earlier. Enemy activity's picking up. Something big's coming.",
-  },
-  {
-    name: "MEDIC",
-    text: "Treating wounds, patching up operators. The med bay's full, but we're managing.",
-  },
-  {
-    name: "SUPPLY OFFICER",
-    text: "Resources are running low. We need more metal scrap if we're going to keep the operation running.",
-  },
-  {
-    name: "COMMS OPERATOR",
-    text: "Intercepted some enemy chatter. They're planning something. We should be ready.",
-  },
-  {
-    name: "WEAPONS SMITH",
-    text: "Got some new gear in. Custom modifications, better than standard issue. Interested?",
-  },
-  {
-    name: "SQUAD LEADER",
-    text: "Lost two good operators last mission. War's getting worse, not better.",
-  },
-  {
-    name: "RECRUITER",
-    text: "Always looking for new talent. Good operators are hard to find, harder to keep.",
-  },
-  {
-    name: "STRATEGIST",
-    text: "The enemy's adapting. We need to change tactics, or we'll keep losing ground.",
-  },
-  {
-    name: "FIELD ENGINEER",
-    text: "Working on some new field mods. Experimental stuff, but it could give us an edge.",
-  },
-  {
-    name: "COMMANDER",
-    text: "Every operation matters. Every decision counts. The war won't win itself.",
-  },
-  {
-    name: "RUMOR MONGER",
-    text: "Heard about a hidden cache in the old sector. Worth checking out, if you're brave enough.",
-  },
-  {
-    name: "WAR CORRESPONDENT",
-    text: "Documenting the war, one operation at a time. History needs to remember what happened here.",
-  },
-  {
-    name: "QUARTERMASTER",
-    text: "Managing supplies, tracking inventory. It's not glamorous, but someone's got to do it.",
-  },
-];
 
 /**
  * Get flavor dialogue based on context (operation/floor or base camp)
@@ -175,117 +96,42 @@ function getTavernDialogue(
   return [selected];
 }
 
-// ----------------------------------------------------------------------------
-// NPC WINDOW SYSTEM
-// ----------------------------------------------------------------------------
+// NPC dialogue data - tavern flavor chatter
+const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+  { name: "BARTENDER", text: "Keep the glasses full and the talk quiet. Command has ears everywhere." },
+  { name: "SQUAD LEADER", text: "Third squad didn't make it back from the ridge. Chaos surges are no joke." },
+  { name: "RUMOR MONGER", text: "Heard there's a cache of military-grade mods buried in the sector 7 wastes." },
+  { name: "RECRUITER", text: "Lots of new faces today. Half of them won't survive the first week." },
+  { name: "INJURED OPERATOR", text: "That last run... I've never seen the enemy hit that hard. We barely got out." },
+  { name: "WEAPON TECH", text: "If your gear is acting up, it's the interference. Don't blame the maintenance." },
+  { name: "DRUNKEN SOLDIER", text: "The Ardycia empire... they used to say it would last forever. Nothing lasts forever." },
+  { name: "TAVERN REGULAR", text: "Seen many like you come and go. Best advice? Don't get attached to anyone." },
+  { name: "INTEL CLERK", text: "The manifests are showing increased activity near the old port. Keep your eyes open." },
+  { name: "OFF-DUTY SENTRY", text: "Safe zones are getting harder to maintain. The static is bleeding through." },
+];
 
-function renderNpcFlavorText(): string {
-  return `
-    <div class="tavern-npc-panel">
-      <div class="tavern-npc-panel-content">
-        <h2 class="tavern-npc-panel-title">TAVERN CHATTER</h2>
-        <div class="tavern-npc-windows-container" id="tavernNpcWindowsContainer">
-          ${activeNpcWindows.map(renderNpcWindow).join("")}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function startNpcWindowSystem(): void {
-  // Clear any existing interval
-  if (npcWindowInterval !== null) {
-    clearInterval(npcWindowInterval);
-  }
-
-  // Clear existing windows
-  activeNpcWindows = [];
-  npcWindowIdCounter = 0;
-
-  // Clear the container completely to remove any leftover elements
-  const container = document.getElementById("tavernNpcWindowsContainer");
-  if (container) {
-    container.innerHTML = "";
-  }
-
-  // Add initial windows (3-4 to start)
-  const initialCount = 3 + Math.floor(Math.random() * 2);
-  for (let i = 0; i < initialCount; i++) {
-    addNpcWindow();
-  }
-
-  // Update the DOM
-  updateNpcWindowsDOM();
-
-  // Start the cycle: add new windows and remove old ones
-  npcWindowInterval = window.setInterval(() => {
-    const now = Date.now();
-    const maxAge = 45000; // 45 seconds
-
-    // Remove stale windows but keep at least a couple for context
-    if (activeNpcWindows.length > 2) {
-      activeNpcWindows = activeNpcWindows.filter(
-        (window) => now - window.timestamp < maxAge,
-      );
-    }
-
-    // Limit feed length to avoid overflow
-    const maxWindows = 6;
-    if (activeNpcWindows.length > maxWindows) {
-      activeNpcWindows = activeNpcWindows.slice(-maxWindows);
-    }
-
-    // Add new window at steady cadence
-    addNpcWindow();
-    updateNpcWindowsDOM();
-  }, 3200);
-}
-
-function addNpcWindow(): void {
-  const dialogue =
-    NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
-  const windowId = `tavern-npc-window-${npcWindowIdCounter++}`;
-
-  activeNpcWindows.push({
-    id: windowId,
-    name: dialogue.name,
-    text: dialogue.text,
-    timestamp: Date.now(),
-  });
-}
-
-function updateNpcWindowsDOM(): void {
-  const container = document.getElementById("tavernNpcWindowsContainer");
-  if (!container) return;
-
-  container.innerHTML = activeNpcWindows.map(renderNpcWindow).join("");
-}
-
-function stopNpcWindowSystem(): void {
-  if (npcWindowInterval !== null) {
-    clearInterval(npcWindowInterval);
-    npcWindowInterval = null;
-  }
-
-  activeNpcWindows = [];
-  const container = document.getElementById("tavernNpcWindowsContainer");
-  if (container) {
-    container.innerHTML = "";
-  }
-}
-
-function renderNpcWindow(window: {
-  id: string;
-  name: string;
-  text: string;
-}): string {
-  return `
-    <div class="tavern-npc-window tavern-npc-window--visible" data-window-id="${window.id}">
-      <div class="tavern-npc-name">${window.name}</div>
-      <div class="tavern-npc-text">${window.text}</div>
-    </div>
-  `;
-}
+// Aeriss response templates
+const AERISS_RESPONSES: Record<string, string[]> = {
+  default: [
+    "Interesting data point.",
+    "I'll factor that into my simulations.",
+    "Acknowledged.",
+    "The environment is increasingly unstable.",
+    "A standard observation for this sector.",
+  ],
+  danger: [
+    "Threat levels are consistent with our projections.",
+    "Casualties are the primary metric of this conflict.",
+    "We must optimize our survival probability.",
+    "The chaos is not just data; it is a physical force.",
+  ],
+  intel: [
+    "That aligns with the current manifest.",
+    "Additional verification is required for that rumor.",
+    "Supply lines are indeed the critical failure point.",
+    "The historical Ardycian archives are incomplete on that matter.",
+  ],
+};
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -347,15 +193,14 @@ function renderCandidateCard(
         <div class="candidate-affinities">
           <div class="candidate-affinity-label">AFFINITIES:</div>
           <div class="candidate-affinity-list">
-            ${
-              Object.entries(candidate.affinities)
-                .filter(([_, value]) => value > 0)
-                .map(
-                  ([type, value]) =>
-                    `<span class="candidate-affinity-item">${type}: ${value}</span>`,
-                )
-                .join("") || "<span class='candidate-affinity-item'>None</span>"
-            }
+            ${Object.entries(candidate.affinities)
+      .filter(([_, value]) => value > 0)
+      .map(
+        ([type, value]) =>
+          `<span class="candidate-affinity-item">${type}: ${value}</span>`,
+      )
+      .join("") || "<span class='candidate-affinity-item'>None</span>"
+    }
           </div>
         </div>
       </div>
@@ -389,7 +234,6 @@ export function renderTavernDialogueScreen(
   returnTo: "operation" | "field" | "basecamp" = "basecamp",
 ): void {
   // Stop any existing NPC window system
-  stopNpcWindowSystem();
 
   const root = document.getElementById("app");
   if (!root) return;
@@ -405,6 +249,15 @@ export function renderTavernDialogueScreen(
   let candidates = state.recruitmentCandidates || [];
   const rosterSize = getRosterSize(state);
   const wad = state.wad || 0;
+
+  // Initialize NPC windows
+  activeNpcWindows = [];
+  activeConversations.clear();
+  npcWindowIdCounter = 0;
+  const initialCount = 2 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < initialCount; i++) {
+    addNpcWindow();
+  }
 
   // If no candidates and this is base camp, generate a new pool
   if (candidates.length === 0 && isBaseCamp) {
@@ -428,117 +281,88 @@ export function renderTavernDialogueScreen(
 
   const candidatesHtml = isBaseCamp
     ? candidates
-        .map((candidate) => renderCandidateCard(candidate, wad))
-        .join("")
+      .map((candidate) => renderCandidateCard(candidate, wad))
+      .join("")
     : "";
 
   root.innerHTML = `
-    <div class="tavern-root ard-noise">
-      <div class="tavern-content-wrapper">
-        <div class="tavern-main-panel">
-          <div class="tavern-card">
-            <div class="tavern-header">
-              <div class="tavern-header-left">
-                <h1 class="tavern-title">${displayTitle}</h1>
-                <div class="tavern-subtitle">SCROLLINK OS // RECRUITMENT_HUB</div>
+    <div class="tavern-root">
+      <div class="tavern-header">
+        <div class="tavern-title-group">
+          <h1 class="tavern-title">${displayTitle}</h1>
+          <div class="tavern-subtitle">SCROLLINK OS // RECRUITMENT_HUB</div>
+        </div>
+        <div class="tavern-controls">
+          ${isBaseCamp
+      ? `
+            <div class="tavern-stats">
+              <span class="stat-badge">ROSTER: ${rosterSize}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
+              <span class="stat-badge">WAD: ${wad.toLocaleString()}</span>
+            </div>
+          `
+      : ""
+    }
+          <button class="tavern-back-btn" id="tavernBackBtn" data-return-to="${returnTo}">
+            ← EXIT
+          </button>
+        </div>
+      </div>
+
+      <div class="tavern-body">
+        <div class="tavern-content-wrapper">
+          <!-- Left Column: Recruitment / Main Window -->
+          <div class="tavern-main-panel">
+            <div class="tavern-info-box">
+               <div class="tavern-flavor-text">
+                "${flavorText}"
               </div>
-              <div class="tavern-header-right">
-                ${
-                  isBaseCamp
-                    ? `
-                  <div class="tavern-stats">
-                    <div class="tavern-stat-item">
-                      <span class="tavern-stat-label">ROSTER</span>
-                      <span class="tavern-stat-value">${rosterSize} / ${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
-                    </div>
-                    <div class="tavern-stat-item">
-                      <span class="tavern-stat-label">WAD</span>
-                      <span class="tavern-stat-value">${wad.toLocaleString()}</span>
-                    </div>
-                  </div>
-                `
-                    : ""
-                }
-                <button class="tavern-back-btn" id="tavernBackBtn" data-return-to="${returnTo}">
-                  <span class="btn-icon">←</span>
-                  <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "OPERATION MAP" : "BASE CAMP"}</span>
-                </button>
-              </div>
+              ${!isBaseCamp
+      ? `
+                <div class="tavern-safe-zone">
+                  <div class="safe-zone-title">SAFE ZONE ACTIVE</div>
+                  <div class="safe-zone-desc">Units relax and recover minor fatigue. No threats detected in immediate vicinity.</div>
+                </div>
+              `
+      : ""
+    }
             </div>
 
-            <div class="tavern-body">
-              <div class="tavern-flavor-block">
-                <div class="tavern-flavor-icon">✦</div>
-                <p class="tavern-flavor-text">${flavorText}</p>
-              </div>
-              ${
-                isBaseCamp
-                  ? `
-                ${
-                  rosterSize >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS
-                    ? `
-                  <div class="tavern-warning">
-                    ⚠️ ROSTER IS FULL (${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS})
-                    <br/>Dismiss units from the roster before recruiting new ones.
-                  </div>
-                `
-                    : ""
-                }
-                
+            <div class="tavern-recruitment-section">
+              ${isBaseCamp
+      ? `
+                <div class="tavern-section-header">
+                  <div class="tavern-section-title">RECRUITMENT POOL</div>
+                  ${rosterSize >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS
+        ? `
+                    <div class="tavern-warning">
+                      ⚠️ ROSTER FULL. DISMISS UNITS TO RECRUIT.
+                    </div>
+                  `
+        : ""
+      }
+                </div>
                 <div class="tavern-candidates-grid">
                   ${candidatesHtml}
                 </div>
-              `
-                  : `
-                <div class="tavern-safe-zone-message">
-                  <div class="tavern-safe-zone-icon">🏠</div>
-                  <div class="tavern-safe-zone-text">
-                    <p>You have reached a safe zone. Take a moment to rest and prepare for the next challenge.</p>
-                  </div>
+                <div class="tavern-footer">
+                  RECRUITMENT POOL REFRESHES DAILY
                 </div>
               `
-              }
+      : `
+                <div class="tavern-empty-state">
+                  <div class="empty-icon">☕</div>
+                  <div class="empty-text">Take a break, Operator.</div>
+                  <button class="candidate-hire-btn" id="tavernContinueBtn">CONTINUE OPERATION</button>
+                </div>
+              `
+    }
             </div>
-            
-            ${
-              isBaseCamp
-                ? `
-              <div class="tavern-footer">
-                <div class="tavern-legend">
-                  <span class="tavern-legend-item">
-                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(50)}"></span>
-                    Rookie (0-50 PWR)
-                  </span>
-                  <span class="tavern-legend-item">
-                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(75)}"></span>
-                    Standard (51-100 PWR)
-                  </span>
-                  <span class="tavern-legend-item">
-                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(125)}"></span>
-                    Veteran (101-150 PWR)
-                  </span>
-                  <span class="tavern-legend-item">
-                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(175)}"></span>
-                    Elite (151-200 PWR)
-                  </span>
-                  <span class="tavern-legend-item">
-                    <span class="tavern-legend-dot" style="background: ${getPWRBandColor(250)}"></span>
-                    Paragon (201+ PWR)
-                  </span>
-                </div>
-              </div>
-            `
-                : `
-              <div class="tavern-footer">
-                <button class="tavern-continue-btn" id="tavernContinueBtn">CONTINUE</button>
-              </div>
-            `
-            }
           </div>
-        </div>
 
-        <div class="tavern-chatter-panel">
-          ${renderNpcFlavorText()}
+          <!-- Right Column: NPC Chatter System -->
+          <div class="tavern-npc-panel">
+            ${renderNpcFlavorText()}
+          </div>
         </div>
       </div>
     </div>
@@ -546,6 +370,8 @@ export function renderTavernDialogueScreen(
 
   // Attach event listeners
   attachTavernListeners(roomId, returnTo);
+
+  // Start the NPC window system
   startNpcWindowSystem();
 
   // Attach click handlers for hiring candidates (base camp only)
@@ -668,4 +494,268 @@ function attachTavernListeners(
     }
   };
   document.addEventListener("keydown", handleKeyDown);
+}
+
+// ----------------------------------------------------------------------------
+// NPC CHATTER SYSTEM
+// ----------------------------------------------------------------------------
+
+function renderNpcFlavorText(): string {
+  return `
+    <div class="tavern-npc-panel-content">
+      <h2 class="tavern-npc-panel-title">TAVERN ACTIVITY</h2>
+      <div class="tavern-npc-windows-container" id="tavernNpcWindowsContainer">
+        ${activeNpcWindows
+      .map((window) => {
+        const conversation = activeConversations.get(
+          window.conversationId || "",
+        );
+        const hasConversation = conversation && conversation.length > 0;
+        return `
+            <div class="tavern-npc-window tavern-npc-window--visible ${hasConversation ? "tavern-npc-window--has-conversation" : ""
+          }" 
+                 data-window-id="${window.id}" 
+                 data-conversation-id="${window.conversationId || ""}">
+              <div class="tavern-npc-name">${window.name}</div>
+              <div class="tavern-npc-text">${window.text}</div>
+              ${hasConversation
+            ? conversation!
+              .map(
+                (msg) => `
+                <div class="tavern-npc-conversation-message ${msg.name === "AERISS"
+                    ? "tavern-npc-conversation-message--aeriss"
+                    : ""
+                  }">
+                  <div class="tavern-npc-conversation-name">${msg.name}</div>
+                  <div class="tavern-npc-conversation-text">${msg.text}</div>
+                </div>
+              `,
+              )
+              .join("")
+            : ""
+          }
+            </div>
+          `;
+      })
+      .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function startNpcWindowSystem(): void {
+  // Clear any existing interval
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+  }
+
+  // Update the DOM immediately
+  updateNpcWindowsDOM();
+
+  // Start the cycle: add new windows and remove old ones
+  npcWindowInterval = window.setInterval(() => {
+    // Random chance to add a new window (60% chance)
+    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+      addNpcWindow();
+    }
+
+    // Remove old windows (random, but keep at least 1)
+    if (activeNpcWindows.length > 1) {
+      const now = Date.now();
+      const maxAge = 8000 + Math.random() * 4000;
+      activeNpcWindows = activeNpcWindows.filter((window) => {
+        const age = now - window.timestamp;
+        if (age >= maxAge) {
+          if (window.conversationId) {
+            activeConversations.delete(window.conversationId);
+          }
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // If we have too many windows, remove the oldest
+    if (activeNpcWindows.length > 4) {
+      const removed = activeNpcWindows.shift();
+      if (removed?.conversationId) {
+        activeConversations.delete(removed.conversationId);
+      }
+    }
+
+    updateNpcWindowsDOM();
+  }, 2000);
+}
+
+function addNpcWindow(): void {
+  const dialogue =
+    NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const windowId = `tavern-npc-window-${npcWindowIdCounter++}`;
+  const conversationId = `conv-${windowId}`;
+
+  activeNpcWindows.push({
+    id: windowId,
+    name: dialogue.name,
+    text: dialogue.text,
+    timestamp: Date.now(),
+    conversationId,
+  });
+}
+
+function updateNpcWindowsDOM(): void {
+  const container = document.getElementById("tavernNpcWindowsContainer");
+  if (!container) return;
+
+  // Get current window IDs in DOM
+  const currentWindowIds = Array.from(
+    container.querySelectorAll(".tavern-npc-window"),
+  )
+    .map((el) => el.getAttribute("data-window-id"))
+    .filter((id): id is string => id !== null);
+
+  // Get active window IDs
+  const activeWindowIds = activeNpcWindows.map((w) => w.id);
+
+  // Remove windows that are no longer active
+  currentWindowIds.forEach((windowId) => {
+    if (!activeWindowIds.includes(windowId)) {
+      const windowEl = container.querySelector(`[data-window-id="${windowId}"]`);
+      if (windowEl) {
+        windowEl.classList.add("tavern-npc-window--removing");
+        setTimeout(() => {
+          windowEl.remove();
+        }, 300);
+      }
+    }
+  });
+
+  // Add new windows and update existing ones
+  activeNpcWindows.forEach((window) => {
+    let windowEl = container.querySelector(
+      `[data-window-id="${window.id}"]`,
+    ) as HTMLElement;
+    const conversation = activeConversations.get(window.conversationId || "");
+    const hasConversation = conversation && conversation.length > 0;
+
+    const isNewWindow = !windowEl;
+
+    if (isNewWindow) {
+      windowEl = document.createElement("div");
+      windowEl.className = "tavern-npc-window";
+      windowEl.setAttribute("data-window-id", window.id);
+      windowEl.setAttribute("data-conversation-id", window.conversationId || "");
+      windowEl.classList.add("tavern-npc-window--appearing");
+      container.appendChild(windowEl);
+    }
+
+    windowEl.innerHTML = `
+      <div class="tavern-npc-name">${window.name}</div>
+      <div class="tavern-npc-text">${window.text}</div>
+      ${hasConversation
+        ? conversation!
+          .map(
+            (msg) => `
+        <div class="tavern-npc-conversation-message ${msg.name === "AERISS" ? "tavern-npc-conversation-message--aeriss" : ""
+              }">
+          <div class="tavern-npc-conversation-name">${msg.name}</div>
+          <div class="tavern-npc-conversation-text">${msg.text}</div>
+        </div>
+      `,
+          )
+          .join("")
+        : ""
+      }
+    `;
+
+    if (isNewWindow) {
+      requestAnimationFrame(() => {
+        windowEl.classList.remove("tavern-npc-window--appearing");
+        windowEl.classList.add("tavern-npc-window--visible");
+      });
+    } else {
+      if (windowEl.classList.contains("tavern-npc-window--appearing")) {
+        windowEl.classList.remove("tavern-npc-window--appearing");
+      }
+      if (!windowEl.classList.contains("tavern-npc-window--visible")) {
+        windowEl.classList.add("tavern-npc-window--visible");
+      }
+    }
+
+    if (hasConversation) {
+      windowEl.classList.add("tavern-npc-window--has-conversation");
+    } else {
+      windowEl.classList.remove("tavern-npc-window--has-conversation");
+    }
+  });
+
+  attachNpcWindowClickHandlers();
+}
+
+function attachNpcWindowClickHandlers(): void {
+  const container = document.getElementById("tavernNpcWindowsContainer");
+  if (!container) return;
+
+  container.querySelectorAll(".tavern-npc-window").forEach((windowEl) => {
+    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
+    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
+
+    newWindowEl.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".tavern-npc-conversation-message")) {
+        return;
+      }
+
+      const windowId = newWindowEl.getAttribute("data-window-id");
+      const conversationId = newWindowEl.getAttribute("data-conversation-id");
+
+      if (windowId && conversationId) {
+        handleNpcWindowClick(windowId, conversationId);
+      }
+    });
+  });
+}
+
+function handleNpcWindowClick(windowId: string, conversationId: string): void {
+  const window = activeNpcWindows.find((w) => w.id === windowId);
+  if (!window) return;
+
+  let conversation = activeConversations.get(conversationId) || [];
+
+  let responseType = "default";
+  const text = window.text.toLowerCase();
+  if (
+    text.includes("danger") ||
+    text.includes("survive") ||
+    text.includes("killed") ||
+    text.includes("chaos")
+  ) {
+    responseType = "danger";
+  } else if (
+    text.includes("intel") ||
+    text.includes("rumor") ||
+    text.includes("manifest") ||
+    text.includes("sector")
+  ) {
+    responseType = "intel";
+  }
+
+  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
+
+  conversation.push({
+    name: "AERISS",
+    text: aerissResponse,
+  });
+
+  activeConversations.set(conversationId, conversation);
+  window.conversationId = conversationId;
+  updateNpcWindowsDOM();
+}
+
+function stopNpcWindowSystem(): void {
+  if (npcWindowInterval !== null) {
+    clearInterval(npcWindowInterval);
+    npcWindowInterval = null;
+  }
+  activeNpcWindows = [];
+  activeConversations.clear();
 }

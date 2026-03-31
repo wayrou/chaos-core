@@ -10,7 +10,6 @@ import { renderBattleScreen } from "./BattleScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
 import { renderShopScreen } from "./ShopScreen";
-import { renderRosterScreen } from "./RosterScreen";
 import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
@@ -21,15 +20,24 @@ import {
   moveToNode,
   clearNode,
   prepareBattleForNode,
-  advanceToNextFloor as campaignAdvanceFloor,
   completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
-import { EVENT_TEMPLATES } from "../../core/procedural";
 // Supply chain removed for now
+
+// ============================================================================
+// FEATURE FLAG - NEW MAP UX
+// ============================================================================
+const FEATURE_NEW_MAP_UX = true;
+
+// ============================================================================
+// UX STATE - Node Interaction
+// ============================================================================
+let hoveredNodeId: string | null = null;
+let selectedNodeId: string | null = null;
 
 // ============================================================================
 // PAN STATE & CONTROLS
@@ -43,9 +51,9 @@ interface PanState {
   shiftPressed: boolean;
 }
 
-const MIN_ZOOM = 0.8;
-const MAX_ZOOM = 1.6;
-const DEFAULT_ZOOM = 1.5;
+const MIN_ZOOM = 0.6;
+const MAX_ZOOM = 1.8;
+const DEFAULT_ZOOM = 1.0;
 const ZOOM_SENSITIVITY = 0.1;
 
 let panState: PanState = {
@@ -64,10 +72,6 @@ let wheelHandler: ((e: WheelEvent) => void) | null = null;
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 const ADVANCE_KEYS = new Set([" ", "Enter"]); // Space and Enter to advance
-
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.max(0, Math.min(arr.length - 1, Math.floor(Math.random() * arr.length)))] as T;
-}
 
 function cleanupPanHandlers(): void {
   if (keydownHandler) {
@@ -92,7 +96,7 @@ function cleanupPanHandlers(): void {
 
 function setupPanHandlers(): void {
   cleanupPanHandlers();
-  
+
   // Don't reset pan position here - let centerOnCurrentNode handle it
   panState.keysPressed = new Set();
   panState.shiftPressed = false;
@@ -102,25 +106,25 @@ function setupPanHandlers(): void {
     if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
       return;
     }
-    
+
     // Track shift key for speed boost
     if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
       panState.shiftPressed = true;
     }
-    
+
     // Handle SPACE and ENTER to advance to next room
     if (ADVANCE_KEYS.has(e.key)) {
       e.preventDefault();
       advanceToNextRoom();
       return;
     }
-    
+
     // Handle pan keys
     if (!PAN_KEYS.has(e.key)) return;
-    
+
     e.preventDefault();
     panState.keysPressed.add(e.key.toLowerCase());
-    
+
     if (!panAnimationFrame) {
       startPanLoop();
     }
@@ -131,13 +135,13 @@ function setupPanHandlers(): void {
     if (e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight") {
       panState.shiftPressed = false;
     }
-    
+
     panState.keysPressed.delete(e.key.toLowerCase());
-    
+
     // Also handle arrow keys
     const arrowToWasd: Record<string, string> = {
       "arrowup": "w",
-      "arrowleft": "a", 
+      "arrowleft": "a",
       "arrowdown": "s",
       "arrowright": "d",
     };
@@ -152,36 +156,36 @@ function setupPanHandlers(): void {
     if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
       return;
     }
-    
+
     // Handle zoom with scroll wheel (no modifier needed)
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Calculate zoom delta
     const zoomDelta = -e.deltaY * ZOOM_SENSITIVITY * 0.01;
     const oldZoom = panState.zoom;
     const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom + zoomDelta));
-    
+
     if (oldZoom === newZoom) return; // No change
-    
+
     // Adjust pan to zoom around viewport center
     const viewport = document.querySelector(".opmap-floor-background") as HTMLElement;
     const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement;
-    
+
     if (viewport && mapContainer) {
       const viewportRect = viewport.getBoundingClientRect();
       const viewportCenterX = viewportRect.width / 2;
       const viewportCenterY = viewportRect.height / 2;
-      
+
       // Calculate zoom factor
       const zoomFactor = newZoom / oldZoom;
-      
+
       // Adjust pan to zoom around viewport center
       // When zooming in, we need to move the pan to keep the center point in the same place
       panState.x = viewportCenterX - (viewportCenterX - panState.x) * zoomFactor;
       panState.y = viewportCenterY - (viewportCenterY - panState.y) * zoomFactor;
     }
-    
+
     panState.zoom = newZoom;
     applyMapTransform();
     updateZoomDisplay();
@@ -196,7 +200,7 @@ function startPanLoop(): void {
   const update = () => {
     let dx = 0;
     let dy = 0;
-    
+
     // Apply speed multiplier when shift is held
     const speedMultiplier = panState.shiftPressed ? 2.5 : 1;
     const currentSpeed = PAN_SPEED * speedMultiplier;
@@ -241,9 +245,6 @@ function resetPan(): void {
   centerOnCurrentNode();
 }
 
-/**
- * Center the camera/viewport on the start node (first node or node with no incoming connections)
- */
 function centerOnStartNode(): void {
   const state = getGameState();
   const operation = getCurrentOperation(state);
@@ -259,37 +260,45 @@ function centerOnStartNode(): void {
   }
 
   const nodes = floor.nodes || floor.rooms || [];
-  
-  // Find start node (first node or node with no incoming connections)
-  let startNode: RoomNode | null = null;
-  let startNodeIndex = -1;
-  
+
+  // Identify node to center on
+  let targetNode: RoomNode | null = null;
+  let targetNodeIndex = -1;
+
   if (nodes.length > 0) {
-    // First, try to find node with no incoming connections
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      let hasIncoming = false;
-      for (const other of nodes) {
-        if (other.connections?.includes(node.id)) {
-          hasIncoming = true;
+    // 1. First choice: current active node
+    if (operation.currentRoomId) {
+      targetNodeIndex = nodes.findIndex(n => n.id === operation.currentRoomId);
+      if (targetNodeIndex >= 0) targetNode = nodes[targetNodeIndex];
+    }
+
+    // 2. Second choice: node without incoming connections (start)
+    if (!targetNode) {
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        let hasIncoming = false;
+        for (const other of nodes) {
+          if (other.connections?.includes(node.id)) {
+            hasIncoming = true;
+            break;
+          }
+        }
+        if (!hasIncoming) {
+          targetNode = node;
+          targetNodeIndex = i;
           break;
         }
       }
-      if (!hasIncoming) {
-        startNode = node;
-        startNodeIndex = i;
-        break;
-      }
     }
-    
-    // Fallback to first node if no node without incoming connections found
-    if (!startNode && nodes.length > 0) {
-      startNode = nodes[0];
-      startNodeIndex = 0;
+
+    // 3. Fallback to first node
+    if (!targetNode && nodes.length > 0) {
+      targetNode = nodes[0];
+      targetNodeIndex = 0;
     }
   }
-  
-  if (!startNode || startNodeIndex < 0) {
+
+  if (!targetNode || targetNodeIndex < 0) {
     // Fallback to (0, 0) if no start node found
     panState.x = 0;
     panState.y = 0;
@@ -299,12 +308,12 @@ function centerOnStartNode(): void {
     return;
   }
 
-  // Wait for DOM to be ready, then find the start node element
+  // Wait for DOM to be ready, then find the target node element
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      const startNodeEl = document.querySelector(`.opmap-node[data-room-index="${startNodeIndex}"]`) as HTMLElement;
-      if (!startNodeEl) {
-        console.warn("[OPMAP] Start node element not found, index:", startNodeIndex);
+      const targetNodeEl = document.querySelector(`.opmap-node[data-room-index="${targetNodeIndex}"]`) as HTMLElement;
+      if (!targetNodeEl) {
+        console.warn("[OPMAP] Target node element not found, index:", targetNodeIndex);
         return;
       }
 
@@ -326,14 +335,14 @@ function centerOnStartNode(): void {
       // Reset transform to get base positions
       mapContainer.style.transform = "translate(0px, 0px) scale(1)";
       mapContainer.style.transformOrigin = "center center";
-      
+
       // Force layout recalculation
       void mapContainer.offsetHeight;
 
       // Get node position relative to container (at transform 0,0)
-      const nodeRect = startNodeEl.getBoundingClientRect();
+      const nodeRect = targetNodeEl.getBoundingClientRect();
       const containerRect = mapContainer.getBoundingClientRect();
-      
+
       // Node center relative to container origin
       const nodeCenterXRelative = nodeRect.left - containerRect.left + nodeRect.width / 2;
       const nodeCenterYRelative = nodeRect.top - containerRect.top + nodeRect.height / 2;
@@ -349,7 +358,7 @@ function centerOnStartNode(): void {
       // Calculate transform needed to move node to viewport center
       const viewportCenterXRelative = viewportRect.width / 2;
       const viewportCenterYRelative = viewportRect.height / 2;
-      
+
       const offsetX = viewportCenterXRelative - nodeCenterInViewportX;
       const offsetY = viewportCenterYRelative - nodeCenterInViewportY;
 
@@ -383,7 +392,7 @@ function advanceToNextRoom(): void {
 
   const nodes = floor.nodes || floor.rooms || [];
   const nextIndex = getNextAvailableRoomIndex(nodes);
-  
+
   // Check if there's a next room to enter
   if (nextIndex >= 0 && nextIndex < nodes.length) {
     const nextRoom = nodes[nextIndex];
@@ -446,16 +455,58 @@ export function renderOperationMapScreen(): void {
   }
 
   const nodes = floor.nodes || floor.rooms || [];
-  
+
+  // ------------------------------------------------------------------------
+  // Hotfix: enforce battle density so the map feels combat-forward.
+  // Target: >= 50% of nodes are battles (or key-room battles).
+  // NOTE: Ideally this lives in the procedural generator. We patch in-place
+  // here only if we haven't already patched this floor during this run.
+  // ------------------------------------------------------------------------
+  ensureBattleDensity(operation, nodes);
+
   // Determine current room index for progression tracking
   const currentRoomIndex = getCurrentRoomIndex(nodes, operation.currentRoomId);
   const canAdvance = canAdvanceToNextFloor(operation);
 
   root.innerHTML = `
     <div class="opmap-root opmap-root--fullscreen">
-      <!-- PROOF MARKER -->
-      <div class="opmap-proof-marker">CURSOR_PROOF_DUNGEON_MAP_REIMAGINE</div>
+      <style>
+        /* Scoped overrides for better interactivity */
+        .opmap-root .opmap-node-wrapper { will-change: transform; transition: z-index 0s; }
+        .opmap-root .opmap-node-wrapper:hover { z-index: 1000 !important; }
+        
+        /* Ensure buttons are large and clickable */
+        .opmap-root .opmap-units-btn-compact,
+        .opmap-root .opmap-abandon-btn-compact {
+          padding: 12px 20px !important;
+          font-size: 14px !important;
+          letter-spacing: 0.12em !important;
+          border-width: 2px !important;
+        }
+        
+        /* Improve tooltip visibility */
+        .opmap-context-panel {
+          pointer-events: none; /* Let clicks pass through if needed */
+        }
+        
+        /* Make sure child panels with buttons catch clicks */
+        .opmap-keyroom-status {
+          pointer-events: auto;
+        }
 
+        /* Next floor button highlight animation */
+        @keyframes pulse-glow {
+          0% { box-shadow: 0 0 5px rgba(0, 255, 128, 0.5); border-color: rgba(0, 255, 128, 0.5); }
+          50% { box-shadow: 0 0 20px rgba(0, 255, 128, 1); border-color: rgba(0, 255, 128, 1); }
+          100% { box-shadow: 0 0 5px rgba(0, 255, 128, 0.5); border-color: rgba(0, 255, 128, 0.5); }
+        }
+
+        .opmap-root .opmap-advance-btn-compact {
+          animation: pulse-glow 2s infinite;
+          background: rgba(0, 80, 40, 0.8) !important;
+          color: #fff !important;
+        }
+      </style>
       <!-- PRIMARY LAYER: The Map -->
       <div class="opmap-floor-background">
         <div class="opmap-floor-map-full">
@@ -502,7 +553,7 @@ export function renderOperationMapScreen(): void {
 
   // Setup pan handlers and attach event listeners
   setupPanHandlers();
-  
+
   // Setup document-level click handler for abandon button (event delegation fallback)
   setupAbandonButtonHandler();
 
@@ -512,6 +563,8 @@ export function renderOperationMapScreen(): void {
       attachEventListeners(nodes, currentRoomIndex);
       // Center camera on start node after DOM is ready
       centerOnStartNode();
+      // Some browsers/layouts still need one extra tick for accurate bounds.
+      setTimeout(centerOnStartNode, 0);
       // Update zoom display
       updateZoomDisplay();
     });
@@ -533,16 +586,16 @@ let abandonHandlerAttached = false;
 function setupAbandonButtonHandler(): void {
   if (abandonHandlerAttached) return;
   abandonHandlerAttached = true;
-  
+
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     // Check if click was on abandon button or its children
-    const abandonBtn = target.closest("#abandonBtn");
+    const abandonBtn = target.closest("#opmapAbandonBtn");
     if (abandonBtn && document.querySelector(".opmap-root")) {
       e.stopPropagation();
       e.preventDefault();
       console.log("[OPMAP] Abandon button clicked (document delegation)!");
-      
+
       if (confirm("Abandon this operation? Progress will be lost.")) {
         cleanupPanHandlers();
         abandonRun();
@@ -583,7 +636,7 @@ function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
   } catch (error) {
     console.warn("[OPMAP] Error getting available nodes from campaign system:", error);
   }
-  
+
   // Fallback: Find the first unvisited room by index
   for (let i = 0; i < nodes.length; i++) {
     if (!nodes[i].visited) {
@@ -591,6 +644,114 @@ function getNextAvailableRoomIndex(nodes: RoomNode[]): number {
     }
   }
   return nodes.length; // All rooms visited
+}
+
+// ---------------------------------------------------------------------------
+// MAP BALANCING HOTFIX
+// ---------------------------------------------------------------------------
+// Enforce that at least 50% of nodes on the current floor are combats.
+// This is a safety net in case the generator produces too many non-combat nodes.
+function ensureBattleDensity(operation: OperationRun, nodes: RoomNode[]): void {
+  try {
+    const floorIndex = operation.currentFloorIndex;
+    const patched = ((operation as any)._battleDensityPatchedFloors as number[] | undefined) || [];
+    if (patched.includes(floorIndex)) return;
+
+    // Compute start/end so we don't retcon those.
+    const startNodeId: string | null = (() => {
+      for (const node of nodes) {
+        let hasIncoming = false;
+        for (const other of nodes) {
+          if (other.connections?.includes(node.id)) {
+            hasIncoming = true;
+            break;
+          }
+        }
+        if (!hasIncoming) return node.id;
+      }
+      return nodes[0]?.id ?? null;
+    })();
+    const endNodeId: string | null = (() => {
+      for (const node of nodes) {
+        if ((node.connections || []).length === 0) return node.id;
+      }
+      let best: { id: string; layer: number } | null = null;
+      for (const node of nodes) {
+        const layer = node.position?.x ?? 0;
+        if (!best || layer > best.layer) best = { id: node.id, layer };
+      }
+      return best?.id ?? null;
+    })();
+
+    const isCombat = (n: RoomNode) => n.type === "battle" || n.type === "elite" || n.type === "boss" || (n as any).isKeyRoom;
+    const currentCombatCount = nodes.filter(isCombat).length;
+    const targetCombatCount = Math.ceil(nodes.length * 0.5);
+
+    if (currentCombatCount >= targetCombatCount) {
+      // Mark as patched anyway so we don't re-check every render.
+      updateGameState(draft => {
+        if (!draft.operation) return draft;
+        (draft.operation as any)._battleDensityPatchedFloors = [...patched, floorIndex];
+        return draft;
+      });
+      return;
+    }
+
+    // Candidates: nodes that are revealed types but non-essential.
+    const mutableTypes = new Set<RoomType>(["event", "treasure", "field_node", "rest", "tavern", "shop"]);
+    const candidates = nodes
+      .filter(n => n.id !== startNodeId && n.id !== endNodeId)
+      .filter(n => !isCombat(n))
+      .filter(n => mutableTypes.has((n.type as any) || "event"));
+
+    const needed = Math.max(0, targetCombatCount - currentCombatCount);
+    const toConvert = candidates.slice(0, needed).map(n => n.id);
+    if (toConvert.length === 0) {
+      updateGameState(draft => {
+        if (!draft.operation) return draft;
+        (draft.operation as any)._battleDensityPatchedFloors = [...patched, floorIndex];
+        return draft;
+      });
+      return;
+    }
+
+    updateGameState(draft => {
+      if (!draft.operation) return draft;
+      const op = draft.operation;
+      const fl = op.floors[op.currentFloorIndex];
+      const list = (fl.nodes || fl.rooms || []) as any[];
+      for (const node of list) {
+        if (toConvert.includes(node.id)) {
+          node.type = "battle";
+          if (!node.label || String(node.label).trim() === "") node.label = "COMBAT";
+        }
+      }
+      (op as any)._battleDensityPatchedFloors = [...patched, floorIndex];
+      return draft;
+    });
+
+    // We must also update the campaign progress so prepareBattleForNode doesn't 
+    // think the node is still a non-battle and throw an error.
+    try {
+      import("../../core/campaign").then(({ loadCampaignProgress, saveCampaignProgress }) => {
+        const progress = loadCampaignProgress();
+        if (progress?.activeRun?.nodeMapByFloor[floorIndex]?.nodes) {
+          const mapNodes = progress.activeRun.nodeMapByFloor[floorIndex].nodes;
+          for (const node of mapNodes) {
+            if (toConvert.includes(node.id)) {
+              node.type = "battle";
+              node.label = "COMBAT";
+            }
+          }
+          saveCampaignProgress(progress);
+        }
+      });
+    } catch (e) {
+      console.warn("[OPMAP] Failed to patch campaign progress for battle density", e);
+    }
+  } catch (error) {
+    console.warn("[OPMAP] ensureBattleDensity failed:", error);
+  }
 }
 
 // ============================================================================
@@ -607,22 +768,22 @@ function computeClearedRoute(
   clearedNodeIds: string[]
 ): Set<string> {
   if (!currentRoomId) return new Set();
-  
+
   // Build graph: nodeId -> connected node IDs
   const graph = new Map<string, string[]>();
   const nodeMap = new Map<string, RoomNode>();
-  
+
   for (const node of nodes) {
     nodeMap.set(node.id, node);
     graph.set(node.id, node.connections || []);
   }
-  
+
   // Find start node (first node or node with no incoming connections)
   let startNodeId: string | null = null;
   if (nodes.length > 0) {
     startNodeId = nodes[0].id;
   }
-  
+
   // Find node with no incoming connections as start
   for (const node of nodes) {
     let hasIncoming = false;
@@ -637,17 +798,17 @@ function computeClearedRoute(
       break;
     }
   }
-  
+
   if (!startNodeId) return new Set();
-  
+
   // BFS from start to current, only using cleared nodes
   const route = new Set<string>();
   const queue: Array<{ id: string; path: string[] }> = [{ id: startNodeId, path: [startNodeId] }];
   const visited = new Set<string>();
-  
+
   while (queue.length > 0) {
     const { id, path } = queue.shift()!;
-    
+
     if (id === currentRoomId) {
       // Reconstruct route from path
       for (let i = 0; i < path.length - 1; i++) {
@@ -655,13 +816,13 @@ function computeClearedRoute(
       }
       break;
     }
-    
+
     if (visited.has(id)) continue;
     visited.add(id);
-    
+
     // Only traverse cleared nodes
     if (!clearedNodeIds.includes(id) && id !== startNodeId) continue;
-    
+
     const connections: string[] = graph.get(id) || [];
     for (const nextId of connections) {
       if (!visited.has(nextId) && (clearedNodeIds.includes(nextId) || nextId === currentRoomId)) {
@@ -669,7 +830,7 @@ function computeClearedRoute(
       }
     }
   }
-  
+
   return route;
 }
 
@@ -678,18 +839,59 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
   const operation = getCurrentOperation(state);
   const currentRoomId = operation?.currentRoomId;
   const availableNodeIds = getAvailableNodes();
-  
+
+  // Identify start/end nodes for icon overrides.
+  const startNodeId: string | null = (() => {
+    for (const node of nodes) {
+      let hasIncoming = false;
+      for (const other of nodes) {
+        if (other.connections?.includes(node.id)) {
+          hasIncoming = true;
+          break;
+        }
+      }
+      if (!hasIncoming) return node.id;
+    }
+    return nodes[0]?.id ?? null;
+  })();
+
+  const endNodeId: string | null = (() => {
+    // Prefer node with no outgoing connections.
+    for (const node of nodes) {
+      const out = node.connections || [];
+      if (out.length === 0) return node.id;
+    }
+    // Fallback: last node by progression layer.
+    let best: { id: string; layer: number } | null = null;
+    for (const node of nodes) {
+      const layer = node.position?.x ?? 0;
+      if (!best || layer > best.layer) best = { id: node.id, layer };
+    }
+    return best?.id ?? null;
+  })();
+
   // Get cleared nodes from campaign system
   const activeRun = getActiveRun();
   const clearedNodeIds = activeRun?.clearedNodeIds || nodes.filter(n => n.visited).map(n => n.id);
-  
+
   // Compute cleared route
   const clearedRoute = computeClearedRoute(nodes, currentRoomId || null, clearedNodeIds);
-  
-  let mapHtml = '<div class="opmap-nodes-container">';
-  
-  // Find max layer (x in position = progression depth) to flip for bottom-to-top
-  const maxLayer = Math.max(...nodes.map(n => n.position?.x || 0));
+
+  // Determine coordinate normalization (handles negative lanes)
+  const minY = Math.min(...nodes.map(n => n.position?.y ?? 0));
+  const maxY = Math.max(...nodes.map(n => n.position?.y ?? 0));
+  const widthInLanes = (maxY - minY) + 1;
+  const mapWidth = widthInLanes * 400 + 400;  // include margin
+
+  const minX = Math.min(...nodes.map(n => n.position?.x ?? 0));
+  const maxX = Math.max(...nodes.map(n => n.position?.x ?? 0));
+  const heightInLayers = (maxX - minX) + 1;
+  const mapHeight = heightInLayers * 300 + 300;
+
+  let mapHtml = `<div class="opmap-nodes-container" style="position: relative; width: ${mapWidth}px; height: ${mapHeight}px; padding: 0; margin: 0;">`;
+
+  // Use maxLayer for flipping for bottom-to-top if needed, or just normalize
+  const maxLayer = maxX;
 
   // Build node visibility map (fog of war)
   const revealedNodeIds = new Set<string>();
@@ -697,7 +899,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     const isCleared = clearedNodeIds.includes(node.id);
     const isCurrent = node.id === currentRoomId;
     const isAvailable = availableNodeIds.includes(node.id);
-    
+
     if (isCleared || isCurrent || isAvailable) {
       revealedNodeIds.add(node.id);
       // Also reveal adjacent nodes
@@ -709,93 +911,71 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     }
   }
 
-  // Determine start and end nodes for icon overrides
-  let startNodeId: string | null = null;
-  let endNodeId: string | null = null;
-  if (nodes.length > 0) {
-    for (const candidate of nodes) {
-      const hasIncoming = nodes.some(n => n.connections?.includes(candidate.id));
-      if (!hasIncoming) {
-        startNodeId = candidate.id;
-        break;
-      }
-    }
-    if (!startNodeId) startNodeId = nodes[0].id;
-    endNodeId = nodes[nodes.length - 1].id;
-  }
-
-  // Render connections ONLY from explicit graph edges (node.connections arrays)
-  // Track rendered edges to avoid duplicates
+  // Render connections as a SINGLE SVG overlay layer.
+  // This avoids sub-SVG offset math issues that can make lines appear "off to the side".
   const renderedEdges = new Set<string>();
-  
+  let connectionLines = "";
+
   for (const fromNode of nodes) {
     if (!fromNode.connections || !fromNode.position) continue;
-    
+
     for (const toNodeId of fromNode.connections) {
-      // Create edge ID to prevent duplicates (bidirectional check)
       const edgeId1 = `${fromNode.id}->${toNodeId}`;
       const edgeId2 = `${toNodeId}->${fromNode.id}`;
       if (renderedEdges.has(edgeId1) || renderedEdges.has(edgeId2)) continue;
       renderedEdges.add(edgeId1);
-      
+
       const toNode = nodes.find(n => n.id === toNodeId);
       if (!toNode || !toNode.position) continue;
-      
-      // Determine edge visibility and styling
+
       const fromRevealed = revealedNodeIds.has(fromNode.id);
       const toRevealed = revealedNodeIds.has(toNodeId);
+      if (!fromRevealed || !toRevealed) continue;
+
       const isOnClearedRoute = clearedRoute.has(edgeId1) || clearedRoute.has(edgeId2);
       const isBranchChoice = fromNode.id === currentRoomId && availableNodeIds.includes(toNodeId);
       const fromCleared = clearedNodeIds.includes(fromNode.id);
       const toCleared = clearedNodeIds.includes(toNodeId);
-      
-      // Only show revealed edges
-      if (!fromRevealed || !toRevealed) continue;
-      
-      // Calculate positions
-      const x1 = fromNode.position.y * 400 + 200;
+
+      // Calculate positions (normalized using minY and baseLayer)
+      const x1 = (fromNode.position.y - minY) * 400 + 200;
       const y1 = (maxLayer - fromNode.position.x) * 300 + 150;
-      const x2 = toNode.position.y * 400 + 200;
+      const x2 = (toNode.position.y - minY) * 400 + 200;
       const y2 = (maxLayer - toNode.position.x) * 300 + 150;
-      
-      // Determine edge styling
-      const edgeId = edgeId1;
+
       let strokeColor: string;
       let strokeWidth: number;
-      let edgeClass = "opmap-connection";
-      
-      // Normal styling: cleared route = gold, branch choices = amber, others = muted (Ardycia colors)
+      let extraClass = "";
+
       if (isOnClearedRoute) {
-        strokeColor = "rgba(243, 163, 16, 0.8)"; // Gold - cleared route
+        strokeColor = "rgba(243, 163, 16, 0.8)";
         strokeWidth = 3;
-        edgeClass += " opmap-connection--cleared-route";
+        extraClass = "opmap-connection--cleared-route";
       } else if (isBranchChoice) {
-        strokeColor = "rgba(235, 156, 101, 0.9)"; // Amber - available choice
+        strokeColor = "rgba(235, 156, 101, 0.9)";
         strokeWidth = 3;
-        edgeClass += " opmap-connection--branch-choice";
+        extraClass = "opmap-connection--branch-choice";
       } else if (fromCleared && toCleared) {
-        strokeColor = "rgba(128, 109, 78, 0.4)"; // Brown - cleared but not on route
+        strokeColor = "rgba(128, 109, 78, 0.4)";
         strokeWidth = 2;
-        edgeClass += " opmap-connection--cleared-off-route";
+        extraClass = "opmap-connection--cleared-off-route";
       } else {
-        strokeColor = "rgba(88, 81, 80, 0.3)"; // Charcoal - known but untraveled
+        strokeColor = "rgba(88, 81, 80, 0.3)";
         strokeWidth = 1.5;
-        edgeClass += " opmap-connection--unexplored";
+        extraClass = "opmap-connection--unexplored";
       }
-      
-      const left = Math.min(x1, x2);
-      const top = Math.min(y1, y2);
-      const width = Math.abs(x2 - x1) || 1;
-      const height = Math.abs(y2 - y1) || 1;
-      mapHtml += `
-        <svg class="${edgeClass}" data-edge-from="${fromNode.id}" data-edge-to="${toNodeId}" style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}px; height: ${height}px; pointer-events: none; z-index: 0;">
-          <line x1="${x1 - left}" y1="${y1 - top}"
-                x2="${x2 - left}" y2="${y2 - top}"
-                stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" />
-        </svg>
+
+      connectionLines += `
+        <line class="opmap-connection ${extraClass}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" />
       `;
     }
   }
+
+  mapHtml += `
+    <svg class="opmap-connection-layer" style="position:absolute; left:0; top:0; width:${mapWidth}px; height:${mapHeight}px; pointer-events:none; z-index:0; overflow:visible;">
+      ${connectionLines}
+    </svg>
+  `;
 
   // Render nodes
   nodes.forEach((node, index) => {
@@ -803,13 +983,26 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     const isCurrent = node.id === currentRoomId;
     const isAvailable = availableNodeIds.includes(node.id);
     const isRevealed = revealedNodeIds.has(node.id);
-    const isLocked = !isRevealed && !isCurrent && !isAvailable;
 
-    const icon = getRoomIcon(node.type, node);
+    // Check if captured (for key rooms)
+    const keyRoomsByFloor = activeRun?.keyRoomsByFloor || {};
+    const floorKeyRooms = keyRoomsByFloor[activeRun?.floorIndex ?? 0] || [];
+    const isCapturedKeyRoom = (node as any).isKeyRoom && floorKeyRooms.some(kr => kr.roomNodeId === node.id);
+
+    const isCombatType = node.type === "battle" || node.type === "elite" || node.type === "boss";
+    // Combat nodes or key rooms are completed if visited/captured
+    const isCompletedNode = isVisited && (isCombatType || isCapturedKeyRoom);
+
+    // Locked for click purposes if: unrevealed OR completed (prevents re-entering)
+    const isLocked = (!isRevealed && !isCurrent && !isAvailable) || isCompletedNode;
+
+    // Icon overrides for start/end
+    const icon = getRoomIcon(node.type, {
+      ...node,
+      isStart: startNodeId === node.id,
+      isEnd: endNodeId === node.id,
+    });
     const typeLabel = getRoomTypeLabel(node.type, node);
-    const isStart = startNodeId === node.id;
-    const isEnd = endNodeId === node.id;
-    const displayIcon = isStart ? "🚀" : isEnd ? "🏁" : icon;
 
     // Status classes
     let statusClass = '';
@@ -819,16 +1012,18 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     else if (isRevealed) statusClass = 'opmap-node--revealed';
     else statusClass = 'opmap-node--locked';
 
+    if (isCompletedNode) statusClass += ' opmap-node--completed';
+
     // Room type class
     const typeClass = `opmap-node--${node.type || 'unknown'}`;
 
-    // Calculate position (center node on its position, matching connection endpoints)
-    const nodeX = (node.position?.y || 0) * 400 + 200; // Center of 400px column
-    const nodeY = (maxLayer - (node.position?.x || 0)) * 300 + 150; // Center of 300px row
+    // Calculate position (normalized)
+    const nodeX = ((node.position?.y ?? 0) - minY) * 400 + 200;
+    const nodeY = (maxLayer - (node.position?.x ?? 0)) * 300 + 150;
 
     // Determine node shape based on room type
     const shapeClass = getNodeShapeClass(node.type);
-    
+
     mapHtml += `
       <div class="opmap-node-wrapper" style="position: absolute; left: ${nodeX}px; top: ${nodeY}px; transform: translate(-50%, -50%);">
         <div class="opmap-node ${statusClass} ${typeClass} ${shapeClass}"
@@ -840,7 +1035,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
              data-room-type-label="${typeLabel}">
           ${isRevealed ? `
             <div class="opmap-node-shape">
-              <span class="opmap-node-icon-small">${displayIcon}</span>
+              <span class="opmap-node-icon-small">${icon}</span>
             </div>
             <div class="opmap-node-label-compact">${node.label}</div>
           ` : `
@@ -853,7 +1048,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
       </div>
     `;
   });
-  
+
   mapHtml += '</div>';
   return mapHtml;
 }
@@ -863,11 +1058,15 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
 /**
  * Render Key Room status summary
  */
-function renderKeyRoomStatus(floorIndex: number): string {
-  const activeRun = getActiveRun();
-  const keyRooms = activeRun
-    ? Object.values(activeRun.keyRoomsByFloor || {}).flat()
-    : getKeyRoomsForFloor(floorIndex);
+function renderKeyRoomStatus(currentFloorIndex: number): string {
+  // Show all captured key rooms from previous floors too (still accessible).
+  const keyRoomsByFloor: Array<{ floorIndex: number; rooms: ReturnType<typeof getKeyRoomsForFloor> }> = [];
+  for (let i = 0; i <= currentFloorIndex; i++) {
+    const rooms = getKeyRoomsForFloor(i);
+    if (rooms.length > 0) keyRoomsByFloor.push({ floorIndex: i, rooms });
+  }
+
+  const keyRooms = keyRoomsByFloor.flatMap(x => x.rooms);
 
   if (keyRooms.length === 0) {
     return "";
@@ -898,7 +1097,12 @@ function renderKeyRoomStatus(floorIndex: number): string {
         ${hasDelayed && !hasUnderAttack ? '<span class="opmap-keyroom-delayed">⏸ DELAYED</span>' : ""}
       </div>
       <div class="opmap-keyroom-list">
-        ${keyRooms.map(kr => renderKeyRoomItem(kr)).join("")}
+        ${keyRoomsByFloor.map(group => `
+          <div class="opmap-keyroom-floor-group">
+            <div class="opmap-keyroom-floor-title">FLOOR ${group.floorIndex + 1}</div>
+            ${group.rooms.map(kr => renderKeyRoomItem(kr, group.floorIndex)).join("")}
+          </div>
+        `).join("")}
       </div>
       <div class="opmap-keyroom-resources">
         <span class="opmap-keyroom-resources-label">Stored:</span>
@@ -916,7 +1120,7 @@ function renderKeyRoomStatus(floorIndex: number): string {
  * Render individual key room item
  */
 
-function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUnderAttack?: boolean; isDelayed?: boolean }): string {
+function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUnderAttack?: boolean; isDelayed?: boolean }, floorIndex: number): string {
   const facilityConfig = FACILITY_CONFIG[keyRoom.facility as keyof typeof FACILITY_CONFIG];
   const facilityName = facilityConfig?.name || keyRoom.facility;
 
@@ -938,18 +1142,69 @@ function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUn
         ${statusIcon ? `<span class="opmap-keyroom-status-icon">${statusIcon}</span>` : ""}
       </div>
       <div class="opmap-keyroom-item-actions">
-        <button class="opmap-keyroom-btn opmap-keyroom-btn--access" data-keyroom-id="${keyRoom.roomNodeId}" data-action="access">
+        <button class="opmap-keyroom-btn opmap-keyroom-btn--access" data-keyroom-id="${keyRoom.roomNodeId}" data-floor-index="${floorIndex}" data-action="access">
           <span class="btn-icon">📋</span>
           <span class="btn-label">ACCESS</span>
         </button>
-        <button class="opmap-keyroom-btn opmap-keyroom-btn--reinforce" data-keyroom-id="${keyRoom.roomNodeId}" data-action="reinforce">
+        <button class="opmap-keyroom-btn opmap-keyroom-btn--reinforce" data-keyroom-id="${keyRoom.roomNodeId}" data-floor-index="${floorIndex}" data-action="reinforce">
           <span class="btn-icon">🛡️</span>
           <span class="btn-label">REINFORCE</span>
         </button>
-        <button class="opmap-keyroom-btn opmap-keyroom-btn--field" data-keyroom-id="${keyRoom.roomNodeId}" data-action="field">
+        <button class="opmap-keyroom-btn opmap-keyroom-btn--field" data-keyroom-id="${keyRoom.roomNodeId}" data-floor-index="${floorIndex}" data-action="field">
           <span class="btn-icon">🌍</span>
           <span class="btn-label">FIELD MODE</span>
         </button>
+      </div>
+    </div>
+  `;
+}
+
+function getRoomDescription(node: RoomNode): string {
+  if ((node as any).isKeyRoom) return "A vital strategic location. Capture to establish a Forward Command Post.";
+
+  switch (node.type) {
+    case "battle": return "Standard hostile engagement. Defeat all enemies to proceed.";
+    case "elite": return "A dangerous encounter with improved enemy units. High risk, high reward.";
+    case "boss": return "A massive threat blocking the path forward. Prepare for a final showdown.";
+    case "treasure": return "A cache of valuable equipment or field modifications.";
+    case "event": return "A point of interest. Something unexpected may happen.";
+    case "shop": return "Trade your resources for equipment and supplies.";
+    case "rest": return "A safe spot to recover HP and regroup.";
+    case "tavern": return "A place to meet weary travelers and potentially recruit new allies.";
+    case "field_node": return "An open area suitable for exploration and resource gathering.";
+    default: return "An uncharted room in the chaos core.";
+  }
+}
+
+function updateContextPanel(node: RoomNode | null, _allNodes: RoomNode[], operation: any, _floor: any): void {
+  const panelBody = document.getElementById("opmapContextBody");
+  if (!panelBody) return;
+
+  if (!node) {
+    panelBody.innerHTML = `
+      <div class="opmap-context-default">
+        <div class="opmap-context-description">${operation.description || "Neutralize the chaos threat."}</div>
+        <div class="opmap-context-hint">Hover over a node to view its details.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const statusHtml = node.visited ? '<span class="node-status-visited">VISITED</span>' : '<span class="node-status-available">AVAILABLE</span>';
+  const icon = getRoomIcon(node.type, node);
+  const typeLabel = getRoomTypeLabel(node.type, node);
+
+  panelBody.innerHTML = `
+    <div class="opmap-context-node">
+      <div class="opmap-context-node-header">
+        <div class="opmap-context-node-icon">${icon}</div>
+        <div class="opmap-context-node-titles">
+          <div class="opmap-context-node-label">${node.label}</div>
+          <div class="opmap-context-node-type">${typeLabel} · ${statusHtml}</div>
+        </div>
+      </div>
+      <div class="opmap-context-node-body">
+        <div class="opmap-context-node-description">${getRoomDescription(node)}</div>
       </div>
     </div>
   `;
@@ -960,6 +1215,10 @@ function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUn
 // ============================================================================
 
 function getRoomIcon(type?: RoomType, room?: any): string {
+  // Start/end overrides (avoid using 🛏️ for both)
+  if (room?.isStart) return "🚪";
+  if (room?.isEnd) return "🏁";
+
   // Check for Key Room flag first
   if (room?.isKeyRoom) {
     return "🔑";
@@ -1024,44 +1283,6 @@ function getNodeShapeClass(type?: RoomType): string {
   }
 }
 
-function updateContextPanel(
-  node: RoomNode | null,
-  _nodes: RoomNode[],
-  operation: any,
-  floor: any
-): void {
-  const panel = document.getElementById("opmapContextBody");
-  if (!panel) return;
-
-  if (!node) {
-    panel.innerHTML = `
-      <div class="opmap-context-default">
-        <div class="opmap-context-description">${operation.description}</div>
-        <div class="opmap-context-hint">Hover or click a node to view details</div>
-      </div>
-    `;
-    return;
-  }
-
-  const typeLabel = getRoomTypeLabel(node.type, node);
-  const status = node.visited ? "Cleared" : "Unvisited";
-  const icon = getRoomIcon(node.type, node);
-
-  panel.innerHTML = `
-    <div class="opmap-context-node">
-      <div class="opmap-context-node-header">
-        <span class="opmap-context-node-icon">${icon}</span>
-        <div>
-          <div class="opmap-context-node-title">${node.label}</div>
-          <div class="opmap-context-node-subtitle">${typeLabel}</div>
-        </div>
-      </div>
-      <div class="opmap-context-node-status">Status: ${status}</div>
-      <div class="opmap-context-node-floor">Floor: ${floor.name}</div>
-    </div>
-  `;
-}
-
 // ============================================================================
 // EVENT LISTENERS
 // ============================================================================
@@ -1079,49 +1300,38 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   root.querySelector("#resetPanBtn")?.addEventListener("click", () => {
     resetPan();
   });
-  // Units button -> roster
-  root.querySelector("#opmapUnitsBtn")?.addEventListener("click", () => {
-    renderRosterScreen("operation");
-  });
-
-  // Advance button
-  root.querySelector("#opmapAdvanceBtn")?.addEventListener("click", () => {
-    campaignAdvanceFloor();
-    syncCampaignToGameState();
-    renderOperationMapScreen();
-  });
 
   // Abandon button
   const abandonBtn = root.querySelector("#opmapAbandonBtn") as HTMLButtonElement | null;
   console.log("[OPMAP] Looking for abandon button, found:", abandonBtn);
-  
+
   if (abandonBtn) {
     console.log("[OPMAP] Attaching click handlers to abandon button");
-    
+
     // Approach 1: Direct onclick
-    abandonBtn.onclick = function(e) {
+    abandonBtn.onclick = function (e) {
       e.stopPropagation();
       e.preventDefault();
       console.log("[OPMAP] Abandon button clicked (onclick)!");
       handleAbandon();
     };
-    
+
     // Approach 2: addEventListener
-    abandonBtn.addEventListener("click", function(e) {
+    abandonBtn.addEventListener("click", function (e) {
       e.stopPropagation();
       e.preventDefault();
       console.log("[OPMAP] Abandon button clicked (addEventListener)!");
       handleAbandon();
     });
-    
+
     // Approach 3: mousedown as fallback
-    abandonBtn.addEventListener("mousedown", function() {
+    abandonBtn.addEventListener("mousedown", function () {
       console.log("[OPMAP] Abandon button mousedown detected!");
     });
   } else {
     console.warn("[OPMAP] Abandon button NOT found in DOM!");
   }
-  
+
   function handleAbandon() {
     if (confirm("Abandon this operation? Progress will be lost.")) {
       cleanupPanHandlers();
@@ -1136,60 +1346,57 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   const operation = getCurrentOperation(state);
   const floor = operation ? getCurrentFloor(operation) : null;
   const availableNodeIds = getAvailableNodes();
-  const activeRun = getActiveRun();
-  const clearedNodeIds = activeRun?.clearedNodeIds || operation?.clearedNodeIds || [];
-  
+
   if (operation && floor) {
     root.addEventListener("mouseenter", (e) => {
-    const target = e.target as HTMLElement;
-    const nodeEl = target.closest(".opmap-node") as HTMLElement;
-    if (!nodeEl) return;
-    
-    const roomId = nodeEl.getAttribute("data-room-id");
-    if (!roomId || !operation || !floor) return;
-    
-    const node = (floor.nodes || floor.rooms || []).find(n => n.id === roomId);
-    if (node) {
-      updateContextPanel(node, floor.nodes || floor.rooms || [], operation, floor);
-      nodeEl.classList.add("opmap-node--hovered");
-    }
-  }, true);
+      const target = e.target as HTMLElement;
+      const nodeEl = target.closest(".opmap-node") as HTMLElement;
+      if (!nodeEl) return;
 
-  root.addEventListener("mouseleave", (e) => {
-    const target = e.target as HTMLElement;
-    const nodeEl = target.closest(".opmap-node") as HTMLElement;
-    if (nodeEl) {
-      nodeEl.classList.remove("opmap-node--hovered");
-      // Optionally reset to default, or keep last hovered node visible
-    }
-  }, true);
+      const roomId = nodeEl.getAttribute("data-room-id");
+      if (!roomId || !operation || !floor) return;
 
-  // Clicking on available nodes to enter
-  root.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const nodeEl = target.closest(".opmap-node") as HTMLElement;
-    if (!nodeEl) return;
-    
-    e.stopPropagation();
-    e.preventDefault();
-    
-    const roomId = nodeEl.getAttribute("data-room-id");
-    const isLocked = nodeEl.getAttribute("data-is-locked") === "true";
-    
-    if (roomId && !isLocked) {
-      const isAvailable = availableNodeIds.includes(roomId);
-      const isCleared = clearedNodeIds.includes(roomId);
-      if (isAvailable && !isCleared) {
-        enterRoom(roomId);
-      } else {
-        // Invalid action - provide feedback
-        nodeEl.classList.add("opmap-node--invalid-click");
-        setTimeout(() => {
-          nodeEl.classList.remove("opmap-node--invalid-click");
-        }, 300);
+      const node = (floor.nodes || floor.rooms || []).find(n => n.id === roomId);
+      if (node) {
+        updateContextPanel(node, floor.nodes || floor.rooms || [], operation, floor);
+        nodeEl.classList.add("opmap-node--hovered");
       }
-    }
-  }, true);
+    }, true);
+
+    root.addEventListener("mouseleave", (e) => {
+      const target = e.target as HTMLElement;
+      const nodeEl = target.closest(".opmap-node") as HTMLElement;
+      if (nodeEl) {
+        nodeEl.classList.remove("opmap-node--hovered");
+        // Optionally reset to default, or keep last hovered node visible
+      }
+    }, true);
+
+    // Clicking on available nodes to enter
+    root.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      const nodeEl = target.closest(".opmap-node") as HTMLElement;
+      if (!nodeEl) return;
+
+      e.stopPropagation();
+      e.preventDefault();
+
+      const roomId = nodeEl.getAttribute("data-room-id");
+      const isLocked = nodeEl.getAttribute("data-is-locked") === "true";
+
+      if (roomId && !isLocked) {
+        const isAvailable = availableNodeIds.includes(roomId);
+        if (isAvailable) {
+          enterRoom(roomId);
+        } else {
+          // Invalid action - provide feedback
+          nodeEl.classList.add("opmap-node--invalid-click");
+          setTimeout(() => {
+            nodeEl.classList.remove("opmap-node--invalid-click");
+          }, 300);
+        }
+      }
+    }, true);
   }
 
   // Initialize context panel with default state
@@ -1211,8 +1418,30 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
       e.preventDefault();
       const keyRoomId = (btn as HTMLElement).getAttribute("data-keyroom-id");
       const action = (btn as HTMLElement).getAttribute("data-action");
+      const floorIndexStr = (btn as HTMLElement).getAttribute("data-floor-index");
+      const floorIndex = floorIndexStr ? Number(floorIndexStr) : undefined;
       if (keyRoomId && action) {
-        handleKeyRoomAction(keyRoomId, action);
+        handleKeyRoomAction(keyRoomId, action, floorIndex);
+      }
+    });
+  });
+
+  // Units button handling
+  root.querySelector("#opmapUnitsBtn")?.addEventListener("click", () => {
+    console.log("[OPMAP] Units button clicked");
+    import("./RosterScreen").then(m => m.renderRosterScreen("operation"));
+  });
+
+  // Next Floor branch logic
+  root.querySelector("#opmapAdvanceBtn")?.addEventListener("click", () => {
+    console.log("[OPMAP] Advance to next floor clicked");
+    import("../../core/campaignManager").then(({ advanceToNextFloor, syncCampaignToGameState }) => {
+      try {
+        advanceToNextFloor();
+        syncCampaignToGameState();
+        renderOperationMapScreen();
+      } catch (err) {
+        console.error("[OPMAP] Failed to advance floor:", err);
       }
     });
   });
@@ -1222,18 +1451,36 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 // KEY ROOM ACTIONS
 // ============================================================================
 
-function handleKeyRoomAction(keyRoomId: string, action: string): void {
+function handleKeyRoomAction(keyRoomId: string, action: string, floorIndexHint?: number): void {
   const activeRun = getActiveRun();
   if (!activeRun) {
     console.warn("[OPMAP] No active run for key room action");
     return;
   }
 
+  // Key rooms can come from previous floors; find the matching record across all floors.
   const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
-  const allKeyRooms = Object.values(keyRoomsByFloor).flat();
-  const keyRoom = allKeyRooms.find(kr => kr.roomNodeId === keyRoomId);
+  let foundFloorIndex: number | null = (typeof floorIndexHint === "number" && !Number.isNaN(floorIndexHint)) ? floorIndexHint : null;
+  let keyRoom: any | undefined;
 
-  if (!keyRoom) {
+  if (foundFloorIndex !== null) {
+    keyRoom = (keyRoomsByFloor[foundFloorIndex] || []).find((kr: any) => kr.roomNodeId === keyRoomId);
+    if (!keyRoom) foundFloorIndex = null;
+  }
+
+  if (foundFloorIndex === null) {
+    for (const [floorIdxStr, rooms] of Object.entries(keyRoomsByFloor)) {
+      const floorIdx = Number(floorIdxStr);
+      const found = (rooms as any[]).find(kr => kr.roomNodeId === keyRoomId);
+      if (found) {
+        foundFloorIndex = floorIdx;
+        keyRoom = found;
+        break;
+      }
+    }
+  }
+
+  if (!keyRoom || foundFloorIndex === null) {
     console.warn("[OPMAP] Key room not found:", keyRoomId);
     return;
   }
@@ -1265,6 +1512,9 @@ function handleKeyRoomAction(keyRoomId: string, action: string): void {
       cleanupPanHandlers();
       // Create a field map ID for the key room
       const fieldMapId = `keyroom_${keyRoomId}` as any;
+      // Some field-mode interaction code expects a global `map` reference.
+      // Provide a best-effort shim to avoid "map is not defined" crashes.
+      (window as any).map = fieldMapId;
       renderFieldScreen(fieldMapId);
       break;
 
@@ -1280,7 +1530,7 @@ function handleKeyRoomAction(keyRoomId: string, action: string): void {
 export function markRoomVisited(roomId: string): void {
   updateGameState(prev => {
     if (!prev.operation) return prev;
-    
+
     const operation = { ...prev.operation };
     const floor = operation.floors[operation.currentFloorIndex];
 
@@ -1302,12 +1552,12 @@ export function markRoomVisited(roomId: string): void {
   try {
     clearNode(roomId);
     syncCampaignToGameState();
-    
+
     // Generate Key Room resources and check for attacks (after room cleared)
     import("../../core/keyRoomSystem").then(({ generateKeyRoomResources, applyKeyRoomPassiveEffects, rollKeyRoomAttack }) => {
       generateKeyRoomResources();
       applyKeyRoomPassiveEffects();
-      
+
       // Check for attack (async, may show UI)
       const attackResult = rollKeyRoomAttack();
       if (attackResult) {
@@ -1353,10 +1603,26 @@ function enterRoom(roomId: string): void {
     return;
   }
 
+  // Prevent re-entering completed combat nodes (especially after victory screens).
+  try {
+    const activeRun = getActiveRun();
+    const clearedNodeIds = activeRun?.clearedNodeIds || [];
+    const isCombat = room.type === "battle" || room.type === "elite" || room.type === "boss";
+    const isCapturedKeyRoom = (room as any).isKeyRoom && (activeRun?.keyRoomsByFloor?.[activeRun.floorIndex] || []).some(kr => kr.roomNodeId === room.id);
+
+    if (isCombat && clearedNodeIds.includes(roomId) && !isCapturedKeyRoom) {
+      console.log("[OPMAP] Blocking re-entry to cleared combat node:", roomId);
+      renderOperationMapScreen();
+      return;
+    }
+  } catch {
+    // ignore
+  }
+
   // Check if node is accessible (campaign system) OR if it's the next available room
   const nextIndex = getNextAvailableRoomIndex(nodes);
   const isNextRoom = nextIndex >= 0 && nextIndex < nodes.length && nodes[nextIndex].id === roomId;
-  
+
   if (!isNodeAccessible(roomId) && !isNextRoom) {
     console.warn("[OPMAP] Attempted to enter inaccessible room:", roomId, {
       isAccessible: isNodeAccessible(roomId),
@@ -1409,14 +1675,9 @@ function enterRoom(roomId: string): void {
       if (room.eventTemplate) {
         renderEventRoomScreen(room.eventTemplate);
       } else {
-        const fallback = EVENT_TEMPLATES.length ? pickRandom(EVENT_TEMPLATES).id : null;
-        if (fallback) {
-          renderEventRoomScreen(fallback);
-        } else {
-          console.error("[OPMAP] Event room missing eventTemplate");
-          markRoomVisited(roomId);
-          renderOperationMapScreen();
-        }
+        console.error("[OPMAP] Event room missing eventTemplate");
+        markRoomVisited(roomId);
+        renderOperationMapScreen();
       }
       break;
 
@@ -1449,7 +1710,7 @@ function enterBattleRoom(room: RoomNode): void {
   try {
     const state = getGameState();
     const activeRun = getActiveRun();
-    
+
     if (!activeRun) {
       console.error("[OPMAP] No active run for battle");
       return;
@@ -1463,17 +1724,17 @@ function enterBattleRoom(room: RoomNode): void {
     prepareBattleForNode(room.id);
     // Sync after preparing battle so battle screen has correct state
     syncCampaignToGameState();
-    
+
     // Get the pending battle encounter
     const updatedRun = getActiveRun();
     if (!updatedRun || !updatedRun.pendingBattle) {
       console.error("[OPMAP] Failed to prepare battle");
       return;
     }
-    
+
     const encounter = updatedRun.pendingBattle.encounterDefinition;
     const encounterSeed = updatedRun.pendingBattle.encounterSeed;
-    
+
     // Create battle from encounter with seed for deterministic cover generation
     const battle = createBattleFromEncounter(state, encounter, encounterSeed);
 
@@ -1501,7 +1762,7 @@ function enterKeyRoom(room: RoomNode): void {
   try {
     const state = getGameState();
     const activeRun = getActiveRun();
-    
+
     if (!activeRun) {
       console.error("[OPMAP] No active run for key room");
       return;
@@ -1511,7 +1772,7 @@ function enterKeyRoom(room: RoomNode): void {
     const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
     const floorKeyRooms = keyRoomsByFloor[activeRun.floorIndex] || [];
     const isCaptured = floorKeyRooms.some(kr => kr.roomNodeId === room.id);
-    
+
     if (isCaptured) {
       // Already captured - just mark as visited and return to map
       markRoomVisited(room.id);
@@ -1527,7 +1788,7 @@ function enterKeyRoom(room: RoomNode): void {
     // Prepare battle for this node (generates encounter)
     prepareBattleForNode(room.id);
     syncCampaignToGameState();
-    
+
     // Get the pending battle encounter
     const updatedRun = getActiveRun();
     if (!updatedRun || !updatedRun.pendingBattle) {
@@ -1536,10 +1797,10 @@ function enterKeyRoom(room: RoomNode): void {
       renderOperationMapScreen();
       return;
     }
-    
+
     const encounter = updatedRun.pendingBattle.encounterDefinition;
     const encounterSeed = updatedRun.pendingBattle.encounterSeed;
-    
+
     // Create battle from encounter with seed for deterministic cover generation
     const battle = createBattleFromEncounter(state, encounter, encounterSeed);
 

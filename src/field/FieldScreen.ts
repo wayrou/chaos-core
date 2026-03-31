@@ -19,6 +19,7 @@ import { showDialogue } from "../ui/screens/DialogueScreen";
 import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource, SpawnResult } from "./spawnResolver";
+import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 
 // ============================================================================
 // STATE
@@ -123,7 +124,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     // Determine requested spawn position
     let requestedX: number;
     let requestedY: number;
-    
+
     if (mapId === "quarters") {
       // Spawn in the middle bottom of the walkable area
       // Quarters is 10x8, walkable area is x:1-8, y:1-6
@@ -134,12 +135,10 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       requestedX = spawnTileX * tileSize + tileSize / 2;
       requestedY = spawnTileY * tileSize + tileSize / 2;
     } else if (mapId === "base_camp") {
-      // Spawn outside quarters node
-      // Quarters station is at x:25, y:12 (size 2x2)
-      // Quarters interaction zone is at x:25, y:14 (size 2x1)
-      // Spawn to the left of quarters interaction zone at x:23, y:14 (center of tile)
-      requestedX = 23 * tileSize + tileSize / 2;
-      requestedY = 14 * tileSize + tileSize / 2;
+      // Quarters station is at x:7, y:3 (size 2x2)
+      // Spawn in front of quarters
+      requestedX = 7 * tileSize + tileSize / 2;
+      requestedY = 5 * tileSize + tileSize / 2;
     } else {
       // Default: center of map (avoiding edge tiles which are typically walls)
       // Use floor to ensure we're not on the right edge (width-1) or bottom edge (height-1)
@@ -148,7 +147,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       requestedX = centerTileX * tileSize + tileSize / 2;
       requestedY = centerTileY * tileSize + tileSize / 2;
     }
-    
+
     // Use spawn resolver for all maps except quarters (quarters has known-good spawn)
     if (mapId === "quarters") {
       playerX = requestedX;
@@ -173,17 +172,17 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
         currentMap,
         { x: requestedX, y: requestedY }
       );
-      
+
       playerX = spawnResult.x;
       playerY = spawnResult.y;
       lastSpawnResult = spawnResult;
-      
+
       // Validate final result - this should never fail, but log if it does
       if (!spawnResult.passable) {
         console.error(`[SPAWN] CRITICAL: Resolved spawn is not passable! This should never happen.`);
         console.error(`[SPAWN] Resolved tile: (${spawnResult.tileX}, ${spawnResult.tileY}), Map size: ${currentMap.width}x${currentMap.height}`);
       }
-      
+
       // Explicit check for right wall spawn (should never happen)
       if (spawnResult.tileX === currentMap.width - 1) {
         console.error(`[SPAWN] CRITICAL: Player spawned on right wall! Tile X: ${spawnResult.tileX}, Map width: ${currentMap.width}`);
@@ -213,11 +212,11 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
         controlledUnitIds: [],
       },
     };
-    
+
     // Always update position for quarters, FCP maps (keyroom_*), or initialize if missing
     const isFCPMap = typeof mapId === "string" && mapId.startsWith("keyroom_");
     const shouldUpdatePosition = mapId === "quarters" || isFCPMap || !players.P1.avatar;
-    
+
     return {
       ...s,
       players: {
@@ -255,7 +254,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   } else {
     // Initialize Sable near player
     const companion = createCompanion(playerX - 40, playerY - 40);
-    
+
     // Initialize NPCs for Base Camp (Headline 15b)
     const npcs: import("./types").FieldNpc[] = [];
     if (mapId === "base_camp") {
@@ -274,7 +273,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
         createNpc("npc_sentinel", "Sentinel", 18 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_sentinel")
       );
     }
-    
+
     fieldState = {
       currentMap: mapId,
       player: createPlayerAvatar(playerX, playerY),
@@ -365,9 +364,9 @@ function render(): void {
   };
   const p1Avatar = players.P1.avatar;
   const p2Avatar = players.P2.active ? players.P2.avatar : null;
-  
+
   let playerHtml = "";
-  
+
   // P1 Avatar (always present)
   if (p1Avatar) {
     playerHtml += `
@@ -378,7 +377,7 @@ function render(): void {
       </div>
     `;
   }
-  
+
   // P2 Avatar (if active)
   if (p2Avatar) {
     playerHtml += `
@@ -393,9 +392,8 @@ function render(): void {
   // Sable companion (Headline 15a)
   const companionHtml = fieldState.companion ? `
     <div class="field-companion field-companion-sable" 
-         style="left: ${fieldState.companion.x - fieldState.companion.width / 2}px; top: ${
-    fieldState.companion.y - fieldState.companion.height / 2
-  }px; width: ${fieldState.companion.width}px; height: ${fieldState.companion.height}px;"
+         style="left: ${fieldState.companion.x - fieldState.companion.width / 2}px; top: ${fieldState.companion.y - fieldState.companion.height / 2
+    }px; width: ${fieldState.companion.width}px; height: ${fieldState.companion.height}px;"
          data-facing="${fieldState.companion.facing}" data-state="${fieldState.companion.state}">
       <div class="field-companion-sprite">🐕</div>
     </div>
@@ -426,7 +424,7 @@ function render(): void {
     if (existingPanel) {
       root.appendChild(existingPanel);
     }
-    
+
     fieldRoot = document.createElement("div");
     fieldRoot.className = "field-root";
     root.insertBefore(fieldRoot, root.firstChild);
@@ -454,7 +452,7 @@ function render(): void {
   `;
 
   centerViewportOnPlayer();
-  
+
   // Re-attach wheel listener if needed (viewport is recreated on each render)
   const viewport = fieldRoot.querySelector(".field-viewport");
   if (viewport) {
@@ -471,14 +469,14 @@ function centerViewportOnPlayer(): void {
 
   const viewportRect = viewport.getBoundingClientRect();
   const mapElement = map as HTMLElement;
-  
+
   const state = getGameState();
   const p1Avatar = state.players.P1.avatar;
   const p2Avatar = state.players.P2.active ? state.players.P2.avatar : null;
-  
+
   let centerX: number;
   let centerY: number;
-  
+
   if (p2Avatar && p1Avatar) {
     // Center between both avatars
     centerX = (p1Avatar.x + p2Avatar.x) / 2;
@@ -631,7 +629,7 @@ function updateAllNodesPanelContent(): void {
           </button>
           <button class="all-nodes-btn" data-action="gear-workbench">
             <span class="btn-icon">🔧</span>
-            <span class="btn-label">GEAR WORKBENCH</span>
+            <span class="btn-label">WORKSHOP</span>
           </button>
           <button class="all-nodes-btn" data-action="port">
             <span class="btn-icon">⚓</span>
@@ -757,7 +755,7 @@ function setupGlobalListeners(): void {
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);
   document.addEventListener("click", handleFieldObjectClick, true);
-  
+
   // Also add document-level click handler for All Nodes button as fallback
   document.addEventListener("click", handleAllNodesButtonClick, true);
 
@@ -774,7 +772,7 @@ function handleWheelZoom(e: WheelEvent): void {
   // Only zoom if we're over the viewport
   const viewport = document.querySelector(".field-viewport");
   if (!viewport || !fieldState) return;
-  
+
   const target = e.target as HTMLElement;
   if (!viewport.contains(target) && target !== viewport) return;
 
@@ -784,12 +782,12 @@ function handleWheelZoom(e: WheelEvent): void {
   // Determine zoom direction
   const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
   const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fieldZoom + delta));
-  
+
   if (newZoom === fieldZoom) return; // No change
-  
+
   // Update zoom
   fieldZoom = newZoom;
-  
+
   // Re-center on player with new zoom level
   centerViewportOnPlayer();
 }
@@ -834,7 +832,7 @@ function handleKeyDown(e: KeyboardEvent): void {
       tryJoinAsP2();
       return;
     }
-    
+
     // K key: Drop out P2
     if (key === "k" || key === "K") {
       e.preventDefault();
@@ -955,17 +953,17 @@ function handleInteractKey(): void {
         "Hello there!",
         "This is placeholder dialogue.",
       ];
-      
+
       // Pause field movement while in dialogue
       fieldState.isPaused = true;
-      
+
       showDialogue(nearbyNpc.name, dialogueLines, () => {
         // Resume field movement after dialogue
         if (fieldState) {
           fieldState.isPaused = false;
         }
       });
-      
+
       return;
     }
   }
@@ -1017,11 +1015,7 @@ function handleNodeAction(action: string): void {
         renderShopScreen("basecamp");
       });
       break;
-    case "workshop":
-      import("../ui/screens/WorkshopScreen").then(({ renderCraftingScreen }) => {
-        renderCraftingScreen("basecamp");
-      });
-      break;
+
     case "roster":
       import("../ui/screens/RosterScreen").then(({ renderRosterScreen }) => {
         renderRosterScreen("basecamp");
@@ -1043,8 +1037,8 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "tavern":
-      import("../ui/screens/RecruitmentScreen").then(({ renderRecruitmentScreen }) => {
-        renderRecruitmentScreen("basecamp");
+      import("../ui/screens/TavernDialogueScreen").then(({ renderTavernDialogueScreen }) => {
+        renderTavernDialogueScreen("base_camp_tavern", "Tavern", "basecamp");
       });
       break;
     case "ops-terminal":
@@ -1127,7 +1121,7 @@ function gameLoop(currentTime: number): void {
     };
     const p1 = players.P1;
     const p2 = players.P2;
-    
+
     // Update P1 avatar movement
     if (p1.active && p1.avatar) {
       const p1Input = getPlayerInput("P1");
@@ -1138,7 +1132,7 @@ function gameLoop(currentTime: number): void {
         right: p1Input.right,
         dash: p1Input.special1,
       };
-      
+
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p1PlayerAvatar = {
         x: p1.avatar.x,
@@ -1148,14 +1142,14 @@ function gameLoop(currentTime: number): void {
         speed: 240,
         facing: p1.avatar.facing,
       };
-      
+
       let newP1Avatar = updatePlayerMovement(
         p1PlayerAvatar,
         p1MovementInput,
         currentMap,
         deltaTime,
       );
-      
+
       // Apply tether constraint if P2 is active
       if (p2.active && p2.avatar) {
         const constrained = applyTetherConstraint(
@@ -1166,7 +1160,7 @@ function gameLoop(currentTime: number): void {
         newP1Avatar.x = constrained.x;
         newP1Avatar.y = constrained.y;
       }
-      
+
       // Update P1 avatar in game state
       updateGameState(s => ({
         ...s,
@@ -1183,7 +1177,7 @@ function gameLoop(currentTime: number): void {
         },
       }));
     }
-    
+
     // Update P2 avatar movement
     if (p2.active && p2.avatar) {
       const p2Input = getPlayerInput("P2");
@@ -1194,7 +1188,7 @@ function gameLoop(currentTime: number): void {
         right: p2Input.right,
         dash: p2Input.special1,
       };
-      
+
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p2PlayerAvatar = {
         x: p2.avatar.x,
@@ -1204,14 +1198,14 @@ function gameLoop(currentTime: number): void {
         speed: 240,
         facing: p2.avatar.facing,
       };
-      
+
       let newP2Avatar = updatePlayerMovement(
         p2PlayerAvatar,
         p2MovementInput,
         currentMap,
         deltaTime,
       );
-      
+
       // Apply tether constraint (P2 constrained by P1)
       if (p1.active && p1.avatar) {
         const constrained = applyTetherConstraint(
@@ -1222,7 +1216,7 @@ function gameLoop(currentTime: number): void {
         newP2Avatar.x = constrained.x;
         newP2Avatar.y = constrained.y;
       }
-      
+
       // Update P2 avatar in game state
       updateGameState(s => ({
         ...s,
@@ -1239,7 +1233,7 @@ function gameLoop(currentTime: number): void {
         },
       }));
     }
-    
+
     // Update legacy fieldState.player for backward compatibility (use P1 position)
     const updatedState = getGameState();
     if (updatedState.players.P1.avatar) {
@@ -1273,7 +1267,7 @@ function gameLoop(currentTime: number): void {
     // Update NPCs (Headline 15b)
     if (fieldState.npcs && currentMap) {
       const map = currentMap; // Type narrowing
-      fieldState.npcs = fieldState.npcs.map(npc => 
+      fieldState.npcs = fieldState.npcs.map(npc =>
         updateNpc(npc, map, deltaTime, currentTime)
       );
     }
@@ -1319,7 +1313,7 @@ function stopGameLoop(): void {
 // EXIT
 // ============================================================================
 
-export function exitFieldMode(): void {
+export function exitFieldMode(returnToOpMap?: boolean): void {
   stopGameLoop();
   cleanupGlobalListeners();
 
@@ -1330,5 +1324,9 @@ export function exitFieldMode(): void {
   }
 
   isPanelOpen = false;
-  renderAllNodesMenuScreen();
+  if (returnToOpMap) {
+    renderOperationMapScreen();
+  } else {
+    renderAllNodesMenuScreen();
+  }
 }

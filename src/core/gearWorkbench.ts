@@ -1,5 +1,5 @@
 // ============================================================================
-// CHAOS CORE - GEAR WORKBENCH SYSTEM (Headline 11da)
+// CHAOS CORE - WORKSHOP SYSTEM (Headline 11da)
 // Card slotting, library management, and deck compilation
 // ============================================================================
 
@@ -85,7 +85,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Next attack gains +2 ACC.",
     strainCost: 1,
   },
-  
+
   // ==================== ATTACK CARDS ====================
   card_power_strike: {
     id: "card_power_strike",
@@ -135,7 +135,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Deal 4 damage to ALL adjacent enemies.",
     strainCost: 3,
   },
-  
+
   // ==================== DEFENSE CARDS ====================
   card_brace: {
     id: "card_brace",
@@ -169,7 +169,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Gain +4 DEF but cannot move next turn.",
     strainCost: 2,
   },
-  
+
   // ==================== MOBILITY CARDS ====================
   card_dash: {
     id: "card_dash",
@@ -195,7 +195,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Teleport behind target enemy.",
     strainCost: 2,
   },
-  
+
   // ==================== BUFF CARDS ====================
   card_rally: {
     id: "card_rally",
@@ -221,7 +221,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Gain +3 ATK but take 2 damage.",
     strainCost: 2,
   },
-  
+
   // ==================== DEBUFF CARDS ====================
   card_weaken: {
     id: "card_weaken",
@@ -255,7 +255,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Target enemy cannot use cards next turn.",
     strainCost: 3,
   },
-  
+
   // ==================== STEAM TECH CARDS ====================
   card_steam_burst: {
     id: "card_steam_burst",
@@ -297,7 +297,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     description: "Absorb next attack. Add its damage as heat.",
     strainCost: 2,
   },
-  
+
   // ==================== CHAOS CARDS ====================
   card_chaos_bolt: {
     id: "card_chaos_bolt",
@@ -405,14 +405,14 @@ export function getDefaultGearSlots(equipmentId: string, equipment?: any): GearS
       };
     }
   }
-  
+
   // Weapons get more slots, armor gets fewer (legacy/fallback)
   const isWeapon = equipmentId.startsWith("weapon_") || equipmentId.startsWith("built_weapon_");
   const isAccessory = equipmentId.startsWith("accessory_") || equipmentId.startsWith("built_accessory_");
-  
+
   // Default locked cards based on equipment
   const lockedCards = getEquipmentLockedCards(equipmentId);
-  
+
   return {
     lockedCards,
     freeSlots: isWeapon ? 3 : isAccessory ? 1 : 2,
@@ -432,19 +432,19 @@ function getEquipmentLockedCards(equipmentId: string): string[] {
     weapon_emberclaw_repeater: ["card_steam_burst", "card_vent"],
     weapon_blazefang_saber: ["card_strike", "card_steam_burst"],
     weapon_brassback_scattergun: ["card_steam_burst"],
-    
+
     // Armor
     armor_ironguard_helm: ["card_brace"],
     armor_rangers_hood: ["card_focus"],
     armor_steelplate_cuirass: ["card_guard", "card_brace"],
     armor_leather_jerkin: ["card_dash"],
-    
+
     // Accessories
     accessory_steel_signet_ring: ["card_focus"],
     accessory_fleetfoot_anklet: ["card_dash"],
     accessory_steam_valve_wristguard: ["card_vent"],
   };
-  
+
   return lockedCardMap[equipmentId] ?? [];
 }
 
@@ -499,8 +499,8 @@ export function filterLibraryCards(
     if (filters.category && card.category !== filters.category) return false;
     if (filters.search) {
       const search = filters.search.toLowerCase();
-      if (!card.name.toLowerCase().includes(search) && 
-          !card.description.toLowerCase().includes(search)) {
+      if (!card.name.toLowerCase().includes(search) &&
+        !card.description.toLowerCase().includes(search)) {
         return false;
       }
     }
@@ -522,7 +522,7 @@ export function slotCard(
   if (gearSlots.slottedCards.length >= gearSlots.freeSlots) {
     return null; // No free slots
   }
-  
+
   return {
     ...gearSlots,
     slottedCards: [...gearSlots.slottedCards, cardId],
@@ -538,7 +538,7 @@ export function unslotCard(
 ): GearSlotData {
   const newSlotted = [...gearSlots.slottedCards];
   newSlotted.splice(slotIndex, 1);
-  
+
   return {
     ...gearSlots,
     slottedCards: newSlotted,
@@ -569,18 +569,18 @@ export function compileDeck(
   equippedGearSlots: GearSlotData[]
 ): CompiledDeck {
   const allCards: string[] = [];
-  
+
   equippedGearSlots.forEach(gear => {
     allCards.push(...gear.lockedCards);
     allCards.push(...gear.slottedCards);
   });
-  
+
   // Count cards
   const cardCounts: Record<string, number> = {};
   allCards.forEach(cardId => {
     cardCounts[cardId] = (cardCounts[cardId] ?? 0) + 1;
   });
-  
+
   return {
     cards: allCards,
     cardCounts,
@@ -611,17 +611,17 @@ export function getDeckPreview(compiled: CompiledDeck): string[] {
 export function openPAK(pakId: string): string[] {
   const pak = PAK_DATABASE[pakId];
   if (!pak) return [];
-  
+
   const cards: string[] = [];
   const availableCards = Object.values(LIBRARY_CARD_DATABASE);
-  
+
   for (let i = 0; i < pak.cardCount; i++) {
     // Determine rarity based on weights
     const rarity = rollRarity(pak.rarityWeights);
-    
+
     // Get cards of that rarity
     const rarityCards = availableCards.filter(c => c.rarity === rarity);
-    
+
     // Also filter by PAK type for themed packs
     let filteredCards = rarityCards;
     if (pak.type === "STEAM") {
@@ -631,26 +631,26 @@ export function openPAK(pakId: string): string[] {
     } else if (pak.type === "TECH") {
       filteredCards = rarityCards.filter(c => c.category === "attack" || c.category === "utility" || c.category === "buff");
     }
-    
+
     // Fallback to all cards of that rarity if filter is too restrictive
     if (filteredCards.length === 0) {
       filteredCards = rarityCards;
     }
-    
+
     // Pick random card
     if (filteredCards.length > 0) {
       const randomIndex = Math.floor(Math.random() * filteredCards.length);
       cards.push(filteredCards[randomIndex].id);
     }
   }
-  
+
   return cards;
 }
 
 function rollRarity(weights: PAKFile["rarityWeights"]): CardRarity {
   const total = weights.common + weights.uncommon + weights.rare + weights.epic + weights.legendary;
   let roll = Math.random() * total;
-  
+
   if (roll < weights.common) return "common";
   roll -= weights.common;
   if (roll < weights.uncommon) return "uncommon";
@@ -666,13 +666,13 @@ function rollRarity(weights: PAKFile["rarityWeights"]): CardRarity {
  */
 export function generateBattleRewardCards(enemyCount: number): string[] {
   const cards: string[] = [];
-  
+
   // 1 guaranteed common
   const commons = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "common");
   if (commons.length > 0) {
     cards.push(commons[Math.floor(Math.random() * commons.length)].id);
   }
-  
+
   // 30% chance for uncommon
   if (Math.random() < 0.3) {
     const uncommons = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "uncommon");
@@ -680,7 +680,7 @@ export function generateBattleRewardCards(enemyCount: number): string[] {
       cards.push(uncommons[Math.floor(Math.random() * uncommons.length)].id);
     }
   }
-  
+
   // 10% chance for rare (increased with more enemies)
   if (Math.random() < 0.1 + (enemyCount * 0.02)) {
     const rares = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "rare");
@@ -688,7 +688,7 @@ export function generateBattleRewardCards(enemyCount: number): string[] {
       cards.push(rares[Math.floor(Math.random() * rares.length)].id);
     }
   }
-  
+
   return cards;
 }
 

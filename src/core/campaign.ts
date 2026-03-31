@@ -9,7 +9,7 @@ import { OperationRun, Floor, RoomNode } from "./types";
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type OperationId = 
+export type OperationId =
   | "op_iron_gate"
   | "op_black_spire"
   | "op_ghost_run"
@@ -103,6 +103,12 @@ export interface KeyRoomState {
   storedResources: Partial<Record<ResourceType, number>>;
   isUnderAttack: boolean;
   isDelayed: boolean;
+  // Controlled Rooms extensions
+  threatLevel: number; // 0-100
+  fortificationLevel: number; // 0-3
+  distancePenalty: number; // effectiveness % (e.g. 100, 85, 70)
+  upkeepFailed: boolean;
+  captureFloorIndex: number;
 }
 
 export interface OperationDefinition {
@@ -217,7 +223,7 @@ export function loadCampaignProgress(): CampaignProgress {
   } catch (error) {
     console.error("[CAMPAIGN] Failed to load progress:", error);
   }
-  
+
   return createDefaultCampaignProgress();
 }
 
@@ -264,7 +270,7 @@ export function isOperationUnlocked(
   if (operationId === "op_custom") {
     return progress.unlockedOperations.includes("op_iron_gate");
   }
-  
+
   return progress.unlockedOperations.includes(operationId);
 }
 
@@ -289,12 +295,12 @@ export function unlockNextOperation(
   if (!opDef || !opDef.unlocksNextOperationId) {
     return progress;
   }
-  
+
   const nextOpId = opDef.unlocksNextOperationId;
   if (progress.unlockedOperations.includes(nextOpId)) {
     return progress; // Already unlocked
   }
-  
+
   return {
     ...progress,
     unlockedOperations: [...progress.unlockedOperations, nextOpId],
@@ -311,12 +317,12 @@ export function completeOperation(
   if (progress.completedOperations.includes(operationId)) {
     return progress; // Already completed
   }
-  
+
   const updated = {
     ...progress,
     completedOperations: [...progress.completedOperations, operationId],
   };
-  
+
   // Unlock next operation
   return unlockNextOperation(operationId, updated);
 }

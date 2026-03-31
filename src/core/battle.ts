@@ -24,6 +24,10 @@ import {
   WeaponRuntimeState,
   createWeaponRuntimeState,
   passiveCooling,
+  rollWeaponHit,
+  rollWeaponNodeHit,
+  damageNode,
+  WEAPON_NODE_NAMES,
 } from "./weaponSystem";
 
 // STEP 6 & 7: Import gear workbench functions
@@ -48,7 +52,7 @@ import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerC
 import { getCoverDamageReduction } from "./coverGenerator";
 
 // Import unlockable system (for battle rewards)
-import { getRewardEligibleUnlockables, getUnownedUnlockables, getUnlockableById } from "./unlockables";
+import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIds } from "./unlockableOwnership";
 
 // ----------------------------------------------------------------------------
@@ -56,6 +60,25 @@ import { getAllOwnedUnlockableIds } from "./unlockableOwnership";
 // ----------------------------------------------------------------------------
 
 export type TerrainType = "floor" | "wall" | "light_cover" | "heavy_cover" | "rubble" | "hazard";
+
+export type StatusEffectType =
+  | "stunned"
+  | "dazed"
+  | "immobilized"
+  | "rooted"
+  | "suppressed"
+  | "weakened"
+  | "vulnerable"
+  | "guarded"
+  | "marked"
+  | "burning"
+  | "poisoned";
+
+export interface StatusEffect {
+  type: StatusEffectType;
+  duration: number; // usually 1 for single round/turn effects
+  sourceId?: string; // e.g. who Marked this unit
+}
 
 export interface Vec2 {
   x: number;
@@ -100,6 +123,7 @@ export interface BattleUnitState {
     amount: number;
     duration: number;
   }>;
+  statuses?: StatusEffect[];
   // Weapon system (14b)
   equippedWeaponId: string | null;
   weaponState: WeaponRuntimeState | null;
@@ -184,6 +208,80 @@ export function getLoadPenalties(state: BattleState): LoadPenaltyFlags | null {
 }
 
 // ----------------------------------------------------------------------------
+// STATUS EFFECTS
+// ----------------------------------------------------------------------------
+
+export function hasStatus(unit: BattleUnitState, type: StatusEffectType): boolean {
+  if (!unit.statuses) return false;
+  return unit.statuses.some(s => s.type === type);
+}
+
+export function addStatus(
+  state: BattleState,
+  unitId: UnitId,
+  type: StatusEffectType,
+  duration: number = 1,
+  sourceId?: string
+): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) return state;
+
+  const currentStatuses = unit.statuses || [];
+
+  // Rule: same status doesn't stack unless stated; reapplying refreshes duration.
+  const existingIndex = currentStatuses.findIndex(s => s.type === type);
+
+  let newStatuses = [...currentStatuses];
+  if (existingIndex >= 0) {
+    newStatuses[existingIndex] = { ...newStatuses[existingIndex], duration: Math.max(newStatuses[existingIndex].duration, duration) };
+  } else {
+    newStatuses.push({ type, duration, sourceId });
+  }
+
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: { ...unit, statuses: newStatuses }
+    }
+  };
+}
+
+export function removeStatus(
+  state: BattleState,
+  unitId: UnitId,
+  type: StatusEffectType
+): BattleState {
+  const unit = state.units[unitId];
+  if (!unit || !unit.statuses) return state;
+
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: { ...unit, statuses: unit.statuses.filter(s => s.type !== type) }
+    }
+  };
+}
+
+export function removeAllStatusesFromSource(
+  state: BattleState,
+  sourceId: string
+): BattleState {
+  let nextState = { ...state };
+  for (const unitId of Object.keys(nextState.units)) {
+    const unit = nextState.units[unitId];
+    if (unit.statuses && unit.statuses.some(s => s.sourceId === sourceId)) {
+      nextState.units[unitId] = {
+        ...unit,
+        statuses: unit.statuses.filter(s => s.sourceId !== sourceId)
+      };
+    }
+  }
+  return nextState;
+}
+
+// ----------------------------------------------------------------------------
 // GRID CREATION
 // ----------------------------------------------------------------------------
 
@@ -254,7 +352,8 @@ export function createBattleUnitState(
 
     // Collect all equipped gear IDs
     const equippedGearIds: string[] = [];
-    if (loadout.weapon) equippedGearIds.push(loadout.weapon);
+    if (loadout.primaryWeapon) equippedGearIds.push(loadout.primaryWeapon);
+    if (loadout.secondaryWeapon) equippedGearIds.push(loadout.secondaryWeapon);
     if (loadout.helmet) equippedGearIds.push(loadout.helmet);
     if (loadout.chestpiece) equippedGearIds.push(loadout.chestpiece);
     if (loadout.accessory1) equippedGearIds.push(loadout.accessory1);
@@ -319,9 +418,9 @@ export function createBattleUnitState(
         // Note: movement bonus is handled separately in movement logic
 
         // Get mount cards and validate them
-        const mountCards = validateMountCards(mount.grantedCards);
-        if (mountCards.length > 0) {
-          deckCards = [...deckCards, ...mountCards];
+        const validCards = validateMountCards(mount.grantedCards);
+        if (validCards.length > 0) {
+          deckCards = [...deckCards, ...validCards];
         }
 
         // Store mount info for battle reference
@@ -349,10 +448,10 @@ export function createBattleUnitState(
   let equippedWeaponId: string | null = null;
   let weaponState: WeaponRuntimeState | null = null;
 
-  if (!opts.isEnemy && loadout.weapon) {
-    const weapon = equipment[loadout.weapon];
+  if (!opts.isEnemy && loadout.primaryWeapon) {
+    const weapon = equipment[loadout.primaryWeapon];
     if (weapon && weapon.slot === "weapon") {
-      equippedWeaponId = loadout.weapon;
+      equippedWeaponId = loadout.primaryWeapon;
       weaponState = createWeaponRuntimeState(weapon as WeaponEquipment);
     }
   }
@@ -397,7 +496,8 @@ export function createBattleUnitState(
 export function computeTurnOrder(
   units: Record<UnitId, BattleUnitState>
 ): UnitId[] {
-  const entries = Object.values(units);
+  // Only units with a position and HP > 0 can be in the turn order
+  const entries = Object.values(units).filter(u => u.pos != null && u.hp > 0);
   entries.sort((a, b) => {
     if (b.agi !== a.agi) {
       return b.agi - a.agi;
@@ -415,12 +515,12 @@ export function computeTurnOrder(
 
 export const BASE_STRAIN_THRESHOLD = 6;
 
-export function getStrainThreshold(unit: BattleUnitState): number {
+export function getStrainThreshold(): number {
   return BASE_STRAIN_THRESHOLD;
 }
 
 export function isOverStrainThreshold(unit: BattleUnitState): boolean {
-  return unit.strain >= getStrainThreshold(unit);
+  return unit.strain >= getStrainThreshold();
 }
 
 export function applyStrain(
@@ -444,8 +544,8 @@ export function applyStrain(
     },
   };
 
-  const wasOver = oldStrain >= getStrainThreshold(unit);
-  const nowOver = newStrain >= getStrainThreshold(updated);
+  const wasOver = oldStrain >= getStrainThreshold();
+  const nowOver = newStrain >= getStrainThreshold();
 
   if (!wasOver && nowOver) {
     next = appendBattleLog(
@@ -470,6 +570,9 @@ export function advanceTurn(state: BattleState): BattleState {
   let newState = state;
   if (state.activeUnitId && state.units[state.activeUnitId]) {
     const currentUnit = state.units[state.activeUnitId];
+    // If unit is stunned, they don't discard hand because they skip turn logic usually, but here they just get 1 action. 
+    // Wait, GDD: "Stunned: You can take only 1 action on your turn". We'll handle action limits in the UI/Card Handler.
+    // For now, normal discard.
     if (!currentUnit.isEnemy && currentUnit.hand.length > 0) {
       // Move all cards from hand to discard pile
       const newUnits = { ...state.units };
@@ -543,8 +646,8 @@ export function advanceTurn(state: BattleState): BattleState {
       strain: cooledStrain,
     };
 
-    const wasOver = oldStrain >= getStrainThreshold(u);
-    const nowOver = cooledStrain >= getStrainThreshold(cooledUnit);
+    const wasOver = oldStrain >= getStrainThreshold();
+    const nowOver = cooledStrain >= getStrainThreshold();
 
     let cooledState: BattleState = {
       ...newState,
@@ -654,6 +757,109 @@ export function advanceTurn(state: BattleState): BattleState {
     newState = drawCardsForTurn(newState, newState.units[nextActiveId]);
   }
 
+  // CRITICAL: Final check for battle outcome at the end of every turn advancement
+  newState = evaluateBattleOutcome(newState);
+
+  // --- UPDATE PHASE BASED ON NEXT UNIT ---
+  if (newState.phase !== "victory" && newState.phase !== "defeat") {
+    const nextUnitState = nextActiveId ? newState.units[nextActiveId] : null;
+    newState = {
+      ...newState,
+      phase: nextUnitState?.isEnemy ? "enemy_turn" : "player_turn",
+    };
+  }
+
+  // --- STATUS EFFECT END-OF-ROUND TICK (POISON) ---
+  if (isNewRound) {
+    for (const unitId of newState.turnOrder) {
+      const u = newState.units[unitId];
+      if (hasStatus(u, "poisoned")) {
+        // Poison: At end of round, suffer 1 damage and gain 1 Strain.
+        const newHp = Math.max(0, u.hp - 1);
+        newState = {
+          ...newState,
+          units: {
+            ...newState.units,
+            [unitId]: { ...newState.units[unitId], hp: newHp }
+          }
+        };
+        newState = applyStrain(newState, newState.units[unitId], 1);
+        newState = appendBattleLog(newState, `SLK//STATUS :: ${u.name} suffers 1 structural damage from POISON.`);
+
+        if (newHp <= 0) {
+          newState = evaluateBattleOutcome(newState);
+        }
+      }
+
+      // Clear specific end-of-round statuses: Dazed, Vulnerable, Guarded
+      if (u.statuses) {
+        let nextStatuses = u.statuses.map(s => {
+          if (["dazed", "vulnerable", "guarded"].includes(s.type)) {
+            return { ...s, duration: s.duration - 1 };
+          }
+          return s;
+        }).filter(s => s.duration > 0);
+
+        newState = {
+          ...newState,
+          units: {
+            ...newState.units,
+            [unitId]: { ...newState.units[unitId], statuses: nextStatuses }
+          }
+        }
+      }
+    }
+  }
+
+  // --- STATUS EFFECT START/END-OF-TURN TICK (BURNING) ---
+  if (newState.activeUnitId) {
+    const activeUnit = newState.units[newState.activeUnitId];
+    if (hasStatus(activeUnit, "burning")) {
+      // Burning: Take 1 damage at end of your turn (we do it implicitly on rotation, or when it becomes active if that's easier. GDD says "end of your turn")
+      // Actually we're processing end-of-turn for the PREVIOUS unit, so let's check currentIndex
+      if (currentIndex !== -1) {
+        const prevUnitId = state.turnOrder[currentIndex];
+        const prevUnit = state.units[prevUnitId];
+        if (prevUnit && prevUnit.hp > 0 && hasStatus(prevUnit, "burning")) {
+          const bHp = Math.max(0, prevUnit.hp - 1);
+          newState = {
+            ...newState,
+            units: {
+              ...newState.units,
+              [prevUnitId]: { ...newState.units[prevUnitId], hp: bHp }
+            }
+          };
+          newState = appendBattleLog(newState, `SLK//STATUS :: ${prevUnit.name} suffers 1 thermal damage from BURNING.`);
+          if (bHp <= 0) {
+            newState = evaluateBattleOutcome(newState);
+          }
+        }
+      }
+    }
+
+    // Clear Stunned at end of NEXT turn - if they are stunned, decrement it now
+    if (currentIndex !== -1) {
+      const prevUnitId = state.turnOrder[currentIndex];
+      const prevUnit = state.units[prevUnitId];
+      if (prevUnit && prevUnit.statuses) {
+        const nextStatuses = prevUnit.statuses.map(s => {
+          if (s.type === "stunned" || s.type === "suppressed") {
+            return { ...s, duration: s.duration - 1 };
+          }
+          return s;
+        }).filter(s => s.duration > 0);
+
+        newState = {
+          ...newState,
+          units: {
+            ...newState.units,
+            [prevUnitId]: { ...newState.units[prevUnitId], statuses: nextStatuses }
+          }
+        }
+      }
+    }
+  }
+
   return newState;
 }
 
@@ -692,14 +898,14 @@ export function getEquippedWeapon(
   equipmentById?: Record<string, Equipment>
 ): WeaponEquipment | null {
   if (!unit.equippedWeaponId) return null;
-  
+
   const equipment = equipmentById || getAllStarterEquipment();
   const weapon = equipment[unit.equippedWeaponId];
-  
+
   if (weapon && weapon.slot === "weapon") {
     return weapon as WeaponEquipment;
   }
-  
+
   return null;
 }
 
@@ -713,7 +919,7 @@ export function updateUnitWeaponState(
 ): BattleState {
   const unit = state.units[unitId];
   if (!unit) return state;
-  
+
   return {
     ...state,
     units: {
@@ -851,11 +1057,23 @@ export function canUnitMoveTo(
 ): boolean {
   if (!unit.pos) return false;
 
+  // Status Check: Immobilized units cannot move
+  if (hasStatus(unit, "immobilized")) return false;
+
   const dx = Math.abs(unit.pos.x - dest.x);
   const dy = Math.abs(unit.pos.y - dest.y);
   const distance = dx + dy;
 
   if (distance === 0 || distance > unit.agi) return false;
+
+  // Status Check: Rooted units cannot move vertically (climb)
+  if (hasStatus(unit, "rooted")) {
+    const startTile = getTileAt(state, unit.pos.x, unit.pos.y);
+    const endTile = getTileAt(state, dest.x, dest.y);
+    if (startTile && endTile && (startTile.elevation ?? 0) !== (endTile.elevation ?? 0)) {
+      return false;
+    }
+  }
 
   return isWalkableTile(state, dest);
 }
@@ -897,7 +1115,7 @@ export function getMovePath(
       // Reconstruct path
       const path: Vec2[] = [];
       let node: { x: number; y: number; cost: number; parent: string | null } | undefined = current;
-      
+
       while (node) {
         path.unshift({ x: node.x, y: node.y });
         if (node.parent) {
@@ -906,7 +1124,7 @@ export function getMovePath(
           node = undefined;
         }
       }
-      
+
       return path;
     }
 
@@ -926,6 +1144,15 @@ export function getMovePath(
       // Check if already visited with lower cost
       const existing = visited.get(key);
       if (existing && existing.cost <= newCost) continue;
+
+      // Status Check: Rooted units cannot climb
+      if (hasStatus(state.units[state.activeUnitId!], "rooted")) {
+        const startTile = getTileAt(state, current.x, current.y);
+        const endTile = getTileAt(state, nx, ny);
+        if (startTile && endTile && (startTile.elevation ?? 0) !== (endTile.elevation ?? 0)) {
+          continue;
+        }
+      }
 
       // Check if tile is walkable
       if (!isWalkableTile(state, { x: nx, y: ny })) continue;
@@ -977,6 +1204,11 @@ export function moveUnit(
     `SLK//MOVE   :: ${unit.name} repositions to (${dest.x}, ${dest.y}).`
   );
 
+  // Suppressed status clears if unit moves
+  if (hasStatus(unit, "suppressed")) {
+    next = removeStatus(next, unitId, "suppressed");
+  }
+
   return next;
 }
 
@@ -992,11 +1224,24 @@ export function canUnitAttackTarget(
   return arePositionsAdjacent(attacker.pos, target.pos);
 }
 
-export function computeHitChance(unit: BattleUnitState): number {
-  let baseChance = unit.acc;
+export function computeHitChance(attacker: BattleUnitState, defender?: BattleUnitState, isRanged: boolean = false): number {
+  let baseChance = attacker.acc;
 
-  if (isOverStrainThreshold(unit)) {
+  if (isOverStrainThreshold(attacker)) {
     baseChance -= 20;
+  }
+
+  // Status Effects
+  if (hasStatus(attacker, "dazed")) {
+    baseChance -= 10; // -1 die equivalent
+  }
+
+  if (isRanged && hasStatus(attacker, "suppressed")) {
+    baseChance -= 10; // -1 die equivalent for ranged
+  }
+
+  if (defender && defender.statuses && defender.statuses.some(s => s.type === "marked" && s.sourceId === attacker.id)) {
+    baseChance += 10; // +1 die equivalent vs marked
   }
 
   return Math.max(10, Math.min(100, baseChance));
@@ -1037,7 +1282,12 @@ export function attackUnit(
   }
 
   // Accuracy check - apply mount intimidate penalty if defender has intimidate
-  let hitChance = computeHitChance(attacker);
+  // Note: we'll assume basic attacks are melee for now regarding suppression logic unless we peek at their weapon.
+  // We'll pass isRanged=false as default. 
+  const equipWpn = getEquippedWeapon(attacker);
+  const isRanged = equipWpn ? ["gun", "bow", "greatbow"].includes(equipWpn.weaponType) : false;
+
+  let hitChance = computeHitChance(attacker, defender, isRanged);
   const intimidatePenalty = getIntimidateAccuracyPenalty(attacker, defender);
   if (intimidatePenalty !== 0) {
     hitChance = Math.max(10, hitChance + intimidatePenalty);
@@ -1059,8 +1309,8 @@ export function attackUnit(
   const totalDefBuff =
     defender.buffs?.length
       ? defender.buffs
-          .filter((b) => b.type === "def_up")
-          .reduce((sum, b) => sum + b.amount, 0)
+        .filter((b) => b.type === "def_up")
+        .reduce((sum, b) => sum + b.amount, 0)
       : 0;
 
   // Cover damage reduction (if defender is on cover tile)
@@ -1073,10 +1323,25 @@ export function attackUnit(
   // Mount armored damage reduction
   const armoredReduction = getArmoredDamageReduction(defender);
 
-  const rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction + armoredReduction);
-  const damage = rawDamage <= 0 ? 1 : rawDamage;
+  let rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction + armoredReduction);
 
-  const newHp = defender.hp - damage;
+  // Apply Status Effects (Weakened / Vulnerable / Guarded)
+  if (hasStatus(attacker, "weakened")) {
+    rawDamage -= 1;
+  }
+
+  if (hasStatus(defender, "guarded")) {
+    rawDamage -= 1; // +1 Defense equivalent
+  }
+
+  if (hasStatus(defender, "vulnerable")) {
+    rawDamage += 1;
+  }
+
+  // Let's use standard calculation but ensure it plays nice with the new statuses
+  const finalDamage = Math.max((rawDamage <= 0 && !hasStatus(attacker, "weakened") ? 1 : rawDamage), 0);
+
+  const newHp = defender.hp - finalDamage;
   const isKill = newHp <= 0;
   const isCrit = false; // TODO: Add crit detection
 
@@ -1094,7 +1359,7 @@ export function attackUnit(
     };
     next = appendBattleLog(
       next,
-      `SLK//HIT   :: ${attacker.name} hits ${defender.name} for ${damage} - TARGET OFFLINE.`
+      `SLK//HIT   :: ${attacker.name} hits ${defender.name} for ${finalDamage} - TARGET OFFLINE.`
     );
   } else {
     const updatedDefender: BattleUnitState = {
@@ -1111,12 +1376,40 @@ export function attackUnit(
     };
     next = appendBattleLog(
       next,
-      `SLK//HIT   :: ${attacker.name} hits ${defender.name} for ${damage} (HP ${newHp}/${defender.maxHp}).`
+      `SLK//HIT   :: ${attacker.name} hits ${defender.name} for ${finalDamage} (HP ${newHp}/${defender.maxHp}).`
     );
   }
 
+  // Vulnerable ends after suffering damage once
+  if (finalDamage > 0 && hasStatus(defender, "vulnerable")) {
+    next = removeStatus(next, defenderId, "vulnerable");
+  }
+
+  // Guarded is consumed when used vs an attack
+  if (hasStatus(defender, "guarded")) {
+    next = removeStatus(next, defenderId, "guarded");
+  }
+
   // Trigger Field Mod: hit (and crit if applicable)
-  next = triggerHit(next, attackerId, defenderId, damage, isCrit, 0);
+  next = triggerHit(next, attackerId, defenderId, finalDamage, isCrit, 0);
+
+  // --- WEAPON DEGRADATION (Node Damage on Hit) ---
+  const currentDefender = next.units[defenderId];
+  if (currentDefender && currentDefender.weaponState && !isKill) {
+    if (rollWeaponHit(isCrit)) {
+      const hitNode = rollWeaponNodeHit();
+      const damagedState = damageNode(currentDefender.weaponState, hitNode);
+      next = updateUnitWeaponState(next, defenderId, damagedState);
+
+      const nodeName = WEAPON_NODE_NAMES[hitNode].primary;
+      const severity = damagedState.nodes[hitNode].toUpperCase();
+
+      next = appendBattleLog(
+        next,
+        `SLK//DMG   :: [${currentDefender.name}] ${nodeName} struck. [${severity}]`
+      );
+    }
+  }
 
   // Trigger Field Mod: kill (if target died)
   if (isKill) {
@@ -1166,17 +1459,17 @@ export function performEnemyTurn(state: BattleState): BattleState {
   const updateFacing = (s: BattleState, unitId: string, targetPos: Vec2): BattleState => {
     const unit = s.units[unitId];
     if (!unit || !unit.pos) return s;
-    
+
     const dx = targetPos.x - unit.pos.x;
     const dy = targetPos.y - unit.pos.y;
     let newFacing: "north" | "south" | "east" | "west" = unit.facing;
-    
+
     if (Math.abs(dx) >= Math.abs(dy)) {
       newFacing = dx > 0 ? "east" : "west";
     } else {
       newFacing = dy > 0 ? "south" : "north";
     }
-    
+
     if (newFacing !== unit.facing) {
       const newUnits = { ...s.units };
       newUnits[unitId] = { ...unit, facing: newFacing };
@@ -1257,20 +1550,20 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
   // Score and find best playable card
   // Use card resolution from BattleScreen (we'll need to import or duplicate logic)
   const playableCards: Array<{ cardId: CardId; index: number; score: number; cardName: string }> = [];
-  
+
   for (let i = 0; i < unit.hand.length; i++) {
     const cardId = unit.hand[i];
     // Simple scoring: prefer attack cards, avoid wait cards
     let score = 0;
     const cardName = cardId.toLowerCase();
-    
+
     // Check if it's a wait/end turn card
     if (cardName.includes("wait") || cardName === "core_wait") {
       score = -100;
     } else {
       // Base score for playable cards
       score = 50;
-      
+
       // Check if it targets enemies
       if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot")) {
         score += 50; // Prefer attack cards
@@ -1281,13 +1574,13 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
           score += 5; // Standard damage
         }
       }
-      
+
       // Check for debuffs
       if (cardName.includes("debuff") || cardName.includes("stun")) {
         score += 10;
       }
     }
-    
+
     playableCards.push({ cardId, index: i, score, cardName });
   }
 
@@ -1295,21 +1588,21 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
   playableCards.sort((a, b) => b.score - a.score);
 
   // Try to play the best card
-  for (const { cardId, index, cardName } of playableCards) {
+  for (const { index, cardName } of playableCards) {
     if (playableCards[0].score <= 0) break; // Don't play negative score cards
-    
+
     // Find best target for this card
     // For enemy-targeting cards, use nearest enemy
     if (nearestEnemy.pos) {
       const distance = Math.abs(unit.pos.x - nearestEnemy.pos.x) + Math.abs(unit.pos.y - nearestEnemy.pos.y);
-      
+
       // Try to play card on nearest enemy
       // Use playCard function which handles card resolution
       if (cardName.includes("wait") || cardName === "core_wait") {
         // Wait card - play on self
         return playCard(state, unitId, index, unitId);
-      } else if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot") || 
-                 cardName.includes("headbutt") || cardName.includes("charge")) {
+      } else if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot") ||
+        cardName.includes("headbutt") || cardName.includes("charge")) {
         // Attack card - check range and play
         // Assume range 1-6 for most attack cards
         if (distance <= 6) {
@@ -1327,17 +1620,17 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
     if (nearestEnemy.pos && unit.agi > 0) {
       const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
       const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
-      
+
       const candidate1 = { x: unit.pos.x + dx, y: unit.pos.y };
       const candidate2 = { x: unit.pos.x, y: unit.pos.y + dy };
-      
+
       if (dx !== 0 && canUnitMoveTo(state, unit, candidate1)) {
         return moveUnit(state, unitId, candidate1);
       } else if (dy !== 0 && canUnitMoveTo(state, unit, candidate2)) {
         return moveUnit(state, unitId, candidate2);
       }
     }
-    
+
     // Can't move, end turn
     return advanceTurn(state);
   }
@@ -1348,10 +1641,10 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
     if (distance > 1 && unit.agi > 0) {
       const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
       const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
-      
+
       const candidate1 = { x: unit.pos.x + dx, y: unit.pos.y };
       const candidate2 = { x: unit.pos.x, y: unit.pos.y + dy };
-      
+
       if (dx !== 0 && canUnitMoveTo(state, unit, candidate1)) {
         return moveUnit(state, unitId, candidate1);
       } else if (dy !== 0 && canUnitMoveTo(state, unit, candidate2)) {
@@ -1365,18 +1658,18 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
 }
 
 // ----------------------------------------------------------------------------
-// BATTLE OUTCOME
-// ----------------------------------------------------------------------------
-
 export function evaluateBattleOutcome(state: BattleState): BattleState {
   if (state.phase === "victory" || state.phase === "defeat") {
     return state;
   }
 
+  // Check typical clear: all enemies defeated
+  let isWin = false;
+  const count = Object.values(state.units).filter((u) => u.isEnemy).length;
   const units = Object.values(state.units);
-  // Only count units with hp > 0 (alive units)
-  const anyPlayers = units.some(u => isPlayerUnit(u) && u.hp > 0);
-  const anyEnemies = units.some(u => isEnemyUnit(u) && u.hp > 0);
+  // Only count units with hp > 0 AND a valid position (alive and present on grid)
+  const anyPlayers = units.some(u => isPlayerUnit(u) && u.hp > 0 && u.pos != null);
+  const anyEnemies = units.some(u => isEnemyUnit(u) && u.hp > 0 && u.pos != null);
 
   // DEFEAT: All player units dead
   if (!anyPlayers) {
@@ -1428,7 +1721,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       recipe: null,
       unlockable: null,
     } : generateBattleRewards(state);
-    
+
     if (isTraining) {
       console.warn("[TRAINING_NO_REWARDS] blocked reward generation");
     }
@@ -1443,16 +1736,16 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
 
     const logMessages = isTraining
       ? [
-          ...state.log,
-          "SLK//TRAIN :: Training simulation complete. No rewards granted.",
-        ]
+        ...state.log,
+        "SLK//TRAIN :: Training simulation complete. No rewards granted.",
+      ]
       : [
-          ...state.log,
-          "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
-          `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components.`,
-          ...(cardLog ? [cardLog] : []),
-        ];
-    
+        ...state.log,
+        "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
+        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components.`,
+        ...(cardLog ? [cardLog] : []),
+      ];
+
     return {
       ...state,
       phase: "victory",
@@ -1525,9 +1818,8 @@ function generateBattleRewards(state: BattleState) {
     try {
       const owned = getAllOwnedUnlockableIds();
       const allOwnedIds = [...owned.chassis, ...owned.doctrines];
-      const eligible = getRewardEligibleUnlockables();
       const unowned = getUnownedUnlockables(allOwnedIds);
-      
+
       if (unowned.length === 0) {
         unlockableReward = null;
       } else {
@@ -1535,10 +1827,10 @@ function generateBattleRewards(state: BattleState) {
         const common = unowned.filter(u => u.rarity === "common");
         const uncommon = unowned.filter(u => u.rarity === "uncommon");
         const rare = unowned.filter(u => u.rarity === "rare" || u.rarity === "epic");
-        
+
         const roll = Math.random();
         let pool: typeof unowned;
-        
+
         if (roll < 0.6 && common.length > 0) {
           pool = common;
         } else if (roll < 0.9 && uncommon.length > 0) {
@@ -1548,7 +1840,7 @@ function generateBattleRewards(state: BattleState) {
         } else {
           pool = unowned;
         }
-        
+
         const selected = pool[Math.floor(Math.random() * pool.length)];
         unlockableReward = selected ? selected.id : null;
       }
@@ -1646,11 +1938,11 @@ export function createTestBattleForCurrentParty(
   // Width: 4-8, Height: 3-6
   const gridWidth = Math.floor(Math.random() * (8 - 4 + 1)) + 4;
   const gridHeight = Math.floor(Math.random() * (6 - 3 + 1)) + 3;
-  
+
   // Generate random elevation map
   const maxElevation = 3;
   const elevationMap = generateElevationMap(gridWidth, gridHeight, maxElevation);
-  
+
   const tiles = createGrid(gridWidth, gridHeight, elevationMap);
   const maxUnitsPerSide = calculateMaxUnitsPerSide(gridWidth, gridHeight);
 
@@ -1753,28 +2045,11 @@ export function createTestBattleForCurrentParty(
 
     for (let i = 0; i < enemyCount; i++) {
       const enemyId = `enemy_grunt_${i + 1}`;
-      // Initial desired position
-      let yPos = Math.floor((gridHeight / enemyCount) * i + 1);
-      yPos = Math.max(0, Math.min(gridHeight - 1, yPos));
-      let enemyPos: Vec2 = { x: gridWidth - 1, y: yPos };
-
-      // Find nearest walkable tile on the right edge if blocked
-      if (!isWalkableTile({ ...battle, units, gridWidth, gridHeight } as BattleState, enemyPos)) {
-        const rightEdgeTiles = tiles
-          .filter(t => t.pos.x === gridWidth - 1 && t.terrain !== "wall")
-          .map(t => t.pos)
-          .sort((a, b) => Math.abs(a.y - yPos) - Math.abs(b.y - yPos));
-        const fallback = rightEdgeTiles.find(pos => isWalkableTile({ ...battle, units, gridWidth, gridHeight } as BattleState, pos));
-        if (fallback) {
-          enemyPos = fallback;
-        }
-      }
-
       units[enemyId] = createBattleUnitState(
         { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
-        { 
-          isEnemy: true, 
-          pos: enemyPos, 
+        {
+          isEnemy: true,
+          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) }
         },
         equipmentById,
         modulesById
@@ -1868,7 +2143,7 @@ export function playCard(
     const newHp = Math.max(0, target.hp - finalDamage);
     updatedTarget = { ...updatedTarget, hp: newHp };
     newLog.push(`SLK//DMG :: ${target.name} takes ${finalDamage} damage. (HP: ${newHp}/${target.maxHp})`);
-    
+
     if (newHp <= 0) {
       newLog.push(`SLK//KILL :: ${target.name} has been eliminated!`);
     }
@@ -1972,20 +2247,15 @@ export function placeUnit(
   pos: Vec2
 ): BattleState {
   if (state.phase !== "placement") return state;
-  
+
   const unit = state.units[unitId];
   if (!unit || unit.isEnemy) return state; // Can only place friendly units
-  
+
   // Check if position is valid (left edge: x === 0)
   if (pos.x !== 0 || pos.y < 0 || pos.y >= state.gridHeight) {
     return appendBattleLog(state, `SLK//PLACE  :: Invalid placement position. Units must be placed on the left edge (x=0).`);
   }
 
-  // Ensure tile exists and is walkable
-  if (!isWalkableTile(state, pos)) {
-    return appendBattleLog(state, `SLK//PLACE  :: Tile (${pos.x}, ${pos.y}) is not walkable.`);
-  }
-  
   // Check if tile is already occupied
   const occupied = Object.values(state.units).some(
     u => u.pos && u.pos.x === pos.x && u.pos.y === pos.y && u.hp > 0
@@ -1993,27 +2263,27 @@ export function placeUnit(
   if (occupied) {
     return appendBattleLog(state, `SLK//PLACE  :: Tile (${pos.x}, ${pos.y}) is already occupied.`);
   }
-  
+
   // Check max units limit
   const placementState = state.placementState;
   if (!placementState) return state;
-  
+
   const placedCount = placementState.placedUnitIds.length;
   if (placedCount >= placementState.maxUnitsPerSide) {
     return appendBattleLog(state, `SLK//PLACE  :: Maximum units per side (${placementState.maxUnitsPerSide}) reached.`);
   }
-  
+
   // Check if already placed
   if (placementState.placedUnitIds.includes(unitId)) {
     return appendBattleLog(state, `SLK//PLACE  :: ${unit.name} is already placed.`);
   }
-  
+
   // Place the unit
   const newUnits = { ...state.units };
   newUnits[unitId] = { ...unit, pos };
-  
+
   const newPlacedIds = [...placementState.placedUnitIds, unitId];
-  
+
   return {
     ...state,
     units: newUnits,
@@ -2030,65 +2300,36 @@ export function placeUnit(
  */
 export function quickPlaceUnits(state: BattleState): BattleState {
   if (state.phase !== "placement") return state;
-  
+
   const placementState = state.placementState;
   if (!placementState) return state;
-  
+
   const friendlyUnits = Object.values(state.units).filter(u => !u.isEnemy);
   const unplacedUnits = friendlyUnits.filter(
     u => !placementState.placedUnitIds.includes(u.id) && !u.pos
   );
 
-  // Gather available walkable tiles along the left edge
-  const walkableLeftTiles = state.tiles
-    .filter(t => t.pos.x === 0 && t.terrain !== "wall")
-    .map(t => t.pos)
-    .sort((a, b) => a.y - b.y);
-
   let newState = state;
   let placedCount = placementState.placedUnitIds.length;
-  
+
   // Calculate middle Y position to center units around
   const middleY = Math.floor(newState.gridHeight / 2);
-  
+
   // Place units centered around the middle line along left edge (x = 0)
   for (let i = 0; i < unplacedUnits.length && placedCount < placementState.maxUnitsPerSide; i++) {
     const unit = unplacedUnits[i];
-    
-    // Calculate Y position: start from middle, spread outward
-    // For odd number of units: center around middle
-    // For even number: place slightly above and below middle
-    let yPos: number;
-    const totalUnits = unplacedUnits.length;
-    const offsetFromMiddle = Math.floor(i / 2);
-    const isOddIndex = i % 2 === 1;
-    
-    if (totalUnits % 2 === 1) {
-      // Odd number of units: center one on middle, others spread around
-      if (i === 0) {
-        yPos = middleY;
-      } else {
-        const direction = isOddIndex ? -1 : 1;
-        yPos = middleY + direction * Math.ceil(offsetFromMiddle);
-      }
-    } else {
-      // Even number: place around middle line
-      const direction = isOddIndex ? -1 : 1;
-      yPos = middleY + direction * (offsetFromMiddle - (isOddIndex ? 0 : 1));
-    }
-    
+
+    const offset = Math.floor((i + 1) / 2);
+    const direction = i % 2 === 1 ? -1 : 1;
+    let yPos = middleY + direction * offset;
+
     // Clamp to valid grid bounds
     yPos = Math.max(0, Math.min(newState.gridHeight - 1, yPos));
 
-    // Prefer a walkable, unoccupied tile on the left edge
-    const candidate = walkableLeftTiles.find(pos => pos.y === yPos && isWalkableTile(newState, pos));
-    const fallback = walkableLeftTiles.find(pos => isWalkableTile(newState, pos));
-    const targetPos = candidate || fallback || { x: 0, y: yPos };
-    
-    newState = placeUnit(newState, unit.id, targetPos);
-    placedCount = newState.placementState?.placedUnitIds.length ?? placedCount;
+    newState = placeUnit(newState, unit.id, { x: 0, y: yPos });
+    placedCount++;
   }
-  
+
   return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedCount - state.placementState!.placedUnitIds.length} units.`);
 }
 
@@ -2097,21 +2338,21 @@ export function quickPlaceUnits(state: BattleState): BattleState {
  */
 export function removePlacedUnit(state: BattleState, unitId: UnitId): BattleState {
   if (state.phase !== "placement") return state;
-  
+
   const unit = state.units[unitId];
   if (!unit || unit.isEnemy) return state;
-  
+
   const placementState = state.placementState;
   if (!placementState) return state;
-  
+
   if (!placementState.placedUnitIds.includes(unitId)) return state;
-  
+
   // Remove position and from placed list
   const newUnits = { ...state.units };
   newUnits[unitId] = { ...unit, pos: null };
-  
+
   const newPlacedIds = placementState.placedUnitIds.filter(id => id !== unitId);
-  
+
   return {
     ...state,
     units: newUnits,
@@ -2130,7 +2371,7 @@ export function setPlacementSelectedUnit(state: BattleState, unitId: UnitId | nu
   if (state.phase !== "placement") return state;
   const placementState = state.placementState;
   if (!placementState) return state;
-  
+
   return {
     ...state,
     placementState: {
@@ -2145,26 +2386,43 @@ export function setPlacementSelectedUnit(state: BattleState, unitId: UnitId | nu
  */
 export function confirmPlacement(state: BattleState): BattleState {
   if (state.phase !== "placement") return state;
-  
+
   const placementState = state.placementState;
   if (!placementState) return state;
-  
-  const friendlyUnits = Object.values(state.units).filter(u => !u.isEnemy);
+
   const placedCount = placementState.placedUnitIds.length;
-  
+
   // Check if all units are placed or max reached
   if (placedCount === 0) {
     return appendBattleLog(state, `SLK//PLACE  :: Please place at least one unit before confirming.`);
   }
-  
+
+  // Filter out any player units that weren't placed
+  const filteredUnits: Record<UnitId, BattleUnitState> = {};
+
+  // Keep all enemies
+  Object.entries(state.units).forEach(([id, u]) => {
+    if (u.isEnemy) {
+      filteredUnits[id] = u;
+    }
+  });
+
+  // Keep ONLY placed player units
+  placementState.placedUnitIds.forEach(id => {
+    if (state.units[id]) {
+      filteredUnits[id] = state.units[id];
+    }
+  });
+
   // Compute turn order now that all units are placed
-  const turnOrder = computeTurnOrder(state.units);
+  const turnOrder = computeTurnOrder(filteredUnits);
   const activeUnitId = turnOrder[0] ?? null;
-  
+
   // Switch to inProgress phase
   let newState: BattleState = {
     ...state,
-    phase: activeUnitId && state.units[activeUnitId]?.isEnemy ? "enemy_turn" : "player_turn",
+    units: filteredUnits, // PRUNE unplaced units so they don't get turns or interfere with outcome
+    phase: activeUnitId && filteredUnits[activeUnitId]?.isEnemy ? "enemy_turn" : "player_turn",
     turnOrder,
     activeUnitId,
     turnCount: 1,
@@ -2174,7 +2432,7 @@ export function confirmPlacement(state: BattleState): BattleState {
       `SLK//ENGAGE :: Placement confirmed. Battle begins.`,
     ],
   };
-  
+
   // Draw hand for first active unit if it's a player unit
   if (activeUnitId) {
     const firstActive = newState.units[activeUnitId];
@@ -2186,6 +2444,6 @@ export function confirmPlacement(state: BattleState): BattleState {
       );
     }
   }
-  
+
   return newState;
 }

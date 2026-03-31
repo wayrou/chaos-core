@@ -21,7 +21,7 @@ export function createBattleFromEncounter(
   // Get party units
   const partyUnitIds = gameState.partyUnitIds || [];
   const units: Record<string, BattleUnitState> = {};
-  
+
   // Create player units (without positions initially - placement phase)
   partyUnitIds.forEach(unitId => {
     const baseUnit = gameState.unitsById[unitId];
@@ -38,71 +38,56 @@ export function createBattleFromEncounter(
       );
     }
   });
-  
+
   // Create enemy units from encounter
   let enemyInstanceCounter = 0;
-  
+
   // Calculate middle Y position to center enemies around
   const middleY = Math.floor(encounter.gridHeight / 2);
   const rightEdgeX = encounter.gridWidth - 1;
-  
+
   // Calculate total number of enemies
   let totalEnemyCount = 0;
   encounter.enemyUnits.forEach(({ count }) => {
     totalEnemyCount += count;
   });
-  
+
   // Generate enemy positions centered around the middle line on right edge
   const enemyPositions: Array<{ x: number; y: number }> = [];
-  
+
   if (totalEnemyCount > 0) {
     for (let i = 0; i < totalEnemyCount; i++) {
-      // Calculate Y position: start from middle, spread outward
-      let yPos: number;
-      const offsetFromMiddle = Math.floor(i / 2);
-      const isOddIndex = i % 2 === 1;
-      
-      if (totalEnemyCount % 2 === 1) {
-        // Odd number of enemies: center one on middle, others spread around
-        if (i === 0) {
-          yPos = middleY;
-        } else {
-          const direction = isOddIndex ? -1 : 1;
-          yPos = middleY + direction * Math.ceil(offsetFromMiddle);
-        }
-      } else {
-        // Even number: place around middle line
-        const direction = isOddIndex ? -1 : 1;
-        yPos = middleY + direction * (offsetFromMiddle - (isOddIndex ? 0 : 1));
-      }
-      
+      const offset = Math.floor((i + 1) / 2);
+      const direction = i % 2 === 1 ? -1 : 1;
+      let yPos = middleY + direction * offset;
+
       // Clamp to valid grid bounds
       yPos = Math.max(0, Math.min(encounter.gridHeight - 1, yPos));
       enemyPositions.push({ x: rightEdgeX, y: yPos });
     }
   }
-  
+
   let positionIndex = 0;
-  
+
   encounter.enemyUnits.forEach(({ enemyId, count, levelMod = 0, elite = false }) => {
     const enemyDef = getEnemyDefinition(enemyId);
     if (!enemyDef) {
       console.warn(`[BATTLE] Unknown enemy: ${enemyId}`);
       return;
     }
-    
+
     // Create count instances of this enemy
     for (let i = 0; i < count; i++) {
       const instanceId = `enemy_${enemyId}_${enemyInstanceCounter++}`;
-      
+
       // Apply level mod and elite bonuses
       const hpMod = levelMod * 2 + (elite ? 5 : 0);
       const statMod = levelMod + (elite ? 1 : 0);
-      
+
       // Get position (centered around middle line)
       const pos = enemyPositions[positionIndex];
       positionIndex++;
-      
+
       // Create base unit from enemy definition
       const baseUnit = {
         id: instanceId,
@@ -121,7 +106,7 @@ export function createBattleFromEncounter(
         acc: 80, // Default accuracy
         move: enemyDef.baseStats.move,
       };
-      
+
       units[instanceId] = createBattleUnitState(
         baseUnit as any,
         {
@@ -133,7 +118,7 @@ export function createBattleFromEncounter(
       );
     }
   });
-  
+
   // Create tiles
   const tiles: import("./battle").Tile[] = [];
   for (let y = 0; y < encounter.gridHeight; y++) {
@@ -145,7 +130,7 @@ export function createBattleFromEncounter(
       });
     }
   }
-  
+
   // Generate cover deterministically based on battle ID (which includes timestamp, but we'll use a deterministic seed)
   // Get reserved cells (spawn zones - left edge for players, right edge for enemies)
   const reservedCells: Array<{ x: number; y: number }> = [];
@@ -157,12 +142,12 @@ export function createBattleFromEncounter(
   for (let y = 0; y < encounter.gridHeight; y++) {
     reservedCells.push({ x: encounter.gridWidth - 1, y });
   }
-  
+
   // Use provided encounter seed or generate from encounter properties for deterministic generation
-  const seedForCover = encounterSeed || 
+  const seedForCover = encounterSeed ||
     `cover_${encounter.gridWidth}x${encounter.gridHeight}_${encounter.enemyUnits.length}_${encounter.enemyUnits.map(e => e.enemyId).join('_')}`;
   const tilesWithCover = generateCover(tiles, encounter.gridWidth, encounter.gridHeight, seedForCover, reservedCells);
-  
+
   // Create battle state (will start in placement phase)
   const battle: BattleState = {
     id: `battle_${Date.now()}`,
@@ -187,7 +172,7 @@ export function createBattleFromEncounter(
       maxUnitsPerSide: Math.max(3, Math.min(10, Math.floor(encounter.gridWidth * encounter.gridHeight * 0.25))),
     },
   };
-  
+
   return battle;
 }
 

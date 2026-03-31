@@ -22,8 +22,6 @@ import {
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
 
-let rosterExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
     squire: "Squire",
@@ -76,16 +74,27 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
     if (!unit) return "";
 
     const loadout: UnitLoadout = (unit as any).loadout || {
-      weapon: null,
+      primaryWeapon: null,
+      secondaryWeapon: null,
       helmet: null,
       chestpiece: null,
       accessory1: null,
       accessory2: null,
     };
 
-    const weaponId = loadout.weapon;
-    const weapon = weaponId ? equipmentById[weaponId] : null;
-    const weaponName = weapon ? weapon.name : "None";
+    const primaryWeaponId = loadout.primaryWeapon;
+    const primaryWeapon = primaryWeaponId ? equipmentById[primaryWeaponId] : null;
+    const secondaryWeaponId = loadout.secondaryWeapon;
+    const secondaryWeapon = secondaryWeaponId ? equipmentById[secondaryWeaponId] : null;
+
+    let weaponName = "None";
+    if (primaryWeapon && secondaryWeapon) {
+      weaponName = `${primaryWeapon.name} & ${secondaryWeapon.name}`;
+    } else if (primaryWeapon) {
+      weaponName = primaryWeapon.name;
+    } else if (secondaryWeapon) {
+      weaponName = secondaryWeapon.name;
+    }
 
     const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
     const unitClass: UnitClass = (unit as any).unitClass || "squire";
@@ -99,7 +108,7 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
     const totalAcc = baseStats.acc + equipStats.acc;
     const totalHp = baseStats.maxHp + equipStats.hp;
     const portraitPath = getUnitPortraitPath(unitId);
-    
+
     // PWR display
     const pwr = (unit as any).pwr || 0;
     const pwrBand = getPWRBand(pwr);
@@ -182,29 +191,32 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
   const partyCardsHtml = partyUnits.map(id => renderUnitCard(id, true)).join("");
   const reserveCardsHtml = reserveUnits.map(id => renderUnitCard(id, false)).join("");
 
+  const getReturnToText = (target: string): string => {
+    switch (target) {
+      case "operation": return "OPERATION MAP";
+      case "field": return "FIELD MODE";
+      case "loadout": return "LOADOUT";
+      default: return "BASE CAMP";
+    }
+  };
+
   root.innerHTML = `
-    <div class="roster-root ard-noise">
-      <div class="roster-card">
+    <div class="roster-root town-screen ard-noise">
+      <div class="roster-card town-screen__panel">
         <!-- Header - Adventure Gothic Panel -->
-        <div class="roster-header">
-          <div class="roster-header-left">
+        <div class="roster-header town-screen__header">
+          <div class="roster-header-left town-screen__titleblock">
             <h1 class="roster-title">UNIT ROSTER</h1>
             <div class="roster-subtitle">SCROLLINK OS // UNIT_MANAGEMENT</div>
           </div>
-          <div class="roster-header-right">
+          <div class="roster-header-right town-screen__header-right">
             <div class="roster-count">
               <span class="roster-count-label">UNITS</span>
               <span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span>
             </div>
-            <button class="roster-back-btn" data-return-to="${returnTo}">
+            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}">
               <span class="btn-icon">←</span>
-              <span class="btn-text">${
-                returnTo === "field"
-                  ? "FIELD MODE"
-                  : returnTo === "operation"
-                    ? "BACK TO MAP"
-                    : "BASE CAMP"
-              }</span>
+              <span class="btn-text">${getReturnToText(returnTo)}</span>
             </button>
           </div>
         </div>
@@ -260,7 +272,6 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
     </div>
   `;
 
-  attachRosterExitHotkey(returnTo);
   // Attach event listeners
   attachRosterListeners(root, returnTo);
 }
@@ -301,7 +312,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       button.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        
+
         if (!unitId) return;
 
         if (action === "add") {
@@ -309,7 +320,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
         } else if (action === "remove") {
           removeUnitFromParty(unitId);
         }
-        
+
         // Re-render to show updated sections
         renderRosterScreen(returnTo);
       });
@@ -320,7 +331,6 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
       (backBtn as HTMLElement).onclick = () => {
         const btn = backBtn as HTMLElement;
         const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
-        detachRosterExitHotkey();
         console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
         if (returnDestination === "field") {
           renderFieldScreen("base_camp");
@@ -339,22 +349,22 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
     // Manage buttons - use both onclick and addEventListener for maximum compatibility
     const manageButtons = root.querySelectorAll(".roster-detail-btn");
     console.log(`[ROSTER] Found ${manageButtons.length} manage buttons`);
-    
+
     if (manageButtons.length === 0) {
       console.error("[ROSTER] No manage buttons found in DOM!");
     }
-    
+
     manageButtons.forEach((btn, index) => {
       const button = btn as HTMLElement;
       const unitId = button.getAttribute("data-unit-id");
-      
+
       if (!unitId) {
         console.warn(`[ROSTER] Button ${index} has no data-unit-id attribute`);
       }
-      
+
       // Clear any existing handlers
       button.onclick = null;
-      
+
       // Use onclick as primary handler (more reliable)
       button.onclick = (e) => {
         e.stopPropagation();
@@ -372,7 +382,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
           alert("Error: Unit ID not found on button");
         }
       };
-      
+
       // Also add event listener as backup
       button.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -386,7 +396,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
           }
         }
       }, { once: false, passive: false });
-      
+
       // Ensure button is clickable
       button.style.pointerEvents = "auto";
       button.style.cursor = "pointer";
@@ -396,11 +406,11 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
     // Unit cards - click anywhere on card to open detail (but not on buttons)
     const unitCards = root.querySelectorAll(".roster-unit-card");
     console.log(`[ROSTER] Found ${unitCards.length} unit cards`);
-    
+
     unitCards.forEach((card, index) => {
       const cardEl = card as HTMLElement;
       const unitId = cardEl.getAttribute("data-unit-id");
-      
+
       // Use onclick for reliability
       cardEl.onclick = (e) => {
         const target = e.target as HTMLElement;
@@ -417,7 +427,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
           }
         }
       };
-      
+
       // Also add event listener
       card.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
@@ -436,51 +446,21 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
     });
   }, 0);
 
-  // Auto-equip all party units button
-  root.querySelector("#autoEquipPartyBtn")?.addEventListener("click", () => {
-    const state = getGameState();
-    const partyUnitIds = state.partyUnitIds || [];
-    
-    if (partyUnitIds.length === 0) {
-      alert("No units in party to equip!");
-      return;
-    }
-    
-    if (!confirm(`Auto-equip best available gear for all ${partyUnitIds.length} party unit(s)?`)) {
-      return;
-    }
-    
-    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-    const equipmentPool = Object.keys(equipmentById);
-    
-    // Import autoEquipUnit function
-    import("./UnitDetailScreen").then((module) => {
-      const { autoEquipUnit } = module;
-      const equipmentPool = Object.keys(equipmentById);
-      
-      partyUnitIds.forEach(unitId => {
-        const unit = state.unitsById[unitId];
-        if (!unit) return;
-        
-        const unitClass: UnitClass = (unit as any).unitClass || "squire";
-        autoEquipUnit(unitId, unitClass, equipmentById, equipmentPool);
-      });
-      
-      // Re-render to show updated equipment
-      setTimeout(() => {
-        renderRosterScreen(returnTo);
-      }, 100);
-    });
-  });
-
   // Debug button to give all equipment to all units
   root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {
-    if (confirm("Give all starter equipment to all units for testing?")) {
-      updateGameState(draft => {
+    if (!confirm("Give all starter equipment to all units for testing?")) return;
+
+    import("./UnitDetailScreen").then(() => {
+      updateGameState((draft) => {
         // Give resources
         draft.wad = 9999;
         if (!draft.resources) {
-          draft.resources = { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+          draft.resources = {
+            metalScrap: 0,
+            wood: 0,
+            chaosShards: 0,
+            steamComponents: 0,
+          };
         }
         draft.resources.metalScrap = 99;
         draft.resources.wood = 99;
@@ -491,17 +471,17 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
         const allEquipment = getAllStarterEquipment();
 
         // Add all equipment to equipmentById
-        if (!draft.equipmentById) draft.equipmentById = {};
         Object.assign(draft.equipmentById, allEquipment);
 
         // Equip all units with compatible gear
-        Object.keys(draft.unitsById).forEach(unitId => {
+        Object.keys(draft.unitsById).forEach((unitId) => {
           const unit = draft.unitsById[unitId];
           const unitClass: UnitClass = (unit as any).unitClass || "squire";
 
-          if (!unit.loadout) {
+          if (!(unit as any).loadout) {
             (unit as any).loadout = {
-              weapon: null,
+              primaryWeapon: null,
+              secondaryWeapon: null,
               helmet: null,
               chestpiece: null,
               accessory1: null,
@@ -510,73 +490,38 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
           }
 
           // Find a compatible weapon for this class
-          const weapons = Object.values(allEquipment).filter(eq => eq.slot === "weapon");
-          const compatibleWeapon = weapons.find(w => {
+          const weapons = Object.values(allEquipment).filter((eq) => eq.slot === "weapon");
+          const compatibleWeapon = weapons.find((w) => {
             const weaponType = (w as any).weaponType;
             const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
             return allowed?.includes(weaponType);
           });
 
           if (compatibleWeapon) {
-            (unit as any).loadout.weapon = compatibleWeapon.id;
+            (unit as any).loadout.primaryWeapon = compatibleWeapon.id;
           }
 
           // Equip first helmet
-          const helmet = Object.values(allEquipment).find(eq => eq.slot === "helmet");
+          const helmet = Object.values(allEquipment).find((eq) => eq.slot === "helmet");
           if (helmet) {
             (unit as any).loadout.helmet = helmet.id;
           }
 
           // Equip first chestpiece
-          const chestpiece = Object.values(allEquipment).find(eq => eq.slot === "chestpiece");
+          const chestpiece = Object.values(allEquipment).find((eq) => eq.slot === "chestpiece");
           if (chestpiece) {
             (unit as any).loadout.chestpiece = chestpiece.id;
           }
 
           // Equip first two accessories
-          const accessories = Object.values(allEquipment).filter(eq => eq.slot === "accessory");
-          if (accessories.length > 0) {
-            (unit as any).loadout.accessory1 = accessories[0].id;
-          }
-          if (accessories.length > 1) {
-            (unit as any).loadout.accessory2 = accessories[1].id;
-          }
+          const accessories = Object.values(allEquipment).filter((eq) => eq.slot === "accessory");
+          if (accessories.length > 0) (unit as any).loadout.accessory1 = accessories[0].id;
+          if (accessories.length > 1) (unit as any).loadout.accessory2 = accessories[1].id;
         });
       });
 
       // Re-render to show updated equipment
-      renderRosterScreen();
-    }
+      renderRosterScreen(returnTo);
+    });
   });
-}
-
-function detachRosterExitHotkey(): void {
-  if (rosterExitKeyHandler) {
-    window.removeEventListener("keydown", rosterExitKeyHandler);
-    rosterExitKeyHandler = null;
-  }
-}
-
-function attachRosterExitHotkey(returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
-  detachRosterExitHotkey();
-
-  if (returnTo !== "field") return;
-
-  rosterExitKeyHandler = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
-    if (key === "escape" || key === "e") {
-      if (key === "e") {
-        const target = e.target as HTMLElement;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-          return;
-        }
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      detachRosterExitHotkey();
-      renderFieldScreen("base_camp");
-    }
-  };
-
-  window.addEventListener("keydown", rosterExitKeyHandler);
 }

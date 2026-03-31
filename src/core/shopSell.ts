@@ -66,7 +66,7 @@ export function getSellPrice(
   if (buyPrice !== undefined && buyPrice > 0) {
     return Math.floor(buyPrice * SELL_MULTIPLIER);
   }
-  
+
   // Try to infer from item data
   if (kind === "consumable") {
     const consumable = CONSUMABLE_DATABASE[id];
@@ -76,15 +76,15 @@ export function getSellPrice(
       return Math.max(1, Math.floor(basePrice * SELL_MULTIPLIER));
     }
   }
-  
+
   if (kind === "weaponPart") {
     try {
       const unlockable = getUnlockableById(id);
       if (unlockable?.cost) {
-        const estimatedBuyPrice = unlockable.cost.wad || 
-          (unlockable.cost.metalScrap || 0) * 5 + 
-          (unlockable.cost.wood || 0) * 3 + 
-          (unlockable.cost.chaosShards || 0) * 10 + 
+        const estimatedBuyPrice = unlockable.cost.wad ||
+          (unlockable.cost.metalScrap || 0) * 5 +
+          (unlockable.cost.wood || 0) * 3 +
+          (unlockable.cost.chaosShards || 0) * 10 +
           (unlockable.cost.steamComponents || 0) * 15;
         return Math.floor(estimatedBuyPrice * SELL_MULTIPLIER);
       }
@@ -92,7 +92,7 @@ export function getSellPrice(
       // Fall through to default
     }
   }
-  
+
   // Fallback: small default price
   return 1;
 }
@@ -122,12 +122,13 @@ function isEquipmentEquipped(
   state: GameState
 ): boolean {
   if (!state.unitsById) return false;
-  
+
   for (const unit of Object.values(state.unitsById)) {
     if (!unit.loadout) continue;
-    
+
     if (
-      unit.loadout.weapon === equipmentId ||
+      unit.loadout.primaryWeapon === equipmentId ||
+      unit.loadout.secondaryWeapon === equipmentId ||
       unit.loadout.helmet === equipmentId ||
       unit.loadout.chestpiece === equipmentId ||
       unit.loadout.accessory1 === equipmentId ||
@@ -136,7 +137,7 @@ function isEquipmentEquipped(
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -150,25 +151,25 @@ function validateSellLine(
   if (line.quantity <= 0) {
     return { valid: false, error: "Quantity must be greater than 0" };
   }
-  
+
   switch (line.kind) {
     case "equipment": {
       const equipment = state.equipmentById?.[line.id];
       if (!equipment) {
         return { valid: false, error: `Equipment ${line.id} not found` };
       }
-      
+
       if (line.quantity > 1) {
         return { valid: false, error: "Equipment items cannot be stacked" };
       }
-      
+
       if (isEquipmentEquipped(line.id, state)) {
         return { valid: false, error: "Cannot sell equipped items" };
       }
-      
+
       return { valid: true };
     }
-    
+
     case "consumable": {
       const owned = state.consumables?.[line.id] || 0;
       if (line.quantity > owned) {
@@ -176,22 +177,22 @@ function validateSellLine(
       }
       return { valid: true };
     }
-    
+
     case "weaponPart": {
       const owned = getAllOwnedUnlockableIds();
       const allOwned = [...owned.chassis, ...owned.doctrines];
       if (!allOwned.includes(line.id)) {
         return { valid: false, error: `Weapon part ${line.id} not owned` };
       }
-      
+
       // Weapon parts are typically not stackable, but allow selling 1
       if (line.quantity > 1) {
         return { valid: false, error: "Weapon parts cannot be stacked" };
       }
-      
+
       return { valid: true };
     }
-    
+
     case "resource": {
       const resourceMap: Record<string, keyof GameState["resources"]> = {
         metalScrap: "metalScrap",
@@ -199,20 +200,20 @@ function validateSellLine(
         chaosShards: "chaosShards",
         steamComponents: "steamComponents",
       };
-      
+
       const resourceKey = resourceMap[line.id];
       if (!resourceKey) {
         return { valid: false, error: `Unknown resource: ${line.id}` };
       }
-      
+
       const owned = state.resources?.[resourceKey] || 0;
       if (line.quantity > owned) {
         return { valid: false, error: `Only ${owned} available, cannot sell ${line.quantity}` };
       }
-      
+
       return { valid: true };
     }
-    
+
     default:
       return { valid: false, error: `Unknown inventory kind: ${line.kind}` };
   }
@@ -237,12 +238,12 @@ export function sellToShop(
       return { error: validation.error || "Validation failed" };
     }
   }
-  
+
   // Calculate total WAD
   let totalWad = 0;
   for (const line of lines) {
     let unitPrice = 0;
-    
+
     if (line.kind === "resource") {
       unitPrice = getResourceSellPrice(line.id);
     } else {
@@ -250,13 +251,13 @@ export function sellToShop(
       // For now, use getSellPrice which has fallbacks
       unitPrice = getSellPrice(line.kind, line.id);
     }
-    
+
     totalWad += unitPrice * line.quantity;
   }
-  
+
   // Create new state with updates
   const nextState: GameState = JSON.parse(JSON.stringify(state)); // Deep clone
-  
+
   // Apply all changes
   for (const line of lines) {
     switch (line.kind) {
@@ -274,7 +275,7 @@ export function sellToShop(
         }
         break;
       }
-      
+
       case "consumable": {
         if (!nextState.consumables) nextState.consumables = {};
         const current = nextState.consumables[line.id] || 0;
@@ -286,7 +287,7 @@ export function sellToShop(
         }
         break;
       }
-      
+
       case "weaponPart": {
         // Remove from unlocked lists
         if (nextState.unlockedChassisIds) {
@@ -297,7 +298,7 @@ export function sellToShop(
         }
         break;
       }
-      
+
       case "resource": {
         const resourceMap: Record<string, keyof GameState["resources"]> = {
           metalScrap: "metalScrap",
@@ -305,7 +306,7 @@ export function sellToShop(
           chaosShards: "chaosShards",
           steamComponents: "steamComponents",
         };
-        
+
         const resourceKey = resourceMap[line.id];
         if (resourceKey && nextState.resources) {
           const current = nextState.resources[resourceKey] || 0;
@@ -315,10 +316,10 @@ export function sellToShop(
       }
     }
   }
-  
+
   // Add WAD
   nextState.wad = (nextState.wad || 0) + totalWad;
-  
+
   return { next: nextState, wadGained: totalWad };
 }
 
@@ -331,13 +332,13 @@ export function sellToShop(
  */
 export function getSellableEntries(state: GameState): SellableEntry[] {
   const entries: SellableEntry[] = [];
-  
+
   // Equipment
   if (state.equipmentById) {
     for (const [id, equipment] of Object.entries(state.equipmentById)) {
       const eq = equipment as Equipment;
       const equipped = isEquipmentEquipped(id, state);
-      
+
       entries.push({
         key: `equipment:${id}`,
         kind: "equipment",
@@ -350,7 +351,7 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
       });
     }
   }
-  
+
   // Consumables
   if (state.consumables) {
     for (const [id, quantity] of Object.entries(state.consumables)) {
@@ -368,7 +369,7 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
       }
     }
   }
-  
+
   // Weapon Parts (unlockables)
   const owned = getAllOwnedUnlockableIds();
   const allOwned = [...owned.chassis, ...owned.doctrines];
@@ -390,7 +391,7 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
       // Skip if not found
     }
   }
-  
+
   // Resources
   if (state.resources) {
     const resources = [
@@ -399,7 +400,7 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
       { id: "chaosShards", name: "Chaos Shards" },
       { id: "steamComponents", name: "Steam Components" },
     ];
-    
+
     for (const res of resources) {
       const quantity = state.resources[res.id as keyof typeof state.resources] as number || 0;
       if (quantity > 0) {
@@ -415,7 +416,7 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
       }
     }
   }
-  
+
   return entries;
 }
 

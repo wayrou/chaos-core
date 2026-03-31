@@ -15,24 +15,25 @@ export interface GameSettings {
   masterVolume: number;
   musicVolume: number;
   sfxVolume: number;
-  
+
   // Display
   screenShake: boolean;
   showDamageNumbers: boolean;
   showGridCoordinates: boolean;
   animationSpeed: "slow" | "normal" | "fast";
   uiTheme: "ardycia" | "cyberpunk" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
-  
+  cardTheme: "light" | "dark";
+
   // Gameplay
   autosaveEnabled: boolean;
   confirmEndTurn: boolean;
   showTutorialHints: boolean;
-  
+
   // Controls
   controllerEnabled: boolean;
   controllerVibration: boolean;
   controllerDeadzone: number;
-  
+
   // Accessibility
   highContrastMode: boolean;
   largeText: boolean;
@@ -44,21 +45,22 @@ export const DEFAULT_SETTINGS: GameSettings = {
   masterVolume: 80,
   musicVolume: 70,
   sfxVolume: 100,
-  
+
   screenShake: true,
   showDamageNumbers: true,
   showGridCoordinates: false,
   animationSpeed: "normal",
   uiTheme: "ardycia",
-  
+  cardTheme: "dark",
+
   autosaveEnabled: true,
   confirmEndTurn: false,
   showTutorialHints: true,
-  
+
   controllerEnabled: true,
   controllerVibration: true,
   controllerDeadzone: 15,
-  
+
   highContrastMode: false,
   largeText: false,
   reducedMotion: false,
@@ -101,7 +103,7 @@ const SETTINGS_STORAGE_KEY = "chaoscore_settings";
 
 async function saveSettingsToDisk(): Promise<void> {
   const json = JSON.stringify(currentSettings);
-  
+
   if (isTauriAvailable()) {
     const invoke = getTauriInvoke()!;
     try {
@@ -118,7 +120,7 @@ async function saveSettingsToDisk(): Promise<void> {
 async function loadSettingsFromDisk(): Promise<GameSettings | null> {
   try {
     let json: string | null = null;
-    
+
     if (isTauriAvailable()) {
       const invoke = getTauriInvoke()!;
       try {
@@ -130,14 +132,14 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
     } else {
       json = localStorage.getItem(SETTINGS_STORAGE_KEY);
     }
-    
+
     if (json) {
       return JSON.parse(json) as GameSettings;
     }
   } catch (error) {
     console.warn("[SETTINGS] Failed to load settings:", error);
   }
-  
+
   return null;
 }
 
@@ -150,13 +152,13 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
  */
 export async function initializeSettings(): Promise<void> {
   const loaded = await loadSettingsFromDisk();
-  
+
   if (loaded) {
     currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
   } else {
     currentSettings = { ...DEFAULT_SETTINGS };
   }
-  
+
   applySettings(currentSettings);
   console.log("[SETTINGS] Initialized:", currentSettings);
 }
@@ -208,7 +210,7 @@ function notifyListeners(): void {
 
 function applySettings(settings: GameSettings): void {
   const root = document.documentElement;
-  
+
   // Large text
   if (settings.largeText) {
     root.style.setProperty("--base-font-size", "18px");
@@ -217,33 +219,37 @@ function applySettings(settings: GameSettings): void {
     root.style.setProperty("--base-font-size", "14px");
     root.classList.remove("large-text");
   }
-  
+
   // High contrast
   if (settings.highContrastMode) {
     root.classList.add("high-contrast");
   } else {
     root.classList.remove("high-contrast");
   }
-  
+
   // Reduced motion
   if (settings.reducedMotion) {
     root.classList.add("reduced-motion");
   } else {
     root.classList.remove("reduced-motion");
   }
-  
+
   // Colorblind modes
   root.classList.remove("colorblind-protanopia", "colorblind-deuteranopia", "colorblind-tritanopia");
   if (settings.colorblindMode !== "none") {
     root.classList.add(`colorblind-${settings.colorblindMode}`);
   }
-  
+
   // Animation speed
   const animSpeeds = { slow: "1.5", normal: "1", fast: "0.5" };
   root.style.setProperty("--animation-speed", animSpeeds[settings.animationSpeed]);
-  
+
   // UI Theme
   applyTheme(settings.uiTheme as ThemeId);
+
+  // Card Theme
+  root.classList.remove("card-theme-light", "card-theme-dark");
+  root.classList.add(`card-theme-${settings.cardTheme}`);
 }
 
 // ----------------------------------------------------------------------------
@@ -294,7 +300,7 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     max: 100,
     step: 5,
   },
-  
+
   // Display
   {
     key: "screenShake",
@@ -348,7 +354,18 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
       { value: "void", label: "Void" },
     ],
   },
-  
+  {
+    key: "cardTheme",
+    label: "Card Theme",
+    description: "Color theme for battle cards",
+    type: "select",
+    category: "display",
+    options: [
+      { value: "dark", label: "Dark (Default)" },
+      { value: "light", label: "Light" },
+    ],
+  },
+
   // Gameplay
   {
     key: "autosaveEnabled",
@@ -371,7 +388,7 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     type: "toggle",
     category: "gameplay",
   },
-  
+
   // Controls
   {
     key: "controllerEnabled",
@@ -397,7 +414,7 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     max: 50,
     step: 5,
   },
-  
+
   // Accessibility
   {
     key: "highContrastMode",
@@ -446,11 +463,11 @@ export function getSettingsByCategory(): Record<string, SettingDescriptor[]> {
     controls: [],
     accessibility: [],
   };
-  
+
   for (const desc of SETTING_DESCRIPTORS) {
     grouped[desc.category].push(desc);
   }
-  
+
   return grouped;
 }
 

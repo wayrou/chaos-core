@@ -105,15 +105,15 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
   const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
   
   app.innerHTML = `
-    <div class="port-root">
+    <div class="port-root town-screen">
       <!-- Header -->
-      <div class="port-header">
-        <div class="port-header-left">
+      <div class="port-header town-screen__header">
+        <div class="port-header-left town-screen__titleblock">
           <h1 class="port-title">PORT</h1>
           <div class="port-subtitle">SUPPLY MANIFEST TERMINAL</div>
         </div>
-        <div class="port-header-right">
-          <button class="port-back-btn" id="backBtn" data-return-to="${returnTo}">
+        <div class="port-header-right town-screen__header-right">
+          <button class="port-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
             <span class="btn-text">${backButtonText}</span>
           </button>
@@ -121,7 +121,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
       </div>
       
       <!-- Main Content: Two Column Layout -->
-      <div class="port-content">
+      <div class="port-content town-screen__content-panel">
         <!-- Left Column: Main Window -->
         <div class="port-main-window">
           <!-- Manifest Updated Stamp -->

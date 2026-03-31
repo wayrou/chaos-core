@@ -1,0 +1,582 @@
+Gear Index
+Mechanical Weapons
+Emberclaw Repeater (Repeating Rifle) – Gear ID: MW001
+ Heat Capacity: 8
+ Heat Zones: 0–3 Stable | 4–6 Barrel Glow (ACC –1) | 7–8 Critical (next shot overheats)
+ Overheat Behavior: Locks for 1 turn; takes 2 strain to clear.
+ Passive Heat Decay: 2 per turn.
+ Heat Conversion Ability: Discharge excess heat to deal 1 unblockable damage to all adjacent enemies.
+ Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Piercing Volley — Ignore target’s DEF for next attack.
+Steamburst Pike (Pneumatic Lance) – Gear ID: MW002
+ Heat Capacity: 5
+ Heat Zones: 0–2 Stable | 3–4 Pressure Surge (+1 damage, risk self-hit) | 5 Overload (forced exhaust)
+ Overheat Behavior: Pushes the user back 1 tile and deals 2 self-damage.
+ Passive Heat Decay: 1 per turn.
+ Heat Conversion Ability: Release steam to create a 2×2 smoke screen.
+ Clutch Toggle: Pierce & Pin — Attack prevents target movement next turn.
+Vulcan Coilgun (Gauss Rifle) – Gear ID: MW003
+ Heat Capacity: 10
+ Heat Zones: 0–4 Stable | 5–7 Coil Strain (MOV –1) | 8–10 Overcharge (next shot doubles damage, forces exhaust)
+ Overheat Behavior: Cards tied to this weapon are disabled for 2 turns.
+ Passive Heat Decay: 3 per turn.
+ Heat Conversion Ability: Redirect heat to self-heal 1 HP.
+ Ammo: Max 4 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggles: Power Shot — +2 damage; Magnetic Pull — Pull target 1 tile closer.
+Brassback Scattergun (Steam Shotgun) – Gear ID: MW004
+ Heat Capacity: 6
+ Heat Zones: 0–2 Stable | 3–4 Spread Boost (+1 range) | 5–6 Jammed (must exhaust to clear)
+ Overheat Behavior: Skips next attack phase.
+ Passive Heat Decay: 1 per turn.
+ Heat Conversion Ability: Shunt heat into a cone blast knockback.
+ Ammo: Max 2 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Slug Round — Range 1 but damage doubled.
+Ironwhisper Crossbow (Steam-Drawn Crossbow) – Gear ID: MW005
+ Heat Capacity: 4
+ Heat Zones: 0–1 Stable | 2–3 Draw Assist (+1 ACC) | 4 Burnout (lose next turn)
+ Overheat Behavior: Destroys current loaded bolt (waste card).
+ Passive Heat Decay: 2 per turn.
+ Heat Conversion Ability: Convert heat into explosive bolt (+2 damage).
+ Ammo: Max 1 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Silenced Shot — Cannot be countered or alert enemies.
+Stormlash Arcstaff (Electro-Steampunk Staff) – Gear ID: MW006
+ Heat Capacity: 9
+ Heat Zones: 0–4 Stable | 5–6 Spark Chain (AOE +1 radius) | 7–9 Surge (randomly target friend or foe)
+ Overheat Behavior: Stuns the wielder for 1 turn.
+ Passive Heat Decay: 1 per turn.
+ Heat Conversion Ability: Discharge into ground to clear traps.
+ Clutch Toggle: Overload Blast — All targets in range take 1 electric damage.
+Blazefang Saber (Steam-Heated Sword) – Gear ID: MW007
+ Heat Capacity: 5
+ Heat Zones: 0–2 Stable | 3–4 Blade Sear (+1 damage) | 5 Blade Warp (damage –2 until repaired)
+ Overheat Behavior: Permanently reduces max capacity by 1 for the match.
+ Passive Heat Decay: 1 per turn.
+ Heat Conversion Ability: Transfer heat to ignite ground for 1 turn.
+ Clutch Toggles: Searing Slash — Inflict Burn; Quick Draw — Attack without consuming movement.
+Gearspike Mortar (Steam Mortar) – Gear ID: MW008
+ Heat Capacity: 7
+ Heat Zones: 0–3 Stable | 4–6 Blast Boost (+1 tile radius) | 7 Overpressure (self-hit if in range)
+ Overheat Behavior: Self-damage 3.
+ Passive Heat Decay: 2 per turn.
+ Heat Conversion Ability: Fire smoke rounds to obscure vision.
+ Ammo: Max 2 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Bunker Buster — Ignores cover and destroys obstacles.
+Emberdrake Harpooner (Steam Harpoon Gun) – Gear ID: MW009
+ Heat Capacity: 6
+ Heat Zones: 0–2 Stable | 3–5 Reel Boost (pull +1 tile) | 6 Snapback (stuns wielder)
+ Overheat Behavior: Cord breaks, weapon disabled for 2 turns.
+ Passive Heat Decay: 1 per turn.
+ Heat Conversion Ability: Reel heat into cord to set it alight.
+ Ammo: Max 1 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Anchor Pull — Pull self to target.
+Thunderjaw Cannon (Rotary Steam Cannon) – Gear ID: MW010
+ Heat Capacity: 12
+ Heat Zones: 0–5 Stable | 6–9 Firestorm (AOE bonus damage) | 10–12 Critical Overdrive (massive damage, then exhaust)
+ Overheat Behavior: Deck loses 1 random weapon card permanently for battle.
+ Passive Heat Decay: 2 per turn.
+ Heat Conversion Ability: Vent heat as damaging shockwave to all adjacent units.
+ Ammo: Max 3 | Quick Reload (Strain) 2 | Full Reload (Strain) 1 | Core/Overwatch: AM1
+ Clutch Toggles: Full Barrage — Extra attack at –2 ACC; Suppressive Fire — Targets lose 1 MOV next turn.
+Non-Mechanical Weapons
+Swords
+ 11. Iron Longsword — ATK +2, DEF +1, AGI 0, ACC +1, HP 0
+ Clutch Toggle: Edge Focus — Gain +2 ACC for the attack, but -1 DEF until your next turn.
+Runed Shortsword — ATK +1, DEF 0, AGI +2, ACC +2, HP -1
+ Clutch Toggle: Quick Strike — Attack first this round regardless of initiative, but suffer -2 ACC on the attack.
+
+
+Scissor Sword — ATK +3, DEF +1, AGI -1, ACC 0, HP 0
+ Clutch Toggles: Overhand Smash — Deal +3 ATK damage, but suffer -3 AGI until your next turn. Defensive Guard — +2 DEF until your next turn, but -2 ATK.
+
+
+Bows
+ 14. Elm Recurve Bow — ATK +2, DEF 0, AGI +1, ACC +2, HP -1
+ Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Piercing Arrow — Ignore 2 DEF for this shot, but -1 ACC.
+Composite Greatbow — ATK +4, DEF 0, AGI -2, ACC +1, HP 0
+ Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggle: Volley — Fire twice at -3 ACC each shot.
+
+
+Willow Shortbow — ATK +1, DEF 0, AGI +3, ACC +2, HP -2
+ Ammo: Max 6 | Quick Reload (Strain) 1 | Full Reload (Strain) 0 | Core/Overwatch: AM1
+ Clutch Toggles: Armor Breaker — Ignore 4 DEF on the attack. Heavy Draw — +4 ATK damage but skip your next move action.
+
+Staves
+17. Oak Battlestaff — ATK +1, DEF +2, AGI 0, ACC +1, HP +1                                            Clutch Toggle: Channel Power — Next skill costs 1 less strain, but suffer -1 DEF until your next turn.
+18. Silver Channeling Rod — ATK +2, DEF 0, AGI +1, ACC +3, HP -1
+Clutch Toggle: Focus Shot — +3 ACC to next skill card this turn, but -1 AGI next turn.
+19. Blackwood Greatstaff — ATK +3, DEF +1, AGI -1, ACC +2, HP 0
+Clutch Toggles: Ward Pulse — Gain +3 DEF until next turn. Crush Swing — +3 ATK but -3 ACC.
+Daggers
+20. Steel Dagger — ATK +1, DEF 0, AGI +3, ACC +2, HP -1                                                Clutch Toggle: Lunge — Move 2 tiles before striking without provoking attacks, but -2 ACC.
+21. Ivory Fangblade — ATK +2, DEF 0, AGI +2, ACC +3, HP -2
+Clutch Toggle: Flurry — Attack twice at -2 ATK per hit.
+22. Weighted Dagger — ATK +2, DEF +1, AGI +1, ACC +2, HP 0
+Clutch Toggles: Precision Cut — Ignore 3 DEF. Feint — Cancel the enemy’s counterattack if the attack misses.
+
+Helmets
+23. Ironguard Helm — DEF +2, HP +1
+24. Ranger’s Hood — AGI +2, ACC +1
+25. Mystic Circlet — ACC +2, ATK +1
+26. Thief’s Bandana — AGI +3
+27. Scholar’s Cap — LUK +2, DEF +1
+28. Brass Visor — DEF +1, ACC +2
+29. Hunter’s Coif — ACC +1, ATK +1, AGI +1
+30. Steamweld Goggles — ACC +3
+31. Battle Mask — DEF +1, HP +2
+32. Arcane Hood — ACC +1, LUK +2
+33. Marksman’s Scope Visor — ACC +3, DEF -1
+34. Warrior’s Crest — ATK +2, HP +1
+
+Chestpieces
+35. Steelplate Cuirass — DEF +3, HP +2
+36. Leather Jerkin — AGI +1, DEF +1
+37. Mage’s Robe — ACC +2, LUK +1
+38. Shadow Cloak — AGI +2, DEF -1, LUK +1
+39. Scholar’s Vest — LUK +2, DEF +1
+40. Chainmail Hauberk — DEF +2, HP +1
+41. Steamline Armor — DEF +1, AGI +2
+42. Hunter’s Vest — ACC +1, AGI +2
+43. Reinforced Gambeson — DEF +2, HP +1
+44. Battle Harness — ATK +2, DEF +1
+45. Arcane Tunic — ACC +1, LUK +2
+46. Marksman’s Brigandine — ACC +3, DEF -1
+Accessories 
+47. Steel Signet Ring — DEF +1, LUK +1
+48. Eagle Eye Lens — ACC +2
+49. Fleetfoot Anklet — AGI +2
+50. Rune Pendant — LUK +3
+51. Power Bracer — ATK +2
+52. Vitality Charm — HP +2
+53. Steam Valve Wristguard — DEF +1, ACC +1
+54. Hunter’s Talisman — ACC +1, AGI +1
+55. Scholar’s Quill Pendant — LUK +2, ACC +1
+56. Smoke Bomb Satchel — AGI +1, DEF -1, special escape ability
+57. Warrior’s Belt — ATK +1, HP +1
+58. Arcane Crystal Brooch — ACC +1, LUK +1, DEF -1
+
+Enemy Index
+Operation Iron Gate – Secure the Chaos Rift entrance (introductory foes)
+Light
+Pudding – Small, chaotic blobs of Dynara energy.
+Skootler – Mutated spiders gnawing at supply caches.
+Detachable Heads – Rabid, mechanical-dynara hybrids.
+
+
+Medium
+Chaos Knight - Bat-like humanoids.
+Chaos Militia – Lightly armed human cultists.
+Goo - Big, chaotic blobs of Dynara energy.
+
+
+Heavy (boss, 4x4)
+Rift Guardian – A hulking crystal-imbued beast blocking the gate.
+
+
+
+Operation Black Spire – Capture enemy artillery positions (siege escalation)
+Light
+Watcher – Winged pyromancers that harass from range.
+Sapper Gremlins – Plant mines and sabotage devices.
+Chaos Bub – Stalk through low-visibility areas.
+
+
+Medium
+Artillery Crewmen – Operate cannons and call bombardments.
+Rober - 
+Skulta Shaman – Buff nearby enemies, weaken player units.
+
+
+Heavy
+Siege Behemoth – A living artillery engine fused with cannons.
+
+
+Operation Ghost Run – Disrupt enemy supply lines (mobility & ambush heavy)
+Light
+Carrion Crows – Bird swarms that dive and peck.
+Marauder Scouts – Hit-and-run skirmishers.
+Dynara Wisps – Blink across tiles and harass with magic.
+
+
+Medium
+Supply Raiders – Dual-blade fighters guarding stolen goods.
+Chess Knights –
+Rift Juggernauts – Shieldbearers that block chokepoints.
+
+
+Heavy
+Phantom Stalker – A massive cloaked predator that phases in and out.
+
+
+Operation Ember Siege – Destroy key enemy fortifications (fortress defenders)
+Light
+Emberlings – Fire-spitting salamanders crawling on walls.
+Bomb Drones – Mechanical drones that divebomb fortifications.
+Chaos Slaves – Shackled, unstable fighters forced into battle.
+
+
+Medium
+Scuttler
+Chaos Wraith – Area-denial mages creating fire zones.
+Chaos Golems – Medium constructs patrolling fortress walls.
+
+
+Heavy
+Infernal Colossus – A towering construct fused into the fortress wall.
+Operation Final Dawn – Assault the enemy command center (endgame threats)
+Light
+Rift Shades – Shadow duplicates of the player’s team.
+Goylej
+Void Drones – Machine overseers of the command chamber.
+
+
+Medium
+Rift Warlocks – High-ranking dynara sorcerers.
+Commander’s Guard – Elite human warriors with mixed gear.
+Screecher
+
+
+Heavy
+The Rift Tyrant – Command center’s final guardian, a 4x4 nightmare.
+
+
+
+Card Index
+Core Cards
+000 — Move+ — Move 2 extra tiles this turn. Strain: 1. Range: R(0–0), V0, N/A
+001 — Basic Attack — Standard attack on enemy. Strain: 0. Range: R(1–1), V1, Direct
+002 — Aid — Restore small amount of HP to ally. Strain: 1. Range: R(1–2), V1, Direct
+003 — Overwatch — Attack enemy that enters range. Strain: 1. Range: R(2–5), V2, Direct
+Class Cards
+004 — Squire: Power Slash — Deal heavy melee damage to one enemy. Strain: 2. Range: R(1–1), V1, Direct
+005 — Squire: Shield Wall — Reduce damage taken by all allies for 1 turn. Strain: 3. Range: R(0–0), V0, N/A
+006 — Squire: Rally Cry — Boost ATK of all allies for 2 turns. Strain: 2. Range: R(0–0), V0, N/A
+007 — Ranger: Pinning Shot — Immobilize an enemy for 1 turn. Strain: 2. Range: R(2–5), V2, Direct
+008 — Ranger: Volley — Deal light damage to all enemies in range. Strain: 3. Range: R(3–6), V2, Indirect, AoE
+009 — Ranger: Scout’s Mark — Reveal all enemies and traps in range. Strain: 1. Range: R(0–6), V3, N/A
+010 — Magician: Arcane Bolt — Deal moderate magic damage to an enemy. Strain: 2. Range: R(2–6), V3, Direct
+011 — Magician: Mana Burst — Deal heavy AoE magic damage. Strain: 3. Range: R(2–4), V2, Indirect, AoE
+012 — Magician: Barrier — Grant magic shield to an ally. Strain: 2. Range: R(1–3), V2, Direct
+013 — Thief: Steal — Take an item from the target. Strain: 1. Range: R(1–1), V1, Direct
+014 — Thief: Backstab — Deal high damage if behind enemy. Strain: 2. Range: R(1–1), V1, Direct
+015 — Thief: Smoke Bomb — Reduce enemy accuracy for 2 turns. Strain: 2. Range: R(0–2), V1, Indirect, AoE
+016 — Academic: Analyze — Reveal enemy stats and weaknesses. Strain: 1. Range: R(0–6), V3, N/A
+017 — Academic: Tactics Shift — Reposition an ally instantly. Strain: 2. Range: R(1–4), V2, Direct
+018 — Academic: Inspire — Reduce strain of all allies by 1. Strain: 2. Range: R(0–0), V0, N/A
+Equipment Cards (grouped by equipment)
+019 — Iron Longsword: Cleave — R(1), V1, Arc — Deal 3 damage to up to 3 adjacent enemies.
+020 — Iron Longsword: Parry Readiness — R(1), V1, Direct — If attacked before your next turn, cancel 1 attack.
+021 — Iron Longsword: Guarded Stance — R(Self) — +2 DEF until your next turn.
+022 — Runed Shortsword: Twin Cut — R(1), V1, Direct — Two attacks, each dealing 2 damage.
+023 — Runed Shortsword: Quick Reposition — R(Self) — Move up to 3 tiles ignoring engagement.
+024 — Runed Shortsword: Arcane Guard — R(Self) — Gain +2 DEF against magic attacks for 1 turn.
+025 — Scissor Sword: Breaker Chop — R(1), V1, Direct — Deal 5 damage and reduce target DEF by 1 for 1 turn.
+026 — Scissor Sword: Guard Break — R(1), V1, Direct — Reduce target DEF by 2 for 1 turn.
+027 — Scissor Sword: Counter Brace — R(Self) — If attacked, make a counterattack at –2 ATK.
+028 — Elm Recurve Bow: Pinpoint Shot — R(3–6), V1, Direct — Deal 4 damage; +1 ACC for this attack.
+029 — Elm Recurve Bow: Warning Shot — R(3–6), V1, Direct — Target suffers –2 ACC for 1 turn.
+030 — Elm Recurve Bow: Defensive Draw — R(Self) — +1 DEF and +1 ACC until your next attack.
+031 — Composite Greatbow: Overdraw — R(4–7), V1, Direct — Deal 5 damage; –2 ACC for this attack.
+032 — Composite Greatbow: Pin Down — R(4–7), V1, Direct — Target cannot move more than 2 tiles next turn.
+033 — Composite Greatbow: Long Sight Guard — R(Self) — Ignore first overwatch attack against you this turn.
+034 — Willow Shortbow: Rapid Shot — R(3–5), V1, Direct — Three attacks, each dealing 2 damage.
+035 — Willow Shortbow: Tag Mark — R(3–5), V1, Direct — Mark target; allies gain +2 ACC when attacking them for 1 turn.
+036 — Willow Shortbow: Quick Cover — R(Self) — Gain +2 DEF if you move at least 2 tiles this turn.
+037 — Oak Battlestaff: Blunt Sweep — R(1–2), V1, Arc — Deal 3 damage to all enemies in a 90° arc.
+038 — Oak Battlestaff: Deflective Spin — R(1), V1, Arc — Block next ranged attack from enemies in arc.
+039 — Oak Battlestaff: Ward Spin — R(Self) — Block first melee hit until next turn.
+040 — Silver Channeling Rod: Piercing Ray — R(2–4), V2, Direct — Deal 4 damage; ignores 1 DEF.
+041 — Silver Channeling Rod: Magic Echo — R(2–4), V2, Direct — Target takes +1 magic damage from all sources for 2 turns.
+042 — Silver Channeling Rod: Barrier Pulse — R(1–2), V1, Direct — Grant +2 DEF to ally.
+043 — Blackwood Greatstaff: Crushing End — R(1), V1, Direct — Deal 6 damage but –2 AGI next turn.
+044 — Blackwood Greatstaff: Zone Control — R(1–3), V1, AoE(1) — Difficult terrain for enemies for 1 turn.
+045 — Blackwood Greatstaff: Earth Ward — R(Self) — Cannot be knocked down or moved until next turn.
+046 — Steel Dagger: Throat Jab — R(1), V1, Direct — Deal 3 damage and reduce target ACC by 2 next turn.
+047 — Steel Dagger: Hamstring — R(1), V1, Direct — Target loses 2 movement next turn.
+048 — Steel Dagger: Sidestep — R(Self) — Gain +3 AGI until end of turn.
+049 — Ivory Fangblade: Frenzy Stab — R(1), V1, Direct — Deal 4 damage; you suffer 1 self-damage.
+050 — Ivory Fangblade: Disarm Flick — R(1), V1, Direct — Target cannot use weapon cards next turn.
+051 — Ivory Fangblade: Retreat Guard — R(Self) — Gain +2 DEF if you move this turn.
+052 — Weighted Dagger: Pommel Smash — R(1), V1, Direct — Deal 3 damage; target loses movement next turn.
+053 — Weighted Dagger: Feint Draw — R(Self) — Gain +2 AGI for 1 turn.
+054 — Weighted Dagger: Deflect Grip — R(Self) — Ignore first melee attack this turn.
+Helmets
+055 — Ironguard Helm: Headbutt — R(1), V1, Direct — Deal 2 damage and stun for 1 turn.
+056 — Ironguard Helm: Shield Sight — R(Self) — Ignore flanking penalties until your next turn.
+057 — Ironguard Helm: Shield Headbutt — R(1), V1, Direct — Stun target for 1 turn.
+058 — Ranger’s Hood: Aimed Strike — R(2–4), V1, Direct — Deal 3 damage with +1 ACC.
+059 — Ranger’s Hood: Hunter’s Mark — R(3–5), V1, Direct — Mark target; next ranged attack deals +2 damage.
+060 — Ranger’s Hood: Hide in Shadows — R(Self) — Gain +2 AGI and untargetable at range for 1 turn.
+061 — Mystic Circlet: Mind Spike — R(2–3), V2, Direct — Deal 4 magic damage.
+062 — Mystic Circlet: Spell Focus — R(Self) — Your next magic skill gains +3 ACC.
+063 — Mystic Circlet: Mana Barrier — R(Self) — Reduce incoming magic damage by 2 until next turn.
+064 — Thief’s Bandana: Neck Slash — R(1), V1, Direct — Deal 4 damage if attacking from side or rear.
+065 — Thief’s Bandana: Blind Step — R(Self) — Move 2 tiles without provoking overwatch.
+066 — Thief’s Bandana: Evasive Step — R(Self) — Gain +3 AGI until your next turn.
+067 — Scholar’s Cap: Book Slam — R(1), V1, Direct — Deal 3 damage and reduce enemy LUK by 2.
+068 — Scholar’s Cap: Quick Study — R(Self) — Reveal one hidden trap within 4 tiles.
+069 — Scholar’s Cap: Insight Guard — R(Self) — Ignore first negative status effect this turn.
+070 — Brass Visor: Flash Flare — R(2–3), V1, Cone — Deal 2 damage to all in cone; blind 1 turn.
+071 — Brass Visor: Glint Distraction — R(2–3), V1, Cone — Enemies in cone have –1 ACC for 1 turn.
+072 — Brass Visor: Glare Shield — R(Self) — Melee attackers suffer –1 ACC for 1 turn.
+073 — Hunter’s Coif: Quick Shot — R(2–5), V1, Direct — Deal 3 damage.
+074 — Hunter’s Coif: Tracking Shot — R(2–4), V1, Direct — Reveals target’s movement path for 1 turn.
+075 — Hunter’s Coif: Predator’s Brace — R(Self) — First enemy to attack you loses 1 DEF.
+076 — Steamweld Goggles: Scald Burst — R(1–2), V1, Cone — Deal 3 damage and inflict Burn 1 turn.
+077 — Steamweld Goggles: Steam Flash — R(1–2), V1, Cone — Blind enemies in cone for 1 turn.
+078 — Steamweld Goggles: Flash Shield — R(Self) — Blind melee attacker for 1 turn when hit.
+079 — Battle Mask: War Cry Strike — R(1), V1, Direct — Deal 3 damage; gain +1 ATK for 1 turn.
+080 — Battle Mask: War Chant — R(Self) — Allies within 2 tiles gain +1 ATK for 1 turn.
+081 — Battle Mask: Rally Shout — R(Self) — All allies within 2 tiles gain +1 DEF for 1 turn.
+082 — Arcane Hood: Mystic Lash — R(2–4), V2, Direct — Deal 3 magic damage.
+083 — Arcane Hood: Rune Sense — R(Self) — Next magic attack ignores LoS.
+084 — Arcane Hood: Rune Shield — R(Self) — Gain +2 DEF and immunity to magic debuffs this turn.
+085 — Marksman’s Scope Visor: Sniper Shot — R(4–8), V1, Direct — Deal 5 damage; –3 ACC next turn.
+086 — Marksman’s Scope Visor: Precision Call — R(Self) — Next attack ignores range penalties.
+087 — Marksman’s Scope Visor: Head Tilt Guard — R(Self) — Ignore critical hits until your next turn.
+088 — Warrior’s Crest: Overhead Smash — R(1), V1, Direct — Deal 4 damage; +1 DEF next turn.
+089 — Warrior’s Crest: Intimidate — R(1–2), V1, Direct — Target suffers –1 ATK for 1 turn.
+090 — Warrior’s Crest: Crest Stand — R(Self) — If HP < 50%, gain +2 DEF and +1 ATK.
+Chestpieces
+091 — Steelplate Cuirass: Shoulder Charge — R(1), V1, Direct — Deal 3 damage; push target 1 tile.
+092 — Steelplate Cuirass: Fortify — R(Self) — Gain immunity to knockback until next turn.
+093 — Steelplate Cuirass: Fortress Form — R(Self) — Gain +3 DEF but movement –1 this turn.
+094 — Leather Jerkin: Knife Toss — R(2–3), V1, Direct — Deal 2 damage; +1 AGI next turn.
+095 — Leather Jerkin: Quick Roll — R(Self) — Move 1 tile as a free action.
+096 — Leather Jerkin: Light Guard — R(Self) — +1 DEF and +1 AGI until next turn.
+097 — Mage’s Robe: Mana Surge Strike — R(2–3), V2, Direct — Deal 4 magic damage.
+098 — Mage’s Robe: Mana Shift — R(Self) — Recover 1 strain.
+099 — Mage’s Robe: Arcane Veil — R(Self) — Gain +2 DEF vs magic for 1 turn.
+100 — Shadow Cloak: Ambush Slash — R(1), V1, Direct — Deal 5 damage if undetected at start of turn.
+101 — Shadow Cloak: Fade — R(Self) — Become untargetable by ranged attacks until next turn.
+102 — Shadow Cloak: Shade Guard — R(Self) — Untargetable if you don’t move this turn.
+103 — Scholar’s Vest: Scroll Slam — R(1), V1, Direct — Deal 2 damage and reduce target ACC by 1.
+104 — Scholar’s Vest: Study Mark — R(3), V1, Direct — Reveal target’s DEF and HP to all allies.
+105 — Scholar’s Vest: Knowledge Shield — R(Self) — Ignore first status effect this turn.
+106 — Chainmail Hauberk: Chain Sweep — R(1–2), V1, Arc — Deal 3 damage to up to 3 enemies.
+107 — Chainmail Hauberk: Hold the Line — R(Self) — Allies adjacent gain +1 DEF.
+108 — Chainmail Hauberk: Linked Brace — R(Self) — Adjacent allies gain +1 DEF.
+109 — Steamline Armor: Steam Bash — R(1–2), V1, Direct — Deal 3 damage and +1 heat to target mech.
+110 — Steamline Armor: Steam Vent — R(Self) — Push adjacent enemies back 1 tile.
+111 — Steamline Armor: Pressure Guard — R(Self) — Push back melee attacker 1 tile.
+112 — Hunter’s Vest: Quiver Barrage — R(2–4), V1, Direct — Three attacks, each dealing 2 damage.
+113 — Hunter’s Vest: Camouflage — R(Self) — +3 ACC on next ranged attack.
+114 — Hunter’s Vest: Camouflage Guard — R(Self) — Gain +2 DEF if attacked at range.
+115 — Reinforced Gambeson: Body Slam — R(1), V1, Direct — Deal 3 damage; target cannot move next turn.
+116 — Reinforced Gambeson: Holdfast — R(Self) — Cannot be moved by enemy effects until next turn.
+117 — Reinforced Gambeson: Stand Fast — R(Self) — Cannot be knocked back until next turn.
+118 — Battle Harness: Lance Thrust — R(1–2), V2, Direct — Deal 4 damage ignoring 1 DEF.
+119 — Battle Harness: Adrenal Surge — R(Self) — Gain +1 movement this turn.
+120 — Battle Harness: Adrenal Guard — R(Self) — If attacked, gain +1 movement next turn.
+121 — Arcane Tunic: Energy Bolt — R(2–4), V2, Direct — Deal 3 magic damage; ignore LoS.
+122 — Arcane Tunic: Glyph Recall — R(Self) — Refresh 1 magic card from discard pile.
+123 — Arcane Tunic: Sigil Ward — R(Self) — Magic attacks deal –1 damage to you until next turn.
+124 — Marksman’s Brigandine: Precision Volley — R(3–5), V1, Direct — Two attacks, each dealing 3 damage.
+125 — Marksman’s Brigandine: Steady Aim — R(Self) — +2 ACC if you don’t move this turn.
+126 — Marksman’s Brigandine: Stagger Guard — R(Self) — If hit, attacker suffers –1 AGI until next turn.
+127 — Steel Signet Ring: Knuckle Jab — R(1), V1, Direct — Deal 2 damage and push target 1 tile.
+128 — Steel Signet Ring: Mark of Command — R(Self) — All allies gain +1 ACC next turn.
+129 — Steel Signet Ring: Signet Shield — R(Self) — Gain +1 DEF and +1 LUK until next turn.
+130 — Eagle Eye Lens: Spotter’s Shot — R(3–6), V1, Direct — Deal 4 damage; target is marked for +1 damage from all sources next turn.
+131 — Eagle Eye Lens: Target Paint — R(3–6), V1, Direct — Allies gain +1 damage to target this turn.
+132 — Eagle Eye Lens: Farsight Guard — R(Self) — Ignore overwatch this turn.
+133 — Fleetfoot Anklet: Flying Kick — R(1–2), V1, Direct — Deal 3 damage; move through target’s tile.
+134 — Fleetfoot Anklet: Speed Burst — R(Self) — +2 movement this turn.
+135 — Fleetfoot Anklet: Swift Guard — R(Self) — Move +2 and gain +1 DEF this turn.
+136 — Rune Pendant: Arcane Surge — R(2–3), V2, Direct — Deal 3 magic damage and ignore 2 DEF.
+137 — Rune Pendant: Rune Recall — R(Self) — Refresh 1 used magic card.
+138 — Rune Pendant: Rune Shield — R(Self) — Block next magic attack.
+139 — Power Bracer: Crushing Punch — R(1), V1, Direct — Deal 4 damage.
+140 — Power Bracer: Overgrip — R(Self) — Next melee attack ignores 2 DEF.
+141 — Power Bracer: Brace Block — R(Self) — Gain +1 DEF and +1 ATK until next turn.
+142 — Vitality Charm: Bulwark Bash — R(1), V1, Direct — Deal 3 damage; gain +1 HP.
+143 — Vitality Charm: Second Wind — R(Self) — Restore 1 HP.
+144 — Vitality Charm: Life Guard — R(Self) — Heal 1 HP and gain +1 DEF.
+145 — Steam Valve Wristguard: Steam Jet Strike — R(1–2), V1, Direct — Deal 3 damage; +1 heat to self.
+146 — Steam Valve Wristguard: Steam Push — R(1–2), V1, Direct — Push target back 1 tile.
+147 — Steam Valve Wristguard: Steam Shield — R(Self) — Adjacent enemies suffer –1 ACC for 1 turn.
+148 — Hunter’s Talisman: Hunter’s Pounce — R(2), V1, Direct — Deal 4 damage if target has moved this turn.
+149 — Hunter’s Talisman: Scent Mark — R(2–4), V1, Direct — Reveal target’s location even if hidden for 2 turns.
+150 — Hunter’s Talisman: Tracker’s Guard — R(Self) — First enemy to attack you is revealed on map.
+151 — Scholar’s Quill Pendant: Ink Slash — R(1), V1, Direct — Deal 3 damage and blind for 1 turn.
+152 — Scholar’s Quill Pendant: Quick Notes — R(Self) — Reduce strain of next card by 1.
+153 — Scholar’s Quill Pendant: Quick Guard — R(Self) — Reduce strain of next defensive card by 1.
+154 — Smoke Bomb Satchel: Ashen Cut — R(1), V1, Direct — Deal 3 damage; target suffers –2 ACC next turn.
+155 — Smoke Bomb Satchel: Cover Retreat — R(Self) — Create smoke on your tile; cannot be targeted until next turn.
+156 — Smoke Bomb Satchel: Escape Guard — R(Self) — Become untargetable for 1 turn after being hit.
+157 — Warrior’s Belt: Hip Smash — R(1), V1, Direct — Deal 3 damage; +1 DEF for 1 turn.
+158 — Warrior’s Belt: Berserk Prep — R(Self) — Next attack deals +2 damage but you take +1 damage until next turn.
+159 — Warrior’s Belt: Belt Brace — R(Self) — Gain +1 DEF and +1 HP until next turn.
+160 — Arcane Crystal Brooch: Crystal Beam — R(2–4), V2, Direct — Deal 4 magic damage.
+161 — Arcane Crystal Brooch: Focus Crystal — R(Self) — Next magic attack gains +1 AoE radius.
+162 — Arcane Crystal Brooch: Crystal Shield — R(Self) — Reflect 1 magic damage back to attacker.
+163 — Emberclaw Repeater: Piercing Volley — R(2–5), V1, Direct — Ignore target’s DEF for next attack. Gain +1 heat.
+164 — Emberclaw Repeater: Suppressive Spray — R(2–5), V1, Direct — Target suffers –2 ACC and –1 movement next turn. Gain +1 heat.
+165 — Emberclaw Repeater: Cooling Discipline — R(Self) — Remove 2 heat from this weapon and gain +1 DEF until next turn.
+166 — Steamburst Pike: Pierce & Pin — R(1–2), V2, Direct — Attack prevents target movement next turn. (Gain +1 heat if used as a weapon skill.)
+167 — Steamburst Pike: Pierce Anchor — R(1–2), V2, Direct — Pin target in place; cannot move next turn. Gain +1 heat.
+168 — Steamburst Pike: Steam Guard — R(Self) — Remove 1 heat; gain immunity to push/pull effects until next turn.
+169 — Vulcan Coilgun: Power Shot — R(3–7), V1, Direct — +2 damage. (Gain heat per your weapon rules.)
+170 — Vulcan Coilgun: Magnetic Pull — R(3–7), V1, Direct — Pull target 2 tiles toward you. Gain +2 heat.
+171 — Vulcan Coilgun: Magnetic Guard — R(Self) — Remove 2 heat; ranged attacks against you suffer –2 ACC until next turn.
+172 — Brassback Scattergun: Slug Round — R(1), V1, Direct — Damage doubled for this shot. (Usually –range.)
+173 — Brassback Scattergun: Warning Blast — R(1–3), V1, Cone — Push all enemies in cone back 1 tile. Gain +1 heat.
+174 — Brassback Scattergun: Blast Shield — R(Self) — Remove 1 heat; ignore first incoming ranged attack.
+175 — Ironwhisper Crossbow: Silenced Shot — R(2–6), V1, Direct — Cannot be countered or alert nearby enemies.
+176 — Ironwhisper Crossbow: Tether Bolt — R(2–6), V1, Direct — Target cannot move more than 2 tiles from current position for 2 turns. Gain +1 heat.
+177 — Ironwhisper Crossbow: Cover Reload — R(Self) — Remove 1 heat; gain +2 DEF until your next attack.
+178 — Stormlash Arcstaff: Overload Blast — R(1–3), V2, AoE(1) — All targets in range take 1 electric damage.
+179 — Stormlash Arcstaff: Static Field — R(1–3), V2, AoE(1) — Enemies in area suffer –2 AGI for 1 turn. Gain +2 heat.
+180 — Stormlash Arcstaff: Grounding Stance — R(Self) — Remove 2 heat; immune to stun until next turn.
+181 — Blazefang Saber: Searing Slash — R(1), V1, Direct — Inflict Burn status.
+182 — Blazefang Saber: Molten Mark — R(1), V1, Direct — Mark target; next attack from any ally deals +2 damage. Gain +1 heat.
+183 — Blazefang Saber: Heat Parry — R(Self) — Remove 1 heat; block the next melee attack.
+184 — Gearspike Mortar: Bunker Buster — R(3–6), V1, AoE — Ignores cover and destroys obstacles in target area.
+185 — Gearspike Mortar: Smoke Shell — R(3–6), V1, AoE(2) — Create smoke area; enemies in area have –3 ACC for 1 turn. Gain +2 heat.
+186 — Gearspike Mortar: Fortified Position — R(Self) — Remove 2 heat; gain +1 DEF and ignore AoE damage until next turn.
+187 — Emberdrake Harpooner: Anchor Pull — R(2–5), V1, Direct — Pull self to target instead of target to self.
+188 — Emberdrake Harpooner: Tether Reel — R(2–5), V1, Direct — Pull target 1 tile and immobilize for 1 turn. Gain +1 heat.
+189 — Emberdrake Harpooner: Anchor Brace — R(Self) — Remove 1 heat; cannot be moved by enemy effects until next turn.
+190 — Thunderjaw Cannon: Full Barrage — R(3–6), V1, Direct — Make an additional attack at –2 accuracy.
+191 — Thunderjaw Cannon: Suppressive Fire — R(3–6), V1, AoE(1) — Reduce enemy movement by 2 for 1 turn. Gain +2 heat.
+192 — Thunderjaw Cannon: Full Vent — R(Self) — Remove all heat; gain +3 DEF until your next turn.
+Gambit Cards
+193 — Last Stand — Double ATK below 50% HP. Strain: 3. Range: R(0–0), V0, N/A
+194 — Perfect Strike — Guaranteed hit and crit. Strain: 3. Range: R(1–1), V1, Direct
+195 — Vengeance — Deal damage equal to HP lost. Strain: 3. Range: R(1–3), V1, Direct
+196 — Battle Frenzy — Act twice this turn. Strain: 4. Range: R(0–0), V0, N/A
+197 — Ambush — First attack of battle deals double damage. Strain: 2. Range: R(1–1), V1, Direct
+198 — Unyielding — Survive fatal hit with 1 HP. Strain: 3. Range: R(0–0), V0, N/A
+199 — Rapid Fire — Attack three times in one turn. Strain: 3. Range: R(2–4), V1, Direct
+200 — Chain Reaction — AOE damage if enemy defeated. Strain: 4. Range: R(1–2), V1, Indirect, AoE
+201 — Blood Pact — Lose HP to gain ATK for 3 turns. Strain: 2. Range: R(0–0), V0, N/A
+202 — Final Gambit — Massive AoE, self‑KO. Strain: 5. Range: R(1–3), V1, Indirect, AoE
+203 — Heroic Rally — Fully restore ally strain. Strain: 2. Range: R(0–0), V0, N/A
+204 — Piercing Lunge — Ignore armor, double damage. Strain: 3. Range: R(2–3), V1, Direct
+205 — Suppressing Fire — Reduce enemy movement by 2. Strain: 2. Range: R(3–5), V1, Direct
+206 — Arcane Overload — Magic attacks deal double damage. Strain: 3. Range: R(0–0), V0, N/A
+207 — Smoke Veil — All allies gain evasion for 2 turns. Strain: 2. Range: R(0–0), V0, N/A
+Enemy Index
+Light Enemies (Free-Move Zones)
+Purpose: Quick skirmishes, resource drops, introduce mechanics without overwhelming the player.
+Count for Base Game: 10–12 types
+Breakdown:
+2–3 melee humanoids (bandits, militia, cultists)
+2–3 ranged humanoids (archers, slingers, tinkers)
+2–3 beasts (wolves, boars, swamp lizards)
+2–3 mechanical units (small drones, clockwork beetles, steam spiders)
+Tactical Encounter Enemies (Battle Rooms)
+Purpose: Core battle challenges; varied enough to keep procedural runs fresh.
+Count for Base Game: 15–18 types 
+Breakdown:
+4–5 basic infantry
+3–4 ranged/aoe units
+3–4 support/debuffer units
+2–3 elite melee units
+3–4 heavy mechanicals
+Boss / Elite Enemies
+Purpose: End-of-floor encounters or key operation milestones.
+Count for Base Game: 5 bosses (1 per operation)
+
+Item Index
+Consumables are one-use, stackable, and buyable/sellable at shops, with recipes for crafting.
+Crafting items:
+Scrap Metal (SM)
+Chaos Shards (CS)
+Medic Herbs (MH)
+Treated Leather (TL)
+Processed Fuel (PF)
+Crystals (CR)
+
+Item Name
+Effect
+Sell Price
+Buy Price
+Crafting Recipe
+Field Ration
+Restore 2 HP to unit
+15g
+30g
+2 MH + 1 TL
+Medkit
+Restore 5 HP to unit
+40g
+80g
+4 MH + 1 TL
+Repair Kit
+Restore 3 HP to mechanical unit
+20g
+40g
+2 SM + 1 PF
+Overcharge Cell
+Add +3 Heat instantly to mechanical weapon, gain +3 ATK next attack
+25g
+50g
+2 PF + 1 CR
+Coolant Flask
+Remove 3 Heat from mechanical weapon
+30g
+60g
+3 PF + 1 CR
+Smoke Canister
+Create smoke on target tile (block LoS for 1 turn)
+25g
+50g
+2 PF + 2 TL
+Throwing Knife
+R(1–3), V1, Direct — Deal 2 damage ignoring DEF
+10g
+20g
+1 SM + 1 TL
+Firebomb
+AoE(1) — Deal 3 Fire damage and apply Burn
+35g
+70g
+3 PF + 1 TL + 1 CR
+Shock Charge
+R(1–2) AoE(1) — Deal 2 Electric damage, stun 1 turn
+40g
+80g
+2 PF + 1 SM + 1 CR
+Arcane Elixir
+Restore 2 strain to target
+30g
+60g
+2 AD + 1 CR
+Focus Draught
+Next attack gains +2 ACC
+15g
+30g
+1 AD + 1 MH
+Battle Banner
+All allies within 2 tiles gain +1 ATK for 1 turn
+45g
+90g
+3 TL + 2 MH
+
+
+
+NPC Index
+Core Functional NPCs
+Quartermaster Garrick – Sells and buys gear, consumables, and crafting materials. Handles bulk supply orders.
+Engineer Mara Vance – Upgrades mechanical weapons, repairs damaged gear, and improves heat capacity or clutch toggles.
+Blacksmith Rulfen – Crafts and upgrades non-mechanical weapons, armor, and accessories.
+Tactician Orren – Manages squad formations, deck building, and multi-weapon loadouts. Provides training simulations.
+Recruiter Elayne – Allows hiring of new units, manages barracks, and handles troop dismissals.
+Medic Selka – Heals injured units, cures status effects, and sells medical supplies.
+Crafter Juno – Handles crafting consumable items from gathered resources.
+Mapwright Thalos – Unlocks and updates dungeon navigation tools, adds map modifiers, and marks hidden routes.
+
+Narrative / Lore NPCs
+Archivist Liora – Keeps records of enemy types, lore entries, and past operations. Updates bestiary entries.
+Courier Dren – Brings letters, parcels, and “off-world” packages from Fairhaven. Sometimes delivers side-quests.
+Bard Corin – Provides rumors, flavor text, and camp atmosphere through songs and stories. May hint at hidden mechanics.
+Mysterious Stranger – Appears randomly with rare trade offers or cryptic intel about enemy activity.
+
+Ambient / Flavor NPCs
+Mess Hall Cook “Big Tova” – Provides morale boosts, sells rations, and offers temporary buff meals.
+Mechanic’s Apprentice Pip – A flavor NPC who comments on player progress and occasionally offers a small crafting discount.
+Gate Guard Fenric – Controls entry and exit from the base camp, gives daily operational briefings.
+
+

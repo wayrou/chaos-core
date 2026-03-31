@@ -1,0 +1,20 @@
+
+
+	
+Using the "exit" node in the quarters screen takes the player outside of the shop node rather than outside of the quarters node
+
+in the gear workbench node while on the crafting tab, the "back" button doesn't return the player to the base camp field screen.
+
+"Tavern chatter" NPC conversation system in the tavern node doesn't have consistent styling with the port npc chatter and black market npc chatter. Completely revise tavern screen.
+
+In dungeon floor map screen:
+-Strange occurence screen needs to have CSS styling matching the rest of the game
+-"Treasure found" screen doesn't have CSS styling
+-"key room captured" screen doesn't have any CSS styling
+-When in field mode in a captured key room, trying to exit freezes the game 
+Uncaught (in promise) ReferenceError: map is not defined
+    at interactions.ts:109:47pnpm
+-"units" and "abandon" buttons should be even larger and easier for the player to see / click on.
+-Capture key rooms / forward command posts from previous floors should still be visible and accessible
+
+
