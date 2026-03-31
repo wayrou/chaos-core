@@ -1,6 +1,6 @@
 // ============================================================================
 // SPLASH SCREEN - Mr. Planet Software Planning
-// Appears before ScrollLink boot screen
+// Appears before S/COM_OS boot screen
 // ============================================================================
 
 import { renderScrollLinkBoot } from "./ScrollLinkBoot";
@@ -21,12 +21,11 @@ export function renderSplashScreen(): void {
     </div>
   `;
 
-  // Auto-advance to ScrollLink boot after 2 seconds
+  // Auto-advance to S/COM_OS boot after 2 seconds
   setTimeout(() => {
     renderScrollLinkBoot();
   }, 2000);
 }
-
 
 
 

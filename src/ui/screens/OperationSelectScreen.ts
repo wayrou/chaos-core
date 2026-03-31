@@ -55,7 +55,7 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
         <div class="opselect-header">
           <div class="opselect-header-left">
             <h1 class="opselect-title">SELECT OPERATION</h1>
-            <div class="opselect-subtitle">SCROLLINK OS // OPERATION_SELECT</div>
+            <div class="opselect-subtitle">S/COM_OS // OPERATION_SELECT</div>
           </div>
           <div class="opselect-header-right">
             <button class="opselect-back-btn" data-return-to="${returnTo}">

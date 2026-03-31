@@ -1328,7 +1328,7 @@ export function renderBattleScreen() {
       
       <!-- Console overlay -->
       <div class="scrollink-console-overlay" style="${uiPanelsMinimized ? 'transform: translateX(-100%); opacity: 0; pointer-events: none;' : ''}">
-        <div class="scrollink-console-header">SCROLLINK OS // ENGAGEMENT_FEED</div>
+        <div class="scrollink-console-header">S/COM_OS // ENGAGEMENT_FEED</div>
         <div class="scrollink-console-body" id="battleLog">${battle.log.slice(-8).map(l => `<div class="scrollink-console-line">${l}</div>`).join("")}</div>
       </div>
       

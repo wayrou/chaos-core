@@ -241,7 +241,7 @@ export function renderLoadoutScreen(): void {
           <div class="loadout-screen-header-left">
             <h1 class="loadout-screen-title">OPERATION LOADOUT</h1>
             <div class="loadout-screen-subtitle">
-              SCROLLINK OS // ${operation.codename} • ${operation.floors.length} FLOORS
+              S/COM_OS // ${operation.codename} • ${operation.floors.length} FLOORS
             </div>
           </div>
           <div class="loadout-screen-header-right">

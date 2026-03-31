@@ -63,7 +63,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
       <div class="quest-board-header town-screen__header">
         <div class="quest-board-header-left town-screen__titleblock">
           <h1 class="quest-board-title">QUEST BOARD</h1>
-          <div class="quest-board-subtitle">SCROLLINK OS // OPERATIONS_TERMINAL</div>
+          <div class="quest-board-subtitle">S/COM_OS // OPERATIONS_TERMINAL</div>
         </div>
         <div class="quest-board-header-right town-screen__header-right">
           <div class="quest-board-stats-group">

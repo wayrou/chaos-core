@@ -38,7 +38,7 @@ export function renderCodexScreen(returnTo: "basecamp" | "menu" = "basecamp"): v
 
     <!--Top Bar-- >
       <div class="ard-top-bar" >
-        <div class="ard-top-bar-title" style = "color: var(--ard-orange)" > SCROLLLINK//CODEX.SYS</div>
+        <div class="ard-top-bar-title" style = "color: var(--ard-orange)" > S/COM_OS//CODEX.SYS</div>
           </div>
 
           < !--Main Layout-- >

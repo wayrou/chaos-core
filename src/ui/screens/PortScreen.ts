@@ -773,7 +773,7 @@ function printTerminalFeed(message: string): void {
   if (terminalFeed) {
     const line = document.createElement("div");
     line.className = "terminal-line";
-    line.textContent = `SLK> PORT :: ${message}`;
+    line.textContent = `S/COM> PORT :: ${message}`;
     terminalFeed.appendChild(line);
     terminalFeed.scrollTop = terminalFeed.scrollHeight;
   }

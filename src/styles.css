@@ -4625,6 +4625,17 @@ body {
   transition: none !important;
 }
 
+.mainmenu-version {
+  margin-top: 0.25rem;
+  text-align: center;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--ard-gold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
 /* ===========================
    GLOBAL RESET & ROOT
    =========================== */
@@ -4668,7 +4679,7 @@ button {
 }
 
 /* ===========================
-   BOOT SCREEN (ScrollLinkBoot)
+   BOOT SCREEN (S/COM_OS Boot)
    =========================== */
 
 /* ==========================================================================
@@ -4903,7 +4914,7 @@ button {
 }
 
 /* ==========================================================================
-   SCROLLLINK BOOT
+   S/COM_OS BOOT
    ========================================================================== */
 
 .scrolllink-boot {
@@ -5404,7 +5415,7 @@ button {
 }
 
 .basecamp-terminal-body::after {
-  content: "SLK> BASE_CAMP_STATUS :: All systems nominal.";
+  content: "S/COM> BASE_CAMP_STATUS :: All systems nominal.";
   display: block;
   margin-top: 6px;
   font-size: 11px;

@@ -37,7 +37,7 @@ export function renderInventoryViewScreen(returnTo: "basecamp" | "field" = "base
       <div class="inventory-view-header town-screen__header">
         <div class="inventory-view-header-left town-screen__titleblock">
           <h1 class="inventory-view-title">INVENTORY</h1>
-          <div class="inventory-view-subtitle">SCROLLINK OS // ASSETS_REGISTRY</div>
+          <div class="inventory-view-subtitle">S/COM_OS // ASSETS_REGISTRY</div>
         </div>
         <div class="inventory-view-header-right town-screen__header-right">
           <div class="inventory-view-wad">

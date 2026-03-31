@@ -6,7 +6,7 @@ export interface CodexEntry {
     id: string;
     title: string;
     category: CodexCategory;
-    content: string; // The "SLK://DATASTREAM" decrypted text
+    content: string; // The "S/COM://DATASTREAM" decrypted text
 }
 
 // Fixed repository of all Codex lore text in the game
@@ -19,9 +19,9 @@ export const CODEX_DATABASE: CodexEntry[] = [
     },
     {
         id: "tech_scrolllink_os",
-        title: "ScrollLink Operating System",
+        title: "S/COM_OS Operating System",
         category: "Tech",
-        content: "SLK//DECRYPTING...\n\nScrollLink OS v4.2.1\n\nDeveloped by the Architects of the Iron Gate. ScrollLink utilizes minimal steam-power via harmonic crystals to maintain data integrity in high-Mist environments. \n\nWarning: Extended exposure to raw Aethernet data may cause ocular hemorrhaging.",
+        content: "S/COM//DECRYPTING...\n\nS/COM_OS v4.2.1\n\nDeveloped by the Architects of the Iron Gate. S/COM_OS utilizes minimal steam-power via harmonic crystals to maintain data integrity in high-Mist environments. \n\nWarning: Extended exposure to raw Aethernet data may cause ocular hemorrhaging.",
     },
     {
         id: "faction_mistguard",

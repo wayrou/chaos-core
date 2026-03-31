@@ -100,7 +100,7 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
         <div class="inventory-header town-screen__header">
           <div class="inventory-header-left town-screen__titleblock">
             <h1 class="inventory-title">LOADOUT</h1>
-            <div class="inventory-subtitle">SCROLLINK OS // FORWARD_LOCKER • BASE_STORAGE</div>
+            <div class="inventory-subtitle">S/COM_OS // FORWARD_LOCKER • BASE_STORAGE</div>
           </div>
           <div class="inventory-header-right town-screen__header-right">
             <button class="inventory-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">

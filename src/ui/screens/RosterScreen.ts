@@ -207,7 +207,7 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
         <div class="roster-header town-screen__header">
           <div class="roster-header-left town-screen__titleblock">
             <h1 class="roster-title">UNIT ROSTER</h1>
-            <div class="roster-subtitle">SCROLLINK OS // UNIT_MANAGEMENT</div>
+            <div class="roster-subtitle">S/COM_OS // UNIT_MANAGEMENT</div>
           </div>
           <div class="roster-header-right town-screen__header-right">
             <div class="roster-count">

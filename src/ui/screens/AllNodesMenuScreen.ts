@@ -76,11 +76,11 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
 
   root.innerHTML = `
     <div class="all-nodes-menu-screen town-screen town-screen--hub ard-noise">
-      <!-- Terminal Header (ScrollLink OS) -->
+      <!-- Terminal Header (S/COM_OS) -->
       <header class="all-nodes-menu-header town-screen__hero">
         <div class="all-nodes-terminal-bar">
           <span class="terminal-indicator"></span>
-          <span class="terminal-text">SCROLLLINK.OS // BASE_CAMP.SYS</span>
+          <span class="terminal-text">S/COM_OS // BASE_CAMP.SYS</span>
         </div>
         <h1 class="all-nodes-menu-title">BASE CAMP</h1>
         <p class="all-nodes-menu-subtitle">Q.U.A.C. // QUICK USER ACCESS CONSOLE</p>
@@ -129,7 +129,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <div class="all-nodes-cli-hint">Direct command access to all town nodes</div>
         </div>
         <form class="all-nodes-cli-form" id="quacForm">
-          <label class="all-nodes-cli-prompt" for="quacInput">SLK://QUAC&gt;</label>
+          <label class="all-nodes-cli-prompt" for="quacInput">S/COM://QUAC&gt;</label>
           <input
             class="all-nodes-cli-input"
             id="quacInput"

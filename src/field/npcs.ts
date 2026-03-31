@@ -167,7 +167,7 @@ export const NPC_DIALOGUE: Record<string, string[]> = {
     "Stay sharp, commander.",
   ],
   npc_engineer: [
-    "Those ScrollLink terminals are ancient tech.",
+    "Those S/COM_OS terminals are ancient tech.",
     "Still works better than most modern systems though.",
     "Can't argue with reliability.",
   ],
@@ -197,4 +197,3 @@ export const NPC_DIALOGUE: Record<string, string[]> = {
     "If you see anything suspicious out there, report it immediately.",
   ],
 };
-

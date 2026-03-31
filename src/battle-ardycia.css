@@ -1,6 +1,6 @@
 /* ==========================================================================
    CHAOS CORE - BATTLE SYSTEM STYLES
-   Ardycia Aesthetic: Utilitycore + ScrollLink Terminal + FFTA Tactical
+   Ardycia Aesthetic: Utilitycore + S/COM_OS Terminal + FFTA Tactical
 
    Uses tokens from ardycia-design-system.css (imported in styles.css)
    ========================================================================== */
@@ -22,7 +22,7 @@
   --ardycia-amber: var(--tech-amber, #ffcc6e);
   --ardycia-pumpkin: #b8612a;
 
-  /* ScrollLink Tech Palette - Map to design system */
+  /* S/COM_OS Tech Palette - Map to design system */
   --slk-green: var(--tech-crt, #35ff95);
   --slk-green-dim: var(--tech-crt-dim, #28cc78);
   --slk-green-glow: var(--tech-crt-glow, rgba(53, 255, 149, 0.4));
@@ -512,7 +512,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   SCROLLINK CONSOLE - Terminal Log
+   S/COM_OS CONSOLE - Terminal Log
    -------------------------------------------------------------------------- */
 .scrollink-console {
   background: var(--ardycia-earth-dark);

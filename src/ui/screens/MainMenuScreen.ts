@@ -24,6 +24,7 @@ import {
 import { initializeSettings } from "../../core/settings";
 import { initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
+import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
 
 // ----------------------------------------------------------------------------
 // INITIALIZATION
@@ -70,31 +71,31 @@ export async function renderMainMenu(): Promise<void> {
   
   // Flavor text for the terminal - will be output continuously
   const flavorLines = [
-    "SLK&gt; SYSTEM_STATUS    :: ScrollLink OS v0.1.0 — All systems nominal.",
-    "SLK&gt; CORE_STATUS      :: Chaos core containment: STABLE.",
-    "SLK&gt; NETWORK_STATUS   :: MISTGUARD relay connected. Signal strength: EXCELLENT.",
+    `S/COM&gt; SYSTEM_STATUS    :: ${SCROLLINK_VERSION_LABEL} — All systems nominal.`,
+    "S/COM&gt; CORE_STATUS      :: Chaos core containment: STABLE.",
+    "S/COM&gt; NETWORK_STATUS   :: MISTGUARD relay connected. Signal strength: EXCELLENT.",
     "",
-    "SLK&gt; OPERATION_LOG    :: Accessing mission archives...",
-    "SLK&gt; OPERATION_LOG    :: Last deployment: Operation IRON GATE — Status: CLEARED",
-    "SLK&gt; OPERATION_LOG    :: Active units: 2 — Squad readiness: GREEN",
+    "S/COM&gt; OPERATION_LOG    :: Accessing mission archives...",
+    "S/COM&gt; OPERATION_LOG    :: Last deployment: Operation IRON GATE — Status: CLEARED",
+    "S/COM&gt; OPERATION_LOG    :: Active units: 2 — Squad readiness: GREEN",
     "",
-    "SLK&gt; BRIEFING         :: In ARDYCIA, bandits, knights, wizards and gunslingers",
-    "SLK&gt; BRIEFING         :: fight for control over cold and rocky terrain.",
-    "SLK&gt; BRIEFING         :: Reports of a dark, growing chasm of evil magic",
-    "SLK&gt; BRIEFING         :: threaten the stability of the Fairhaven empire.",
+    "S/COM&gt; BRIEFING         :: In ARDYCIA, bandits, knights, wizards and gunslingers",
+    "S/COM&gt; BRIEFING         :: fight for control over cold and rocky terrain.",
+    "S/COM&gt; BRIEFING         :: Reports of a dark, growing chasm of evil magic",
+    "S/COM&gt; BRIEFING         :: threaten the stability of the Fairhaven empire.",
     "",
-    "SLK&gt; MISSION_PARAMS   :: Objective: Locate and secure the CHAOS CORE",
-    "SLK&gt; MISSION_PARAMS   :: Close the rift before it consumes the region.",
-    "SLK&gt; MISSION_PARAMS   :: Leading officer: AERISS THORNE — Status: ACTIVE",
+    "S/COM&gt; MISSION_PARAMS   :: Objective: Locate and secure the CHAOS CORE",
+    "S/COM&gt; MISSION_PARAMS   :: Close the rift before it consumes the region.",
+    "S/COM&gt; MISSION_PARAMS   :: Leading officer: AERISS THORNE — Status: ACTIVE",
     "",
-    "SLK&gt; AWAITING_INPUT   :: Select operation or adjust loadout.",
-    "SLK&gt; LEGACY_SYSTEM    :: Solaris (defunct) — \"Working for you.\"",
+    "S/COM&gt; AWAITING_INPUT   :: Select operation or adjust loadout.",
+    "S/COM&gt; LEGACY_SYSTEM    :: Solaris (defunct) — \"Working for you.\"",
     "",
-    "SLK&gt; SYSTEM_UPDATE    :: Running background diagnostics...",
-    "SLK&gt; SYSTEM_UPDATE    :: All subsystems operational.",
+    "S/COM&gt; SYSTEM_UPDATE    :: Running background diagnostics...",
+    "S/COM&gt; SYSTEM_UPDATE    :: All subsystems operational.",
     "",
-    "SLK&gt; NETWORK_STATUS   :: Maintaining connection to MISTGUARD relay...",
-    "SLK&gt; NETWORK_STATUS   :: Latency: 12ms — Quality: EXCELLENT",
+    "S/COM&gt; NETWORK_STATUS   :: Maintaining connection to MISTGUARD relay...",
+    "S/COM&gt; NETWORK_STATUS   :: Latency: 12ms — Quality: EXCELLENT",
   ];
 
   root.innerHTML = /*html*/ `
@@ -160,11 +161,7 @@ export async function renderMainMenu(): Promise<void> {
             </div>
             
             <!-- Footer info -->
-            <div class="mainmenu-footer">
-              <span>SCROLLINK OS v0.1.0</span>
-              <span class="mainmenu-separator">•</span>
-              <span>ARDCYTECH PROTOTYPE</span>
-            </div>
+            <div class="mainmenu-version" aria-label="Game version">${APP_VERSION}</div>
           </div>
         </div>
         
@@ -172,7 +169,7 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-terminal-container">
           <div class="mainmenu-terminal-window">
             <div class="mainmenu-terminal-header">
-              <span class="terminal-window-title">SCROLLINK OS // SYSTEM_CONSOLE</span>
+              <span class="terminal-window-title">S/COM_OS // SYSTEM_CONSOLE</span>
               <span class="terminal-window-status">[ACTIVE]</span>
             </div>
             <div class="mainmenu-terminal-body" id="terminalBody">

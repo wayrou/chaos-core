@@ -6,7 +6,7 @@
    - Steampunk Bronze + Industrial Futurism Decay
    - Atomic Autumn (warm autumn + industrial melancholy)
    - Retrofuture Noir (high-contrast, foggy, not cyberpunk)
-   - ScrollLink OS UI (CRT glow, scanlines, terminal prompts)
+   - S/COM_OS UI (CRT glow, scanlines, terminal prompts)
 
    Inspired by: Final Fantasy Tactics Advance (panel hierarchy, tactical framing)
    ========================================================================== */
@@ -47,7 +47,7 @@
   --world-smoke: #3a3937;
 
   /* -------------------------------------------------------------------------
-     1B. COLOR TOKENS - SCROLLLINK TECH PALETTE (Terminal/OS)
+     1B. COLOR TOKENS - S/COM_OS TECH PALETTE (Terminal/OS)
      ------------------------------------------------------------------------- */
 
   /* CRT Greens */
@@ -423,7 +423,7 @@
 }
 
 /* ==========================================================================
-   SECTION 4: SCROLLLINK OS OVERLAYS (Retrofuture Terminal)
+   SECTION 4: S/COM_OS OVERLAYS (Retrofuture Terminal)
 
    CRT glow, scanlines, ghost text, tactical brackets
    ========================================================================== */
@@ -1440,7 +1440,7 @@
    - --world-parchment, --world-fog: Text and light accents
    - --world-coal, --world-ash: Deep backgrounds
 
-   TECH PALETTE (ScrollLink OS):
+   TECH PALETTE (S/COM_OS):
    - --tech-crt: Terminal text, success states, health
    - --tech-teal: Selected items, rare items, info states
    - --tech-amber: Accents, headings, legendary items
@@ -1472,7 +1472,7 @@
    - Use --bg-panel or --bg-panel-alt backgrounds
    - Add .ard-panel--inset for recessed panels
 
-   SCROLLLINK OS (.slk-*):
+   S/COM_OS (.slk-*):
    - Terminal-style overlays with CRT green
    - Use .slk-terminal-bar for header bars
    - Add scanline effect with ::after pseudo-element

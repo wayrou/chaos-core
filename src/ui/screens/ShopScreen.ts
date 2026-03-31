@@ -223,7 +223,7 @@ export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = 
       <div class="shop-header town-screen__header">
         <div class="shop-header-left town-screen__titleblock">
           <h1 class="shop-title">QUARTERMASTER</h1>
-          <div class="shop-subtitle">SCROLLINK SUPPLY TERMINAL</div>
+          <div class="shop-subtitle">S/COM_OS SUPPLY TERMINAL</div>
         </div>
         <div class="shop-header-right town-screen__header-right">
           <div class="shop-wallet">

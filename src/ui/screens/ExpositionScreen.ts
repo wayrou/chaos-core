@@ -1,7 +1,7 @@
 // ============================================================================
 // EXPOSITION SCREEN - Story introduction
-// Appears after ScrollLink boot, before main menu
-// Terminal/ScrollLink aesthetic window with exposition text
+// Appears after S/COM_OS boot, before main menu
+// Terminal/S/COM_OS aesthetic window with exposition text
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";
@@ -19,7 +19,7 @@ export function renderExpositionScreen(): void {
     <div class="exposition-screen">
       <div class="exposition-window">
         <div class="exposition-window-header">
-          <span class="window-title">SCROLLINK OS // BRIEFING_01</span>
+          <span class="window-title">S/COM_OS // BRIEFING_01</span>
           <span class="window-status">[SECURE]</span>
         </div>
         <div class="exposition-window-body">
@@ -66,4 +66,3 @@ export function renderExpositionScreen(): void {
   window.addEventListener("keydown", handleKeyPress);
   window.addEventListener("click", handleClick);
 }
-

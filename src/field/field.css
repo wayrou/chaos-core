@@ -1,6 +1,6 @@
 /* ==========================================================================
    FIELD SYSTEM STYLES - Ardycia Design System
-   Aesthetic: Adventure Gothic ground + ScrollLink OS HUD
+   Aesthetic: Adventure Gothic ground + S/COM_OS HUD
    ========================================================================== */
 
 .field-root {
@@ -15,7 +15,7 @@
   position: relative;
 }
 
-/* Header - ScrollLink OS Style */
+/* Header - S/COM_OS Style */
 .field-header {
   display: flex;
   justify-content: space-between;
@@ -600,7 +600,7 @@
 
 /* ============================================================================
    ALL NODES MENU SCREEN - Ardycia Design System Implementation
-   Aesthetic: Adventure Gothic + ScrollLink OS + FFTA Menus
+   Aesthetic: Adventure Gothic + S/COM_OS + FFTA Menus
    ============================================================================ */
 
 .all-nodes-menu-screen {
@@ -626,7 +626,7 @@
   z-index: 0;
 }
 
-/* Header - ScrollLink OS Terminal Style */
+/* Header - S/COM_OS Terminal Style */
 .all-nodes-menu-header {
   position: relative;
   z-index: 1;

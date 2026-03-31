@@ -13,12 +13,13 @@ export function renderScrollLinkBoot() {
       <div class="boot-inner">
         <div class="boot-header">
           <div class="boot-window-header">
-            <span class="boot-window-title">SCROLLINK OS // SYSTEM_BOOT</span>
+            <span class="boot-window-title">S/COM_OS // SYSTEM_BOOT</span>
+            
             <span class="boot-window-status">[INIT]</span>
           </div>
         </div>
         <div class="boot-body">
-          <div class="boot-logo">SCROLLLINK OS</div>
+          <div class="boot-logo">S/COM_OS</div>
           <div class="boot-subtitle">ARDCYTECH TERMINAL INTERFACE</div>
           <div class="boot-log"></div>
           <div class="boot-progress">
@@ -40,7 +41,7 @@ export function renderScrollLinkBoot() {
     "[OK] Initializing bios...",
     "[OK] Mounting ARDCY-A01 core drive...",
     "[OK] Loading Chaos Core modules...",
-    "[OK] Linking ScrollLink nodes...",
+    "[OK] Linking S/COM_OS nodes...",
     "[OK] Verifying rift containment seals...",
     "[OK] Preparing OPS profile: AERISS.QW",
     "[OK] Legacy handoff from Solaris (defunct) — \"Working for you.\"",
@@ -61,7 +62,7 @@ export function renderScrollLinkBoot() {
     if (line.startsWith("[OK]")) {
       const prompt = document.createElement("span");
       prompt.className = "boot-prompt";
-      prompt.textContent = "SLK>";
+      prompt.textContent = "S/COM>";
       lineDiv.appendChild(prompt);
       
       const text = document.createElement("span");

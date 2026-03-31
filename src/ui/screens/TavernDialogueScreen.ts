@@ -290,7 +290,7 @@ export function renderTavernDialogueScreen(
       <div class="tavern-header">
         <div class="tavern-title-group">
           <h1 class="tavern-title">${displayTitle}</h1>
-          <div class="tavern-subtitle">SCROLLINK OS // RECRUITMENT_HUB</div>
+          <div class="tavern-subtitle">S/COM_OS // RECRUITMENT_HUB</div>
         </div>
         <div class="tavern-controls">
           ${isBaseCamp

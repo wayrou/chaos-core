@@ -26,7 +26,7 @@ export function renderEventRoomScreen(eventTemplateId: string): void {
       <div class="event-room-card">
         <div class="event-room-header">
           <div class="event-room-title">${eventTemplate.title}</div>
-          <div class="event-room-subtitle">SLK://EVENT_NODE</div>
+          <div class="event-room-subtitle">S/COM://EVENT_NODE</div>
         </div>
 
         <div class="event-room-body">

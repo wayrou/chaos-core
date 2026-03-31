@@ -202,7 +202,7 @@ export function renderGearWorkbenchScreen(
       <div class="workbench-header town-screen__header">
         <div class="workbench-header-left town-screen__titleblock">
           <h1 class="workbench-title">WORKSHOP</h1>
-          <div class="workbench-subtitle">SLK://GEAR_FABRICATION_INTERFACE • DECK COMPILER v2.3</div>
+          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • DECK COMPILER v2.3</div>
         </div>
         <div class="workbench-header-right town-screen__header-right">
           <button class="workbench-back-btn town-screen__back-btn" id="backBtn">${backBtnText}</button>
@@ -253,7 +253,7 @@ export function renderGearWorkbenchScreen(
       
       <!-- Console -->
       <div class="workbench-console">
-        <div class="console-header">SCROLLINK OS // WORKBENCH_LOG</div>
+        <div class="console-header">S/COM_OS // WORKBENCH_LOG</div>
         <div class="console-body" id="workbenchLog">
           ${workbenchState.activeTab === "build"
       ? '<div class="console-line">SLK//BUILDER :: Gear fabrication interface online.</div>'

@@ -35,6 +35,7 @@ import {
   SAVE_SLOTS,
   SaveSlot,
 } from "../../core/saveSystem";
+import { SCROLLINK_BUILD_LABEL } from "../../core/appVersion";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -62,7 +63,7 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
       <div class="settings-header">
         <div class="settings-header-left">
           <h1 class="settings-title">SETTINGS</h1>
-          <div class="settings-subtitle">SLK://SYSTEM_CONFIG</div>
+          <div class="settings-subtitle">S/COM://SYSTEM_CONFIG</div>
         </div>
         <div class="settings-header-right">
           <button class="settings-back-btn" id="backBtn">← BACK</button>
@@ -92,7 +93,7 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
       
       <div class="settings-footer">
         <button class="settings-reset-btn" id="resetBtn">RESET TO DEFAULTS</button>
-        <div class="settings-version">SCROLLINK OS BUILD 0.1.0</div>
+        <div class="settings-version">${SCROLLINK_BUILD_LABEL}</div>
       </div>
     </div>
   `;

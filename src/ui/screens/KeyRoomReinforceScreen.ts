@@ -68,7 +68,7 @@ export function renderKeyRoomReinforceScreen(keyRoomId: string): void {
         <div class="ard-panel-header">
           <div class="flex-col">
             <h1 class="ard-heading-lg">REINFORCE KEY ROOM</h1>
-            <div class="ard-subheading">SCROLLINK OS // FACILITY_UPGRADE</div>
+            <div class="ard-subheading">S/COM_OS // FACILITY_UPGRADE</div>
           </div>
           <button class="ard-btn-secondary" id="backBtn">
             <span class="ard-icon">←</span> BACK TO MAP

@@ -44,7 +44,7 @@ export function renderClassChangeScreen(unitId: UnitId): void {
           <div class="class-change-header-left">
             <h1 class="class-change-title">${unit.name} - CLASS MANAGEMENT</h1>
             <div class="class-change-subtitle">
-              SCROLLINK OS // CLASS_SYSTEM • Current: ${currentClassDef.name} (Tier ${currentClassDef.tier})
+              S/COM_OS // CLASS_SYSTEM • Current: ${currentClassDef.name} (Tier ${currentClassDef.tier})
             </div>
           </div>
           <div class="class-change-header-right">

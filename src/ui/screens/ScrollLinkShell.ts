@@ -47,7 +47,7 @@ export function renderScrollLinkShell(): void {
 
       <div class="scrolllink-main">
         <div class="window window--terminal">
-          <div class="window-header">SCROLLINK OS // OPERATIONS_CONSOLE</div>
+          <div class="window-header">S/COM_OS // OPERATIONS_CONSOLE</div>
           <div class="window-body terminal-body">
 
             <div class="terminal-line">
