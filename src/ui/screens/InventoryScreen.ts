@@ -1,190 +1,129 @@
-// src/ui/screens/InventoryScreen.ts
-
 import { getGameState, updateGameState } from "../../state/gameStore";
 import {
   computeLoad,
-  computeLoadPenaltyFlags,
-  transferItem,
   upgradeMuleClass,
   MULE_CLASS_CAPS,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
-
+import {
+  buildOwnedBaseStorageItems,
+  moveOwnedItemToBaseStorage,
+  moveOwnedItemToForwardLocker,
+} from "../../core/loadoutInventory";
+import {
+  buildInventoryFolderTransferSummaries,
+  InventoryFolderTransferSummary,
+  moveInventoryFolderToBaseStorage,
+  moveInventoryFolderToForwardLocker,
+} from "../../core/inventoryFolders";
+import {
+  BaseCampReturnTo,
+  returnFromBaseCampScreen,
+  registerBaseCampReturnHotkey,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
-export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
-  const root = document.getElementById("app");
-  if (!root) {
-    console.error("Missing #app element in index.html");
-    return;
+function renderBar(label: string, current: number, cap: number, unit: string): string {
+  const pct = current / cap;
+  let color = "#52a0ff";
+  let isFlashing = false;
+
+  if (pct >= 0.8 && pct < 1) {
+    color = "#e4d96f";
+  } else if (pct >= 1 && pct < 1.2) {
+    color = "#ff5c5c";
+  } else if (pct >= 1.2) {
+    color = "#ff3030";
+    isFlashing = true;
   }
 
-  const state = getGameState();
-  const inv: InventoryState = state.inventory;
+  const fillWidth = Math.min(pct * 100, 150);
 
-  const forwardLocker: InventoryItem[] = inv.forwardLocker ?? [];
-  const baseStorage: InventoryItem[] = inv.baseStorage ?? [];
-
-  // --- LOAD + CAPACITY (10za) ---
-  const load = computeLoad(inv);
-  const penalties = computeLoadPenaltyFlags(inv);
-
-  // Get current MULE class caps directly from MULE_CLASS_CAPS (always up-to-date)
-  const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
-  const caps = {
-    mass: muleCaps.massKg,
-    bulk: muleCaps.bulkBu,
-    power: muleCaps.powerW,
-  };
-
-  function renderBar(label: string, current: number, cap: number, unit: string): string {
-    const pct = current / cap;
-    let color = "#52a0ff"; // White/Blue = normal
-    let isFlashing = false;
-    
-    if (pct >= 0.8 && pct < 1) {
-      color = "#e4d96f"; // Yellow = nearing capacity (≥ 80%)
-    } else if (pct >= 1 && pct < 1.2) {
-      color = "#ff5c5c"; // Red = overloaded (>100%)
-    } else if (pct >= 1.2) {
-      color = "#ff3030"; // Flashing Red = extreme overload
-      isFlashing = true;
-    }
-
-    const fillWidth = Math.min(pct * 100, 150);
-    const displayText = `${current.toFixed(0)} / ${cap} ${unit}`;
-
-    return `
-      <div class="loadout-bar">
-        <div class="loadout-bar-label">${label}</div>
-        <div class="loadout-bar-track">
-          <div class="loadout-bar-fill ${isFlashing ? 'loadout-bar-fill--flashing' : ''}"
-               style="
-                 width:${fillWidth}%;
-                 background:${color};
-               ">
-          </div>
-        </div>
-        <div class="loadout-bar-value">${displayText}</div>
+  return `
+    <div class="loadout-bar">
+      <div class="loadout-bar-label">${label}</div>
+      <div class="loadout-bar-track">
+        <div class="loadout-bar-fill ${isFlashing ? "loadout-bar-fill--flashing" : ""}" style="width:${fillWidth}%;background:${color};"></div>
       </div>
-    `;
-  }
+      <div class="loadout-bar-value">${current.toFixed(0)} / ${cap} ${unit}</div>
+    </div>
+  `;
+}
 
-  function renderItem(item: InventoryItem, bin: InventoryBin): string {
-    return `
-      <div class="inv-item"
-           draggable="true"
-           data-id="${item.id}"
-           data-bin="${bin}">
-        <div class="inv-item-header">
-          <div class="inv-item-name">${item.name}</div>
-          <div class="inv-item-qty">x${item.quantity}</div>
-        </div>
-        <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
-        <div class="inv-item-stats">
-          <span>${item.massKg}kg</span>
-          <span>${item.bulkBu}bu</span>
-          <span>${item.powerW}w</span>
-        </div>
+function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
+  return `
+    <div class="inv-item"
+         draggable="true"
+         data-id="${item.id}"
+         data-bin="${bin}">
+      <div class="inv-item-header">
+        <div class="inv-item-name">${item.name}</div>
+        <div class="inv-item-qty">x${item.quantity}</div>
       </div>
-    `;
-  }
-
-  root.innerHTML = `
-    <div class="inventory-root town-screen ard-noise">
-      <div class="inventory-card town-screen__panel">
-        <!-- Header - Adventure Gothic Panel -->
-        <div class="inventory-header town-screen__header">
-          <div class="inventory-header-left town-screen__titleblock">
-            <h1 class="inventory-title">LOADOUT</h1>
-            <div class="inventory-subtitle">S/COM_OS // FORWARD_LOCKER • BASE_STORAGE</div>
-          </div>
-          <div class="inventory-header-right town-screen__header-right">
-            <button class="inventory-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
-              <span class="btn-icon">←</span>
-              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="loadout-body">
-          <div class="loadout-left">
-            <div class="loadout-capacity-section">
-              <div class="loadout-section-title">CAPACITY METERS</div>
-              ${renderBar("MASS", load.mass, caps.mass, "kg")}
-              ${renderBar("BULK", load.bulk, caps.bulk, "bu")}
-              ${renderBar("POWER", load.power, caps.power, "w")}
-            </div>
-
-            <div class="mule-upgrade">
-              <div class="mule-class-display">
-                <div class="mule-class-label">MULE SYSTEM</div>
-                <div class="mule-class-value">CLASS ${inv.muleClass}</div>
-              </div>
-              <button class="mule-upgrade-btn">UPGRADE MULE</button>
-            </div>
-          </div>
-
-          <div class="loadout-right">
-            <div class="inventory-column" data-bin="baseStorage">
-              <div class="inventory-column-header">
-                <div class="inventory-column-title">BASE CAMP STORAGE</div>
-                <div class="inventory-column-subtitle">
-                  Stored back at camp. No risk, no load penalties.
-                </div>
-              </div>
-              <div class="inventory-column-body" data-bin="baseStorage">
-                ${
-                  baseStorage.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
-                    : baseStorage
-                        .map((i) => renderItem(i, "baseStorage"))
-                        .join("")
-                }
-              </div>
-            </div>
-
-            <div class="inventory-column" data-bin="forwardLocker">
-              <div class="inventory-column-header">
-                <div class="inventory-column-title">FORWARD LOCKER</div>
-                <div class="inventory-column-subtitle">
-                  Items carried into the dungeon. Count against load.
-                </div>
-              </div>
-              <div class="inventory-column-body" data-bin="forwardLocker">
-                ${
-                  forwardLocker.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
-                    : forwardLocker
-                        .map((i) => renderItem(i, "forwardLocker"))
-                        .join("")
-                }
-              </div>
-            </div>
-          </div>
-        </div>
-
+      <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
+      <div class="inv-item-stats">
+        <span>${item.massKg}kg</span>
+        <span>${item.bulkBu}bu</span>
+        <span>${item.powerW}w</span>
       </div>
     </div>
   `;
+}
 
-  // --- BUTTON: BACK ---
+function renderInventoryFolderCard(folder: InventoryFolderTransferSummary, bin: InventoryBin): string {
+  const items = bin === "forwardLocker" ? folder.forwardLockerItems : folder.baseStorageItems;
+  const mass = bin === "forwardLocker" ? folder.lockerMassKg : folder.baseMassKg;
+  const bulk = bin === "forwardLocker" ? folder.lockerBulkBu : folder.baseBulkBu;
+  const power = bin === "forwardLocker" ? folder.lockerPowerW : folder.basePowerW;
+  const actionLabel = bin === "forwardLocker" ? "RETURN FOLDER" : "STAGE FOLDER";
+  const previewNames = items.slice(0, 3).map((item) => item.name).join(", ");
+  const moreCount = Math.max(items.length - 3, 0);
+
+  return `
+    <div
+      class="loadout-folder-card"
+      draggable="true"
+      data-folder-id="${folder.id}"
+      data-bin="${bin}"
+      style="--loadout-folder-color:${folder.color};"
+    >
+      <div class="loadout-folder-card-header">
+        <div class="loadout-folder-card-name">${folder.name}</div>
+        <div class="loadout-folder-card-count">${folder.entryCount} ASSETS</div>
+      </div>
+      <div class="loadout-folder-card-preview">
+        ${previewNames || "No deployable items in this section"}${moreCount > 0 ? ` +${moreCount} more` : ""}
+      </div>
+      <div class="loadout-folder-card-stats">
+        <span>${mass}kg</span>
+        <span>${bulk}bu</span>
+        <span>${power}w</span>
+      </div>
+      <div class="loadout-folder-card-action">${actionLabel}</div>
+    </div>
+  `;
+}
+
+function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
-      const returnDestination = backBtn.getAttribute("data-return-to") || returnTo;
-      if (returnDestination === "field") {
-        renderFieldScreen("base_camp");
-      } else {
-        renderAllNodesMenuScreen();
-      }
+      unregisterBaseCampReturnHotkey("inventory-screen");
+      const returnDestination = (backBtn.getAttribute("data-return-to") as BaseCampReturnTo | null) || returnTo;
+      returnFromBaseCampScreen(returnDestination);
     });
   }
 
-  // --- BUTTON: MULE UPGRADE (placeholder logic: no WAD cost yet) ---
+  registerBaseCampReturnHotkey("inventory-screen", returnTo, {
+    allowFieldEKey: true,
+    activeSelector: ".inventory-root",
+  });
+
   const muleBtn = root.querySelector<HTMLButtonElement>(".mule-upgrade-btn");
   if (muleBtn) {
     muleBtn.addEventListener("click", () => {
@@ -192,38 +131,45 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
         ...prev,
         inventory: upgradeMuleClass(prev.inventory),
       }));
-      renderInventoryScreen();
+      renderInventoryScreen(returnTo);
     });
   }
 
-  // ------------------------------
-  // CLICK-TO-TRANSFER (reliable)
-  // ------------------------------
   const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
   itemEls.forEach((el) => {
     el.style.cursor = "pointer";
-
     el.addEventListener("click", () => {
       const itemId = el.dataset.id;
-      const fromBinRaw = el.dataset.bin as InventoryBin | undefined;
-      if (!itemId || !fromBinRaw) return;
+      const fromBin = el.dataset.bin as InventoryBin | undefined;
+      if (!itemId || !fromBin) return;
 
-      const fromBin = fromBinRaw;
-      const toBin: InventoryBin =
-        fromBin === "forwardLocker" ? "baseStorage" : "forwardLocker";
+      updateGameState((prev) => (
+        fromBin === "forwardLocker"
+          ? moveOwnedItemToBaseStorage(prev, itemId)
+          : moveOwnedItemToForwardLocker(prev, itemId)
+      ));
 
-      updateGameState((prev) => ({
-        ...prev,
-        inventory: transferItem(prev.inventory, fromBin, toBin, itemId),
-      }));
-
-      renderInventoryScreen();
+      renderInventoryScreen(returnTo);
     });
   });
 
-  // ------------------------------
-  // DRAG & DROP (still there, but optional)
-  // ------------------------------
+  const folderEls = root.querySelectorAll<HTMLElement>(".loadout-folder-card");
+  folderEls.forEach((el) => {
+    el.style.cursor = "pointer";
+    el.addEventListener("click", () => {
+      const folderId = el.dataset.folderId;
+      const fromBin = el.dataset.bin as InventoryBin | undefined;
+      if (!folderId || !fromBin) return;
+
+      updateGameState((prev) => (
+        fromBin === "forwardLocker"
+          ? moveInventoryFolderToBaseStorage(prev, folderId)
+          : moveInventoryFolderToForwardLocker(prev, folderId)
+      ));
+
+      renderInventoryScreen(returnTo);
+    });
+  });
 
   itemEls.forEach((el) => {
     el.addEventListener("dragstart", (event: DragEvent) => {
@@ -236,6 +182,21 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
       event.dataTransfer.setData("text/plain", itemId);
       event.dataTransfer.setData("itemId", itemId);
       event.dataTransfer.setData("fromBin", fromBin);
+      event.dataTransfer.setData("transferKind", "item");
+    });
+  });
+
+  folderEls.forEach((el) => {
+    el.addEventListener("dragstart", (event: DragEvent) => {
+      if (!event.dataTransfer) return;
+      const folderId = el.dataset.folderId;
+      const fromBin = el.dataset.bin as InventoryBin | undefined;
+      if (!folderId || !fromBin) return;
+
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("folderId", folderId);
+      event.dataTransfer.setData("fromBin", fromBin);
+      event.dataTransfer.setData("transferKind", "folder");
     });
   });
 
@@ -261,14 +222,15 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
       const itemId =
         event.dataTransfer.getData("itemId") ||
         event.dataTransfer.getData("text/plain");
+      const folderId = event.dataTransfer.getData("folderId");
       const fromBinRaw = event.dataTransfer.getData("fromBin");
       const toBinRaw = colBody.dataset.bin;
+      const transferKind = event.dataTransfer.getData("transferKind");
 
-      if (!itemId || !fromBinRaw || !toBinRaw) return;
+      if ((!itemId && !folderId) || !fromBinRaw || !toBinRaw) return;
 
       const fromBin = fromBinRaw as InventoryBin;
       const toBin = toBinRaw as InventoryBin;
-
       if (fromBin === toBin) return;
       if (
         (fromBin !== "forwardLocker" && fromBin !== "baseStorage") ||
@@ -277,12 +239,152 @@ export function renderInventoryScreen(returnTo: "basecamp" | "field" = "basecamp
         return;
       }
 
-      updateGameState((prev) => ({
-        ...prev,
-        inventory: transferItem(prev.inventory, fromBin, toBin, itemId),
-      }));
+      if (transferKind !== "folder" && !itemId) {
+        return;
+      }
 
-      renderInventoryScreen();
+      updateGameState((prev) => {
+        if (transferKind === "folder" && folderId) {
+          return fromBin === "forwardLocker"
+            ? moveInventoryFolderToBaseStorage(prev, folderId)
+            : moveInventoryFolderToForwardLocker(prev, folderId);
+        }
+
+        return fromBin === "forwardLocker"
+          ? moveOwnedItemToBaseStorage(prev, itemId)
+          : moveOwnedItemToForwardLocker(prev, itemId);
+      });
+
+      renderInventoryScreen(returnTo);
     });
   });
+}
+
+export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
+  const root = document.getElementById("app");
+  if (!root) {
+    console.error("Missing #app element in index.html");
+    return;
+  }
+
+  const state = getGameState();
+  const inv: InventoryState = state.inventory;
+  const forwardLocker: InventoryItem[] = inv.forwardLocker ?? [];
+  const baseStorage: InventoryItem[] = buildOwnedBaseStorageItems(state);
+  const folderSummaries = buildInventoryFolderTransferSummaries(state);
+  const baseStorageFolders = folderSummaries.filter((folder) => folder.baseStorageItems.length > 0);
+  const forwardLockerFolders = folderSummaries.filter((folder) => folder.forwardLockerItems.length > 0);
+  const load = computeLoad(inv);
+  const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
+  const caps = {
+    mass: muleCaps.massKg,
+    bulk: muleCaps.bulkBu,
+    power: muleCaps.powerW,
+  };
+
+  root.innerHTML = `
+    <div class="inventory-root town-screen ard-noise">
+      <div class="inventory-card town-screen__panel">
+        <div class="inventory-header town-screen__header">
+          <div class="inventory-header-left town-screen__titleblock">
+            <h1 class="inventory-title">LOADOUT</h1>
+            <div class="inventory-subtitle">S/COM_OS // FORWARD_LOCKER • BASE_STORAGE</div>
+          </div>
+          <div class="inventory-header-right town-screen__header-right">
+            <button class="inventory-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
+              <span class="btn-icon">&larr;</span>
+              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="loadout-body">
+          <div class="loadout-left">
+            <div class="loadout-capacity-section">
+              <div class="loadout-section-title">FORWARD LOCKER CAPACITY</div>
+              <div class="inventory-column-subtitle">
+                Staged here in town means it will already be ready when you open the ops terminal loadout.
+              </div>
+              ${renderBar("MASS", load.mass, caps.mass, "kg")}
+              ${renderBar("BULK", load.bulk, caps.bulk, "bu")}
+              ${renderBar("POWER", load.power, caps.power, "w")}
+            </div>
+
+            <div class="mule-upgrade">
+              <div class="mule-class-display">
+                <div class="mule-class-label">MULE SYSTEM</div>
+                <div class="mule-class-value">CLASS ${inv.muleClass}</div>
+              </div>
+              <button class="mule-upgrade-btn" type="button">UPGRADE MULE</button>
+            </div>
+
+            <div class="mule-upgrade">
+              <div class="loadout-section-title">LOADOUT SYNC</div>
+              <div class="inventory-column-subtitle">
+                This node now mirrors the ops-terminal inventory management section. Folder bundles and individual staged items carry straight into operation setup.
+              </div>
+            </div>
+          </div>
+
+          <div class="loadout-right">
+            <div class="inventory-column" data-bin="baseStorage">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">BASE CAMP STORAGE</div>
+                <div class="inventory-column-subtitle">
+                  Stored back at camp. No risk, no load penalties.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="baseStorage">
+                ${
+                  baseStorageFolders.length > 0
+                    ? `
+                      <div class="loadout-folder-list">
+                        ${baseStorageFolders
+                          .map((folder) => renderInventoryFolderCard(folder, "baseStorage"))
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  baseStorage.length === 0
+                    ? (baseStorageFolders.length === 0 ? `<div class="inv-empty">[ EMPTY ]</div>` : "")
+                    : baseStorage.map((item) => renderInventoryItem(item, "baseStorage")).join("")
+                }
+              </div>
+            </div>
+
+            <div class="inventory-column" data-bin="forwardLocker">
+              <div class="inventory-column-header">
+                <div class="inventory-column-title">FORWARD LOCKER</div>
+                <div class="inventory-column-subtitle">
+                  Items carried into the dungeon. Count against load.
+                </div>
+              </div>
+              <div class="inventory-column-body" data-bin="forwardLocker">
+                ${
+                  forwardLockerFolders.length > 0
+                    ? `
+                      <div class="loadout-folder-list">
+                        ${forwardLockerFolders
+                          .map((folder) => renderInventoryFolderCard(folder, "forwardLocker"))
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  forwardLocker.length === 0
+                    ? (forwardLockerFolders.length === 0 ? `<div class="inv-empty">[ EMPTY ]</div>` : "")
+                    : forwardLocker.map((item) => renderInventoryItem(item, "forwardLocker")).join("")
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  attachInventoryManagementListeners(returnTo);
 }

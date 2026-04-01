@@ -192,6 +192,17 @@ export interface BattleState {
 // HELPERS
 // ----------------------------------------------------------------------------
 
+function normalizeBattleLoadout(loadoutLike: Partial<UnitLoadout> & { weapon?: string | null } | undefined): UnitLoadout {
+  return {
+    primaryWeapon: loadoutLike?.primaryWeapon ?? loadoutLike?.weapon ?? null,
+    secondaryWeapon: loadoutLike?.secondaryWeapon ?? null,
+    helmet: loadoutLike?.helmet ?? null,
+    chestpiece: loadoutLike?.chestpiece ?? null,
+    accessory1: loadoutLike?.accessory1 ?? null,
+    accessory2: loadoutLike?.accessory2 ?? null,
+  };
+}
+
 function shuffleArray<T>(arr: T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -327,13 +338,7 @@ export function createBattleUnitState(
 
   // Get unit's class and loadout (with fallbacks)
   const unitClass: UnitClass = (base as any).unitClass || "squire";
-  const loadout: UnitLoadout = (base as any).loadout || {
-    weapon: null,
-    helmet: null,
-    chestpiece: null,
-    accessory1: null,
-    accessory2: null,
-  };
+  const loadout = normalizeBattleLoadout((base as any).loadout);
 
   // BUILD DECK FROM EQUIPMENT (the key change!)
   let deckCards: CardId[];
@@ -374,11 +379,11 @@ export function createBattleUnitState(
   const equipStats = calculateEquipmentStats(loadout, equipment, modules);
 
   // Base stats + equipment bonuses
-  const baseAtk = (base as any).stats?.atk ?? 10;
-  const baseDef = (base as any).stats?.def ?? 5;
-  const baseAgi = base.agi ?? 3;
-  const baseAcc = (base as any).stats?.acc ?? 80;
-  const baseMaxHp = base.maxHp ?? 12;
+  const baseAtk = (base as any).atk ?? (base as any).stats?.atk ?? 10;
+  const baseDef = (base as any).def ?? (base as any).stats?.def ?? 5;
+  const baseAgi = base.agi ?? (base as any).stats?.agi ?? 3;
+  const baseAcc = (base as any).acc ?? (base as any).stats?.acc ?? 80;
+  const baseMaxHp = base.maxHp ?? (base as any).stats?.maxHp ?? 12;
 
   let finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
   let finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
@@ -1040,14 +1045,27 @@ export function isWalkableTile(state: BattleState, pos: Vec2): boolean {
   const tile = state.tiles.find(
     (t) => t.pos.x === pos.x && t.pos.y === pos.y
   );
-  if (!tile || tile.terrain === "wall") return false;
+  return Boolean(tile && tile.terrain !== "wall");
+}
 
-  const unitOnTile = Object.values(state.units).find(
-    (u) => u.pos && u.pos.x === pos.x && u.pos.y === pos.y
+function getLivingUnitAt(state: BattleState, pos: Vec2): BattleUnitState | null {
+  return (
+    Object.values(state.units).find(
+      (u) => u.hp > 0 && u.pos && u.pos.x === pos.x && u.pos.y === pos.y
+    ) ?? null
   );
-  if (unitOnTile) return false;
+}
 
-  return true;
+function canTraverseOccupiedTile(
+  movingUnit: BattleUnitState | null,
+  occupant: BattleUnitState | null,
+  isDestination: boolean,
+): boolean {
+  if (!occupant) return true;
+  if (!movingUnit) return false;
+  if (occupant.id === movingUnit.id) return true;
+  if (isDestination) return false;
+  return occupant.isEnemy === movingUnit.isEnemy;
 }
 
 export function canUnitMoveTo(
@@ -1063,8 +1081,9 @@ export function canUnitMoveTo(
   const dx = Math.abs(unit.pos.x - dest.x);
   const dy = Math.abs(unit.pos.y - dest.y);
   const distance = dx + dy;
+  const movementRange = getUnitMovementRange(unit);
 
-  if (distance === 0 || distance > unit.agi) return false;
+  if (distance === 0 || distance > movementRange) return false;
 
   // Status Check: Rooted units cannot move vertically (climb)
   if (hasStatus(unit, "rooted")) {
@@ -1075,7 +1094,64 @@ export function canUnitMoveTo(
     }
   }
 
+  const occupant = getLivingUnitAt(state, dest);
+  if (occupant && occupant.id !== unit.id) return false;
+
   return isWalkableTile(state, dest);
+}
+
+export function getReachableMovementTiles(
+  state: BattleState,
+  unit: BattleUnitState,
+  origin: Vec2 = unit.pos ?? { x: 0, y: 0 },
+): Set<string> {
+  if (!unit.pos) return new Set<string>();
+
+  const movement = getUnitMovementRange(unit);
+  const reachable = new Set<string>();
+  const visited = new Map<string, number>();
+  const queue: Array<{ x: number; y: number; cost: number }> = [{ x: origin.x, y: origin.y, cost: 0 }];
+  visited.set(`${origin.x},${origin.y}`, 0);
+
+  const dirs = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+
+    for (const d of dirs) {
+      const nx = current.x + d.x;
+      const ny = current.y + d.y;
+      const newCost = current.cost + 1;
+      const key = `${nx},${ny}`;
+
+      if (nx < 0 || nx >= state.gridWidth || ny < 0 || ny >= state.gridHeight) continue;
+      if (newCost > movement) continue;
+      if (visited.has(key) && visited.get(key)! <= newCost) continue;
+
+      if (hasStatus(unit, "rooted")) {
+        const startTile = getTileAt(state, current.x, current.y);
+        const endTile = getTileAt(state, nx, ny);
+        if (startTile && endTile && (startTile.elevation ?? 0) !== (endTile.elevation ?? 0)) {
+          continue;
+        }
+      }
+
+      const nextPos = { x: nx, y: ny };
+      if (!isWalkableTile(state, nextPos)) continue;
+
+      const occupant = getLivingUnitAt(state, nextPos);
+      const occupiedByOther = occupant && occupant.id !== unit.id;
+      if (!canTraverseOccupiedTile(unit, occupant, false)) continue;
+
+      visited.set(key, newCost);
+      if (!occupiedByOther) {
+        reachable.add(key);
+      }
+      queue.push({ x: nx, y: ny, cost: newCost });
+    }
+  }
+
+  return reachable;
 }
 
 /**
@@ -1106,6 +1182,9 @@ export function getMovePath(
     { x: -1, y: 0 }, // west
     { x: 1, y: 0 }   // east
   ];
+  const movingUnit =
+    getLivingUnitAt(state, start) ??
+    (state.activeUnitId ? state.units[state.activeUnitId] ?? null : null);
 
   while (queue.length > 0) {
     const current = queue.shift()!;
@@ -1157,13 +1236,9 @@ export function getMovePath(
       // Check if tile is walkable
       if (!isWalkableTile(state, { x: nx, y: ny })) continue;
 
-      // Check if occupied by a unit (except destination and start)
-      if (!(nx === dest.x && ny === dest.y) && !(nx === start.x && ny === start.y)) {
-        const occupied = Object.values(state.units).some(
-          u => u.pos && u.pos.x === nx && u.pos.y === ny && u.hp > 0
-        );
-        if (occupied) continue;
-      }
+      const occupant = getLivingUnitAt(state, { x: nx, y: ny });
+      const isDestination = nx === dest.x && ny === dest.y;
+      if (!canTraverseOccupiedTile(movingUnit, occupant, isDestination)) continue;
 
       // Add to queue
       const newNode = { x: nx, y: ny, cost: newCost, parent: `${current.x},${current.y}` };

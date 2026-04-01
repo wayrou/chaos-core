@@ -4,8 +4,13 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
 import { 
   PAK_DATABASE, 
@@ -14,9 +19,10 @@ import {
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
 import { getAllStarterEquipment } from "../../core/equipment";
-import { getShopEligibleUnlockables, getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
+import { getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
 import { getAllOwnedUnlockableIds } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
+import { showSystemPing } from "../components/systemPing";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -27,7 +33,7 @@ interface ShopItem {
   name: string;
   description: string;
   price: number;
-  category: "pak" | "equipment" | "consumable" | "recipe";
+  category: "pak" | "equipment" | "consumable" | "recipe" | "unlockable";
   rarity?: "common" | "uncommon" | "rare" | "epic";
   stock?: number; // undefined = unlimited
 }
@@ -210,12 +216,12 @@ const RECIPE_ITEMS: ShopItem[] = [
 
 let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell" = "paks";
 
-export function renderShopScreen(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
+export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
   
   const state = getGameState();
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "DUNGEON MAP" : "BASE CAMP";
+  const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
     <div class="shop-root town-screen town-screen--shop">
@@ -334,7 +340,6 @@ function renderShopContent(state: any): string {
       try {
         const owned = getAllOwnedUnlockableIds();
         const allOwnedIds = [...owned.chassis, ...owned.doctrines];
-        const eligible = getShopEligibleUnlockables();
         const unowned = getUnownedUnlockables(allOwnedIds);
         
         // Convert to ShopItem format
@@ -418,16 +423,15 @@ function renderShopItem(item: ShopItem, state: any): string {
 // EVENT HANDLERS
 // ----------------------------------------------------------------------------
 
-function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
+function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     // Get return destination from button's data attribute or parameter
     const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
     backBtn.onclick = () => {
-      if (returnDestination === "field") {
-        renderFieldScreen("base_camp");
-      } else if (returnDestination === "operation") {
+      unregisterBaseCampReturnHotkey("shop-screen");
+      if (returnDestination === "operation") {
         // Mark the current room as visited when leaving the shop (uses campaign system)
         const state = getGameState();
         if (state.operation?.currentRoomId) {
@@ -435,7 +439,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
         }
         renderOperationMapScreen();
       } else {
-        renderAllNodesMenuScreen();
+        returnFromBaseCampScreen(returnDestination as BaseCampReturnTo);
       }
     };
   }
@@ -448,7 +452,7 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
         currentTab = tabName as "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell";
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
       }
     });
   });
@@ -469,25 +473,8 @@ function attachShopListeners(returnTo: "basecamp" | "field" | "operation" = "bas
     attachSellListeners(returnTo);
   }
 
-  // ESC and E key handlers to exit to field mode (only when opened from field)
-  if (returnTo === "field") {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const key = e.key?.toLowerCase() ?? "";
-      if (key === "escape" || e.key === "Escape" || e.keyCode === 27 || key === "e") {
-        // Only exit if E key and not typing in an input
-        if (key === "e") {
-          const target = e.target as HTMLElement;
-          if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-            return; // Don't exit if typing in an input
-          }
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        renderFieldScreen("base_camp");
-        window.removeEventListener("keydown", handleKeyDown);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
+  if (returnTo !== "operation") {
+    registerBaseCampReturnHotkey("shop-screen", returnTo, { allowFieldEKey: true, activeSelector: ".shop-root" });
   }
 }
 
@@ -559,7 +546,7 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
     }));
     
     showNotification(`LEARNED: ${recipe.name}`, "success");
-    renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as "basecamp" | "field" | "operation" || "basecamp");
+    renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp");
   }).catch((err: any) => {
     console.error("[SHOP] Failed to purchase recipe:", err);
     showNotification("PURCHASE FAILED", "error");
@@ -567,8 +554,6 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
 }
 
 function purchaseUnlockable(itemId: string, item: ShopItem): void {
-  const state = getGameState();
-  
   // Check if already owned
   import("../../core/unlockableOwnership").then(({ hasUnlock, grantUnlock }) => {
     if (hasUnlock(itemId)) {
@@ -586,7 +571,7 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
     showNotification(`UNLOCKED: ${item.name}`, "success");
     
     // Refresh shop screen
-    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as "basecamp" | "field" | "operation" || "basecamp";
+    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp";
     renderShopScreen(returnTo);
   }).catch((err: any) => {
     console.error("[SHOP] Failed to purchase unlockable:", err);
@@ -626,7 +611,7 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
 
   // Get return destination from button
   const backBtn = document.getElementById("backBtn");
-  const returnTo = (backBtn?.getAttribute("data-return-to") as "basecamp" | "field" | "operation") || "basecamp";
+  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
 
   // Create equipment entry (basic structure - will need proper equipment data)
   const equipmentData = createEquipmentFromShopItem(itemId, item);
@@ -692,7 +677,7 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
 
   // Get return destination from button
   const backBtn = document.getElementById("backBtn");
-  const returnTo = (backBtn?.getAttribute("data-return-to") as "basecamp" | "field" | "operation") || "basecamp";
+  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
 
   updateGameState(draft => {
     draft.wad -= item.price;
@@ -745,6 +730,15 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
 // ----------------------------------------------------------------------------
 
 function showNotification(message: string, type: "success" | "error" | "info"): void {
+  showSystemPing({
+    title: type === "error" ? "SHOP ERROR" : type === "success" ? "SHOP CONFIRM" : "SHOP NOTICE",
+    message,
+    type,
+    channel: "shop",
+  });
+  return;
+
+  /*
   // Remove existing notification
   const existing = document.querySelector(".shop-notification");
   if (existing) existing.remove();
@@ -766,6 +760,7 @@ function showNotification(message: string, type: "success" | "error" | "info"): 
     notification.classList.remove("shop-notification--visible");
     setTimeout(() => notification.remove(), 300);
   }, 2500);
+  */
 }
 
 function showPurchaseModal(itemName: string, items: string[], subtitle: string): void {
@@ -1112,7 +1107,7 @@ function renderSellItem(entry: SellableEntry): string {
   `;
 }
 
-function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void {
+function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
   // Category filter buttons
   document.querySelectorAll(".sell-category-btn").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -1120,7 +1115,7 @@ function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void
       if (category) {
         sellCategoryFilter = category as typeof sellCategoryFilter;
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
       }
     });
   });
@@ -1138,7 +1133,7 @@ function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void
           sellSelectedLines.delete(key);
         }
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
       }
     });
   });
@@ -1155,7 +1150,7 @@ function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void
           sellSelectedLines.set(key, 1);
         }
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
       }
     });
   });
@@ -1207,7 +1202,7 @@ function attachSellListeners(returnTo: "basecamp" | "field" | "operation"): void
       
       // Re-render
       const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-      renderShopScreen(currentReturnTo as "basecamp" | "field" | "operation");
+      renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
     });
   }
 }

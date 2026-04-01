@@ -3,9 +3,13 @@
 // src/ui/screens/QuestBoardScreen.ts
 // ============================================================================
 
-import { getGameState } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import { 
   getAvailableQuests, 
   getActiveQuests, 
@@ -21,9 +25,8 @@ import { Quest } from "../../quests/types";
 // ----------------------------------------------------------------------------
 
 let currentTab: "available" | "active" = "available";
-let questBoardExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderQuestBoardScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) {
     console.error("[QUEST BOARD] App element not found");
@@ -40,8 +43,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
     return;
   }
 
-  const state = getGameState();
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
+  const backButtonText = getBaseCampReturnLabel(returnTo);
   const totalCompleted = getTotalQuestsCompleted();
   
   let availableQuests: Quest[];
@@ -105,7 +107,7 @@ export function renderQuestBoardScreen(returnTo: "basecamp" | "field" = "basecam
       </div>
     </div>
   `;
-  attachQuestBoardExitHotkey(returnTo);
+  registerBaseCampReturnHotkey("quest-board-screen", returnTo, { allowFieldEKey: true, activeSelector: ".quest-board-root" });
 
   attachEventListeners(returnTo);
 }
@@ -310,17 +312,13 @@ function getQuestTypeIcon(type: Quest["questType"]): string {
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachEventListeners(returnTo: "basecamp" | "field"): void {
+function attachEventListeners(returnTo: BaseCampReturnTo): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
-      detachQuestBoardExitHotkey();
-      if (returnTo === "field") {
-        renderFieldScreen("base_camp");
-      } else {
-        renderAllNodesMenuScreen();
-      }
+      unregisterBaseCampReturnHotkey("quest-board-screen");
+      returnFromBaseCampScreen(returnTo);
     });
   }
 
@@ -370,35 +368,4 @@ function attachEventListeners(returnTo: "basecamp" | "field"): void {
       }
     });
   });
-}
-
-function detachQuestBoardExitHotkey(): void {
-  if (questBoardExitKeyHandler) {
-    window.removeEventListener("keydown", questBoardExitKeyHandler);
-    questBoardExitKeyHandler = null;
-  }
-}
-
-function attachQuestBoardExitHotkey(returnTo: "basecamp" | "field"): void {
-  detachQuestBoardExitHotkey();
-
-  if (returnTo !== "field") return;
-
-  questBoardExitKeyHandler = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
-    if (key === "escape" || key === "e") {
-      if (key === "e") {
-        const target = e.target as HTMLElement;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-          return;
-        }
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      detachQuestBoardExitHotkey();
-      renderFieldScreen("base_camp");
-    }
-  };
-
-  window.addEventListener("keydown", questBoardExitKeyHandler);
 }

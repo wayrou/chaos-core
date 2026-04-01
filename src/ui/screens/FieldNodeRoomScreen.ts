@@ -18,6 +18,7 @@ import {
 } from "../../field/companion";
 import { handleKeyDown as handlePlayerInputKeyDown } from "../../core/playerInput";
 import { tryJoinAsP2, dropOutP2 } from "../../core/coop";
+import { showSystemPing } from "../components/systemPing";
 
 // ============================================================================
 // TYPES
@@ -170,8 +171,9 @@ const INVULNERABILITY_DURATION = 1000; // ms of i-frames after taking damage
 const ENEMY_KNOCKBACK_FORCE = 600; // pixels per second (2x increased)
 const ENEMY_KNOCKBACK_DURATION = 300; // ms
 const PLAYER_KNOCKBACK_FORCE = 400; // pixels per second (2x increased, smaller than enemy)
-const PLAYER_KNOCKBACK_DURATION = 200; // ms
+const _PLAYER_KNOCKBACK_DURATION = 200; // ms
 const KNOCKBACK_DAMPING = 0.85; // Velocity damping per frame
+void _PLAYER_KNOCKBACK_DURATION;
 
 // ============================================================================
 // ROOM GENERATION - Multi-Room Dungeon (Pokemon Mystery Dungeon Style)
@@ -2051,6 +2053,16 @@ function formatResourceName(type: string): string {
 }
 
 function showToast(message: string): void {
+  showSystemPing({
+    title: "FIELD MODE",
+    message,
+    type: "info",
+    durationMs: 1700,
+    channel: "field-node",
+  });
+  return;
+
+  /*
   const existing = document.querySelector(".field-node-toast");
   if (existing) existing.remove();
   
@@ -2064,6 +2076,7 @@ function showToast(message: string): void {
     toast.classList.remove("toast-visible");
     setTimeout(() => toast.remove(), 300);
   }, 1500);
+  */
 }
 
 function cleanup(): void {
@@ -2073,4 +2086,3 @@ function cleanup(): void {
 }
 
 export { cleanup as cleanupFieldNodeRoom };
-

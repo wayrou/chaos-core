@@ -5,9 +5,14 @@
 // ============================================================================
 
 import { getActiveRun } from "../../core/campaignManager";
-import { renderFieldScreen } from "../../field/FieldScreen";
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { RecruitmentCandidate, GUILD_ROSTER_LIMITS } from "../../core/types";
+import {
+  BaseCampReturnTo,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import {
   generateCandidates,
   hireCandidate,
@@ -231,7 +236,7 @@ function renderCandidateCard(
 export function renderTavernDialogueScreen(
   roomId: string = "base_camp_tavern",
   roomLabel?: string,
-  returnTo: "operation" | "field" | "basecamp" = "basecamp",
+  returnTo: "operation" | BaseCampReturnTo = "basecamp",
 ): void {
   // Stop any existing NPC window system
 
@@ -239,7 +244,7 @@ export function renderTavernDialogueScreen(
   if (!root) return;
 
   const activeRun = getActiveRun();
-  const isBaseCamp = returnTo === "basecamp" || returnTo === "field";
+  const isBaseCamp = returnTo !== "operation";
   const floorIndex = isBaseCamp ? null : (activeRun?.floorIndex ?? 0);
   const [flavorText] = getTavernDialogue(floorIndex, isBaseCamp);
   const displayTitle = (roomLabel || "Tavern").toUpperCase();
@@ -387,7 +392,7 @@ export function renderTavernDialogueScreen(
 // ----------------------------------------------------------------------------
 
 function attachCandidateHireHandlers(
-  returnTo: "operation" | "field" | "basecamp",
+  returnTo: "operation" | BaseCampReturnTo,
 ): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -407,7 +412,7 @@ function attachCandidateHireHandlers(
 
 function handleHireCandidate(
   candidateId: string,
-  returnTo: "operation" | "field" | "basecamp",
+  returnTo: "operation" | BaseCampReturnTo,
 ): void {
   const state = getGameState();
   const candidates = state.recruitmentCandidates || [];
@@ -433,7 +438,7 @@ function handleHireCandidate(
 
 function attachTavernListeners(
   roomId: string,
-  returnTo: "operation" | "field" | "basecamp",
+  returnTo: "operation" | BaseCampReturnTo,
 ): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -453,47 +458,35 @@ function attachTavernListeners(
           renderOperationMapScreen();
         },
       );
-    } else if (returnTo === "field") {
-      // Return to field mode
-      renderFieldScreen("base_camp");
     } else {
-      // Return to base camp screen
-      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
-        renderAllNodesMenuScreen();
-      });
+      unregisterBaseCampReturnHotkey("tavern-screen");
+      returnFromBaseCampScreen(returnTo);
     }
   };
 
   backBtn?.addEventListener("click", closeDialogue);
   continueBtn?.addEventListener("click", closeDialogue);
 
-  // ESC and E key handlers to exit (always works for ESC, E key only for field mode)
-  const handleKeyDown = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
+  if (returnTo === "operation") {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key?.toLowerCase() ?? "";
+      if (key !== "escape" && e.key !== "Escape" && e.keyCode !== 27) {
+        return;
+      }
 
-    // Handle ESC key - always works regardless of returnTo
-    if (key === "escape" || e.key === "Escape" || e.keyCode === 27) {
       e.preventDefault();
       closeDialogue();
       document.removeEventListener("keydown", handleKeyDown);
-      return;
-    }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return;
+  }
 
-    // Handle E key (only if returnTo is "field" and not typing in input)
-    if (returnTo === "field" && key === "e") {
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName !== "INPUT" &&
-        target.tagName !== "TEXTAREA" &&
-        !target.isContentEditable
-      ) {
-        e.preventDefault();
-        closeDialogue();
-        document.removeEventListener("keydown", handleKeyDown);
-      }
-    }
-  };
-  document.addEventListener("keydown", handleKeyDown);
+  registerBaseCampReturnHotkey("tavern-screen", returnTo, {
+    allowFieldEKey: true,
+    activeSelector: ".tavern-root",
+    onReturn: stopNpcWindowSystem,
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -555,7 +548,7 @@ function startNpcWindowSystem(): void {
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
     // Random chance to add a new window (60% chance)
-    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+    if (Math.random() < 0.6 && activeNpcWindows.length < 3) {
       addNpcWindow();
     }
 
@@ -576,7 +569,7 @@ function startNpcWindowSystem(): void {
     }
 
     // If we have too many windows, remove the oldest
-    if (activeNpcWindows.length > 4) {
+    if (activeNpcWindows.length > 3) {
       const removed = activeNpcWindows.shift();
       if (removed?.conversationId) {
         activeConversations.delete(removed.conversationId);
@@ -695,22 +688,28 @@ function attachNpcWindowClickHandlers(): void {
   const container = document.getElementById("tavernNpcWindowsContainer");
   if (!container) return;
 
-  container.querySelectorAll(".tavern-npc-window").forEach((windowEl) => {
-    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
-    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
+  if (container.dataset.clickBound === "true") {
+    return;
+  }
 
-    newWindowEl.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest(".tavern-npc-conversation-message")) {
-        return;
-      }
+  container.dataset.clickBound = "true";
+  container.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(".tavern-npc-conversation-message")) {
+      return;
+    }
 
-      const windowId = newWindowEl.getAttribute("data-window-id");
-      const conversationId = newWindowEl.getAttribute("data-conversation-id");
+    const windowEl = target.closest(".tavern-npc-window") as HTMLElement | null;
+    if (!windowEl) {
+      return;
+    }
 
-      if (windowId && conversationId) {
-        handleNpcWindowClick(windowId, conversationId);
-      }
-    });
+    const windowId = windowEl.getAttribute("data-window-id");
+    const conversationId = windowEl.getAttribute("data-conversation-id");
+
+    if (windowId && conversationId) {
+      handleNpcWindowClick(windowId, conversationId);
+    }
   });
 }
 

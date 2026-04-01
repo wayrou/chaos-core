@@ -2,7 +2,7 @@
 // QUARTERS SCREEN
 // ============================================================================
 
-import { getGameState, updateGameState } from "../../state/gameStore";
+import { getGameState } from "../../state/gameStore";
 import {
   getMailState,
   getUnreadCount,
@@ -26,6 +26,13 @@ import {
 } from "../../core/decorSystem";
 import { loadCampaignProgress } from "../../core/campaign";
 import { showDialogue } from "./DialogueScreen";
+import {
+  BaseCampReturnTo,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
+import { showSystemPing } from "../components/systemPing";
 
 type QuartersPanel = "main" | "mailbox" | "bunk" | "pinboard" | "footlocker";
 
@@ -33,12 +40,24 @@ let currentPanel: QuartersPanel = "main";
 let currentMail: MailItem | null = null;
 let currentMailPage = 0;
 
+function registerQuartersExitHotkey(returnTo: BaseCampReturnTo): void {
+  registerBaseCampReturnHotkey("quarters-screen", returnTo, {
+    allowFieldEKey: true,
+    activeSelector: ".quarters-root",
+  });
+}
+
+function returnFromQuartersScreen(returnTo: BaseCampReturnTo): void {
+  unregisterBaseCampReturnHotkey("quarters-screen");
+  returnFromBaseCampScreen(returnTo);
+}
+
 // ============================================================================
 // MAIN RENDER
 // ============================================================================
 
 export function renderQuartersScreen(
-  returnTo: "basecamp" | "field" = "basecamp",
+  returnTo: BaseCampReturnTo = "basecamp",
   initialPanel?: QuartersPanel
 ): void {
   const root = document.getElementById("app");
@@ -58,7 +77,6 @@ export function renderQuartersScreen(
   }
 
   const state = getGameState();
-  const mailState = getMailState(state);
   const unreadCount = getUnreadCount(state);
   const buffsState = getQuartersBuffsState(state);
   const decorState = getDecorState(state);
@@ -138,6 +156,7 @@ export function renderQuartersScreen(
     </div>
   `;
 
+  registerQuartersExitHotkey(returnTo);
   attachQuartersListeners(returnTo);
 }
 
@@ -145,7 +164,7 @@ export function renderQuartersScreen(
 // MAILBOX PANEL
 // ============================================================================
 
-function renderMailboxPanel(returnTo: "basecamp" | "field"): void {
+function renderMailboxPanel(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -190,6 +209,7 @@ function renderMailboxPanel(returnTo: "basecamp" | "field"): void {
       </div>
     `;
 
+    registerQuartersExitHotkey(returnTo);
     root.querySelector("#mailboxBackBtn")?.addEventListener("click", () => {
       if (currentMail) {
         // If viewing a mail, go back to inbox
@@ -199,9 +219,7 @@ function renderMailboxPanel(returnTo: "basecamp" | "field"): void {
       } else {
         // If in inbox, go back to quarters
         if (returnTo === "field") {
-          import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-            renderFieldScreen("quarters");
-          });
+          returnFromQuartersScreen(returnTo);
         } else {
           currentPanel = "main";
           renderQuartersScreen(returnTo);
@@ -263,12 +281,10 @@ function renderMailboxPanel(returnTo: "basecamp" | "field"): void {
     </div>
   `;
 
+  registerQuartersExitHotkey(returnTo);
   root.querySelector("#mailboxBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
-      // Return to quarters field map
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("quarters");
-      });
+      returnFromQuartersScreen(returnTo);
     } else {
       currentPanel = "main";
       renderQuartersScreen(returnTo);
@@ -295,7 +311,7 @@ function renderMailboxPanel(returnTo: "basecamp" | "field"): void {
 // BUNK PANEL
 // ============================================================================
 
-function renderBunkPanel(returnTo: "basecamp" | "field"): void {
+function renderBunkPanel(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -337,12 +353,10 @@ function renderBunkPanel(returnTo: "basecamp" | "field"): void {
     </div>
   `;
 
+  registerQuartersExitHotkey(returnTo);
   root.querySelector("#bunkBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
-      // Return to quarters field map
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("quarters");
-      });
+      returnFromQuartersScreen(returnTo);
     } else {
       currentPanel = "main";
       renderQuartersScreen(returnTo);
@@ -354,6 +368,17 @@ function renderBunkPanel(returnTo: "basecamp" | "field"): void {
 
     const buff = await restAtBunk();
     if (buff) {
+      showSystemPing({
+        title: "BUFF RECEIVED",
+        message: buff.name,
+        detail: buff.description,
+        type: "success",
+        channel: "quarters-buff",
+      });
+      renderBunkPanel(returnTo);
+      return;
+
+      /*
       // Show buff notification
       const notification = document.createElement("div");
       notification.className = "buff-notification";
@@ -374,6 +399,7 @@ function renderBunkPanel(returnTo: "basecamp" | "field"): void {
         notification.classList.remove("visible");
         setTimeout(() => notification.remove(), 300);
       }, 3000);
+      */
 
       // Refresh panel
       renderBunkPanel(returnTo);
@@ -385,7 +411,7 @@ function renderBunkPanel(returnTo: "basecamp" | "field"): void {
 // PINBOARD PANEL
 // ============================================================================
 
-function renderPinboardPanel(returnTo: "basecamp" | "field"): void {
+function renderPinboardPanel(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -451,12 +477,10 @@ function renderPinboardPanel(returnTo: "basecamp" | "field"): void {
     </div>
   `;
 
+  registerQuartersExitHotkey(returnTo);
   root.querySelector("#pinboardBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
-      // Return to quarters field map
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("quarters");
-      });
+      returnFromQuartersScreen(returnTo);
     } else {
       currentPanel = "main";
       renderQuartersScreen(returnTo);
@@ -468,12 +492,11 @@ function renderPinboardPanel(returnTo: "basecamp" | "field"): void {
 // FOOTLOCKER PANEL (DECOR MANAGEMENT)
 // ============================================================================
 
-function renderFootlockerPanel(returnTo: "basecamp" | "field"): void {
+function renderFootlockerPanel(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   const state = getGameState();
-  const decorState = getDecorState(state);
   const unplaced = getUnplacedDecor(state);
   const placed = getPlacedDecor(state);
   const allAnchors: DecorAnchorId[] = [
@@ -545,12 +568,10 @@ function renderFootlockerPanel(returnTo: "basecamp" | "field"): void {
     </div>
   `;
 
+  registerQuartersExitHotkey(returnTo);
   root.querySelector("#footlockerBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
-      // Return to quarters field map
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("quarters");
-      });
+      returnFromQuartersScreen(returnTo);
     } else {
       currentPanel = "main";
       renderQuartersScreen(returnTo);
@@ -634,21 +655,12 @@ function renderDecorPreview(decorState: any): string {
   `;
 }
 
-function attachQuartersListeners(returnTo: "basecamp" | "field"): void {
+function attachQuartersListeners(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
-    if (returnTo === "field") {
-      // Return to quarters field map
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("quarters");
-      });
-    } else {
-      import("./AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
-        renderAllNodesMenuScreen();
-      });
-    }
+    returnFromQuartersScreen(returnTo);
   });
 
   root.querySelector("#mailboxBtn")?.addEventListener("click", () => {
@@ -678,4 +690,3 @@ function attachQuartersListeners(returnTo: "basecamp" | "field"): void {
     showDialogue("Aeriss", ["you've done a great job today"]);
   });
 }
-

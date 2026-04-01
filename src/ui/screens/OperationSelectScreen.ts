@@ -5,8 +5,14 @@
 // ============================================================================
 
 import { updateGameState } from "../../state/gameStore";
-import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import {
   OPERATION_DEFINITIONS,
   OperationId,
@@ -33,7 +39,7 @@ let customOperationConfig = {
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -60,7 +66,7 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
           <div class="opselect-header-right">
             <button class="opselect-back-btn" data-return-to="${returnTo}">
               <span class="btn-icon">←</span>
-              <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+              <span class="btn-text">${getBaseCampReturnLabel(returnTo)}</span>
             </button>
           </div>
         </div>
@@ -187,15 +193,12 @@ export function renderOperationSelectScreen(returnTo: "basecamp" | "field" = "ba
   // Event listeners
   root.querySelector(".opselect-back-btn")?.addEventListener("click", () => {
     const btn = root.querySelector(".opselect-back-btn") as HTMLElement;
-    const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
-    if (returnDestination === "field") {
-      renderFieldScreen("base_camp");
-    } else {
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("base_camp");
-      });
-    }
+    unregisterBaseCampReturnHotkey("operation-select-screen");
+    const returnDestination = (btn?.getAttribute("data-return-to") as BaseCampReturnTo | null) || returnTo;
+    returnFromBaseCampScreen(returnDestination);
   });
+
+  registerBaseCampReturnHotkey("operation-select-screen", returnTo, { allowFieldEKey: true, activeSelector: ".opselect-root" });
 
   // Story operation buttons
   root.querySelectorAll(".opselect-deploy-btn[data-op-id]").forEach(btn => {

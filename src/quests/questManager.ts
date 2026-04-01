@@ -8,6 +8,7 @@ import { getGameState, updateGameState } from "../state/gameStore";
 import { getQuestById, cloneQuest, getAvailableQuests as getAvailableQuestsFromData } from "./questData";
 import { grantQuestRewards } from "./questRewards";
 import { generateRandomQuest, generateRandomQuests } from "./questGenerator";
+import { showSystemPing } from "../ui/components/systemPing";
 
 // ============================================================================
 // CONFIGURATION
@@ -248,6 +249,19 @@ function completeQuest(questId: QuestId): void {
  * Show a notification when a quest is completed
  */
 function showQuestCompletionNotification(quest: Quest): void {
+  const rewardParts: string[] = [];
+  if (quest.rewards.wad) rewardParts.push(`${quest.rewards.wad} WAD`);
+  if (quest.rewards.xp) rewardParts.push(`${quest.rewards.xp} XP`);
+
+  showSystemPing({
+    title: "QUEST COMPLETE",
+    message: quest.title,
+    detail: rewardParts.length > 0 ? rewardParts.join(" • ") : undefined,
+    type: "success",
+    channel: "quest-complete",
+  });
+  return;
+
   // Create notification element
   const notification = document.createElement("div");
   notification.className = "quest-completion-notification";
@@ -395,4 +409,3 @@ export function abandonQuest(questId: QuestId): boolean {
   
   return true;
 }
-

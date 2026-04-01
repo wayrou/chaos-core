@@ -75,6 +75,20 @@ function formatStatWithSign(val: number): string {
   return "0";
 }
 
+function getDeckCardGlyph(type: EquipmentCard["type"]): string {
+  switch (type) {
+    case "class":
+      return "^";
+    case "equipment":
+      return "#";
+    case "gambit":
+      return "!";
+    case "core":
+    default:
+      return "*";
+  }
+}
+
 export function renderUnitDetailScreen(unitId: string): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -193,15 +207,25 @@ export function renderUnitDetailScreen(unitId: string): void {
       if (!card) return "";
 
       const typeClass = `deck-card--${card.type}`;
+      const footerBits = [
+        card.range ? `<span class="deck-card-stat">${card.range}</span>` : "",
+        count > 1 ? `<span class="deck-card-stat">x${count}</span>` : "",
+      ].filter(Boolean).join("");
+
       return `
         <div class="deck-card ${typeClass}">
-          <div class="deck-card-header">
-            <span class="deck-card-name">${card.name}</span>
-            <span class="deck-card-cost">${card.strainCost}</span>
-          </div>
+          <div class="deck-card-cost">${card.strainCost}</div>
           <div class="deck-card-type">${card.type.toUpperCase()}</div>
+          <div class="deck-card-art">
+            <span class="deck-card-glyph">${getDeckCardGlyph(card.type)}</span>
+          </div>
+          <div class="deck-card-name-banner">
+            <span class="deck-card-name">${card.name}</span>
+          </div>
           <div class="deck-card-desc">${card.description}</div>
-          ${count > 1 ? `<div class="deck-card-count">x${count}</div>` : ""}
+          <div class="deck-card-footer">
+            ${footerBits || `<span class="deck-card-stat">DECK</span>`}
+          </div>
         </div>
       `;
     })

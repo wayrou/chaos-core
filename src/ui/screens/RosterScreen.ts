@@ -4,12 +4,17 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderUnitDetailScreen } from "./UnitDetailScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 
 import {
   UnitLoadout,
@@ -52,7 +57,7 @@ function formatStatDiff(diff: number): string {
   return "";
 }
 
-export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | "operation" = "basecamp"): void {
+export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "operation" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -196,7 +201,9 @@ export function renderRosterScreen(returnTo: "basecamp" | "field" | "loadout" | 
       case "operation": return "OPERATION MAP";
       case "field": return "FIELD MODE";
       case "loadout": return "LOADOUT";
-      default: return "BASE CAMP";
+      case "esc":
+      case "basecamp":
+      default: return getBaseCampReturnLabel(target as BaseCampReturnTo);
     }
   };
 
@@ -300,7 +307,7 @@ function removeUnitFromParty(unitId: string): void {
   });
 }
 
-function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field" | "loadout" | "operation"): void {
+function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "loadout" | "operation"): void {
   // Use setTimeout to ensure DOM is fully rendered
   setTimeout(() => {
     // Toggle party buttons - click to add/remove from party
@@ -332,18 +339,24 @@ function attachRosterListeners(root: HTMLElement, returnTo: "basecamp" | "field"
         const btn = backBtn as HTMLElement;
         const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
         console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
-        if (returnDestination === "field") {
-          renderFieldScreen("base_camp");
-        } else if (returnDestination === "loadout") {
+        unregisterBaseCampReturnHotkey("roster-screen");
+        if (returnDestination === "loadout") {
           renderLoadoutScreen();
         } else if (returnDestination === "operation") {
           renderOperationMapScreen();
         } else {
-          renderAllNodesMenuScreen();
+          returnFromBaseCampScreen(returnDestination as BaseCampReturnTo);
         }
       };
     } else {
       console.warn("[ROSTER] Back button not found");
+    }
+
+    if (returnTo !== "loadout" && returnTo !== "operation") {
+      registerBaseCampReturnHotkey("roster-screen", returnTo, {
+        allowFieldEKey: true,
+        activeSelector: ".roster-root",
+      });
     }
 
     // Manage buttons - use both onclick and addEventListener for maximum compatibility

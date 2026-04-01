@@ -7,14 +7,18 @@ import {
   CODEX_DATABASE,
   debugUnlockAllCodexEntries
 } from "../../core/codexSystem";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { renderMainMenu } from "./MainMenuScreen";
-
+import {
+  BaseCampReturnTo,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 let activeCategory: CodexCategory = "Lore";
 let activeEntry: CodexEntry | null = null;
-let returnDestination: "basecamp" | "menu" = "basecamp";
+let returnDestination: BaseCampReturnTo | "menu" = "basecamp";
 
-export function renderCodexScreen(returnTo: "basecamp" | "menu" = "basecamp"): void {
+export function renderCodexScreen(returnTo: BaseCampReturnTo | "menu" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -195,31 +199,18 @@ function attachListeners(): void {
   const closeBtn = root.querySelector("#codex-btn-close");
   if (closeBtn) {
     closeBtn.addEventListener("click", () => {
+      unregisterBaseCampReturnHotkey("codex-screen");
       if (returnDestination === "menu") {
         renderMainMenu();
       } else {
-        renderAllNodesMenuScreen();
+        returnFromBaseCampScreen(returnDestination);
       }
     });
   }
 
-  // Escape key to close
-  const escapeHandler = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      window.removeEventListener("keydown", escapeHandler);
-      if (returnDestination === "menu") {
-        renderMainMenu();
-      } else {
-        renderAllNodesMenuScreen();
-      }
-    }
-  };
-  window.addEventListener("keydown", escapeHandler);
-
-  // Clean up listener when screen changes
-  const checkScreenChange = new MutationObserver(() => {
-    window.removeEventListener("keydown", escapeHandler);
-    checkScreenChange.disconnect();
-  });
-  checkScreenChange.observe(root, { childList: true });
+  if (returnDestination !== "menu") {
+    registerBaseCampReturnHotkey("codex-screen", returnDestination, { activeSelector: "#codex-btn-close" });
+  } else {
+    unregisterBaseCampReturnHotkey("codex-screen");
+  }
 }

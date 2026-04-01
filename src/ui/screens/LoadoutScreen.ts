@@ -10,7 +10,18 @@ import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
 import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../core/inventory";
-import { GameState, InventoryState, InventoryItem } from "../../core/types";
+import { InventoryState, InventoryItem } from "../../core/types";
+import {
+  buildOwnedBaseStorageItems,
+  moveOwnedItemToBaseStorage,
+  moveOwnedItemToForwardLocker,
+} from "../../core/loadoutInventory";
+import {
+  buildInventoryFolderTransferSummaries,
+  InventoryFolderTransferSummary,
+  moveInventoryFolderToBaseStorage,
+  moveInventoryFolderToForwardLocker,
+} from "../../core/inventoryFolders";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
@@ -26,127 +37,6 @@ interface PartyUnitSummary {
   totalMass: number;
   totalBulk: number;
   totalPower: number;
-}
-
-function makeEquipmentInventoryItem(equipment: Equipment, existing?: InventoryItem): InventoryItem {
-  return {
-    id: equipment.id,
-    name: equipment.name,
-    kind: "equipment",
-    stackable: false,
-    quantity: 1,
-    massKg: existing?.massKg ?? 2,
-    bulkBu: existing?.bulkBu ?? 1,
-    powerW: existing?.powerW ?? 1,
-  };
-}
-
-function makeConsumableInventoryItem(
-  id: string,
-  quantity: number,
-  existing?: InventoryItem
-): InventoryItem {
-  return {
-    id,
-    name: existing?.name ?? id,
-    kind: "consumable",
-    stackable: true,
-    quantity,
-    massKg: existing?.massKg ?? 1,
-    bulkBu: existing?.bulkBu ?? 1,
-    powerW: existing?.powerW ?? 0,
-  };
-}
-
-function buildLoadoutBaseStorageItems(state: GameState): InventoryItem[] {
-  const forwardLocker = state.inventory?.forwardLocker ?? [];
-  const inventoryLookup = new Map<string, InventoryItem>();
-  [...forwardLocker, ...(state.inventory?.baseStorage ?? [])].forEach((item) => {
-    inventoryLookup.set(item.id, item);
-  });
-
-  const reservedInForwardLocker = new Map<string, number>();
-  forwardLocker.forEach((item) => {
-    reservedInForwardLocker.set(item.id, (reservedInForwardLocker.get(item.id) ?? 0) + (item.quantity || 1));
-  });
-
-  const derivedItems: InventoryItem[] = [];
-  const addedIds = new Set<string>();
-
-  for (const equipmentId of state.equipmentPool || []) {
-    if (reservedInForwardLocker.has(equipmentId)) {
-      continue;
-    }
-
-    const equipment = state.equipmentById?.[equipmentId] as Equipment | undefined;
-    if (!equipment) {
-      continue;
-    }
-
-    derivedItems.push(makeEquipmentInventoryItem(equipment, inventoryLookup.get(equipmentId)));
-    addedIds.add(equipmentId);
-  }
-
-  for (const [consumableId, ownedQty] of Object.entries(state.consumables || {})) {
-    const remainingQty = ownedQty - (reservedInForwardLocker.get(consumableId) ?? 0);
-    if (remainingQty <= 0) {
-      continue;
-    }
-
-    derivedItems.push(makeConsumableInventoryItem(consumableId, remainingQty, inventoryLookup.get(consumableId)));
-    addedIds.add(consumableId);
-  }
-
-  for (const legacyItem of state.inventory?.baseStorage ?? []) {
-    if (!addedIds.has(legacyItem.id)) {
-      derivedItems.push(legacyItem);
-    }
-  }
-
-  return derivedItems.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function moveItemToForwardLocker(state: GameState, itemId: string): GameState {
-  const availableItems = buildLoadoutBaseStorageItems(state);
-  const item = availableItems.find((entry) => entry.id === itemId);
-  if (!item) {
-    return state;
-  }
-
-  const forwardLocker = [...(state.inventory?.forwardLocker ?? [])];
-  const existing = forwardLocker.find((entry) => entry.id === itemId);
-
-  if (existing && item.stackable) {
-    existing.quantity += item.quantity;
-  } else if (!existing) {
-    forwardLocker.push({ ...item });
-  }
-
-  return {
-    ...state,
-    inventory: {
-      ...state.inventory,
-      forwardLocker,
-    },
-  };
-}
-
-function moveItemToBaseStorage(state: GameState, itemId: string): GameState {
-  const forwardLocker = [...(state.inventory?.forwardLocker ?? [])];
-  const itemIndex = forwardLocker.findIndex((entry) => entry.id === itemId);
-  if (itemIndex === -1) {
-    return state;
-  }
-
-  forwardLocker.splice(itemIndex, 1);
-
-  return {
-    ...state,
-    inventory: {
-      ...state.inventory,
-      forwardLocker,
-    },
-  };
 }
 
 // ============================================================================
@@ -214,7 +104,10 @@ export function renderLoadoutScreen(): void {
   // Get inventory state
   const inv: InventoryState = state.inventory;
   const forwardLocker: InventoryItem[] = inv.forwardLocker ?? [];
-  const baseStorage: InventoryItem[] = buildLoadoutBaseStorageItems(state);
+  const baseStorage: InventoryItem[] = buildOwnedBaseStorageItems(state);
+  const folderSummaries = buildInventoryFolderTransferSummaries(state);
+  const baseStorageFolders = folderSummaries.filter((folder) => folder.baseStorageItems.length > 0);
+  const forwardLockerFolders = folderSummaries.filter((folder) => folder.forwardLockerItems.length > 0);
   const load = computeLoad(inv);
   const penalties = computeLoadPenaltyFlags(inv);
 
@@ -322,8 +215,19 @@ export function renderLoadoutScreen(): void {
               </div>
               <div class="inventory-column-body" data-bin="baseStorage">
                 ${
+                  baseStorageFolders.length > 0
+                    ? `
+                      <div class="loadout-folder-list">
+                        ${baseStorageFolders
+                          .map((folder) => renderInventoryFolderCard(folder, "baseStorage"))
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+                ${
                   baseStorage.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    ? (baseStorageFolders.length === 0 ? `<div class="inv-empty">[ EMPTY ]</div>` : "")
                     : baseStorage
                         .map((i) => renderInventoryItem(i, "baseStorage"))
                         .join("")
@@ -340,8 +244,19 @@ export function renderLoadoutScreen(): void {
               </div>
               <div class="inventory-column-body" data-bin="forwardLocker">
                 ${
+                  forwardLockerFolders.length > 0
+                    ? `
+                      <div class="loadout-folder-list">
+                        ${forwardLockerFolders
+                          .map((folder) => renderInventoryFolderCard(folder, "forwardLocker"))
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+                ${
                   forwardLocker.length === 0
-                    ? `<div class="inv-empty">[ EMPTY ]</div>`
+                    ? (forwardLockerFolders.length === 0 ? `<div class="inv-empty">[ EMPTY ]</div>` : "")
                     : forwardLocker
                         .map((i) => renderInventoryItem(i, "forwardLocker"))
                         .join("")
@@ -459,6 +374,40 @@ function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
   `;
 }
 
+function renderInventoryFolderCard(folder: InventoryFolderTransferSummary, bin: InventoryBin): string {
+  const items = bin === "forwardLocker" ? folder.forwardLockerItems : folder.baseStorageItems;
+  const mass = bin === "forwardLocker" ? folder.lockerMassKg : folder.baseMassKg;
+  const bulk = bin === "forwardLocker" ? folder.lockerBulkBu : folder.baseBulkBu;
+  const power = bin === "forwardLocker" ? folder.lockerPowerW : folder.basePowerW;
+  const buttonLabel = bin === "forwardLocker" ? "RETURN FOLDER" : "STAGE FOLDER";
+  const previewNames = items.slice(0, 3).map((item) => item.name).join(", ");
+  const moreCount = Math.max(items.length - 3, 0);
+
+  return `
+    <div
+      class="loadout-folder-card"
+      draggable="true"
+      data-folder-id="${folder.id}"
+      data-bin="${bin}"
+      style="--loadout-folder-color:${folder.color};"
+    >
+      <div class="loadout-folder-card-header">
+        <div class="loadout-folder-card-name">${folder.name}</div>
+        <div class="loadout-folder-card-count">${folder.entryCount} ASSETS</div>
+      </div>
+      <div class="loadout-folder-card-preview">
+        ${previewNames || "No deployable items in this section"}${moreCount > 0 ? ` +${moreCount} more` : ""}
+      </div>
+      <div class="loadout-folder-card-stats">
+        <span>${mass}kg</span>
+        <span>${bulk}bu</span>
+        <span>${power}w</span>
+      </div>
+      <div class="loadout-folder-card-action">${buttonLabel}</div>
+    </div>
+  `;
+}
+
 // ============================================================================
 // EVENT LISTENERS
 // ============================================================================
@@ -550,8 +499,27 @@ function attachLoadoutListeners(): void {
       const fromBin = fromBinRaw;
       updateGameState((prev) => (
         fromBin === "forwardLocker"
-          ? moveItemToBaseStorage(prev, itemId)
-          : moveItemToForwardLocker(prev, itemId)
+          ? moveOwnedItemToBaseStorage(prev, itemId)
+          : moveOwnedItemToForwardLocker(prev, itemId)
+      ));
+
+      renderLoadoutScreen();
+    });
+  });
+
+  const folderEls = root.querySelectorAll<HTMLElement>(".loadout-folder-card");
+  folderEls.forEach((el) => {
+    el.style.cursor = "pointer";
+
+    el.addEventListener("click", () => {
+      const folderId = el.dataset.folderId;
+      const fromBinRaw = el.dataset.bin as InventoryBin | undefined;
+      if (!folderId || !fromBinRaw) return;
+
+      updateGameState((prev) => (
+        fromBinRaw === "forwardLocker"
+          ? moveInventoryFolderToBaseStorage(prev, folderId)
+          : moveInventoryFolderToForwardLocker(prev, folderId)
       ));
 
       renderLoadoutScreen();
@@ -570,6 +538,21 @@ function attachLoadoutListeners(): void {
       event.dataTransfer.setData("text/plain", itemId);
       event.dataTransfer.setData("itemId", itemId);
       event.dataTransfer.setData("fromBin", fromBin);
+      event.dataTransfer.setData("transferKind", "item");
+    });
+  });
+
+  folderEls.forEach((el) => {
+    el.addEventListener("dragstart", (event: DragEvent) => {
+      if (!event.dataTransfer) return;
+      const folderId = el.dataset.folderId;
+      const fromBin = el.dataset.bin as InventoryBin | undefined;
+      if (!folderId || !fromBin) return;
+
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("folderId", folderId);
+      event.dataTransfer.setData("fromBin", fromBin);
+      event.dataTransfer.setData("transferKind", "folder");
     });
   });
 
@@ -595,10 +578,12 @@ function attachLoadoutListeners(): void {
       const itemId =
         event.dataTransfer.getData("itemId") ||
         event.dataTransfer.getData("text/plain");
+      const folderId = event.dataTransfer.getData("folderId");
       const fromBinRaw = event.dataTransfer.getData("fromBin");
       const toBinRaw = colBody.dataset.bin;
+      const transferKind = event.dataTransfer.getData("transferKind");
 
-      if (!itemId || !fromBinRaw || !toBinRaw) return;
+      if ((!itemId && !folderId) || !fromBinRaw || !toBinRaw) return;
 
       const fromBin = fromBinRaw as InventoryBin;
       const toBin = toBinRaw as InventoryBin;
@@ -611,11 +596,21 @@ function attachLoadoutListeners(): void {
         return;
       }
 
-      updateGameState((prev) => (
-        fromBin === "forwardLocker"
-          ? moveItemToBaseStorage(prev, itemId)
-          : moveItemToForwardLocker(prev, itemId)
-      ));
+      if (transferKind !== "folder" && !itemId) {
+        return;
+      }
+
+      updateGameState((prev) => {
+        if (transferKind === "folder" && folderId) {
+          return fromBin === "forwardLocker"
+            ? moveInventoryFolderToBaseStorage(prev, folderId)
+            : moveInventoryFolderToForwardLocker(prev, folderId);
+        }
+
+        return fromBin === "forwardLocker"
+          ? moveOwnedItemToBaseStorage(prev, itemId)
+          : moveOwnedItemToForwardLocker(prev, itemId);
+      });
 
       renderLoadoutScreen();
     });

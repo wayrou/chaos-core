@@ -4,12 +4,17 @@
 // ============================================================================
 
 import "../../field/field.css";
+import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../../core/types";
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderFieldScreen } from "../../field/FieldScreen";
+import { setBaseCampFieldReturnMap } from "./baseCampReturn";
 
 let lastFieldMap: string = "base_camp";
 let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
 let suppressNodeClickUntil = 0;
+let allNodesEscHandler: ((e: KeyboardEvent) => void) | null = null;
+let allNodesResizeHandler: (() => void) | null = null;
+let pinnedFrameSyncHandle: number | null = null;
 
 type NodeDefinition = {
   action: string;
@@ -19,9 +24,49 @@ type NodeDefinition = {
   variant?: string;
 };
 
+type WorkspaceItemLayout = {
+  colSpan: number;
+  rowSpan: number;
+  gridX: number;
+  gridY: number;
+};
+
+type GridMetrics = {
+  columnCount: number;
+  trackWidth: number;
+  columnGap: number;
+  rowGap: number;
+  rowHeight: number;
+};
+
+type WorkspaceLayoutPreset = {
+  name: string;
+  layouts: Record<string, WorkspaceItemLayout>;
+};
+
+type BaseCampColorTheme = {
+  key: string;
+  label: string;
+  vars: Record<string, string>;
+};
+
 const QUAC_LAYOUT_ID = "quac-terminal";
+const RESOURCE_LAYOUT_ID = "resource-tracker";
 const DRAG_THRESHOLD_PX = 8;
-const MIN_ITEM_HEIGHT = 104;
+const WORKSPACE_ROW_HEIGHT_PX = 24;
+const MIN_ITEM_ROW_SPAN = 4;
+const AUTO_SCROLL_MARGIN_PX = 72;
+const AUTO_SCROLL_STEP_PX = 24;
+const BASE_CAMP_LAYOUT_VERSION = 5;
+const BASE_CAMP_LOADOUT_COUNT = 2;
+const DEFAULT_LOADOUT_PRESET_INDEXES = [0, 2] as const;
+const LEGACY_WORKSPACE_COLUMN_COUNT = 4;
+const LEGACY_TO_WIDE_COLUMN_SCALE = 3;
+const DEFAULT_NODE_ROW_SPAN = 5;
+const DEFAULT_RESOURCE_COL_SPAN = 3;
+const DEFAULT_RESOURCE_ROW_SPAN = 9;
+const DEFAULT_QUAC_COL_SPAN = 5;
+const DEFAULT_QUAC_ROW_SPAN = 10;
 
 const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -40,7 +85,235 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
 ];
 
-const DEFAULT_LAYOUT_ORDER = [...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID];
+const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID];
+
+const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
+  [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: DEFAULT_RESOURCE_COL_SPAN, rowSpan: DEFAULT_RESOURCE_ROW_SPAN },
+  "ops-terminal": { gridX: 4, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  roster: { gridX: 5, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  loadout: { gridX: 6, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  inventory: { gridX: 7, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "gear-workbench": { gridX: 4, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  shop: { gridX: 5, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  tavern: { gridX: 6, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "quest-board": { gridX: 7, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  port: { gridX: 1, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  quarters: { gridX: 2, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  stable: { gridX: 3, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  codex: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  settings: { gridX: 5, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "comms-array": { gridX: 6, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: DEFAULT_QUAC_COL_SPAN, rowSpan: DEFAULT_QUAC_ROW_SPAN },
+};
+
+function cloneLayoutMap(layouts: Record<string, WorkspaceItemLayout>): Record<string, WorkspaceItemLayout> {
+  return Object.fromEntries(
+    Object.entries(layouts).map(([itemId, layout]) => [itemId, { ...layout }]),
+  ) as Record<string, WorkspaceItemLayout>;
+}
+
+function createLayoutPreset(
+  name: string,
+  overrides: Partial<Record<string, WorkspaceItemLayout>>,
+): WorkspaceLayoutPreset {
+  const layouts = cloneLayoutMap(DEFAULT_ITEM_LAYOUTS);
+  Object.entries(overrides).forEach(([itemId, layout]) => {
+    if (!layout) return;
+    layouts[itemId] = { ...(layouts[itemId] ?? DEFAULT_ITEM_LAYOUTS[itemId] ?? { gridX: 1, gridY: 1, colSpan: 1, rowSpan: MIN_ITEM_ROW_SPAN }), ...layout };
+  });
+
+  return { name, layouts };
+}
+
+const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
+  createLayoutPreset("COMMAND", {}),
+  createLayoutPreset("BROADCAST", {
+    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 4, rowSpan: 7 },
+    [QUAC_LAYOUT_ID]: { gridX: 5, gridY: 1, colSpan: 8, rowSpan: 8 },
+    "ops-terminal": { gridX: 1, gridY: 8, colSpan: 2, rowSpan: 5 },
+    roster: { gridX: 3, gridY: 8, colSpan: 2, rowSpan: 5 },
+    loadout: { gridX: 1, gridY: 13, colSpan: 2, rowSpan: 5 },
+    inventory: { gridX: 3, gridY: 13, colSpan: 2, rowSpan: 5 },
+    "gear-workbench": { gridX: 5, gridY: 9, colSpan: 3, rowSpan: 5 },
+    shop: { gridX: 8, gridY: 9, colSpan: 2, rowSpan: 5 },
+    tavern: { gridX: 10, gridY: 9, colSpan: 3, rowSpan: 5 },
+    "quest-board": { gridX: 5, gridY: 14, colSpan: 2, rowSpan: 5 },
+    port: { gridX: 7, gridY: 14, colSpan: 2, rowSpan: 5 },
+    quarters: { gridX: 9, gridY: 14, colSpan: 2, rowSpan: 5 },
+    stable: { gridX: 11, gridY: 14, colSpan: 2, rowSpan: 5 },
+    codex: { gridX: 1, gridY: 18, colSpan: 2, rowSpan: 4 },
+    settings: { gridX: 3, gridY: 18, colSpan: 2, rowSpan: 4 },
+    "comms-array": { gridX: 5, gridY: 19, colSpan: 3, rowSpan: 4 },
+  }),
+  createLayoutPreset("TACTICAL", {
+    [QUAC_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 4, rowSpan: 12 },
+    [RESOURCE_LAYOUT_ID]: { gridX: 10, gridY: 1, colSpan: 3, rowSpan: 9 },
+    "ops-terminal": { gridX: 5, gridY: 1, colSpan: 2, rowSpan: 5 },
+    roster: { gridX: 7, gridY: 1, colSpan: 2, rowSpan: 5 },
+    loadout: { gridX: 5, gridY: 6, colSpan: 2, rowSpan: 5 },
+    inventory: { gridX: 7, gridY: 6, colSpan: 2, rowSpan: 5 },
+    "gear-workbench": { gridX: 5, gridY: 11, colSpan: 2, rowSpan: 5 },
+    shop: { gridX: 7, gridY: 11, colSpan: 2, rowSpan: 5 },
+    tavern: { gridX: 10, gridY: 10, colSpan: 3, rowSpan: 5 },
+    "quest-board": { gridX: 1, gridY: 13, colSpan: 2, rowSpan: 5 },
+    port: { gridX: 3, gridY: 13, colSpan: 2, rowSpan: 5 },
+    quarters: { gridX: 5, gridY: 16, colSpan: 2, rowSpan: 5 },
+    stable: { gridX: 7, gridY: 16, colSpan: 2, rowSpan: 5 },
+    codex: { gridX: 9, gridY: 15, colSpan: 2, rowSpan: 5 },
+    settings: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 5 },
+    "comms-array": { gridX: 1, gridY: 18, colSpan: 3, rowSpan: 4 },
+  }),
+  createLayoutPreset("CATALOG", {
+    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 8 },
+    "ops-terminal": { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 5 },
+    roster: { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 5 },
+    loadout: { gridX: 8, gridY: 1, colSpan: 2, rowSpan: 5 },
+    inventory: { gridX: 10, gridY: 1, colSpan: 2, rowSpan: 5 },
+    "gear-workbench": { gridX: 4, gridY: 6, colSpan: 2, rowSpan: 5 },
+    shop: { gridX: 6, gridY: 6, colSpan: 2, rowSpan: 5 },
+    tavern: { gridX: 8, gridY: 6, colSpan: 2, rowSpan: 5 },
+    "quest-board": { gridX: 10, gridY: 6, colSpan: 2, rowSpan: 5 },
+    port: { gridX: 1, gridY: 9, colSpan: 2, rowSpan: 5 },
+    quarters: { gridX: 3, gridY: 9, colSpan: 2, rowSpan: 5 },
+    stable: { gridX: 5, gridY: 9, colSpan: 2, rowSpan: 5 },
+    codex: { gridX: 7, gridY: 9, colSpan: 2, rowSpan: 5 },
+    settings: { gridX: 9, gridY: 9, colSpan: 2, rowSpan: 5 },
+    "comms-array": { gridX: 11, gridY: 9, colSpan: 2, rowSpan: 5 },
+    [QUAC_LAYOUT_ID]: { gridX: 1, gridY: 14, colSpan: 12, rowSpan: 8 },
+  }),
+];
+
+const BASE_CAMP_COLOR_THEMES: BaseCampColorTheme[] = [
+  {
+    key: "amber",
+    label: "Amber",
+    vars: {
+      "--all-nodes-panel-bg": "#4d3f34",
+      "--all-nodes-panel-hover-bg": "#6b5d4f",
+      "--all-nodes-border": "#7a5a32",
+      "--all-nodes-border-hover": "#a87c45",
+      "--all-nodes-surface-bg": "#2d2c2a",
+      "--all-nodes-surface-border": "rgba(168, 124, 69, 0.28)",
+      "--all-nodes-accent": "#ffcc6e",
+      "--all-nodes-accent-soft": "rgba(255, 204, 110, 0.14)",
+      "--all-nodes-text": "#e8e4dc",
+      "--all-nodes-muted": "#8d7a67",
+      "--all-nodes-glow": "rgba(168, 124, 69, 0.28)",
+      "--all-nodes-focus": "#ffcc6e",
+    },
+  },
+  {
+    key: "violet",
+    label: "Violet",
+    vars: {
+      "--all-nodes-panel-bg": "#463a4f",
+      "--all-nodes-panel-hover-bg": "#5e4d69",
+      "--all-nodes-border": "#8967ff",
+      "--all-nodes-border-hover": "#c0b3ff",
+      "--all-nodes-surface-bg": "#26222d",
+      "--all-nodes-surface-border": "rgba(192, 179, 255, 0.32)",
+      "--all-nodes-accent": "#cdbfff",
+      "--all-nodes-accent-soft": "rgba(192, 179, 255, 0.16)",
+      "--all-nodes-text": "#eee8f7",
+      "--all-nodes-muted": "#9a8eb2",
+      "--all-nodes-glow": "rgba(192, 179, 255, 0.26)",
+      "--all-nodes-focus": "#d8cfff",
+    },
+  },
+  {
+    key: "verdant",
+    label: "Verdant",
+    vars: {
+      "--all-nodes-panel-bg": "#34463d",
+      "--all-nodes-panel-hover-bg": "#466050",
+      "--all-nodes-border": "#5f9b7a",
+      "--all-nodes-border-hover": "#84c59b",
+      "--all-nodes-surface-bg": "#1f2c26",
+      "--all-nodes-surface-border": "rgba(132, 197, 155, 0.3)",
+      "--all-nodes-accent": "#a8e0b4",
+      "--all-nodes-accent-soft": "rgba(132, 197, 155, 0.16)",
+      "--all-nodes-text": "#edf4ef",
+      "--all-nodes-muted": "#8a9d91",
+      "--all-nodes-glow": "rgba(132, 197, 155, 0.24)",
+      "--all-nodes-focus": "#b7efc3",
+    },
+  },
+  {
+    key: "teal",
+    label: "Teal",
+    vars: {
+      "--all-nodes-panel-bg": "#2f4650",
+      "--all-nodes-panel-hover-bg": "#3f6170",
+      "--all-nodes-border": "#4f8b93",
+      "--all-nodes-border-hover": "#73b5bf",
+      "--all-nodes-surface-bg": "#1d2b30",
+      "--all-nodes-surface-border": "rgba(115, 181, 191, 0.28)",
+      "--all-nodes-accent": "#9ed8de",
+      "--all-nodes-accent-soft": "rgba(115, 181, 191, 0.16)",
+      "--all-nodes-text": "#e5f0f2",
+      "--all-nodes-muted": "#86999d",
+      "--all-nodes-glow": "rgba(115, 181, 191, 0.24)",
+      "--all-nodes-focus": "#b2e4e8",
+    },
+  },
+  {
+    key: "oxide",
+    label: "Oxide",
+    vars: {
+      "--all-nodes-panel-bg": "#4e362f",
+      "--all-nodes-panel-hover-bg": "#67463d",
+      "--all-nodes-border": "#b0684c",
+      "--all-nodes-border-hover": "#d68d6b",
+      "--all-nodes-surface-bg": "#2b201d",
+      "--all-nodes-surface-border": "rgba(214, 141, 107, 0.28)",
+      "--all-nodes-accent": "#ffc0a4",
+      "--all-nodes-accent-soft": "rgba(214, 141, 107, 0.18)",
+      "--all-nodes-text": "#f0e5e0",
+      "--all-nodes-muted": "#a28a7e",
+      "--all-nodes-glow": "rgba(214, 141, 107, 0.24)",
+      "--all-nodes-focus": "#ffd0b8",
+    },
+  },
+  {
+    key: "moss",
+    label: "Moss",
+    vars: {
+      "--all-nodes-panel-bg": "#404733",
+      "--all-nodes-panel-hover-bg": "#575f45",
+      "--all-nodes-border": "#7f9161",
+      "--all-nodes-border-hover": "#a6ba85",
+      "--all-nodes-surface-bg": "#252a20",
+      "--all-nodes-surface-border": "rgba(166, 186, 133, 0.28)",
+      "--all-nodes-accent": "#d2e3ad",
+      "--all-nodes-accent-soft": "rgba(166, 186, 133, 0.17)",
+      "--all-nodes-text": "#eef0e5",
+      "--all-nodes-muted": "#949880",
+      "--all-nodes-glow": "rgba(166, 186, 133, 0.22)",
+      "--all-nodes-focus": "#e1efbf",
+    },
+  },
+  {
+    key: "steel",
+    label: "Steel",
+    vars: {
+      "--all-nodes-panel-bg": "#384047",
+      "--all-nodes-panel-hover-bg": "#4a555e",
+      "--all-nodes-border": "#70818d",
+      "--all-nodes-border-hover": "#9aaab5",
+      "--all-nodes-surface-bg": "#20262b",
+      "--all-nodes-surface-border": "rgba(154, 170, 181, 0.28)",
+      "--all-nodes-accent": "#d5e0e8",
+      "--all-nodes-accent-soft": "rgba(154, 170, 181, 0.16)",
+      "--all-nodes-text": "#edf1f4",
+      "--all-nodes-muted": "#96a2ab",
+      "--all-nodes-glow": "rgba(154, 170, 181, 0.22)",
+      "--all-nodes-focus": "#e4edf3",
+    },
+  },
+];
+
+const BASE_CAMP_COLOR_THEME_KEYS = BASE_CAMP_COLOR_THEMES.map((theme) => theme.key);
+const BASE_CAMP_COLOR_THEME_MAP = new Map(BASE_CAMP_COLOR_THEMES.map((theme) => [theme.key, theme]));
 
 const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
@@ -101,7 +374,7 @@ function readLayoutOrder(): string[] {
   const validIds = new Set(DEFAULT_LAYOUT_ORDER);
 
   if (!savedOrder || savedOrder.length === 0) {
-    return [...readNodeLayout().map((node) => node.action), QUAC_LAYOUT_ID];
+    return [...DEFAULT_LAYOUT_ORDER];
   }
 
   const ordered = savedOrder.filter((id) => validIds.has(id));
@@ -109,81 +382,707 @@ function readLayoutOrder(): string[] {
   return [...ordered, ...missing];
 }
 
-function persistLayoutOrder(order: string[]): void {
-  updateGameState((state) => ({
-    ...state,
-    uiLayout: {
-      ...(state.uiLayout ?? {}),
-      baseCampItemOrder: order,
-      baseCampNodeOrder: order.filter((id) => id !== QUAC_LAYOUT_ID),
+type ResolvedBaseCampLoadout = {
+  minimizedItems: string[];
+  itemSizes: Record<string, BaseCampItemSize>;
+  pinnedItems: string[];
+  itemColors: Record<string, string>;
+  pinnedItemFrames: Record<string, BaseCampPinnedItemFrame>;
+};
+
+function getLoadoutStorageKey(index: number): string {
+  return `${index}`;
+}
+
+function getDefaultLoadout(index: number): ResolvedBaseCampLoadout {
+  const presetIndex = DEFAULT_LOADOUT_PRESET_INDEXES[clamp(index, 0, BASE_CAMP_LOADOUT_COUNT - 1)] ?? DEFAULT_LOADOUT_PRESET_INDEXES[0];
+  const preset = BASE_CAMP_LAYOUT_PRESETS[presetIndex] ?? BASE_CAMP_LAYOUT_PRESETS[0];
+  return {
+    minimizedItems: [],
+    itemSizes: serializeLayoutRecord(preset.layouts),
+    pinnedItems: [],
+    itemColors: {},
+    pinnedItemFrames: {},
+  };
+}
+
+function normalizeLoadoutState(loadout: BaseCampLayoutLoadout | undefined, index: number): ResolvedBaseCampLoadout {
+  const fallback = getDefaultLoadout(index);
+  const validIds = new Set(DEFAULT_LAYOUT_ORDER);
+  const minimizedItems = Array.from(new Set((loadout?.minimizedItems ?? fallback.minimizedItems).filter((id) => validIds.has(id))));
+  const pinnedItems = Array.from(new Set((loadout?.pinnedItems ?? fallback.pinnedItems).filter((id) => validIds.has(id))));
+  const pinnedSet = new Set(pinnedItems);
+  const pinnedItemFrames = Object.fromEntries(
+    Object.entries(loadout?.pinnedItemFrames ?? fallback.pinnedItemFrames).filter(([itemId]) => pinnedSet.has(itemId)),
+  ) as Record<string, BaseCampPinnedItemFrame>;
+
+  return {
+    minimizedItems,
+    itemSizes: {
+      ...fallback.itemSizes,
+      ...(loadout?.itemSizes ?? {}),
     },
-  }));
+    pinnedItems,
+    itemColors: {
+      ...fallback.itemColors,
+      ...(loadout?.itemColors ?? {}),
+    },
+    pinnedItemFrames,
+  };
+}
+
+function readActiveLoadoutIndex(state = getGameState()): number {
+  const legacyIndex = state.uiLayout?.baseCampResetPresetIndex ?? 0;
+  const savedIndex = state.uiLayout?.baseCampActiveLoadoutIndex ?? legacyIndex;
+  return clamp(savedIndex, 0, BASE_CAMP_LOADOUT_COUNT - 1);
+}
+
+function readStoredLoadouts(state = getGameState()): Record<string, ResolvedBaseCampLoadout> {
+  const activeIndex = readActiveLoadoutIndex(state);
+  const savedLoadouts = state.uiLayout?.baseCampLayoutLoadouts ?? {};
+  const loadouts = Object.fromEntries(
+    Array.from({ length: BASE_CAMP_LOADOUT_COUNT }, (_, index) => {
+      const key = getLoadoutStorageKey(index);
+      return [key, normalizeLoadoutState(savedLoadouts[key], index)];
+    }),
+  ) as Record<string, ResolvedBaseCampLoadout>;
+
+  if (!state.uiLayout?.baseCampLayoutLoadouts) {
+    const hasLegacyLayoutState = Boolean(
+      (state.uiLayout?.baseCampMinimizedItems?.length ?? 0) > 0
+      || (state.uiLayout?.baseCampPinnedItems?.length ?? 0) > 0
+      || Object.keys(state.uiLayout?.baseCampItemSizes ?? {}).length > 0
+      || Object.keys(state.uiLayout?.baseCampItemColors ?? {}).length > 0
+      || Object.keys(state.uiLayout?.baseCampPinnedItemFrames ?? {}).length > 0,
+    );
+
+    if (hasLegacyLayoutState) {
+      loadouts[getLoadoutStorageKey(activeIndex)] = normalizeLoadoutState({
+        minimizedItems: state.uiLayout?.baseCampMinimizedItems,
+        itemSizes: state.uiLayout?.baseCampItemSizes,
+        pinnedItems: state.uiLayout?.baseCampPinnedItems,
+        itemColors: state.uiLayout?.baseCampItemColors,
+        pinnedItemFrames: state.uiLayout?.baseCampPinnedItemFrames,
+      }, activeIndex);
+    }
+  }
+
+  return loadouts;
+}
+
+function serializeStoredLoadouts(loadouts: Record<string, ResolvedBaseCampLoadout>): Record<string, BaseCampLayoutLoadout> {
+  return Object.fromEntries(
+    Object.entries(loadouts).map(([key, loadout]) => [
+      key,
+      {
+        minimizedItems: [...loadout.minimizedItems],
+        itemSizes: { ...loadout.itemSizes },
+        pinnedItems: [...loadout.pinnedItems],
+        itemColors: { ...loadout.itemColors },
+        pinnedItemFrames: { ...loadout.pinnedItemFrames },
+      },
+    ]),
+  ) as Record<string, BaseCampLayoutLoadout>;
+}
+
+function readActiveLoadout(): ResolvedBaseCampLoadout {
+  const state = getGameState();
+  const loadouts = readStoredLoadouts(state);
+  return loadouts[getLoadoutStorageKey(readActiveLoadoutIndex(state))];
+}
+
+function updateActiveLoadout(
+  updater: (loadout: ResolvedBaseCampLoadout) => ResolvedBaseCampLoadout,
+): void {
+  updateGameState((state) => {
+    const activeIndex = readActiveLoadoutIndex(state);
+    const loadouts = readStoredLoadouts(state);
+    const loadoutKey = getLoadoutStorageKey(activeIndex);
+    const nextActiveLoadout = updater(loadouts[loadoutKey]);
+    loadouts[loadoutKey] = {
+      minimizedItems: [...nextActiveLoadout.minimizedItems],
+      itemSizes: { ...nextActiveLoadout.itemSizes },
+      pinnedItems: [...nextActiveLoadout.pinnedItems],
+      itemColors: { ...nextActiveLoadout.itemColors },
+      pinnedItemFrames: { ...nextActiveLoadout.pinnedItemFrames },
+    };
+
+    return {
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampLayoutVersion: BASE_CAMP_LAYOUT_VERSION,
+        baseCampActiveLoadoutIndex: activeIndex,
+        baseCampLayoutLoadouts: serializeStoredLoadouts(loadouts),
+        baseCampMinimizedItems: [...loadouts[loadoutKey].minimizedItems],
+        baseCampItemSizes: { ...loadouts[loadoutKey].itemSizes },
+        baseCampPinnedItems: [...loadouts[loadoutKey].pinnedItems],
+        baseCampItemColors: { ...loadouts[loadoutKey].itemColors },
+        baseCampPinnedItemFrames: { ...loadouts[loadoutKey].pinnedItemFrames },
+      },
+    };
+  });
+}
+
+function switchBaseCampLoadout(nextIndex: number): void {
+  updateGameState((state) => {
+    const loadouts = readStoredLoadouts(state);
+    const activeIndex = clamp(nextIndex, 0, BASE_CAMP_LOADOUT_COUNT - 1);
+    const activeLoadout = loadouts[getLoadoutStorageKey(activeIndex)];
+
+    return {
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampLayoutVersion: BASE_CAMP_LAYOUT_VERSION,
+        baseCampActiveLoadoutIndex: activeIndex,
+        baseCampLayoutLoadouts: serializeStoredLoadouts(loadouts),
+        baseCampMinimizedItems: [...activeLoadout.minimizedItems],
+        baseCampItemSizes: { ...activeLoadout.itemSizes },
+        baseCampPinnedItems: [...activeLoadout.pinnedItems],
+        baseCampItemColors: { ...activeLoadout.itemColors },
+        baseCampPinnedItemFrames: { ...activeLoadout.pinnedItemFrames },
+      },
+    };
+  });
 }
 
 function readMinimizedItems(): string[] {
-  const state = getGameState();
-  return state.uiLayout?.baseCampMinimizedItems ?? [];
+  return [...readActiveLoadout().minimizedItems];
+}
+
+function readPinnedItems(): string[] {
+  return [...readActiveLoadout().pinnedItems];
+}
+
+function readItemColorKeys(): Record<string, string> {
+  return { ...readActiveLoadout().itemColors };
+}
+
+function readPinnedItemFrames(): Record<string, BaseCampPinnedItemFrame> {
+  return { ...readActiveLoadout().pinnedItemFrames };
 }
 
 function persistMinimizedItems(ids: string[]): void {
-  updateGameState((state) => ({
-    ...state,
-    uiLayout: {
-      ...(state.uiLayout ?? {}),
-      baseCampMinimizedItems: ids,
-    },
+  const validIds = new Set(DEFAULT_LAYOUT_ORDER);
+  updateActiveLoadout((loadout) => ({
+    ...loadout,
+    minimizedItems: Array.from(new Set(ids.filter((id) => validIds.has(id)))),
   }));
 }
 
-function readItemSizes(): Record<string, { colSpan: number; minHeight: number }> {
-  return getGameState().uiLayout?.baseCampItemSizes ?? {};
+function persistPinnedItems(ids: string[]): void {
+  const validIds = new Set(DEFAULT_LAYOUT_ORDER);
+  updateActiveLoadout((loadout) => {
+    const pinnedItems = Array.from(new Set(ids.filter((id) => validIds.has(id))));
+    const nextPinned = new Set(pinnedItems);
+    const nextFrames = Object.fromEntries(
+      Object.entries(loadout.pinnedItemFrames).filter(([itemId]) => nextPinned.has(itemId)),
+    ) as Record<string, BaseCampPinnedItemFrame>;
+
+    return {
+      ...loadout,
+      pinnedItems,
+      pinnedItemFrames: nextFrames,
+    };
+  });
 }
 
-function persistItemSizes(sizes: Record<string, { colSpan: number; minHeight: number }>): void {
-  updateGameState((state) => ({
-    ...state,
-    uiLayout: {
-      ...(state.uiLayout ?? {}),
-      baseCampItemSizes: sizes,
-    },
+function persistItemColorKeys(colors: Record<string, string>): void {
+  updateActiveLoadout((loadout) => ({
+    ...loadout,
+    itemColors: { ...colors },
   }));
 }
 
-function resetBaseCampView(): void {
-  updateGameState((state) => ({
-    ...state,
-    uiLayout: {
-      ...(state.uiLayout ?? {}),
-      baseCampItemOrder: [...DEFAULT_LAYOUT_ORDER],
-      baseCampNodeOrder: DEFAULT_NODE_LAYOUT.map((node) => node.action),
-      baseCampMinimizedItems: [],
-      baseCampItemSizes: {},
-    },
+function persistPinnedItemFrames(frames: Record<string, BaseCampPinnedItemFrame>): void {
+  const pinnedSet = new Set(readPinnedItems());
+  updateActiveLoadout((loadout) => ({
+    ...loadout,
+    pinnedItemFrames: Object.fromEntries(
+      Object.entries(frames).filter(([itemId]) => pinnedSet.has(itemId)),
+    ) as Record<string, BaseCampPinnedItemFrame>,
   }));
 }
 
-function mergeLayoutOrder(activeOrder: string[], fullOrder: string[], minimized: Set<string>): string[] {
-  const nextActive = [...activeOrder];
-  return fullOrder.map((id) => (minimized.has(id) ? id : nextActive.shift() ?? id));
+function readItemSizes(): Record<string, BaseCampItemSize> {
+  return { ...readActiveLoadout().itemSizes };
 }
 
-function getItemStyle(itemId: string, sizes: Record<string, { colSpan: number; minHeight: number }>): string {
-  const size = sizes[itemId];
-  if (!size) {
-    return "";
+function persistItemSizes(sizes: Record<string, BaseCampItemSize>): void {
+  updateActiveLoadout((loadout) => ({
+    ...loadout,
+    itemSizes: { ...sizes },
+  }));
+}
+
+function serializeLayoutRecord(layouts: Record<string, WorkspaceItemLayout>): Record<string, BaseCampItemSize> {
+  return Object.fromEntries(
+    Object.entries(layouts).map(([itemId, layout]) => [itemId, serializeItemLayout(layout)]),
+  ) as Record<string, BaseCampItemSize>;
+}
+
+function getDefaultItemColorKey(itemId: string): string {
+  switch (itemId) {
+    case QUAC_LAYOUT_ID:
+      return "verdant";
+    case RESOURCE_LAYOUT_ID:
+      return "violet";
+    case "port":
+    case "comms-array":
+      return "teal";
+    case "tavern":
+    case "quarters":
+      return "oxide";
+    case "stable":
+      return "moss";
+    case "codex":
+    case "settings":
+    case "inventory":
+      return "steel";
+    default:
+      return "amber";
+  }
+}
+
+function getResolvedItemColorKey(itemId: string, savedColors: Record<string, string>): string {
+  const colorKey = savedColors[itemId] ?? getDefaultItemColorKey(itemId);
+  return BASE_CAMP_COLOR_THEME_MAP.has(colorKey) ? colorKey : "amber";
+}
+
+function renderItemThemeAttributes(itemId: string, savedColors: Record<string, string>): string {
+  const colorKey = getResolvedItemColorKey(itemId, savedColors);
+  const theme = BASE_CAMP_COLOR_THEME_MAP.get(colorKey) ?? BASE_CAMP_COLOR_THEMES[0];
+  const style = Object.entries(theme.vars)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("; ");
+
+  return `data-color-key="${theme.key}" style="${style}"`;
+}
+
+function getDefaultItemLayout(itemId: string): WorkspaceItemLayout {
+  return DEFAULT_ITEM_LAYOUTS[itemId] ?? { gridX: 1, gridY: 1, colSpan: 1, rowSpan: MIN_ITEM_ROW_SPAN };
+}
+
+function minHeightToRowSpan(minHeight: number | undefined): number {
+  if (!minHeight || !Number.isFinite(minHeight)) {
+    return MIN_ITEM_ROW_SPAN;
+  }
+  return Math.max(MIN_ITEM_ROW_SPAN, Math.round(minHeight / WORKSPACE_ROW_HEIGHT_PX));
+}
+
+function migrateLegacyStoredLayout(itemId: string, layout: BaseCampItemSize | undefined): BaseCampItemSize | undefined {
+  if (!layout) {
+    return layout;
   }
 
-  return `style="grid-column: span ${size.colSpan}; min-height: ${size.minHeight}px;"`;
+  const occupiedMaxColumn = (layout.gridX ?? 1) + Math.max((layout.colSpan ?? 1) - 1, 0);
+  if (occupiedMaxColumn > LEGACY_WORKSPACE_COLUMN_COUNT) {
+    return layout;
+  }
+
+  const translated: BaseCampItemSize = {
+    ...layout,
+    gridX: layout.gridX !== undefined ? ((layout.gridX - 1) * LEGACY_TO_WIDE_COLUMN_SCALE) + 1 : layout.gridX,
+  };
+
+  if (itemId === RESOURCE_LAYOUT_ID) {
+    translated.colSpan = Math.max(DEFAULT_RESOURCE_COL_SPAN, layout.colSpan * LEGACY_TO_WIDE_COLUMN_SCALE);
+    translated.rowSpan = Math.max(DEFAULT_RESOURCE_ROW_SPAN, layout.rowSpan ?? DEFAULT_RESOURCE_ROW_SPAN);
+  } else if (itemId === QUAC_LAYOUT_ID) {
+    translated.colSpan = Math.max(DEFAULT_QUAC_COL_SPAN, layout.colSpan * LEGACY_TO_WIDE_COLUMN_SCALE);
+    translated.rowSpan = Math.max(DEFAULT_QUAC_ROW_SPAN, layout.rowSpan ?? DEFAULT_QUAC_ROW_SPAN);
+  }
+
+  return translated;
 }
 
-function renderNodeContent(node: NodeDefinition): string {
+function ensureBaseCampLayoutVersion(): void {
+  const state = getGameState();
+  const currentVersion = state.uiLayout?.baseCampLayoutVersion ?? 0;
+  if (currentVersion >= BASE_CAMP_LAYOUT_VERSION) {
+    return;
+  }
+
+  const existingSizes = state.uiLayout?.baseCampItemSizes ?? {};
+  const migratedSizes = Object.fromEntries(
+    Object.entries(existingSizes).map(([itemId, layout]) => [itemId, migrateLegacyStoredLayout(itemId, layout)]),
+  ) as Record<string, BaseCampItemSize>;
+  const activeLoadoutIndex = readActiveLoadoutIndex(state);
+  const savedLoadouts = state.uiLayout?.baseCampLayoutLoadouts ?? {};
+  const migratedLoadouts = Object.fromEntries(
+    Array.from({ length: BASE_CAMP_LOADOUT_COUNT }, (_, index) => {
+      const key = getLoadoutStorageKey(index);
+      const sourceLoadout = savedLoadouts[key];
+      const baseLoadout = normalizeLoadoutState(sourceLoadout, index);
+      const migratedItemSizes = Object.fromEntries(
+        Object.entries(baseLoadout.itemSizes).map(([itemId, layout]) => [itemId, migrateLegacyStoredLayout(itemId, layout) ?? layout]),
+      ) as Record<string, BaseCampItemSize>;
+
+      if (!state.uiLayout?.baseCampLayoutLoadouts && index === activeLoadoutIndex) {
+        return [
+          key,
+          {
+            minimizedItems: state.uiLayout?.baseCampMinimizedItems ?? baseLoadout.minimizedItems,
+            itemSizes: {
+              ...baseLoadout.itemSizes,
+              ...migratedSizes,
+            },
+            pinnedItems: state.uiLayout?.baseCampPinnedItems ?? baseLoadout.pinnedItems,
+            itemColors: state.uiLayout?.baseCampItemColors ?? baseLoadout.itemColors,
+            pinnedItemFrames: state.uiLayout?.baseCampPinnedItemFrames ?? baseLoadout.pinnedItemFrames,
+          },
+        ];
+      }
+
+      return [
+        key,
+        {
+          minimizedItems: baseLoadout.minimizedItems,
+          itemSizes: migratedItemSizes,
+          pinnedItems: baseLoadout.pinnedItems,
+          itemColors: baseLoadout.itemColors,
+          pinnedItemFrames: baseLoadout.pinnedItemFrames,
+        },
+      ];
+    }),
+  ) as Record<string, BaseCampLayoutLoadout>;
+  const activeLoadout = normalizeLoadoutState(migratedLoadouts[getLoadoutStorageKey(activeLoadoutIndex)], activeLoadoutIndex);
+
+  updateGameState((currentState) => ({
+    ...currentState,
+    uiLayout: {
+      ...(currentState.uiLayout ?? {}),
+      baseCampLayoutVersion: BASE_CAMP_LAYOUT_VERSION,
+      baseCampActiveLoadoutIndex: activeLoadoutIndex,
+      baseCampItemSizes: activeLoadout.itemSizes,
+      baseCampMinimizedItems: activeLoadout.minimizedItems,
+      baseCampItemColors: activeLoadout.itemColors,
+      baseCampPinnedItemFrames: activeLoadout.pinnedItemFrames,
+      baseCampPinnedItems: activeLoadout.pinnedItems,
+      baseCampLayoutLoadouts: migratedLoadouts,
+    },
+  }));
+}
+
+function normalizeItemLayout(itemId: string, layout: BaseCampItemSize | undefined, columnCount: number): WorkspaceItemLayout {
+  const fallback = getDefaultItemLayout(itemId);
+  const safeColumns = Math.max(columnCount, 1);
+  const colSpan = clamp(layout?.colSpan ?? fallback.colSpan, 1, safeColumns);
+  const rowSpan = Math.max(
+    MIN_ITEM_ROW_SPAN,
+    layout?.rowSpan ?? (layout?.minHeight ? minHeightToRowSpan(layout.minHeight) : fallback.rowSpan),
+  );
+  const maxGridX = Math.max(safeColumns - colSpan + 1, 1);
+  return {
+    colSpan,
+    rowSpan,
+    gridX: clamp(layout?.gridX ?? fallback.gridX, 1, maxGridX),
+    gridY: Math.max(layout?.gridY ?? fallback.gridY, 1),
+  };
+}
+
+function serializeItemLayout(layout: WorkspaceItemLayout): BaseCampItemSize {
+  return {
+    colSpan: layout.colSpan,
+    rowSpan: layout.rowSpan,
+    gridX: layout.gridX,
+    gridY: layout.gridY,
+  };
+}
+
+function layoutsOverlap(a: WorkspaceItemLayout, b: WorkspaceItemLayout): boolean {
+  return (
+    a.gridX < b.gridX + b.colSpan &&
+    a.gridX + a.colSpan > b.gridX &&
+    a.gridY < b.gridY + b.rowSpan &&
+    a.gridY + a.rowSpan > b.gridY
+  );
+}
+
+function isLayoutAreaFree(candidate: WorkspaceItemLayout, occupied: Iterable<WorkspaceItemLayout>): boolean {
+  for (const other of occupied) {
+    if (layoutsOverlap(candidate, other)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function findOpenLayoutSlot(
+  requested: WorkspaceItemLayout,
+  occupied: Iterable<WorkspaceItemLayout>,
+  columnCount: number,
+): WorkspaceItemLayout {
+  const safeColumns = Math.max(columnCount, 1);
+  const colSpan = clamp(requested.colSpan, 1, safeColumns);
+  const maxGridX = Math.max(safeColumns - colSpan + 1, 1);
+  const candidate: WorkspaceItemLayout = {
+    colSpan,
+    rowSpan: Math.max(MIN_ITEM_ROW_SPAN, requested.rowSpan),
+    gridX: clamp(requested.gridX, 1, maxGridX),
+    gridY: Math.max(requested.gridY, 1),
+  };
+
+  let guard = 0;
+  while (!isLayoutAreaFree(candidate, occupied) && guard < 2000) {
+    candidate.gridY += 1;
+    guard += 1;
+  }
+
+  return candidate;
+}
+
+type WorkspaceResolutionOptions = {
+  priorityItemId?: string;
+  priorityLayout?: WorkspaceItemLayout;
+};
+
+function buildResolvedWorkspaceLayouts(
+  order: string[],
+  sizes: Record<string, BaseCampItemSize>,
+  columnCount: number,
+  options: WorkspaceResolutionOptions = {},
+): Map<string, WorkspaceItemLayout> {
+  const entries = order.map((itemId, index) => {
+    const requested =
+      itemId === options.priorityItemId && options.priorityLayout
+        ? findOpenLayoutSlot(options.priorityLayout, [], columnCount)
+        : normalizeItemLayout(itemId, sizes[itemId], columnCount);
+
+    return {
+      itemId,
+      index,
+      requested,
+      area: requested.colSpan * requested.rowSpan,
+      isPriority: itemId === options.priorityItemId,
+    };
+  });
+
+  entries.sort((a, b) => {
+    if (a.isPriority !== b.isPriority) {
+      return a.isPriority ? -1 : 1;
+    }
+    if (a.requested.gridY !== b.requested.gridY) {
+      return a.requested.gridY - b.requested.gridY;
+    }
+    if (a.requested.gridX !== b.requested.gridX) {
+      return a.requested.gridX - b.requested.gridX;
+    }
+    if (a.area !== b.area) {
+      return b.area - a.area;
+    }
+    return a.index - b.index;
+  });
+
+  const resolved = new Map<string, WorkspaceItemLayout>();
+
+  for (const entry of entries) {
+    const placed = findOpenLayoutSlot(entry.requested, resolved.values(), columnCount);
+    resolved.set(entry.itemId, placed);
+  }
+
+  return resolved;
+}
+
+function applyGridItemStyle(item: HTMLElement, layout: WorkspaceItemLayout): void {
+  item.style.gridColumn = `${layout.gridX} / span ${layout.colSpan}`;
+  item.style.gridRow = `${layout.gridY} / span ${layout.rowSpan}`;
+}
+
+function applyResolvedWorkspaceLayouts(grid: HTMLElement, resolved: Map<string, WorkspaceItemLayout>): void {
+  grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item").forEach((item) => {
+    const itemId = item.dataset.layoutId;
+    if (!itemId) return;
+
+    const layout = resolved.get(itemId);
+    if (!layout) return;
+    applyGridItemStyle(item, layout);
+  });
+}
+
+function applyWorkspaceLayoutStyles(root: HTMLElement): void {
+  const grid = root.querySelector<HTMLElement>("#allNodesMenuGrid");
+  if (!grid) return;
+
+  const order = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+    .map((item) => item.dataset.layoutId ?? "")
+    .filter(Boolean);
+  const sizes = readItemSizes();
+  const metrics = getGridMetrics(grid);
+  const resolved = buildResolvedWorkspaceLayouts(order, sizes, metrics.columnCount);
+  applyResolvedWorkspaceLayouts(grid, resolved);
+}
+
+function getRenderedWorkspaceLayouts(grid: HTMLElement): Map<string, WorkspaceItemLayout> {
+  const order = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+    .map((item) => item.dataset.layoutId ?? "")
+    .filter(Boolean);
+  return buildResolvedWorkspaceLayouts(order, readItemSizes(), getGridMetrics(grid).columnCount);
+}
+
+function getPointerGridPosition(grid: HTMLElement, clientX: number, clientY: number, colSpan: number, rowSpan: number): WorkspaceItemLayout {
+  const metrics = getGridMetrics(grid);
+  const rect = grid.getBoundingClientRect();
+  const localX = Math.max(clientX - rect.left, 0);
+  const localY = Math.max(clientY - rect.top + grid.scrollTop, 0);
+  const columnStep = Math.max(metrics.trackWidth + metrics.columnGap, 1);
+  const rowStep = Math.max(metrics.rowHeight + metrics.rowGap, 1);
+  const maxGridX = Math.max(metrics.columnCount - colSpan + 1, 1);
+
+  return {
+    colSpan: clamp(colSpan, 1, metrics.columnCount),
+    rowSpan: Math.max(MIN_ITEM_ROW_SPAN, rowSpan),
+    gridX: clamp(Math.floor(localX / columnStep) + 1, 1, maxGridX),
+    gridY: Math.max(Math.floor(localY / rowStep) + 1, 1),
+  };
+}
+
+function autoScrollGrid(grid: HTMLElement, clientY: number): void {
+  const rect = grid.getBoundingClientRect();
+  if (clientY > rect.bottom - AUTO_SCROLL_MARGIN_PX) {
+    grid.scrollTop += AUTO_SCROLL_STEP_PX;
+  } else if (clientY < rect.top + AUTO_SCROLL_MARGIN_PX) {
+    grid.scrollTop -= AUTO_SCROLL_STEP_PX;
+  }
+}
+
+function cleanupAllNodesWindowListeners(): void {
+  if (allNodesEscHandler) {
+    window.removeEventListener("keydown", allNodesEscHandler);
+    allNodesEscHandler = null;
+  }
+
+  if (allNodesResizeHandler) {
+    window.removeEventListener("resize", allNodesResizeHandler);
+    allNodesResizeHandler = null;
+  }
+
+  if (pinnedFrameSyncHandle !== null) {
+    cancelAnimationFrame(pinnedFrameSyncHandle);
+    pinnedFrameSyncHandle = null;
+  }
+}
+
+function arePinnedFramesEqual(
+  a: Record<string, BaseCampPinnedItemFrame>,
+  b: Record<string, BaseCampPinnedItemFrame>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+
+  return aKeys.every((key) => {
+    const aFrame = a[key];
+    const bFrame = b[key];
+    return Boolean(bFrame)
+      && aFrame.left === bFrame.left
+      && aFrame.top === bFrame.top
+      && aFrame.width === bFrame.width
+      && aFrame.height === bFrame.height;
+  });
+}
+
+function syncPinnedItemFrames(root: ParentNode): void {
+  const pinned = new Set(readPinnedItems());
+  if (pinned.size === 0) {
+    const existing = readPinnedItemFrames();
+    if (Object.keys(existing).length > 0) {
+      persistPinnedItemFrames({});
+    }
+    return;
+  }
+
+  const nextFrames = { ...readPinnedItemFrames() };
+  let updated = false;
+
+  root.querySelectorAll<HTMLElement>(".all-nodes-grid-item[data-layout-id]").forEach((item) => {
+    const itemId = item.dataset.layoutId;
+    if (!itemId || !pinned.has(itemId)) return;
+
+    const rect = item.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const nextFrame: BaseCampPinnedItemFrame = {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+    const currentFrame = nextFrames[itemId];
+
+    if (
+      !currentFrame
+      || currentFrame.left !== nextFrame.left
+      || currentFrame.top !== nextFrame.top
+      || currentFrame.width !== nextFrame.width
+      || currentFrame.height !== nextFrame.height
+    ) {
+      nextFrames[itemId] = nextFrame;
+      updated = true;
+    }
+  });
+
+  if (updated && !arePinnedFramesEqual(readPinnedItemFrames(), nextFrames)) {
+    persistPinnedItemFrames(nextFrames);
+  }
+}
+
+function queuePinnedItemFrameSync(root: ParentNode): void {
+  if (pinnedFrameSyncHandle !== null) {
+    cancelAnimationFrame(pinnedFrameSyncHandle);
+  }
+
+  pinnedFrameSyncHandle = requestAnimationFrame(() => {
+    pinnedFrameSyncHandle = null;
+    syncPinnedItemFrames(root);
+  });
+}
+
+type ItemToolbarOptions = {
+  extraClass?: string;
+  isPinned?: boolean;
+  showColor?: boolean;
+  showMinimize?: boolean;
+  showPin?: boolean;
+};
+
+function renderItemToolbar(itemId: string, label: string, options: ItemToolbarOptions = {}): string {
+  const {
+    extraClass = "",
+    isPinned = false,
+    showColor = true,
+    showMinimize = true,
+    showPin = true,
+  } = options;
+
+  return `
+    <div class="all-nodes-item-toolbar${extraClass}">
+      <span class="all-nodes-item-grip" aria-hidden="true">::</span>
+      <div class="all-nodes-item-toolbar-actions">
+        ${showColor ? `
+          <button class="all-nodes-item-color" type="button" data-color-id="${itemId}" aria-label="Change color for ${label}">
+            <span class="all-nodes-item-color-dot" aria-hidden="true"></span>
+          </button>
+        ` : ""}
+        ${showPin ? `
+          <button class="all-nodes-item-pin${isPinned ? " all-nodes-item-pin--active" : ""}" type="button" data-pin-id="${itemId}" aria-label="${isPinned ? "Unpin" : "Pin"} ${label}">P</button>
+        ` : ""}
+        ${showMinimize ? `
+          <button class="all-nodes-item-minimize" type="button" data-minimize-id="${itemId}" aria-label="Minimize ${label}">_</button>
+        ` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
   const variantClass = node.variant ? ` ${node.variant}` : "";
   return `
     <div class="all-nodes-item-shell">
-      <div class="all-nodes-item-toolbar">
-        <span class="all-nodes-item-grip" aria-hidden="true">::</span>
-        <button class="all-nodes-item-minimize" type="button" data-minimize-id="${node.action}" aria-label="Minimize ${node.label}">_</button>
-      </div>
+      ${renderItemToolbar(node.action, node.label, { isPinned })}
       <button class="all-nodes-node-btn${variantClass}" data-action="${node.action}">
         <span class="node-icon">${node.icon}</span>
         <span class="node-label">${node.label}</span>
@@ -194,13 +1093,56 @@ function renderNodeContent(node: NodeDefinition): string {
   `;
 }
 
-function renderQuacContent(): string {
+function renderResourceTrackerContent(
+  wad: number,
+  resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number },
+  isPinned: boolean,
+): string {
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--resource">
+      ${renderItemToolbar(RESOURCE_LAYOUT_ID, "resource tracker", { isPinned })}
+      <section class="all-nodes-balance-panel" aria-label="Resource balances">
+        <div class="all-nodes-balance-heading">
+          <span class="all-nodes-balance-kicker">RESOURCE BALANCE</span>
+          <span class="all-nodes-balance-subtitle">Live stockpile telemetry</span>
+        </div>
+        <div class="all-nodes-balance-grid">
+          <div class="all-nodes-balance-item">
+            <span class="all-nodes-balance-icon">W</span>
+            <span class="all-nodes-balance-label">WAD</span>
+            <span class="all-nodes-balance-value">${wad.toLocaleString()}</span>
+          </div>
+          <div class="all-nodes-balance-item">
+            <span class="all-nodes-balance-icon">M</span>
+            <span class="all-nodes-balance-label">METAL</span>
+            <span class="all-nodes-balance-value">${resources.metalScrap}</span>
+          </div>
+          <div class="all-nodes-balance-item">
+            <span class="all-nodes-balance-icon">T</span>
+            <span class="all-nodes-balance-label">TIMBER</span>
+            <span class="all-nodes-balance-value">${resources.wood}</span>
+          </div>
+          <div class="all-nodes-balance-item">
+            <span class="all-nodes-balance-icon">C</span>
+            <span class="all-nodes-balance-label">CHAOS</span>
+            <span class="all-nodes-balance-value">${resources.chaosShards}</span>
+          </div>
+          <div class="all-nodes-balance-item">
+            <span class="all-nodes-balance-icon">S</span>
+            <span class="all-nodes-balance-label">STEAM</span>
+            <span class="all-nodes-balance-value">${resources.steamComponents}</span>
+          </div>
+        </div>
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${RESOURCE_LAYOUT_ID}" aria-label="Resize resource tracker"></button>
+    </div>
+  `;
+}
+
+function renderQuacContent(isPinned: boolean): string {
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--quac">
-      <div class="all-nodes-item-toolbar all-nodes-item-toolbar--quac">
-        <span class="all-nodes-item-grip" aria-hidden="true">::</span>
-        <button class="all-nodes-item-minimize" type="button" data-minimize-id="${QUAC_LAYOUT_ID}" aria-label="Minimize QUAC terminal">_</button>
-      </div>
+      ${renderItemToolbar(QUAC_LAYOUT_ID, "QUAC terminal", { extraClass: " all-nodes-item-toolbar--quac", isPinned })}
       <section class="all-nodes-cli-panel" aria-label="Quick User Access Console" data-ez-drag-disable="true">
         <div class="all-nodes-cli-header">
           <div class="all-nodes-cli-title">Q.U.A.C. TERMINAL</div>
@@ -220,11 +1162,21 @@ function renderQuacContent(): string {
         </form>
         <div class="all-nodes-cli-status" id="quacStatus">${quacLastFeedback}</div>
       </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${QUAC_LAYOUT_ID}" aria-label="Resize QUAC terminal"></button>
     </div>
   `;
 }
 
 function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): string {
+  if (itemId === RESOURCE_LAYOUT_ID) {
+    return `
+      <button class="all-nodes-dock-item" type="button" data-restore-id="${itemId}" aria-label="Restore resource tracker">
+        <span class="dock-icon">R</span>
+        <span class="dock-label">BAL</span>
+      </button>
+    `;
+  }
+
   if (itemId === QUAC_LAYOUT_ID) {
     return `
       <button class="all-nodes-dock-item all-nodes-dock-item--quac" type="button" data-restore-id="${itemId}" aria-label="Restore QUAC terminal">
@@ -249,8 +1201,12 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const root = document.getElementById("app");
   if (!root) return;
 
+  cleanupAllNodesWindowListeners();
+  ensureBaseCampLayoutVersion();
+
   if (fromFieldMap) {
     lastFieldMap = fromFieldMap;
+    setBaseCampFieldReturnMap(fromFieldMap);
   }
 
   const state = getGameState();
@@ -266,7 +1222,9 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const nodeMap = new Map(nodeLayout.map((node) => [node.action, node]));
   const fullOrder = readLayoutOrder();
   const minimized = new Set(readMinimizedItems());
-  const itemSizes = readItemSizes();
+  const pinned = new Set(readPinnedItems());
+  const itemColors = readItemColorKeys();
+  const activeLoadoutIndex = readActiveLoadoutIndex();
   const activeOrder = fullOrder.filter((id) => !minimized.has(id));
   const dockOrder = fullOrder.filter((id) => minimized.has(id));
 
@@ -278,55 +1236,33 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
             <span class="terminal-indicator"></span>
             <span class="terminal-text">S/COM_OS // BASE_CAMP.SYS</span>
           </div>
-          <h1 class="all-nodes-menu-title">BASE CAMP</h1>
+          <h1 class="all-nodes-menu-title">External Signal Controller (E.S.C.)</h1>
           <p class="all-nodes-menu-subtitle">AERISS // PROFILE</p>
         </div>
         <div class="all-nodes-header-actions">
-          <button class="all-nodes-reset-btn" type="button" id="allNodesResetViewBtn">RESET VIEW</button>
+          <div class="all-nodes-view-switcher" aria-label="E.S.C. layout view switcher">
+            <span class="all-nodes-view-switcher-label">VIEW</span>
+            <button class="all-nodes-view-switcher-btn${activeLoadoutIndex === 0 ? " all-nodes-view-switcher-btn--active" : ""}" type="button" data-loadout-index="0">1</button>
+            <span class="all-nodes-view-switcher-separator">|</span>
+            <button class="all-nodes-view-switcher-btn${activeLoadoutIndex === 1 ? " all-nodes-view-switcher-btn--active" : ""}" type="button" data-loadout-index="1">2</button>
+          </div>
         </div>
       </header>
 
-      <nav class="all-nodes-menu-mode-toggle">
-        <button class="all-nodes-mode-tab all-nodes-mode-tab--active" data-mode="menu">
-          <span class="mode-icon">[CMD]</span>
-          <span class="mode-label">COMMAND</span>
-        </button>
-      </nav>
-
-      <div class="all-nodes-menu-resources town-screen__resource-strip ard-panel--inset">
-        <div class="all-nodes-resource">
-          <span class="resource-icon">W</span>
-          <span class="resource-value">${wad.toLocaleString()}</span>
-          <span class="resource-label">WAD</span>
-        </div>
-        <div class="all-nodes-resource">
-          <span class="resource-icon">M</span>
-          <span class="resource-value">${res.metalScrap}</span>
-          <span class="resource-label">METAL</span>
-        </div>
-        <div class="all-nodes-resource">
-          <span class="resource-icon">T</span>
-          <span class="resource-value">${res.wood}</span>
-          <span class="resource-label">TIMBER</span>
-        </div>
-        <div class="all-nodes-resource">
-          <span class="resource-icon">C</span>
-          <span class="resource-value">${res.chaosShards}</span>
-          <span class="resource-label">CHAOS</span>
-        </div>
-        <div class="all-nodes-resource">
-          <span class="resource-icon">S</span>
-          <span class="resource-value">${res.steamComponents}</span>
-          <span class="resource-label">STEAM</span>
-        </div>
-      </div>
-
       <div class="all-nodes-menu-grid town-screen__grid" id="allNodesMenuGrid">
         ${activeOrder.map((itemId) => {
+          if (itemId === RESOURCE_LAYOUT_ID) {
+            return `
+              <div class="all-nodes-grid-item all-nodes-grid-item--resource" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+                ${renderResourceTrackerContent(wad, res, pinned.has(itemId))}
+              </div>
+            `;
+          }
+
           if (itemId === QUAC_LAYOUT_ID) {
             return `
-              <div class="all-nodes-grid-item all-nodes-grid-item--quac" data-layout-id="${itemId}" ${getItemStyle(itemId, itemSizes)}>
-                ${renderQuacContent()}
+              <div class="all-nodes-grid-item all-nodes-grid-item--quac" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+                ${renderQuacContent(pinned.has(itemId))}
               </div>
             `;
           }
@@ -335,8 +1271,8 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           if (!node) return "";
 
           return `
-            <div class="all-nodes-grid-item" data-layout-id="${itemId}" ${getItemStyle(itemId, itemSizes)}>
-              ${renderNodeContent(node)}
+            <div class="all-nodes-grid-item" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+              ${renderNodeContent(node, pinned.has(itemId))}
             </div>
           `;
         }).join("")}
@@ -372,20 +1308,14 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
     </div>
   `;
 
+  applyWorkspaceLayoutStyles(root);
+  queuePinnedItemFrameSync(root);
   attachAllNodesMenuListeners();
 }
 
 function attachAllNodesMenuListeners(): void {
   const root = document.getElementById("app");
   if (!root) return;
-
-  root.querySelectorAll(".all-nodes-mode-tab").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const mode = (btn as HTMLElement).dataset.mode;
-      handleModeSwitch(mode);
-    });
-  });
 
   root.querySelectorAll(".all-nodes-node-btn[data-action]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -400,9 +1330,17 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
-  root.querySelector<HTMLButtonElement>("#allNodesResetViewBtn")?.addEventListener("click", () => {
-    resetBaseCampView();
-    renderAllNodesMenuScreen();
+  root.querySelectorAll<HTMLElement>(".all-nodes-view-switcher-btn[data-loadout-index]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const nextIndex = Number.parseInt(btn.dataset.loadoutIndex ?? "", 10);
+      if (!Number.isFinite(nextIndex) || nextIndex === readActiveLoadoutIndex()) {
+        return;
+      }
+
+      switchBaseCampLoadout(nextIndex);
+      renderAllNodesMenuScreen();
+    });
   });
 
   root.querySelectorAll<HTMLElement>(".all-nodes-item-minimize[data-minimize-id]").forEach((btn) => {
@@ -415,6 +1353,44 @@ function attachAllNodesMenuListeners(): void {
       const minimized = new Set(readMinimizedItems());
       minimized.add(itemId);
       persistMinimizedItems(Array.from(minimized));
+      renderAllNodesMenuScreen();
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(".all-nodes-item-color[data-color-id]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const itemId = btn.dataset.colorId;
+      if (!itemId) return;
+
+      const colors = { ...readItemColorKeys() };
+      const currentKey = getResolvedItemColorKey(itemId, colors);
+      const currentIndex = BASE_CAMP_COLOR_THEME_KEYS.indexOf(currentKey);
+      const nextKey = BASE_CAMP_COLOR_THEME_KEYS[(currentIndex + 1 + BASE_CAMP_COLOR_THEME_KEYS.length) % BASE_CAMP_COLOR_THEME_KEYS.length];
+      colors[itemId] = nextKey;
+      persistItemColorKeys(colors);
+      renderAllNodesMenuScreen();
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(".all-nodes-item-pin[data-pin-id]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const itemId = btn.dataset.pinId;
+      if (!itemId) return;
+
+      const pinned = new Set(readPinnedItems());
+      if (pinned.has(itemId)) {
+        pinned.delete(itemId);
+      } else {
+        pinned.add(itemId);
+      }
+
+      persistPinnedItems(Array.from(pinned));
       renderAllNodesMenuScreen();
     });
   });
@@ -433,6 +1409,27 @@ function attachAllNodesMenuListeners(): void {
 
   attachPointerGridDrag(root);
   attachPointerResize(root);
+
+  if (allNodesResizeHandler) {
+    window.removeEventListener("resize", allNodesResizeHandler);
+  }
+  allNodesResizeHandler = () => {
+    const appRoot = document.getElementById("app");
+    if (!appRoot?.querySelector(".all-nodes-menu-screen")) {
+      if (allNodesResizeHandler) {
+        window.removeEventListener("resize", allNodesResizeHandler);
+        allNodesResizeHandler = null;
+      }
+      return;
+    }
+    applyWorkspaceLayoutStyles(appRoot);
+    queuePinnedItemFrameSync(appRoot);
+  };
+  window.addEventListener("resize", allNodesResizeHandler);
+
+  root.querySelector<HTMLElement>("#allNodesMenuGrid")?.addEventListener("scroll", () => {
+    queuePinnedItemFrameSync(root);
+  }, { passive: true });
 
   root.querySelectorAll(".all-nodes-debug-btn[data-action]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -478,14 +1475,21 @@ function attachAllNodesMenuListeners(): void {
     setTimeout(() => quacInput.focus(), 0);
   }
 
-  const escHandler = (e: KeyboardEvent) => {
+  if (allNodesEscHandler) {
+    window.removeEventListener("keydown", allNodesEscHandler);
+  }
+
+  allNodesEscHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
       handleModeSwitch("field");
-      window.removeEventListener("keydown", escHandler);
+      if (allNodesEscHandler) {
+        window.removeEventListener("keydown", allNodesEscHandler);
+        allNodesEscHandler = null;
+      }
     }
   };
-  window.addEventListener("keydown", escHandler);
+  window.addEventListener("keydown", allNodesEscHandler);
 }
 
 function attachPointerGridDrag(root: HTMLElement): void {
@@ -500,7 +1504,7 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt")) {
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt")) {
         return;
       }
 
@@ -512,12 +1516,17 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const draggedId = draggedItem.dataset.layoutId;
       if (!draggedId) return;
 
-      const initialOrder = readLayoutOrder();
-      const minimized = new Set(readMinimizedItems());
+      const layoutOrder = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+        .map((item) => item.dataset.layoutId ?? "")
+        .filter(Boolean);
+      const sizes = { ...readItemSizes() };
+      const initialLayouts = buildResolvedWorkspaceLayouts(layoutOrder, sizes, getGridMetrics(grid).columnCount);
+      const initialLayout = initialLayouts.get(draggedId) ?? normalizeItemLayout(draggedId, sizes[draggedId], getGridMetrics(grid).columnCount);
       let started = false;
       let ghost: HTMLElement | null = null;
       let offsetX = 0;
       let offsetY = 0;
+      let previewLayout = initialLayout;
 
       const cleanup = () => {
         window.removeEventListener("pointermove", onPointerMove);
@@ -536,7 +1545,6 @@ function attachPointerGridDrag(root: HTMLElement): void {
         }
 
         draggedItem.classList.remove("all-nodes-grid-item--dragging", "all-nodes-grid-item--placeholder");
-        clearLayoutDropTargets(grid);
       };
 
       const onPointerMove = (moveEvent: PointerEvent) => {
@@ -574,38 +1582,34 @@ function attachPointerGridDrag(root: HTMLElement): void {
           draggedItem.classList.add("all-nodes-grid-item--dragging", "all-nodes-grid-item--placeholder");
         }
 
+        autoScrollGrid(grid, moveEvent.clientY);
+
         if (ghost) {
           ghost.style.left = `${moveEvent.clientX - offsetX}px`;
           ghost.style.top = `${moveEvent.clientY - offsetY}px`;
         }
 
-        const hovered = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest(".all-nodes-grid-item") as HTMLElement | null;
-        clearLayoutDropTargets(grid);
-
-        if (hovered && hovered !== draggedItem) {
-          hovered.classList.add("all-nodes-grid-item--drop-target");
-          const rect = hovered.getBoundingClientRect();
-          const insertBefore = moveEvent.clientY < rect.top + rect.height / 2 ||
-            (Math.abs(moveEvent.clientY - (rect.top + rect.height / 2)) < rect.height * 0.2 &&
-              moveEvent.clientX < rect.left + rect.width / 2);
-
-          if (insertBefore) {
-            grid.insertBefore(draggedItem, hovered);
-          } else if (hovered.nextSibling !== draggedItem) {
-            grid.insertBefore(draggedItem, hovered.nextSibling);
-          }
-        } else if (!hovered && isPointInsideRect(grid.getBoundingClientRect(), moveEvent.clientX, moveEvent.clientY)) {
-          grid.appendChild(draggedItem);
-        }
+        const proposed = getPointerGridPosition(
+          grid,
+          moveEvent.clientX - offsetX,
+          moveEvent.clientY - offsetY,
+          initialLayout.colSpan,
+          initialLayout.rowSpan,
+        );
+        const resolvedPreview = buildResolvedWorkspaceLayouts(layoutOrder, sizes, getGridMetrics(grid).columnCount, {
+          priorityItemId: draggedId,
+          priorityLayout: proposed,
+        });
+        previewLayout = resolvedPreview.get(draggedId) ?? proposed;
+        applyResolvedWorkspaceLayouts(grid, resolvedPreview);
       };
 
       const onPointerUp = (upEvent: PointerEvent) => {
         if (upEvent.pointerId !== pointerId) return;
 
         if (started) {
-          const activeOrder = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item")).map((item) => item.dataset.layoutId ?? "").filter(Boolean);
-          const nextOrder = mergeLayoutOrder(activeOrder, initialOrder, minimized);
-          persistLayoutOrder(nextOrder);
+          sizes[draggedId] = serializeItemLayout(previewLayout);
+          persistItemSizes(sizes);
           cleanup();
           renderAllNodesMenuScreen();
           return;
@@ -649,13 +1653,15 @@ function attachPointerResize(root: HTMLElement): void {
       const pointerId = event.pointerId;
       const startX = event.clientX;
       const startY = event.clientY;
-      const startRect = wrapper.getBoundingClientRect();
       const metrics = getGridMetrics(grid);
       const sizes = { ...readItemSizes() };
-      const existingSize = sizes[itemId];
-      const initialSpan = existingSize?.colSpan ?? (wrapper.classList.contains("all-nodes-grid-item--quac") ? 2 : 1);
-      const initialHeight = existingSize?.minHeight ?? Math.max(MIN_ITEM_HEIGHT, Math.round(startRect.height));
+      const layoutOrder = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+        .map((item) => item.dataset.layoutId ?? "")
+        .filter(Boolean);
+      const initialLayouts = buildResolvedWorkspaceLayouts(layoutOrder, sizes, metrics.columnCount);
+      const initialLayout = initialLayouts.get(itemId) ?? normalizeItemLayout(itemId, sizes[itemId], metrics.columnCount);
       let resizing = false;
+      let previewLayout = initialLayout;
 
       const cleanup = () => {
         window.removeEventListener("pointermove", onPointerMove);
@@ -683,24 +1689,28 @@ function attachPointerResize(root: HTMLElement): void {
         suppressNodeClickUntil = Date.now() + 250;
         wrapper.classList.add("all-nodes-grid-item--resizing");
 
-        const nextWidth = Math.max(metrics.trackWidth, startRect.width + dx);
-        const nextHeight = Math.max(MIN_ITEM_HEIGHT, startRect.height + dy);
-        const nextSpan = clamp(Math.round((nextWidth + metrics.gap) / (metrics.trackWidth + metrics.gap)), 1, metrics.columnCount);
+        const liveMetrics = getGridMetrics(grid);
+        const spanDelta = Math.round(dx / Math.max(liveMetrics.trackWidth + liveMetrics.columnGap, 1));
+        const rowDelta = Math.round(dy / Math.max(liveMetrics.rowHeight + liveMetrics.rowGap, 1));
+        const proposed: WorkspaceItemLayout = {
+          ...initialLayout,
+          colSpan: clamp(initialLayout.colSpan + spanDelta, 1, liveMetrics.columnCount),
+          rowSpan: Math.max(MIN_ITEM_ROW_SPAN, initialLayout.rowSpan + rowDelta),
+        };
 
-        wrapper.style.gridColumn = `span ${nextSpan}`;
-        wrapper.style.minHeight = `${Math.round(nextHeight)}px`;
+        const resolvedPreview = buildResolvedWorkspaceLayouts(layoutOrder, sizes, liveMetrics.columnCount, {
+          priorityItemId: itemId,
+          priorityLayout: proposed,
+        });
+        previewLayout = resolvedPreview.get(itemId) ?? proposed;
+        applyResolvedWorkspaceLayouts(grid, resolvedPreview);
       };
 
       const onPointerUp = (upEvent: PointerEvent) => {
         if (upEvent.pointerId !== pointerId) return;
 
         if (resizing) {
-          const finalRect = wrapper.getBoundingClientRect();
-          const finalSpan = clamp(Math.round((finalRect.width + metrics.gap) / (metrics.trackWidth + metrics.gap)), 1, metrics.columnCount);
-          sizes[itemId] = {
-            colSpan: finalSpan || initialSpan,
-            minHeight: Math.max(MIN_ITEM_HEIGHT, Math.round(finalRect.height || initialHeight)),
-          };
+          sizes[itemId] = serializeItemLayout(previewLayout);
           persistItemSizes(sizes);
         }
 
@@ -718,15 +1728,10 @@ function attachPointerResize(root: HTMLElement): void {
   });
 }
 
-function clearLayoutDropTargets(grid: HTMLElement): void {
-  grid.querySelectorAll(".all-nodes-grid-item--drop-target").forEach((element) => {
-    element.classList.remove("all-nodes-grid-item--drop-target");
-  });
-}
-
-function getGridMetrics(grid: HTMLElement): { columnCount: number; trackWidth: number; gap: number } {
+function getGridMetrics(grid: HTMLElement): GridMetrics {
   const computed = window.getComputedStyle(grid);
-  const gap = parseFloat(computed.columnGap || "0") || 0;
+  const columnGap = parseFloat(computed.columnGap || "0") || 0;
+  const rowGap = parseFloat(computed.rowGap || "0") || 0;
   const trackWidths = computed.gridTemplateColumns
     .split(" ")
     .map((token) => parseFloat(token))
@@ -734,7 +1739,8 @@ function getGridMetrics(grid: HTMLElement): { columnCount: number; trackWidth: n
 
   const columnCount = Math.max(trackWidths.length, 1);
   const trackWidth = trackWidths[0] ?? 180;
-  return { columnCount, trackWidth, gap };
+  const rowHeight = parseFloat(computed.gridAutoRows || `${WORKSPACE_ROW_HEIGHT_PX}`) || WORKSPACE_ROW_HEIGHT_PX;
+  return { columnCount, trackWidth, columnGap, rowGap, rowHeight };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -746,6 +1752,12 @@ function isPointInsideRect(rect: DOMRect, x: number, y: number): boolean {
 }
 
 function handleModeSwitch(mode: string | undefined): void {
+  if (mode === "field") {
+    syncPinnedItemFrames(document);
+  }
+
+  cleanupAllNodesWindowListeners();
+
   switch (mode) {
     case "field":
       renderFieldScreen(lastFieldMap as any);
@@ -758,45 +1770,47 @@ function handleModeSwitch(mode: string | undefined): void {
 }
 
 function handleNodeAction(action: string): void {
+  syncPinnedItemFrames(document);
+
   switch (action) {
     case "shop":
       import("./ShopScreen").then(({ renderShopScreen }) => {
-        renderShopScreen("basecamp");
+        renderShopScreen("esc");
       });
       break;
     case "workshop":
       import("./GearWorkbenchScreen").then(({ renderGearWorkbenchScreen }) => {
-        renderGearWorkbenchScreen(undefined, undefined, "basecamp");
+        renderGearWorkbenchScreen(undefined, undefined, "esc");
       });
       break;
     case "roster":
       import("./RosterScreen").then(({ renderRosterScreen }) => {
-        renderRosterScreen("basecamp");
+        renderRosterScreen("esc");
       });
       break;
     case "loadout":
       import("./InventoryScreen").then(({ renderInventoryScreen }) => {
-        renderInventoryScreen("basecamp");
+        renderInventoryScreen("esc");
       });
       break;
     case "inventory":
       import("./InventoryViewScreen").then(({ renderInventoryViewScreen }) => {
-        renderInventoryViewScreen("basecamp");
+        renderInventoryViewScreen("esc");
       });
       break;
     case "quest-board":
       import("./QuestBoardScreen").then(({ renderQuestBoardScreen }) => {
-        renderQuestBoardScreen("basecamp");
+        renderQuestBoardScreen("esc");
       });
       break;
     case "tavern":
       import("./TavernDialogueScreen").then(({ renderTavernDialogueScreen }) => {
-        renderTavernDialogueScreen("base_camp_tavern", "Tavern", "basecamp");
+        renderTavernDialogueScreen("base_camp_tavern", "Tavern", "esc");
       });
       break;
     case "ops-terminal":
       import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
-        renderOperationSelectScreen("basecamp");
+        renderOperationSelectScreen("esc");
       });
       break;
     case "gear-workbench":
@@ -806,15 +1820,15 @@ function handleNodeAction(action: string): void {
         if (firstUnitId) {
           const unit = state.unitsById[firstUnitId];
           const weaponId = (unit as any)?.loadout?.primaryWeapon ?? null;
-          renderGearWorkbenchScreen(firstUnitId, weaponId, "basecamp");
+          renderGearWorkbenchScreen(firstUnitId, weaponId, "esc");
         } else {
-          renderGearWorkbenchScreen(undefined, undefined, "basecamp");
+          renderGearWorkbenchScreen(undefined, undefined, "esc");
         }
       });
       break;
     case "port":
       import("./PortScreen").then(({ renderPortScreen }) => {
-        renderPortScreen("basecamp");
+        renderPortScreen("esc");
       });
       break;
     case "quarters":
@@ -822,22 +1836,22 @@ function handleNodeAction(action: string): void {
       break;
     case "stable":
       import("./StableScreen").then(({ renderStableScreen }) => {
-        renderStableScreen("basecamp");
+        renderStableScreen("esc");
       });
       break;
     case "codex":
       import("./CodexScreen").then(({ renderCodexScreen }) => {
-        renderCodexScreen("basecamp");
+        renderCodexScreen("esc");
       });
       break;
     case "settings":
       import("./SettingsScreen").then(({ renderSettingsScreen }) => {
-        renderSettingsScreen("basecamp");
+        renderSettingsScreen("esc");
       });
       break;
     case "comms-array":
       import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen("basecamp");
+        renderCommsArrayScreen("esc");
       });
       break;
     case "endless-field-nodes":

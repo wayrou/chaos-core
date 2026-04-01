@@ -4,7 +4,13 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import {
   Mount,
   OwnedMount,
@@ -131,7 +137,7 @@ function renderMountCards(mount: Mount): string {
 // MAIN RENDER FUNCTION
 // ----------------------------------------------------------------------------
 
-export function renderStableScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderStableScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -325,7 +331,7 @@ export function renderStableScreen(returnTo: "basecamp" | "field" = "basecamp"):
         </div>
         <div class="stable-header-right town-screen__header-right">
           <div class="stable-wad">WAD: ${wad}</div>
-          <button class="stable-back-btn town-screen__back-btn" id="backBtn">${returnTo === "field" ? "FIELD MODE" : "BACK TO BASE CAMP"}</button>
+          <button class="stable-back-btn town-screen__back-btn" id="backBtn">${getBaseCampReturnLabel(returnTo, { esc: "BACK TO E.S.C." })}</button>
         </div>
       </div>
 
@@ -358,38 +364,11 @@ export function renderStableScreen(returnTo: "basecamp" | "field" = "basecamp"):
 
   // Back button
   root.querySelector("#backBtn")?.addEventListener("click", () => {
-    if (returnTo === "field") {
-      // Return to field mode
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("base_camp");
-      });
-    } else {
-      renderAllNodesMenuScreen();
-    }
+    unregisterBaseCampReturnHotkey("stable-screen");
+    returnFromBaseCampScreen(returnTo);
   });
 
-  // ESC and E key handlers to exit to field mode
-  if (returnTo === "field") {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const key = e.key?.toLowerCase() ?? "";
-      if (key === "escape" || e.key === "Escape" || e.keyCode === 27 || key === "e") {
-        // Only exit if E key and not typing in an input
-        if (key === "e") {
-          const target = e.target as HTMLElement;
-          if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-            return; // Don't exit if typing in an input
-          }
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-          renderFieldScreen("base_camp");
-        });
-        window.removeEventListener("keydown", handleKeyDown);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-  }
+  registerBaseCampReturnHotkey("stable-screen", returnTo, { allowFieldEKey: true, activeSelector: ".stable-root" });
 
   // Unlock mount buttons
   root.querySelectorAll(".stable-unlock-btn").forEach((btn) => {

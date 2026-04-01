@@ -889,7 +889,6 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
   const mapHeight = heightInLayers * 300 + 300;
 
   let mapHtml = `<div class="opmap-nodes-container" style="position: relative; width: ${mapWidth}px; height: ${mapHeight}px; padding: 0; margin: 0;">`;
-  mapHtml += renderHexGridLayer(mapWidth, mapHeight);
 
   // Use maxLayer for flipping for bottom-to-top if needed, or just normalize
   const maxLayer = maxX;
@@ -949,20 +948,20 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
       let extraClass = "";
 
       if (isOnClearedRoute) {
-        strokeColor = "rgba(228, 228, 228, 0.82)";
-        strokeWidth = 7;
+        strokeColor = "rgba(243, 163, 16, 0.8)";
+        strokeWidth = 3;
         extraClass = "opmap-connection--cleared-route";
       } else if (isBranchChoice) {
-        strokeColor = "rgba(183, 183, 183, 0.9)";
-        strokeWidth = 5;
+        strokeColor = "rgba(235, 156, 101, 0.9)";
+        strokeWidth = 3;
         extraClass = "opmap-connection--branch-choice";
       } else if (fromCleared && toCleared) {
-        strokeColor = "rgba(121, 121, 121, 0.35)";
-        strokeWidth = 3;
+        strokeColor = "rgba(128, 109, 78, 0.4)";
+        strokeWidth = 2;
         extraClass = "opmap-connection--cleared-off-route";
       } else {
-        strokeColor = "rgba(118, 127, 139, 0.22)";
-        strokeWidth = 2;
+        strokeColor = "rgba(88, 81, 80, 0.3)";
+        strokeWidth = 1.5;
         extraClass = "opmap-connection--unexplored";
       }
 
@@ -1021,7 +1020,6 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
     // Calculate position (normalized)
     const nodeX = ((node.position?.y ?? 0) - minY) * 400 + 200;
     const nodeY = (maxLayer - (node.position?.x ?? 0)) * 300 + 150;
-    const sectorCode = `${String((node.position?.y ?? 0) - minY + 1).padStart(2, "0")}${String(maxLayer - (node.position?.x ?? 0) + 1).padStart(2, "0")}`;
 
     // Determine node shape based on room type
     const shapeClass = getNodeShapeClass(node.type);
@@ -1039,13 +1037,11 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
             <div class="opmap-node-shape">
               <span class="opmap-node-icon-small">${icon}</span>
             </div>
-            <div class="opmap-node-sector-code">${sectorCode}</div>
             <div class="opmap-node-label-compact">${node.label}</div>
           ` : `
             <div class="opmap-node-shape opmap-node-shape--hidden">
               <span class="opmap-node-icon-small">?</span>
             </div>
-            <div class="opmap-node-sector-code">----</div>
             <div class="opmap-node-label-compact">???</div>
           `}
         </div>
@@ -1055,46 +1051,6 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
 
   mapHtml += '</div>';
   return mapHtml;
-}
-
-function renderHexGridLayer(mapWidth: number, mapHeight: number): string {
-  const hexRadius = 135;
-  const hexWidth = Math.sqrt(3) * hexRadius;
-  const verticalStep = 1.5 * hexRadius;
-  const cols = Math.ceil(mapWidth / hexWidth) + 3;
-  const rows = Math.ceil(mapHeight / verticalStep) + 3;
-
-  let hexPaths = "";
-  let labels = "";
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const centerX = col * hexWidth + (row % 2 === 0 ? hexWidth / 2 : hexWidth);
-      const centerY = row * verticalStep + hexRadius;
-
-      if (centerX < -hexWidth || centerX > mapWidth + hexWidth || centerY < -hexRadius || centerY > mapHeight + hexRadius) {
-        continue;
-      }
-
-      const points: string[] = [];
-      for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 180) * (60 * i - 30);
-        const x = centerX + hexRadius * Math.cos(angle);
-        const y = centerY + hexRadius * Math.sin(angle);
-        points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      }
-      hexPaths += `<polygon points="${points.join(" ")}" class="opmap-hex-cell" />`;
-
-      const sectorCode = `${String(col + 1).padStart(2, "0")}${String(row + 1).padStart(2, "0")}`;
-      labels += `<text x="${centerX.toFixed(1)}" y="${(centerY - 8).toFixed(1)}" class="opmap-hex-label">${sectorCode}</text>`;
-    }
-  }
-
-  return `
-    <svg class="opmap-hexgrid-layer" style="position:absolute; left:0; top:0; width:${mapWidth}px; height:${mapHeight}px; pointer-events:none; z-index:0;">
-      <g class="opmap-hex-cells">${hexPaths}</g>
-      <g class="opmap-hex-labels">${labels}</g>
-    </svg>
-  `;
 }
 
 // Floor progress removed - misleading with branching paths

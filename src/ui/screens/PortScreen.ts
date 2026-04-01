@@ -2,9 +2,14 @@
 // PORT SCREEN - TRADE MANIFEST SYSTEM
 // ============================================================================
 
-import { getGameState, updateGameState, addResources } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
+import { getGameState, updateGameState } from "../../state/gameStore";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import {
   PortManifest,
   TradeOffer,
@@ -25,7 +30,6 @@ let npcWindowInterval: number | null = null;
 let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
-let portExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // Aeriss response templates based on dialogue context
 const AERISS_RESPONSES: Record<string, string[]> = {
@@ -60,9 +64,19 @@ const AERISS_RESPONSES: Record<string, string[]> = {
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderPortScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   // Stop any existing NPC window system
   stopNpcWindowSystem();
+
+  // Match the black market and tavern chatter flow by seeding windows before
+  // the first paint instead of letting the panel render empty.
+  activeNpcWindows = [];
+  activeConversations.clear();
+  npcWindowIdCounter = 0;
+  const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
+  for (let i = 0; i < initialCount; i++) {
+    addNpcWindow();
+  }
   
   // Reset stamp visibility
   manifestUpdatedStampVisible = false;
@@ -102,7 +116,7 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
   const tradesRemaining = state.portTradesRemaining ?? 2;
   const res = state.resources;
   
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
+  const backButtonText = getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
     <div class="port-root town-screen">
@@ -180,14 +194,13 @@ export function renderPortScreen(returnTo: "basecamp" | "field" = "basecamp"): v
         </div>
         
         <!-- Right Column: NPC Flavor Text -->
-        <div class="port-npc-panel town-screen__panel ard-panel--inset">
+        <div class="port-npc-panel">
           ${renderNpcFlavorText()}
         </div>
       </div>
     </div>
   `;
   
-  attachPortExitHotkey(returnTo);
   attachPortListeners(returnTo, manifest);
   
   // Start the NPC window system
@@ -332,7 +345,7 @@ const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
 function renderNpcFlavorText(): string {
   return `
     <div class="port-npc-panel-content">
-      <h2 class="port-npc-panel-title">PORT ACTIVITY</h2>
+      <h2 class="port-npc-panel-title">PORT CHATTER</h2>
       <div class="port-npc-windows-container" id="portNpcWindowsContainer">
         ${activeNpcWindows.map(window => {
           const conversation = activeConversations.get(window.conversationId || "");
@@ -383,7 +396,7 @@ function startNpcWindowSystem(): void {
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
     // Random chance to add a new window (60% chance)
-    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+    if (Math.random() < 0.6 && activeNpcWindows.length < 3) {
       addNpcWindow();
     }
     
@@ -406,7 +419,7 @@ function startNpcWindowSystem(): void {
     }
     
     // If we have too many windows, remove the oldest
-    if (activeNpcWindows.length > 4) {
+    if (activeNpcWindows.length > 3) {
       const removed = activeNpcWindows.shift();
       if (removed?.conversationId) {
         activeConversations.delete(removed.conversationId);
@@ -523,27 +536,29 @@ function updateNpcWindowsDOM(): void {
 function attachNpcWindowClickHandlers(): void {
   const container = document.getElementById("portNpcWindowsContainer");
   if (!container) return;
-  
-  // Remove old handlers and attach new ones
-  container.querySelectorAll('.port-npc-window').forEach(windowEl => {
-    // Remove existing click handler
-    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
-    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
-    
-    // Attach click handler to the main window (not conversation messages)
-    newWindowEl.addEventListener('click', (e) => {
-      // Don't trigger if clicking on a conversation message
-      if ((e.target as HTMLElement).closest('.port-npc-conversation-message')) {
-        return;
-      }
-      
-      const windowId = newWindowEl.getAttribute('data-window-id');
-      const conversationId = newWindowEl.getAttribute('data-conversation-id');
-      
-      if (windowId && conversationId && conversationId !== "null") {
-        handleNpcWindowClick(windowId, conversationId);
-      }
-    });
+
+  if (container.dataset.clickBound === "true") {
+    return;
+  }
+
+  container.dataset.clickBound = "true";
+  container.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(".port-npc-conversation-message")) {
+      return;
+    }
+
+    const windowEl = target.closest(".port-npc-window") as HTMLElement | null;
+    if (!windowEl) {
+      return;
+    }
+
+    const windowId = windowEl.getAttribute("data-window-id");
+    const conversationId = windowEl.getAttribute("data-conversation-id");
+
+    if (windowId && conversationId && conversationId !== "null") {
+      handleNpcWindowClick(windowId, conversationId);
+    }
   });
 }
 
@@ -599,8 +614,8 @@ function stopNpcWindowSystem(): void {
 // ----------------------------------------------------------------------------
 
 function attachPortListeners(
-  returnTo: "basecamp" | "field",
-  manifest: PortManifest
+  returnTo: BaseCampReturnTo,
+  manifest: PortManifest,
 ): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -609,13 +624,8 @@ function attachPortListeners(
   app.querySelector("#backBtn")?.addEventListener("click", () => {
     // Stop NPC window system when leaving
     stopNpcWindowSystem();
-    detachPortExitHotkey();
-    
-    if (returnTo === "field") {
-      renderFieldScreen("base_camp");
-    } else {
-      renderAllNodesMenuScreen();
-    }
+    unregisterBaseCampReturnHotkey("port-screen");
+    returnFromBaseCampScreen(returnTo);
   });
   
   // Normal trade buttons
@@ -631,6 +641,12 @@ function attachPortListeners(
   // Bulk shipment button
   app.querySelector(".port-bulk-btn:not(.port-bulk-btn--disabled)")?.addEventListener("click", () => {
     executeBulkShipment(manifest.bulkShipmentOffer);
+  });
+
+  registerBaseCampReturnHotkey("port-screen", returnTo, {
+    allowFieldEKey: true,
+    onReturn: stopNpcWindowSystem,
+    activeSelector: ".port-root",
   });
 }
 
@@ -685,7 +701,8 @@ function executeNormalTrade(offerId: string, manifest: PortManifest): void {
   );
   
   // Re-render screen
-  renderPortScreen();
+  const returnTo = (document.getElementById("backBtn")?.getAttribute("data-return-to") as BaseCampReturnTo | null) || "basecamp";
+  renderPortScreen(returnTo);
 }
 
 function executeBulkShipment(offer: BulkShipmentOffer): void {
@@ -740,7 +757,7 @@ function executeBulkShipment(offer: BulkShipmentOffer): void {
   );
   
   // Re-render screen
-  const returnTo = (document.getElementById("backBtn")?.getAttribute("data-return-to") as "basecamp" | "field") || "basecamp";
+  const returnTo = (document.getElementById("backBtn")?.getAttribute("data-return-to") as BaseCampReturnTo | null) || "basecamp";
   renderPortScreen(returnTo);
 }
 
@@ -794,7 +811,6 @@ import { GameState } from "../../core/types";
  * Call from console: window.debugRefreshPortManifest()
  */
 export function debugRefreshPortManifest(): void {
-  const state = getGameState();
   const campaignProgress = loadCampaignProgress();
   
   // Increment visit index to force refresh
@@ -822,7 +838,8 @@ export function debugRefreshPortManifest(): void {
   
   // Re-render if Port screen is open
   if (document.querySelector(".port-root")) {
-    renderPortScreen();
+    const returnTo = (document.getElementById("backBtn")?.getAttribute("data-return-to") as BaseCampReturnTo | null) || "basecamp";
+    renderPortScreen(returnTo);
   }
 }
 
@@ -849,37 +866,6 @@ export function debugPrintPortManifest(): void {
     console.log(`    ${i + 1}. ${offer.name} - ${offer.fulfilled ? 'FULFILLED' : 'AVAILABLE'}`);
   });
   console.log(`  Bulk Shipment: ${manifest.bulkShipmentOffer.targetResource}`);
-}
-
-function detachPortExitHotkey(): void {
-  if (portExitKeyHandler) {
-    window.removeEventListener("keydown", portExitKeyHandler);
-    portExitKeyHandler = null;
-  }
-}
-
-function attachPortExitHotkey(returnTo: "basecamp" | "field"): void {
-  detachPortExitHotkey();
-
-  if (returnTo !== "field") return;
-
-  portExitKeyHandler = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
-    if (key === "escape" || key === "e") {
-      if (key === "e") {
-        const target = e.target as HTMLElement;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-          return;
-        }
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      detachPortExitHotkey();
-      renderFieldScreen("base_camp");
-    }
-  };
-
-  window.addEventListener("keydown", portExitKeyHandler);
 }
 
 // Expose to window for console access (DEV only)

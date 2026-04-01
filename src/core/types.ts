@@ -171,14 +171,49 @@ export interface Player {
 
 export interface BaseCampItemSize {
   colSpan: number;
-  minHeight: number;
+  minHeight?: number;
+  rowSpan?: number;
+  gridX?: number;
+  gridY?: number;
+}
+
+export interface BaseCampPinnedItemFrame {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface BaseCampLayoutLoadout {
+  minimizedItems?: string[];
+  itemSizes?: Record<string, BaseCampItemSize>;
+  pinnedItems?: string[];
+  itemColors?: Record<string, string>;
+  pinnedItemFrames?: Record<string, BaseCampPinnedItemFrame>;
+}
+
+export interface InventoryFolder {
+  id: string;
+  name: string;
+  color: string;
+  entryKeys: string[];
 }
 
 export interface UILayoutState {
+  baseCampLayoutVersion?: number;
+  baseCampResetPresetIndex?: number;
+  baseCampActiveLoadoutIndex?: number;
   baseCampNodeOrder?: string[];
   baseCampItemOrder?: string[];
   baseCampMinimizedItems?: string[];
+  baseCampPinnedItems?: string[];
   baseCampItemSizes?: Record<string, BaseCampItemSize>;
+  baseCampItemColors?: Record<string, string>;
+  baseCampPinnedItemFrames?: Record<string, BaseCampPinnedItemFrame>;
+  baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
+  inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
+  inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
+  inventoryFolders?: Record<string, InventoryFolder>;
 }
 
 // ============================================================================

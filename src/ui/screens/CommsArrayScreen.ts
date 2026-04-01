@@ -4,12 +4,18 @@
 // ============================================================================
 
 import { getGameState } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
 import { createTrainingEncounter, TrainingConfig } from "../../core/trainingEncounter";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { updateGameState } from "../../state/gameStore";
 import { renderBattleScreen } from "./BattleScreen";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
+import { showSystemPing } from "../components/systemPing";
 
 // Training config state
 let trainingConfig: TrainingConfig = {
@@ -24,12 +30,11 @@ let trainingConfig: TrainingConfig = {
 // Store last training config for rematch
 let lastTrainingConfig: TrainingConfig | null = null;
 
-export function renderCommsArrayScreen(returnTo: "basecamp" | "field" | "operation" = "basecamp"): void {
+export function renderCommsArrayScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
   
-  const state = getGameState();
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : returnTo === "operation" ? "DUNGEON MAP" : "BASE CAMP";
+  const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
     <div class="comms-array-root">
@@ -133,22 +138,27 @@ export function renderCommsArrayScreen(returnTo: "basecamp" | "field" | "operati
   attachCommsArrayListeners(returnTo);
 }
 
-function attachCommsArrayListeners(returnTo: "basecamp" | "field" | "operation"): void {
+function attachCommsArrayListeners(returnTo: BaseCampReturnTo | "operation"): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
-      if (returnTo === "field") {
-        renderFieldScreen("base_camp");
-      } else if (returnTo === "operation") {
+      unregisterBaseCampReturnHotkey("comms-array-screen");
+      if (returnTo === "operation") {
         // Return to operation map if needed
         import("./OperationMapScreen").then(({ renderOperationMapScreen }) => {
           renderOperationMapScreen();
         });
       } else {
-        renderAllNodesMenuScreen();
+        returnFromBaseCampScreen(returnTo);
       }
     };
+  }
+
+  if (returnTo !== "operation") {
+    registerBaseCampReturnHotkey("comms-array-screen", returnTo, { allowFieldEKey: true, activeSelector: ".comms-array-root" });
+  } else {
+    unregisterBaseCampReturnHotkey("comms-array-screen");
   }
   
   // Locked multiplayer buttons
@@ -169,7 +179,6 @@ function attachCommsArrayListeners(returnTo: "basecamp" | "field" | "operation")
   const gridWidthSelect = document.getElementById("gridWidthSelect") as HTMLSelectElement;
   const gridHeightSelect = document.getElementById("gridHeightSelect") as HTMLSelectElement;
   const difficultySelect = document.getElementById("difficultySelect") as HTMLSelectElement;
-  const botAutoBattleCheck = document.getElementById("botAutoBattleCheck") as HTMLInputElement;
   
   if (gridWidthSelect) {
     gridWidthSelect.addEventListener("change", () => {
@@ -198,7 +207,7 @@ function attachCommsArrayListeners(returnTo: "basecamp" | "field" | "operation")
   }
 }
 
-function startTrainingBattle(returnTo: "basecamp" | "field" | "operation"): void {
+function startTrainingBattle(returnTo: BaseCampReturnTo | "operation"): void {
   const state = getGameState();
   
   // Validate grid bounds
@@ -255,6 +264,14 @@ export function clearLastTrainingConfig(): void {
 }
 
 function showNotification(message: string, type: "success" | "error" | "info"): void {
+  showSystemPing({
+    title: type === "error" ? "COMMS ERROR" : type === "success" ? "COMMS READY" : "COMMS NOTICE",
+    message,
+    type,
+    channel: "comms-array",
+  });
+  return;
+
   // Simple notification - reuse existing pattern if available
   const notification = document.createElement("div");
   notification.className = `notification notification--${type}`;
@@ -278,4 +295,3 @@ function showNotification(message: string, type: "success" | "error" | "info"): 
     notification.remove();
   }, 3000);
 }
-

@@ -5,7 +5,12 @@
 // ============================================================================
 
 import { renderMainMenu } from "./MainMenuScreen";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
+import {
+  BaseCampReturnTo,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 import {
   getSettings,
   updateSettings,
@@ -43,13 +48,13 @@ import { SCROLLINK_BUILD_LABEL } from "../../core/appVersion";
 
 type SettingsTab = "general" | "controls" | "saves";
 let currentTab: SettingsTab = "general";
-let returnDestination: "menu" | "basecamp" = "menu";
+let returnDestination: "menu" | BaseCampReturnTo = "menu";
 
 // ----------------------------------------------------------------------------
 // RENDER
 // ----------------------------------------------------------------------------
 
-export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): void {
+export function renderSettingsScreen(returnTo: "menu" | BaseCampReturnTo = "menu"): void {
   returnDestination = returnTo;
   
   const app = document.getElementById("app");
@@ -99,6 +104,11 @@ export function renderSettingsScreen(returnTo: "menu" | "basecamp" = "menu"): vo
   `;
   
   attachSettingsListeners(settings);
+  if (returnDestination !== "menu") {
+    registerBaseCampReturnHotkey("settings-screen", returnDestination, { allowFieldEKey: true, activeSelector: ".settings-root" });
+  } else {
+    unregisterBaseCampReturnHotkey("settings-screen");
+  }
   updateFocusableElements();
 }
 
@@ -380,8 +390,9 @@ function attachSettingsListeners(settings: GameSettings): void {
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
-      if (returnDestination === "basecamp") {
-        renderAllNodesMenuScreen();
+      unregisterBaseCampReturnHotkey("settings-screen");
+      if (returnDestination !== "menu") {
+        returnFromBaseCampScreen(returnDestination);
       } else {
         renderMainMenu();
       }

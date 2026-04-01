@@ -7,8 +7,7 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
+import { getChassisById } from "../data/gearChassis";
 
 export type CardRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 export type CardCategory = "attack" | "defense" | "utility" | "mobility" | "buff" | "debuff" | "steam" | "chaos";
@@ -397,10 +396,14 @@ export function getDefaultGearSlots(equipmentId: string, equipment?: any): GearS
   if (equipment?.chassisId) {
     const chassis = getChassisById(equipment.chassisId);
     if (chassis) {
+      const lockedCards = Array.isArray(equipment.lockedCards) ? equipment.lockedCards : [];
+      const lockedSlots = Number.isFinite(equipment?.provenance?.bias?.slotsLocked)
+        ? equipment.provenance.bias.slotsLocked
+        : 0;
       // Return with correct slot count from chassis
       return {
-        lockedCards: [],
-        freeSlots: chassis.maxCardSlots,
+        lockedCards,
+        freeSlots: Math.max(0, chassis.maxCardSlots - lockedSlots),
         slottedCards: [],
       };
     }

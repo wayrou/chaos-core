@@ -4,11 +4,16 @@
 // ============================================================================
 
 import { getGameState, updateGameState, spendWad } from "../../state/gameStore";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
 import { getAllFieldModDefs, getFieldModDef } from "../../core/fieldModDefinitions";
 import { FieldModInstance } from "../../core/fieldMods";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
+import {
+  BaseCampReturnTo,
+  getBaseCampReturnLabel,
+  registerBaseCampReturnHotkey,
+  returnFromBaseCampScreen,
+  unregisterBaseCampReturnHotkey,
+} from "./baseCampReturn";
 
 // ----------------------------------------------------------------------------
 // NPC CONVERSATION SYSTEM STATE
@@ -18,6 +23,7 @@ let npcWindowInterval: number | null = null;
 let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+let currentReturnTo: BaseCampReturnTo = "basecamp";
 
 // NPC dialogue data - conversations in the black market
 const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
@@ -77,9 +83,10 @@ const AERISS_RESPONSES: Record<string, string[]> = {
 // MAIN RENDER
 // ----------------------------------------------------------------------------
 
-export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "basecamp"): void {
+export function renderBlackMarketScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   // Stop any existing NPC window system
   stopNpcWindowSystem();
+  currentReturnTo = returnTo;
 
   // Populate initial NPC windows before rendering
   activeNpcWindows = [];
@@ -130,7 +137,7 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
           </div>
           <button class="blackmarket-back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
-            <span class="btn-text">${returnTo === "field" ? "FIELD MODE" : "BASE CAMP"}</span>
+            <span class="btn-text">${getBaseCampReturnLabel(returnTo)}</span>
           </button>
         </div>
       </div>
@@ -221,53 +228,19 @@ export function renderBlackMarketScreen(returnTo: "basecamp" | "field" = "baseca
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachBlackMarketListeners(root: HTMLElement, returnTo: "basecamp" | "field"): void {
+function attachBlackMarketListeners(root: HTMLElement, returnTo: BaseCampReturnTo): void {
   // Back button
   root.querySelector("#backBtn")?.addEventListener("click", () => {
-    // Stop NPC window system when leaving
     stopNpcWindowSystem();
-
-    // Remove key listener
-    document.removeEventListener("keydown", handleKeyDown);
-
-    if (returnTo === "field") {
-      renderFieldScreen("base_camp");
-    } else {
-      renderAllNodesMenuScreen();
-    }
+    unregisterBaseCampReturnHotkey("black-market-screen");
+    returnFromBaseCampScreen(returnTo);
   });
 
-  // Handle keyboard exit (ESC or E)
-  const handleKeyDown = (e: KeyboardEvent) => {
-    const key = e.key?.toLowerCase() ?? "";
-
-    if (key === "escape" || key === "e") {
-      // Don't exit on E if typing
-      if (key === "e") {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-          return;
-        }
-      }
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      // Cleanup
-      stopNpcWindowSystem();
-      document.removeEventListener("keydown", handleKeyDown);
-
-      if (returnTo === "field") {
-        renderFieldScreen("base_camp");
-      } else {
-        renderAllNodesMenuScreen();
-      }
-    }
-  };
-
-  // Add listener (remove first to avoid duplicates if any)
-  document.removeEventListener("keydown", handleKeyDown);
-  document.addEventListener("keydown", handleKeyDown);
+  registerBaseCampReturnHotkey("black-market-screen", returnTo, {
+    allowFieldEKey: true,
+    onReturn: stopNpcWindowSystem,
+    activeSelector: ".blackmarket-root",
+  });
 
   // Purchase buttons
   root.querySelectorAll(".blackmarket-item-buy-btn:not(.blackmarket-item-buy-btn--disabled)").forEach((btn) => {
@@ -344,7 +317,7 @@ function purchaseFieldMod(modId: string): void {
   console.log(`[BLACK MARKET] Purchased field mod: ${modDef.name} for ${modDef.cost} WAD`);
 
   // Re-render to update UI
-  renderBlackMarketScreen("field");
+  renderBlackMarketScreen(currentReturnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -365,7 +338,7 @@ function renderNpcFlavorText(): string {
                  data-conversation-id="${window.conversationId || ""}">
               <div class="blackmarket-npc-name">${window.name}</div>
               <div class="blackmarket-npc-text">${window.text}</div>
-              ${hasConversation ? conversation!.map((msg, idx) => `
+              ${hasConversation ? conversation!.map((msg) => `
                 <div class="blackmarket-npc-conversation-message ${msg.name === "AERISS" ? "blackmarket-npc-conversation-message--aeriss" : ""}">
                   <div class="blackmarket-npc-conversation-name">${msg.name}</div>
                   <div class="blackmarket-npc-conversation-text">${msg.text}</div>
@@ -405,7 +378,7 @@ function startNpcWindowSystem(): void {
   // Start the cycle: add new windows and remove old ones
   npcWindowInterval = window.setInterval(() => {
     // Random chance to add a new window (60% chance)
-    if (Math.random() < 0.6 && activeNpcWindows.length < 5) {
+    if (Math.random() < 0.6 && activeNpcWindows.length < 3) {
       addNpcWindow();
     }
 
@@ -428,7 +401,7 @@ function startNpcWindowSystem(): void {
     }
 
     // If we have too many windows, remove the oldest
-    if (activeNpcWindows.length > 4) {
+    if (activeNpcWindows.length > 3) {
       const removed = activeNpcWindows.shift();
       if (removed?.conversationId) {
         activeConversations.delete(removed.conversationId);
@@ -546,26 +519,28 @@ function attachNpcWindowClickHandlers(): void {
   const container = document.getElementById("blackmarketNpcWindowsContainer");
   if (!container) return;
 
-  // Remove old handlers and attach new ones
-  container.querySelectorAll('.blackmarket-npc-window').forEach(windowEl => {
-    // Remove existing click handler
-    const newWindowEl = windowEl.cloneNode(true) as HTMLElement;
-    windowEl.parentNode?.replaceChild(newWindowEl, windowEl);
+  if (container.dataset.clickBound === "true") {
+    return;
+  }
 
-    // Attach click handler to the main window (not conversation messages)
-    newWindowEl.addEventListener('click', (e) => {
-      // Don't trigger if clicking on a conversation message
-      if ((e.target as HTMLElement).closest('.blackmarket-npc-conversation-message')) {
-        return;
-      }
+  container.dataset.clickBound = "true";
+  container.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(".blackmarket-npc-conversation-message")) {
+      return;
+    }
 
-      const windowId = newWindowEl.getAttribute('data-window-id');
-      const conversationId = newWindowEl.getAttribute('data-conversation-id');
+    const windowEl = target.closest(".blackmarket-npc-window") as HTMLElement | null;
+    if (!windowEl) {
+      return;
+    }
 
-      if (windowId && conversationId) {
-        handleNpcWindowClick(windowId, conversationId);
-      }
-    });
+    const windowId = windowEl.getAttribute("data-window-id");
+    const conversationId = windowEl.getAttribute("data-conversation-id");
+
+    if (windowId && conversationId) {
+      handleNpcWindowClick(windowId, conversationId);
+    }
   });
 }
 
@@ -617,4 +592,3 @@ function stopNpcWindowSystem(): void {
   activeNpcWindows = [];
   activeConversations.clear();
 }
-
