@@ -1451,6 +1451,40 @@
   overflow-wrap: anywhere;
 }
 
+.all-nodes-node-btn .node-pip {
+  width: 100%;
+  margin-top: 0.28rem;
+  padding: 0.28rem 0.42rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  border: 1px solid var(--all-nodes-surface-border, rgba(168, 124, 69, 0.25));
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.all-nodes-node-btn .node-pip--idle {
+  opacity: 0.8;
+}
+
+.all-nodes-node-btn .node-pip-label {
+  font-family: var(--font-terminal, 'JetBrains Mono', monospace);
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--all-nodes-muted, #6b6b6e);
+}
+
+.all-nodes-node-btn .node-pip-value {
+  font-family: var(--font-terminal, 'JetBrains Mono', monospace);
+  font-size: 0.54rem;
+  line-height: 1.25;
+  color: var(--all-nodes-accent, #ffcc6e);
+  overflow-wrap: anywhere;
+}
+
 /* Primary Button (OPS Terminal) */
 .all-nodes-node-btn--primary {
   background: var(--all-nodes-panel-bg, var(--accent-bronze-dark, #7a5a32));

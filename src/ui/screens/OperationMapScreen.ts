@@ -53,7 +53,7 @@ interface PanState {
 
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.8;
-const DEFAULT_ZOOM = 1.0;
+const DEFAULT_ZOOM = 1.5;
 const ZOOM_SENSITIVITY = 0.1;
 
 let panState: PanState = {
@@ -68,12 +68,21 @@ let panAnimationFrame: number | null = null;
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 let keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 let wheelHandler: ((e: WheelEvent) => void) | null = null;
+let opmapWindowMouseMoveHandler: ((e: MouseEvent) => void) | null = null;
+let opmapWindowMouseUpHandler: ((e: MouseEvent) => void) | null = null;
+let opmapContextPanelFrame = {
+  x: 16,
+  y: 16,
+  width: 360,
+  height: 0,
+};
 
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 const ADVANCE_KEYS = new Set([" ", "Enter"]); // Space and Enter to advance
 
 function cleanupPanHandlers(): void {
+  cleanupOperationWindowHandlers();
   if (keydownHandler) {
     window.removeEventListener("keydown", keydownHandler);
     keydownHandler = null;
@@ -92,6 +101,105 @@ function cleanupPanHandlers(): void {
   }
   panState.keysPressed.clear();
   panState.shiftPressed = false;
+}
+
+function cleanupOperationWindowHandlers(): void {
+  if (opmapWindowMouseMoveHandler) {
+    window.removeEventListener("mousemove", opmapWindowMouseMoveHandler);
+    opmapWindowMouseMoveHandler = null;
+  }
+  if (opmapWindowMouseUpHandler) {
+    window.removeEventListener("mouseup", opmapWindowMouseUpHandler);
+    opmapWindowMouseUpHandler = null;
+  }
+}
+
+function clampOperationWindowFrame(frame: { x: number; y: number; width: number; height: number }): typeof opmapContextPanelFrame {
+  const viewportWidth = window.innerWidth || 1280;
+  const viewportHeight = window.innerHeight || 720;
+  const width = Math.max(320, Math.min(frame.width || 360, viewportWidth - 16));
+  const measuredHeight = frame.height > 0 ? frame.height : Math.min(640, viewportHeight - 32);
+  const maxY = Math.max(8, viewportHeight - Math.min(measuredHeight, viewportHeight - 16) - 8);
+  const maxX = Math.max(8, viewportWidth - width - 8);
+
+  return {
+    x: Math.min(Math.max(8, frame.x), maxX),
+    y: Math.min(Math.max(8, frame.y), maxY),
+    width,
+    height: measuredHeight,
+  };
+}
+
+function applyOperationContextPanelFrame(): void {
+  const panel = document.getElementById("opmapContextPanel") as HTMLElement | null;
+  if (!panel) return;
+
+  if (!opmapContextPanelFrame.height) {
+    opmapContextPanelFrame.height = panel.offsetHeight || 0;
+  }
+
+  const clamped = clampOperationWindowFrame(opmapContextPanelFrame);
+  opmapContextPanelFrame = clamped;
+  panel.style.left = `${clamped.x}px`;
+  panel.style.top = `${clamped.y}px`;
+  panel.style.width = `${clamped.width}px`;
+}
+
+function setupOperationWindowInteractions(): void {
+  cleanupOperationWindowHandlers();
+
+  const panel = document.getElementById("opmapContextPanel") as HTMLElement | null;
+  const dragHandle = panel?.querySelector(".opmap-context-header") as HTMLElement | null;
+  const resizeHandle = panel?.querySelector(".opmap-context-resize") as HTMLElement | null;
+  if (!panel || !dragHandle || !resizeHandle) return;
+
+  applyOperationContextPanelFrame();
+
+  dragHandle.onmousedown = (event: MouseEvent) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startFrame = { ...opmapContextPanelFrame };
+
+    opmapWindowMouseMoveHandler = (moveEvent: MouseEvent) => {
+      opmapContextPanelFrame = clampOperationWindowFrame({
+        ...startFrame,
+        x: startFrame.x + (moveEvent.clientX - startX),
+        y: startFrame.y + (moveEvent.clientY - startY),
+      });
+      applyOperationContextPanelFrame();
+    };
+
+    opmapWindowMouseUpHandler = () => {
+      cleanupOperationWindowHandlers();
+    };
+
+    window.addEventListener("mousemove", opmapWindowMouseMoveHandler);
+    window.addEventListener("mouseup", opmapWindowMouseUpHandler);
+  };
+
+  resizeHandle.onmousedown = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = opmapContextPanelFrame.width || panel.offsetWidth || 360;
+
+    opmapWindowMouseMoveHandler = (moveEvent: MouseEvent) => {
+      opmapContextPanelFrame = clampOperationWindowFrame({
+        ...opmapContextPanelFrame,
+        width: startWidth + (moveEvent.clientX - startX),
+      });
+      applyOperationContextPanelFrame();
+    };
+
+    opmapWindowMouseUpHandler = () => {
+      cleanupOperationWindowHandlers();
+    };
+
+    window.addEventListener("mousemove", opmapWindowMouseMoveHandler);
+    window.addEventListener("mouseup", opmapWindowMouseUpHandler);
+  };
 }
 
 function setupPanHandlers(): void {
@@ -484,13 +592,7 @@ export function renderOperationMapScreen(): void {
           border-width: 2px !important;
         }
         
-        /* Improve tooltip visibility */
         .opmap-context-panel {
-          pointer-events: none; /* Let clicks pass through if needed */
-        }
-        
-        /* Make sure child panels with buttons catch clicks */
-        .opmap-keyroom-status {
           pointer-events: auto;
         }
 
@@ -510,7 +612,7 @@ export function renderOperationMapScreen(): void {
       <!-- PRIMARY LAYER: The Map -->
       <div class="opmap-floor-background">
         <div class="opmap-floor-map-full">
-          ${renderRoguelikeMap(nodes, currentRoomIndex)}
+          ${renderRoguelikeMap(nodes, currentRoomIndex, canAdvance)}
         </div>
       </div>
 
@@ -527,6 +629,7 @@ export function renderOperationMapScreen(): void {
           </div>
         </div>
         ${renderKeyRoomStatus(operation.currentFloorIndex)}
+        <button class="opmap-context-resize" id="opmapContextResize" type="button" aria-label="Resize operation panel"></button>
       </div>
 
       <!-- TERTIARY LAYER: Controls -->
@@ -561,6 +664,7 @@ export function renderOperationMapScreen(): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       attachEventListeners(nodes, currentRoomIndex);
+      setupOperationWindowInteractions();
       // Center camera on start node after DOM is ready
       centerOnStartNode();
       // Some browsers/layouts still need one extra tick for accurate bounds.
@@ -723,7 +827,7 @@ function ensureBattleDensity(operation: OperationRun, nodes: RoomNode[]): void {
       for (const node of list) {
         if (toConvert.includes(node.id)) {
           node.type = "battle";
-          if (!node.label || String(node.label).trim() === "") node.label = "COMBAT";
+          node.label = getPatchedNodeLabel("battle");
         }
       }
       (op as any)._battleDensityPatchedFloors = [...patched, floorIndex];
@@ -740,7 +844,7 @@ function ensureBattleDensity(operation: OperationRun, nodes: RoomNode[]): void {
           for (const node of mapNodes) {
             if (toConvert.includes(node.id)) {
               node.type = "battle";
-              node.label = "COMBAT";
+              node.label = getPatchedNodeLabel("battle");
             }
           }
           saveCampaignProgress(progress);
@@ -834,7 +938,7 @@ function computeClearedRoute(
   return route;
 }
 
-function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): string {
+function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number, canAdvance: boolean): string {
   const state = getGameState();
   const operation = getCurrentOperation(state);
   const currentRoomId = operation?.currentRoomId;
@@ -1035,6 +1139,8 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
 
     // Determine node shape based on room type
     const shapeClass = getNodeShapeClass(node.type);
+    const isExitNode = endNodeId === node.id;
+    const showAdvancePinnedAction = isExitNode && canAdvance;
 
     mapHtml += `
       <div class="opmap-node-wrapper" style="position: absolute; left: ${nodeX}px; top: ${nodeY}px; transform: translate(-50%, -50%);">
@@ -1057,6 +1163,11 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
             <div class="opmap-node-label-compact">???</div>
           `}
         </div>
+        ${showAdvancePinnedAction ? `
+          <button class="opmap-node-advance-btn" id="opmapAdvanceNodeBtn" type="button" aria-label="Advance to next floor from the exit node">
+            <span class="opmap-node-advance-btn__label">NEXT FLOOR</span>
+          </button>
+        ` : ""}
       </div>
     `;
   });
@@ -1169,6 +1280,31 @@ function renderKeyRoomItem(keyRoom: { roomNodeId: string; facility: string; isUn
       </div>
     </div>
   `;
+}
+
+function getPatchedNodeLabel(type: RoomType): string {
+  switch (type) {
+    case "battle":
+      return "Combat Zone";
+    case "elite":
+      return "Elite Encounter";
+    case "boss":
+      return "Boss Encounter";
+    case "treasure":
+      return "Treasure Cache";
+    case "event":
+      return "Strange Occurrence";
+    case "shop":
+      return "Merchant";
+    case "rest":
+      return "Safe Zone";
+    case "tavern":
+      return "Tavern";
+    case "field_node":
+      return "Field Exploration";
+    default:
+      return "Room";
+  }
 }
 
 function getRoomDescription(node: RoomNode): string {
@@ -1355,6 +1491,19 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     }
   }
 
+  function handleAdvanceFloor() {
+    console.log("[OPMAP] Advance to next floor clicked");
+    import("../../core/campaignManager").then(({ advanceToNextFloor, syncCampaignToGameState }) => {
+      try {
+        advanceToNextFloor();
+        syncCampaignToGameState();
+        renderOperationMapScreen();
+      } catch (err) {
+        console.error("[OPMAP] Failed to advance floor:", err);
+      }
+    });
+  }
+
   // Node hover/click handlers for context panel updates and navigation
   const state = getGameState();
   const operation = getCurrentOperation(state);
@@ -1447,17 +1596,11 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   });
 
   // Next Floor branch logic
-  root.querySelector("#opmapAdvanceBtn")?.addEventListener("click", () => {
-    console.log("[OPMAP] Advance to next floor clicked");
-    import("../../core/campaignManager").then(({ advanceToNextFloor, syncCampaignToGameState }) => {
-      try {
-        advanceToNextFloor();
-        syncCampaignToGameState();
-        renderOperationMapScreen();
-      } catch (err) {
-        console.error("[OPMAP] Failed to advance floor:", err);
-      }
-    });
+  root.querySelector("#opmapAdvanceBtn")?.addEventListener("click", handleAdvanceFloor);
+  root.querySelector("#opmapAdvanceNodeBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    handleAdvanceFloor();
   });
 }
 

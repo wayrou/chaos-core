@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderUnitDetailScreen } from "./UnitDetailScreen";
+import { renderUnitDetailScreen } from "./Unitdetailscreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
@@ -27,6 +27,7 @@ import {
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
+import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 
 let rosterOperationEscHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -99,6 +100,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const unitIds = Object.keys(units);
   const partyUnitIds = state.partyUnitIds || [];
   const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
+  const statBank = getStatBank(state);
 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
@@ -254,6 +256,10 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
             <div class="roster-subtitle">S/COM_OS // UNIT_MANAGEMENT</div>
           </div>
           <div class="roster-header-right town-screen__header-right">
+            <div class="roster-count roster-count--stat">
+              <span class="roster-count-label">${STAT_SHORT_LABEL}</span>
+              <span class="roster-count-value">${statBank}</span>
+            </div>
             <div class="roster-count">
               <span class="roster-count-label">UNITS</span>
               <span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span>
@@ -515,7 +521,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
   root.querySelector("#debugEquipBtn")?.addEventListener("click", () => {
     if (!confirm("Give all starter equipment to all units for testing?")) return;
 
-    import("./UnitDetailScreen").then(() => {
+    import("./Unitdetailscreen").then(() => {
       updateGameState((draft) => {
         // Give resources
         draft.wad = 9999;

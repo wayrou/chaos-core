@@ -46,10 +46,11 @@ export const PWR_BANDS: Record<PWRBand, { min: number; max: number; color?: stri
 /**
  * Calculate PWR for a unit
  * Formula weights:
- * - Base stats: 40% (HP, ATK, DEF, AGI, ACC normalized)
- * - Class ranks: 25% (sum of all class ranks * 5)
+ * - Base stats: 35% (HP, ATK, DEF, AGI, ACC normalized)
+ * - Class ranks: 20% (sum of all class ranks * 5)
+ * - Ability grid: 15% (unlocked training nodes)
  * - Gear tier: 20% (equipment stat bonuses)
- * - Cards/effects: 10% (number of equipped cards)
+ * - Cards/effects: 5% (number of equipped cards)
  * - Promotions: 5% (bonus for advanced classes)
  */
 export function calculatePWR(input: PWRCalculationInput): number {
@@ -77,7 +78,7 @@ export function calculatePWR(input: PWRCalculationInput): number {
   const mods = modulesById || getAllModules();
   const equipStats = calculateEquipmentStats(loadout, equip, mods);
 
-  // 1. Base Stats Component (40% weight)
+  // 1. Base Stats Component (35% weight)
   // Normalize stats to 0-100 scale
   const statHp = Math.min(100, (baseStats.maxHp / 150) * 100);
   const statAtk = Math.min(100, (baseStats.atk / 20) * 100);
@@ -86,9 +87,9 @@ export function calculatePWR(input: PWRCalculationInput): number {
   const statAcc = Math.min(100, baseStats.acc); // Already 0-100
 
   const baseStatsScore = (statHp + statAtk + statDef + statAgi + statAcc) / 5;
-  const baseStatsComponent = baseStatsScore * 0.4;
+  const baseStatsComponent = baseStatsScore * 0.35;
 
-  // 2. Class Ranks Component (25% weight)
+  // 2. Class Ranks Component (20% weight)
   let classRanksScore = 0;
   if (unitClassProgress) {
     const totalRanks = Object.values(unitClassProgress.classRanks || {}).reduce(
@@ -100,9 +101,19 @@ export function calculatePWR(input: PWRCalculationInput): number {
     // Default: assume rank 1 in current class
     classRanksScore = 5; // 1 rank = 5 points
   }
-  const classRanksComponent = classRanksScore * 0.25;
+  const classRanksComponent = classRanksScore * 0.2;
 
-  // 3. Gear Tier Component (20% weight)
+  // 3. Ability Grid Component (15% weight)
+  const unlockedGridNodeCount = unitClassProgress
+    ? Object.values(unitClassProgress.gridUnlocks || {}).reduce(
+      (sum, nodes) => sum + (nodes?.length || 0),
+      0,
+    )
+    : 0;
+  const gridScore = Math.min(100, (unlockedGridNodeCount / 18) * 100);
+  const abilityGridComponent = gridScore * 0.15;
+
+  // 4. Gear Tier Component (20% weight)
   // Sum equipment stat bonuses (normalized)
   const gearAtk = Math.min(50, equipStats.atk * 2);
   const gearDef = Math.min(50, equipStats.def * 2);
@@ -112,14 +123,14 @@ export function calculatePWR(input: PWRCalculationInput): number {
   const gearScore = (gearAtk + gearDef + gearAgi + gearAcc + gearHp) / 5;
   const gearComponent = gearScore * 0.2;
 
-  // 4. Cards/Effects Component (10% weight)
+  // 5. Cards/Effects Component (5% weight)
   // Count total cards in deck (from equipment)
   const unitClass = (unit as any).unitClass || "squire";
   const deckSize = estimateDeckSize(unitClass, loadout, equip);
   const cardsScore = Math.min(100, (deckSize / 20) * 100); // Assume max 20 cards
-  const cardsComponent = cardsScore * 0.1;
+  const cardsComponent = cardsScore * 0.05;
 
-  // 5. Promotions Component (5% weight)
+  // 6. Promotions Component (5% weight)
   let promotionsScore = 0;
   if (unitClassProgress) {
     const currentClass = getClassDefinition(unitClassProgress.currentClass as ClassId);
@@ -131,6 +142,7 @@ export function calculatePWR(input: PWRCalculationInput): number {
   const totalPWR = Math.round(
     baseStatsComponent +
     classRanksComponent +
+    abilityGridComponent +
     gearComponent +
     cardsComponent +
     promotionsComponent
@@ -143,7 +155,7 @@ export function calculatePWR(input: PWRCalculationInput): number {
  * Estimate deck size for a unit (helper for PWR calculation)
  */
 function estimateDeckSize(
-  unitClass: string,
+  _unitClass: string,
   loadout: any,
   equipmentById: Record<string, Equipment>
 ): number {
@@ -153,7 +165,6 @@ function estimateDeckSize(
   for (const slot of slots) {
     const equipId = loadout[slot];
     if (equipId && equipmentById[equipId]) {
-      const equip = equipmentById[equipId];
       // Estimate: each equipment piece contributes ~2-4 cards
       count += 3; // Average
     }
@@ -206,5 +217,3 @@ export function updateUnitPWR(
   // Update unit with new PWR
   unit.pwr = pwr;
 }
-
-

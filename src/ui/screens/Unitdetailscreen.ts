@@ -304,7 +304,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
           </div>
           <div class="unitdetail-header-right">
             <button class="unitdetail-class-btn" id="changeClassBtn">
-              CHANGE CLASS
+              MANAGE CLASS
             </button>
             <button class="unitdetail-back-btn">BACK TO ROSTER</button>
           </div>

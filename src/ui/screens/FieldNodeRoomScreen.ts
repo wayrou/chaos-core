@@ -19,6 +19,7 @@ import {
 import { handleKeyDown as handlePlayerInputKeyDown } from "../../core/playerInput";
 import { tryJoinAsP2, dropOutP2 } from "../../core/coop";
 import { showSystemPing } from "../components/systemPing";
+import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 
 // ============================================================================
 // TYPES
@@ -125,6 +126,7 @@ interface FieldNodeRoomState {
     steamComponents: number;
     wad: number;
   };
+  statReward: number;
   projectiles: Projectile[];
 }
 
@@ -554,6 +556,7 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       steamComponents: 0,
       wad: 0,
     },
+    statReward: 0,
     projectiles: [],
   };
 }
@@ -756,6 +759,13 @@ function renderSparkles(sparkles: FieldNodeSparkle[]): string {
     `).join('');
 }
 
+function calculateFieldNodeStatReward(state: FieldNodeRoomState): number {
+  const enemyCount = state.enemies.length;
+  const chestCount = state.chests.length;
+  const sparkleCount = state.sparkles.length;
+  return 12 + enemyCount * 4 + chestCount * 5 + sparkleCount * 2;
+}
+
 function renderChests(chests: FieldNodeChest[]): string {
   return chests.map(c => `
     <div class="field-node-chest ${c.opened ? 'chest-opened' : ''}" style="
@@ -907,12 +917,15 @@ function renderAttackEffect(player: FieldNodePlayer): string {
 
 function renderCompletionOverlay(): string {
   const resources = roomState!.collectedResources;
+  const statReward = roomState!.statReward;
   
   return `
     <div class="field-node-completion-overlay">
       <div class="field-node-completion-card">
         <div class="completion-title">ROOM CLEARED!</div>
+        <div class="completion-subtitle">${STAT_LONG_LABEL} credited to the shared squad bank.</div>
         <div class="completion-rewards">
+          ${statReward > 0 ? `<div class="reward-item reward-item--stat">✦ ${statReward} ${STAT_SHORT_LABEL}</div>` : ''}
           ${resources.wad > 0 ? `<div class="reward-item">💰 ${resources.wad} WAD</div>` : ''}
           ${resources.metalScrap > 0 ? `<div class="reward-item">⚙️ ${resources.metalScrap} Metal Scrap</div>` : ''}
           ${resources.wood > 0 ? `<div class="reward-item">🪵 ${resources.wood} Wood</div>` : ''}
@@ -1826,9 +1839,11 @@ function completeRoom(): void {
   if (!roomState) return;
   
   roomState.isCompleted = true;
+  roomState.statReward = calculateFieldNodeStatReward(roomState);
   
   // Apply collected resources to game state
   const resources = roomState.collectedResources;
+  const statReward = roomState.statReward;
   const roomId = roomState.roomId;
   const isTestRoom = roomId.startsWith("test_");
   
@@ -1846,7 +1861,7 @@ function completeRoom(): void {
       }
     }
     
-    return {
+    return awardStatTokens({
       ...prev,
       operation,
       wad: prev.wad + resources.wad,
@@ -1857,8 +1872,20 @@ function completeRoom(): void {
         chaosShards: (prev.resources?.chaosShards ?? 0) + resources.chaosShards,
         steamComponents: (prev.resources?.steamComponents ?? 0) + resources.steamComponents,
       },
-    };
+    }, statReward);
   });
+
+  if (statReward > 0) {
+    showSystemPing({
+      title: STAT_SHORT_LABEL,
+      message: `+${statReward} ${STAT_SHORT_LABEL} secured`,
+      detail: "Field room cleared",
+      type: "success",
+      durationMs: 2200,
+      channel: "field-node-stat",
+      replaceChannel: true,
+    });
+  }
   
   // Update quest progress for field node exploration (Headline 15)
   updateQuestProgress("clear_node", "field_node", 1);

@@ -5,6 +5,8 @@
 
 import "../../field/field.css";
 import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../../core/types";
+import { getDispatchState } from "../../core/dispatchSystem";
+import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { setBaseCampFieldReturnMap } from "./baseCampReturn";
@@ -1081,8 +1083,57 @@ function renderItemToolbar(itemId: string, label: string, options: ItemToolbarOp
   `;
 }
 
+function renderDispatchNodePip(): string {
+  const dispatch = getDispatchState(getGameState());
+  if (dispatch.activeExpeditions.length === 0) {
+    return `
+      <span class="node-pip node-pip--idle">
+        <span class="node-pip-label">Routes</span>
+        <span class="node-pip-value">Idle</span>
+      </span>
+    `;
+  }
+
+  const routeSummary = dispatch.activeExpeditions
+    .slice(0, 2)
+    .map((expedition) => {
+      const remaining = Math.max(0, expedition.completesAtTick - dispatch.dispatchTick);
+      return `${expedition.missionName} ${remaining}t`;
+    })
+    .join(" • ");
+  const extraCount = Math.max(0, dispatch.activeExpeditions.length - 2);
+  const compactSummary = extraCount > 0 ? `${routeSummary} +${extraCount}` : routeSummary;
+
+  return `
+    <span class="node-pip">
+      <span class="node-pip-label">Routes</span>
+      <span class="node-pip-value">${compactSummary}</span>
+    </span>
+  `;
+}
+
+function renderRosterNodePip(): string {
+  const state = getGameState();
+  const friendlyUnits = Object.values(state.unitsById).filter((unit) => !unit.isEnemy);
+  const partyCount = (state.partyUnitIds ?? []).length;
+  const reserveCount = Math.max(0, friendlyUnits.length - partyCount);
+  const statBank = getStatBank(state);
+
+  return `
+    <span class="node-pip">
+      <span class="node-pip-label">Roster</span>
+      <span class="node-pip-value">${partyCount} party / ${reserveCount} reserve • ${statBank} ${STAT_SHORT_LABEL}</span>
+    </span>
+  `;
+}
+
 function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
   const variantClass = node.variant ? ` ${node.variant}` : "";
+  const pip = node.action === "dispatch"
+    ? renderDispatchNodePip()
+    : node.action === "roster"
+      ? renderRosterNodePip()
+      : "";
   return `
     <div class="all-nodes-item-shell">
       ${renderItemToolbar(node.action, node.label, { isPinned })}
@@ -1090,6 +1141,7 @@ function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
         <span class="node-icon">${node.icon}</span>
         <span class="node-label">${node.label}</span>
         <span class="node-desc">${node.desc}</span>
+        ${pip}
       </button>
       <button class="all-nodes-item-resize" type="button" data-resize-id="${node.action}" aria-label="Resize ${node.label}"></button>
     </div>
@@ -1107,7 +1159,6 @@ function renderResourceTrackerContent(
       <section class="all-nodes-balance-panel" aria-label="Resource balances">
         <div class="all-nodes-balance-heading">
           <span class="all-nodes-balance-kicker">RESOURCE BALANCE</span>
-          <span class="all-nodes-balance-subtitle">Live stockpile telemetry</span>
         </div>
         <div class="all-nodes-balance-grid">
           <div class="all-nodes-balance-item">

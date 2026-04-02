@@ -14,9 +14,9 @@ import {
   addClassXP,
   createDefaultClassProgress,
   getAvailableClasses,
-  isClassUnlocked,
   ClassId,
   UnitClassProgress,
+  unlockEligibleClasses,
 } from "./classes";
 import { calculatePWR } from "./pwr";
 import { generateCandidates } from "./recruitment";
@@ -198,23 +198,6 @@ function createProgressForUnit(unit: Unit): UnitClassProgress {
   progress.currentClass = resolvedClassId;
   progress.classRanks[resolvedClassId] = progress.classRanks[resolvedClassId] || 1;
   return progress;
-}
-
-function unlockEligibleClasses(progress: UnitClassProgress): UnitClassProgress {
-  let unlockedClasses = [...progress.unlockedClasses];
-
-  for (const classId of getAvailableClasses()) {
-    if (unlockedClasses.includes(classId)) continue;
-    const probe = { ...progress, unlockedClasses };
-    if (isClassUnlocked(classId, probe)) {
-      unlockedClasses.push(classId);
-    }
-  }
-
-  return {
-    ...progress,
-    unlockedClasses,
-  };
 }
 
 function pickLockedCodexEntryId(state: GameState): string | undefined {

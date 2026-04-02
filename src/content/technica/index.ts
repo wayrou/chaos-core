@@ -47,6 +47,10 @@ export function getImportedDialogue(dialogueId: string): ImportedDialogue | null
   return importedDialogues.get(dialogueId) || null;
 }
 
+export function getAllImportedDialogues(): ImportedDialogue[] {
+  return Array.from(importedDialogues.values());
+}
+
 export function hasImportedDialogue(dialogueId: string): boolean {
   return importedDialogues.has(dialogueId);
 }

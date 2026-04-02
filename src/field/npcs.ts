@@ -196,4 +196,29 @@ export const NPC_DIALOGUE: Record<string, string[]> = {
     "Nothing gets past me. Safety is my priority.",
     "If you see anything suspicious out there, report it immediately.",
   ],
+  npc_keyroom_logistics: [
+    "We sorted this site into a working depot faster than expected.",
+    "Every crate we recover here keeps the front from starving for stock.",
+    "Hold the room and the flow keeps moving.",
+  ],
+  npc_keyroom_medic: [
+    "This ward is rough, but it still keeps people breathing.",
+    "Patch kits are stacked where I can reach them in a hurry.",
+    "If this room falls, the whole line feels it.",
+  ],
+  npc_keyroom_armorer: [
+    "The armory benches still have life in them.",
+    "Keep metal coming and I can turn scrap into something useful.",
+    "A held position is only as good as the gear behind it.",
+  ],
+  npc_keyroom_analyst: [
+    "Command relays from this room keep the map from going blind.",
+    "Every scouting report we pull here sharpens the route ahead.",
+    "Lose the uplink and we're back to guessing.",
+  ],
+  npc_keyroom_miner: [
+    "The haul from this shaft is ugly, but rich.",
+    "We pull metal, timber, and the occasional shard if the walls behave.",
+    "Just don't ask what keeps scratching beyond the supports.",
+  ],
 };

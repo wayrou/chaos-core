@@ -168,6 +168,7 @@ export interface BattleState {
     wood: number;
     chaosShards: number;
     steamComponents: number;
+    squadXp?: number;
     cards?: string[];  // NEW: Card IDs won
     recipe?: string | null;  // NEW: Recipe ID won
     unlockable?: string | null;  // NEW: Unlockable ID (chassis, doctrine, or field mod)
@@ -1817,7 +1818,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       : [
         ...state.log,
         "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
-        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components.`,
+        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components, +${rewards.squadXp ?? 0} S.T.A.T.`,
         ...(cardLog ? [cardLog] : []),
       ];
 
@@ -1930,6 +1931,7 @@ function generateBattleRewards(state: BattleState) {
     wood: 1 * enemyCount,
     chaosShards: enemyCount >= 2 ? 1 : 0,
     steamComponents: enemyCount >= 2 ? 1 : 0,
+    squadXp: 18 + enemyCount * 10,
     cards: cardRewards,
     recipe: recipeReward,
     unlockable: unlockableReward,

@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderUnitDetailScreen } from "./UnitDetailScreen";
+import { renderUnitDetailScreen } from "./Unitdetailscreen";
 import { GameState } from "../../core/types";
 import {
   BaseCampReturnTo,

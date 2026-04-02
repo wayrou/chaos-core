@@ -22,6 +22,9 @@ import { resolvePlayerSpawn, SpawnSource, SpawnResult } from "./spawnResolver";
 import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import type { BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../core/types";
 import { setBaseCampFieldReturnMap } from "../ui/screens/baseCampReturn";
+import { getActiveRun } from "../core/campaignManager";
+import { getDispatchState } from "../core/dispatchSystem";
+import { getStatBank, STAT_SHORT_LABEL } from "../core/statTokens";
 
 // ============================================================================
 // STATE
@@ -245,6 +248,59 @@ const PINNED_QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> 
   { action: "endless-field-nodes", aliases: ["endless rooms", "debug endless rooms"] },
   { action: "endless-battles", aliases: ["endless battles", "debug endless battles"] },
 ];
+
+function getKeyRoomFacility(mapId: string): string | null {
+  if (!mapId.startsWith("keyroom_")) return null;
+  const keyRoomId = mapId.replace("keyroom_", "");
+  const activeRun = getActiveRun();
+  if (!activeRun) return null;
+
+  for (const rooms of Object.values(activeRun.keyRoomsByFloor || {})) {
+    const match = (rooms || []).find((room) => room.roomNodeId === keyRoomId);
+    if (match) {
+      return match.facility;
+    }
+  }
+
+  return null;
+}
+
+function createKeyRoomNpcs(mapId: string): import("./types").FieldNpc[] {
+  const tileSize = 64;
+  const facility = getKeyRoomFacility(mapId);
+
+  switch (facility) {
+    case "supply_depot":
+      return [
+        createNpc("npc_keyroom_logistics_1", "Storekeeper", 5 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_logistics"),
+        createNpc("npc_keyroom_logistics_2", "Loader", 13 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_logistics"),
+      ];
+    case "medical_ward":
+      return [
+        createNpc("npc_keyroom_medic_1", "Field Medic", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_medic"),
+        createNpc("npc_keyroom_medic_2", "Orderly", 12 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_medic"),
+      ];
+    case "armory":
+      return [
+        createNpc("npc_keyroom_armorer_1", "Armorer", 5 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_armorer"),
+        createNpc("npc_keyroom_armorer_2", "Bench Tech", 13 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_keyroom_armorer"),
+      ];
+    case "command_center":
+      return [
+        createNpc("npc_keyroom_analyst_1", "Signal Analyst", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_analyst"),
+        createNpc("npc_keyroom_analyst_2", "Watch Officer", 12 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_keyroom_analyst"),
+      ];
+    case "mine":
+      return [
+        createNpc("npc_keyroom_miner_1", "Excavator", 5 * tileSize + tileSize / 2, 5 * tileSize + tileSize / 2, "npc_keyroom_miner"),
+        createNpc("npc_keyroom_miner_2", "Foreman", 13 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_miner"),
+      ];
+    default:
+      return [
+        createNpc("npc_keyroom_sentinel_1", "Sentinel", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_sentinel"),
+      ];
+  }
+}
 
 // ============================================================================
 // GETTERS
@@ -559,6 +615,8 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
         createNpc("npc_researcher", "Researcher", 4 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_researcher"),
         createNpc("npc_sentinel", "Sentinel", 18 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_sentinel")
       );
+    } else if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
+      npcs.push(...createKeyRoomNpcs(mapId));
     }
 
     fieldState = {
@@ -1050,8 +1108,57 @@ function renderPinnedOverlayToolbar(itemId: string, label: string): string {
   `;
 }
 
+function renderPinnedDispatchNodePip(): string {
+  const dispatch = getDispatchState(getGameState());
+  if (dispatch.activeExpeditions.length === 0) {
+    return `
+      <span class="node-pip node-pip--idle">
+        <span class="node-pip-label">Routes</span>
+        <span class="node-pip-value">Idle</span>
+      </span>
+    `;
+  }
+
+  const routeSummary = dispatch.activeExpeditions
+    .slice(0, 2)
+    .map((expedition) => {
+      const remaining = Math.max(0, expedition.completesAtTick - dispatch.dispatchTick);
+      return `${expedition.missionName} ${remaining}t`;
+    })
+    .join(" • ");
+  const extraCount = Math.max(0, dispatch.activeExpeditions.length - 2);
+  const compactSummary = extraCount > 0 ? `${routeSummary} +${extraCount}` : routeSummary;
+
+  return `
+    <span class="node-pip">
+      <span class="node-pip-label">Routes</span>
+      <span class="node-pip-value">${compactSummary}</span>
+    </span>
+  `;
+}
+
+function renderPinnedRosterNodePip(): string {
+  const state = getGameState();
+  const friendlyUnits = Object.values(state.unitsById).filter((unit) => !unit.isEnemy);
+  const partyCount = (state.partyUnitIds ?? []).length;
+  const reserveCount = Math.max(0, friendlyUnits.length - partyCount);
+  const statBank = getStatBank(state);
+
+  return `
+    <span class="node-pip">
+      <span class="node-pip-label">Roster</span>
+      <span class="node-pip-value">${partyCount} party / ${reserveCount} reserve • ${statBank} ${STAT_SHORT_LABEL}</span>
+    </span>
+  `;
+}
+
 function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
   const variantClass = node.variant ? ` ${node.variant}` : "";
+  const pip = node.action === "dispatch"
+    ? renderPinnedDispatchNodePip()
+    : node.action === "roster"
+      ? renderPinnedRosterNodePip()
+      : "";
   return `
     <div class="all-nodes-item-shell">
       ${renderPinnedOverlayToolbar(node.action, node.label)}
@@ -1059,6 +1166,7 @@ function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
         <span class="node-icon">${node.icon}</span>
         <span class="node-label">${node.label}</span>
         <span class="node-desc">${node.desc}</span>
+        ${pip}
       </button>
     </div>
   `;
@@ -1071,7 +1179,6 @@ function renderPinnedResourceCard(wad: number, resources: { metalScrap: number; 
       <section class="all-nodes-balance-panel" aria-label="Resource balances">
         <div class="all-nodes-balance-heading">
           <span class="all-nodes-balance-kicker">RESOURCE BALANCE</span>
-          <span class="all-nodes-balance-subtitle">Live stockpile telemetry</span>
         </div>
         <div class="all-nodes-balance-grid">
           <div class="all-nodes-balance-item">

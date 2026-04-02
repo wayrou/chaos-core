@@ -50,6 +50,19 @@ export interface UnlockCondition {
   description?: string;
 }
 
+export interface ClassGridNode {
+  id: string;
+  name: string;
+  description: string;
+  cost: number;
+  row: number;
+  col: number;
+  requires?: string[];
+  benefit?: string;
+}
+
+export type ClassRankLetter = "E" | "D" | "C" | "B" | "A";
+
 export interface UnitClassProgress {
   unitId: UnitId;
   classRanks: Record<ClassId, number>; // Rank/mastery for each class (0-5+)
@@ -57,6 +70,7 @@ export interface UnitClassProgress {
   unlockedClasses: ClassId[];
   battlesWon: number;
   milestones: string[]; // Track special unlock conditions
+  gridUnlocks?: Partial<Record<ClassId, string[]>>;
 }
 
 // ============================================================================
@@ -525,8 +539,9 @@ export function isClassUnlocked(
 
       case "milestone":
       case "special":
-        // For now, treat milestones as locked (will implement milestone tracking later)
-        return false;
+        // Milestone tracking is only partially wired right now, so these
+        // descriptors are treated as advisory until dedicated hooks land.
+        return true;
 
       default:
         return false;
@@ -550,6 +565,14 @@ export function getClassTier(classId: ClassId): number {
   return CLASS_DEFINITIONS[classId].tier;
 }
 
+export function getClassRankLetter(rank: number): ClassRankLetter {
+  if (rank >= 5) return "A";
+  if (rank >= 4) return "B";
+  if (rank >= 3) return "C";
+  if (rank >= 2) return "D";
+  return "E";
+}
+
 export function getClassesByTier(tier: 0 | 1 | 2 | 3): ClassId[] {
   return getAvailableClasses().filter(classId =>
     CLASS_DEFINITIONS[classId].tier === tier
@@ -569,7 +592,7 @@ export function getUnlockRequirementsText(classId: ClassId): string[] {
       case "class_rank":
         if (condition.requiredClass && condition.requiredRank) {
           const reqClass = CLASS_DEFINITIONS[condition.requiredClass];
-          texts.push(`${reqClass.name} Rank ${condition.requiredRank}`);
+          texts.push(`${reqClass.name} Rank ${getClassRankLetter(condition.requiredRank)}`);
         }
         break;
 
@@ -585,6 +608,196 @@ export function getUnlockRequirementsText(classId: ClassId): string[] {
   return texts;
 }
 
+function formatWeaponType(weaponType: WeaponType): string {
+  return weaponType
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getInnateAbilityTitle(classDef: ClassDefinition): string {
+  return classDef.innateAbility?.split(":")[0]?.trim() || `${classDef.name} Signature`;
+}
+
+function getInnateAbilityBody(classDef: ClassDefinition): string {
+  const segments = classDef.innateAbility?.split(":");
+  if (!segments || segments.length < 2) {
+    return `Deepen ${classDef.name.toLowerCase()} specialization and steady this role's battlefield identity.`;
+  }
+  return segments.slice(1).join(":").trim();
+}
+
+export function getClassAbilityGrid(classId: ClassId): ClassGridNode[] {
+  const classDef = getClassDefinition(classId);
+  const weaponLine = classDef.weaponTypes.map(formatWeaponType).join(" / ");
+  const tierCost = classDef.tier * 10;
+
+  return [
+    {
+      id: "fundamentals",
+      name: `${classDef.name} Fundamentals`,
+      description: `Establish core ${classDef.name.toLowerCase()} drills and clean up ${weaponLine.toLowerCase()} handling for live operations.`,
+      cost: 20 + tierCost,
+      row: 1,
+      col: 1,
+      benefit: "Stabilizes role foundation",
+    },
+    {
+      id: "armament",
+      name: `${classDef.name} Armament`,
+      description: `Refine ${weaponLine.toLowerCase()} routines so this class can deploy its tools with greater discipline.`,
+      cost: 34 + tierCost,
+      row: 1,
+      col: 2,
+      requires: ["fundamentals"],
+      benefit: "Improves weapon discipline",
+    },
+    {
+      id: "tempo",
+      name: `${classDef.name} Tempo`,
+      description: `Sharpen timing, movement, and action flow around the ${classDef.name.toLowerCase()} combat rhythm.`,
+      cost: 42 + tierCost,
+      row: 1,
+      col: 3,
+      requires: ["fundamentals"],
+      benefit: "Improves combat tempo",
+    },
+    {
+      id: "doctrine",
+      name: `${classDef.name} Doctrine`,
+      description: `Formalize the class doctrine so squadmates can lean on this role with more confidence.`,
+      cost: 56 + tierCost,
+      row: 2,
+      col: 1,
+      requires: ["armament", "tempo"],
+      benefit: "Raises class mastery",
+    },
+    {
+      id: "signature",
+      name: getInnateAbilityTitle(classDef),
+      description: getInnateAbilityBody(classDef),
+      cost: 68 + tierCost,
+      row: 2,
+      col: 2,
+      requires: ["armament", "tempo"],
+      benefit: "Deepens signature identity",
+    },
+    {
+      id: "promotion",
+      name: `${classDef.name} Promotion Lattice`,
+      description: `Lock in advanced ${classDef.name.toLowerCase()} training and prepare this unit for higher-order class paths.`,
+      cost: 88 + tierCost,
+      row: 2,
+      col: 3,
+      requires: ["doctrine", "signature"],
+      benefit: "Pushes promotion readiness",
+    },
+  ];
+}
+
+export function getUnlockedClassGridNodes(progress: UnitClassProgress, classId: ClassId): string[] {
+  return [...(progress.gridUnlocks?.[classId] || [])];
+}
+
+export function isClassGridNodeUnlocked(progress: UnitClassProgress, classId: ClassId, nodeId: string): boolean {
+  return getUnlockedClassGridNodes(progress, classId).includes(nodeId);
+}
+
+export function getClassRankFromGridNodeCount(nodeCount: number): number {
+  if (nodeCount >= 5) return 5;
+  if (nodeCount >= 4) return 4;
+  if (nodeCount >= 3) return 3;
+  if (nodeCount >= 2) return 2;
+  return 1;
+}
+
+export function getDisplayedClassRank(progress: UnitClassProgress, classId: ClassId): number {
+  const storedRank = progress.classRanks[classId] || 0;
+  const gridRank = getClassRankFromGridNodeCount(getUnlockedClassGridNodes(progress, classId).length);
+  const baseline = progress.unlockedClasses.includes(classId) || progress.currentClass === classId ? 1 : 0;
+  return Math.max(storedRank, gridRank, baseline);
+}
+
+export function syncClassRanksWithGrid(progress: UnitClassProgress): UnitClassProgress {
+  const nextRanks = { ...progress.classRanks };
+
+  for (const classId of getAvailableClasses()) {
+    const displayedRank = getDisplayedClassRank(progress, classId);
+    if (displayedRank > 0) {
+      nextRanks[classId] = Math.max(nextRanks[classId] || 0, displayedRank);
+    }
+  }
+
+  return {
+    ...progress,
+    classRanks: nextRanks,
+  };
+}
+
+export function canUnlockClassGridNode(
+  progress: UnitClassProgress,
+  classId: ClassId,
+  nodeId: string,
+): { ok: boolean; reason?: string; node?: ClassGridNode } {
+  const node = getClassAbilityGrid(classId).find((entry) => entry.id === nodeId);
+  if (!node) {
+    return { ok: false, reason: "Unknown grid node." };
+  }
+
+  if (isClassGridNodeUnlocked(progress, classId, nodeId)) {
+    return { ok: false, reason: "Node already unlocked.", node };
+  }
+
+  const unlockedNodes = new Set(getUnlockedClassGridNodes(progress, classId));
+  const missingRequirements = (node.requires || []).filter((requiredId) => !unlockedNodes.has(requiredId));
+  if (missingRequirements.length > 0) {
+    return { ok: false, reason: "Required training nodes are still locked.", node };
+  }
+
+  return { ok: true, node };
+}
+
+export function purchaseClassGridNode(
+  progress: UnitClassProgress,
+  classId: ClassId,
+  nodeId: string,
+): UnitClassProgress {
+  const validation = canUnlockClassGridNode(progress, classId, nodeId);
+  if (!validation.ok || !validation.node) {
+    return progress;
+  }
+
+  const nextUnlockedNodes = [...getUnlockedClassGridNodes(progress, classId), nodeId];
+  const nextProgress: UnitClassProgress = {
+    ...progress,
+    unlockedClasses: progress.unlockedClasses.includes(classId)
+      ? progress.unlockedClasses
+      : [...progress.unlockedClasses, classId],
+    gridUnlocks: {
+      ...(progress.gridUnlocks || {}),
+      [classId]: nextUnlockedNodes,
+    },
+  };
+
+  return syncClassRanksWithGrid(nextProgress);
+}
+
+export function unlockEligibleClasses(progress: UnitClassProgress): UnitClassProgress {
+  let unlockedClasses = [...progress.unlockedClasses];
+
+  for (const classId of getAvailableClasses()) {
+    if (unlockedClasses.includes(classId)) continue;
+    const probe = { ...progress, unlockedClasses };
+    if (isClassUnlocked(classId, probe)) {
+      unlockedClasses.push(classId);
+    }
+  }
+
+  return {
+    ...progress,
+    unlockedClasses,
+  };
+}
+
 export function createDefaultClassProgress(unitId: UnitId): UnitClassProgress {
   return {
     unitId,
@@ -596,6 +809,7 @@ export function createDefaultClassProgress(unitId: UnitId): UnitClassProgress {
     unlockedClasses: ["squire", "ranger"],
     battlesWon: 0,
     milestones: [],
+    gridUnlocks: {},
   };
 }
 
@@ -620,12 +834,12 @@ export function changeUnitClass(
     classRanks[newClass] = 1;
   }
 
-  return {
+  return syncClassRanksWithGrid({
     ...progress,
     currentClass: newClass,
     unlockedClasses,
     classRanks,
-  };
+  });
 }
 
 export function addClassXP(
@@ -636,13 +850,13 @@ export function addClassXP(
   const currentRank = progress.classRanks[classId] || 0;
   const newRank = currentRank + Math.floor(xp / 100); // Simple: 100 XP per rank
 
-  return {
+  return syncClassRanksWithGrid({
     ...progress,
     classRanks: {
       ...progress.classRanks,
       [classId]: Math.min(newRank, 5), // Cap at rank 5
     },
-  };
+  });
 }
 
 export function addMilestone(

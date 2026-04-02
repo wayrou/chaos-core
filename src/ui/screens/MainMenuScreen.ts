@@ -25,6 +25,8 @@ import { initializeSettings } from "../../core/settings";
 import { initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
 import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
+import { initializeTechnicaContentLibrary } from "../../content/technica/library";
+import { renderImportContentScreen } from "./ImportContentScreen";
 
 const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
 const FLOATING_TERMINAL_TITLES = [
@@ -63,6 +65,8 @@ async function initializeGame(): Promise<void> {
     console.error("[INIT] Failed to load crafting recipes:", error);
     // Non-fatal - game can continue without recipes
   }
+
+  initializeTechnicaContentLibrary();
   
   isInitialized = true;
   console.log("[INIT] Initialization complete");
@@ -167,6 +171,12 @@ export async function renderMainMenu(): Promise<void> {
               <button class="mainmenu-btn mainmenu-btn-secondary" data-action="settings">
                 <span class="btn-icon">⚙</span>
                 <span class="btn-text">SETTINGS</span>
+              </button>
+
+              <button class="mainmenu-btn mainmenu-btn-half mainmenu-btn-secondary" data-action="import-content">
+                <span class="btn-icon">IMP</span>
+                <span class="btn-text">IMPORT CONTENT</span>
+                <span class="btn-subtitle">Drag in Technica bundles</span>
               </button>
 
               <button class="mainmenu-btn mainmenu-btn-tertiary" data-action="exit">
@@ -555,6 +565,13 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (settingsBtn) {
     settingsBtn.addEventListener("click", () => {
       renderSettingsScreen("menu");
+    });
+  }
+
+  const importContentBtn = root.querySelector<HTMLButtonElement>('button[data-action="import-content"]');
+  if (importContentBtn) {
+    importContentBtn.addEventListener("click", () => {
+      renderImportContentScreen();
     });
   }
 

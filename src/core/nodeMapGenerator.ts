@@ -55,6 +55,8 @@ export function generateNodeMap(
       break;
   }
   
+  ensureFieldNodes(nodes, floorIndex, rng);
+
   // Ensure 2 Key Rooms per floor
   ensureKeyRooms(nodes, connections, floorIndex, rng);
   
@@ -111,13 +113,13 @@ function generateSplitRejoinMap(
       layerNodeIds.push(nodeId);
       
       const nodeType = rollNodeType(rng, layer, layers);
-      const node: RoomNode = {
-        id: nodeId,
-        label: getNodeLabel(nodeType, nodeCounter),
-        type: nodeType,
-        position: { x: layer + 1, y: i - Math.floor(nodesInLayer / 2) },
-        visited: false,
-      };
+      const node = createGeneratedNode(
+        nodeId,
+        nodeType,
+        nodeCounter,
+        { x: layer + 1, y: i - Math.floor(nodesInLayer / 2) },
+        rng
+      );
       nodes.push(node);
     }
     
@@ -204,13 +206,7 @@ function generateRiskDetourMap(
     mainPath.push(nodeId);
     
     const nodeType = rollNodeType(rng, i, mainPathLength);
-    const node: RoomNode = {
-      id: nodeId,
-      label: getNodeLabel(nodeType, i),
-      type: nodeType,
-      position: { x: i + 1, y: 0 },
-      visited: false,
-    };
+    const node = createGeneratedNode(nodeId, nodeType, i, { x: i + 1, y: 0 }, rng);
     nodes.push(node);
   }
   
@@ -228,13 +224,15 @@ function generateRiskDetourMap(
     const detourToId = mainPath[detourFromIndex + 1];
     
     const detourNodeId = `floor_${floorIndex}_detour_${d}`;
-    const detourNode: RoomNode = {
-      id: detourNodeId,
-      label: "Risk Detour",
-      type: (rng.nextFloat() < 0.5 ? "battle" : "treasure") as RoomType,
-      position: { x: detourFromIndex + 1, y: d % 2 === 0 ? 1 : -1 },
-      visited: false,
-    };
+    const detourType = (rng.nextFloat() < 0.5 ? "battle" : "treasure") as RoomType;
+    const detourNode = createGeneratedNode(
+      detourNodeId,
+      detourType,
+      d,
+      { x: detourFromIndex + 1, y: d % 2 === 0 ? 1 : -1 },
+      rng,
+      detourType === "battle" ? "Risk Detour" : undefined
+    );
     nodes.push(detourNode);
     
     // Detour branches from main path and rejoins
@@ -289,25 +287,15 @@ function generateForkedCorridorMap(
     // Left path
     const leftNodeId = `floor_${floorIndex}_left_${i}`;
     leftPath.push(leftNodeId);
-    const leftNode: RoomNode = {
-      id: leftNodeId,
-      label: getNodeLabel(rollNodeType(rng, i, pathLength), i),
-      type: rollNodeType(rng, i, pathLength),
-      position: { x: i + 1, y: -1 },
-      visited: false,
-    };
+    const leftType = rollNodeType(rng, i, pathLength);
+    const leftNode = createGeneratedNode(leftNodeId, leftType, i, { x: i + 1, y: -1 }, rng);
     nodes.push(leftNode);
     
     // Right path
     const rightNodeId = `floor_${floorIndex}_right_${i}`;
     rightPath.push(rightNodeId);
-    const rightNode: RoomNode = {
-      id: rightNodeId,
-      label: getNodeLabel(rollNodeType(rng, i, pathLength), i),
-      type: rollNodeType(rng, i, pathLength),
-      position: { x: i + 1, y: 1 },
-      visited: false,
-    };
+    const rightType = rollNodeType(rng, i, pathLength);
+    const rightNode = createGeneratedNode(rightNodeId, rightType, i, { x: i + 1, y: 1 }, rng);
     nodes.push(rightNode);
   }
   
@@ -341,7 +329,7 @@ function generateForkedCorridorMap(
  */
 function ensureKeyRooms(
   nodes: RoomNode[],
-  connections: Record<string, string[]>,
+  _connections: Record<string, string[]>,
   floorIndex: number,
   rng: SeededRNG
 ): void {
@@ -375,6 +363,104 @@ function ensureKeyRooms(
   }
 
   console.log(`[NODEMAP] Marked ${selected.length} battle nodes as Key Rooms on floor ${floorIndex}`);
+}
+
+function createGeneratedNode(
+  id: string,
+  type: RoomType,
+  index: number,
+  position: { x: number; y: number },
+  rng: SeededRNG,
+  labelOverride?: string
+): RoomNode {
+  return {
+    id,
+    label: labelOverride || getNodeLabel(type, index),
+    type,
+    position,
+    visited: false,
+    fieldNodeSeed: type === "field_node" ? rng.nextInt(1, 999999) : undefined,
+  };
+}
+
+function ensureFieldNodes(
+  nodes: RoomNode[],
+  floorIndex: number,
+  rng: SeededRNG
+): void {
+  const existingFieldNodes = nodes.filter(node => node.type === "field_node");
+  const targetCount = nodes.length >= 10 ? 2 : 1;
+  if (existingFieldNodes.length >= targetCount) {
+    existingFieldNodes.forEach((node, index) => {
+      if (!node.fieldNodeSeed) {
+        node.fieldNodeSeed = rng.nextInt(1, 999999);
+      }
+      node.label = getNodeLabel("field_node", index);
+    });
+    return;
+  }
+
+  const battleNodes = nodes.filter(node => node.type === "battle" && !node.id.includes("_start") && !node.id.includes("_exit"));
+  const safeBattleConversions = Math.max(0, battleNodes.length - 3);
+  let battleConversionsUsed = 0;
+
+  const candidates = nodes.filter(node => {
+    if (node.id.includes("_start") || node.id.includes("_exit")) {
+      return false;
+    }
+    if (node.type === "field_node" || node.type === "boss" || node.type === "key_room") {
+      return false;
+    }
+    if (node.type === "battle" && battleConversionsUsed >= safeBattleConversions) {
+      return false;
+    }
+    return true;
+  });
+
+  candidates.sort((a, b) => {
+    const priority = (node: RoomNode): number => {
+      switch (node.type) {
+        case "event":
+          return 0;
+        case "treasure":
+          return 1;
+        case "rest":
+          return 2;
+        case "shop":
+        case "tavern":
+          return 3;
+        case "battle":
+          return 4;
+        default:
+          return 5;
+      }
+    };
+    return priority(a) - priority(b);
+  });
+
+  const needed = targetCount - existingFieldNodes.length;
+  const converted: RoomNode[] = [];
+
+  for (const node of candidates) {
+    if (converted.length >= needed) {
+      break;
+    }
+    if (node.type === "battle" && battleConversionsUsed >= safeBattleConversions) {
+      continue;
+    }
+    if (node.type === "battle") {
+      battleConversionsUsed += 1;
+    }
+    node.type = "field_node";
+    node.fieldNodeSeed = rng.nextInt(1, 999999);
+    converted.push(node);
+  }
+
+  [...existingFieldNodes, ...converted].forEach((node, index) => {
+    node.label = getNodeLabel("field_node", index);
+  });
+
+  console.log(`[NODEMAP] Ensured ${existingFieldNodes.length + converted.length} field nodes on floor ${floorIndex}`);
 }
 
 /**
@@ -423,15 +509,17 @@ function rollNodeType(rng: SeededRNG, position: number, total: number): RoomType
   
   // Early nodes: more battles, fewer elites
   // Late nodes: more elites, fewer battles
-  if (roll < 0.5) {
+  if (roll < 0.46) {
     return "battle";
-  } else if (roll < 0.65) {
+  } else if (roll < 0.58) {
+    return "field_node";
+  } else if (roll < 0.7) {
     return "shop";
-  } else if (roll < 0.8) {
+  } else if (roll < 0.82) {
     return "rest";
-  } else if (roll < 0.9) {
+  } else if (roll < 0.91) {
     return "event";
-  } else if (progress > 0.7 && roll < 0.95) {
+  } else if (progress > 0.7 && roll < 0.96) {
     return "elite"; // Elite battles more likely later
   } else {
     return "treasure";

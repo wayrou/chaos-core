@@ -14,10 +14,13 @@ This folder is the thin import/adapter layer for Technica Chaos Core exports.
 - Imported field maps are added to the existing field map registry in `src/field/maps.ts`
 - Imported quests are merged into the quest database in `src/quests/questData.ts`
 - Imported dialogue graphs are played through `src/ui/screens/DialogueScreen.ts`
+- User-imported packages are persisted locally and restored on boot
+- Chaos Core exposes a main-menu `Import Content` screen for drag-and-drop installs
 
-## Future drag-and-drop flow
+## Import flow
 
 1. Read `manifest.json` from the Technica bundle.
 2. Load `entryFile`.
 3. Pass both into `importTechnicaEntry(...)`.
-4. Render or refresh the relevant Chaos Core screen.
+4. Persist the installed package for future sessions.
+5. Render or refresh the relevant Chaos Core screen.

@@ -40,6 +40,8 @@ import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
 import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampReturn";
+import { showSystemPing } from "../components/systemPing";
+import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 // Isometric imports removed - using simple grid now
 import { BattleGridRenderer } from "./BattleGridRenderer";
 // Mount system imports
@@ -48,6 +50,7 @@ import { getMountById as getMountDefinition } from "../../core/mounts";
 import { handleCardPlay } from "../../core/cardHandler";
 
 let isAnimatingEnemyTurn = false;
+let lastBattleStatPingKey: string | null = null;
 
 function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" {
   const returnTo = (battle as any)?.returnTo;
@@ -2090,6 +2093,7 @@ export function renderBattleScreen() {
   }
 
   const battle = localBattleState as BattleState;
+  maybeShowBattleStatPing(battle);
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
   const isPlacementPhase = battle.phase === "placement";
@@ -2252,6 +2256,30 @@ function getMountIconForType(mountType: string): string {
     bird: "&#128038;", // Bird emoji
   };
   return icons[mountType] || "&#128052;"; // Default horse face
+}
+
+function maybeShowBattleStatPing(battle: BattleState): void {
+  if (battle.phase !== "victory") {
+    lastBattleStatPingKey = null;
+    return;
+  }
+
+  const statReward = Math.max(0, battle.rewards?.squadXp ?? 0);
+  if (statReward <= 0) return;
+
+  const pingKey = `${battle.id}:${battle.phase}:${statReward}`;
+  if (lastBattleStatPingKey === pingKey) return;
+
+  lastBattleStatPingKey = pingKey;
+  showSystemPing({
+    type: "success",
+    title: STAT_SHORT_LABEL,
+    message: `+${statReward} ${STAT_SHORT_LABEL} secured`,
+    detail: STAT_LONG_LABEL,
+    durationMs: 2400,
+    channel: "battle-stat-reward",
+    replaceChannel: true,
+  });
 }
 
 /**
@@ -2618,7 +2646,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
   // Normal battle overlay
   if (battle.phase === "victory") {
-    const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+    const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0, squadXp: 0 };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
 
     // Load unlockable name if present
@@ -2642,12 +2670,14 @@ function renderBattleResultOverlay(battle: BattleState): string {
               Your squad successfully defended the facility!
             </div>
           ` : ""}
+          <div class="battle-result-message">${STAT_LONG_LABEL} credited to the shared squad bank.</div>
           <div class="battle-reward-grid">
             <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
             <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
             <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
             <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
             <div class="battle-reward-item"><div class="reward-label">STEAM COMP</div><div class="reward-value">+${r.steamComponents}</div></div>
+            <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
             ${unlockableId && unlockableId !== "pending" && unlockableName ? `
               <div class="battle-reward-item battle-reward-item--unlockable">
                 <div class="reward-label">NEW UNLOCK</div>
@@ -3840,7 +3870,7 @@ function attachBattleListeners() {
 
         updateGameState(s => {
           // MUST create a new object and RETURN it!
-          const updatedState = {
+          const updatedState = awardStatTokens({
             ...s,
             wad: (s.wad ?? 0) + (r.wad ?? 0),
             resources: {
@@ -3852,7 +3882,7 @@ function attachBattleListeners() {
             cardLibrary: r.cards && r.cards.length > 0
               ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
               : s.cardLibrary,
-          };
+          }, r.squadXp ?? 0);
 
           // Grant unlockable if present
           if ((r as any).unlockable) {
@@ -3924,6 +3954,7 @@ function attachBattleListeners() {
       cleanupBattlePanHandlers();
       teardownBattleHud();
       localBattleState = null;
+      lastBattleStatPingKey = null;
       selectedCardIndex = null;
       resetTurnStateForUnit(null);
       uiPanelsMinimized = false;

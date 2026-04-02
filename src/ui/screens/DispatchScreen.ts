@@ -17,6 +17,7 @@ import {
   launchDispatchExpedition,
 } from "../../core/dispatchSystem";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
+import { STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 
 let selectedMissionId: DispatchMissionType = "scouting_run";
 let selectedUnitIds = new Set<string>();
@@ -34,8 +35,8 @@ const AFFINITY_LABELS: Record<string, string> = {
 
 const MISSION_PREVIEW: Record<DispatchMissionType, string[]> = {
   scouting_run: [
-    "Intel dossiers for the next operation",
-    "Small Squad XP infusion",
+    "Scouting reports for the next operation",
+    `Small ${STAT_SHORT_LABEL} infusion`,
     "Minor salvage and route notes",
   ],
   salvage_expedition: [
@@ -51,7 +52,7 @@ const MISSION_PREVIEW: Record<DispatchMissionType, string[]> = {
   escort_detail: [
     "Strong WAD payout and mission credit",
     "Chance to surface a recruit lead",
-    "Best Squad XP among the starting missions",
+    `Best ${STAT_SHORT_LABEL} among the starting missions`,
   ],
 };
 
@@ -173,12 +174,12 @@ function renderReports(): string {
       const rewards = report.outcome.rewards;
       const rewardBits = [
         rewards.wad > 0 ? `${rewards.wad} WAD` : "",
-        rewards.squadXp > 0 ? `${rewards.squadXp} Squad XP` : "",
+        rewards.squadXp > 0 ? `${rewards.squadXp} ${STAT_SHORT_LABEL}` : "",
         rewards.resources.metalScrap > 0 ? `${rewards.resources.metalScrap} Metal` : "",
         rewards.resources.wood > 0 ? `${rewards.resources.wood} Wood` : "",
         rewards.resources.chaosShards > 0 ? `${rewards.resources.chaosShards} Shards` : "",
         rewards.resources.steamComponents > 0 ? `${rewards.resources.steamComponents} Steam` : "",
-        rewards.intelDossiers > 0 ? `${rewards.intelDossiers} Intel` : "",
+        rewards.intelDossiers > 0 ? `${rewards.intelDossiers} Scouting Report` : "",
         rewards.gearDropId ? `Gear Recovery` : "",
         rewards.codexEntryId ? `Codex Fragment` : "",
         rewards.recruitCandidate ? `Recruit Lead` : "",
@@ -219,9 +220,9 @@ function buildClaimNotice(reportId: string): string {
     + rewards.resources.steamComponents;
   const notes = [
     rewards.wad > 0 ? `+${rewards.wad} WAD` : "",
-    rewards.squadXp > 0 ? `+${rewards.squadXp} squad XP banked` : "",
+    rewards.squadXp > 0 ? `+${rewards.squadXp} ${STAT_SHORT_LABEL} banked` : "",
     materialTotal > 0 ? "Recovered materials transferred to stores" : "",
-    rewards.intelDossiers > 0 ? `+${rewards.intelDossiers} intel dossier` : "",
+    rewards.intelDossiers > 0 ? `+${rewards.intelDossiers} scouting report` : "",
     rewards.gearDropId ? "Recovered field gear added to stores" : "",
     rewards.codexEntryId ? "Codex fragment archived" : "",
     rewards.recruitCandidate ? "A new recruit lead is waiting in the Tavern" : "",
@@ -270,11 +271,11 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
                 <span class="dispatch-metric__value">${slotsFilled}</span>
               </div>
               <div class="dispatch-metric">
-                <span class="dispatch-metric__label">INTEL DOSSIERS</span>
+                <span class="dispatch-metric__label">SCOUTING REPORTS</span>
                 <span class="dispatch-metric__value">${dispatch.intelDossiers}</span>
               </div>
               <div class="dispatch-metric">
-                <span class="dispatch-metric__label">BANKED SQUAD XP</span>
+                <span class="dispatch-metric__label">${STAT_SHORT_LABEL}</span>
                 <span class="dispatch-metric__value">${dispatch.squadXpBank}</span>
               </div>
             </div>
@@ -288,8 +289,7 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
         <div class="dispatch-hero town-screen__hero">
           <div class="dispatch-hero__copy">
             <div class="dispatch-hero__eyebrow">COMMAND OVERVIEW</div>
-            <div class="dispatch-hero__title">Reserve teams can earn resources, dossier intel, and class growth while the frontline pushes operations.</div>
-            <div class="dispatch-hero__text">Dispatch timers advance when rooms are cleared, floors are breached, or operations resolve. Scouting dossiers are consumed automatically on the next run and reveal deeper node intel.</div>
+            <div class="dispatch-hero__text">Dispatch missions advance when rooms are cleared, floors are reached or operations are completed.</div>
           </div>
           <div class="dispatch-hero__status">
             <div class="dispatch-hero__status-label">SELECTED MISSION</div>
@@ -305,7 +305,6 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
             <div class="dispatch-section-header">
               <div>
                 <div class="dispatch-section-title">Mission Board</div>
-                <div class="dispatch-section-subtitle">Four standing assignments tuned to different reserve specialties.</div>
               </div>
             </div>
             <div class="dispatch-mission-list">
@@ -317,7 +316,6 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
             <div class="dispatch-section-header">
               <div>
                 <div class="dispatch-section-title">Assignment Desk</div>
-                <div class="dispatch-section-subtitle">Reserve units only. More bodies improve safety, but class and affinity fit still matters.</div>
               </div>
               <span class="dispatch-pill">${selectedCount} selected</span>
             </div>
@@ -327,6 +325,7 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
               <div class="dispatch-assignment-card__preview">
                 ${MISSION_PREVIEW[selectedMission.id].map((line) => `<span class="dispatch-tag">${line}</span>`).join("")}
               </div>
+              <div class="dispatch-assignment-card__summary">${STAT_LONG_LABEL} is shared across the whole squad.</div>
               <div class="dispatch-assignment-card__meta">
                 <span>Projected Success ${projectedChance}%</span>
                 <span>${selectedMission.durationTicks} ticks</span>
@@ -344,7 +343,6 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
             <div class="dispatch-section-header">
               <div>
                 <div class="dispatch-section-title">Active Routes</div>
-                <div class="dispatch-section-subtitle">Teams currently out beyond the walls.</div>
               </div>
             </div>
             <div class="dispatch-activity-list">
@@ -354,7 +352,6 @@ export function renderDispatchScreen(returnTo: BaseCampReturnTo = "basecamp"): v
             <div class="dispatch-section-header dispatch-section-header--reports">
               <div>
                 <div class="dispatch-section-title">Debrief Queue</div>
-                <div class="dispatch-section-subtitle">Completed reports waiting to be claimed and folded back into squad stores.</div>
               </div>
             </div>
             <div class="dispatch-report-list">

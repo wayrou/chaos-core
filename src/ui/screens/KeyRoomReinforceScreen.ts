@@ -7,6 +7,24 @@ import { getActiveRun } from "../../core/campaignManager";
 import { getKeyRoomsForFloor, getFacilityConfig } from "../../core/keyRoomSystem";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 
+function findKeyRoomAcrossFloors(keyRoomId: string): { floorIndex: number; keyRoom: ReturnType<typeof getKeyRoomsForFloor>[number] } | null {
+  const activeRun = getActiveRun();
+  if (!activeRun) return null;
+
+  const keyRoomsByFloor = activeRun.keyRoomsByFloor || {};
+  for (const [floorIndexStr, rooms] of Object.entries(keyRoomsByFloor)) {
+    const match = (rooms || []).find((room) => room.roomNodeId === keyRoomId);
+    if (match) {
+      return {
+        floorIndex: Number(floorIndexStr),
+        keyRoom: match,
+      };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Render key room reinforcement screen
  */
@@ -21,15 +39,13 @@ export function renderKeyRoomReinforceScreen(keyRoomId: string): void {
     return;
   }
 
-  const floorIndex = activeRun.floorIndex;
-  const keyRooms = getKeyRoomsForFloor(floorIndex);
-  const keyRoom = keyRooms.find(kr => kr.roomNodeId === keyRoomId);
-
-  if (!keyRoom) {
+  const keyRoomMatch = findKeyRoomAcrossFloors(keyRoomId);
+  if (!keyRoomMatch) {
     console.warn("[KEYROOM] Key room not found:", keyRoomId);
     renderOperationMapScreen();
     return;
   }
+  const { keyRoom } = keyRoomMatch;
 
   const facilityConfig = getFacilityConfig(keyRoom.facility);
 
