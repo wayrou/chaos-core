@@ -79,7 +79,7 @@ import { showSystemPing } from "../components/systemPing";
 // STATE
 // ----------------------------------------------------------------------------
 
-type ReturnDestination = BaseCampReturnTo | "unitdetail";
+type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation";
 
 type WorkbenchTab = "build" | "customize" | "endless" | "craft";
 type BuildDoctrineSelection = string | "__chaotic__" | null;
@@ -158,12 +158,12 @@ function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
 function returnFromWorkbenchScreen(returnTo: ReturnDestination, unitId = workbenchState.selectedUnitId): void {
   detachGearWorkbenchExitHotkey();
 
-  if (returnTo === "unitdetail" && unitId) {
-    renderUnitDetailScreen(unitId);
+  if ((returnTo === "unitdetail" || returnTo === "unitdetail-operation") && unitId) {
+    renderUnitDetailScreen(unitId, returnTo === "unitdetail-operation" ? "operation" : "basecamp");
     return;
   }
 
-  returnFromBaseCampScreen(returnTo === "unitdetail" ? "basecamp" : returnTo);
+  returnFromBaseCampScreen(returnTo === "unitdetail" || returnTo === "unitdetail-operation" ? "basecamp" : returnTo);
 }
 
 function attachWorkbenchBackButton(resetTab: WorkbenchTab): void {
@@ -172,7 +172,7 @@ function attachWorkbenchBackButton(resetTab: WorkbenchTab): void {
 
   backBtn.setAttribute(
     "title",
-    workbenchState.returnDestination === "unitdetail"
+    workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
       ? "UNIT ROSTER"
       : getBaseCampReturnLabel(workbenchState.returnDestination),
   );
@@ -253,7 +253,7 @@ export function renderGearWorkbenchScreen(
 
   // equipmentById already retrieved above
 
-  const backBtnText = workbenchState.returnDestination === "unitdetail"
+  const backBtnText = workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
     ? "← UNIT ROSTER"
     : workbenchState.returnDestination === "field"
       ? "← FIELD MODE"
@@ -2313,7 +2313,7 @@ function attachCraftTabListeners(state: any): void {
 function attachGearWorkbenchExitHotkey(returnTo: ReturnDestination): void {
   detachGearWorkbenchExitHotkey();
 
-  if (returnTo !== "unitdetail") {
+  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation") {
     registerBaseCampReturnHotkey(GEAR_WORKBENCH_RETURN_HOTKEY_ID, returnTo, {
       allowFieldEKey: true,
       activeSelector: ".workbench-root",
@@ -2334,7 +2334,7 @@ function attachGearWorkbenchExitHotkey(returnTo: ReturnDestination): void {
       e.stopPropagation();
       const unitId = workbenchState.selectedUnitId;
       resetWorkbenchState("build");
-      returnFromWorkbenchScreen("unitdetail", unitId);
+      returnFromWorkbenchScreen(returnTo, unitId);
     }
   };
 

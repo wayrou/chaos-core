@@ -15,7 +15,7 @@ import { getGameState, updateGameState } from "../state/gameStore";
 import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { createCompanion, updateCompanion } from "./companion";
 import { createNpc, updateNpc, getNpcInRange, NPC_DIALOGUE } from "./npcs";
-import { showDialogue } from "../ui/screens/DialogueScreen";
+import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
 import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource, SpawnResult } from "./spawnResolver";
@@ -88,6 +88,7 @@ const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
+  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve teams on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
@@ -235,6 +236,7 @@ const PINNED_QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> 
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
+  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
@@ -921,6 +923,10 @@ function updateAllNodesPanelContent(): void {
             <span class="btn-icon">⚓</span>
             <span class="btn-label">PORT</span>
           </button>
+          <button class="all-nodes-btn" data-action="dispatch">
+            <span class="btn-icon">🛰</span>
+            <span class="btn-label">DISPATCH</span>
+          </button>
           <button class="all-nodes-btn all-nodes-btn--stable" data-action="stable">
             <span class="btn-icon">🐎</span>
             <span class="btn-label">STABLE</span>
@@ -1526,6 +1532,16 @@ function handleInteractKey(): void {
   if (fieldState.npcs) {
     const nearbyNpc = getNpcInRange(fieldState.player, fieldState.npcs);
     if (nearbyNpc && nearbyNpc.dialogueId) {
+      const openedImportedDialogue = showImportedDialogue(nearbyNpc.dialogueId, () => {
+        if (fieldState) {
+          fieldState.isPaused = false;
+        }
+      }, nearbyNpc.name);
+
+      if (openedImportedDialogue) {
+        return;
+      }
+
       const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId] || [
         "Hello there!",
         "This is placeholder dialogue.",
@@ -1639,6 +1655,11 @@ function handleNodeAction(action: string): void {
     case "port":
       import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("field");
+      });
+      break;
+    case "dispatch":
+      import("../ui/screens/DispatchScreen").then(({ renderDispatchScreen }) => {
+        renderDispatchScreen("field");
       });
       break;
     case "stable":

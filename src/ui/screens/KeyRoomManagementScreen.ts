@@ -4,9 +4,8 @@
 // ============================================================================
 
 import { getActiveRun } from "../../core/campaignManager";
-import { getKeyRoomsForFloor, FACILITY_CONFIG, getFacilityConfig } from "../../core/keyRoomSystem";
+import { getKeyRoomsForFloor, getFacilityConfig } from "../../core/keyRoomSystem";
 import { renderOperationMapScreen } from "./OperationMapScreen";
-import { syncCampaignToGameState } from "../../core/campaignSync";
 
 /**
  * Render key room management screen
@@ -34,65 +33,94 @@ export function renderKeyRoomManagementScreen(keyRoomId: string): void {
 
   const facilityConfig = getFacilityConfig(keyRoom.facility);
 
+  const statusText = keyRoom.isUnderAttack
+    ? "UNDER ATTACK"
+    : keyRoom.isDelayed
+      ? "DELAYED"
+      : "OPERATIONAL";
+  const statusClass = keyRoom.isUnderAttack
+    ? "keyroom-screen__status--attack"
+    : keyRoom.isDelayed
+      ? "keyroom-screen__status--delayed"
+      : "keyroom-screen__status--normal";
+
   root.innerHTML = `
-    <div class="keyroom-mgmt-root">
-      <div class="keyroom-mgmt-card">
-        <div class="keyroom-mgmt-header">
-          <h1 class="keyroom-mgmt-title">KEY ROOM MANAGEMENT</h1>
-          <button class="keyroom-mgmt-back-btn" id="backBtn">← BACK TO MAP</button>
+    <div class="keyroom-screen">
+      <div class="keyroom-screen__panel">
+        <div class="keyroom-screen__header">
+          <div class="keyroom-screen__titleblock">
+            <span class="keyroom-screen__eyebrow">S/COM // CAPTURED FACILITY</span>
+            <h1 class="keyroom-screen__title">KEY ROOM ACCESS</h1>
+            <p class="keyroom-screen__subtitle">Review forward command output, room status, and support gains before resuming the operation.</p>
+          </div>
+          <button class="keyroom-screen__back-btn" id="backBtn">BACK TO MAP</button>
         </div>
 
-        <div class="keyroom-mgmt-body">
-          <div class="keyroom-mgmt-facility">
-            <div class="keyroom-mgmt-facility-header">
-              <span class="keyroom-mgmt-facility-icon">🔑</span>
-              <h2 class="keyroom-mgmt-facility-name">${facilityConfig.name}</h2>
-            </div>
-            <p class="keyroom-mgmt-facility-desc">${facilityConfig.description}</p>
-            ${facilityConfig.passiveEffect ? `
-              <div class="keyroom-mgmt-effect">
-                <span class="keyroom-mgmt-effect-label">Passive Effect:</span>
-                <span class="keyroom-mgmt-effect-text">${getPassiveEffectDescription(facilityConfig.passiveEffect)}</span>
-              </div>
-            ` : ""}
+        <div class="keyroom-screen__hero">
+          <div class="keyroom-screen__hero-mark">KR</div>
+          <div class="keyroom-screen__hero-copy">
+            <span class="keyroom-screen__hero-kicker">Captured Site</span>
+            <h2 class="keyroom-screen__hero-title">${facilityConfig.name}</h2>
+            <p class="keyroom-screen__hero-desc">${facilityConfig.description}</p>
           </div>
+        </div>
 
-          <div class="keyroom-mgmt-status">
-            <div class="keyroom-mgmt-status-item">
-              <span class="keyroom-mgmt-status-label">Status:</span>
-              <span class="keyroom-mgmt-status-value ${keyRoom.isUnderAttack ? 'status-attack' : keyRoom.isDelayed ? 'status-delayed' : 'status-normal'}">
-                ${keyRoom.isUnderAttack ? '⚠️ UNDER ATTACK' : keyRoom.isDelayed ? '⏸ DELAYED' : '✓ OPERATIONAL'}
-              </span>
-            </div>
+        <div class="keyroom-screen__meta">
+          <div class="keyroom-screen__meta-item">
+            <span class="keyroom-screen__meta-label">Floor</span>
+            <span class="keyroom-screen__meta-value">${floorIndex + 1}</span>
           </div>
-
-          <div class="keyroom-mgmt-resources">
-            <h3 class="keyroom-mgmt-section-title">STORED RESOURCES</h3>
-            <div class="keyroom-mgmt-resources-list">
-              ${Object.keys(keyRoom.storedResources || {}).length > 0 ? `
-                ${Object.entries(keyRoom.storedResources || {}).map(([type, amount]) => `
-                  <div class="keyroom-mgmt-resource-item">
-                    <span class="keyroom-mgmt-resource-type">${type}:</span>
-                    <span class="keyroom-mgmt-resource-amount">${amount}</span>
-                  </div>
-                `).join("")}
-              ` : `
-                <div class="keyroom-mgmt-resource-empty">No resources stored yet</div>
-              `}
-            </div>
+          <div class="keyroom-screen__meta-item">
+            <span class="keyroom-screen__meta-label">Room</span>
+            <span class="keyroom-screen__meta-value">${keyRoom.roomNodeId}</span>
           </div>
+          <div class="keyroom-screen__meta-item">
+            <span class="keyroom-screen__meta-label">Status</span>
+            <span class="keyroom-screen__status ${statusClass}">${statusText}</span>
+          </div>
+        </div>
 
-          <div class="keyroom-mgmt-generation">
-            <h3 class="keyroom-mgmt-section-title">RESOURCE GENERATION</h3>
-            <div class="keyroom-mgmt-generation-list">
+        <div class="keyroom-screen__grid">
+          <section class="keyroom-screen__section">
+            <div class="keyroom-screen__section-header">
+              <h3 class="keyroom-screen__section-title">Facility Effect</h3>
+            </div>
+            <p class="keyroom-screen__body-copy">
+              ${facilityConfig.passiveEffect
+                ? getPassiveEffectDescription(facilityConfig.passiveEffect)
+                : "This capture point is active and awaiting future command protocols."}
+            </p>
+          </section>
+
+          <section class="keyroom-screen__section">
+            <div class="keyroom-screen__section-header">
+              <h3 class="keyroom-screen__section-title">Stored Resources</h3>
+            </div>
+            <div class="keyroom-screen__list">
+              ${Object.keys(keyRoom.storedResources || {}).length > 0
+                ? Object.entries(keyRoom.storedResources || {}).map(([type, amount]) => `
+                    <div class="keyroom-screen__list-item">
+                      <span class="keyroom-screen__list-label">${formatResourceLabel(type)}</span>
+                      <span class="keyroom-screen__list-value">${amount}</span>
+                    </div>
+                  `).join("")
+                : `<div class="keyroom-screen__empty">No resources banked from this facility yet.</div>`}
+            </div>
+          </section>
+
+          <section class="keyroom-screen__section keyroom-screen__section--wide">
+            <div class="keyroom-screen__section-header">
+              <h3 class="keyroom-screen__section-title">Generation Output</h3>
+            </div>
+            <div class="keyroom-screen__list">
               ${Object.entries(facilityConfig.resourceGeneration).map(([type, amount]) => `
-                <div class="keyroom-mgmt-generation-item">
-                  <span class="keyroom-mgmt-generation-type">${type}:</span>
-                  <span class="keyroom-mgmt-generation-amount">+${amount} per room cleared</span>
+                <div class="keyroom-screen__list-item">
+                  <span class="keyroom-screen__list-label">${formatResourceLabel(type)}</span>
+                  <span class="keyroom-screen__list-value">+${amount} per room cleared</span>
                 </div>
               `).join("")}
             </div>
-          </div>
+          </section>
         </div>
       </div>
     </div>
@@ -115,5 +143,11 @@ function getPassiveEffectDescription(effect: string): string {
     default:
       return effect;
   }
+}
+
+function formatResourceLabel(type: string): string {
+  return type
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (char) => char.toUpperCase());
 }
 

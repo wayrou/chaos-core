@@ -39,6 +39,7 @@ import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
+import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampReturn";
 // Isometric imports removed - using simple grid now
 import { BattleGridRenderer } from "./BattleGridRenderer";
 // Mount system imports
@@ -47,6 +48,23 @@ import { getMountById as getMountDefinition } from "../../core/mounts";
 import { handleCardPlay } from "../../core/cardHandler";
 
 let isAnimatingEnemyTurn = false;
+
+function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" {
+  const returnTo = (battle as any)?.returnTo;
+  return returnTo === "field" || returnTo === "esc" || returnTo === "basecamp" || returnTo === "operation"
+    ? returnTo
+    : "operation";
+}
+
+function returnFromBattle(battle: BattleState | null | undefined): void {
+  const returnTo = getBattleReturnTarget(battle);
+  if (returnTo === "operation") {
+    renderOperationMap();
+    return;
+  }
+
+  returnFromBaseCampScreen(returnTo);
+}
 
 // Card type definition
 interface Card {
@@ -3052,7 +3070,7 @@ function attachBattleListeners() {
           renderFieldScreen("base_camp");
         });
       } else {
-        renderOperationMap();
+        returnFromBattle(battle);
       }
     };
   }
@@ -4056,10 +4074,7 @@ function attachBattleListeners() {
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
       }
-
-      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
-        renderFieldScreen("base_camp");
-      });
+      returnFromBattle(battle);
     };
   }
 

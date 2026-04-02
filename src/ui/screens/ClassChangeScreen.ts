@@ -19,7 +19,36 @@ import {
   createDefaultClassProgress,
 } from "../../core/classes";
 
-export function renderClassChangeScreen(unitId: UnitId): void {
+type ClassChangeReturnTo = "basecamp" | "field" | "esc" | "loadout" | "operation";
+let classChangeEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function unregisterClassChangeReturnHotkey(): void {
+  if (!classChangeEscHandler) return;
+  window.removeEventListener("keydown", classChangeEscHandler);
+  classChangeEscHandler = null;
+}
+
+function registerClassChangeReturnHotkey(unitId: UnitId, returnTo: ClassChangeReturnTo): void {
+  unregisterClassChangeReturnHotkey();
+
+  classChangeEscHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    const isEscape = key === "escape" || e.key === "Escape" || e.keyCode === 27;
+    if (!isEscape || !document.querySelector(".class-change-root")) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    unregisterClassChangeReturnHotkey();
+    renderUnitDetailScreen(unitId, returnTo);
+  };
+
+  window.addEventListener("keydown", classChangeEscHandler);
+}
+
+export function renderClassChangeScreen(unitId: UnitId, returnTo: ClassChangeReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -73,7 +102,7 @@ export function renderClassChangeScreen(unitId: UnitId): void {
     </div>
   `;
   // Event listeners
-  attachEventListeners(unitId, classProgress);
+  attachEventListeners(unitId, classProgress, returnTo);
 }
 
 function renderClassTiers(progress: UnitClassProgress): string {
@@ -201,13 +230,15 @@ function renderClassCard(classId: ClassId, progress: UnitClassProgress): string 
   `;
 }
 
-function attachEventListeners(unitId: UnitId, progress: UnitClassProgress): void {
+function attachEventListeners(unitId: UnitId, progress: UnitClassProgress, returnTo: ClassChangeReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
+  registerClassChangeReturnHotkey(unitId, returnTo);
 
   // Back button
   root.querySelector(".class-change-back-btn")?.addEventListener("click", () => {
-    renderUnitDetailScreen(unitId);
+    unregisterClassChangeReturnHotkey();
+    renderUnitDetailScreen(unitId, returnTo);
   });
 
   // Change class buttons
@@ -215,13 +246,14 @@ function attachEventListeners(unitId: UnitId, progress: UnitClassProgress): void
     btn.addEventListener("click", (e) => {
       const classId = (e.target as HTMLElement).getAttribute("data-class-id") as ClassId;
       if (classId) {
-        changeClass(unitId, classId);
+        unregisterClassChangeReturnHotkey();
+        changeClass(unitId, classId, returnTo);
       }
     });
   });
 }
 
-function changeClass(unitId: UnitId, newClassId: ClassId): void {
+function changeClass(unitId: UnitId, newClassId: ClassId, returnTo: ClassChangeReturnTo): void {
   const newClassDef = getClassDefinition(newClassId);
 
   // Confirm change
@@ -271,7 +303,7 @@ function changeClass(unitId: UnitId, newClassId: ClassId): void {
   });
 
   // Re-render to show new class
-  renderClassChangeScreen(unitId);
+  renderClassChangeScreen(unitId, returnTo);
 }
 
 // Re-export for backwards compatibility

@@ -26,6 +26,39 @@ import {
   CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
 import { getUnitPortraitPath } from "../../core/portraits";
+import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
+
+let rosterOperationEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function unregisterRosterOperationReturnHotkey(): void {
+  if (!rosterOperationEscHandler) return;
+  window.removeEventListener("keydown", rosterOperationEscHandler);
+  rosterOperationEscHandler = null;
+}
+
+function registerRosterOperationReturnHotkey(): void {
+  unregisterRosterOperationReturnHotkey();
+
+  rosterOperationEscHandler = (e: KeyboardEvent) => {
+    if (!document.querySelector(".roster-root")) {
+      unregisterRosterOperationReturnHotkey();
+      return;
+    }
+
+    const key = e.key?.toLowerCase() ?? "";
+    if (key !== "escape" && e.key !== "Escape" && e.keyCode !== 27) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    unregisterRosterOperationReturnHotkey();
+    renderOperationMapScreen();
+  };
+
+  window.addEventListener("keydown", rosterOperationEscHandler);
+}
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -65,6 +98,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const units = state.unitsById;
   const unitIds = Object.keys(units);
   const partyUnitIds = state.partyUnitIds || [];
+  const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
@@ -77,6 +111,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const renderUnitCard = (unitId: string, isInParty: boolean): string => {
     const unit = units[unitId];
     if (!unit) return "";
+    const isDispatched = busyDispatchUnitIds.has(unitId);
 
     const loadout: UnitLoadout = (unit as any).loadout || {
       primaryWeapon: null,
@@ -178,13 +213,15 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
         </div>
         <div class="roster-unit-footer">
           ${isInParty ? '<span class="roster-party-badge">IN PARTY</span>' : ""}
+          ${isDispatched ? '<span class="roster-party-badge roster-party-badge--dispatch">ON DISPATCH</span>' : ""}
           <div class="roster-unit-actions">
             <button class="roster-toggle-party-btn ${isInParty ? 'roster-toggle-party-btn--remove' : 'roster-toggle-party-btn--add'}" 
                     data-unit-id="${unitId}" 
                     data-action="${isInParty ? 'remove' : 'add'}"
                     type="button"
-                    title="${isInParty ? 'Remove from party' : 'Add to party'}">
-              ${isInParty ? '− REMOVE' : '+ ADD TO PARTY'}
+                    title="${isDispatched ? 'This unit is currently on Dispatch' : isInParty ? 'Remove from party' : 'Add to party'}"
+                    ${isDispatched ? "disabled" : ""}>
+              ${isDispatched ? 'ON DISPATCH' : isInParty ? '− REMOVE' : '+ ADD TO PARTY'}
             </button>
             <button class="roster-detail-btn" data-unit-id="${unitId}" type="button">MANAGE</button>
           </div>
@@ -308,6 +345,12 @@ function removeUnitFromParty(unitId: string): void {
 }
 
 function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "loadout" | "operation"): void {
+  const openUnitDetail = (unitId: string): void => {
+    unregisterBaseCampReturnHotkey("roster-screen");
+    unregisterRosterOperationReturnHotkey();
+    renderUnitDetailScreen(unitId, returnTo);
+  };
+
   // Use setTimeout to ensure DOM is fully rendered
   setTimeout(() => {
     // Toggle party buttons - click to add/remove from party
@@ -340,6 +383,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
         const returnDestination = btn?.getAttribute("data-return-to") || returnTo;
         console.log(`[ROSTER] Back button clicked, returning to: ${returnDestination}`);
         unregisterBaseCampReturnHotkey("roster-screen");
+        unregisterRosterOperationReturnHotkey();
         if (returnDestination === "loadout") {
           renderLoadoutScreen();
         } else if (returnDestination === "operation") {
@@ -352,11 +396,19 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
       console.warn("[ROSTER] Back button not found");
     }
 
+    if (returnTo === "operation") {
+      registerRosterOperationReturnHotkey();
+    } else {
+      unregisterRosterOperationReturnHotkey();
+    }
+
     if (returnTo !== "loadout" && returnTo !== "operation") {
       registerBaseCampReturnHotkey("roster-screen", returnTo, {
         allowFieldEKey: true,
         activeSelector: ".roster-root",
       });
+    } else {
+      unregisterBaseCampReturnHotkey("roster-screen");
     }
 
     // Manage buttons - use both onclick and addEventListener for maximum compatibility
@@ -385,7 +437,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
         console.log(`[ROSTER] Manage button ${index} clicked (onclick), unitId: ${unitId}`);
         if (unitId) {
           try {
-            renderUnitDetailScreen(unitId);
+            openUnitDetail(unitId);
           } catch (error) {
             console.error("[ROSTER] Error opening unit detail screen:", error);
             alert(`Error opening unit detail: ${error}`);
@@ -403,7 +455,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
         console.log(`[ROSTER] Manage button ${index} clicked (addEventListener), unitId: ${unitId}`);
         if (unitId) {
           try {
-            renderUnitDetailScreen(unitId);
+            openUnitDetail(unitId);
           } catch (error) {
             console.error("[ROSTER] Error opening unit detail screen:", error);
           }
@@ -434,7 +486,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
         console.log(`[ROSTER] Unit card ${index} clicked, unitId: ${unitId}`);
         if (unitId) {
           try {
-            renderUnitDetailScreen(unitId);
+            openUnitDetail(unitId);
           } catch (error) {
             console.error("[ROSTER] Error opening unit detail screen:", error);
           }
@@ -450,7 +502,7 @@ function attachRosterListeners(root: HTMLElement, returnTo: BaseCampReturnTo | "
         const unitId = cardEl.getAttribute("data-unit-id");
         if (unitId) {
           try {
-            renderUnitDetailScreen(unitId);
+            openUnitDetail(unitId);
           } catch (error) {
             console.error("[ROSTER] Error opening unit detail screen:", error);
           }

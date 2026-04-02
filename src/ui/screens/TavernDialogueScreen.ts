@@ -19,6 +19,13 @@ import {
   getRosterSize,
 } from "../../core/recruitment";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
+import {
+  getQueuedTavernMealBuff,
+  queueTavernMeal,
+  TavernMealBuff,
+  TAVERN_MEAL_DEFINITIONS,
+} from "../../core/tavernMeals";
+import { showSystemPing } from "../components/systemPing";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -227,6 +234,41 @@ function renderCandidateCard(
   `;
 }
 
+function renderMealCard(meal: TavernMealBuff, playerWad: number, queuedMeal: TavernMealBuff | null): string {
+  const canAfford = playerWad >= meal.cost;
+  const alreadyQueued = queuedMeal?.id === meal.id;
+  const mealLocked = Boolean(queuedMeal);
+  const disabled = mealLocked || !canAfford;
+  const buttonText = alreadyQueued
+    ? "QUEUED"
+    : mealLocked
+      ? "MEAL ALREADY QUEUED"
+      : canAfford
+        ? "ORDER MEAL"
+        : "INSUFFICIENT WAD";
+
+  return `
+    <div class="tavern-meal-card ${alreadyQueued ? "tavern-meal-card--queued" : ""}">
+      <div class="tavern-meal-card-header">
+        <span class="tavern-meal-icon">${meal.icon}</span>
+        <div class="tavern-meal-meta">
+          <div class="tavern-meal-name">${meal.name}</div>
+          <div class="tavern-meal-cost">${meal.cost} WAD</div>
+        </div>
+      </div>
+      <div class="tavern-meal-description">${meal.description}</div>
+      <button
+        class="tavern-meal-btn"
+        type="button"
+        data-meal-id="${meal.id}"
+        ${disabled ? "disabled" : ""}
+      >
+        ${buttonText}
+      </button>
+    </div>
+  `;
+}
+
 /**
  * Render tavern dialogue screen
  * @param roomId - Room/node ID (for operation maps) or "base_camp_tavern" for base camp
@@ -254,6 +296,7 @@ export function renderTavernDialogueScreen(
   let candidates = state.recruitmentCandidates || [];
   const rosterSize = getRosterSize(state);
   const wad = state.wad || 0;
+  const queuedMeal = isBaseCamp ? getQueuedTavernMealBuff(state) : null;
 
   // Initialize NPC windows
   activeNpcWindows = [];
@@ -288,6 +331,9 @@ export function renderTavernDialogueScreen(
     ? candidates
       .map((candidate) => renderCandidateCard(candidate, wad))
       .join("")
+    : "";
+  const mealCardsHtml = isBaseCamp
+    ? TAVERN_MEAL_DEFINITIONS.map((meal) => renderMealCard(meal, wad, queuedMeal)).join("")
     : "";
 
   root.innerHTML = `
@@ -331,6 +377,30 @@ export function renderTavernDialogueScreen(
       : ""
     }
             </div>
+
+            ${isBaseCamp
+      ? `
+              <div class="tavern-meal-section">
+                <div class="tavern-section-header">
+                  <div class="tavern-section-title">MESS HALL</div>
+                  <div class="tavern-meal-status">
+                    ${queuedMeal
+          ? `NEXT RUN BUFF: ${queuedMeal.name.toUpperCase()}`
+          : "QUEUE ONE SMALL BUFF FOR YOUR NEXT RUN"}
+                  </div>
+                </div>
+                <div class="tavern-meal-grid">
+                  ${mealCardsHtml}
+                </div>
+                <div class="tavern-meal-note">
+                  ${queuedMeal
+          ? `${queuedMeal.name} is queued and will activate when your next operation begins.`
+          : "A good meal won't stack. Order one when you're ready to deploy."}
+                </div>
+              </div>
+            `
+      : ""
+    }
 
             <div class="tavern-recruitment-section">
               ${isBaseCamp
@@ -383,6 +453,7 @@ export function renderTavernDialogueScreen(
   if (isBaseCamp) {
     setTimeout(() => {
       attachCandidateHireHandlers(returnTo);
+      attachTavernMealHandlers(returnTo);
     }, 100);
   }
 }
@@ -434,6 +505,47 @@ function handleHireCandidate(
     () => renderTavernDialogueScreen("base_camp_tavern", undefined, returnTo),
     100,
   );
+}
+
+function attachTavernMealHandlers(returnTo: "operation" | BaseCampReturnTo): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+
+  root.querySelectorAll<HTMLElement>(".tavern-meal-btn[data-meal-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mealId = btn.dataset.mealId;
+      if (!mealId) return;
+      handlePurchaseTavernMeal(mealId, returnTo);
+    });
+  });
+}
+
+function handlePurchaseTavernMeal(
+  mealId: string,
+  returnTo: "operation" | BaseCampReturnTo,
+): void {
+  const state = getGameState();
+  const result = queueTavernMeal(state, mealId);
+
+  if ("error" in result) {
+    showSystemPing({
+      title: "MESS HALL ERROR",
+      message: result.error,
+      type: "error",
+      channel: "tavern-meals",
+    });
+    return;
+  }
+
+  updateGameState(() => result.next);
+  showSystemPing({
+    title: "MEAL QUEUED",
+    message: result.meal.name,
+    detail: result.meal.description,
+    type: "success",
+    channel: "tavern-meals",
+  });
+  renderTavernDialogueScreen("base_camp_tavern", undefined, returnTo);
 }
 
 function attachTavernListeners(

@@ -16,6 +16,7 @@ import {
   moveOwnedItemToBaseStorage,
   moveOwnedItemToForwardLocker,
 } from "../../core/loadoutInventory";
+import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
 import {
   buildInventoryFolderTransferSummaries,
   InventoryFolderTransferSummary,
@@ -438,6 +439,16 @@ function attachLoadoutListeners(): void {
     const state = getGameState();
     if (state.partyUnitIds.length === 0) {
       alert("You need at least one unit in your party to proceed!");
+      return;
+    }
+    const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
+    const dispatchedPartyUnits = state.partyUnitIds
+      .map((unitId) => state.unitsById[unitId])
+      .filter((unit) => unit && busyDispatchUnitIds.has(unit.id))
+      .map((unit) => unit!.name);
+
+    if (dispatchedPartyUnits.length > 0) {
+      alert(`These units are still assigned to Dispatch and cannot deploy:\n\n${dispatchedPartyUnits.join("\n")}`);
       return;
     }
 

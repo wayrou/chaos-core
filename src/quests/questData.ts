@@ -2,7 +2,8 @@
 // QUEST SYSTEM - QUEST DATA DEFINITIONS
 // ============================================================================
 
-import { Quest, QuestType, QuestDifficultyTier } from "./types";
+import { Quest, QuestId } from "./types";
+import { getAllImportedQuests, getImportedQuest } from "../content/technica";
 
 /**
  * Quest database - all available quest definitions
@@ -179,14 +180,14 @@ export const QUEST_DATABASE: Record<string, Quest> = {
  * Get all available quests (not yet accepted)
  */
 export function getAvailableQuests(): Quest[] {
-  return Object.values(QUEST_DATABASE).filter(q => q.status === "available");
+  return [...Object.values(QUEST_DATABASE), ...getAllImportedQuests()].filter(q => q.status === "available");
 }
 
 /**
  * Get quest by ID
  */
 export function getQuestById(questId: QuestId): Quest | null {
-  return QUEST_DATABASE[questId] || null;
+  return QUEST_DATABASE[questId] || getImportedQuest(questId) || null;
 }
 
 /**
@@ -203,6 +204,4 @@ export function cloneQuest(quest: Quest): Quest {
     })),
   };
 }
-
-
 

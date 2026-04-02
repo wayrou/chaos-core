@@ -27,8 +27,6 @@ export type WeaponType =
   | "spear"
   | "instrument";
 
-import { getStarterRecipeIds } from "../core/crafting";
-
 export interface CardEffect {
   type: string;
   amount?: number;
@@ -444,6 +442,9 @@ export interface GameState {
   // Unit Recruitment System (Headline 14az)
   recruitmentCandidates?: RecruitmentCandidate[]; // Current pool of candidates at active recruitment hub
 
+  // Class progression / mastery state
+  unitClassProgress?: Record<UnitId, import("./classes").UnitClassProgress>;
+
   // Local Co-op System
   players: {
     P1: Player;
@@ -466,6 +467,10 @@ export interface GameState {
       log?: Array<{ timestamp: number; message: string }>;
     };
   };
+  tavern?: {
+    queuedMealBuff?: import("./tavernMeals").TavernMealBuff | null;
+    activeRunMealBuff?: import("./tavernMeals").TavernMealBuff | null;
+  };
   // Field Mods System - Run inventory (synced from ActiveRunState)
   runFieldModInventory?: import("./fieldMods").FieldModInstance[];
 
@@ -475,6 +480,9 @@ export interface GameState {
 
   // Codex System - Meta progression
   unlockedCodexEntries?: string[];
+
+  // Dispatch / Expeditions
+  dispatch?: import("./dispatchSystem").DispatchState;
 
   // Mount/Stable System
   stable?: StableState;

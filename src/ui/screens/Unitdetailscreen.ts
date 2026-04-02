@@ -7,6 +7,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
+import { renderOperationMapScreen } from "./OperationMapScreen";
 import { saveGame, loadGame } from "../../core/saveSystem";
 import { getSettings, updateSettings } from "../../core/settings";
 import { initControllerSupport } from "../../core/controllerSupport";
@@ -32,6 +33,42 @@ import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign"
 import { HardpointState, FieldModInstance } from "../../core/fieldMods";
 import { getFieldModDef, getAllFieldModDefs } from "../../core/fieldModDefinitions";
 import { getTriggerLabel } from "../../core/fieldModStrings";
+
+type UnitDetailReturnTo = "basecamp" | "field" | "esc" | "loadout" | "operation";
+let currentUnitDetailReturnTo: UnitDetailReturnTo = "basecamp";
+let unitDetailEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function unregisterUnitDetailReturnHotkey(): void {
+  if (!unitDetailEscHandler) return;
+  window.removeEventListener("keydown", unitDetailEscHandler);
+  unitDetailEscHandler = null;
+}
+
+function registerUnitDetailReturnHotkey(unitId: string, returnTo: UnitDetailReturnTo): void {
+  unregisterUnitDetailReturnHotkey();
+
+  unitDetailEscHandler = (e: KeyboardEvent) => {
+    const key = e.key?.toLowerCase() ?? "";
+    const isEscape = key === "escape" || e.key === "Escape" || e.keyCode === 27;
+    if (!isEscape || !document.querySelector(".unitdetail-root")) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    unregisterUnitDetailReturnHotkey();
+
+    if (returnTo === "operation") {
+      renderOperationMapScreen();
+      return;
+    }
+
+    renderRosterScreen(returnTo === "loadout" ? "loadout" : returnTo);
+  };
+
+  window.addEventListener("keydown", unitDetailEscHandler);
+}
 
 function formatClassName(cls: UnitClass): string {
   const names: Record<UnitClass, string> = {
@@ -89,14 +126,19 @@ function getDeckCardGlyph(type: EquipmentCard["type"]): string {
   }
 }
 
-export function renderUnitDetailScreen(unitId: string): void {
+export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
+  currentUnitDetailReturnTo = returnTo;
 
   const state = getGameState();
   const unit = state.unitsById[unitId];
   if (!unit) {
-    renderRosterScreen();
+    if (returnTo === "operation") {
+      renderOperationMapScreen();
+    } else {
+      renderRosterScreen(returnTo === "loadout" ? "loadout" : returnTo);
+    }
     return;
   }
 
@@ -262,7 +304,7 @@ export function renderUnitDetailScreen(unitId: string): void {
           </div>
           <div class="unitdetail-header-right">
             <button class="unitdetail-class-btn" id="changeClassBtn">
-              🎭 CHANGE CLASS
+              CHANGE CLASS
             </button>
             <button class="unitdetail-back-btn">BACK TO ROSTER</button>
           </div>
@@ -361,17 +403,20 @@ export function renderUnitDetailScreen(unitId: string): void {
   `;
 
   // --- EVENT LISTENERS ---
+  registerUnitDetailReturnHotkey(unitId, returnTo);
 
   // Back to roster
   root.querySelector(".unitdetail-back-btn")?.addEventListener("click", () => {
-    renderRosterScreen();
+    unregisterUnitDetailReturnHotkey();
+    renderRosterScreen(returnTo === "loadout" ? "loadout" : returnTo);
   });
 
   // Change Class button
   root.querySelector("#changeClassBtn")?.addEventListener("click", () => {
+    unregisterUnitDetailReturnHotkey();
     // Import dynamically to avoid circular dependencies
     import("./ClassChangeScreen").then(({ renderClassChangeScreen }) => {
-      renderClassChangeScreen(unitId);
+      renderClassChangeScreen(unitId, returnTo);
     });
   });
 
@@ -416,8 +461,9 @@ export function renderUnitDetailScreen(unitId: string): void {
       const targetUnitId = el.getAttribute("data-unit-id");
       const equipmentId = el.getAttribute("data-equipment-id");
       if (targetUnitId && equipmentId) {
+        unregisterUnitDetailReturnHotkey();
         // Pass "unitdetail" as the return destination so back button returns here
-        renderGearWorkbenchScreen(targetUnitId, equipmentId, "unitdetail");
+        renderGearWorkbenchScreen(targetUnitId, equipmentId, returnTo === "operation" ? "unitdetail-operation" : "unitdetail");
       }
     });
   });
@@ -770,7 +816,7 @@ function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
     };
   });
 
-  renderUnitDetailScreen(unitId);
+  renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
 }
 
 /**
@@ -857,7 +903,7 @@ export function autoEquipUnit(
     };
   });
 
-  renderUnitDetailScreen(unitId);
+  renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
 }
 
 function unequipItem(unitId: string, slot: EquipSlot): void {
@@ -893,7 +939,7 @@ function unequipItem(unitId: string, slot: EquipSlot): void {
     };
   });
 
-  renderUnitDetailScreen(unitId);
+  renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
 }
 
 // ----------------------------------------------------------------------------
@@ -1030,7 +1076,7 @@ function openHardpointModal(unitId: string, hardpointIndex: number): void {
       });
     }
 
-    renderUnitDetailScreen(unitId);
+    renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
     return;
   }
 
@@ -1087,6 +1133,6 @@ function openHardpointSelectModal(unitId: string, modInstanceId: string | null, 
       });
     }
 
-    renderUnitDetailScreen(unitId);
+    renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
   }
 }

@@ -13,7 +13,7 @@ import {
   completeOperation as markOperationComplete,
 } from "./campaign";
 import { processControlledRoomsTimeStep } from "./controlledRooms";
-import { getSupplyState, advanceSupplyStep } from "./supplyChain";
+import { advanceSupplyStep } from "./supplyChain";
 import {
   loadCampaignProgress,
   saveCampaignProgress,
@@ -23,6 +23,15 @@ import { generateNodeMap } from "./nodeMapGenerator";
 import { generateEncounter } from "./encounterGenerator";
 import { OperationRun, Floor, RoomNode } from "./types";
 import { getGameState, updateGameState } from "../state/gameStore";
+import {
+  activateQueuedTavernMealForRun,
+  clearActiveRunTavernMeal,
+} from "./tavernMeals";
+import {
+  advanceDispatchTime,
+  clearDispatchIntelBonus,
+  consumeDispatchIntelForOperation,
+} from "./dispatchSystem";
 
 // ----------------------------------------------------------------------------
 // CAMPAIGN MANAGER
@@ -85,10 +94,14 @@ export function startOperationRun(
   console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}`);
 
   // Clear field mod inventory from game state (they're now in the active run)
-  updateGameState(s => ({
-    ...s,
-    runFieldModInventory: [],
-  }));
+  updateGameState((state) => {
+    const withMealBuff = activateQueuedTavernMealForRun(state);
+    const withDispatchIntel = consumeDispatchIntelForOperation(withMealBuff);
+    return {
+      ...withDispatchIntel,
+      runFieldModInventory: [],
+    };
+  });
 
   // Consume quarters buff if active
   import("./quartersBuffs").then(({ consumeBuffOnRunStart }) => {
@@ -126,6 +139,7 @@ export function clearNode(nodeId: string): CampaignProgress {
   // Advance Time Step for Controlled Rooms
   processControlledRoomsTimeStep("room_cleared", 100);
   advanceSupplyStep(getGameState());
+  updateGameState((state) => advanceDispatchTime(state, 1));
 
   return updated;
 }
@@ -336,11 +350,6 @@ export function prepareDefenseBattle(keyRoomId: string): CampaignProgress {
   // Get turns to survive from key room system config
   const turnsToSurvive = 6; // Default, will be imported from keyRoomSystem
 
-  // Import dynamically to avoid circular dependency
-  import("./keyRoomSystem").then(({ getDefenseBattleTurns }) => {
-    // This runs async but the value is already set above
-  });
-
   // Generate defense encounter
   import("./defenseBattleGenerator").then(({ generateDefenseEncounter }) => {
     const encounter = generateDefenseEncounter(floorIndex, encounterSeed);
@@ -493,6 +502,7 @@ export function advanceToNextFloor(): CampaignProgress {
   // Advance Time Step for floor transition
   processControlledRoomsTimeStep("floor_transition", 100);
   advanceSupplyStep(getGameState());
+  updateGameState((state) => advanceDispatchTime(state, 1));
 
   console.log(`[CAMPAIGN] Advanced to floor ${nextFloorIndex + 1}`);
 
@@ -523,35 +533,35 @@ export function completeOperationRun(): CampaignProgress {
   saveCampaignProgress(final);
   console.log(`[CAMPAIGN] Completed operation: ${operationId}`);
 
-  // Update pinboard
-  import("../state/gameStore").then(({ updateGameState }) => {
-    updateGameState(s => {
-      const quarters = s.quarters ?? {};
-      const pinboard = quarters.pinboard ?? {
-        completedOperations: [],
-        failedOperations: [],
-        log: [],
-      };
+  updateGameState((state) => {
+    const clearedState = clearActiveRunTavernMeal(state);
+    const withDispatchProgress = advanceDispatchTime(clearedState, 1);
+    const finalizedState = clearDispatchIntelBonus(withDispatchProgress);
+    const quarters = finalizedState.quarters ?? {};
+    const pinboard = quarters.pinboard ?? {
+      completedOperations: [],
+      failedOperations: [],
+      log: [],
+    };
 
-      pinboard.completedOperations = pinboard.completedOperations || [];
-      if (!pinboard.completedOperations.includes(operationId)) {
-        pinboard.completedOperations.push(operationId);
-      }
+    pinboard.completedOperations = pinboard.completedOperations || [];
+    if (!pinboard.completedOperations.includes(operationId)) {
+      pinboard.completedOperations.push(operationId);
+    }
 
-      pinboard.log = pinboard.log || [];
-      pinboard.log.push({
-        timestamp: Date.now(),
-        message: `Completed operation: ${operationId}`,
-      });
-
-      return {
-        ...s,
-        quarters: {
-          ...quarters,
-          pinboard,
-        },
-      };
+    pinboard.log = pinboard.log || [];
+    pinboard.log.push({
+      timestamp: Date.now(),
+      message: `Completed operation: ${operationId}`,
     });
+
+    return {
+      ...finalizedState,
+      quarters: {
+        ...quarters,
+        pinboard,
+      },
+    };
   });
 
   return final;
@@ -579,38 +589,40 @@ export function abandonRun(): CampaignProgress {
     triggerMailOnOperationComplete(false);
   });
 
-  // Update pinboard if operation ID available
-  if (operationId) {
-    import("../state/gameStore").then(({ updateGameState }) => {
-      updateGameState(s => {
-        const quarters = s.quarters ?? {};
-        const pinboard = quarters.pinboard ?? {
-          completedOperations: [],
-          failedOperations: [],
-          log: [],
-        };
+  updateGameState((state) => {
+    const clearedState = clearActiveRunTavernMeal(state);
+    const withDispatchProgress = advanceDispatchTime(clearedState, 1);
+    const finalizedState = clearDispatchIntelBonus(withDispatchProgress);
+    if (!operationId) {
+      return finalizedState;
+    }
 
-        if (!pinboard.failedOperations?.includes(operationId)) {
-          pinboard.failedOperations = pinboard.failedOperations || [];
-          pinboard.failedOperations.push(operationId);
-        }
+    const quarters = finalizedState.quarters ?? {};
+    const pinboard = quarters.pinboard ?? {
+      completedOperations: [],
+      failedOperations: [],
+      log: [],
+    };
 
-        pinboard.log = pinboard.log || [];
-        pinboard.log.push({
-          timestamp: Date.now(),
-          message: `Failed operation: ${operationId}`,
-        });
+    if (!pinboard.failedOperations?.includes(operationId)) {
+      pinboard.failedOperations = pinboard.failedOperations || [];
+      pinboard.failedOperations.push(operationId);
+    }
 
-        return {
-          ...s,
-          quarters: {
-            ...quarters,
-            pinboard,
-          },
-        };
-      });
+    pinboard.log = pinboard.log || [];
+    pinboard.log.push({
+      timestamp: Date.now(),
+      message: `Failed operation: ${operationId}`,
     });
-  }
+
+    return {
+      ...finalizedState,
+      quarters: {
+        ...quarters,
+        pinboard,
+      },
+    };
+  });
 
   return updated;
 }
@@ -679,5 +691,3 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
 function generateRunSeed(): string {
   return `run_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
-
-

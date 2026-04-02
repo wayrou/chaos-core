@@ -4,10 +4,8 @@
 // ============================================================================
 
 import { getActiveRun } from "../../core/campaignManager";
-import { getKeyRoomsForFloor, FACILITY_CONFIG, getFacilityConfig } from "../../core/keyRoomSystem";
+import { getKeyRoomsForFloor, getFacilityConfig } from "../../core/keyRoomSystem";
 import { renderOperationMapScreen } from "./OperationMapScreen";
-import { syncCampaignToGameState } from "../../core/campaignSync";
-import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
 
 /**
  * Render key room reinforcement screen
@@ -61,59 +59,50 @@ export function renderKeyRoomReinforceScreen(keyRoomId: string): void {
   ];
 
   root.innerHTML = `
-    <div class="ard-fullscreen-overlay ard-noise flex-center">
-      <div class="ard-panel" style="max-width: 800px; width: 90%;">
-        
-        <!-- Header -->
-        <div class="ard-panel-header">
-          <div class="flex-col">
-            <h1 class="ard-heading-lg">REINFORCE KEY ROOM</h1>
-            <div class="ard-subheading">S/COM_OS // FACILITY_UPGRADE</div>
+    <div class="keyroom-screen">
+      <div class="keyroom-screen__panel">
+        <div class="keyroom-screen__header">
+          <div class="keyroom-screen__titleblock">
+            <span class="keyroom-screen__eyebrow">S/COM // FACILITY UPGRADE</span>
+            <h1 class="keyroom-screen__title">REINFORCE KEY ROOM</h1>
+            <p class="keyroom-screen__subtitle">Commit resources to harden the site and improve what this command post contributes during the run.</p>
           </div>
-          <button class="ard-btn-secondary" id="backBtn">
-            <span class="ard-icon">←</span> BACK TO MAP
-          </button>
+          <button class="keyroom-screen__back-btn" id="backBtn">BACK TO MAP</button>
         </div>
 
-        <!-- Body -->
-        <div class="ard-panel-section" style="padding: var(--space-lg);">
-          
-          <!-- Facility Info -->
-          <div class="ard-panel-inset" style="margin-bottom: var(--space-lg); display: flex; align-items: flex-start; gap: var(--space-md);">
-            <div style="font-size: 2rem; line-height: 1; color: var(--accent-bronze);">🔑</div>
-            <div>
-              <h2 class="ard-heading-md" style="margin-bottom: var(--space-xs);">${facilityConfig.name}</h2>
-              <p class="ard-text-muted" style="margin: 0; line-height: 1.5;">${facilityConfig.description}</p>
-            </div>
+        <div class="keyroom-screen__hero">
+          <div class="keyroom-screen__hero-mark">RF</div>
+          <div class="keyroom-screen__hero-copy">
+            <span class="keyroom-screen__hero-kicker">Upgrade Queue</span>
+            <h2 class="keyroom-screen__hero-title">${facilityConfig.name}</h2>
+            <p class="keyroom-screen__hero-desc">${facilityConfig.description}</p>
           </div>
+        </div>
 
-          <!-- Options -->
-          <div>
-            <h3 class="ard-subheading" style="margin-bottom: var(--space-md);">REINFORCEMENT OPTIONS</h3>
-            <div style="display: flex; flex-direction: column; gap: var(--space-md);">
-              ${reinforcementOptions.map(option => `
-                <div class="ard-panel-inset" style="display: flex; justify-content: space-between; align-items: center; gap: var(--space-md);">
-                  <div style="flex: 1;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: var(--space-xs);">
-                      <h4 class="ard-heading-sm" style="color: var(--tech-amber);">${option.name}</h4>
-                      <div style="display: flex; gap: var(--space-sm);">
-                        ${Object.entries(option.cost).map(([type, amount]) => `
-                          <span class="ard-badge ard-badge-warning" style="font-family: var(--font-mono); font-size: 0.8rem;">
-                            💰 ${amount} ${type.toUpperCase()}
-                          </span>
-                        `).join("")}
-                      </div>
+        <div class="keyroom-screen__section keyroom-screen__section--wide">
+          <div class="keyroom-screen__section-header">
+            <h3 class="keyroom-screen__section-title">Reinforcement Packages</h3>
+          </div>
+          <div class="keyroom-reinforce__options">
+            ${reinforcementOptions.map(option => `
+              <div class="keyroom-reinforce__option">
+                <div class="keyroom-reinforce__copy">
+                  <div class="keyroom-reinforce__topline">
+                    <h4 class="keyroom-reinforce__name">${option.name}</h4>
+                    <div class="keyroom-reinforce__costs">
+                      ${Object.entries(option.cost).map(([type, amount]) => `
+                        <span class="keyroom-reinforce__cost">${amount} ${formatCostLabel(type)}</span>
+                      `).join("")}
                     </div>
-                    <p class="ard-text" style="margin: 0; font-size: 0.9rem;">${option.description}</p>
                   </div>
-                  <button class="ard-btn-primary keyroom-reinforce-option-btn" data-option-id="${option.id}" data-keyroom-id="${keyRoomId}" style="white-space: nowrap;">
-                    APPLY <span class="ard-icon">→</span>
-                  </button>
+                  <p class="keyroom-reinforce__description">${option.description}</p>
                 </div>
-              `).join("")}
-            </div>
+                <button class="keyroom-screen__action-btn keyroom-reinforce-option-btn" data-option-id="${option.id}" data-keyroom-id="${keyRoomId}">
+                  APPLY PACKAGE
+                </button>
+              </div>
+            `).join("")}
           </div>
-
         </div>
       </div>
     </div>
@@ -143,5 +132,9 @@ function applyReinforcement(keyRoomId: string, optionId: string): void {
 
   // Return to map
   renderOperationMapScreen();
+}
+
+function formatCostLabel(type: string): string {
+  return type.toUpperCase();
 }
 

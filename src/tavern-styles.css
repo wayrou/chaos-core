@@ -151,6 +151,128 @@
     min-height: 0;
 }
 
+.tavern-meal-section {
+    background: var(--bg-panel);
+    border: var(--stroke-2) solid var(--stroke-panel);
+    border-radius: var(--radius-panel);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.tavern-meal-status {
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    color: var(--ink-muted);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+}
+
+.tavern-meal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-3);
+}
+
+.tavern-meal-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--bg-panel-alt);
+    border: var(--stroke-1) solid var(--stroke-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-elev-1);
+}
+
+.tavern-meal-card--queued {
+    border-color: var(--tech-violet);
+    box-shadow: var(--shadow-elev-1), 0 0 18px rgba(192, 179, 255, 0.16);
+}
+
+.tavern-meal-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.tavern-meal-icon {
+    min-width: 48px;
+    height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset-dark);
+    border: var(--stroke-1) solid var(--accent-bronze-muted);
+    color: var(--ink-accent);
+    font-family: var(--font-terminal);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+}
+
+.tavern-meal-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tavern-meal-name {
+    font-size: var(--text-base);
+    font-weight: var(--weight-bold);
+    color: var(--ink);
+}
+
+.tavern-meal-cost {
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    color: var(--ink-accent);
+    text-transform: uppercase;
+}
+
+.tavern-meal-description {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+    min-height: 2.8em;
+}
+
+.tavern-meal-btn {
+    width: 100%;
+    padding: var(--space-2);
+    background: rgba(192, 179, 255, 0.12);
+    border: var(--stroke-1) solid rgba(192, 179, 255, 0.28);
+    border-radius: var(--radius-sm);
+    color: var(--tech-violet);
+    cursor: pointer;
+    font-family: var(--font-terminal);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    transition: var(--transition-base);
+}
+
+.tavern-meal-btn:hover:not(:disabled) {
+    background: rgba(192, 179, 255, 0.2);
+    border-color: rgba(192, 179, 255, 0.42);
+    box-shadow: 0 0 12px rgba(192, 179, 255, 0.16);
+}
+
+.tavern-meal-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.tavern-meal-note {
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    color: var(--ink-muted);
+    font-family: var(--font-terminal);
+}
+
 .tavern-candidates-grid {
     flex: 1;
     overflow-y: auto;

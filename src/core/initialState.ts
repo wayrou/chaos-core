@@ -506,6 +506,7 @@ export function createNewGameState(): GameStateWithEquipment {
 
     // Unit Recruitment System (Headline 14az)
     recruitmentCandidates: undefined, // Will be generated when Tavern is opened
+    unitClassProgress: {},
 
     // Local Co-op System - Initialize players
     players: {
@@ -531,6 +532,17 @@ export function createNewGameState(): GameStateWithEquipment {
     baseCampVisitIndex: 0,
     portManifest: undefined,
     portTradesRemaining: 2,
+
+    // Dispatch / Expeditions
+    dispatch: {
+      missionSlots: 2,
+      dispatchTick: 0,
+      intelDossiers: 0,
+      activeIntelBonus: 0,
+      squadXpBank: 0,
+      activeExpeditions: [],
+      completedReports: [],
+    },
 
     // Gear Builder System - Starter unlocks
     unlockedChassisIds: [

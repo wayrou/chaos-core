@@ -38,7 +38,7 @@ export interface InteractionZone {
   y: number;
   width: number;
   height: number;
-  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "gear_workbench" | "port" | "quarters" | "black_market" | "stable" | "comms-array" | "mini_core" | "fcp_test" | "free_zone_entry" | "base_camp_entry" | "custom";
+  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "gear_workbench" | "port" | "dispatch" | "quarters" | "black_market" | "stable" | "comms-array" | "mini_core" | "fcp_test" | "free_zone_entry" | "base_camp_entry" | "custom";
   label: string;
   metadata?: Record<string, any>;
 }
@@ -76,4 +76,3 @@ export interface FieldState {
   companion?: import("./companion").Companion; // Sable companion (Headline 15a)
   npcs?: FieldNpc[]; // NPCs for Base Camp (Headline 15b)
 }
-

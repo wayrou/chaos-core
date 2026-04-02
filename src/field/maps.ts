@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { FieldMap, FieldObject, InteractionZone } from "./types";
+import { getAllImportedFieldMaps, getImportedFieldMap } from "../content/technica";
 
 // ============================================================================
 // BASE CAMP MAP
@@ -106,6 +107,11 @@ function createBaseCampMap(): FieldMap {
       metadata: { name: "Port" },
     },
     {
+      id: "dispatch_station",
+      x: 40, y: 12, width: 2, height: 2, type: "station", sprite: "dispatch",
+      metadata: { name: "Dispatch" },
+    },
+    {
       id: "quarters_station",
       x: 7, y: 3, width: 2, height: 2, type: "station", sprite: "quarters",
       metadata: { name: "Quarters" },
@@ -145,13 +151,14 @@ function createBaseCampMap(): FieldMap {
     { id: "interact_tavern", x: 7, y: 10, width: 2, height: 2, action: "tavern", label: "TAVERN" },
     { id: "interact_gear_workbench", x: 11, y: 10, width: 2, height: 2, action: "gear_workbench", label: "WORKSHOP" },
     { id: "interact_port", x: 25, y: 15, width: 2, height: 2, action: "port", label: "PORT" },
+    { id: "interact_dispatch", x: 40, y: 12, width: 2, height: 2, action: "dispatch", label: "DISPATCH" },
     { id: "interact_quarters", x: 7, y: 3, width: 2, height: 2, action: "quarters", label: "QUARTERS" },
     { id: "interact_black_market", x: 2, y: 17, width: 2, height: 2, action: "black_market", label: "BLACK MARKET" },
 
     // Annex Interactions
     { id: "interact_comms_array", x: 40, y: 8, width: 2, height: 2, action: "comms-array", label: "COMMS ARRAY" },
     { id: "interact_stable", x: 44, y: 8, width: 2, height: 2, action: "stable", label: "STABLE" },
-    { id: "interact_mini_core", x: 42, y: 12, width: 2, height: 2, action: "mini_core", label: "MINI CORE" }, // Note: assuming "mini_core" action exists or will be generic
+    { id: "interact_mini_core", x: 42, y: 12, width: 2, height: 2, action: "mini_core", label: "MINI CORE" },
 
     {
       id: "enter_free_zone",
@@ -468,12 +475,16 @@ const maps = new Map<FieldMap["id"], FieldMap>([
   ["quarters", createQuartersMap()],
 ]);
 
+for (const importedMap of getAllImportedFieldMaps()) {
+  maps.set(importedMap.id, importedMap);
+}
+
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   // Handle dynamic key room maps
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
     return createKeyRoomMap(mapId);
   }
-  const map = maps.get(mapId);
+  const map = maps.get(mapId) || getImportedFieldMap(mapId);
   if (!map) {
     throw new Error(`Field map not found: ${mapId}`);
   }
@@ -483,4 +494,3 @@ export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
 export function getAllMapIds(): FieldMap["id"][] {
   return Array.from(maps.keys());
 }
-

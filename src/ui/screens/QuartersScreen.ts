@@ -28,6 +28,7 @@ import { loadCampaignProgress } from "../../core/campaign";
 import { showDialogue } from "./DialogueScreen";
 import {
   BaseCampReturnTo,
+  getBaseCampReturnLabel,
   registerBaseCampReturnHotkey,
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
@@ -39,6 +40,40 @@ type QuartersPanel = "main" | "mailbox" | "bunk" | "pinboard" | "footlocker";
 let currentPanel: QuartersPanel = "main";
 let currentMail: MailItem | null = null;
 let currentMailPage = 0;
+
+function renderQuartersShell(
+  returnTo: BaseCampReturnTo,
+  options: {
+    title: string;
+    subtitle: string;
+    bodyClass: string;
+    body: string;
+    backText?: string;
+  }
+): string {
+  return `
+    <div class="quarters-root town-screen ard-noise">
+      <div class="quarters-panel town-screen__panel">
+        <div class="quarters-header town-screen__header">
+          <div class="quarters-header-left town-screen__titleblock">
+            <h1 class="quarters-title">${options.title}</h1>
+            <div class="quarters-subtitle">${options.subtitle}</div>
+          </div>
+          <div class="quarters-header-right town-screen__header-right">
+            <button class="quarters-back-btn town-screen__back-btn" id="quartersBackBtn">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${options.backText ?? getBaseCampReturnLabel(returnTo)}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="quarters-content town-screen__content-panel ${options.bodyClass}">
+          ${options.body}
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 function registerQuartersExitHotkey(returnTo: BaseCampReturnTo): void {
   registerBaseCampReturnHotkey("quarters-screen", returnTo, {
@@ -106,55 +141,59 @@ export function renderQuartersScreen(
   }
 
   // Main quarters view
-  root.innerHTML = `
-    <div class="quarters-root">
-      <div class="quarters-header">
-        <div class="quarters-title">QUARTERS</div>
-        <button class="quarters-back-btn" id="quartersBackBtn">← BACK</button>
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "QUARTERS",
+    subtitle: "S/COM_OS // DOWNTIME_STATION",
+    bodyClass: "quarters-room",
+    body: `
+      <div class="quarters-room-description">
+        Personal space for recovery, correspondence, and small bits of off-duty ritual before the next deployment.
       </div>
 
-      <div class="quarters-room">
-        <div class="quarters-room-description">
-          Your personal downtime space. A place to rest, reflect, and prepare.
-        </div>
+      <div class="quarters-interactables">
+        <button class="quarters-interactable" id="mailboxBtn" data-unread="${unreadCount}">
+          <span class="interactable-code">MAIL</span>
+          <span class="interactable-label">Mailbox</span>
+          <span class="interactable-text">Review dispatches, gossip, and official notices addressed to the squad.</span>
+          ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount} NEW</span>` : `<span class="interactable-status">QUIET</span>`}
+        </button>
 
-        <div class="quarters-interactables">
-          <button class="quarters-interactable" id="mailboxBtn" data-unread="${unreadCount}">
-            <span class="interactable-icon">📬</span>
-            <span class="interactable-label">MAILBOX</span>
-            ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount}</span>` : ""}
-          </button>
+        <button class="quarters-interactable" id="bunkBtn">
+          <span class="interactable-code">REST</span>
+          <span class="interactable-label">Bunk</span>
+          <span class="interactable-text">Turn in early and carry a small edge into the next operation.</span>
+          ${buffsState.currentBuff && !buffsState.currentBuff.consumed
+            ? `<span class="buff-active">BUFF READY</span>`
+            : `<span class="interactable-status">AVAILABLE</span>`}
+        </button>
 
-          <button class="quarters-interactable" id="bunkBtn">
-            <span class="interactable-icon">🛏️</span>
-            <span class="interactable-label">BUNK</span>
-            ${buffsState.currentBuff && !buffsState.currentBuff.consumed
-              ? `<span class="buff-active">BUFF ACTIVE</span>`
-              : ""}
-          </button>
+        <button class="quarters-interactable" id="pinboardBtn">
+          <span class="interactable-code">LOG</span>
+          <span class="interactable-label">Pinboard</span>
+          <span class="interactable-text">Track completed ops, failures, and whatever the crew decided was worth remembering.</span>
+          <span class="interactable-status">${(loadCampaignProgress().completedOperations || []).length} FILED</span>
+        </button>
 
-          <button class="quarters-interactable" id="pinboardBtn">
-            <span class="interactable-icon">📋</span>
-            <span class="interactable-label">PINBOARD</span>
-          </button>
+        <button class="quarters-interactable" id="footlockerBtn">
+          <span class="interactable-code">DECO</span>
+          <span class="interactable-label">Footlocker</span>
+          <span class="interactable-text">Arrange the scraps of comfort you have managed to keep alive between deployments.</span>
+          <span class="interactable-status">${getPlacedDecor(state).length} PLACED</span>
+        </button>
 
-          <button class="quarters-interactable" id="footlockerBtn">
-            <span class="interactable-icon">📦</span>
-            <span class="interactable-label">FOOTLOCKER</span>
-          </button>
-
-          <button class="quarters-interactable" id="sableBtn">
-            <span class="interactable-icon">🐕</span>
-            <span class="interactable-label">SABLE</span>
-          </button>
-        </div>
-
-        <div class="quarters-decor-preview">
-          ${renderDecorPreview(decorState)}
-        </div>
+        <button class="quarters-interactable" id="sableBtn">
+          <span class="interactable-code">COMP</span>
+          <span class="interactable-label">Sable</span>
+          <span class="interactable-text">Check in with the camp hound. Morale support remains unofficial, but reliable.</span>
+          <span class="interactable-status">WAITING</span>
+        </button>
       </div>
-    </div>
-  `;
+
+      <div class="quarters-decor-preview">
+        ${renderDecorPreview(decorState)}
+      </div>
+    `,
+  });
 
   registerQuartersExitHotkey(returnTo);
   attachQuartersListeners(returnTo);
@@ -177,40 +216,37 @@ function renderMailboxPanel(returnTo: BaseCampReturnTo): void {
     const isLastPage = currentMailPage >= currentMail.bodyPages.length - 1;
     const isFirstPage = currentMailPage === 0;
 
-    root.innerHTML = `
-      <div class="quarters-root">
-        <div class="quarters-header">
-          <div class="quarters-title">MAILBOX - ${currentMail.subject}</div>
-          <button class="quarters-back-btn" id="mailboxBackBtn">← BACK</button>
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "MAILBOX",
+    subtitle: `S/COM_OS // MESSAGE_VIEWER • ${currentMail.subject}`,
+    bodyClass: "mail-view",
+    backText: "BACK TO MAILBOX",
+    body: `
+        <div class="mail-header">
+          <div class="mail-from">FROM // ${currentMail.from}</div>
+          <div class="mail-category">${currentMail.category.toUpperCase()}</div>
         </div>
 
-        <div class="mail-view">
-          <div class="mail-header">
-            <div class="mail-from">From: ${currentMail.from}</div>
-            <div class="mail-category">${currentMail.category.toUpperCase()}</div>
-          </div>
-
-          <div class="mail-body">
-            <div class="mail-page">${page}</div>
-          </div>
-
-          <div class="mail-footer">
-            <button class="mail-nav-btn" id="mailPrevBtn" ${isFirstPage ? "disabled" : ""}>
-              ← PREV
-            </button>
-            <div class="mail-page-indicator">
-              Page ${currentMailPage + 1} / ${currentMail.bodyPages.length}
-            </div>
-            <button class="mail-nav-btn" id="mailNextBtn" ${isLastPage ? "disabled" : ""}>
-              NEXT →
-            </button>
-          </div>
+        <div class="mail-body">
+          <div class="mail-page">${page}</div>
         </div>
-      </div>
-    `;
+
+        <div class="mail-footer">
+          <button class="mail-nav-btn" id="mailPrevBtn" ${isFirstPage ? "disabled" : ""}>
+            ← PREV
+          </button>
+          <div class="mail-page-indicator">
+            PAGE ${currentMailPage + 1} / ${currentMail.bodyPages.length}
+          </div>
+          <button class="mail-nav-btn" id="mailNextBtn" ${isLastPage ? "disabled" : ""}>
+            NEXT →
+          </button>
+        </div>
+      `,
+    });
 
     registerQuartersExitHotkey(returnTo);
-    root.querySelector("#mailboxBackBtn")?.addEventListener("click", () => {
+    root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
       if (currentMail) {
         // If viewing a mail, go back to inbox
         currentMail = null;
@@ -252,37 +288,32 @@ function renderMailboxPanel(returnTo: BaseCampReturnTo): void {
   }
 
   // Show inbox list
-  root.innerHTML = `
-    <div class="quarters-root">
-      <div class="quarters-header">
-        <div class="quarters-title">MAILBOX</div>
-        <button class="quarters-back-btn" id="mailboxBackBtn">← BACK</button>
-      </div>
-
-      <div class="mailbox-inbox">
-        ${mailState.inbox.length === 0
-          ? `<div class="mailbox-empty">No mail. The mailbox is empty.</div>`
-          : mailState.inbox
-              .sort((a, b) => b.receivedAt - a.receivedAt)
-              .map(
-                (mail) => `
-          <div class="mail-item ${mail.read ? "read" : "unread"}" data-mail-id="${mail.id}">
-            <div class="mail-item-header">
-              <div class="mail-item-from">${mail.from}</div>
-              <div class="mail-item-category">${mail.category}</div>
-            </div>
-            <div class="mail-item-subject">${mail.subject}</div>
-            ${!mail.read ? `<div class="mail-item-unread-indicator">NEW</div>` : ""}
-          </div>
-        `
-              )
-              .join("")}
-      </div>
-    </div>
-  `;
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "MAILBOX",
+    subtitle: "S/COM_OS // INBOX_INDEX",
+    bodyClass: "mailbox-inbox",
+    backText: "BACK TO QUARTERS",
+    body: mailState.inbox.length === 0
+      ? `<div class="mailbox-empty">No mail is waiting. Either command has gone quiet or the crew finally stopped leaving notes.</div>`
+      : mailState.inbox
+          .sort((a, b) => b.receivedAt - a.receivedAt)
+          .map(
+            (mail) => `
+              <div class="mail-item ${mail.read ? "read" : "unread"}" data-mail-id="${mail.id}">
+                <div class="mail-item-header">
+                  <div class="mail-item-from">${mail.from}</div>
+                  <div class="mail-item-category">${mail.category}</div>
+                </div>
+                <div class="mail-item-subject">${mail.subject}</div>
+                ${!mail.read ? `<div class="mail-item-unread-indicator">NEW</div>` : `<div class="mail-item-unread-indicator mail-item-unread-indicator--read">READ</div>`}
+              </div>
+            `,
+          )
+          .join(""),
+  });
 
   registerQuartersExitHotkey(returnTo);
-  root.querySelector("#mailboxBackBtn")?.addEventListener("click", () => {
+  root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
       returnFromQuartersScreen(returnTo);
     } else {
@@ -319,42 +350,43 @@ function renderBunkPanel(returnTo: BaseCampReturnTo): void {
   const buffsState = getQuartersBuffsState(state);
   const canRestNow = canRest(state);
 
-  root.innerHTML = `
-    <div class="quarters-root">
-      <div class="quarters-header">
-        <div class="quarters-title">BUNK</div>
-        <button class="quarters-back-btn" id="bunkBackBtn">← BACK</button>
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "BUNK",
+    subtitle: "S/COM_OS // RECOVERY_PROTOCOL",
+    bodyClass: "bunk-view",
+    backText: "BACK TO QUARTERS",
+    body: `
+      <div class="bunk-description">
+        Take the edge off and bank a small randomized benefit for the next operation. Nothing dramatic, just the kind of luck that comes from a decent night's sleep.
       </div>
 
-      <div class="bunk-view">
-        <div class="bunk-description">
-          Rest here to receive a small randomized buff for your next operation run.
-          Buffs are intentionally small and non-optimizable.
+      ${buffsState.currentBuff && !buffsState.currentBuff.consumed ? `
+        <div class="bunk-current-buff">
+          <div class="buff-title">CURRENT BUFF</div>
+          <div class="buff-name">${buffsState.currentBuff.name}</div>
+          <div class="buff-description">${buffsState.currentBuff.description}</div>
         </div>
-
-        ${buffsState.currentBuff && !buffsState.currentBuff.consumed ? `
-          <div class="bunk-current-buff">
-            <div class="buff-title">Current Buff:</div>
-            <div class="buff-name">${buffsState.currentBuff.name}</div>
-            <div class="buff-description">${buffsState.currentBuff.description}</div>
-          </div>
-        ` : ""}
-
-        <button class="bunk-rest-btn" id="restBtn" ${!canRestNow ? "disabled" : ""}>
-          ${canRestNow ? "REST" : "ALREADY RESTED"}
-        </button>
-
-        <div class="bunk-note">
-          ${canRestNow
-            ? "Resting grants a random small buff for your next run."
-            : "You've already rested this visit. Buff will apply to your next run."}
+      ` : `
+        <div class="bunk-current-buff bunk-current-buff--empty">
+          <div class="buff-title">NO BUFF STORED</div>
+          <div class="buff-description">Turn in now to queue a small advantage for the next deployment.</div>
         </div>
+      `}
+
+      <button class="bunk-rest-btn" id="restBtn" ${!canRestNow ? "disabled" : ""}>
+        ${canRestNow ? "REST UNTIL MORNING" : "RECOVERY ALREADY CLAIMED"}
+      </button>
+
+      <div class="bunk-note">
+        ${canRestNow
+          ? "Rest can only be claimed once per visit to quarters."
+          : "The stored buff remains queued until your next run begins."}
       </div>
-    </div>
-  `;
+    `,
+  });
 
   registerQuartersExitHotkey(returnTo);
-  root.querySelector("#bunkBackBtn")?.addEventListener("click", () => {
+  root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
       returnFromQuartersScreen(returnTo);
     } else {
@@ -428,57 +460,54 @@ function renderPinboardPanel(returnTo: BaseCampReturnTo): void {
   const failedOps = pinboardState.failedOperations || [];
   const log = pinboardState.log || [];
 
-  root.innerHTML = `
-    <div class="quarters-root">
-      <div class="quarters-header">
-        <div class="quarters-title">PINBOARD</div>
-        <button class="quarters-back-btn" id="pinboardBackBtn">← BACK</button>
-      </div>
-
-      <div class="pinboard-view">
-        <div class="pinboard-section">
-          <div class="pinboard-section-title">COMPLETED OPERATIONS</div>
-          <div class="pinboard-list">
-            ${completedOps.length === 0
-              ? `<div class="pinboard-empty">No operations completed yet.</div>`
-              : completedOps.map((opId) => `<div class="pinboard-item">${opId}</div>`).join("")}
-          </div>
-        </div>
-
-        <div class="pinboard-section">
-          <div class="pinboard-section-title">FAILED OPERATIONS</div>
-          <div class="pinboard-list">
-            ${failedOps.length === 0
-              ? `<div class="pinboard-empty">No failed operations recorded.</div>`
-              : failedOps.map((opId) => `<div class="pinboard-item failed">${opId}</div>`).join("")}
-          </div>
-        </div>
-
-        <div class="pinboard-section">
-          <div class="pinboard-section-title">LOG</div>
-          <div class="pinboard-log">
-            ${log.length === 0
-              ? `<div class="pinboard-empty">No log entries yet.</div>`
-              : log
-                  .slice()
-                  .reverse()
-                  .map(
-                    (entry) => `
-              <div class="pinboard-log-entry">
-                <div class="log-timestamp">${new Date(entry.timestamp).toLocaleDateString()}</div>
-                <div class="log-message">${entry.message}</div>
-              </div>
-            `
-                  )
-                  .join("")}
-          </div>
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "PINBOARD",
+    subtitle: "S/COM_OS // ROOM_LOGBOOK",
+    bodyClass: "pinboard-view",
+    backText: "BACK TO QUARTERS",
+    body: `
+      <div class="pinboard-section">
+        <div class="pinboard-section-title">COMPLETED OPERATIONS</div>
+        <div class="pinboard-list">
+          ${completedOps.length === 0
+            ? `<div class="pinboard-empty">No operations have been pinned here yet.</div>`
+            : completedOps.map((opId) => `<div class="pinboard-item">${opId}</div>`).join("")}
         </div>
       </div>
-    </div>
-  `;
+
+      <div class="pinboard-section">
+        <div class="pinboard-section-title">FAILED OPERATIONS</div>
+        <div class="pinboard-list">
+          ${failedOps.length === 0
+            ? `<div class="pinboard-empty">No failures logged. Keep it that way.</div>`
+            : failedOps.map((opId) => `<div class="pinboard-item failed">${opId}</div>`).join("")}
+        </div>
+      </div>
+
+      <div class="pinboard-section">
+        <div class="pinboard-section-title">ROOM LOG</div>
+        <div class="pinboard-log">
+          ${log.length === 0
+            ? `<div class="pinboard-empty">No handwritten notes, sketches, or records have been archived yet.</div>`
+            : log
+                .slice()
+                .reverse()
+                .map(
+                  (entry) => `
+                    <div class="pinboard-log-entry">
+                      <div class="log-timestamp">${new Date(entry.timestamp).toLocaleDateString()}</div>
+                      <div class="log-message">${entry.message}</div>
+                    </div>
+                  `,
+                )
+                .join("")}
+        </div>
+      </div>
+    `,
+  });
 
   registerQuartersExitHotkey(returnTo);
-  root.querySelector("#pinboardBackBtn")?.addEventListener("click", () => {
+  root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
       returnFromQuartersScreen(returnTo);
     } else {
@@ -509,67 +538,64 @@ function renderFootlockerPanel(returnTo: BaseCampReturnTo): void {
     "bedside_table",
   ];
 
-  root.innerHTML = `
-    <div class="quarters-root">
-      <div class="quarters-header">
-        <div class="quarters-title">FOOTLOCKER - DECOR</div>
-        <button class="quarters-back-btn" id="footlockerBackBtn">← BACK</button>
-      </div>
-
-      <div class="footlocker-view">
-        <div class="footlocker-section">
-          <div class="footlocker-section-title">UNPLACED ITEMS</div>
-          <div class="footlocker-items">
-            ${unplaced.length === 0
-              ? `<div class="footlocker-empty">No unplaced decor items.</div>`
-              : unplaced
-                  .map(
-                    (decor) => `
-              <div class="footlocker-item" data-decor-id="${decor.id}">
-                <div class="footlocker-item-icon">${decor.iconKey || "📦"}</div>
-                <div class="footlocker-item-name">${decor.name}</div>
-                <div class="footlocker-item-desc">${decor.description}</div>
-                <div class="footlocker-item-anchors">
-                  Compatible: ${decor.allowedAnchors.join(", ")}
-                </div>
-                <button class="footlocker-place-btn" data-decor-id="${decor.id}">PLACE</button>
-              </div>
-            `
-                  )
-                  .join("")}
-          </div>
-        </div>
-
-        <div class="footlocker-section">
-          <div class="footlocker-section-title">PLACED ITEMS</div>
-          <div class="footlocker-anchors">
-            ${allAnchors
-              .map((anchorId) => {
-                const placedDecor = placed.find((p) => p.anchorId === anchorId);
-                return `
-              <div class="footlocker-anchor" data-anchor-id="${anchorId}">
-                <div class="anchor-label">${anchorId.replace(/_/g, " ").toUpperCase()}</div>
-                ${placedDecor
-                  ? `
-                <div class="anchor-decor">
-                  <div class="anchor-decor-icon">${placedDecor.decor.iconKey || "📦"}</div>
-                  <div class="anchor-decor-name">${placedDecor.decor.name}</div>
-                  <button class="anchor-remove-btn" data-anchor-id="${anchorId}">REMOVE</button>
-                </div>
-              `
-                  : `<div class="anchor-empty">Empty</div>`}
-              </div>
-            `;
-              })
-              .join("")}
-          </div>
+  root.innerHTML = renderQuartersShell(returnTo, {
+    title: "FOOTLOCKER",
+    subtitle: "S/COM_OS // DECOR_LAYOUT",
+    bodyClass: "footlocker-view",
+    backText: "BACK TO QUARTERS",
+    body: `
+      <div class="footlocker-section">
+        <div class="footlocker-section-title">UNPLACED ITEMS</div>
+        <div class="footlocker-items">
+          ${unplaced.length === 0
+            ? `<div class="footlocker-empty">Everything you own is already on display, packed away, or spoken for.</div>`
+            : unplaced
+                .map(
+                  (decor) => `
+                    <div class="footlocker-item" data-decor-id="${decor.id}">
+                      <div class="footlocker-item-icon">${decor.iconKey || "CRATE"}</div>
+                      <div class="footlocker-item-name">${decor.name}</div>
+                      <div class="footlocker-item-desc">${decor.description}</div>
+                      <div class="footlocker-item-anchors">
+                        COMPATIBLE: ${decor.allowedAnchors.join(", ")}
+                      </div>
+                      <button class="footlocker-place-btn" data-decor-id="${decor.id}">PLACE ITEM</button>
+                    </div>
+                  `,
+                )
+                .join("")}
         </div>
       </div>
-    </div>
-  `;
+
+      <div class="footlocker-section">
+        <div class="footlocker-section-title">PLACED ITEMS</div>
+        <div class="footlocker-anchors">
+          ${allAnchors
+            .map((anchorId) => {
+              const placedDecor = placed.find((p) => p.anchorId === anchorId);
+              return `
+                <div class="footlocker-anchor" data-anchor-id="${anchorId}">
+                  <div class="anchor-label">${anchorId.replace(/_/g, " ").toUpperCase()}</div>
+                  ${placedDecor
+                    ? `
+                      <div class="anchor-decor">
+                        <div class="anchor-decor-icon">${placedDecor.decor.iconKey || "ITEM"}</div>
+                        <div class="anchor-decor-name">${placedDecor.decor.name}</div>
+                        <button class="anchor-remove-btn" data-anchor-id="${anchorId}">REMOVE</button>
+                      </div>
+                    `
+                    : `<div class="anchor-empty">EMPTY SLOT</div>`}
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+    `,
+  });
 
   registerQuartersExitHotkey(returnTo);
-  root.querySelector("#footlockerBackBtn")?.addEventListener("click", () => {
+  root.querySelector("#quartersBackBtn")?.addEventListener("click", () => {
     if (returnTo === "field") {
       returnFromQuartersScreen(returnTo);
     } else {

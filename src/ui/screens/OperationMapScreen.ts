@@ -839,6 +839,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
   const operation = getCurrentOperation(state);
   const currentRoomId = operation?.currentRoomId;
   const availableNodeIds = getAvailableNodes();
+  const intelRevealDepth = Math.max(0, state.dispatch?.activeIntelBonus ?? 0);
 
   // Identify start/end nodes for icon overrides.
   const startNodeId: string | null = (() => {
@@ -907,6 +908,17 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number): strin
         for (const connectedId of node.connections) {
           revealedNodeIds.add(connectedId);
         }
+      }
+    }
+  }
+
+  for (let depth = 0; depth < intelRevealDepth; depth++) {
+    const currentlyRevealed = Array.from(revealedNodeIds);
+    for (const nodeId of currentlyRevealed) {
+      const node = nodes.find((entry) => entry.id === nodeId);
+      if (!node?.connections) continue;
+      for (const connectedId of node.connections) {
+        revealedNodeIds.add(connectedId);
       }
     }
   }
@@ -1179,12 +1191,14 @@ function getRoomDescription(node: RoomNode): string {
 function updateContextPanel(node: RoomNode | null, _allNodes: RoomNode[], operation: any, _floor: any): void {
   const panelBody = document.getElementById("opmapContextBody");
   if (!panelBody) return;
+  const intelBonus = getGameState().dispatch?.activeIntelBonus ?? 0;
 
   if (!node) {
     panelBody.innerHTML = `
       <div class="opmap-context-default">
         <div class="opmap-context-description">${operation.description || "Neutralize the chaos threat."}</div>
         <div class="opmap-context-hint">Hover over a node to view its details.</div>
+        ${intelBonus > 0 ? `<div class="opmap-context-hint">Dispatch intel active: +${intelBonus} reveal depth on this run.</div>` : ""}
       </div>
     `;
     return;

@@ -57,7 +57,7 @@ const WORKSPACE_ROW_HEIGHT_PX = 24;
 const MIN_ITEM_ROW_SPAN = 4;
 const AUTO_SCROLL_MARGIN_PX = 72;
 const AUTO_SCROLL_STEP_PX = 24;
-const BASE_CAMP_LAYOUT_VERSION = 5;
+const BASE_CAMP_LAYOUT_VERSION = 6;
 const BASE_CAMP_LOADOUT_COUNT = 2;
 const DEFAULT_LOADOUT_PRESET_INDEXES = [0, 2] as const;
 const LEGACY_WORKSPACE_COLUMN_COUNT = 4;
@@ -78,6 +78,7 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
+  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve units on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
@@ -100,6 +101,7 @@ const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   port: { gridX: 1, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   quarters: { gridX: 2, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   stable: { gridX: 3, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  dispatch: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   codex: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   settings: { gridX: 5, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "comms-array": { gridX: 6, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
@@ -325,6 +327,7 @@ const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
+  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "mission board", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
@@ -1480,6 +1483,14 @@ function attachAllNodesMenuListeners(): void {
   }
 
   allNodesEscHandler = (e: KeyboardEvent) => {
+    if (!document.querySelector(".all-nodes-menu-screen")) {
+      if (allNodesEscHandler) {
+        window.removeEventListener("keydown", allNodesEscHandler);
+        allNodesEscHandler = null;
+      }
+      return;
+    }
+
     if (e.key === "Escape") {
       e.preventDefault();
       handleModeSwitch("field");
@@ -1771,6 +1782,7 @@ function handleModeSwitch(mode: string | undefined): void {
 
 function handleNodeAction(action: string): void {
   syncPinnedItemFrames(document);
+  cleanupAllNodesWindowListeners();
 
   switch (action) {
     case "shop":
@@ -1829,6 +1841,11 @@ function handleNodeAction(action: string): void {
     case "port":
       import("./PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("esc");
+      });
+      break;
+    case "dispatch":
+      import("./DispatchScreen").then(({ renderDispatchScreen }) => {
+        renderDispatchScreen("esc");
       });
       break;
     case "quarters":

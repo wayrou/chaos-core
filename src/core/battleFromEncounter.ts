@@ -9,6 +9,7 @@ import { EncounterDefinition } from "./campaign";
 import { getEnemyDefinition } from "./enemies";
 import { createBattleUnitState } from "./battle";
 import { generateCover } from "./coverGenerator";
+import { getActiveRunTavernMealBuff } from "./tavernMeals";
 
 /**
  * Create a battle state from an encounter definition
@@ -21,6 +22,7 @@ export function createBattleFromEncounter(
   // Get party units
   const partyUnitIds = gameState.partyUnitIds || [];
   const units: Record<string, BattleUnitState> = {};
+  const activeRunMealBuff = getActiveRunTavernMealBuff(gameState);
 
   // Create player units (without positions initially - placement phase)
   partyUnitIds.forEach(unitId => {
@@ -36,6 +38,25 @@ export function createBattleFromEncounter(
         (gameState as any).equipmentById,
         (gameState as any).modulesById
       );
+
+      if (activeRunMealBuff) {
+        const battleUnit = units[unitId];
+        switch (activeRunMealBuff.effect) {
+          case "hp":
+            battleUnit.maxHp += activeRunMealBuff.amount;
+            battleUnit.hp += activeRunMealBuff.amount;
+            break;
+          case "atk":
+            battleUnit.atk += activeRunMealBuff.amount;
+            break;
+          case "def":
+            battleUnit.def += activeRunMealBuff.amount;
+            break;
+          case "agi":
+            battleUnit.agi += activeRunMealBuff.amount;
+            break;
+        }
+      }
     }
   });
 
@@ -164,6 +185,9 @@ export function createBattleFromEncounter(
     log: [
       `SLK//ENGAGE :: Engagement feed online.`,
       `SLK//ROOM   :: Linked to node.`,
+      ...(activeRunMealBuff
+        ? [`S/COM//BUFF :: ${activeRunMealBuff.name} active for this run.`]
+        : []),
       encounter.introText || `SLK//PLACE  :: Unit placement phase - position your squad.`,
     ],
     placementState: {
@@ -175,4 +199,3 @@ export function createBattleFromEncounter(
 
   return battle;
 }
-

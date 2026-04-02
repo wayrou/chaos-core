@@ -3,155 +3,190 @@ import {
   CodexCategory,
   CodexEntry,
   getUnlockedCodexEntries,
-  unlockCodexEntry,
   CODEX_DATABASE,
-  debugUnlockAllCodexEntries
+  debugUnlockAllCodexEntries,
 } from "../../core/codexSystem";
 import { renderMainMenu } from "./MainMenuScreen";
 import {
   BaseCampReturnTo,
+  getBaseCampReturnLabel,
   registerBaseCampReturnHotkey,
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+
 let activeCategory: CodexCategory = "Lore";
 let activeEntry: CodexEntry | null = null;
 let returnDestination: BaseCampReturnTo | "menu" = "basecamp";
+
+const CODEX_CATEGORY_LABELS: Record<CodexCategory, string> = {
+  Lore: "Recovered history, campaign notes, and recovered fragments.",
+  Faction: "Profiles on powers, banners, and institutions shaping Ardycia.",
+  Bestiary: "Threat sketches and field notes from confirmed encounters.",
+  Tech: "Terminal systems, relic machinery, and sanctioned speculation.",
+};
+
+function getEntriesForCategory(category: CodexCategory): CodexEntry[] {
+  return getUnlockedCodexEntries().filter((entry) => entry.category === category);
+}
+
+function getCategoryCounts(category: CodexCategory): { unlocked: number; total: number } {
+  return {
+    unlocked: getEntriesForCategory(category).length,
+    total: CODEX_DATABASE.filter((entry) => entry.category === category).length,
+  };
+}
+
+function ensureActiveEntry(): CodexEntry | null {
+  const categoryEntries = getEntriesForCategory(activeCategory);
+  if (!activeEntry || activeEntry.category !== activeCategory) {
+    activeEntry = categoryEntries[0] ?? null;
+  } else {
+    activeEntry = categoryEntries.find((entry) => entry.id === activeEntry?.id) ?? categoryEntries[0] ?? null;
+  }
+  return activeEntry;
+}
+
+function renderCategoryTabs(): string {
+  return (["Lore", "Faction", "Bestiary", "Tech"] as CodexCategory[])
+    .map((category) => {
+      const counts = getCategoryCounts(category);
+      return `
+        <button class="codex-tab ${activeCategory === category ? "codex-tab--active" : ""}" data-tab="${category}">
+          <span class="codex-tab__title">${category.toUpperCase()}</span>
+          <span class="codex-tab__meta">${counts.unlocked} / ${counts.total}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderEntryList(entries: CodexEntry[]): string {
+  if (entries.length === 0) {
+    return `
+      <div class="codex-empty-state codex-empty-state--sidebar">
+        <div class="codex-empty-state__title">NO VERIFIED FRAGMENTS</div>
+        <div class="codex-empty-state__text">
+          Recover reports, clear operations, and inspect new threats to populate this archive.
+        </div>
+      </div>
+    `;
+  }
+
+  return entries
+    .map(
+      (entry) => `
+        <button class="codex-entry-btn ${activeEntry?.id === entry.id ? "codex-entry-btn--active" : ""}" data-entry-id="${entry.id}">
+          <span class="codex-entry-btn__id">${entry.id.replace(/^.*?_/, "").toUpperCase()}</span>
+          <span class="codex-entry-btn__title">${entry.title}</span>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+function renderActiveEntry(entry: CodexEntry | null): string {
+  if (!entry) {
+    const counts = getCategoryCounts(activeCategory);
+    return `
+      <div class="codex-empty-state codex-empty-state--detail">
+        <div class="codex-empty-state__title">ARCHIVE STANDBY</div>
+        <div class="codex-empty-state__text">
+          ${counts.unlocked === 0
+            ? `No ${activeCategory.toLowerCase()} fragments are available yet. Keep pushing into new rooms and encounters.`
+            : "Select an unlocked fragment from the archive list to inspect it here."}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="codex-detail">
+      <div class="codex-detail__meta">
+        <span class="codex-detail__category">${entry.category.toUpperCase()}</span>
+        <span class="codex-detail__status">ACCESS LEVEL: VERIFIED</span>
+      </div>
+      <h2 class="codex-detail__title">${entry.title}</h2>
+      <div class="codex-detail__content">${entry.content}</div>
+    </div>
+  `;
+}
 
 export function renderCodexScreen(returnTo: BaseCampReturnTo | "menu" = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   returnDestination = returnTo;
-
-  // Get entries for the current category
-  const allUnlocked = getUnlockedCodexEntries();
-  const categoryEntries = allUnlocked.filter(e => e.category === activeCategory);
-
-  // Auto-select the first entry if none exists or active is not in current list
-  if (!activeEntry || activeEntry.category !== activeCategory) {
-    activeEntry = categoryEntries.length > 0 ? categoryEntries[0] : null;
-  }
-
-  // Count known vs unknown
-  const totalInCategory = CODEX_DATABASE.filter(e => e.category === activeCategory).length;
-  const unlockedInCategory = categoryEntries.length;
+  const entries = getEntriesForCategory(activeCategory);
+  ensureActiveEntry();
+  const activeCounts = getCategoryCounts(activeCategory);
+  const totalUnlocked = getUnlockedCodexEntries().length;
 
   root.innerHTML = `
-  < div class="ard-fullscreen ard-bg-dark ard-noise" style = "display: flex; flex-direction: column; height: 100vh;" >
-
-    <!--Top Bar-- >
-      <div class="ard-top-bar" >
-        <div class="ard-top-bar-title" style = "color: var(--ard-orange)" > S/COM_OS//CODEX.SYS</div>
+    <div class="codex-root town-screen ard-noise">
+      <div class="codex-panel town-screen__panel">
+        <div class="codex-header town-screen__header">
+          <div class="codex-header-left town-screen__titleblock">
+            <h1 class="codex-title">CODEX</h1>
+            <div class="codex-subtitle">S/COM_OS // FIELD_ARCHIVE</div>
           </div>
-
-          < !--Main Layout-- >
-            <div style="flex: 1; display: flex; gap: var(--ard-spacing-4); padding: var(--ard-spacing-4); max-height: calc(100vh - 48px); box-sizing: border-box;" >
-
-              <!--Left Sidebar: Categories & List-- >
-                <div class="ard-panel" style = "width: 320px; display: flex; flex-direction: column; overflow: hidden;" >
-                  <div class="ard-panel-header" > ARCHIVE QUERY </div>
-
-                    < div style = "display: flex; gap: 4px; padding: var(--ard-spacing-2); border-bottom: 1px solid var(--ard-border);" >
-                      ${["Lore", "Faction", "Bestiary", "Tech"].map((cat) => `
-              <button class="ard-btn-${activeCategory === cat ? 'primary' : 'secondary'}" data-tab="${cat}" style="flex: 1; padding: 4px; font-size: 10px;">
-                ${cat.toUpperCase()}
-              </button>
-            `).join('')
-    }
-</div>
-
-  < div style = "padding: var(--ard-spacing-2); font-size: 10px; color: var(--ard-text-muted); text-align: center; border-bottom: 1px solid var(--ard-border);" >
-    DECRYPTED: ${unlockedInCategory} / ${totalInCategory}
-      </div>
-
-      < div class="ard-scrollable" style = "flex: 1; padding: var(--ard-spacing-2); display: flex; flex-direction: column; gap: var(--ard-spacing-2);" >
-        ${categoryEntries.length === 0 ? `
-              <div style="text-align: center; color: var(--ard-text-muted); margin-top: 20px; font-style: italic;">
-                NO DATA FRAGMENTS FOUND
-              </div>
-            ` : categoryEntries.map(entry => `
-              <button class="codex-entry-btn ${activeEntry?.id === entry.id ? 'active' : ''}" data-entry-id="${entry.id}" style="
-                background: ${activeEntry?.id === entry.id ? 'var(--ard-bg-elevated)' : 'transparent'};
-                border: 1px solid ${activeEntry?.id === entry.id ? 'var(--ard-orange)' : 'var(--ard-border)'};
-                color: ${activeEntry?.id === entry.id ? 'var(--ard-orange)' : 'var(--ard-text)'};
-                padding: var(--ard-spacing-2);
-                text-align: left;
-                font-family: var(--ard-font-mono);
-                font-size: 12px;
-                cursor: pointer;
-                transition: all 0.2s;
-              ">
-                > ${entry.title.toUpperCase()}
-              </button>
-            `).join('')
-    }
-</div>
-  </div>
-
-  < !--Right Content: The Datastream-- >
-    <div class="ard-panel" style = "flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;" >
-      ${activeEntry ? `
-            <div class="ard-panel-header" style="color: var(--ard-orange); border-bottom: 2px solid var(--ard-orange);">
-              DATASTREAM OPENED: [${activeEntry.id}]
+          <div class="codex-header-right town-screen__header-right">
+            <div class="codex-stats">
+              <span class="codex-stats__label">UNLOCKED</span>
+              <span class="codex-stats__value">${totalUnlocked} / ${CODEX_DATABASE.length}</span>
             </div>
-            
-            <div class="ard-scrollable" style="flex: 1; padding: var(--ard-spacing-4);">
-              <h1 style="color: var(--ard-text-accent); margin-top: 0; font-family: var(--ard-font-display); letter-spacing: 1px;">
-                ${activeEntry.title}
-              </h1>
-              
-              <div style="
-                color: var(--ard-text-muted); 
-                font-size: 12px; 
-                margin-bottom: var(--ard-spacing-4);
-                border-bottom: 1px solid var(--ard-border);
-                padding-bottom: var(--ard-spacing-2);
-              ">
-                CLASS: ${activeEntry.category.toUpperCase()} | ENCRYPTION: KNOWLEDGE-TIER
-              </div>
-
-              <!-- Content parsed with simple linebreaks -->
-              <div style="
-                color: var(--ard-text); 
-                font-size: 14px; 
-                line-height: 1.6;
-                white-space: pre-wrap;
-              ">${activeEntry.content}</div>
-            </div>
-          ` : `
-            <div style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              height: 100%;
-              color: var(--ard-text-muted);
-              font-size: 18px;
-              opacity: 0.5;
-            ">
-              AWAITING DECRYPTION KEY...
-            </div>
-          `}
-
-<div class="ard-ghost-text" style = "bottom: 10px; right: 10px; font-size: 40px; opacity: 0.03;" > THE ARCHIVE </div>
-  </div>
-  </div>
-
-  < !--Action Bar-- >
-    <div class="ard-action-bar" >
-      <!--Optional debug button just for testing-- >
-        <button id= "codex-debug-unlock" class= "ard-btn-secondary" style = "margin-right: auto;" >
-          [DEV] UNLOCK ALL
+            <button class="codex-back-btn town-screen__back-btn" id="codexBackBtn">
+              <span class="btn-icon">←</span>
+              <span class="btn-text">${returnDestination === "menu" ? "MAIN MENU" : getBaseCampReturnLabel(returnDestination)}</span>
             </button>
+          </div>
+        </div>
 
-            < button id = "codex-btn-close" class="ard-btn-secondary" >
-              <span class="btn-icon" >×</span>
-          CLOSE SYSTEM
-  </button>
-  </div>
+        <div class="codex-hero town-screen__hero">
+          <div class="codex-hero__copy">
+            <div class="codex-hero__eyebrow">ARCHIVE FOCUS</div>
+            <div class="codex-hero__title">${activeCategory.toUpperCase()}</div>
+            <div class="codex-hero__text">${CODEX_CATEGORY_LABELS[activeCategory]}</div>
+          </div>
+          <div class="codex-hero__status">
+            <div class="codex-hero__status-label">FRAGMENTS VERIFIED</div>
+            <div class="codex-hero__status-value">${activeCounts.unlocked} / ${activeCounts.total}</div>
+          </div>
+        </div>
 
-  </div>
-    `;
+        <div class="codex-tabs town-screen__subnav">
+          ${renderCategoryTabs()}
+        </div>
+
+        <div class="codex-content">
+          <aside class="codex-sidebar town-screen__content-panel">
+            <div class="codex-sidebar__header">
+              <div class="codex-sidebar__title">ARCHIVE INDEX</div>
+              <div class="codex-sidebar__subtitle">Unlocked entries in ${activeCategory.toUpperCase()}</div>
+            </div>
+            <div class="codex-sidebar__list">
+              ${renderEntryList(entries)}
+            </div>
+          </aside>
+
+          <section class="codex-reader town-screen__content-panel">
+            <div class="codex-reader__header">
+              <div class="codex-reader__title">DATASTREAM</div>
+              <div class="codex-reader__subtitle">${activeEntry ? activeEntry.id.toUpperCase() : "NO ENTRY SELECTED"}</div>
+            </div>
+            <div class="codex-reader__body">
+              ${renderActiveEntry(activeEntry)}
+            </div>
+          </section>
+        </div>
+
+        <div class="codex-footer town-screen__footer">
+          <div class="codex-footer__hint">Recovered intelligence is permanent once verified.</div>
+          <button class="codex-debug-btn" id="codexDebugUnlockBtn">[DEV] UNLOCK ALL ENTRIES</button>
+        </div>
+      </div>
+    </div>
+  `;
 
   attachListeners();
 }
@@ -160,56 +195,43 @@ function attachListeners(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  // Category Tabs
-  const tabBtns = root.querySelectorAll("button[data-tab]");
-  tabBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      const cat = (btn as HTMLElement).dataset.tab as CodexCategory;
-      activeCategory = cat;
-      // Selecting a new category shouldn't keep the old entry active
+  root.querySelectorAll<HTMLButtonElement>("button[data-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeCategory = button.dataset.tab as CodexCategory;
       activeEntry = null;
       renderCodexScreen(returnDestination);
     });
   });
 
-  // Entry List
-  const entryBtns = root.querySelectorAll(".codex-entry-btn");
-  entryBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      const entryId = (btn as HTMLElement).dataset.entryId;
-      const allUnlocked = getUnlockedCodexEntries();
-      const entry = allUnlocked.find(e => e.id === entryId);
-      if (entry) {
-        activeEntry = entry;
-        renderCodexScreen(returnDestination);
-      }
+  root.querySelectorAll<HTMLButtonElement>("button[data-entry-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const entryId = button.dataset.entryId;
+      const entry = getUnlockedCodexEntries().find((candidate) => candidate.id === entryId) ?? null;
+      if (!entry) return;
+      activeEntry = entry;
+      renderCodexScreen(returnDestination);
     });
   });
 
-  // Dev Unlock
-  const debugUnlockBtn = root.querySelector("#codex-debug-unlock");
-  if (debugUnlockBtn) {
-    debugUnlockBtn.addEventListener("click", () => {
-      debugUnlockAllCodexEntries();
-      renderCodexScreen(returnDestination);
-    });
-  }
+  root.querySelector("#codexDebugUnlockBtn")?.addEventListener("click", () => {
+    debugUnlockAllCodexEntries();
+    renderCodexScreen(returnDestination);
+  });
 
-  // Close
-  const closeBtn = root.querySelector("#codex-btn-close");
-  if (closeBtn) {
-    closeBtn.addEventListener("click", () => {
-      unregisterBaseCampReturnHotkey("codex-screen");
-      if (returnDestination === "menu") {
-        renderMainMenu();
-      } else {
-        returnFromBaseCampScreen(returnDestination);
-      }
-    });
-  }
+  root.querySelector("#codexBackBtn")?.addEventListener("click", () => {
+    unregisterBaseCampReturnHotkey("codex-screen");
+    if (returnDestination === "menu") {
+      renderMainMenu();
+      return;
+    }
+    returnFromBaseCampScreen(returnDestination);
+  });
 
   if (returnDestination !== "menu") {
-    registerBaseCampReturnHotkey("codex-screen", returnDestination, { activeSelector: "#codex-btn-close" });
+    registerBaseCampReturnHotkey("codex-screen", returnDestination, {
+      activeSelector: ".codex-root",
+      allowFieldEKey: true,
+    });
   } else {
     unregisterBaseCampReturnHotkey("codex-screen");
   }

@@ -15,6 +15,8 @@ import { renderPortScreen } from "../ui/screens/PortScreen";
 import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
 import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
 import { renderStableScreen } from "../ui/screens/StableScreen";
+import { renderDispatchScreen } from "../ui/screens/DispatchScreen";
+import { showImportedDialogue } from "../ui/screens/DialogueScreen";
 
 /**
  * Handle interaction with a zone
@@ -64,6 +66,10 @@ export function handleInteraction(
 
     case "port":
       renderPortScreen("field");
+      break;
+
+    case "dispatch":
+      renderDispatchScreen("field");
       break;
 
     case "quarters":
@@ -145,6 +151,26 @@ export function handleInteraction(
       break;
 
     case "custom":
+      if (zone.metadata?.dialogueId) {
+        const resumeAfterDialogue = () => {
+          if (zone.metadata?.handlerId === "open_board") {
+            renderQuestBoardScreen("field");
+            return;
+          }
+          onResume();
+        };
+
+        const opened = showImportedDialogue(String(zone.metadata.dialogueId), resumeAfterDialogue, zone.label);
+        if (opened) {
+          break;
+        }
+      }
+
+      if (zone.metadata?.handlerId === "open_board") {
+        renderQuestBoardScreen("field");
+        break;
+      }
+
       // Custom interactions can be handled via metadata
       const quartersAction = zone.metadata?.quartersAction;
       if (quartersAction) {

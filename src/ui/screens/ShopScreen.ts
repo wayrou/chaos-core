@@ -580,6 +580,9 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
 }
 
 function purchasePAK(pakId: string, item: ShopItem): void {
+  const backBtn = document.getElementById("backBtn");
+  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
+
   // Open the PAK and get cards
   const cards = openPAK(pakId);
   
@@ -589,17 +592,11 @@ function purchasePAK(pakId: string, item: ShopItem): void {
     draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, cards);
     return draft;
   });
-  
-  // Show acquired cards
-  const cardNames = cards.map(id => {
-    const card = LIBRARY_CARD_DATABASE[id];
-    return card ? card.name : id;
-  });
-  
-  showPurchaseModal(item.name, cardNames, "Cards acquired:");
+
+  showPurchaseModal(item.name, cards, "Recovered card set:");
   
   // Re-render shop
-  renderShopScreen();
+  renderShopScreen(returnTo);
 }
 
 function purchaseEquipment(itemId: string, item: ShopItem): void {
@@ -763,23 +760,92 @@ function showNotification(message: string, type: "success" | "error" | "info"): 
   */
 }
 
-function showPurchaseModal(itemName: string, items: string[], subtitle: string): void {
+function getShopCardGlyph(category: string): string {
+  const icons: Record<string, string> = {
+    attack: "⚔",
+    defense: "🛡",
+    utility: "🔧",
+    mobility: "💨",
+    buff: "✨",
+    debuff: "💀",
+    steam: "♨",
+    chaos: "🌀",
+  };
+  return icons[category] ?? "📜";
+}
+
+function renderPAKRevealCard(cardId: string, index: number): string {
+  const card = LIBRARY_CARD_DATABASE[cardId];
+  if (!card) {
+    return `
+      <div class="shop-pak-reveal-card">
+        <div class="battle-cardui">
+          <div class="hs-card-cost">?</div>
+          <div class="hs-card-type">UNKNOWN</div>
+          <div class="hs-card-art">
+            <span class="hs-card-art-glyph">?</span>
+          </div>
+          <div class="hs-card-name-banner">
+            <div class="hs-card-name">${cardId}</div>
+          </div>
+          <div class="hs-card-desc">Recovered data block could not be identified.</div>
+          <div class="hs-card-footer">
+            <span class="hs-card-stat">DRAW ${index + 1}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="shop-pak-reveal-card library-card library-card--${card.rarity}">
+      <div class="battle-cardui">
+        <div class="hs-card-cost">${card.strainCost}</div>
+        <div class="hs-card-type">${card.category.toUpperCase()}</div>
+        <div class="hs-card-art">
+          <span class="hs-card-art-glyph">${getShopCardGlyph(card.category)}</span>
+        </div>
+        <div class="hs-card-name-banner">
+          <div class="hs-card-name">${card.name}</div>
+        </div>
+        <div class="hs-card-desc">${card.description}</div>
+        <div class="hs-card-footer">
+          <span class="hs-card-stat">${card.rarity.toUpperCase()}</span>
+          <span class="hs-card-stat">DRAW ${index + 1}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string): void {
   const modal = document.createElement("div");
   modal.className = "shop-modal";
   modal.innerHTML = `
-    <div class="shop-modal-content">
+    <div class="shop-modal-content shop-modal-content--pak">
       <div class="shop-modal-header">
         <span class="modal-icon">📦</span>
         <span class="modal-title">DECOMPRESSING ${itemName}...</span>
       </div>
       <div class="shop-modal-body">
-        <p class="modal-subtitle">${subtitle}</p>
-        <ul class="modal-items">
-          ${items.map(item => `<li class="modal-item">${item}</li>`).join('')}
-        </ul>
+        <div class="shop-pak-loader" id="shopPakLoader">
+          <div class="shop-pak-terminal">
+            <div class="shop-pak-terminal-header">S/COM_OS // ARCHIVE_DECOMPRESS</div>
+            <div class="shop-pak-log" id="shopPakLog"></div>
+            <div class="shop-pak-progress">
+              <div class="shop-pak-progress-bar" id="shopPakProgressBar"></div>
+            </div>
+          </div>
+        </div>
+        <div class="shop-pak-results" id="shopPakResults" hidden>
+          <p class="modal-subtitle">${subtitle}</p>
+          <div class="shop-pak-reveal-grid">
+            ${cardIds.map((cardId, index) => renderPAKRevealCard(cardId, index)).join("")}
+          </div>
+        </div>
       </div>
       <div class="shop-modal-footer">
-        <button class="modal-close-btn" id="closeModalBtn">CONFIRM</button>
+        <button class="modal-close-btn" id="closeModalBtn" disabled>CONFIRM</button>
       </div>
     </div>
   `;
@@ -788,18 +854,84 @@ function showPurchaseModal(itemName: string, items: string[], subtitle: string):
   
   // Animate in
   setTimeout(() => modal.classList.add("shop-modal--visible"), 10);
-  
-  // Close button
-  modal.querySelector("#closeModalBtn")?.addEventListener("click", () => {
+
+  const logEl = modal.querySelector<HTMLElement>("#shopPakLog");
+  const progressBar = modal.querySelector<HTMLElement>("#shopPakProgressBar");
+  const resultsEl = modal.querySelector<HTMLElement>("#shopPakResults");
+  const loaderEl = modal.querySelector<HTMLElement>("#shopPakLoader");
+  const closeBtn = modal.querySelector<HTMLButtonElement>("#closeModalBtn");
+  const titleEl = modal.querySelector<HTMLElement>(".modal-title");
+  const logLines = [
+    `S/COM> Mounting ${itemName} archive...`,
+    `S/COM> Verifying tactical signatures...`,
+    `S/COM> Inflating card payload blocks...`,
+    `S/COM> Syncing recovered data to library...`,
+  ];
+
+  let logIndex = 0;
+  let closed = false;
+  let revealTimer: number | null = null;
+  let logTimer: number | null = null;
+
+  const cleanupTimers = () => {
+    if (logTimer !== null) {
+      window.clearInterval(logTimer);
+    }
+    if (revealTimer !== null) {
+      window.clearTimeout(revealTimer);
+    }
+  };
+
+  const closeModal = () => {
+    closed = true;
+    cleanupTimers();
     modal.classList.remove("shop-modal--visible");
     setTimeout(() => modal.remove(), 300);
+  };
+
+  const revealCards = () => {
+    if (closed) return;
+    loaderEl?.setAttribute("hidden", "true");
+    resultsEl?.removeAttribute("hidden");
+    titleEl && (titleEl.textContent = `${itemName} DECOMPRESSED`);
+    if (closeBtn) {
+      closeBtn.disabled = false;
+    }
+  };
+
+  if (logEl && progressBar) {
+    logTimer = window.setInterval(() => {
+      if (closed) return;
+
+      if (logIndex >= logLines.length) {
+        cleanupTimers();
+        revealTimer = window.setTimeout(revealCards, 350);
+        return;
+      }
+
+      const line = document.createElement("div");
+      line.className = "shop-pak-log-line";
+      line.textContent = logLines[logIndex];
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+
+      const percent = ((logIndex + 1) / logLines.length) * 100;
+      progressBar.style.width = `${percent}%`;
+      logIndex += 1;
+    }, 260);
+  } else {
+    revealCards();
+  }
+
+  closeBtn?.addEventListener("click", () => {
+    if (!closeBtn.disabled) {
+      closeModal();
+    }
   });
-  
-  // Click outside to close
+
   modal.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      modal.classList.remove("shop-modal--visible");
-      setTimeout(() => modal.remove(), 300);
+    if (e.target === modal && closeBtn && !closeBtn.disabled) {
+      closeModal();
     }
   });
 }

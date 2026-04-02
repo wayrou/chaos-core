@@ -14,10 +14,8 @@ import {
   UnitAffinities,
   GUILD_ROSTER_LIMITS,
 } from "./types";
-import { ClassId, CLASS_DEFINITIONS, getClassDefinition } from "./classes";
+import { ClassId, getClassDefinition } from "./classes";
 import { createDefaultAffinities } from "./affinity";
-import { calculatePWR } from "./pwr";
-import { getAllStarterEquipment } from "./equipment";
 
 // ============================================================================
 // TYPES
@@ -182,8 +180,8 @@ function estimatePWRFromArchetype(
  * Generate candidate name
  */
 function generateCandidateName(baseClass: ClassId, index: number): string {
-  const namePrefixes: Record<ClassId, string[]> = {
-    squire: ["Aeriss", "Kael", "Thorne", "Valen", "Darius"],
+  const namePrefixes: Partial<Record<ClassId, string[]>> = {
+    squire: ["Kael", "Thorne", "Valen", "Darius", "Maren"],
     ranger: ["Mira", "Silas", "Raven", "Arrow", "Hawke"],
     magician: ["Lyra", "Zephyr", "Nyx", "Cinder", "Vex"],
     thief: ["Shadow", "Rook", "Whisper", "Blade", "Shade"],
@@ -223,7 +221,7 @@ function generateTraits(archetype: CandidateArchetype, baseClass: ClassId): stri
   traits.push(archetype);
 
   // Class-based trait
-  const classTraits: Record<ClassId, string[]> = {
+  const classTraits: Partial<Record<ClassId, string[]>> = {
     squire: ["Frontline", "Reliable"],
     ranger: ["Marksman", "Mobile"],
     magician: ["Caster", "Chaos"],
@@ -351,5 +349,3 @@ export function getRosterSize(state: any): number {
 export function isRosterFull(state: any): boolean {
   return getRosterSize(state) >= GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS;
 }
-
-
