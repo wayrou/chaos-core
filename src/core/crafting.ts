@@ -6,8 +6,7 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
+import { isTechnicaContentDisabled } from "../content/technica";
 
 export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents";
 
@@ -323,14 +322,16 @@ export const RECIPE_DATABASE: Record<string, Recipe> = {
 export function getKnownRecipes(knownRecipeIds: string[]): Recipe[] {
   return knownRecipeIds
     .map(id => RECIPE_DATABASE[id])
-    .filter((r): r is Recipe => r !== undefined);
+    .filter((r): r is Recipe => r !== undefined && !isTechnicaContentDisabled("item", r.resultItemId));
 }
 
 /**
  * Get all starter recipes (known by default)
  */
 export function getStarterRecipes(): Recipe[] {
-  return Object.values(RECIPE_DATABASE).filter(r => r.starterRecipe);
+  return Object.values(RECIPE_DATABASE).filter(
+    r => r.starterRecipe && !isTechnicaContentDisabled("item", r.resultItemId)
+  );
 }
 
 /**

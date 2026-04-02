@@ -3,7 +3,11 @@
 // ============================================================================
 
 import { Quest, QuestId } from "./types";
-import { getAllImportedQuests, getImportedQuest } from "../content/technica";
+import {
+  getAllImportedQuests,
+  getImportedQuest,
+  isTechnicaContentDisabled,
+} from "../content/technica";
 
 /**
  * Quest database - all available quest definitions
@@ -180,14 +184,21 @@ export const QUEST_DATABASE: Record<string, Quest> = {
  * Get all available quests (not yet accepted)
  */
 export function getAvailableQuests(): Quest[] {
-  return [...Object.values(QUEST_DATABASE), ...getAllImportedQuests()].filter(q => q.status === "available");
+  return [
+    ...Object.values(QUEST_DATABASE).filter((quest) => !isTechnicaContentDisabled("quest", quest.id)),
+    ...getAllImportedQuests(),
+  ].filter(q => q.status === "available");
 }
 
 /**
  * Get quest by ID
  */
 export function getQuestById(questId: QuestId): Quest | null {
-  return QUEST_DATABASE[questId] || getImportedQuest(questId) || null;
+  return (
+    getImportedQuest(questId) ||
+    (isTechnicaContentDisabled("quest", questId) ? null : QUEST_DATABASE[questId]) ||
+    null
+  );
 }
 
 /**
@@ -204,4 +215,3 @@ export function cloneQuest(quest: Quest): Quest {
     })),
   };
 }
-

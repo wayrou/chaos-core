@@ -3,10 +3,20 @@
 // Headline 11b & 11c: Equipment, Cards, Modules, Deck Building
 // ============================================================================
 
+<<<<<<< HEAD
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
 import { getAllImportedBattleCards, getAllImportedGear, getImportedClassDefinition } from "../content/technica";
+=======
+import {
+  getAllImportedCards,
+  getAllImportedGear,
+  getImportedClass,
+  isTechnicaContentDisabled,
+} from "../content/technica";
+import type { ImportedCard, ImportedGear } from "../content/technica/types";
+>>>>>>> 3307f1b (technica compat)
 
 // ----------------------------------------------------------------------------
 // ENUMS & CONSTANTS
@@ -21,7 +31,14 @@ export type WeaponType =
   | "gun"
   | "staff"
   | "greatstaff"
-  | "dagger";
+  | "dagger"
+  | "knife"
+  | "fist"
+  | "rod"
+  | "katana"
+  | "shuriken"
+  | "spear"
+  | "instrument";
 
 export type ArmorSlot = "helmet" | "chestpiece";
 export type EquipSlot = "weapon" | "helmet" | "chestpiece" | "accessory1" | "accessory2";
@@ -46,7 +63,11 @@ export type BuiltInUnitClass =
   | "academic"
   | "freelancer";
 
+<<<<<<< HEAD
 export type UnitClass = BuiltInUnitClass | (string & {});
+=======
+export type UnitClass = BuiltInUnitClass | string;
+>>>>>>> 3307f1b (technica compat)
 
 export type EquipmentCardType = "core" | "class" | "equipment" | "gambit";
 
@@ -110,7 +131,11 @@ export interface EquipmentCard {
   damage?: number;
   effects?: string[];
   sourceEquipmentId?: string;
+<<<<<<< HEAD
   sourceClassId?: string;
+=======
+  artPath?: string;
+>>>>>>> 3307f1b (technica compat)
 }
 
 // ----------------------------------------------------------------------------
@@ -153,6 +178,7 @@ export interface HeatZone {
 export interface WeaponEquipment {
   id: string;
   name: string;
+  description?: string;
   slot: "weapon";
   weaponType: WeaponType;
   isMechanical: boolean;
@@ -169,6 +195,14 @@ export interface WeaponEquipment {
   clutchToggle?: string;
   doubleClutch?: string;
   wear: number;
+  inventory?: {
+    massKg: number;
+    bulkBu: number;
+    powerW: number;
+    startingOwned?: boolean;
+  };
+  iconPath?: string;
+  metadata?: Record<string, unknown>;
 
   // Gear Builder metadata (v1)
   chassisId?: string;
@@ -180,9 +214,18 @@ export interface WeaponEquipment {
 export interface ArmorEquipment {
   id: string;
   name: string;
+  description?: string;
   slot: "helmet" | "chestpiece";
   stats: EquipmentStats;
   cardsGranted: string[];
+  inventory?: {
+    massKg: number;
+    bulkBu: number;
+    powerW: number;
+    startingOwned?: boolean;
+  };
+  iconPath?: string;
+  metadata?: Record<string, unknown>;
 
   // Gear Builder metadata (v1)
   chassisId?: string;
@@ -194,9 +237,18 @@ export interface ArmorEquipment {
 export interface AccessoryEquipment {
   id: string;
   name: string;
+  description?: string;
   slot: "accessory";
   stats: EquipmentStats;
   cardsGranted: string[];
+  inventory?: {
+    massKg: number;
+    bulkBu: number;
+    powerW: number;
+    startingOwned?: boolean;
+  };
+  iconPath?: string;
+  metadata?: Record<string, unknown>;
 
   // Gear Builder metadata (v1)
   chassisId?: string;
@@ -244,6 +296,7 @@ import { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 // ----------------------------------------------------------------------------
 
 export function canEquipWeapon(unitClass: UnitClass, weaponType: WeaponType): boolean {
+<<<<<<< HEAD
   const importedClass = getImportedClassDefinition(unitClass);
   if (importedClass) {
     return importedClass.weaponTypes.includes(weaponType);
@@ -251,15 +304,84 @@ export function canEquipWeapon(unitClass: UnitClass, weaponType: WeaponType): bo
 
   const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass as BuiltInUnitClass] || [];
   return allowed.includes(weaponType);
+=======
+  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+  if (allowed) {
+    return allowed.includes(weaponType);
+  }
+
+  const importedClass = getImportedClass(unitClass);
+  return importedClass?.weaponTypes.includes(weaponType) ?? false;
+}
+
+function toEquipmentCardRange(range: number | undefined): string | undefined {
+  if (range === undefined) {
+    return undefined;
+  }
+
+  return range <= 0 ? "R(Self)" : `R(${range})`;
+}
+
+function toImportedEquipmentCard(card: ImportedCard): EquipmentCard {
+  return {
+    id: card.id,
+    name: card.name,
+    type: card.type,
+    strainCost: card.strainCost,
+    description: card.description,
+    range: toEquipmentCardRange(card.range),
+    damage: card.damage,
+    effects: card.effects.map((effect) => effect.type),
+    sourceEquipmentId: card.sourceEquipmentId,
+    artPath: card.artPath
+  };
+}
+
+function toRuntimeEquipment(gear: ImportedGear): Equipment {
+  if (gear.slot === "weapon") {
+    return {
+      ...gear,
+      slot: "weapon",
+      weaponType: gear.weaponType ?? "sword",
+      isMechanical: gear.isMechanical ?? false,
+      moduleSlots: gear.moduleSlots ?? 0,
+      attachedModules: gear.attachedModules ?? [],
+      wear: gear.wear ?? 0
+    };
+  }
+
+  return {
+    ...gear,
+    slot: gear.slot
+  } as ArmorEquipment | AccessoryEquipment;
+>>>>>>> 3307f1b (technica compat)
 }
 
 export function getAllStarterEquipment(): Record<string, Equipment> {
   const all: Record<string, Equipment> = {};
+<<<<<<< HEAD
   for (const w of STARTER_WEAPONS) all[w.id] = w;
   for (const h of STARTER_HELMETS) all[h.id] = h;
   for (const c of STARTER_CHESTPIECES) all[c.id] = c;
   for (const a of STARTER_ACCESSORIES) all[a.id] = a;
   for (const imported of getAllImportedGear()) all[imported.id] = imported;
+=======
+  for (const w of STARTER_WEAPONS) {
+    if (!isTechnicaContentDisabled("gear", w.id)) all[w.id] = w;
+  }
+  for (const h of STARTER_HELMETS) {
+    if (!isTechnicaContentDisabled("gear", h.id)) all[h.id] = h;
+  }
+  for (const c of STARTER_CHESTPIECES) {
+    if (!isTechnicaContentDisabled("gear", c.id)) all[c.id] = c;
+  }
+  for (const a of STARTER_ACCESSORIES) {
+    if (!isTechnicaContentDisabled("gear", a.id)) all[a.id] = a;
+  }
+  for (const gear of getAllImportedGear()) {
+    all[gear.id] = toRuntimeEquipment(gear);
+  }
+>>>>>>> 3307f1b (technica compat)
   return all;
 }
 
@@ -290,11 +412,30 @@ function toImportedEquipmentCard(card: ReturnType<typeof getAllImportedBattleCar
 
 export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   const all: Record<string, EquipmentCard> = {};
+<<<<<<< HEAD
   for (const c of CORE_CARDS) all[c.id] = c;
   for (const c of EQUIPMENT_CARDS) all[c.id] = c;
   for (const c of MODULE_CARDS) all[c.id] = c;
   for (const unitClass of Object.keys(CLASS_CARDS) as BuiltInUnitClass[]) {
     for (const c of CLASS_CARDS[unitClass]) all[c.id] = c;
+=======
+  for (const c of CORE_CARDS) {
+    if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
+  }
+  for (const c of EQUIPMENT_CARDS) {
+    if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
+  }
+  for (const c of MODULE_CARDS) {
+    if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
+  }
+  for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
+    for (const c of CLASS_CARDS[unitClass]) {
+      if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
+    }
+  }
+  for (const card of getAllImportedCards()) {
+    all[card.id] = toImportedEquipmentCard(card);
+>>>>>>> 3307f1b (technica compat)
   }
   for (const imported of getAllImportedBattleCards()) {
     all[imported.id] = toImportedEquipmentCard(imported);
@@ -327,6 +468,7 @@ export function buildDeckFromLoadout(
 
   // 1. Add core cards (always available)
   for (const card of CORE_CARDS) {
+    if (isTechnicaContentDisabled("card", card.id)) continue;
     deck.push(card.id);
     deck.push(card.id); // Add 2 copies of each core card
   }
@@ -334,6 +476,7 @@ export function buildDeckFromLoadout(
   // 2. Add class cards
   const classCards = getClassCardsForUnitClass(unitClass);
   for (const card of classCards) {
+    if (isTechnicaContentDisabled("card", card.id)) continue;
     deck.push(card.id);
   }
 
@@ -355,6 +498,7 @@ export function buildDeckFromLoadout(
     if (!equip) continue;
 
     for (const cardId of equip.cardsGranted) {
+      if (isTechnicaContentDisabled("card", cardId)) continue;
       deck.push(cardId);
     }
 
@@ -364,6 +508,7 @@ export function buildDeckFromLoadout(
         const mod = modulesById[modId];
         if (mod) {
           for (const cardId of mod.cardsGranted) {
+            if (isTechnicaContentDisabled("card", cardId)) continue;
             deck.push(cardId);
           }
         }

@@ -64,6 +64,14 @@ export interface FieldNpc {
   path?: { x: number; y: number }[]; // Patrol path
   currentPathIndex?: number;
   dialogueId?: string;
+  routeMode?: "fixed" | "random" | "none";
+  routePoints?: { id?: string; x: number; y: number }[];
+  routePointIndex?: number;
+  spawnMapId?: string;
+  portraitKey?: string;
+  spriteKey?: string;
+  portraitPath?: string;
+  spritePath?: string;
   stateStartTime: number; // When current state (idle/walk) started
   stateDuration: number; // How long to stay in current state
 }

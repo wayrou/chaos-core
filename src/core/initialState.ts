@@ -5,13 +5,8 @@
 import { getStarterRecipeIds } from "./crafting";
 import { getImportedRosterUnits, getImportedStarterItems } from "../content/technica";
 
-import { GameState } from "./types";
-import { getSettings } from "./settings";
-
 import {
   getStarterCardLibrary,
-  getDefaultGearSlots,
-  GearSlotData
 } from "./gearWorkbench";
 
 import {
@@ -24,10 +19,7 @@ import {
   PlayerProfile,
   RoomNode,
   Unit,
-  UnitClassId,
   UnitId,
-  InventoryState,
-  MuleWeightClass,
 } from "./types";
 
 import {
@@ -40,6 +32,13 @@ import {
   getAllEquipmentCards,
   EquipmentCard,
 } from "./equipment";
+import {
+  getAllImportedOperations,
+  getAllImportedUnits,
+  getImportedOperation,
+  isTechnicaContentDisabled,
+} from "../content/technica";
+import type { ImportedOperationDefinition, ImportedUnitTemplate } from "../content/technica/types";
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
 
@@ -227,8 +226,67 @@ function createAllCards(): Record<CardId, Card> {
  * Extended Unit type with equipment loadout
  */
 interface UnitWithEquipment extends Unit {
+  classId?: UnitClass;
   unitClass: UnitClass;
   loadout: UnitLoadout;
+  deck?: CardId[];
+  description?: string;
+  recruitCost?: number;
+  startingInRoster?: boolean;
+  deployInParty?: boolean;
+  stats?: {
+    maxHp: number;
+    atk: number;
+    def: number;
+    agi: number;
+    acc: number;
+  };
+  traits?: string[];
+}
+
+function importedUnitToRuntimeUnit(unit: ImportedUnitTemplate): UnitWithEquipment | null {
+  if (unit.startingInRoster === false && !unit.deployInParty) {
+    return null;
+  }
+
+  return {
+    id: unit.id,
+    name: unit.name,
+    isEnemy: false,
+    hp: unit.stats.maxHp,
+    maxHp: unit.stats.maxHp,
+    agi: unit.stats.agi,
+    pos: null,
+    hand: [],
+    drawPile: [],
+    discardPile: [],
+    strain: 0,
+    description: unit.description,
+    classId: unit.currentClassId,
+    unitClass: unit.currentClassId,
+    stats: {
+      maxHp: unit.stats.maxHp,
+      atk: unit.stats.atk,
+      def: unit.stats.def,
+      agi: unit.stats.agi,
+      acc: unit.stats.acc,
+    },
+    deck: [],
+    loadout: {
+      primaryWeapon: unit.loadout.primaryWeapon || null,
+      secondaryWeapon: unit.loadout.secondaryWeapon || null,
+      helmet: unit.loadout.helmet || null,
+      chestpiece: unit.loadout.chestpiece || null,
+      accessory1: unit.loadout.accessory1 || null,
+      accessory2: unit.loadout.accessory2 || null,
+    },
+    affinities: createDefaultAffinities(),
+    pwr: unit.pwr,
+    recruitCost: unit.recruitCost,
+    startingInRoster: unit.startingInRoster ?? true,
+    deployInParty: unit.deployInParty ?? false,
+    traits: [...(unit.traits ?? [])],
+  } as UnitWithEquipment;
 }
 
 function createImportedUnit(template: ReturnType<typeof getImportedRosterUnits>[number]): UnitWithEquipment {
@@ -282,10 +340,19 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   const modulesById = getAllModules();
 
   const units: UnitWithEquipment[] = [
-    {
+    ...(isTechnicaContentDisabled("unit", "unit_aeriss") ? [] : [{
       id: "unit_aeriss",
       name: "Aeriss",
-      classId: "vanguard" as UnitClassId,
+      isEnemy: false,
+      hp: 9,
+      maxHp: 9,
+      agi: 3,
+      pos: null,
+      hand: [],
+      drawPile: [],
+      discardPile: [],
+      strain: 0,
+      classId: "vanguard",
       unitClass: "squire",
       stats: {
         maxHp: 9,
@@ -296,18 +363,30 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       },
       deck: baseDeck,
       loadout: {
-        weapon: "weapon_emberclaw_repeater", // Mechanical weapon for testing
+        primaryWeapon: "weapon_emberclaw_repeater", // Mechanical weapon for testing
+        secondaryWeapon: null,
         helmet: "armor_ironguard_helm",
         chestpiece: "armor_steelplate_cuirass",
         accessory1: "accessory_steel_signet_ring",
         accessory2: null,
       },
       affinities: createDefaultAffinities(),
-    },
-    {
+      startingInRoster: true,
+      deployInParty: true,
+    }]),
+    ...(isTechnicaContentDisabled("unit", "unit_marksman_1") ? [] : [{
       id: "unit_marksman_1",
       name: "Mistguard Marksman",
-      classId: "marksman" as UnitClassId,
+      isEnemy: false,
+      hp: 13,
+      maxHp: 13,
+      agi: 3,
+      pos: null,
+      hand: [],
+      drawPile: [],
+      discardPile: [],
+      strain: 0,
+      classId: "marksman",
       unitClass: "ranger",
       stats: {
         maxHp: 13,
@@ -318,18 +397,30 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       },
       deck: baseDeck,
       loadout: {
-        weapon: "weapon_elm_recurve_bow",
+        primaryWeapon: "weapon_elm_recurve_bow",
+        secondaryWeapon: null,
         helmet: "armor_rangers_hood",
         chestpiece: "armor_leather_jerkin",
         accessory1: "accessory_eagle_eye_lens",
         accessory2: null,
       },
       affinities: createDefaultAffinities(),
-    },
-    {
+      startingInRoster: true,
+      deployInParty: true,
+    }]),
+    ...(isTechnicaContentDisabled("unit", "unit_mage_1") ? [] : [{
       id: "unit_mage_1",
       name: "Field Mage",
-      classId: "caster" as UnitClassId,
+      isEnemy: false,
+      hp: 10,
+      maxHp: 10,
+      agi: 2,
+      pos: null,
+      hand: [],
+      drawPile: [],
+      discardPile: [],
+      strain: 0,
+      classId: "caster",
       unitClass: "magician",
       stats: {
         maxHp: 10,
@@ -340,27 +431,47 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       },
       deck: baseDeck,
       loadout: {
-        weapon: "weapon_oak_battlestaff",
+        primaryWeapon: "weapon_oak_battlestaff",
+        secondaryWeapon: null,
         helmet: "armor_mystic_circlet",
         chestpiece: "armor_mages_robe",
         accessory1: "accessory_vitality_charm",
         accessory2: null,
       },
       affinities: createDefaultAffinities(),
-    },
+      startingInRoster: true,
+      deployInParty: true,
+    }]),
   ];
 
+<<<<<<< HEAD
   getImportedRosterUnits().forEach((template) => {
     units.push(createImportedUnit(template));
+=======
+  getAllImportedUnits().forEach((unit) => {
+    const runtimeUnit = importedUnitToRuntimeUnit(unit);
+    if (!runtimeUnit) {
+      return;
+    }
+
+    const existingIndex = units.findIndex((candidate) => candidate.id === runtimeUnit.id);
+    if (existingIndex >= 0) {
+      units[existingIndex] = runtimeUnit;
+    } else {
+      units.push(runtimeUnit);
+    }
+>>>>>>> 3307f1b (technica compat)
   });
 
   // Calculate PWR for each unit
   const unitsWithPWR = units.map((u) => {
-    const pwr = calculatePWR({
-      unit: u,
-      equipmentById,
-      modulesById,
-    });
+    const pwr = typeof u.pwr === "number"
+      ? u.pwr
+      : calculatePWR({
+          unit: u,
+          equipmentById,
+          modulesById,
+        });
     return { ...u, pwr, controller: "P1" as const }; // Default all units to P1
   });
 
@@ -370,7 +481,43 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   >;
 }
 
+function importedOperationToRuntimeOperation(operation: ImportedOperationDefinition): OperationRun {
+  return {
+    id: operation.id,
+    codename: operation.codename,
+    description: operation.description,
+    currentFloorIndex: 0,
+    currentRoomId: operation.floors[0]?.startingRoomId ?? operation.floors[0]?.rooms[0]?.id ?? null,
+    floors: operation.floors.map((floor) => ({
+      id: floor.id,
+      name: floor.name,
+      nodes: floor.rooms.map((room) => ({
+        id: room.id,
+        type: room.type,
+        label: room.label,
+        position: { x: room.position.x, y: room.position.y },
+        connections: [...(room.connections ?? [])],
+        battleTemplate: room.battleTemplate,
+        eventTemplate: room.eventTemplate,
+        shopInventory: [...(room.shopInventory ?? [])],
+      })),
+    })),
+  };
+}
+
 function createOperationIronGate(): OperationRun {
+  const importedOperation = getImportedOperation("op_iron_gate");
+  if (importedOperation) {
+    return importedOperationToRuntimeOperation(importedOperation);
+  }
+
+  if (isTechnicaContentDisabled("operation", "op_iron_gate")) {
+    const firstImportedOperation = getAllImportedOperations()[0];
+    if (firstImportedOperation) {
+      return importedOperationToRuntimeOperation(firstImportedOperation);
+    }
+  }
+
   const nodes: RoomNode[] = [
     {
       id: "room_start",
@@ -429,20 +576,6 @@ function createDefaultProfile(rosterUnitIds: UnitId[]): PlayerProfile {
   };
 }
 
-function createInitialInventory(): InventoryState {
-  const muleClass: MuleWeightClass = "E";
-  const caps = MULE_CLASS_CAPS[muleClass];
-
-  return {
-    muleClass,
-    capacityMassKg: caps.massKg,
-    capacityBulkBu: caps.bulkBu,
-    capacityPowerW: caps.powerW,
-    forwardLocker: [],
-    baseStorage: [],
-  };
-}
-
 /**
  * Create the equipment pool (all available equipment IDs)
  */
@@ -466,7 +599,9 @@ export function createNewGameState(): GameStateWithEquipment {
   const cardsById = createAllCards();
   const unitsById = createStarterUnits();
 
-  const rosterUnitIds = Object.keys(unitsById);
+  const rosterUnitIds = Object.values(unitsById)
+    .filter((unit) => (unit as UnitWithEquipment).startingInRoster !== false)
+    .map((unit) => unit.id);
   const profile = createDefaultProfile(rosterUnitIds);
   const operation = createOperationIronGate();
   const importedStarterItems = getImportedStarterItems().map((item) => ({ ...item }));
@@ -486,6 +621,7 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
+<<<<<<< HEAD
     partyUnitIds: [
       "unit_aeriss",
       "unit_marksman_1",
@@ -494,6 +630,11 @@ export function createNewGameState(): GameStateWithEquipment {
         .filter((entry) => entry.deployInParty)
         .map((entry) => entry.id),
     ],
+=======
+    partyUnitIds: Object.values(unitsById)
+      .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
+      .map((unit) => unit.id),
+>>>>>>> 3307f1b (technica compat)
 
     wad: 0,
     resources: {
@@ -504,7 +645,11 @@ export function createNewGameState(): GameStateWithEquipment {
     },
 
     // Starter card library
-    cardLibrary: getStarterCardLibrary(),
+    cardLibrary: Object.fromEntries(
+      Object.entries(getStarterCardLibrary()).filter(
+        ([cardId]) => !isTechnicaContentDisabled("card", cardId)
+      )
+    ),
 
     // Gear slots - will be populated as equipment is acquired
     gearSlots: {},

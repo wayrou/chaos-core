@@ -1,29 +1,56 @@
 import type { FieldMap } from "../../field/types";
+import { updateGameState } from "../../state/gameStore";
 import type { Quest } from "../../quests/types";
+<<<<<<< HEAD
 import { hasGameState, updateGameState } from "../../state/gameStore";
 import {
   registerImportedBattleCard,
   registerImportedClassDefinition,
+=======
+import {
+  registerImportedCard,
+  registerImportedClass,
+>>>>>>> 3307f1b (technica compat)
   registerImportedDialogue,
   registerImportedFieldMap,
   registerImportedGear,
   registerImportedItem,
+<<<<<<< HEAD
   registerImportedOperation,
   registerImportedQuest,
   registerImportedUnitTemplate
 } from "./index";
 import type {
   ImportedBattleCard,
+=======
+  registerImportedNpc,
+  registerImportedOperation,
+  registerImportedQuest,
+  registerImportedUnit,
+} from "./index";
+import type {
+  ImportedCard,
+>>>>>>> 3307f1b (technica compat)
   ImportedClassDefinition,
   ImportedDialogue,
   ImportedGear,
   ImportedItem,
+<<<<<<< HEAD
   ImportedOperation,
   ImportedUnitTemplate
 } from "./types";
 
 export interface TechnicaManifestDependency {
   contentType: "map" | "quest" | "dialogue" | "gear" | "item" | "card" | "unit" | "operation" | "class" | "scene";
+=======
+  ImportedNpcTemplate,
+  ImportedOperationDefinition,
+  ImportedUnitTemplate,
+} from "./types";
+
+export interface TechnicaManifestDependency {
+  contentType: "map" | "quest" | "dialogue" | "npc" | "item" | "gear" | "card" | "unit" | "operation" | "class" | "scene";
+>>>>>>> 3307f1b (technica compat)
   id: string;
   relation: string;
 }
@@ -32,8 +59,13 @@ export interface TechnicaManifest {
   schemaVersion: string;
   sourceApp: "Technica";
   sourceAppVersion?: string;
+<<<<<<< HEAD
   exportType: "map" | "quest" | "dialogue" | "gear" | "item" | "card" | "unit" | "operation" | "class";
   contentType: "map" | "quest" | "dialogue" | "gear" | "item" | "card" | "unit" | "operation" | "class";
+=======
+  exportType: "map" | "quest" | "dialogue" | "npc" | "item" | "gear" | "card" | "unit" | "operation" | "class";
+  contentType: "map" | "quest" | "dialogue" | "npc" | "item" | "gear" | "card" | "unit" | "operation" | "class";
+>>>>>>> 3307f1b (technica compat)
   targetGame: string;
   targetSchemaVersion: string;
   exportedAt: string;
@@ -43,6 +75,11 @@ export interface TechnicaManifest {
   entryFile: string;
   dependencies: TechnicaManifestDependency[];
   files: string[];
+}
+
+export interface ImportTechnicaOptions {
+  resolveAssetPath?: (relativePath: string) => string;
+  syncToGameState?: boolean;
 }
 
 function isFieldMap(value: unknown): value is FieldMap {
@@ -77,6 +114,7 @@ function isDialogue(value: unknown): value is ImportedDialogue {
   );
 }
 
+<<<<<<< HEAD
 function isGear(value: unknown): value is ImportedGear {
   return Boolean(
     value &&
@@ -88,6 +126,8 @@ function isGear(value: unknown): value is ImportedGear {
   );
 }
 
+=======
+>>>>>>> 3307f1b (technica compat)
 function isItem(value: unknown): value is ImportedItem {
   return Boolean(
     value &&
@@ -99,11 +139,16 @@ function isItem(value: unknown): value is ImportedItem {
   );
 }
 
+<<<<<<< HEAD
 function isCard(value: unknown): value is ImportedBattleCard {
+=======
+function isNpcTemplate(value: unknown): value is ImportedNpcTemplate {
+>>>>>>> 3307f1b (technica compat)
   return Boolean(
     value &&
       typeof value === "object" &&
       "id" in value &&
+<<<<<<< HEAD
       "targetType" in value &&
       "effects" in value &&
       "rarity" in value
@@ -111,6 +156,48 @@ function isCard(value: unknown): value is ImportedBattleCard {
 }
 
 function isUnit(value: unknown): value is ImportedUnitTemplate {
+=======
+      "name" in value &&
+      "mapId" in value &&
+      "routeMode" in value
+  );
+}
+
+function isGear(value: unknown): value is ImportedGear {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "slot" in value &&
+      "stats" in value &&
+      "cardsGranted" in value
+  );
+}
+
+function isCard(value: unknown): value is ImportedCard {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "type" in value &&
+      "effects" in value &&
+      "targetType" in value
+  );
+}
+
+function isClassDefinition(value: unknown): value is ImportedClassDefinition {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "tier" in value &&
+      "baseStats" in value &&
+      "unlockConditions" in value
+  );
+}
+
+function isUnitTemplate(value: unknown): value is ImportedUnitTemplate {
+>>>>>>> 3307f1b (technica compat)
   return Boolean(
     value &&
       typeof value === "object" &&
@@ -121,16 +208,25 @@ function isUnit(value: unknown): value is ImportedUnitTemplate {
   );
 }
 
+<<<<<<< HEAD
 function isOperation(value: unknown): value is ImportedOperation {
+=======
+function isOperationDefinition(value: unknown): value is ImportedOperationDefinition {
+>>>>>>> 3307f1b (technica compat)
   return Boolean(
     value &&
       typeof value === "object" &&
       "id" in value &&
       "codename" in value &&
+<<<<<<< HEAD
+=======
+      "description" in value &&
+>>>>>>> 3307f1b (technica compat)
       "floors" in value
   );
 }
 
+<<<<<<< HEAD
 function isClassDefinition(value: unknown): value is ImportedClassDefinition {
   return Boolean(
     value &&
@@ -140,6 +236,170 @@ function isClassDefinition(value: unknown): value is ImportedClassDefinition {
       "weaponTypes" in value &&
       "unlockConditions" in value
   );
+=======
+function resolveAssetPath(path: string | undefined, options?: ImportTechnicaOptions): string | undefined {
+  if (!path) {
+    return undefined;
+  }
+
+  if (!options?.resolveAssetPath) {
+    return path;
+  }
+
+  return options.resolveAssetPath(path);
+}
+
+function withResolvedItemAssets(item: ImportedItem, options?: ImportTechnicaOptions): ImportedItem {
+  return {
+    ...item,
+    iconPath: resolveAssetPath(item.iconPath, options)
+  };
+}
+
+function withResolvedGearAssets(gear: ImportedGear, options?: ImportTechnicaOptions): ImportedGear {
+  return {
+    ...gear,
+    iconPath: resolveAssetPath(gear.iconPath, options)
+  };
+}
+
+function withResolvedCardAssets(card: ImportedCard, options?: ImportTechnicaOptions): ImportedCard {
+  return {
+    ...card,
+    artPath: resolveAssetPath(card.artPath, options)
+  };
+}
+
+function withResolvedNpcAssets(npc: ImportedNpcTemplate, options?: ImportTechnicaOptions): ImportedNpcTemplate {
+  return {
+    ...npc,
+    portraitPath: resolveAssetPath(npc.portraitPath, options),
+    spritePath: resolveAssetPath(npc.spritePath, options)
+  };
+}
+
+function syncImportedItemToGameState(item: ImportedItem): void {
+  updateGameState((prev) => {
+    const baseStorage = [...(prev.inventory?.baseStorage ?? [])];
+    const existingIndex = baseStorage.findIndex((entry) => entry.id === item.id);
+
+    if (existingIndex >= 0) {
+      baseStorage[existingIndex] = {
+        ...baseStorage[existingIndex],
+        ...item
+      };
+    } else {
+      baseStorage.push({ ...item });
+    }
+
+    const nextConsumables =
+      item.kind === "consumable"
+        ? {
+            ...prev.consumables,
+            [item.id]: item.quantity
+          }
+        : prev.consumables;
+
+    return {
+      ...prev,
+      consumables: nextConsumables,
+      inventory: {
+        ...prev.inventory,
+        baseStorage
+      }
+    };
+  });
+}
+
+function syncImportedGearToGameState(gear: ImportedGear): void {
+  updateGameState((prev) => {
+    const equipmentById = {
+      ...(prev.equipmentById ?? {}),
+      [gear.id]: gear
+    };
+
+    const shouldOwn = gear.inventory?.startingOwned ?? true;
+    const equipmentPool = shouldOwn
+      ? Array.from(new Set([...(prev.equipmentPool ?? []), gear.id]))
+      : prev.equipmentPool ?? [];
+
+    return {
+      ...prev,
+      equipmentById,
+      equipmentPool
+    };
+  });
+}
+
+function syncImportedCardToGameState(card: ImportedCard): void {
+  updateGameState((prev) => ({
+    ...prev,
+    cardsById: {
+      ...prev.cardsById,
+      [card.id]: {
+        id: card.id,
+        name: card.name,
+        description: card.description,
+        strainCost: card.strainCost,
+        targetType: card.targetType,
+        range: card.range,
+        effects: [...card.effects],
+        artPath: card.artPath
+      }
+    }
+  }));
+}
+
+function syncImportedUnitToGameState(unit: ImportedUnitTemplate): void {
+  if (unit.startingInRoster === false && !unit.deployInParty) {
+    return;
+  }
+
+  updateGameState((prev) => {
+    const nextRosterUnitIds = unit.startingInRoster === false
+      ? [...prev.profile.rosterUnitIds]
+      : Array.from(new Set([...(prev.profile.rosterUnitIds ?? []), unit.id]));
+    const nextPartyUnitIds = unit.deployInParty
+      ? Array.from(new Set([...(prev.partyUnitIds ?? []), unit.id]))
+      : [...(prev.partyUnitIds ?? [])];
+
+    return {
+      ...prev,
+      profile: {
+        ...prev.profile,
+        rosterUnitIds: nextRosterUnitIds,
+      },
+      partyUnitIds: nextPartyUnitIds,
+      unitsById: {
+        ...(prev.unitsById ?? {}),
+        [unit.id]: {
+          id: unit.id,
+          name: unit.name,
+          isEnemy: false,
+          hp: unit.stats.maxHp,
+          maxHp: unit.stats.maxHp,
+          agi: unit.stats.agi,
+          pos: null,
+          hand: [],
+          drawPile: [],
+          discardPile: [],
+          strain: 0,
+          unitClass: unit.currentClassId,
+          loadout: {
+            primaryWeapon: unit.loadout.primaryWeapon ?? null,
+            secondaryWeapon: unit.loadout.secondaryWeapon ?? null,
+            helmet: unit.loadout.helmet ?? null,
+            chestpiece: unit.loadout.chestpiece ?? null,
+            accessory1: unit.loadout.accessory1 ?? null,
+            accessory2: unit.loadout.accessory2 ?? null,
+          },
+          pwr: unit.pwr,
+          controller: "P1",
+        },
+      },
+    };
+  });
+>>>>>>> 3307f1b (technica compat)
 }
 
 export function validateTechnicaManifest(manifest: TechnicaManifest): void {
@@ -156,6 +416,7 @@ export function validateTechnicaManifest(manifest: TechnicaManifest): void {
   }
 }
 
+<<<<<<< HEAD
 function syncImportedGearToState(gear: ImportedGear): void {
   if (!hasGameState()) {
     return;
@@ -300,6 +561,13 @@ function syncImportedUnitToState(unit: ImportedUnitTemplate): void {
 }
 
 export function importTechnicaEntry(manifest: TechnicaManifest, entryData: unknown): string {
+=======
+export function importTechnicaEntry(
+  manifest: TechnicaManifest,
+  entryData: unknown,
+  options?: ImportTechnicaOptions
+): string {
+>>>>>>> 3307f1b (technica compat)
   validateTechnicaManifest(manifest);
 
   switch (manifest.contentType) {
@@ -324,10 +592,37 @@ export function importTechnicaEntry(manifest: TechnicaManifest, entryData: unkno
       registerImportedDialogue(entryData);
       return entryData.id;
 
+<<<<<<< HEAD
+=======
+    case "item":
+      if (!isItem(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core inventory item shape.");
+      }
+      {
+        const resolvedItem = withResolvedItemAssets(entryData, options);
+        registerImportedItem(resolvedItem);
+        if (options?.syncToGameState) {
+          syncImportedItemToGameState(resolvedItem);
+        }
+        return resolvedItem.id;
+      }
+
+    case "npc":
+      if (!isNpcTemplate(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core NPC shape.");
+      }
+      {
+        const resolvedNpc = withResolvedNpcAssets(entryData, options);
+        registerImportedNpc(resolvedNpc);
+        return resolvedNpc.id;
+      }
+
+>>>>>>> 3307f1b (technica compat)
     case "gear":
       if (!isGear(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core gear shape.");
       }
+<<<<<<< HEAD
       registerImportedGear(entryData);
       syncImportedGearToState(entryData);
       return entryData.id;
@@ -339,11 +634,22 @@ export function importTechnicaEntry(manifest: TechnicaManifest, entryData: unkno
       registerImportedItem(entryData);
       syncImportedItemToState(entryData);
       return entryData.id;
+=======
+      {
+        const resolvedGear = withResolvedGearAssets(entryData, options);
+        registerImportedGear(resolvedGear);
+        if (options?.syncToGameState) {
+          syncImportedGearToGameState(resolvedGear);
+        }
+        return resolvedGear.id;
+      }
+>>>>>>> 3307f1b (technica compat)
 
     case "card":
       if (!isCard(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core card shape.");
       }
+<<<<<<< HEAD
       registerImportedBattleCard(entryData);
       syncImportedCardToState(entryData);
       return entryData.id;
@@ -358,11 +664,42 @@ export function importTechnicaEntry(manifest: TechnicaManifest, entryData: unkno
 
     case "operation":
       if (!isOperation(entryData)) {
+=======
+      {
+        const resolvedCard = withResolvedCardAssets(entryData, options);
+        registerImportedCard(resolvedCard);
+        if (options?.syncToGameState) {
+          syncImportedCardToGameState(resolvedCard);
+        }
+        return resolvedCard.id;
+      }
+
+    case "class":
+      if (!isClassDefinition(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core class definition shape.");
+      }
+      registerImportedClass(entryData);
+      return entryData.id;
+
+    case "unit":
+      if (!isUnitTemplate(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core unit template shape.");
+      }
+      registerImportedUnit(entryData);
+      if (options?.syncToGameState) {
+        syncImportedUnitToGameState(entryData);
+      }
+      return entryData.id;
+
+    case "operation":
+      if (!isOperationDefinition(entryData)) {
+>>>>>>> 3307f1b (technica compat)
         throw new Error("Entry data does not match the expected Chaos Core operation shape.");
       }
       registerImportedOperation(entryData);
       return entryData.id;
 
+<<<<<<< HEAD
     case "class":
       if (!isClassDefinition(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core class shape.");
@@ -370,6 +707,8 @@ export function importTechnicaEntry(manifest: TechnicaManifest, entryData: unkno
       registerImportedClassDefinition(entryData);
       return entryData.id;
 
+=======
+>>>>>>> 3307f1b (technica compat)
     default:
       throw new Error(`Unsupported Technica content type '${manifest.contentType}'.`);
   }

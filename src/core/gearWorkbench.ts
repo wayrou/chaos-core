@@ -9,6 +9,7 @@
 
 import { getAllImportedBattleCards } from "../content/technica";
 import { getChassisById } from "../data/gearChassis";
+import { isTechnicaContentDisabled } from "../content/technica";
 
 export type CardRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 export type CardCategory = "attack" | "defense" | "utility" | "mobility" | "buff" | "debuff" | "steam" | "chaos";
@@ -20,6 +21,7 @@ export interface LibraryCard {
   category: CardCategory;
   description: string;
   strainCost: number;
+  artPath?: string;
 }
 
 export interface CardLibrary {
@@ -341,6 +343,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
   },
 };
 
+<<<<<<< HEAD
 function toLibraryCardFromImportedCard(card: ReturnType<typeof getAllImportedBattleCards>[number]): LibraryCard {
   return {
     id: card.id,
@@ -365,6 +368,10 @@ export function getLibraryCardDatabase(): Record<string, LibraryCard> {
 
 export function getLibraryCard(cardId: string): LibraryCard | undefined {
   return getLibraryCardDatabase()[cardId];
+=======
+export function upsertLibraryCard(card: LibraryCard): void {
+  LIBRARY_CARD_DATABASE[card.id] = card;
+>>>>>>> 3307f1b (technica compat)
 }
 
 // ----------------------------------------------------------------------------
@@ -510,7 +517,12 @@ export function getLibraryCards(library: CardLibrary): LibraryCard[] {
   const cardDatabase = getLibraryCardDatabase();
   return Object.keys(library)
     .filter(id => library[id] > 0)
+<<<<<<< HEAD
     .map(id => cardDatabase[id])
+=======
+    .filter(id => !isTechnicaContentDisabled("card", id))
+    .map(id => LIBRARY_CARD_DATABASE[id])
+>>>>>>> 3307f1b (technica compat)
     .filter((card): card is LibraryCard => card !== undefined);
 }
 
@@ -733,7 +745,11 @@ export function generateBattleRewardCards(enemyCount: number): string[] {
  * Get the starter card library for new games
  */
 export function getStarterCardLibrary(): CardLibrary {
+<<<<<<< HEAD
   const starterLibrary: CardLibrary = {
+=======
+  return Object.fromEntries(Object.entries({
+>>>>>>> 3307f1b (technica compat)
     card_strike: 3,
     card_guard: 2,
     card_move_plus: 2,
@@ -742,6 +758,7 @@ export function getStarterCardLibrary(): CardLibrary {
     card_dash: 1,
     card_weaken: 1,
     card_vent: 1,
+<<<<<<< HEAD
   };
 
   getAllImportedBattleCards().forEach((card) => {
@@ -749,4 +766,7 @@ export function getStarterCardLibrary(): CardLibrary {
   });
 
   return starterLibrary;
+=======
+  }).filter(([cardId]) => !isTechnicaContentDisabled("card", cardId)));
+>>>>>>> 3307f1b (technica compat)
 }

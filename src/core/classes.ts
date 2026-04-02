@@ -1,3 +1,9 @@
+import {
+  getAllImportedClasses,
+  getImportedClass,
+  isTechnicaContentDisabled,
+} from "../content/technica";
+
 // ============================================================================
 // CLASS SYSTEM - Headline 14
 // FFT-style branching class progression based on GDD
@@ -27,7 +33,11 @@ export type BuiltInClassId =
   | "spellblade" | "dragoon" | "gladiator" | "geomancer" | "oracle"
   | "summoner" | "chronomancer" | "warsmith" | "necrotec" | "battle_alchemist";
 
+<<<<<<< HEAD
 export type ClassId = BuiltInClassId | (string & {});
+=======
+export type ClassId = BuiltInClassId | string;
+>>>>>>> 3307f1b (technica compat)
 
 export interface ClassDefinition {
   id: ClassId;
@@ -80,7 +90,11 @@ export interface UnitClassProgress {
 // CLASS DEFINITIONS
 // ============================================================================
 
+<<<<<<< HEAD
 export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
+=======
+export const CLASS_DEFINITIONS: Record<string, ClassDefinition> = {
+>>>>>>> 3307f1b (technica compat)
   // ==========================================================================
   // TIER 0 - STARTER JOBS
   // ==========================================================================
@@ -503,6 +517,7 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
   },
 };
 
+<<<<<<< HEAD
 function getClassCatalog(): Record<string, ClassDefinition> {
   const importedDefinitions = Object.fromEntries(
     getAllImportedClassDefinitions().map((entry) => [
@@ -526,16 +541,71 @@ function getClassCatalog(): Record<string, ClassDefinition> {
   };
 }
 
+=======
+function importedClassToDefinition(classDefinition: ReturnType<typeof getImportedClass>): ClassDefinition | null {
+  if (!classDefinition) {
+    return null;
+  }
+
+  return {
+    id: classDefinition.id,
+    name: classDefinition.name,
+    description: classDefinition.description,
+    tier: classDefinition.tier,
+    baseStats: { ...classDefinition.baseStats },
+    weaponTypes: [...classDefinition.weaponTypes],
+    unlockConditions: classDefinition.unlockConditions.map((condition) => ({
+      type: condition.type,
+      requiredClass: condition.requiredClassId,
+      requiredRank: condition.requiredRank,
+      description: condition.description,
+    })),
+    innateAbility: classDefinition.innateAbility,
+  };
+}
+
+function registerImportedClasses(): void {
+  getAllImportedClasses().forEach((classDefinition) => {
+    const mappedClass = importedClassToDefinition(classDefinition);
+    if (mappedClass) {
+      CLASS_DEFINITIONS[mappedClass.id] = mappedClass;
+    }
+  });
+}
+
+registerImportedClasses();
+
+>>>>>>> 3307f1b (technica compat)
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
 export function getClassDefinition(classId: ClassId): ClassDefinition {
+<<<<<<< HEAD
   return getClassCatalog()[classId] || CLASS_DEFINITIONS.squire;
 }
 
 export function getAvailableClasses(): ClassId[] {
   return Object.keys(getClassCatalog()) as ClassId[];
+=======
+  const importedClass = importedClassToDefinition(getImportedClass(classId));
+  if (importedClass) {
+    return importedClass;
+  }
+
+  if (isTechnicaContentDisabled("class", classId)) {
+    return CLASS_DEFINITIONS.squire;
+  }
+
+  return CLASS_DEFINITIONS[classId] || CLASS_DEFINITIONS.squire;
+}
+
+export function getAvailableClasses(): ClassId[] {
+  return Array.from(new Set([
+    ...Object.keys(CLASS_DEFINITIONS).filter((classId) => !isTechnicaContentDisabled("class", classId)),
+    ...getAllImportedClasses().map((classDefinition) => classDefinition.id),
+  ])) as ClassId[];
+>>>>>>> 3307f1b (technica compat)
 }
 
 export function isClassUnlocked(
@@ -589,6 +659,7 @@ export function getUnlockableClasses(progress: UnitClassProgress): ClassId[] {
 
 export function getClassTier(classId: ClassId): number {
   return getClassDefinition(classId).tier;
+<<<<<<< HEAD
 }
 
 export function getClassRankLetter(rank: number): ClassRankLetter {
@@ -597,6 +668,8 @@ export function getClassRankLetter(rank: number): ClassRankLetter {
   if (rank >= 3) return "C";
   if (rank >= 2) return "D";
   return "E";
+=======
+>>>>>>> 3307f1b (technica compat)
 }
 
 export function getClassesByTier(tier: 0 | 1 | 2 | 3): ClassId[] {
@@ -618,7 +691,11 @@ export function getUnlockRequirementsText(classId: ClassId): string[] {
       case "class_rank":
         if (condition.requiredClass && condition.requiredRank) {
           const reqClass = getClassDefinition(condition.requiredClass);
+<<<<<<< HEAD
           texts.push(`${reqClass.name} Rank ${getClassRankLetter(condition.requiredRank)}`);
+=======
+          texts.push(`${reqClass.name} Rank ${condition.requiredRank}`);
+>>>>>>> 3307f1b (technica compat)
         }
         break;
 

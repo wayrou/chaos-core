@@ -3,7 +3,11 @@
 // ============================================================================
 
 import { FieldMap, FieldObject, InteractionZone } from "./types";
-import { getAllImportedFieldMaps, getImportedFieldMap } from "../content/technica";
+import {
+  getAllImportedFieldMaps,
+  getImportedFieldMap,
+  isTechnicaContentDisabled,
+} from "../content/technica";
 
 // ============================================================================
 // BASE CAMP MAP
@@ -470,9 +474,9 @@ function createKeyRoomMap(mapId: string): FieldMap {
 // ============================================================================
 
 const maps = new Map<FieldMap["id"], FieldMap>([
-  ["base_camp", createBaseCampMap()],
-  ["free_zone_1", createFreeZoneMap()],
-  ["quarters", createQuartersMap()],
+  ...(isTechnicaContentDisabled("map", "base_camp") ? [] : [["base_camp", createBaseCampMap()] as const]),
+  ...(isTechnicaContentDisabled("map", "free_zone_1") ? [] : [["free_zone_1", createFreeZoneMap()] as const]),
+  ...(isTechnicaContentDisabled("map", "quarters") ? [] : [["quarters", createQuartersMap()] as const]),
 ]);
 
 for (const importedMap of getAllImportedFieldMaps()) {

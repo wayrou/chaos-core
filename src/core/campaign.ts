@@ -3,19 +3,25 @@
 // Campaign progress, operation definitions, and run management
 // ============================================================================
 
-import { OperationRun, Floor, RoomNode } from "./types";
+import {
+  getAllImportedOperations,
+  isTechnicaContentDisabled,
+} from "../content/technica";
+import { RoomNode } from "./types";
 
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type OperationId =
+export type BuiltInOperationId =
   | "op_iron_gate"
   | "op_black_spire"
   | "op_ghost_run"
   | "op_ember_siege"
   | "op_final_dawn"
   | "op_custom";
+
+export type OperationId = BuiltInOperationId | string;
 
 export type Difficulty = "easy" | "normal" | "hard" | "custom";
 
@@ -134,8 +140,7 @@ export function getEffectiveFloors(opDef: OperationDefinition, customFloors?: nu
  * Starts at 25 for floor 0, scales linearly
  */
 export function calculateRecommendedPower(floorIndex: number, baseRecommendedPower?: number): number {
-  // Start at 25 for first floor, scale by 2.5 per floor
-  const basePWR = 25;
+  const basePWR = baseRecommendedPower ?? 25;
   const pwrPerFloor = 2.5;
   return Math.round(basePWR + (floorIndex * pwrPerFloor));
 }
@@ -144,7 +149,7 @@ export function calculateRecommendedPower(floorIndex: number, baseRecommendedPow
 // OPERATION DEFINITIONS
 // ----------------------------------------------------------------------------
 
-export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
+export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
   op_iron_gate: {
     id: "op_iron_gate",
     name: "IRON GATE",
@@ -198,12 +203,44 @@ export const OPERATION_DEFINITIONS: Record<OperationId, OperationDefinition> = {
   },
 };
 
+getAllImportedOperations().forEach((operation) => {
+  OPERATION_DEFINITIONS[operation.id] = {
+    id: operation.id,
+    name: operation.codename,
+    description: operation.description,
+    floors: Math.max(1, operation.floors.length),
+    recommendedPower: operation.recommendedPower,
+    unlocksNextOperationId:
+      typeof operation.metadata?.unlocksNextOperationId === "string"
+        ? operation.metadata.unlocksNextOperationId
+        : undefined,
+    isCustom: false,
+  };
+});
+
+Object.keys(OPERATION_DEFINITIONS).forEach((operationId) => {
+  if (!getAllImportedOperations().some((operation) => operation.id === operationId) && isTechnicaContentDisabled("operation", operationId)) {
+    delete OPERATION_DEFINITIONS[operationId];
+  }
+});
+
 // ----------------------------------------------------------------------------
 // CAMPAIGN PROGRESS PERSISTENCE
 // ----------------------------------------------------------------------------
 
 const CAMPAIGN_STORAGE_KEY = "chaoscore_campaign_progress";
 const CAMPAIGN_VERSION = 1;
+
+function getDefaultUnlockedOperationIds(): OperationId[] {
+  const builtInDefaults = ["op_iron_gate"].filter(
+    (operationId) => !isTechnicaContentDisabled("operation", operationId)
+  );
+  const importedOperationIds = getAllImportedOperations()
+    .map((operation) => operation.id)
+    .filter((operationId) => operationId !== "op_custom" && operationId !== "op_iron_gate");
+
+  return Array.from(new Set<OperationId>([...builtInDefaults, ...importedOperationIds]));
+}
 
 /**
  * Load campaign progress from storage
@@ -218,7 +255,10 @@ export function loadCampaignProgress(): CampaignProgress {
         console.warn("[CAMPAIGN] Version mismatch, resetting progress");
         return createDefaultCampaignProgress();
       }
-      return parsed;
+      return {
+        ...parsed,
+        unlockedOperations: Array.from(new Set([...(parsed.unlockedOperations ?? []), ...getDefaultUnlockedOperationIds()])),
+      };
     }
   } catch (error) {
     console.error("[CAMPAIGN] Failed to load progress:", error);
@@ -250,7 +290,7 @@ export function createDefaultCampaignProgress(): CampaignProgress {
   return {
     version: CAMPAIGN_VERSION,
     completedOperations: [],
-    unlockedOperations: ["op_iron_gate"], // Only first operation unlocked
+    unlockedOperations: getDefaultUnlockedOperationIds(),
     activeRun: null,
   };
 }
@@ -268,7 +308,7 @@ export function isOperationUnlocked(
 ): boolean {
   // Custom operation is always available (or after first op - choose always)
   if (operationId === "op_custom") {
-    return progress.unlockedOperations.includes("op_iron_gate");
+    return progress.unlockedOperations.length > 0;
   }
 
   return progress.unlockedOperations.includes(operationId);
@@ -353,4 +393,3 @@ export function debugUnlockAllOperations(): CampaignProgress {
     unlockedOperations: Object.keys(OPERATION_DEFINITIONS) as OperationId[],
   };
 }
-

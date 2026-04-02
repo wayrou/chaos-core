@@ -47,14 +47,9 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   const progress = loadCampaignProgress();
   const importedOperations = getAllImportedOperations();
 
-  // Story operations (exclude custom)
-  const storyOperationIds: OperationId[] = [
-    "op_iron_gate",
-    "op_black_spire",
-    "op_ghost_run",
-    "op_ember_siege",
-    "op_final_dawn",
-  ];
+  const storyOperationIds: OperationId[] = Object.values(OPERATION_DEFINITIONS)
+    .filter((operation) => !operation.isCustom)
+    .map((operation) => operation.id);
 
   root.innerHTML = `
     <div class="opselect-root ard-noise">

@@ -43,6 +43,7 @@ export interface Card {
   targetType: "enemy" | "self" | "tile" | "ally";
   range?: number;
   effects: CardEffect[];
+  artPath?: string;
 }
 
 export interface Unit {
@@ -132,6 +133,7 @@ export interface RoomNode {
 export interface Floor {
   id?: string;
   name: string;
+  startingNodeId?: RoomId;
   nodes?: RoomNode[];  // New name for rooms
   rooms?: RoomNode[];  // Keep for backwards compatibility
 }
@@ -374,6 +376,9 @@ export interface InventoryItem {
   massKg: number;
   bulkBu: number;
   powerW: number;
+  description?: string;
+  iconPath?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface InventoryState {

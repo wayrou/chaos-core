@@ -14,7 +14,7 @@ import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { createCompanion, updateCompanion } from "./companion";
-import { createNpc, updateNpc, getNpcInRange, NPC_DIALOGUE } from "./npcs";
+import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
 import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
 import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
@@ -598,6 +598,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     // Initialize Sable near player
     const companion = createCompanion(playerX - 40, playerY - 40);
 
+<<<<<<< HEAD
     // Initialize NPCs for Base Camp (Headline 15b)
     const npcs: import("./types").FieldNpc[] = [];
     if (mapId === "base_camp") {
@@ -618,6 +619,9 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     } else if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
       npcs.push(...createKeyRoomNpcs(mapId));
     }
+=======
+    const npcs = getFieldNpcsForMap(String(mapId));
+>>>>>>> 3307f1b (technica compat)
 
     fieldState = {
       currentMap: mapId,
@@ -750,7 +754,11 @@ function render(): void {
     <div class="field-npc" 
          style="left: ${npc.x - npc.width / 2}px; top: ${npc.y - npc.height / 2}px; width: ${npc.width}px; height: ${npc.height}px;"
          data-facing="${npc.direction}" data-state="${npc.state}">
-      <div class="field-npc-sprite">👤</div>
+      <div class="field-npc-sprite">${
+        npc.spritePath
+          ? `<img src="${npc.spritePath}" alt="${npc.name}" class="field-npc-sprite-image" />`
+          : "👤"
+      }</div>
       <div class="field-npc-name">${npc.name}</div>
     </div>
   `).join("") : "";

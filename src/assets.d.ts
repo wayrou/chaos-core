@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 // src/vite-env.d.ts or src/assets.d.ts
 // TypeScript declarations for asset imports
 

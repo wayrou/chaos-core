@@ -356,12 +356,17 @@ function formatClassName(cls: string): string {
 }
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
+  const iconMarkup = item.iconPath
+    ? `<img src="${item.iconPath}" alt="${item.name}" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);" />`
+    : "";
+
   return `
     <div class="inv-item"
          draggable="true"
          data-id="${item.id}"
          data-bin="${bin}">
       <div class="inv-item-header">
+        ${iconMarkup}
         <div class="inv-item-name">${item.name}</div>
         <div class="inv-item-qty">x${item.quantity}</div>
       </div>

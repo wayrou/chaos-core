@@ -19,6 +19,8 @@ import {
   saveCampaignProgress,
   OPERATION_DEFINITIONS,
 } from "./campaign";
+import { getImportedOperation } from "../content/technica";
+import type { ImportedOperationDefinition } from "../content/technica/types";
 import { generateNodeMap } from "./nodeMapGenerator";
 import { generateEncounter } from "./encounterGenerator";
 import { OperationRun, Floor, RoomNode } from "./types";
@@ -53,15 +55,16 @@ export function startOperationRun(
   }
 
   // Apply 10× floor scaling
-  const baseFloors = customFloors || opDef.floors;
-  const floorsTotal = baseFloors * 10;
   const rngSeed = generateRunSeed();
+  const importedOperation = getImportedOperation(operationId);
+  const floorsTotal = importedOperation
+    ? Math.max(1, importedOperation.floors.length)
+    : (customFloors || opDef.floors) * 10;
 
   // Generate node maps for all floors
-  const nodeMapByFloor: Record<number, NodeMap> = {};
-  for (let i = 0; i < floorsTotal; i++) {
-    nodeMapByFloor[i] = generateNodeMap(i, floorsTotal, difficulty, rngSeed);
-  }
+  const nodeMapByFloor = importedOperation
+    ? createImportedOperationNodeMaps(importedOperation)
+    : createProceduralNodeMaps(floorsTotal, difficulty, rngSeed);
 
   // Get field mods from game state (purchased from black market)
   const gameState = getGameState();
@@ -645,6 +648,7 @@ export { syncCampaignToGameState } from "./campaignSync";
  */
 export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun {
   const opDef = OPERATION_DEFINITIONS[activeRun.operationId];
+  const importedOperation = getImportedOperation(activeRun.operationId);
   const cleared = new Set(activeRun.clearedNodeIds);
 
   // Convert node maps to floors
@@ -664,8 +668,8 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
     }));
 
     floors.push({
-      id: `floor_${i}`,
-      name: `Floor ${i + 1}`,
+      id: importedOperation?.floors[i]?.id ?? `floor_${i}`,
+      name: importedOperation?.floors[i]?.name ?? `Floor ${i + 1}`,
       nodes: nodesWithVisitFlag,
     });
   }
@@ -690,4 +694,50 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
  */
 function generateRunSeed(): string {
   return `run_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function createProceduralNodeMaps(
+  floorsTotal: number,
+  difficulty: Difficulty,
+  rngSeed: string
+): Record<number, NodeMap> {
+  const nodeMapByFloor: Record<number, NodeMap> = {};
+  for (let i = 0; i < floorsTotal; i++) {
+    nodeMapByFloor[i] = generateNodeMap(i, floorsTotal, difficulty, rngSeed);
+  }
+  return nodeMapByFloor;
+}
+
+function createImportedOperationNodeMaps(operation: ImportedOperationDefinition): Record<number, NodeMap> {
+  const nodeMapByFloor: Record<number, NodeMap> = {};
+
+  operation.floors.forEach((floor, floorIndex) => {
+    const nodes = floor.rooms.map((room) => ({
+      id: room.id,
+      label: room.label,
+      type: room.type,
+      position: room.position,
+      connections: [...(room.connections ?? [])],
+      battleTemplate: room.battleTemplate,
+      eventTemplate: room.eventTemplate,
+      shopInventory: [...(room.shopInventory ?? [])],
+    }));
+    const connections = Object.fromEntries(
+      nodes.map((node) => [node.id, [...(node.connections ?? [])]])
+    );
+    const startNodeId = floor.startingRoomId || nodes[0]?.id || `floor_${floorIndex}_start`;
+    const exitNodeId =
+      nodes.find((node) => (node.connections ?? []).length === 0)?.id ||
+      nodes[nodes.length - 1]?.id ||
+      startNodeId;
+
+    nodeMapByFloor[floorIndex] = {
+      nodes,
+      connections,
+      startNodeId,
+      exitNodeId,
+    };
+  });
+
+  return nodeMapByFloor;
 }

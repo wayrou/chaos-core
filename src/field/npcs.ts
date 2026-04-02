@@ -4,6 +4,11 @@
 // ============================================================================
 
 import { FieldNpc, FieldMap, PlayerAvatar } from "./types";
+import {
+  getAllImportedNpcs,
+  isTechnicaContentDisabled,
+} from "../content/technica";
+import type { ImportedNpcTemplate } from "../content/technica/types";
 
 // ============================================================================
 // CONSTANTS
@@ -17,6 +22,34 @@ const NPC_WALK_DURATION_MAX = 4000; // ms - maximum time to walk
 const NPC_IDLE_DURATION_MIN = 3000; // ms - minimum time to idle
 const NPC_IDLE_DURATION_MAX = 6000; // ms - maximum time to idle
 const NPC_INTERACTION_RANGE = 50; // pixels
+const FIELD_TILE_SIZE = 64;
+
+export type BuiltInNpcDefinition = {
+  id: string;
+  name: string;
+  mapId: string;
+  tileX: number;
+  tileY: number;
+  routeMode?: "fixed" | "random" | "none";
+  dialogueId?: string;
+  portraitKey?: string;
+  spriteKey?: string;
+  portraitPath?: string;
+  spritePath?: string;
+  routePoints?: Array<{ id?: string; x: number; y: number }>;
+};
+
+export const BUILT_IN_NPCS: BuiltInNpcDefinition[] = [
+  { id: "npc_medic", name: "Medic", mapId: "base_camp", tileX: 5, tileY: 8, routeMode: "random", dialogueId: "npc_medic" },
+  { id: "npc_quartermaster", name: "Quartermaster", mapId: "base_camp", tileX: 12, tileY: 6, routeMode: "random", dialogueId: "npc_quartermaster" },
+  { id: "npc_scout", name: "Scout", mapId: "base_camp", tileX: 8, tileY: 12, routeMode: "random", dialogueId: "npc_scout" },
+  { id: "npc_engineer", name: "Engineer", mapId: "base_camp", tileX: 14, tileY: 10, routeMode: "random", dialogueId: "npc_engineer" },
+  { id: "npc_supply_officer", name: "Supply Officer", mapId: "base_camp", tileX: 20, tileY: 8, routeMode: "random", dialogueId: "npc_supply_officer" },
+  { id: "npc_armorer", name: "Armorer", mapId: "base_camp", tileX: 6, tileY: 6, routeMode: "random", dialogueId: "npc_armorer" },
+  { id: "npc_commander", name: "Commander", mapId: "base_camp", tileX: 10, tileY: 10, routeMode: "random", dialogueId: "npc_commander" },
+  { id: "npc_researcher", name: "Researcher", mapId: "base_camp", tileX: 4, tileY: 10, routeMode: "random", dialogueId: "npc_researcher" },
+  { id: "npc_sentinel", name: "Sentinel", mapId: "base_camp", tileX: 18, tileY: 12, routeMode: "random", dialogueId: "npc_sentinel" },
+];
 
 // ============================================================================
 // NPC CREATION
@@ -27,7 +60,17 @@ export function createNpc(
   name: string,
   x: number,
   y: number,
-  dialogueId?: string
+  dialogueId?: string,
+  options?: {
+    routeMode?: "fixed" | "random" | "none";
+    routePoints?: Array<{ id?: string; x: number; y: number }>;
+    routePointIndex?: number;
+    spawnMapId?: string;
+    portraitKey?: string;
+    spriteKey?: string;
+    portraitPath?: string;
+    spritePath?: string;
+  }
 ): FieldNpc {
   const idleDuration = NPC_IDLE_DURATION_MIN + Math.random() * (NPC_IDLE_DURATION_MAX - NPC_IDLE_DURATION_MIN);
   return {
@@ -40,9 +83,61 @@ export function createNpc(
     state: "idle",
     direction: "south",
     dialogueId,
+    routeMode: options?.routeMode ?? "random",
+    routePoints: options?.routePoints?.map((point) => ({ ...point })) ?? [],
+    routePointIndex: options?.routePointIndex ?? 0,
+    spawnMapId: options?.spawnMapId,
+    portraitKey: options?.portraitKey,
+    spriteKey: options?.spriteKey,
+    portraitPath: options?.portraitPath,
+    spritePath: options?.spritePath,
     stateStartTime: 0, // Will be set when NPC is first updated
     stateDuration: idleDuration,
   };
+}
+
+function createNpcFromDefinition(definition: BuiltInNpcDefinition | ImportedNpcTemplate): FieldNpc {
+  const tileX = "tileX" in definition ? definition.tileX : definition.x;
+  const tileY = "tileY" in definition ? definition.tileY : definition.y;
+  return createNpc(
+    definition.id,
+    definition.name,
+    tileX * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+    tileY * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+    definition.dialogueId,
+    {
+      routeMode: definition.routeMode ?? "random",
+      routePoints: (definition.routePoints ?? []).map((point) => ({
+        id: point.id,
+        x: point.x * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+        y: point.y * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+      })),
+      routePointIndex: 0,
+      spawnMapId: definition.mapId,
+      portraitKey: definition.portraitKey,
+      spriteKey: definition.spriteKey,
+      portraitPath: definition.portraitPath,
+      spritePath: definition.spritePath,
+    }
+  );
+}
+
+export function getFieldNpcsForMap(mapId: string): FieldNpc[] {
+  const npcById = new Map<string, FieldNpc>();
+
+  BUILT_IN_NPCS
+    .filter((npc) => npc.mapId === mapId && !isTechnicaContentDisabled("npc", npc.id))
+    .forEach((npc) => {
+      npcById.set(npc.id, createNpcFromDefinition(npc));
+    });
+
+  getAllImportedNpcs()
+    .filter((npc) => npc.mapId === mapId)
+    .forEach((npc) => {
+      npcById.set(npc.id, createNpcFromDefinition(npc));
+    });
+
+  return Array.from(npcById.values());
 }
 
 // ============================================================================
@@ -58,6 +153,36 @@ export function updateNpc(
   // Initialize stateStartTime if not set
   if (npc.stateStartTime === 0) {
     npc.stateStartTime = currentTime;
+  }
+
+  if (npc.routeMode === "none") {
+    npc.state = "idle";
+    return npc;
+  }
+
+  if (npc.routeMode === "fixed" && npc.routePoints && npc.routePoints.length > 0) {
+    const nextPointIndex = npc.routePointIndex ?? 0;
+    const targetPoint = npc.routePoints[nextPointIndex % npc.routePoints.length];
+    const dx = targetPoint.x - npc.x;
+    const dy = targetPoint.y - npc.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance <= 2) {
+      npc.routePointIndex = (nextPointIndex + 1) % npc.routePoints.length;
+      npc.state = "idle";
+      npc.stateStartTime = currentTime;
+      npc.stateDuration = NPC_IDLE_DURATION_MIN;
+      return npc;
+    }
+
+    const moveDistance = Math.min(NPC_SPEED * (deltaTime / 1000), distance);
+    npc.x += (dx / distance) * moveDistance;
+    npc.y += (dy / distance) * moveDistance;
+    npc.state = "walk";
+    npc.direction = Math.abs(dx) >= Math.abs(dy)
+      ? dx >= 0 ? "east" : "west"
+      : dy >= 0 ? "south" : "north";
+    return npc;
   }
   
   const timeInState = currentTime - npc.stateStartTime;
@@ -101,9 +226,8 @@ export function updateNpc(
     }
     
     // Check collision with map boundaries
-    const tileSize = 64;
-    const tileX = Math.floor(newX / tileSize);
-    const tileY = Math.floor(newY / tileSize);
+    const tileX = Math.floor(newX / FIELD_TILE_SIZE);
+    const tileY = Math.floor(newY / FIELD_TILE_SIZE);
     
     if (
       tileX >= 0 && tileX < map.width &&

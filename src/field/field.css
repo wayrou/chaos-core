@@ -283,6 +283,14 @@
   color: white;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
   box-shadow: 0 4px 12px rgba(139, 69, 19, 0.4);
+  overflow: hidden;
+}
+
+.field-npc-sprite-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .field-npc-name {

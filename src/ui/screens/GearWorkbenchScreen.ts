@@ -1007,6 +1007,9 @@ function renderLibraryCard(card: LibraryCard, count: number): string {
   const rarityClass = `library-card--${card.rarity}`;
   const categoryIcon = getCategoryIcon(card.category);
   const isSelected = workbenchState.draggedCardId === card.id;
+  const artMarkup = card.artPath
+    ? `<img src="${card.artPath}" alt="${card.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
+    : `<span class="hs-card-art-glyph">${categoryIcon}</span>`;
 
   return `
     <div class="library-card ${rarityClass}" draggable="true" data-card-id="${card.id}">
@@ -1014,7 +1017,7 @@ function renderLibraryCard(card: LibraryCard, count: number): string {
         <div class="hs-card-cost">${card.strainCost}</div>
         <div class="hs-card-type">${card.category.toUpperCase()}</div>
         <div class="hs-card-art">
-          <span class="hs-card-art-glyph">${categoryIcon}</span>
+          ${artMarkup}
         </div>
         <div class="hs-card-name-banner">
           <div class="hs-card-name">${card.name}</div>

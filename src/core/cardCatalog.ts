@@ -1,5 +1,7 @@
 import { getAllEquipmentCards, EquipmentCard } from "./equipment";
 import { Card, CardEffect } from "./types";
+import { getImportedCard, isTechnicaContentDisabled } from "../content/technica";
+import type { ImportedCard } from "../content/technica/types";
 
 type BattleCardTarget = "enemy" | "ally" | "self" | "tile";
 
@@ -16,6 +18,7 @@ export interface ResolvedBattleCard {
   defBuff?: number;
   atkBuff?: number;
   effects: CardEffect[];
+  artPath?: string;
 }
 
 const SELF_NAME_HINTS = [
@@ -59,7 +62,15 @@ const ALLY_TEXT_HINTS = [
 ];
 
 function getCatalogCards(): EquipmentCard[] {
+<<<<<<< HEAD
   return Object.values(getAllEquipmentCards());
+=======
+  const cards: EquipmentCard[] = [...CORE_CARDS, ...EQUIPMENT_CARDS];
+  for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
+    cards.push(...CLASS_CARDS[unitClass]);
+  }
+  return cards.filter((card) => !isTechnicaContentDisabled("card", card.id));
+>>>>>>> 3307f1b (technica compat)
 }
 
 function parseRange(range?: string): number {
@@ -238,6 +249,34 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
 
   const atkEffect = effects.find(effect => effect.type === "atk_up");
   if (atkEffect?.amount) resolved.atkBuff = atkEffect.amount;
+  if (card.artPath) resolved.artPath = card.artPath;
+
+  return resolved;
+}
+
+function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
+  const resolved: ResolvedBattleCard = {
+    id: card.id,
+    name: card.name,
+    type: card.type,
+    target: card.targetType,
+    strainCost: card.strainCost,
+    range: card.range,
+    description: card.description,
+    effects: [...card.effects],
+  };
+
+  if (card.damage !== undefined) resolved.damage = card.damage;
+  if (card.artPath) resolved.artPath = card.artPath;
+
+  const healEffect = card.effects.find(effect => effect.type === "heal");
+  if (healEffect?.amount) resolved.healing = healEffect.amount;
+
+  const defEffect = card.effects.find(effect => effect.type === "def_up");
+  if (defEffect?.amount) resolved.defBuff = defEffect.amount;
+
+  const atkEffect = card.effects.find(effect => effect.type === "atk_up");
+  if (atkEffect?.amount) resolved.atkBuff = atkEffect.amount;
 
   return resolved;
 }
@@ -247,10 +286,28 @@ const BATTLE_CARD_LOOKUP: Record<string, ResolvedBattleCard> = Object.fromEntrie
 );
 
 export function getResolvedBattleCard(id: string): ResolvedBattleCard | null {
+  const imported = getImportedCard(id);
+  if (imported) {
+    return toResolvedImportedCard(imported);
+  }
+
+  if (isTechnicaContentDisabled("card", id)) {
+    return null;
+  }
+
   const direct = BATTLE_CARD_LOOKUP[id];
   if (direct) return direct;
 
   const normalized = id.toLowerCase().replace(/-/g, "_");
+  const normalizedImported = getImportedCard(normalized);
+  if (normalizedImported) {
+    return toResolvedImportedCard(normalizedImported);
+  }
+
+  if (isTechnicaContentDisabled("card", normalized)) {
+    return null;
+  }
+
   return BATTLE_CARD_LOOKUP[normalized] || null;
 }
 
@@ -263,5 +320,6 @@ export function toCoreCard(card: ResolvedBattleCard): Card {
     targetType: card.target === "ally" ? "ally" : card.target,
     range: card.range,
     effects: [...card.effects],
+    artPath: card.artPath,
   };
 }
