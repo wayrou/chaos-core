@@ -35,7 +35,7 @@ import {
   GearSlotData,
   getDefaultGearSlots,
   generateBattleRewardCards,
-  LIBRARY_CARD_DATABASE,
+  getLibraryCard,
 } from "./gearWorkbench";
 
 // Mount system imports
@@ -1804,7 +1804,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
 
     // STEP 7: Build card reward log
     const cardNames = (rewards.cards ?? [])
-      .map(id => LIBRARY_CARD_DATABASE[id]?.name ?? id)
+      .map(id => getLibraryCard(id)?.name ?? id)
       .join(", ");
     const cardLog = rewards.cards && rewards.cards.length > 0
       ? `SLK//CARDS :: Acquired: ${cardNames}`

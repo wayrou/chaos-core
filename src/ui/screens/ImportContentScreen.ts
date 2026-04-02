@@ -19,7 +19,25 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "quest") {
     return "QUEST";
   }
-  return "DIALOGUE";
+  if (entry.manifest.contentType === "dialogue") {
+    return "DIALOGUE";
+  }
+  if (entry.manifest.contentType === "gear") {
+    return "GEAR";
+  }
+  if (entry.manifest.contentType === "item") {
+    return "ITEM";
+  }
+  if (entry.manifest.contentType === "card") {
+    return "CARD";
+  }
+  if (entry.manifest.contentType === "unit") {
+    return "UNIT";
+  }
+  if (entry.manifest.contentType === "operation") {
+    return "OPERATION";
+  }
+  return "CLASS";
 }
 
 function getEntryActionLabel(entry: InstalledTechnicaContent): string | null {
@@ -245,6 +263,7 @@ export function renderImportContentScreen(): void {
 
   const installedEntries = getInstalledTechnicaContent();
   const counts = getInstalledTechnicaCounts();
+  const systemsCount = counts.gear + counts.item + counts.card + counts.unit + counts.operation + counts.class;
 
   app.innerHTML = `
     <div class="import-content-root town-screen ard-noise">
@@ -267,6 +286,10 @@ export function renderImportContentScreen(): void {
               <span>DIALOGUE</span>
               <strong>${counts.dialogue}</strong>
             </div>
+            <div class="import-content-count">
+              <span>SYSTEMS</span>
+              <strong>${systemsCount}</strong>
+            </div>
           </div>
           <button class="town-screen__back-btn" id="importContentBackBtn">
             <span class="btn-icon">&larr;</span>
@@ -285,8 +308,9 @@ export function renderImportContentScreen(): void {
             <div class="import-content-dropzone__label">Drag Technica files here</div>
             <p>
               Chaos Core accepts the exported Technica <code>.zip</code> bundle directly.
-              Standalone runtime <code>.fieldmap.json</code>, <code>.quest.json</code>, and <code>.dialogue.json</code>
-              files also work.
+              Standalone runtime <code>.fieldmap.json</code>, <code>.quest.json</code>, <code>.dialogue.json</code>,
+              <code>.gear.json</code>, <code>.item.json</code>, <code>.card.json</code>, <code>.unit.json</code>,
+              <code>.operation.json</code>, and <code>.class.json</code> files also work.
             </p>
             <button class="import-content-select-btn" id="importContentSelectBtn" ${isImporting ? "disabled" : ""}>
               ${isImporting ? "IMPORTING..." : "SELECT FILES"}
@@ -297,6 +321,7 @@ export function renderImportContentScreen(): void {
             <span>Maps can be entered directly from this screen.</span>
             <span>Imported quests appear on the in-game Quest Board.</span>
             <span>Imported dialogue can be previewed here or triggered by imported maps.</span>
+            <span>Imported gear, items, cards, units, operations, and classes sync into the live Chaos Core runtime.</span>
           </div>
         </section>
 

@@ -1,6 +1,16 @@
 import JSZip from "jszip";
 import { importTechnicaEntry, type TechnicaManifest } from "./importer";
-import { getAllImportedDialogues, getAllImportedFieldMaps, getAllImportedQuests } from "./index";
+import {
+  getAllImportedBattleCards,
+  getAllImportedClassDefinitions,
+  getAllImportedDialogues,
+  getAllImportedFieldMaps,
+  getAllImportedGear,
+  getAllImportedItems,
+  getAllImportedOperations,
+  getAllImportedQuests,
+  getAllImportedUnitTemplates
+} from "./index";
 
 type TechnicaContentType = TechnicaManifest["contentType"];
 type SourceKind = "zip" | "runtime-json";
@@ -86,6 +96,71 @@ function isDialogueShape(value: unknown): value is { id: string; title: string }
   );
 }
 
+function isGearShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "slot" in value &&
+      "stats" in value
+  );
+}
+
+function isItemShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "kind" in value &&
+      "quantity" in value
+  );
+}
+
+function isCardShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "targetType" in value &&
+      "effects" in value
+  );
+}
+
+function isUnitShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "currentClassId" in value &&
+      "stats" in value
+  );
+}
+
+function isOperationShape(value: unknown): value is { id: string; codename: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "codename" in value &&
+      "floors" in value
+  );
+}
+
+function isClassShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "tier" in value &&
+      "weaponTypes" in value
+  );
+}
+
 function createSyntheticManifest(fileName: string, entryData: unknown): TechnicaManifest | null {
   const exportedAt = new Date().toISOString();
 
@@ -146,6 +221,120 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
     };
   }
 
+  if (isGearShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "gear",
+      contentType: "gear",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "equipment.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica gear runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isItemShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "item",
+      contentType: "item",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "inventory-item.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica item runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isCardShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "card",
+      contentType: "card",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "battle-card.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica card runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isUnitShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "unit",
+      contentType: "unit",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "unit-template.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica unit runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isOperationShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "operation",
+      contentType: "operation",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "operation.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.codename,
+      description: "Standalone Technica operation runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isClassShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "class",
+      contentType: "class",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "class.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica class runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
   return null;
 }
 
@@ -161,9 +350,15 @@ function getExistingDependencyBuckets() {
   const mapIds = new Set(getAllImportedFieldMaps().map((entry) => entry.id));
   const questIds = new Set(getAllImportedQuests().map((entry) => entry.id));
   const dialogueIds = new Set(getAllImportedDialogues().map((entry) => entry.id));
+  const gearIds = new Set(getAllImportedGear().map((entry) => entry.id));
+  const itemIds = new Set(getAllImportedItems().map((entry) => entry.id));
+  const cardIds = new Set(getAllImportedBattleCards().map((entry) => entry.id));
+  const unitIds = new Set(getAllImportedUnitTemplates().map((entry) => entry.id));
+  const operationIds = new Set(getAllImportedOperations().map((entry) => entry.id ?? entry.codename));
+  const classIds = new Set(getAllImportedClassDefinitions().map((entry) => entry.id));
   const sceneIds = new Set(mapIds);
 
-  return { mapIds, questIds, dialogueIds, sceneIds };
+  return { mapIds, questIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
 }
 
 function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
@@ -181,6 +376,24 @@ function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
 
     if (manifest.contentType === "dialogue") {
       buckets.dialogueIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "gear") {
+      buckets.gearIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "item") {
+      buckets.itemIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "card") {
+      buckets.cardIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "unit") {
+      buckets.unitIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "operation") {
+      buckets.operationIds.add(manifest.contentId);
+    }
+    if (manifest.contentType === "class") {
+      buckets.classIds.add(manifest.contentId);
     }
   });
 
@@ -200,6 +413,18 @@ function getDependencyWarnings(
       exists = buckets.questIds.has(dependency.id);
     } else if (dependency.contentType === "dialogue") {
       exists = buckets.dialogueIds.has(dependency.id);
+    } else if (dependency.contentType === "gear") {
+      exists = buckets.gearIds.has(dependency.id);
+    } else if (dependency.contentType === "item") {
+      exists = buckets.itemIds.has(dependency.id);
+    } else if (dependency.contentType === "card") {
+      exists = buckets.cardIds.has(dependency.id);
+    } else if (dependency.contentType === "unit") {
+      exists = buckets.unitIds.has(dependency.id);
+    } else if (dependency.contentType === "operation") {
+      exists = buckets.operationIds.has(dependency.id);
+    } else if (dependency.contentType === "class") {
+      exists = buckets.classIds.has(dependency.id);
     } else if (dependency.contentType === "scene") {
       exists = buckets.sceneIds.has(dependency.id);
     }
@@ -335,7 +560,13 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
     {
       map: 0,
       quest: 0,
-      dialogue: 0
+      dialogue: 0,
+      gear: 0,
+      item: 0,
+      card: 0,
+      unit: 0,
+      operation: 0,
+      class: 0
     }
   );
 }

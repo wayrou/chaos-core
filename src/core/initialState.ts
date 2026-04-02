@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { getStarterRecipeIds } from "./crafting";
+import { getImportedRosterUnits, getImportedStarterItems } from "../content/technica";
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
@@ -38,10 +39,6 @@ import {
   getAllModules,
   getAllEquipmentCards,
   EquipmentCard,
-  STARTER_WEAPONS,
-  STARTER_HELMETS,
-  STARTER_CHESTPIECES,
-  STARTER_ACCESSORIES,
 } from "./equipment";
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
@@ -234,6 +231,46 @@ interface UnitWithEquipment extends Unit {
   loadout: UnitLoadout;
 }
 
+function createImportedUnit(template: ReturnType<typeof getImportedRosterUnits>[number]): UnitWithEquipment {
+  const primaryWeapon = template.loadout.primaryWeapon || null;
+  const loadout = {
+    primaryWeapon,
+    secondaryWeapon: template.loadout.secondaryWeapon || null,
+    helmet: template.loadout.helmet || null,
+    chestpiece: template.loadout.chestpiece || null,
+    accessory1: template.loadout.accessory1 || null,
+    accessory2: template.loadout.accessory2 || null,
+    weapon: primaryWeapon,
+  } as unknown as UnitLoadout;
+
+  return {
+    id: template.id,
+    name: template.name,
+    isEnemy: false,
+    hp: template.stats.maxHp,
+    maxHp: template.stats.maxHp,
+    agi: template.stats.agi,
+    pos: null,
+    hand: [],
+    drawPile: [],
+    discardPile: [],
+    strain: 0,
+    unitClass: template.currentClassId as UnitClass,
+    stats: {
+      maxHp: template.stats.maxHp,
+      atk: template.stats.atk,
+      def: template.stats.def,
+      agi: template.stats.agi,
+      acc: template.stats.acc,
+    } as any,
+    deck: [] as any,
+    loadout,
+    pwr: template.pwr,
+    affinities: createDefaultAffinities(),
+    controller: "P1",
+  } as unknown as UnitWithEquipment;
+}
+
 /**
  * Starter units with equipment loadouts
  */
@@ -312,6 +349,10 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       affinities: createDefaultAffinities(),
     },
   ];
+
+  getImportedRosterUnits().forEach((template) => {
+    units.push(createImportedUnit(template));
+  });
 
   // Calculate PWR for each unit
   const unitsWithPWR = units.map((u) => {
@@ -406,22 +447,9 @@ function createInitialInventory(): InventoryState {
  * Create the equipment pool (all available equipment IDs)
  */
 function createEquipmentPool(): string[] {
-  const pool: string[] = [];
-
-  for (const w of STARTER_WEAPONS) {
-    pool.push(w.id);
-  }
-  for (const h of STARTER_HELMETS) {
-    pool.push(h.id);
-  }
-  for (const c of STARTER_CHESTPIECES) {
-    pool.push(c.id);
-  }
-  for (const a of STARTER_ACCESSORIES) {
-    pool.push(a.id);
-  }
-
-  return pool;
+  return Object.values(getAllStarterEquipment())
+    .filter((equipment) => (equipment as { inventory?: { startingOwned?: boolean } }).inventory?.startingOwned !== false)
+    .map((equipment) => equipment.id);
 }
 
 /**
@@ -441,6 +469,7 @@ export function createNewGameState(): GameStateWithEquipment {
   const rosterUnitIds = Object.keys(unitsById);
   const profile = createDefaultProfile(rosterUnitIds);
   const operation = createOperationIronGate();
+  const importedStarterItems = getImportedStarterItems().map((item) => ({ ...item }));
 
   // Equipment system data
   const equipmentById = getAllStarterEquipment();
@@ -457,7 +486,14 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-    partyUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
+    partyUnitIds: [
+      "unit_aeriss",
+      "unit_marksman_1",
+      "unit_mage_1",
+      ...getImportedRosterUnits()
+        .filter((entry) => entry.deployInParty)
+        .map((entry) => entry.id),
+    ],
 
     wad: 0,
     resources: {
@@ -487,7 +523,7 @@ export function createNewGameState(): GameStateWithEquipment {
       capacityBulkBu: 35,
       capacityPowerW: 150,
       forwardLocker: [],
-      baseStorage: [],
+      baseStorage: importedStarterItems as any,
     },
 
     // 11b/11c Equipment system additions

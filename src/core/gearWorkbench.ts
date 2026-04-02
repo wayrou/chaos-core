@@ -7,6 +7,7 @@
 // TYPES
 // ----------------------------------------------------------------------------
 
+import { getAllImportedBattleCards } from "../content/technica";
 import { getChassisById } from "../data/gearChassis";
 
 export type CardRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
@@ -340,6 +341,32 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
   },
 };
 
+function toLibraryCardFromImportedCard(card: ReturnType<typeof getAllImportedBattleCards>[number]): LibraryCard {
+  return {
+    id: card.id,
+    name: card.name,
+    rarity: card.rarity,
+    category: card.category,
+    description: card.description,
+    strainCost: card.strainCost,
+  };
+}
+
+export function getLibraryCardDatabase(): Record<string, LibraryCard> {
+  const importedCards = Object.fromEntries(
+    getAllImportedBattleCards().map((card) => [card.id, toLibraryCardFromImportedCard(card)])
+  );
+
+  return {
+    ...LIBRARY_CARD_DATABASE,
+    ...importedCards,
+  };
+}
+
+export function getLibraryCard(cardId: string): LibraryCard | undefined {
+  return getLibraryCardDatabase()[cardId];
+}
+
 // ----------------------------------------------------------------------------
 // PAK FILE DEFINITIONS
 // ----------------------------------------------------------------------------
@@ -480,9 +507,10 @@ export function hasCard(library: CardLibrary, cardId: string): boolean {
  * Get all cards in library as array
  */
 export function getLibraryCards(library: CardLibrary): LibraryCard[] {
+  const cardDatabase = getLibraryCardDatabase();
   return Object.keys(library)
     .filter(id => library[id] > 0)
-    .map(id => LIBRARY_CARD_DATABASE[id])
+    .map(id => cardDatabase[id])
     .filter((card): card is LibraryCard => card !== undefined);
 }
 
@@ -595,9 +623,10 @@ export function compileDeck(
  * Get deck preview as formatted strings
  */
 export function getDeckPreview(compiled: CompiledDeck): string[] {
+  const cardDatabase = getLibraryCardDatabase();
   return Object.entries(compiled.cardCounts)
     .map(([cardId, count]) => {
-      const card = LIBRARY_CARD_DATABASE[cardId];
+      const card = cardDatabase[cardId];
       const name = card?.name ?? cardId;
       return `${name} ×${count}`;
     })
@@ -616,7 +645,7 @@ export function openPAK(pakId: string): string[] {
   if (!pak) return [];
 
   const cards: string[] = [];
-  const availableCards = Object.values(LIBRARY_CARD_DATABASE);
+  const availableCards = Object.values(getLibraryCardDatabase());
 
   for (let i = 0; i < pak.cardCount; i++) {
     // Determine rarity based on weights
@@ -669,16 +698,17 @@ function rollRarity(weights: PAKFile["rarityWeights"]): CardRarity {
  */
 export function generateBattleRewardCards(enemyCount: number): string[] {
   const cards: string[] = [];
+  const cardDatabase = Object.values(getLibraryCardDatabase());
 
   // 1 guaranteed common
-  const commons = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "common");
+  const commons = cardDatabase.filter(c => c.rarity === "common");
   if (commons.length > 0) {
     cards.push(commons[Math.floor(Math.random() * commons.length)].id);
   }
 
   // 30% chance for uncommon
   if (Math.random() < 0.3) {
-    const uncommons = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "uncommon");
+    const uncommons = cardDatabase.filter(c => c.rarity === "uncommon");
     if (uncommons.length > 0) {
       cards.push(uncommons[Math.floor(Math.random() * uncommons.length)].id);
     }
@@ -686,7 +716,7 @@ export function generateBattleRewardCards(enemyCount: number): string[] {
 
   // 10% chance for rare (increased with more enemies)
   if (Math.random() < 0.1 + (enemyCount * 0.02)) {
-    const rares = Object.values(LIBRARY_CARD_DATABASE).filter(c => c.rarity === "rare");
+    const rares = cardDatabase.filter(c => c.rarity === "rare");
     if (rares.length > 0) {
       cards.push(rares[Math.floor(Math.random() * rares.length)].id);
     }
@@ -703,7 +733,7 @@ export function generateBattleRewardCards(enemyCount: number): string[] {
  * Get the starter card library for new games
  */
 export function getStarterCardLibrary(): CardLibrary {
-  return {
+  const starterLibrary: CardLibrary = {
     card_strike: 3,
     card_guard: 2,
     card_move_plus: 2,
@@ -713,4 +743,10 @@ export function getStarterCardLibrary(): CardLibrary {
     card_weaken: 1,
     card_vent: 1,
   };
+
+  getAllImportedBattleCards().forEach((card) => {
+    starterLibrary[card.id] = Math.max(starterLibrary[card.id] ?? 0, 1);
+  });
+
+  return starterLibrary;
 }

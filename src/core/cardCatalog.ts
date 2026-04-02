@@ -1,4 +1,4 @@
-import { CORE_CARDS, CLASS_CARDS, EQUIPMENT_CARDS, EquipmentCard, UnitClass } from "./equipment";
+import { getAllEquipmentCards, EquipmentCard } from "./equipment";
 import { Card, CardEffect } from "./types";
 
 type BattleCardTarget = "enemy" | "ally" | "self" | "tile";
@@ -59,11 +59,7 @@ const ALLY_TEXT_HINTS = [
 ];
 
 function getCatalogCards(): EquipmentCard[] {
-  const cards: EquipmentCard[] = [...CORE_CARDS, ...EQUIPMENT_CARDS];
-  for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
-    cards.push(...CLASS_CARDS[unitClass]);
-  }
-  return cards;
+  return Object.values(getAllEquipmentCards());
 }
 
 function parseRange(range?: string): number {

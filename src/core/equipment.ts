@@ -6,6 +6,7 @@
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
+import { getAllImportedBattleCards, getAllImportedGear, getImportedClassDefinition } from "../content/technica";
 
 // ----------------------------------------------------------------------------
 // ENUMS & CONSTANTS
@@ -25,7 +26,7 @@ export type WeaponType =
 export type ArmorSlot = "helmet" | "chestpiece";
 export type EquipSlot = "weapon" | "helmet" | "chestpiece" | "accessory1" | "accessory2";
 
-export type UnitClass =
+export type BuiltInUnitClass =
   | "squire"
   | "sentry"
   | "paladin"
@@ -45,13 +46,15 @@ export type UnitClass =
   | "academic"
   | "freelancer";
 
+export type UnitClass = BuiltInUnitClass | (string & {});
+
 export type EquipmentCardType = "core" | "class" | "equipment" | "gambit";
 
 // ----------------------------------------------------------------------------
 // CLASS WEAPON RESTRICTIONS
 // ----------------------------------------------------------------------------
 
-export const CLASS_WEAPON_RESTRICTIONS: Record<UnitClass, WeaponType[]> = {
+export const CLASS_WEAPON_RESTRICTIONS: Record<BuiltInUnitClass, WeaponType[]> = {
   // Squire tree
   squire: ["sword"],
   sentry: ["sword", "greatsword"],
@@ -107,6 +110,7 @@ export interface EquipmentCard {
   damage?: number;
   effects?: string[];
   sourceEquipmentId?: string;
+  sourceClassId?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -240,7 +244,12 @@ import { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 // ----------------------------------------------------------------------------
 
 export function canEquipWeapon(unitClass: UnitClass, weaponType: WeaponType): boolean {
-  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+  const importedClass = getImportedClassDefinition(unitClass);
+  if (importedClass) {
+    return importedClass.weaponTypes.includes(weaponType);
+  }
+
+  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass as BuiltInUnitClass] || [];
   return allowed.includes(weaponType);
 }
 
@@ -250,7 +259,33 @@ export function getAllStarterEquipment(): Record<string, Equipment> {
   for (const h of STARTER_HELMETS) all[h.id] = h;
   for (const c of STARTER_CHESTPIECES) all[c.id] = c;
   for (const a of STARTER_ACCESSORIES) all[a.id] = a;
+  for (const imported of getAllImportedGear()) all[imported.id] = imported;
   return all;
+}
+
+function formatCardRange(range?: number): string | undefined {
+  if (range === undefined) {
+    return undefined;
+  }
+  if (range <= 0) {
+    return "Self";
+  }
+  return `R(${range})`;
+}
+
+function toImportedEquipmentCard(card: ReturnType<typeof getAllImportedBattleCards>[number]): EquipmentCard {
+  return {
+    id: card.id,
+    name: card.name,
+    type: card.type,
+    strainCost: card.strainCost,
+    description: card.description,
+    range: formatCardRange(card.range),
+    damage: card.damage,
+    effects: (card.effects || []).map((effect) => effect.type),
+    sourceEquipmentId: card.sourceEquipmentId,
+    sourceClassId: card.sourceClassId
+  };
 }
 
 export function getAllEquipmentCards(): Record<string, EquipmentCard> {
@@ -258,10 +293,22 @@ export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   for (const c of CORE_CARDS) all[c.id] = c;
   for (const c of EQUIPMENT_CARDS) all[c.id] = c;
   for (const c of MODULE_CARDS) all[c.id] = c;
-  for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
+  for (const unitClass of Object.keys(CLASS_CARDS) as BuiltInUnitClass[]) {
     for (const c of CLASS_CARDS[unitClass]) all[c.id] = c;
   }
+  for (const imported of getAllImportedBattleCards()) {
+    all[imported.id] = toImportedEquipmentCard(imported);
+  }
   return all;
+}
+
+function getClassCardsForUnitClass(unitClass: UnitClass): EquipmentCard[] {
+  const builtInCards = CLASS_CARDS[unitClass as BuiltInUnitClass] || [];
+  const importedCards = getAllImportedBattleCards()
+    .filter((card) => card.type === "class" && card.sourceClassId === unitClass)
+    .map((card) => toImportedEquipmentCard(card));
+
+  return [...builtInCards, ...importedCards];
 }
 
 export function getAllModules(): Record<string, Module> {
@@ -285,7 +332,7 @@ export function buildDeckFromLoadout(
   }
 
   // 2. Add class cards
-  const classCards = CLASS_CARDS[unitClass] || [];
+  const classCards = getClassCardsForUnitClass(unitClass);
   for (const card of classCards) {
     deck.push(card.id);
   }

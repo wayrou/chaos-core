@@ -3,13 +3,14 @@
 // FFT-style branching class progression based on GDD
 // ============================================================================
 
+import { getAllImportedClassDefinitions } from "../content/technica";
 import { UnitId, WeaponType } from "./types";
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-export type ClassId =
+export type BuiltInClassId =
   // TIER 0 - Starter
   | "squire" | "ranger"
   // TIER 1 - Core Unlockable
@@ -25,6 +26,8 @@ export type ClassId =
   // TIER 3 - Prestige Hybrids
   | "spellblade" | "dragoon" | "gladiator" | "geomancer" | "oracle"
   | "summoner" | "chronomancer" | "warsmith" | "necrotec" | "battle_alchemist";
+
+export type ClassId = BuiltInClassId | (string & {});
 
 export interface ClassDefinition {
   id: ClassId;
@@ -77,7 +80,7 @@ export interface UnitClassProgress {
 // CLASS DEFINITIONS
 // ============================================================================
 
-export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
+export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
   // ==========================================================================
   // TIER 0 - STARTER JOBS
   // ==========================================================================
@@ -500,16 +503,39 @@ export const CLASS_DEFINITIONS: Record<ClassId, ClassDefinition> = {
   },
 };
 
+function getClassCatalog(): Record<string, ClassDefinition> {
+  const importedDefinitions = Object.fromEntries(
+    getAllImportedClassDefinitions().map((entry) => [
+      entry.id,
+      {
+        ...entry,
+        id: entry.id as ClassId,
+        unlockConditions: entry.unlockConditions.map((condition) => ({
+          type: condition.type,
+          requiredClass: condition.requiredClassId as ClassId | undefined,
+          requiredRank: condition.requiredRank,
+          description: condition.description,
+        })),
+      } satisfies ClassDefinition,
+    ])
+  );
+
+  return {
+    ...CLASS_DEFINITIONS,
+    ...importedDefinitions,
+  };
+}
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
 export function getClassDefinition(classId: ClassId): ClassDefinition {
-  return CLASS_DEFINITIONS[classId];
+  return getClassCatalog()[classId] || CLASS_DEFINITIONS.squire;
 }
 
 export function getAvailableClasses(): ClassId[] {
-  return Object.keys(CLASS_DEFINITIONS) as ClassId[];
+  return Object.keys(getClassCatalog()) as ClassId[];
 }
 
 export function isClassUnlocked(
@@ -521,7 +547,7 @@ export function isClassUnlocked(
     return true;
   }
 
-  const classDef = CLASS_DEFINITIONS[classId];
+  const classDef = getClassDefinition(classId);
   const conditions = classDef.unlockConditions;
 
   // Check all conditions
@@ -562,7 +588,7 @@ export function getUnlockableClasses(progress: UnitClassProgress): ClassId[] {
 }
 
 export function getClassTier(classId: ClassId): number {
-  return CLASS_DEFINITIONS[classId].tier;
+  return getClassDefinition(classId).tier;
 }
 
 export function getClassRankLetter(rank: number): ClassRankLetter {
@@ -575,12 +601,12 @@ export function getClassRankLetter(rank: number): ClassRankLetter {
 
 export function getClassesByTier(tier: 0 | 1 | 2 | 3): ClassId[] {
   return getAvailableClasses().filter(classId =>
-    CLASS_DEFINITIONS[classId].tier === tier
+    getClassDefinition(classId).tier === tier
   );
 }
 
 export function getUnlockRequirementsText(classId: ClassId): string[] {
-  const classDef = CLASS_DEFINITIONS[classId];
+  const classDef = getClassDefinition(classId);
   const texts: string[] = [];
 
   classDef.unlockConditions.forEach(condition => {
@@ -591,7 +617,7 @@ export function getUnlockRequirementsText(classId: ClassId): string[] {
 
       case "class_rank":
         if (condition.requiredClass && condition.requiredRank) {
-          const reqClass = CLASS_DEFINITIONS[condition.requiredClass];
+          const reqClass = getClassDefinition(condition.requiredClass);
           texts.push(`${reqClass.name} Rank ${getClassRankLetter(condition.requiredRank)}`);
         }
         break;

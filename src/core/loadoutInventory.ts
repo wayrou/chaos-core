@@ -2,15 +2,16 @@ import type { GameState, InventoryItem } from "./types";
 import type { Equipment } from "./equipment";
 
 function makeEquipmentInventoryItem(equipment: Equipment, existing?: InventoryItem): InventoryItem {
+  const importedInventory = (equipment as { inventory?: { massKg?: number; bulkBu?: number; powerW?: number } }).inventory;
   return {
     id: equipment.id,
     name: equipment.name,
     kind: "equipment",
     stackable: false,
     quantity: 1,
-    massKg: existing?.massKg ?? 2,
-    bulkBu: existing?.bulkBu ?? 1,
-    powerW: existing?.powerW ?? 1,
+    massKg: existing?.massKg ?? importedInventory?.massKg ?? 2,
+    bulkBu: existing?.bulkBu ?? importedInventory?.bulkBu ?? 1,
+    powerW: existing?.powerW ?? importedInventory?.powerW ?? 1,
   };
 }
 

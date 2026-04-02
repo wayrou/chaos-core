@@ -4,6 +4,7 @@
 // Flow: Select Operation → Loadout Screen → Floor Screen
 // ============================================================================
 
+import { getAllImportedOperations } from "../../content/technica";
 import { updateGameState } from "../../state/gameStore";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import {
@@ -44,6 +45,7 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   if (!root) return;
 
   const progress = loadCampaignProgress();
+  const importedOperations = getAllImportedOperations();
 
   // Story operations (exclude custom)
   const storyOperationIds: OperationId[] = [
@@ -184,6 +186,31 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
                 START CUSTOM RUN →
               </button>
             </div>
+
+            ${importedOperations.length > 0 ? `
+              <div class="opselect-op-card opselect-op-card--custom">
+                <div class="opselect-op-header">
+                  <div class="opselect-op-codename">TECHNICA IMPORTS</div>
+                  <span class="opselect-status-badge opselect-status--available">LIVE</span>
+                </div>
+                <div class="opselect-op-description">
+                  Direct-run operations imported from Technica appear here.
+                </div>
+                <div class="opselect-imported-list">
+                  ${importedOperations.map((operation) => `
+                    <div class="opselect-imported-item">
+                      <div class="opselect-imported-item__meta">
+                        <strong>${operation.codename}</strong>
+                        <span>${operation.description}</span>
+                      </div>
+                      <button class="opselect-deploy-btn" data-imported-op-id="${operation.id}">
+                        DEPLOY IMPORT
+                      </button>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
           </div>
         </div>
       </div>
@@ -206,6 +233,15 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
       const opId = (e.target as HTMLElement).getAttribute("data-op-id") as OperationId;
       if (opId && isOperationUnlocked(opId, progress)) {
         startOperation(opId, "normal");
+      }
+    });
+  });
+
+  root.querySelectorAll(".opselect-deploy-btn[data-imported-op-id]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const operationId = (e.target as HTMLElement).getAttribute("data-imported-op-id");
+      if (operationId) {
+        startImportedOperation(operationId);
       }
     });
   });
@@ -269,4 +305,47 @@ function startOperation(
     console.error("[OPSELECT] Error starting operation:", error);
     alert(`Failed to start operation: ${error instanceof Error ? error.message : "Unknown error"}`);
   }
+}
+
+function startImportedOperation(operationId: string): void {
+  const importedOperation = getAllImportedOperations().find((entry) => entry.id === operationId);
+  if (!importedOperation) {
+    alert("Imported operation not found.");
+    return;
+  }
+
+  const floors = importedOperation.floors.map((floor) => {
+    const nodes = (floor.nodes || floor.rooms || []).map((node) => ({
+      ...node,
+      visited: node.visited ?? false,
+      connections: [...(node.connections || [])],
+    }));
+
+    return {
+      ...floor,
+      nodes,
+      rooms: nodes,
+    };
+  });
+
+  const firstFloor = floors[0];
+  const firstNodes = firstFloor?.nodes || firstFloor?.rooms || [];
+  const startingRoomId =
+    importedOperation.currentRoomId ||
+    firstFloor?.startingRoomId ||
+    firstNodes[0]?.id ||
+    null;
+
+  updateGameState((prev) => ({
+    ...prev,
+    operation: {
+      ...importedOperation,
+      currentFloorIndex: importedOperation.currentFloorIndex ?? 0,
+      currentRoomId: startingRoomId,
+      floors,
+    } as any,
+    phase: "loadout",
+  }));
+
+  renderLoadoutScreen();
 }
