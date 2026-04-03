@@ -1,0 +1,27 @@
+{
+  "contentId": "unit_lucien",
+  "contentType": "unit",
+  "dependencies": [
+    {
+      "contentType": "class",
+      "id": "squire",
+      "relation": "current-class"
+    }
+  ],
+  "description": "Chaos Core runtime unit template export.",
+  "entryFile": "unit_lucien.unit.json",
+  "exportType": "unit",
+  "exportedAt": "2026-04-03T04:10:48.128Z",
+  "files": [
+    "manifest.json",
+    "unit_lucien.unit.json",
+    "unit_lucien.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "unit-template.v1",
+  "title": "Lucien"
+}

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "gear_coil_gun",
+  "name": "Coil Gun",
+  "description": "A balanced frontline gun package tuned for steady guard pressure.",
+  "slot": "weapon",
+  "weaponType": "gun",
+  "isMechanical": true,
+  "stats": {
+    "atk": 90,
+    "def": 1,
+    "agi": 0,
+    "acc": 1,
+    "hp": 2
+  },
+  "cardsGranted": [],
+  "moduleSlots": 1,
+  "attachedModules": [],
+  "wear": 0,
+  "inventory": {
+    "massKg": 4,
+    "bulkBu": 2,
+    "powerW": 0,
+    "startingOwned": true
+  },
+  "metadata": {
+    "source": "Technica sample",
+    "role": "frontline"
+  },
+  "createdAt": "2026-04-03T01:44:01.157Z",
+  "updatedAt": "2026-04-03T02:16:12.475Z"
+}

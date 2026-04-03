@@ -1,0 +1,67 @@
+{
+  "entryNodeId": "opening",
+  "id": "untitled_dialogue",
+  "metadata": {
+    "linkedNpcId": "npc_test2"
+  },
+  "nodes": [
+    {
+      "id": "opening",
+      "nextNodeId": "opening_line_2",
+      "speaker": "Tester2",
+      "text": "This is a test.",
+      "type": "line"
+    },
+    {
+      "id": "opening_line_2",
+      "nextNodeId": "opening_choices",
+      "speaker": "Tester2",
+      "text": "How is it working?",
+      "type": "line"
+    },
+    {
+      "choices": [
+        {
+          "id": "working_good",
+          "targetNodeId": "working_good",
+          "text": "Working good"
+        },
+        {
+          "id": "working_bad",
+          "targetNodeId": "working_bad",
+          "text": "Working bad"
+        }
+      ],
+      "id": "opening_choices",
+      "type": "choice_set"
+    },
+    {
+      "id": "working_good",
+      "speaker": "Tester2",
+      "text": "Good! I'm glad.",
+      "type": "line"
+    },
+    {
+      "id": "working_bad",
+      "nextNodeId": "working_bad_end",
+      "speaker": "Tester2",
+      "text": "Oh, okay then.",
+      "type": "line"
+    },
+    {
+      "id": "working_bad_end",
+      "type": "end"
+    },
+    {
+      "id": "working_bad_line_3",
+      "speaker": "Tester2",
+      "text": "Well, see ya.",
+      "type": "line"
+    }
+  ],
+  "sceneId": "scene_untitled",
+  "source": {
+    "rawSource": "@id untitled_dialogue\n@title Untitled Dialogue\n@scene scene_untitled\n@meta linkedNpcId=npc_test2\n\n:opening\nTester2: This is a test.\nTester2: How is it working?\n? Working good -> working_good\n? Working bad -> working_bad\n\n:working_good\nTester2: Good! I'm glad.\n\n:working_bad\nTester2: Oh, okay then.\nEND\nTester2: Well, see ya.\n"
+  },
+  "title": "Untitled Dialogue"
+}

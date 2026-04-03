@@ -5,6 +5,8 @@
 // ============================================================================
 
 import { GameState } from "../core/types";
+import { getAllStarterEquipment } from "../core/equipment";
+import { getAllImportedGear } from "../content/technica";
 import { createNewGameState } from "../core/initialState";
 
 // ----------------------------------------------------------------------------
@@ -16,6 +18,48 @@ let _gameState: GameState | null = null;
 type Listener = (state: GameState) => void;
 const listeners = new Set<Listener>();
 
+function syncPublishedTechnicaGear(state: GameState): GameState {
+  const importedGear = getAllImportedGear();
+  if (importedGear.length === 0) {
+    return state;
+  }
+
+  const syncedGearIds = new Set(state.technicaSync?.starterGearIds ?? []);
+  const runtimeEquipment = getAllStarterEquipment();
+  const nextEquipmentById = { ...(state.equipmentById ?? {}) };
+  const nextEquipmentPool = [...(state.equipmentPool ?? [])];
+  let changed = false;
+
+  importedGear.forEach((gear) => {
+    if (syncedGearIds.has(gear.id)) {
+      return;
+    }
+
+    nextEquipmentById[gear.id] = runtimeEquipment[gear.id] ?? gear;
+
+    if (gear.inventory?.startingOwned !== false && !nextEquipmentPool.includes(gear.id)) {
+      nextEquipmentPool.push(gear.id);
+    }
+
+    syncedGearIds.add(gear.id);
+    changed = true;
+  });
+
+  if (!changed) {
+    return state;
+  }
+
+  return {
+    ...state,
+    equipmentById: nextEquipmentById,
+    equipmentPool: nextEquipmentPool,
+    technicaSync: {
+      ...state.technicaSync,
+      starterGearIds: Array.from(syncedGearIds),
+    },
+  };
+}
+
 // ----------------------------------------------------------------------------
 // CORE API
 // ----------------------------------------------------------------------------
@@ -25,7 +69,9 @@ const listeners = new Set<Listener>();
  */
 export function getGameState(): GameState {
   if (!_gameState) {
-    _gameState = createNewGameState();
+    _gameState = syncPublishedTechnicaGear(createNewGameState());
+  } else {
+    _gameState = syncPublishedTechnicaGear(_gameState);
   }
   return _gameState;
 }
@@ -34,7 +80,7 @@ export function getGameState(): GameState {
  * Replace the entire game state and notify listeners
  */
 export function setGameState(newState: GameState): void {
-  _gameState = newState;
+  _gameState = syncPublishedTechnicaGear(newState);
   notifyListeners();
 }
 

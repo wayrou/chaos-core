@@ -7,7 +7,7 @@ import "../../field/field.css";
 import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../../core/types";
 import { getDispatchState } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
-import { getGameState, updateGameState } from "../../state/gameStore";
+import { getGameState, resetToNewGame, updateGameState } from "../../state/gameStore";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { setBaseCampFieldReturnMap } from "./baseCampReturn";
 
@@ -321,6 +321,7 @@ const BASE_CAMP_COLOR_THEME_MAP = new Map(BASE_CAMP_COLOR_THEMES.map((theme) => 
 
 const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
+  { action: "atlas", aliases: ["atlas", "a t l a s", "adaptive theater logistics and survey", "theater command map", "strategic map", "metamap"] },
   { action: "roster", aliases: ["roster", "unit roster", "units", "party", "manage units"] },
   { action: "loadout", aliases: ["loadout", "gear", "equipment", "equip", "locker"] },
   { action: "inventory", aliases: ["inventory", "items", "assets", "storage", "owned items"] },
@@ -1294,6 +1295,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <p class="all-nodes-menu-subtitle">AERISS // PROFILE</p>
         </div>
         <div class="all-nodes-header-actions">
+          <button class="all-nodes-atlas-btn" id="allNodesAtlasBtn" type="button">
+            <span class="all-nodes-atlas-btn__kicker">HAVEN NODE</span>
+            <span class="all-nodes-atlas-btn__label">A.T.L.A.S.</span>
+          </button>
           <div class="all-nodes-view-switcher" aria-label="E.S.C. layout view switcher">
             <span class="all-nodes-view-switcher-label">VIEW</span>
             <button class="all-nodes-view-switcher-btn${activeLoadoutIndex === 0 ? " all-nodes-view-switcher-btn--active" : ""}" type="button" data-loadout-index="0">1</button>
@@ -1352,9 +1357,14 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
             <span class="debug-text">+999999 WAD</span>
           </button>
         </div>
-        <div class="all-nodes-escape-hint">
-          <span class="hint-key">[ESC]</span>
-          <span class="hint-text">Return to Field</span>
+        <div class="all-nodes-footer-actions">
+          <div class="all-nodes-escape-hint">
+            <span class="hint-key">[ESC]</span>
+            <span class="hint-text">Return to Field</span>
+          </div>
+          <button class="all-nodes-quit-title-btn" id="allNodesQuitTitleBtn" type="button">
+            QUIT TO TITLE SCREEN
+          </button>
         </div>
       </footer>
 
@@ -1382,6 +1392,10 @@ function attachAllNodesMenuListeners(): void {
         handleNodeAction(action);
       }
     });
+  });
+
+  root.querySelector<HTMLElement>("#allNodesAtlasBtn")?.addEventListener("click", () => {
+    handleNodeAction("atlas");
   });
 
   root.querySelectorAll<HTMLElement>(".all-nodes-view-switcher-btn[data-loadout-index]").forEach((btn) => {
@@ -1493,6 +1507,14 @@ function attachAllNodesMenuListeners(): void {
         handleNodeAction(action);
       }
     });
+  });
+
+  root.querySelector<HTMLElement>("#allNodesQuitTitleBtn")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    cleanupAllNodesWindowListeners();
+    resetToNewGame();
+    const { renderMainMenu } = await import("./MainMenuScreen");
+    await renderMainMenu();
   });
 
   const quacForm = root.querySelector<HTMLFormElement>("#quacForm");
@@ -1836,6 +1858,11 @@ function handleNodeAction(action: string): void {
   cleanupAllNodesWindowListeners();
 
   switch (action) {
+    case "atlas":
+      import("./AtlasScreen").then(({ renderAtlasScreen }) => {
+        renderAtlasScreen("esc");
+      });
+      break;
     case "shop":
       import("./ShopScreen").then(({ renderShopScreen }) => {
         renderShopScreen("esc");

@@ -3,7 +3,7 @@
 // Supports both legacy line-array dialogues and imported Technica node graphs
 // ============================================================================
 
-import { getImportedDialogue } from "../../content/technica";
+import { getAllImportedDialogues, getImportedDialogue } from "../../content/technica";
 import type { DialogueChoice, DialogueEffect, DialogueNode, ImportedDialogue } from "../../content/technica/types";
 
 type LegacyDialogueContent = {
@@ -92,8 +92,30 @@ export function showDialogue(npcName: string, dialogueLines: string[], onClose?:
   attachDialogueListeners();
 }
 
-export function showImportedDialogue(dialogueId: string, onClose?: () => void, fallbackNpcName?: string): boolean {
-  const dialogue = getImportedDialogue(dialogueId);
+function resolveImportedDialogue(dialogueId: string, fallbackNpcId?: string): ImportedDialogue | null {
+  const exactDialogue = getImportedDialogue(dialogueId);
+  if (exactDialogue) {
+    return exactDialogue;
+  }
+
+  if (!fallbackNpcId) {
+    return null;
+  }
+
+  return (
+    getAllImportedDialogues().find(
+      (dialogue) => String(dialogue.metadata?.linkedNpcId ?? "").trim() === fallbackNpcId
+    ) || null
+  );
+}
+
+export function showImportedDialogue(
+  dialogueId: string,
+  onClose?: () => void,
+  fallbackNpcName?: string,
+  fallbackNpcId?: string
+): boolean {
+  const dialogue = resolveImportedDialogue(dialogueId, fallbackNpcId);
   if (!dialogue) {
     return false;
   }

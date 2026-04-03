@@ -1,0 +1,21 @@
+{
+  "contentId": "gear_coil_gun",
+  "contentType": "gear",
+  "dependencies": [],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "gear_coil_gun.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-03T02:16:17.795Z",
+  "files": [
+    "manifest.json",
+    "gear_coil_gun.gear.json",
+    "gear_coil_gun.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Coil Gun"
+}

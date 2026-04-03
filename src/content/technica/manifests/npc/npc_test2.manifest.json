@@ -1,0 +1,32 @@
+{
+  "contentId": "npc_test2",
+  "contentType": "npc",
+  "dependencies": [
+    {
+      "contentType": "map",
+      "id": "base_camp",
+      "relation": "spawn-map"
+    },
+    {
+      "contentType": "dialogue",
+      "id": "tester_dialogue",
+      "relation": "dialogue"
+    }
+  ],
+  "description": "Chaos Core runtime field NPC export.",
+  "entryFile": "npc_test2.npc.json",
+  "exportType": "npc",
+  "exportedAt": "2026-04-03T01:42:04.363Z",
+  "files": [
+    "manifest.json",
+    "npc_test2.npc.json",
+    "npc_test2.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "npc.v1",
+  "title": "Tester2"
+}

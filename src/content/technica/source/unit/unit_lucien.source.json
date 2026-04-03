@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "unit_Lucien",
+  "name": "Lucien",
+  "description": "A steady breach specialist prepared for early operation deployment.",
+  "currentClassId": "squire",
+  "stats": {
+    "maxHp": 15,
+    "atk": 9,
+    "def": 7,
+    "agi": 4,
+    "acc": 7
+  },
+  "loadout": {
+    "primaryWeapon": "",
+    "secondaryWeapon": "",
+    "helmet": "",
+    "chestpiece": "",
+    "accessory1": "",
+    "accessory2": ""
+  },
+  "traits": [
+    "Frontline",
+    "Reliable"
+  ],
+  "pwr": 42,
+  "recruitCost": 120,
+  "startingInRoster": true,
+  "deployInParty": false,
+  "metadata": {
+    "faction": "free_company"
+  },
+  "createdAt": "2026-04-03T03:52:09.100Z",
+  "updatedAt": "2026-04-03T03:52:30.090Z"
+}

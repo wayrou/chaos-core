@@ -1,37 +1,27 @@
 import type { FieldMap } from "../../field/types";
 import { upsertLibraryCard } from "../../core/gearWorkbench";
 import type { Quest } from "../../quests/types";
+import generatedContentVersion from "./generated/version.json";
 import type {
-<<<<<<< HEAD
-  ImportedBattleCard,
-=======
+  DisabledTechnicaContent,
   ImportedCard,
->>>>>>> 3307f1b (technica compat)
   ImportedClassDefinition,
   ImportedDialogue,
   ImportedGear,
   ImportedItem,
-<<<<<<< HEAD
-  ImportedOperation,
-  ImportedUnitTemplate
-} from "./types";
-import villageGuideIntro from "./generated/dialogue/village_guide_intro.dialogue.json";
-import oakSquareMap from "./generated/map/oak_square.fieldmap.json";
-import checkTheCourierBoard from "./generated/quest/check_the_courier_board.quest.json";
-=======
   ImportedNpcTemplate,
   ImportedOperationDefinition,
   ImportedUnitTemplate,
-  DisabledTechnicaContent,
   TechnicaContentType,
 } from "./types";
->>>>>>> 3307f1b (technica compat)
+
+void generatedContentVersion;
 
 type JsonModule<TValue> = {
   default: TValue;
 };
 
-type ImportMetaWithGlob = ImportMeta & {
+type ImportMetaWithOptionalGlob = ImportMeta & {
   glob?: <TModule>(pattern: string, options: { eager: true }) => Record<string, TModule>;
 };
 
@@ -57,12 +47,6 @@ const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
   ["operation", new Set()],
   ["class", new Set()],
 ]);
-const importedGear = new Map<string, ImportedGear>();
-const importedItems = new Map<string, ImportedItem>();
-const importedCards = new Map<string, ImportedBattleCard>();
-const importedUnits = new Map<string, ImportedUnitTemplate>();
-const importedOperations = new Map<string, ImportedOperation>();
-const importedClasses = new Map<string, ImportedClassDefinition>();
 
 function loadGeneratedRegistry<TValue extends { id: string }>(
   modules: Record<string, JsonModule<TValue>>,
@@ -73,11 +57,9 @@ function loadGeneratedRegistry<TValue extends { id: string }>(
   });
 }
 
-const importGlob = (import.meta as ImportMetaWithGlob).glob;
-
-if (typeof importGlob === "function") {
+if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   loadGeneratedRegistry(
-    importGlob<JsonModule<DisabledTechnicaContent>>("./disabled/*/*.disabled.json", { eager: true }) as Record<
+    import.meta.glob<JsonModule<DisabledTechnicaContent>>("./disabled/*/*.disabled.json", { eager: true }) as Record<
       string,
       JsonModule<DisabledTechnicaContent>
     >,
@@ -89,66 +71,89 @@ if (typeof importGlob === "function") {
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<FieldMap>>("./generated/map/*.fieldmap.json", { eager: true }) as Record<string, JsonModule<FieldMap>>,
-    (map) => importedMaps.set(map.id, map)
+    import.meta.glob<JsonModule<FieldMap>>("./generated/map/*.fieldmap.json", { eager: true }) as Record<
+      string,
+      JsonModule<FieldMap>
+    >,
+    registerImportedFieldMap
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<Quest>>("./generated/quest/*.quest.json", { eager: true }) as Record<string, JsonModule<Quest>>,
-    (quest) => importedQuests.set(quest.id, quest)
+    import.meta.glob<JsonModule<Quest>>("./generated/quest/*.quest.json", { eager: true }) as Record<
+      string,
+      JsonModule<Quest>
+    >,
+    registerImportedQuest
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedDialogue>>("./generated/dialogue/*.dialogue.json", { eager: true }) as Record<string, JsonModule<ImportedDialogue>>,
-    (dialogue) => importedDialogues.set(dialogue.id, dialogue)
+    import.meta.glob<JsonModule<ImportedDialogue>>("./generated/dialogue/*.dialogue.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedDialogue>
+    >,
+    registerImportedDialogue
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedItem>>("./generated/item/*.item.json", { eager: true }) as Record<string, JsonModule<ImportedItem>>,
-    (item) => importedItems.set(item.id, item)
+    import.meta.glob<JsonModule<ImportedItem>>("./generated/item/*.item.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedItem>
+    >,
+    registerImportedItem
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedNpcTemplate>>("./generated/npc/*.npc.json", { eager: true }) as Record<
+    import.meta.glob<JsonModule<ImportedNpcTemplate>>("./generated/npc/*.npc.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedNpcTemplate>
     >,
-    (npc) => registerImportedNpc(npc)
+    registerImportedNpc
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedGear>>("./generated/gear/*.gear.json", { eager: true }) as Record<string, JsonModule<ImportedGear>>,
-    (gear) => importedGear.set(gear.id, gear)
+    import.meta.glob<JsonModule<ImportedGear>>("./generated/gear/*.gear.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedGear>
+    >,
+    registerImportedGear
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedCard>>("./generated/card/*.card.json", { eager: true }) as Record<string, JsonModule<ImportedCard>>,
-    (card) => registerImportedCard(card)
+    import.meta.glob<JsonModule<ImportedCard>>("./generated/card/*.card.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedCard>
+    >,
+    registerImportedCard
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedClassDefinition>>("./generated/class/*.class.json", { eager: true }) as Record<
+    import.meta.glob<JsonModule<ImportedClassDefinition>>("./generated/class/*.class.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedClassDefinition>
     >,
-    (classDefinition) => registerImportedClass(classDefinition)
+    registerImportedClass
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedUnitTemplate>>("./generated/unit/*.unit.json", { eager: true }) as Record<
+    import.meta.glob<JsonModule<ImportedUnitTemplate>>("./generated/unit/*.unit.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedUnitTemplate>
     >,
-    (unit) => registerImportedUnit(unit)
+    registerImportedUnit
   );
 
   loadGeneratedRegistry(
-    importGlob<JsonModule<ImportedOperationDefinition>>("./generated/operation/*.operation.json", { eager: true }) as Record<
-      string,
-      JsonModule<ImportedOperationDefinition>
-    >,
-    (operation) => registerImportedOperation(operation)
+    import.meta.glob<JsonModule<ImportedOperationDefinition>>("./generated/operation/*.operation.json", {
+      eager: true,
+    }) as Record<string, JsonModule<ImportedOperationDefinition>>,
+    registerImportedOperation
   );
+}
+
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    window.location.reload();
+  });
 }
 
 export function registerImportedFieldMap(map: FieldMap): void {
@@ -195,25 +200,6 @@ export function hasImportedDialogue(dialogueId: string): boolean {
   return importedDialogues.has(dialogueId);
 }
 
-<<<<<<< HEAD
-export function registerImportedGear(gear: ImportedGear): void {
-  importedGear.set(gear.id, gear);
-}
-
-export function getImportedGear(gearId: string): ImportedGear | null {
-  return importedGear.get(gearId) || null;
-}
-
-export function getAllImportedGear(): ImportedGear[] {
-  return Array.from(importedGear.values());
-}
-
-export function getImportedStarterGear(): ImportedGear[] {
-  return getAllImportedGear().filter((entry) => entry.inventory?.startingOwned !== false);
-}
-
-=======
->>>>>>> 3307f1b (technica compat)
 export function registerImportedItem(item: ImportedItem): void {
   importedItems.set(item.id, item);
 }
@@ -226,67 +212,10 @@ export function getAllImportedItems(): ImportedItem[] {
   return Array.from(importedItems.values());
 }
 
-<<<<<<< HEAD
 export function getImportedStarterItems(): ImportedItem[] {
   return getAllImportedItems();
 }
 
-export function registerImportedBattleCard(card: ImportedBattleCard): void {
-  importedCards.set(card.id, card);
-}
-
-export function getImportedBattleCard(cardId: string): ImportedBattleCard | null {
-  return importedCards.get(cardId) || null;
-}
-
-export function getAllImportedBattleCards(): ImportedBattleCard[] {
-  return Array.from(importedCards.values());
-}
-
-export function getImportedStarterBattleCards(): ImportedBattleCard[] {
-  return getAllImportedBattleCards();
-}
-
-export function registerImportedUnitTemplate(unit: ImportedUnitTemplate): void {
-  importedUnits.set(unit.id, unit);
-}
-
-export function getImportedUnitTemplate(unitId: string): ImportedUnitTemplate | null {
-  return importedUnits.get(unitId) || null;
-}
-
-export function getAllImportedUnitTemplates(): ImportedUnitTemplate[] {
-  return Array.from(importedUnits.values());
-}
-
-export function getImportedRosterUnits(): ImportedUnitTemplate[] {
-  return getAllImportedUnitTemplates().filter((entry) => entry.startingInRoster !== false);
-}
-
-export function registerImportedOperation(operation: ImportedOperation): void {
-  importedOperations.set(operation.id ?? operation.codename, operation);
-}
-
-export function getImportedOperation(operationId: string): ImportedOperation | null {
-  return importedOperations.get(operationId) || null;
-}
-
-export function getAllImportedOperations(): ImportedOperation[] {
-  return Array.from(importedOperations.values());
-}
-
-export function registerImportedClassDefinition(classDefinition: ImportedClassDefinition): void {
-  importedClasses.set(classDefinition.id, classDefinition);
-}
-
-export function getImportedClassDefinition(classId: string): ImportedClassDefinition | null {
-  return importedClasses.get(classId) || null;
-}
-
-export function getAllImportedClassDefinitions(): ImportedClassDefinition[] {
-  return Array.from(importedClasses.values());
-}
-=======
 export function registerImportedNpc(npc: ImportedNpcTemplate): void {
   importedNpcs.set(npc.id, npc);
 }
@@ -311,6 +240,10 @@ export function getAllImportedGear(): ImportedGear[] {
   return Array.from(importedGear.values());
 }
 
+export function getImportedStarterGear(): ImportedGear[] {
+  return getAllImportedGear().filter((entry) => entry.inventory?.startingOwned !== false);
+}
+
 export function registerImportedCard(card: ImportedCard): void {
   importedCards.set(card.id, card);
   upsertLibraryCard({
@@ -320,40 +253,84 @@ export function registerImportedCard(card: ImportedCard): void {
     category: card.category ?? "utility",
     description: card.description,
     strainCost: card.strainCost,
-    artPath: card.artPath
+    artPath: card.artPath,
   });
+}
+
+export function registerImportedBattleCard(card: ImportedCard): void {
+  registerImportedCard(card);
 }
 
 export function getImportedCard(cardId: string): ImportedCard | null {
   return importedCards.get(cardId) || null;
 }
 
+export function getImportedBattleCard(cardId: string): ImportedCard | null {
+  return getImportedCard(cardId);
+}
+
 export function getAllImportedCards(): ImportedCard[] {
   return Array.from(importedCards.values());
+}
+
+export function getAllImportedBattleCards(): ImportedCard[] {
+  return getAllImportedCards();
+}
+
+export function getImportedStarterBattleCards(): ImportedCard[] {
+  return getAllImportedCards();
 }
 
 export function registerImportedClass(classDefinition: ImportedClassDefinition): void {
   importedClasses.set(classDefinition.id, classDefinition);
 }
 
+export function registerImportedClassDefinition(classDefinition: ImportedClassDefinition): void {
+  registerImportedClass(classDefinition);
+}
+
 export function getImportedClass(classId: string): ImportedClassDefinition | null {
   return importedClasses.get(classId) || null;
+}
+
+export function getImportedClassDefinition(classId: string): ImportedClassDefinition | null {
+  return getImportedClass(classId);
 }
 
 export function getAllImportedClasses(): ImportedClassDefinition[] {
   return Array.from(importedClasses.values());
 }
 
+export function getAllImportedClassDefinitions(): ImportedClassDefinition[] {
+  return getAllImportedClasses();
+}
+
 export function registerImportedUnit(unit: ImportedUnitTemplate): void {
   importedUnits.set(unit.id, unit);
+}
+
+export function registerImportedUnitTemplate(unit: ImportedUnitTemplate): void {
+  registerImportedUnit(unit);
 }
 
 export function getImportedUnit(unitId: string): ImportedUnitTemplate | null {
   return importedUnits.get(unitId) || null;
 }
 
+export function getImportedUnitTemplate(unitId: string): ImportedUnitTemplate | null {
+  return getImportedUnit(unitId);
+}
+
 export function getAllImportedUnits(): ImportedUnitTemplate[] {
   return Array.from(importedUnits.values());
+}
+
+export function getAllImportedUnitTemplates(): ImportedUnitTemplate[] {
+  return getAllImportedUnits();
+}
+
+export function getImportedRosterUnits(): ImportedUnitTemplate[] {
+  return getAllImportedUnits().filter((entry) => entry.startingInRoster !== false);
 }
 
 export function registerImportedOperation(operation: ImportedOperationDefinition): void {
@@ -371,4 +348,3 @@ export function getAllImportedOperations(): ImportedOperationDefinition[] {
 export function isTechnicaContentDisabled(contentType: TechnicaContentType, contentId: string): boolean {
   return disabledContentIds.get(contentType)?.has(contentId) ?? false;
 }
->>>>>>> 3307f1b (technica compat)

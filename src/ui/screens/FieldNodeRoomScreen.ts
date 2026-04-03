@@ -6,6 +6,7 @@
 
 import { updateGameState, getGameState } from "../../state/gameStore";
 import { renderOperationMapScreen } from "./OperationMapScreen";
+import { hasTheaterOperation, secureTheaterRoomInState } from "../../core/theaterSystem";
 import { updateQuestProgress } from "../../quests/questManager";
 import {
   createCompanion,
@@ -1848,8 +1849,24 @@ function completeRoom(): void {
   const isTestRoom = roomId.startsWith("test_");
   
   updateGameState(prev => {
+    const baseState = awardStatTokens({
+      ...prev,
+      wad: prev.wad + resources.wad,
+      resources: {
+        ...prev.resources,
+        metalScrap: (prev.resources?.metalScrap ?? 0) + resources.metalScrap,
+        wood: (prev.resources?.wood ?? 0) + resources.wood,
+        chaosShards: (prev.resources?.chaosShards ?? 0) + resources.chaosShards,
+        steamComponents: (prev.resources?.steamComponents ?? 0) + resources.steamComponents,
+      },
+    }, statReward);
+
+    if (hasTheaterOperation(baseState.operation) && !isTestRoom) {
+      return secureTheaterRoomInState(baseState, roomId);
+    }
+
     // Mark room as visited (only if in an operation)
-    const operation = prev.operation ? { ...prev.operation } : null;
+    const operation = baseState.operation ? { ...baseState.operation } : null;
     if (operation && !isTestRoom) {
       const floor = operation.floors[operation.currentFloorIndex];
       if (floor) {
@@ -1861,18 +1878,10 @@ function completeRoom(): void {
       }
     }
     
-    return awardStatTokens({
-      ...prev,
+    return {
+      ...baseState,
       operation,
-      wad: prev.wad + resources.wad,
-      resources: {
-        ...prev.resources,
-        metalScrap: (prev.resources?.metalScrap ?? 0) + resources.metalScrap,
-        wood: (prev.resources?.wood ?? 0) + resources.wood,
-        chaosShards: (prev.resources?.chaosShards ?? 0) + resources.chaosShards,
-        steamComponents: (prev.resources?.steamComponents ?? 0) + resources.steamComponents,
-      },
-    }, statReward);
+    };
   });
 
   if (statReward > 0) {

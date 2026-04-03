@@ -1,0 +1,28 @@
+{
+  "contentId": "untitled_dialogue",
+  "contentType": "dialogue",
+  "dependencies": [
+    {
+      "contentType": "scene",
+      "id": "scene_untitled",
+      "relation": "scene"
+    }
+  ],
+  "description": "Chaos Core runtime dialogue graph export.",
+  "entryFile": "untitled_dialogue.dialogue.json",
+  "exportType": "dialogue",
+  "exportedAt": "2026-04-03T01:41:21.017Z",
+  "files": [
+    "manifest.json",
+    "untitled_dialogue.dialogue.json",
+    "untitled_dialogue.source.json",
+    "untitled_dialogue.dialogue.txt",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "dialogue.v1",
+  "title": "Untitled Dialogue"
+}

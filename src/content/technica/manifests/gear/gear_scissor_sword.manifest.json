@@ -1,0 +1,21 @@
+{
+  "contentId": "gear_scissor_sword",
+  "contentType": "gear",
+  "dependencies": [],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "gear_scissor_sword.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-03T02:04:16.811Z",
+  "files": [
+    "manifest.json",
+    "gear_scissor_sword.gear.json",
+    "gear_scissor_sword.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Scissor Sword"
+}

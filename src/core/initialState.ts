@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { getStarterRecipeIds } from "./crafting";
-import { getImportedRosterUnits, getImportedStarterItems } from "../content/technica";
+import { getImportedStarterItems } from "../content/technica";
 
 import {
   getStarterCardLibrary,
@@ -289,46 +289,6 @@ function importedUnitToRuntimeUnit(unit: ImportedUnitTemplate): UnitWithEquipmen
   } as UnitWithEquipment;
 }
 
-function createImportedUnit(template: ReturnType<typeof getImportedRosterUnits>[number]): UnitWithEquipment {
-  const primaryWeapon = template.loadout.primaryWeapon || null;
-  const loadout = {
-    primaryWeapon,
-    secondaryWeapon: template.loadout.secondaryWeapon || null,
-    helmet: template.loadout.helmet || null,
-    chestpiece: template.loadout.chestpiece || null,
-    accessory1: template.loadout.accessory1 || null,
-    accessory2: template.loadout.accessory2 || null,
-    weapon: primaryWeapon,
-  } as unknown as UnitLoadout;
-
-  return {
-    id: template.id,
-    name: template.name,
-    isEnemy: false,
-    hp: template.stats.maxHp,
-    maxHp: template.stats.maxHp,
-    agi: template.stats.agi,
-    pos: null,
-    hand: [],
-    drawPile: [],
-    discardPile: [],
-    strain: 0,
-    unitClass: template.currentClassId as UnitClass,
-    stats: {
-      maxHp: template.stats.maxHp,
-      atk: template.stats.atk,
-      def: template.stats.def,
-      agi: template.stats.agi,
-      acc: template.stats.acc,
-    } as any,
-    deck: [] as any,
-    loadout,
-    pwr: template.pwr,
-    affinities: createDefaultAffinities(),
-    controller: "P1",
-  } as unknown as UnitWithEquipment;
-}
-
 /**
  * Starter units with equipment loadouts
  */
@@ -444,10 +404,6 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
     }]),
   ];
 
-<<<<<<< HEAD
-  getImportedRosterUnits().forEach((template) => {
-    units.push(createImportedUnit(template));
-=======
   getAllImportedUnits().forEach((unit) => {
     const runtimeUnit = importedUnitToRuntimeUnit(unit);
     if (!runtimeUnit) {
@@ -460,7 +416,6 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
     } else {
       units.push(runtimeUnit);
     }
->>>>>>> 3307f1b (technica compat)
   });
 
   // Calculate PWR for each unit
@@ -621,20 +576,9 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-<<<<<<< HEAD
-    partyUnitIds: [
-      "unit_aeriss",
-      "unit_marksman_1",
-      "unit_mage_1",
-      ...getImportedRosterUnits()
-        .filter((entry) => entry.deployInParty)
-        .map((entry) => entry.id),
-    ],
-=======
     partyUnitIds: Object.values(unitsById)
       .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
       .map((unit) => unit.id),
->>>>>>> 3307f1b (technica compat)
 
     wad: 0,
     resources: {

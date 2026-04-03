@@ -25,6 +25,10 @@ import {
 } from "../../core/campaign";
 import { startOperationRun } from "../../core/campaignManager";
 import { activeRunToOperationRun } from "../../core/campaignManager";
+import {
+  ensureOperationHasTheater,
+  getTheaterStarterResources,
+} from "../../core/theaterSystem";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -35,6 +39,18 @@ let customOperationConfig = {
   difficulty: "normal" as "easy" | "normal" | "hard",
   enemyDensity: "normal" as "low" | "normal" | "high",
 };
+
+function mergeTheaterStarterReserve(
+  currentResources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number }
+): { metalScrap: number; wood: number; chaosShards: number; steamComponents: number } {
+  const reserve = getTheaterStarterResources();
+  return {
+    metalScrap: Math.max(currentResources.metalScrap, reserve.metalScrap),
+    wood: Math.max(currentResources.wood, reserve.wood),
+    chaosShards: Math.max(currentResources.chaosShards, reserve.chaosShards),
+    steamComponents: Math.max(currentResources.steamComponents, reserve.steamComponents),
+  };
+}
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -258,7 +274,7 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
         enemyDensity: densitySelect.value as "low" | "normal" | "high",
       };
       
-      startOperation("op_custom", difficulty, floors);
+      startOperation("op_custom", difficulty, customOperationConfig.floors, customOperationConfig.enemyDensity);
     });
   }
 }
@@ -270,13 +286,14 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
 function startOperation(
   operationId: OperationId,
   difficulty: "easy" | "normal" | "hard" = "normal",
-  customFloors?: number
+  customFloors?: number,
+  customEnemyDensity: "low" | "normal" | "high" = "normal",
 ): void {
-  console.log("[OPSELECT] Starting operation:", operationId, difficulty, customFloors);
+  console.log("[OPSELECT] Starting operation:", operationId, difficulty, customFloors, customEnemyDensity);
   
   try {
     // Start campaign run
-    const progress = startOperationRun(operationId, difficulty, customFloors);
+    const progress = startOperationRun(operationId, difficulty, customFloors, customEnemyDensity);
     const activeRun = progress.activeRun;
     
     if (!activeRun) {
@@ -286,12 +303,17 @@ function startOperation(
     
     // Convert to OperationRun format for existing UI
     const operation = activeRunToOperationRun(activeRun);
+    const operationWithLaunchSource = {
+      ...operation,
+      launchSource: "ops_terminal" as const,
+    };
     
     // Store in game state
     updateGameState(prev => ({
       ...prev,
-      operation: operation as any,
+      operation: ensureOperationHasTheater(operationWithLaunchSource as any) as any,
       phase: "loadout", // Go to loadout first
+      resources: mergeTheaterStarterReserve(prev.resources),
     }));
     
     // Navigate to loadout screen
@@ -310,7 +332,7 @@ function startImportedOperation(operationId: string): void {
   }
 
   const floors = importedOperation.floors.map((floor) => {
-    const nodes = (floor.nodes || floor.rooms || []).map((node) => ({
+    const nodes = (((floor as any).nodes || floor.rooms || []) as any[]).map((node) => ({
       ...node,
       visited: node.visited ?? false,
       connections: [...(node.connections || [])],
@@ -324,22 +346,24 @@ function startImportedOperation(operationId: string): void {
   });
 
   const firstFloor = floors[0];
-  const firstNodes = firstFloor?.nodes || firstFloor?.rooms || [];
+  const firstNodes = (firstFloor as any)?.nodes || firstFloor?.rooms || [];
   const startingRoomId =
-    importedOperation.currentRoomId ||
-    firstFloor?.startingRoomId ||
+    (importedOperation as any).currentRoomId ||
+    (firstFloor as any)?.startingRoomId ||
     firstNodes[0]?.id ||
     null;
 
   updateGameState((prev) => ({
     ...prev,
-    operation: {
+    operation: ensureOperationHasTheater({
       ...importedOperation,
-      currentFloorIndex: importedOperation.currentFloorIndex ?? 0,
+      currentFloorIndex: (importedOperation as any).currentFloorIndex ?? 0,
       currentRoomId: startingRoomId,
       floors,
-    } as any,
+      launchSource: "ops_terminal",
+    } as any) as any,
     phase: "loadout",
+    resources: mergeTheaterStarterReserve(prev.resources),
   }));
 
   renderLoadoutScreen();

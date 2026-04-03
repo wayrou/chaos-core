@@ -62,15 +62,7 @@ const ALLY_TEXT_HINTS = [
 ];
 
 function getCatalogCards(): EquipmentCard[] {
-<<<<<<< HEAD
   return Object.values(getAllEquipmentCards());
-=======
-  const cards: EquipmentCard[] = [...CORE_CARDS, ...EQUIPMENT_CARDS];
-  for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
-    cards.push(...CLASS_CARDS[unitClass]);
-  }
-  return cards.filter((card) => !isTechnicaContentDisabled("card", card.id));
->>>>>>> 3307f1b (technica compat)
 }
 
 function parseRange(range?: string): number {

@@ -1,0 +1,18 @@
+@id untitled_dialogue
+@title Untitled Dialogue
+@scene scene_untitled
+@meta linkedNpcId=npc_test2
+
+:opening
+Tester2: This is a test.
+Tester2: How is it working?
+? Working good -> working_good
+? Working bad -> working_bad
+
+:working_good
+Tester2: Good! I'm glad.
+
+:working_bad
+Tester2: Oh, okay then.
+END
+Tester2: Well, see ya.

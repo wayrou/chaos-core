@@ -8,6 +8,7 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderOperationMapScreen } from "./OperationMapScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
+import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
 import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../core/inventory";
 import { InventoryState, InventoryItem } from "../../core/types";
@@ -25,6 +26,7 @@ import {
 } from "../../core/inventoryFolders";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
+let operationProceedInFlight = false;
 
 // ============================================================================
 // TYPES
@@ -47,6 +49,7 @@ interface PartyUnitSummary {
 export function renderLoadoutScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;
+  operationProceedInFlight = false;
 
   const state = getGameState();
   const operation = state.operation;
@@ -58,6 +61,7 @@ export function renderLoadoutScreen(): void {
   }
 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+  const theaterName = operation.theater?.definition.name ?? "THEATER COMMAND";
   // Future: modulesById can be used for gear slot calculations
   void getAllModules();
 
@@ -135,7 +139,7 @@ export function renderLoadoutScreen(): void {
           <div class="loadout-screen-header-left">
             <h1 class="loadout-screen-title">OPERATION LOADOUT</h1>
             <div class="loadout-screen-subtitle">
-              S/COM_OS // ${operation.codename} • ${operation.floors.length} FLOORS
+              S/COM_OS // ${operation.codename} // ${theaterName}
             </div>
           </div>
           <div class="loadout-screen-header-right">
@@ -144,6 +148,7 @@ export function renderLoadoutScreen(): void {
               <span class="btn-text">CANCEL</span>
             </button>
             <button class="loadout-screen-proceed-btn" id="proceedBtn" ${partyUnits.length === 0 ? 'disabled' : ''}>
+              <span class="loadout-screen-proceed-spinner" aria-hidden="true"></span>
               <span class="btn-text">PROCEED</span>
               <span class="btn-icon">→</span>
             </button>
@@ -176,8 +181,8 @@ export function renderLoadoutScreen(): void {
                   <span class="loadout-screen-op-value">${operation.codename}</span>
                 </div>
                 <div class="loadout-screen-op-detail">
-                  <span class="loadout-screen-op-label">Floors:</span>
-                  <span class="loadout-screen-op-value">${operation.floors.length}</span>
+                  <span class="loadout-screen-op-label">Theater:</span>
+                  <span class="loadout-screen-op-value">${theaterName}</span>
                 </div>
                 <div class="loadout-screen-op-detail">
                   <span class="loadout-screen-op-label">Party Size:</span>
@@ -424,12 +429,21 @@ function attachLoadoutListeners(): void {
 
   // Back button - cancel operation
   root.querySelector("#backBtn")?.addEventListener("click", () => {
+    const launchSource = getGameState().operation?.launchSource;
     // Clear operation and return to operation select
     updateGameState(prev => ({
       ...prev,
       operation: null,
-      phase: "shell",
+      phase: launchSource === "atlas" ? "atlas" : "shell",
     }));
+
+    if (launchSource === "atlas") {
+      import("./AtlasScreen").then(({ renderAtlasScreen }) => {
+        renderAtlasScreen("esc");
+      });
+      return;
+    }
+
     renderOperationSelectScreen("field");
   });
 
@@ -441,6 +455,8 @@ function attachLoadoutListeners(): void {
 
   // Proceed button
   root.querySelector("#proceedBtn")?.addEventListener("click", () => {
+    if (operationProceedInFlight) return;
+
     const state = getGameState();
     if (state.partyUnitIds.length === 0) {
       alert("You need at least one unit in your party to proceed!");
@@ -456,6 +472,10 @@ function attachLoadoutListeners(): void {
       alert(`These units are still assigned to Dispatch and cannot deploy:\n\n${dispatchedPartyUnits.join("\n")}`);
       return;
     }
+
+    operationProceedInFlight = true;
+    setProceedButtonLoading(root, true);
+    showOperationProceedLoader(root);
 
     // Auto-populate forward locker from equipped items
     const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
@@ -482,20 +502,28 @@ function attachLoadoutListeners(): void {
       }
     });
 
-    // Update phase and auto-populate forward locker capacity usage
-    updateGameState(prev => ({
-      ...prev,
-      phase: "operation",
-      inventory: {
-        ...prev.inventory,
-        // Store the equipment load contribution for reference
-        equipmentMassUsed: totalMass,
-        equipmentBulkUsed: totalBulk,
-        equipmentPowerUsed: totalPower,
-      } as any,
-    }));
+    window.setTimeout(() => {
+      // Update phase and auto-populate forward locker capacity usage
+      updateGameState(prev => ({
+        ...prev,
+        phase: "operation",
+        inventory: {
+          ...prev.inventory,
+          // Store the equipment load contribution for reference
+          equipmentMassUsed: totalMass,
+          equipmentBulkUsed: totalBulk,
+          equipmentPowerUsed: totalPower,
+        } as any,
+      }));
 
-    renderOperationMapScreen();
+      operationProceedInFlight = false;
+      if (getGameState().operation?.theater) {
+        renderTheaterCommandScreen();
+        return;
+      }
+
+      renderOperationMapScreen();
+    }, 4000);
   });
 
   // ------------------------------
@@ -631,4 +659,35 @@ function attachLoadoutListeners(): void {
       renderLoadoutScreen();
     });
   });
+}
+
+function showOperationProceedLoader(root: HTMLElement): void {
+  const existing = root.querySelector(".loadout-screen-proceed-loader");
+  if (existing) existing.remove();
+  const isGeneratedTheater = Boolean(getGameState().operation?.theater);
+
+  const loader = document.createElement("div");
+  loader.className = "loadout-screen-proceed-loader";
+  loader.innerHTML = `
+    <div class="loadout-screen-proceed-loader__icon" aria-hidden="true"></div>
+    <div class="loadout-screen-proceed-loader__text">${isGeneratedTheater ? "LINKING TO GENERATED THEATER..." : "LINKING TO OPERATION THEATER..."}</div>
+  `;
+  root.appendChild(loader);
+}
+
+function setProceedButtonLoading(root: HTMLElement, isLoading: boolean): void {
+  const button = root.querySelector<HTMLButtonElement>("#proceedBtn");
+  if (!button) return;
+
+  button.disabled = isLoading || button.disabled;
+  button.classList.toggle("loadout-screen-proceed-btn--loading", isLoading);
+
+  const text = button.querySelector<HTMLElement>(".btn-text");
+  const icon = button.querySelector<HTMLElement>(".btn-icon");
+  if (text) {
+    text.textContent = isLoading ? "LINKING..." : "PROCEED";
+  }
+  if (icon) {
+    icon.style.opacity = isLoading ? "0" : "1";
+  }
 }

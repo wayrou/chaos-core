@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "npc_test2",
+  "name": "Tester2",
+  "mapId": "base_camp",
+  "tileX": 6,
+  "tileY": 18,
+  "routeMode": "fixed",
+  "routePoints": [],
+  "dialogueId": "tester_dialogue",
+  "portraitKey": "",
+  "spriteKey": "",
+  "metadata": {
+    "role": "tester"
+  },
+  "createdAt": "2026-04-02T23:51:49.131Z",
+  "updatedAt": "2026-04-03T01:42:04.361Z"
+}

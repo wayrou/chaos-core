@@ -13,6 +13,7 @@ import { renderShopScreen } from "./ShopScreen";
 import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
+import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
 import { GameState, RoomNode, RoomType, OperationRun } from "../../core/types";
 import { canAdvanceToNextFloor } from "../../core/procedural";
 import { syncCampaignToGameState, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
@@ -20,12 +21,17 @@ import {
   moveToNode,
   clearNode,
   prepareBattleForNode,
+  advanceToNextFloor,
   completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
+import {
+  hasTheaterOperation,
+  secureTheaterRoomInState,
+} from "../../core/theaterSystem";
 // Supply chain removed for now
 
 // ============================================================================
@@ -525,6 +531,12 @@ export function renderOperationMapScreen(): void {
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element");
+    return;
+  }
+
+  const stateBeforeLegacySync = getGameState();
+  if (hasTheaterOperation(stateBeforeLegacySync.operation)) {
+    renderTheaterCommandScreen();
     return;
   }
 
@@ -1685,6 +1697,11 @@ function handleKeyRoomAction(keyRoomId: string, action: string, floorIndexHint?:
 // ============================================================================
 
 export function markRoomVisited(roomId: string): void {
+  if (hasTheaterOperation(getGameState().operation)) {
+    updateGameState((prev) => secureTheaterRoomInState(prev, roomId));
+    return;
+  }
+
   updateGameState(prev => {
     if (!prev.operation) return prev;
 
@@ -2066,6 +2083,21 @@ function enterTavernRoom(room: RoomNode): void {
 }
 
 function enterRestRoom(room: RoomNode): void {
+  const operation = getCurrentOperation(getGameState());
+  const activeRun = getActiveRun();
+  const currentFloorMap = activeRun ? activeRun.nodeMapByFloor[activeRun.floorIndex] : null;
+  const isCustomExitNode = Boolean(
+    operation?.id === "op_custom"
+    && activeRun
+    && currentFloorMap
+    && room.id === currentFloorMap.exitNodeId,
+  );
+  const isLastCustomFloor = Boolean(
+    isCustomExitNode
+    && activeRun
+    && activeRun.floorIndex >= activeRun.floorsTotal - 1,
+  );
+
   // Heal all party members
   updateGameState(prev => {
     const updated = { ...prev };
@@ -2091,17 +2123,39 @@ function enterRestRoom(room: RoomNode): void {
     root.innerHTML = `
       <div class="event-result-overlay">
         <div class="event-result-card">
-          <div class="event-result-title">REST SITE</div>
+          <div class="event-result-title">${isCustomExitNode ? (isLastCustomFloor ? "FINAL DESCENT POINT" : "DESCENT POINT") : "REST SITE"}</div>
           <div class="event-result-message">
-            Your party rests and recovers.<br>
-            All units restored to full HP.
+            ${isCustomExitNode
+              ? (isLastCustomFloor
+                  ? "The final randomized floor is clear.<br>Your party is staged to extract and end the run."
+                  : "The floor exit is secured.<br>Your party is staged to descend into the next randomized floor.")
+              : "Your party rests and recovers.<br>All units restored to full HP."}
           </div>
-          <button class="event-result-continue" id="continueBtn">CONTINUE</button>
+          <button class="event-result-continue" id="continueBtn">${isCustomExitNode ? (isLastCustomFloor ? "COMPLETE RUN" : "DESCEND") : "CONTINUE"}</button>
         </div>
       </div>
     `;
 
     root.querySelector("#continueBtn")?.addEventListener("click", () => {
+      if (isCustomExitNode && activeRun) {
+        if (isLastCustomFloor) {
+          completeOperationRun();
+          syncCampaignToGameState();
+          import("./OperationClearScreen").then(m => m.renderOperationClearScreen());
+          return;
+        }
+
+        try {
+          advanceToNextFloor();
+          syncCampaignToGameState();
+          renderOperationMapScreen();
+        } catch (error) {
+          console.error("[OPMAP] Failed to auto-descend custom run:", error);
+          renderOperationMapScreen();
+        }
+        return;
+      }
+
       renderOperationMapScreen();
     });
   }

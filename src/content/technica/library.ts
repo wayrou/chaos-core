@@ -405,6 +405,13 @@ function getDependencyWarnings(
   buckets: ReturnType<typeof buildDependencyBuckets>
 ): string[] {
   return manifest.dependencies.flatMap((dependency) => {
+    if (dependency.contentType === "class" || dependency.contentType === "gear") {
+      // Chaos Core ships a large built-in class/gear catalog that this import
+      // library does not index separately, so warning here creates false
+      // positives for perfectly valid references like "squire" or starter gear.
+      return [];
+    }
+
     let exists = false;
 
     if (dependency.contentType === "map") {
@@ -499,7 +506,7 @@ async function parseTechnicaCandidate(file: File): Promise<ParsedTechnicaCandida
 
 function restoreInstalledEntry(entry: InstalledTechnicaContent): boolean {
   try {
-    importTechnicaEntry(entry.manifest, entry.entryData);
+    importTechnicaEntry(entry.manifest, entry.entryData, { syncToGameState: true });
     installedContent.set(entry.key, entry);
     return true;
   } catch (error) {
@@ -602,7 +609,7 @@ export async function installTechnicaFiles(files: File[] | FileList): Promise<Te
     const warnings = getDependencyWarnings(candidate.manifest, dependencyBuckets);
 
     try {
-      importTechnicaEntry(candidate.manifest, candidate.entryData);
+      importTechnicaEntry(candidate.manifest, candidate.entryData, { syncToGameState: true });
       const installedEntry: InstalledTechnicaContent = {
         key: createContentKey(candidate.manifest),
         manifest: candidate.manifest,

@@ -1,4 +1,5 @@
 import { getInstalledTechnicaContent, getInstalledTechnicaCounts, installTechnicaFiles, type InstalledTechnicaContent, type TechnicaFileImportResult } from "../../content/technica/library";
+import { notifyIfNewTechnicaContentLoaded } from "../../content/technica/notifier";
 import { updateFocusableElements } from "../../core/controllerSupport";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { showImportedDialogue } from "./DialogueScreen";
@@ -162,6 +163,7 @@ async function handleFileImport(files: File[] | FileList): Promise<void> {
 
   try {
     lastImportResults = await installTechnicaFiles(fileArray);
+    notifyIfNewTechnicaContentLoaded();
   } catch (error) {
     lastImportResults = [
       {
@@ -307,10 +309,8 @@ export function renderImportContentScreen(): void {
           <div class="import-content-dropzone ${isImporting ? "import-content-dropzone--busy" : ""}" id="importContentDropZone">
             <div class="import-content-dropzone__label">Drag Technica files here</div>
             <p>
-              Chaos Core accepts the exported Technica <code>.zip</code> bundle directly.
-              Standalone runtime <code>.fieldmap.json</code>, <code>.quest.json</code>, <code>.dialogue.json</code>,
-              <code>.gear.json</code>, <code>.item.json</code>, <code>.card.json</code>, <code>.unit.json</code>,
-              <code>.operation.json</code>, and <code>.class.json</code> files also work.
+              Drop exported Technica <code>.zip</code> bundles or standalone Chaos Core runtime
+              <code>.json</code> files.
             </p>
             <button class="import-content-select-btn" id="importContentSelectBtn" ${isImporting ? "disabled" : ""}>
               ${isImporting ? "IMPORTING..." : "SELECT FILES"}
@@ -318,10 +318,7 @@ export function renderImportContentScreen(): void {
             <input id="importContentFileInput" type="file" accept=".zip,.json" multiple hidden />
           </div>
           <div class="import-content-notes">
-            <span>Maps can be entered directly from this screen.</span>
-            <span>Imported quests appear on the in-game Quest Board.</span>
-            <span>Imported dialogue can be previewed here or triggered by imported maps.</span>
-            <span>Imported gear, items, cards, units, operations, and classes sync into the live Chaos Core runtime.</span>
+            <span>Maps open from here. Quests, dialogue, gear, items, cards, units, operations, and classes sync into the live runtime.</span>
           </div>
         </section>
 

@@ -5,7 +5,7 @@
 
 import { RoomNode, RoomType } from "./types";
 import { NodeMap } from "./campaign";
-import { Difficulty } from "./campaign";
+import { Difficulty, EnemyDensity } from "./campaign";
 
 // ----------------------------------------------------------------------------
 // NODE MAP GENERATION
@@ -18,14 +18,17 @@ export function generateNodeMap(
   floorIndex: number,
   _floorCount: number,
   difficulty: Difficulty,
-  rngSeed: string
+  rngSeed: string,
+  enemyDensity: EnemyDensity = "normal",
+  includeKeyRooms = true,
 ): NodeMap {
   const rng = createSeededRNG(rngSeed + `_floor${floorIndex}`);
   
   // Determine node count (8-12, scale by difficulty)
   const baseCount = 10;
   const difficultyBonus = difficulty === "hard" ? 2 : difficulty === "easy" ? -2 : 0;
-  const nodeCount = Math.max(8, Math.min(12, baseCount + difficultyBonus + rng.nextInt(-1, 1)));
+  const densityBonus = enemyDensity === "high" ? 1 : enemyDensity === "low" ? -1 : 0;
+  const nodeCount = Math.max(8, Math.min(13, baseCount + difficultyBonus + densityBonus + rng.nextInt(-1, 1)));
   
   // Choose template based on seed
   const templateRoll = rng.nextFloat();
@@ -45,20 +48,22 @@ export function generateNodeMap(
   
   switch (template) {
     case "split_rejoin":
-      ({ nodes, connections } = generateSplitRejoinMap(floorIndex, nodeCount, rng));
+      ({ nodes, connections } = generateSplitRejoinMap(floorIndex, nodeCount, rng, enemyDensity));
       break;
     case "risk_detour":
-      ({ nodes, connections } = generateRiskDetourMap(floorIndex, nodeCount, rng));
+      ({ nodes, connections } = generateRiskDetourMap(floorIndex, nodeCount, rng, enemyDensity));
       break;
     case "forked_corridor":
-      ({ nodes, connections } = generateForkedCorridorMap(floorIndex, nodeCount, rng));
+      ({ nodes, connections } = generateForkedCorridorMap(floorIndex, nodeCount, rng, enemyDensity));
       break;
   }
   
   ensureFieldNodes(nodes, floorIndex, rng);
 
   // Ensure 2 Key Rooms per floor
-  ensureKeyRooms(nodes, connections, floorIndex, rng);
+  if (includeKeyRooms) {
+    ensureKeyRooms(nodes, connections, floorIndex, rng);
+  }
   
   // Find start and exit nodes
   const startNode = nodes.find(n => n.id.includes("_start")) || nodes[0];
@@ -81,19 +86,14 @@ export function generateNodeMap(
 function generateSplitRejoinMap(
   floorIndex: number,
   nodeCount: number,
-  rng: SeededRNG
+  rng: SeededRNG,
+  enemyDensity: EnemyDensity,
 ): { nodes: RoomNode[]; connections: Record<string, string[]> } {
   const nodes: RoomNode[] = [];
   const connections: Record<string, string[]> = {};
   
   // Start node
-  const startNode: RoomNode = {
-    id: `floor_${floorIndex}_start`,
-    label: "Start",
-    type: "rest",
-    position: { x: 0, y: 0 },
-    visited: true,
-  };
+  const startNode = createStartNode(floorIndex, rng);
   nodes.push(startNode);
   
   // Calculate depth layers (3-4 layers)
@@ -112,7 +112,7 @@ function generateSplitRejoinMap(
       const nodeId = `floor_${floorIndex}_node_${nodeCounter++}`;
       layerNodeIds.push(nodeId);
       
-      const nodeType = rollNodeType(rng, layer, layers);
+      const nodeType = rollNodeType(rng, layer, layers, enemyDensity);
       const node = createGeneratedNode(
         nodeId,
         nodeType,
@@ -155,13 +155,7 @@ function generateSplitRejoinMap(
   }
   
   // Exit node
-  const exitNode: RoomNode = {
-    id: `floor_${floorIndex}_exit`,
-    label: "Exit",
-    type: "rest",
-    position: { x: layers + 1, y: 0 },
-    visited: false,
-  };
+  const exitNode = createExitNode(floorIndex, { x: layers + 1, y: 0 }, rng);
   nodes.push(exitNode);
   
   // Connect last layer to exit
@@ -182,19 +176,14 @@ function generateSplitRejoinMap(
 function generateRiskDetourMap(
   floorIndex: number,
   nodeCount: number,
-  rng: SeededRNG
+  rng: SeededRNG,
+  enemyDensity: EnemyDensity,
 ): { nodes: RoomNode[]; connections: Record<string, string[]> } {
   const nodes: RoomNode[] = [];
   const connections: Record<string, string[]> = {};
   
   // Start node
-  const startNode: RoomNode = {
-    id: `floor_${floorIndex}_start`,
-    label: "Start",
-    type: "rest",
-    position: { x: 0, y: 0 },
-    visited: true,
-  };
+  const startNode = createStartNode(floorIndex, rng);
   nodes.push(startNode);
   
   // Main path (linear with occasional detours)
@@ -205,7 +194,7 @@ function generateRiskDetourMap(
     const nodeId = `floor_${floorIndex}_node_${i}`;
     mainPath.push(nodeId);
     
-    const nodeType = rollNodeType(rng, i, mainPathLength);
+    const nodeType = rollNodeType(rng, i, mainPathLength, enemyDensity);
     const node = createGeneratedNode(nodeId, nodeType, i, { x: i + 1, y: 0 }, rng);
     nodes.push(node);
   }
@@ -244,13 +233,7 @@ function generateRiskDetourMap(
   }
   
   // Exit node
-  const exitNode: RoomNode = {
-    id: `floor_${floorIndex}_exit`,
-    label: "Exit",
-    type: "rest",
-    position: { x: mainPathLength + 1, y: 0 },
-    visited: false,
-  };
+  const exitNode = createExitNode(floorIndex, { x: mainPathLength + 1, y: 0 }, rng);
   nodes.push(exitNode);
   connections[mainPath[mainPath.length - 1]] = [exitNode.id];
   
@@ -263,19 +246,14 @@ function generateRiskDetourMap(
 function generateForkedCorridorMap(
   floorIndex: number,
   nodeCount: number,
-  rng: SeededRNG
+  rng: SeededRNG,
+  enemyDensity: EnemyDensity,
 ): { nodes: RoomNode[]; connections: Record<string, string[]> } {
   const nodes: RoomNode[] = [];
   const connections: Record<string, string[]> = {};
   
   // Start node
-  const startNode: RoomNode = {
-    id: `floor_${floorIndex}_start`,
-    label: "Start",
-    type: "rest",
-    position: { x: 0, y: 0 },
-    visited: true,
-  };
+  const startNode = createStartNode(floorIndex, rng);
   nodes.push(startNode);
   
   // Fork into 2 paths
@@ -287,14 +265,14 @@ function generateForkedCorridorMap(
     // Left path
     const leftNodeId = `floor_${floorIndex}_left_${i}`;
     leftPath.push(leftNodeId);
-    const leftType = rollNodeType(rng, i, pathLength);
+    const leftType = rollNodeType(rng, i, pathLength, enemyDensity);
     const leftNode = createGeneratedNode(leftNodeId, leftType, i, { x: i + 1, y: -1 }, rng);
     nodes.push(leftNode);
     
     // Right path
     const rightNodeId = `floor_${floorIndex}_right_${i}`;
     rightPath.push(rightNodeId);
-    const rightType = rollNodeType(rng, i, pathLength);
+    const rightType = rollNodeType(rng, i, pathLength, enemyDensity);
     const rightNode = createGeneratedNode(rightNodeId, rightType, i, { x: i + 1, y: 1 }, rng);
     nodes.push(rightNode);
   }
@@ -308,13 +286,7 @@ function generateForkedCorridorMap(
   }
   
   // Rejoin point (exit)
-  const exitNode: RoomNode = {
-    id: `floor_${floorIndex}_exit`,
-    label: "Exit",
-    type: "rest",
-    position: { x: pathLength + 1, y: 0 },
-    visited: false,
-  };
+  const exitNode = createExitNode(floorIndex, { x: pathLength + 1, y: 0 }, rng);
   nodes.push(exitNode);
   
   connections[leftPath[pathLength - 1]] = [exitNode.id];
@@ -375,7 +347,7 @@ function createGeneratedNode(
 ): RoomNode {
   return {
     id,
-    label: labelOverride || getNodeLabel(type, index),
+    label: labelOverride || getNodeLabel(type, index, rng),
     type,
     position,
     visited: false,
@@ -395,7 +367,7 @@ function ensureFieldNodes(
       if (!node.fieldNodeSeed) {
         node.fieldNodeSeed = rng.nextInt(1, 999999);
       }
-      node.label = getNodeLabel("field_node", index);
+      node.label = getNodeLabel("field_node", index, rng);
     });
     return;
   }
@@ -457,7 +429,7 @@ function ensureFieldNodes(
   }
 
   [...existingFieldNodes, ...converted].forEach((node, index) => {
-    node.label = getNodeLabel("field_node", index);
+    node.label = getNodeLabel("field_node", index, rng);
   });
 
   console.log(`[NODEMAP] Ensured ${existingFieldNodes.length + converted.length} field nodes on floor ${floorIndex}`);
@@ -503,23 +475,29 @@ function ensurePathToExit(
 /**
  * Roll node type based on position and layer
  */
-function rollNodeType(rng: SeededRNG, position: number, total: number): RoomType {
+function rollNodeType(rng: SeededRNG, position: number, total: number, enemyDensity: EnemyDensity): RoomType {
   const roll = rng.nextFloat();
   const progress = position / total;
+  const battleThreshold = enemyDensity === "high" ? 0.58 : enemyDensity === "low" ? 0.34 : 0.46;
+  const fieldThreshold = enemyDensity === "high" ? 0.68 : enemyDensity === "low" ? 0.48 : 0.58;
+  const shopThreshold = enemyDensity === "high" ? 0.77 : enemyDensity === "low" ? 0.62 : 0.70;
+  const restThreshold = enemyDensity === "high" ? 0.84 : enemyDensity === "low" ? 0.79 : 0.82;
+  const eventThreshold = enemyDensity === "high" ? 0.91 : enemyDensity === "low" ? 0.93 : 0.91;
+  const eliteThreshold = enemyDensity === "high" ? 0.98 : enemyDensity === "low" ? 0.95 : 0.96;
   
   // Early nodes: more battles, fewer elites
   // Late nodes: more elites, fewer battles
-  if (roll < 0.46) {
+  if (roll < battleThreshold) {
     return "battle";
-  } else if (roll < 0.58) {
+  } else if (roll < fieldThreshold) {
     return "field_node";
-  } else if (roll < 0.7) {
+  } else if (roll < shopThreshold) {
     return "shop";
-  } else if (roll < 0.82) {
+  } else if (roll < restThreshold) {
     return "rest";
-  } else if (roll < 0.91) {
+  } else if (roll < eventThreshold) {
     return "event";
-  } else if (progress > 0.7 && roll < 0.96) {
+  } else if (progress > 0.7 && roll < eliteThreshold) {
     return "elite"; // Elite battles more likely later
   } else {
     return "treasure";
@@ -529,22 +507,54 @@ function rollNodeType(rng: SeededRNG, position: number, total: number): RoomType
 /**
  * Get label for a node based on type
  */
-function getNodeLabel(type: RoomType, index: number): string {
+function getNodeLabel(type: RoomType, index: number, rng: SeededRNG): string {
   const labels: Record<RoomType, string[]> = {
-    battle: ["Combat Zone", "Enemy Encounter", "Hostile Area", "Battlefield"],
-    shop: ["Merchant", "Supply Depot", "Trading Post"],
-    rest: ["Safe Zone", "Rest Area", "Camp Site"],
-    event: ["Strange Occurrence", "Mystery", "Event"],
-    boss: ["Boss Encounter", "Elite Battle"],
-    elite: ["Elite Encounter", "Champion Battle", "Stronghold"],
-    treasure: ["Treasure Cache", "Hidden Stash", "Loot Vault"],
+    battle: ["Combat Zone", "Enemy Encounter", "Hostile Area", "Battlefield", "Kill Corridor", "War Chamber"],
+    shop: ["Merchant", "Supply Depot", "Trading Post", "Relay Vendor", "Provision Kiosk"],
+    rest: ["Safe Zone", "Rest Area", "Camp Site", "Recovery Nook", "Quiet Barracks"],
+    event: ["Strange Occurrence", "Mystery", "Event", "Signal Echo", "Anomaly Pulse"],
+    boss: ["Boss Encounter", "Elite Battle", "Command Nest"],
+    elite: ["Elite Encounter", "Champion Battle", "Stronghold", "Purge Node"],
+    treasure: ["Treasure Cache", "Hidden Stash", "Loot Vault", "Locked Hoard", "Spoils Locker"],
     tavern: ["Tavern"],
-    field_node: ["Field Exploration"],
+    field_node: ["Field Exploration", "Survey Zone", "Unmapped Pocket", "Dust Channel"],
     key_room: ["Key Room"],
   };
   
   const options = labels[type] || ["Room"];
-  return options[index % options.length];
+  const variantIndex = (index + rng.nextInt(0, options.length - 1)) % options.length;
+  return options[variantIndex];
+}
+
+function getSpecialNodeLabel(kind: "start" | "exit", floorIndex: number, rng: SeededRNG): string {
+  const labels = kind === "start"
+    ? ["Uplink Gate", "Staging Lift", "Entry Lock", "Survey Breach", "Drop Threshold"]
+    : ["Descent Lift", "Spiral Hatch", "Deep Gate", "Lowering Platform", "Exit Spine"];
+  return `${labels[rng.nextInt(0, labels.length - 1)]} // F${floorIndex + 1}`;
+}
+
+function createStartNode(floorIndex: number, rng: SeededRNG): RoomNode {
+  return {
+    id: `floor_${floorIndex}_start`,
+    label: getSpecialNodeLabel("start", floorIndex, rng),
+    type: "rest",
+    position: { x: 0, y: 0 },
+    visited: true,
+  };
+}
+
+function createExitNode(
+  floorIndex: number,
+  position: { x: number; y: number },
+  rng: SeededRNG,
+): RoomNode {
+  return {
+    id: `floor_${floorIndex}_exit`,
+    label: getSpecialNodeLabel("exit", floorIndex, rng),
+    type: "rest",
+    position,
+    visited: false,
+  };
 }
 
 // ----------------------------------------------------------------------------

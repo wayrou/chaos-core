@@ -190,19 +190,30 @@
 }
 
 .field-player-sprite {
+  position: relative;
   width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(37, 99, 235, 0.9));
-  border: 2px solid rgba(59, 130, 246, 1);
-  border-radius: 50%;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  font-size: 18px;
-  font-weight: 700;
-  color: white;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  color: transparent;
+  font-size: 0;
+  text-shadow: none;
+  box-shadow: none;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.field-player-sprite::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6%;
+  width: 220%;
+  height: 220%;
+  transform: translateX(-50%);
+  background: url("../assets/Placeholder_field.png") center bottom / contain no-repeat;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
 }
 
 /* ==========================================================================
@@ -1556,6 +1567,32 @@
   border-top: var(--stroke-1, 1px) solid var(--stroke-subtle, rgba(168, 124, 69, 0.25));
 }
 
+.all-nodes-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4, 1rem);
+}
+
+.all-nodes-quit-title-btn {
+  border: var(--stroke-1, 1px) solid rgba(255, 204, 110, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 204, 110, 0.08);
+  color: var(--ink-secondary, #c5bba8);
+  padding: 0.55rem 1rem;
+  font-family: var(--font-display, "Michroma", sans-serif);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.all-nodes-quit-title-btn:hover {
+  border-color: rgba(255, 204, 110, 0.45);
+  background: rgba(255, 204, 110, 0.14);
+  color: var(--ink-primary, #f3ede0);
+}
+
 /* Debug Section */
 .all-nodes-debug-section {
   display: flex;
@@ -1788,9 +1825,11 @@
 }
 
 .field-node-player-combat .field-player-sprite {
-  background: linear-gradient(135deg, rgba(255, 138, 0, 0.9), rgba(255, 107, 0, 1));
-  border-color: #ff8a00;
-  box-shadow: 0 4px 12px rgba(255, 138, 0, 0.5);
+  position: relative;
+}
+
+.field-node-player-combat .field-player-sprite::before {
+  filter: drop-shadow(0 4px 10px rgba(255, 138, 0, 0.38));
 }
 
 .player-attacking {

@@ -1,11 +1,5 @@
-<<<<<<< HEAD
-import type { Equipment } from "../../core/equipment";
-import type { ClassDefinition } from "../../core/classes";
-import type { Card, CardEffect, InventoryItem, OperationRun, RoomNode, Floor, Unit } from "../../core/types";
-=======
 import type { EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
 import type { CardEffect, InventoryItem } from "../../core/types";
->>>>>>> 3307f1b (technica compat)
 import type { FieldMap } from "../../field/types";
 import type { Quest } from "../../quests/types";
 
@@ -221,91 +215,6 @@ export interface ImportedNpcTemplate {
 export type ImportedFieldMap = FieldMap;
 export type ImportedQuest = Quest;
 
-<<<<<<< HEAD
-export interface ImportedGearInventoryProfile {
-  massKg: number;
-  bulkBu: number;
-  powerW: number;
-  startingOwned: boolean;
-}
-
-export interface ImportedGear extends Equipment {
-  description?: string;
-  inventory?: ImportedGearInventoryProfile;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedItem extends InventoryItem {
-  description?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedBattleCard extends Card {
-  type: "core" | "class" | "equipment" | "gambit";
-  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary";
-  category: "attack" | "defense" | "utility" | "mobility" | "buff" | "debuff" | "steam" | "chaos";
-  damage?: number;
-  sourceClassId?: string;
-  sourceEquipmentId?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedUnitTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  currentClassId: string;
-  stats: {
-    maxHp: number;
-    atk: number;
-    def: number;
-    agi: number;
-    acc: number;
-  };
-  loadout: {
-    primaryWeapon?: string;
-    secondaryWeapon?: string;
-    helmet?: string;
-    chestpiece?: string;
-    accessory1?: string;
-    accessory2?: string;
-  };
-  traits?: string[];
-  pwr?: number;
-  recruitCost?: number;
-  startingInRoster?: boolean;
-  deployInParty?: boolean;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedOperationRoom extends RoomNode {
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedOperationFloor extends Floor {
-  startingRoomId?: string;
-  rooms?: ImportedOperationRoom[];
-  nodes?: ImportedOperationRoom[];
-}
-
-export interface ImportedOperation extends OperationRun {
-  recommendedPower?: number;
-  floors: ImportedOperationFloor[];
-  metadata?: Record<string, unknown>;
-}
-
-export interface ImportedClassUnlockCondition {
-  type: "always_unlocked" | "class_rank" | "milestone" | "special";
-  requiredClassId?: string;
-  requiredRank?: number;
-  description?: string;
-}
-
-export interface ImportedClassDefinition extends Omit<ClassDefinition, "id" | "unlockConditions"> {
-  id: string;
-  unlockConditions: ImportedClassUnlockCondition[];
-  metadata?: Record<string, unknown>;
-=======
 export type TechnicaContentType =
   | "dialogue"
   | "quest"
@@ -323,5 +232,7 @@ export interface DisabledTechnicaContent {
   contentType: TechnicaContentType;
   origin: "game";
   disabledAt: string;
->>>>>>> 3307f1b (technica compat)
 }
+
+export type ImportedBattleCard = ImportedCard;
+export type ImportedOperation = ImportedOperationDefinition;

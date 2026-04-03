@@ -3,12 +3,8 @@
 // Headline 11b & 11c: Equipment, Cards, Modules, Deck Building
 // ============================================================================
 
-<<<<<<< HEAD
-
 import { GameState } from "./types";
 import { getSettings } from "./settings";
-import { getAllImportedBattleCards, getAllImportedGear, getImportedClassDefinition } from "../content/technica";
-=======
 import {
   getAllImportedCards,
   getAllImportedGear,
@@ -16,7 +12,6 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import type { ImportedCard, ImportedGear } from "../content/technica/types";
->>>>>>> 3307f1b (technica compat)
 
 // ----------------------------------------------------------------------------
 // ENUMS & CONSTANTS
@@ -63,11 +58,7 @@ export type BuiltInUnitClass =
   | "academic"
   | "freelancer";
 
-<<<<<<< HEAD
 export type UnitClass = BuiltInUnitClass | (string & {});
-=======
-export type UnitClass = BuiltInUnitClass | string;
->>>>>>> 3307f1b (technica compat)
 
 export type EquipmentCardType = "core" | "class" | "equipment" | "gambit";
 
@@ -131,11 +122,8 @@ export interface EquipmentCard {
   damage?: number;
   effects?: string[];
   sourceEquipmentId?: string;
-<<<<<<< HEAD
   sourceClassId?: string;
-=======
   artPath?: string;
->>>>>>> 3307f1b (technica compat)
 }
 
 // ----------------------------------------------------------------------------
@@ -296,22 +284,17 @@ import { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 // ----------------------------------------------------------------------------
 
 export function canEquipWeapon(unitClass: UnitClass, weaponType: WeaponType): boolean {
-<<<<<<< HEAD
-  const importedClass = getImportedClassDefinition(unitClass);
-  if (importedClass) {
-    return importedClass.weaponTypes.includes(weaponType);
-  }
-
-  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass as BuiltInUnitClass] || [];
-  return allowed.includes(weaponType);
-=======
-  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass];
+  const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass as BuiltInUnitClass];
   if (allowed) {
     return allowed.includes(weaponType);
   }
 
   const importedClass = getImportedClass(unitClass);
-  return importedClass?.weaponTypes.includes(weaponType) ?? false;
+  if (importedClass) {
+    return importedClass.weaponTypes.includes(weaponType);
+  }
+
+  return false;
 }
 
 function toEquipmentCardRange(range: number | undefined): string | undefined {
@@ -333,6 +316,7 @@ function toImportedEquipmentCard(card: ImportedCard): EquipmentCard {
     damage: card.damage,
     effects: card.effects.map((effect) => effect.type),
     sourceEquipmentId: card.sourceEquipmentId,
+    sourceClassId: card.sourceClassId,
     artPath: card.artPath
   };
 }
@@ -344,6 +328,7 @@ function toRuntimeEquipment(gear: ImportedGear): Equipment {
       slot: "weapon",
       weaponType: gear.weaponType ?? "sword",
       isMechanical: gear.isMechanical ?? false,
+      cardsGranted: gear.cardsGranted ?? [],
       moduleSlots: gear.moduleSlots ?? 0,
       attachedModules: gear.attachedModules ?? [],
       wear: gear.wear ?? 0
@@ -352,20 +337,13 @@ function toRuntimeEquipment(gear: ImportedGear): Equipment {
 
   return {
     ...gear,
+    cardsGranted: gear.cardsGranted ?? [],
     slot: gear.slot
   } as ArmorEquipment | AccessoryEquipment;
->>>>>>> 3307f1b (technica compat)
 }
 
 export function getAllStarterEquipment(): Record<string, Equipment> {
   const all: Record<string, Equipment> = {};
-<<<<<<< HEAD
-  for (const w of STARTER_WEAPONS) all[w.id] = w;
-  for (const h of STARTER_HELMETS) all[h.id] = h;
-  for (const c of STARTER_CHESTPIECES) all[c.id] = c;
-  for (const a of STARTER_ACCESSORIES) all[a.id] = a;
-  for (const imported of getAllImportedGear()) all[imported.id] = imported;
-=======
   for (const w of STARTER_WEAPONS) {
     if (!isTechnicaContentDisabled("gear", w.id)) all[w.id] = w;
   }
@@ -381,44 +359,11 @@ export function getAllStarterEquipment(): Record<string, Equipment> {
   for (const gear of getAllImportedGear()) {
     all[gear.id] = toRuntimeEquipment(gear);
   }
->>>>>>> 3307f1b (technica compat)
   return all;
-}
-
-function formatCardRange(range?: number): string | undefined {
-  if (range === undefined) {
-    return undefined;
-  }
-  if (range <= 0) {
-    return "Self";
-  }
-  return `R(${range})`;
-}
-
-function toImportedEquipmentCard(card: ReturnType<typeof getAllImportedBattleCards>[number]): EquipmentCard {
-  return {
-    id: card.id,
-    name: card.name,
-    type: card.type,
-    strainCost: card.strainCost,
-    description: card.description,
-    range: formatCardRange(card.range),
-    damage: card.damage,
-    effects: (card.effects || []).map((effect) => effect.type),
-    sourceEquipmentId: card.sourceEquipmentId,
-    sourceClassId: card.sourceClassId
-  };
 }
 
 export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   const all: Record<string, EquipmentCard> = {};
-<<<<<<< HEAD
-  for (const c of CORE_CARDS) all[c.id] = c;
-  for (const c of EQUIPMENT_CARDS) all[c.id] = c;
-  for (const c of MODULE_CARDS) all[c.id] = c;
-  for (const unitClass of Object.keys(CLASS_CARDS) as BuiltInUnitClass[]) {
-    for (const c of CLASS_CARDS[unitClass]) all[c.id] = c;
-=======
   for (const c of CORE_CARDS) {
     if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
   }
@@ -435,17 +380,13 @@ export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   }
   for (const card of getAllImportedCards()) {
     all[card.id] = toImportedEquipmentCard(card);
->>>>>>> 3307f1b (technica compat)
-  }
-  for (const imported of getAllImportedBattleCards()) {
-    all[imported.id] = toImportedEquipmentCard(imported);
   }
   return all;
 }
 
 function getClassCardsForUnitClass(unitClass: UnitClass): EquipmentCard[] {
   const builtInCards = CLASS_CARDS[unitClass as BuiltInUnitClass] || [];
-  const importedCards = getAllImportedBattleCards()
+  const importedCards = getAllImportedCards()
     .filter((card) => card.type === "class" && card.sourceClassId === unitClass)
     .map((card) => toImportedEquipmentCard(card));
 

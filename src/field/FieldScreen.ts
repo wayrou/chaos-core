@@ -3,7 +3,7 @@
 // ============================================================================
 
 import "./field.css";
-import { FieldMap, FieldState } from "./types";
+import { FieldMap, FieldNpc, FieldState } from "./types";
 import { getFieldMap } from "./maps";
 import {
   createPlayerAvatar,
@@ -50,6 +50,31 @@ let isPanelOpen = false;
 
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
+
+function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []): FieldNpc[] {
+  const currentNpcById = new Map(currentNpcs.map((npc) => [npc.id, npc]));
+
+  return getFieldNpcsForMap(String(mapId)).map((nextNpc) => {
+    const currentNpc = currentNpcById.get(nextNpc.id);
+    if (!currentNpc) {
+      return nextNpc;
+    }
+
+    const hasPatrolRoute = nextNpc.routeMode === "fixed" && (nextNpc.routePoints?.length ?? 0) > 0;
+    const shouldPreserveMotionState = nextNpc.routeMode === "random" || hasPatrolRoute;
+
+    return {
+      ...nextNpc,
+      x: shouldPreserveMotionState ? currentNpc.x : nextNpc.x,
+      y: shouldPreserveMotionState ? currentNpc.y : nextNpc.y,
+      state: shouldPreserveMotionState ? currentNpc.state : nextNpc.state,
+      direction: shouldPreserveMotionState ? currentNpc.direction : nextNpc.direction,
+      routePointIndex: shouldPreserveMotionState ? currentNpc.routePointIndex : nextNpc.routePointIndex,
+      stateStartTime: shouldPreserveMotionState ? currentNpc.stateStartTime : nextNpc.stateStartTime,
+      stateDuration: shouldPreserveMotionState ? currentNpc.stateDuration : nextNpc.stateDuration
+    };
+  });
+}
 
 // Spawn debug info (for debug label)
 let lastSpawnResult: SpawnResult | null = null;
@@ -593,35 +618,11 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       isPaused: false,
       activeInteraction: null,
       companion,
+      npcs: syncFieldNpcsForMap(mapId, fieldState.npcs ?? []),
     };
   } else {
     // Initialize Sable near player
     const companion = createCompanion(playerX - 40, playerY - 40);
-
-<<<<<<< HEAD
-    // Initialize NPCs for Base Camp (Headline 15b)
-    const npcs: import("./types").FieldNpc[] = [];
-    if (mapId === "base_camp") {
-      const tileSize = 64;
-      // Add NPCs at different locations
-      npcs.push(
-        createNpc("npc_medic", "Medic", 5 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_medic"),
-        createNpc("npc_quartermaster", "Quartermaster", 12 * tileSize + tileSize / 2, 6 * tileSize + tileSize / 2, "npc_quartermaster"),
-        createNpc("npc_scout", "Scout", 8 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_scout"),
-        createNpc("npc_engineer", "Engineer", 14 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_engineer"),
-        // 5 additional NPCs
-        createNpc("npc_supply_officer", "Supply Officer", 20 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_supply_officer"),
-        createNpc("npc_armorer", "Armorer", 6 * tileSize + tileSize / 2, 6 * tileSize + tileSize / 2, "npc_armorer"),
-        createNpc("npc_commander", "Commander", 10 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_commander"),
-        createNpc("npc_researcher", "Researcher", 4 * tileSize + tileSize / 2, 10 * tileSize + tileSize / 2, "npc_researcher"),
-        createNpc("npc_sentinel", "Sentinel", 18 * tileSize + tileSize / 2, 12 * tileSize + tileSize / 2, "npc_sentinel")
-      );
-    } else if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
-      npcs.push(...createKeyRoomNpcs(mapId));
-    }
-=======
-    const npcs = getFieldNpcsForMap(String(mapId));
->>>>>>> 3307f1b (technica compat)
 
     fieldState = {
       currentMap: mapId,
@@ -629,7 +630,7 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
       isPaused: false,
       activeInteraction: null,
       companion,
-      npcs,
+      npcs: syncFieldNpcsForMap(mapId),
     };
   }
 
@@ -1647,11 +1648,16 @@ function handleInteractKey(): void {
   if (fieldState.npcs) {
     const nearbyNpc = getNpcInRange(fieldState.player, fieldState.npcs);
     if (nearbyNpc && nearbyNpc.dialogueId) {
-      const openedImportedDialogue = showImportedDialogue(nearbyNpc.dialogueId, () => {
-        if (fieldState) {
-          fieldState.isPaused = false;
-        }
-      }, nearbyNpc.name);
+      const openedImportedDialogue = showImportedDialogue(
+        nearbyNpc.dialogueId,
+        () => {
+          if (fieldState) {
+            fieldState.isPaused = false;
+          }
+        },
+        nearbyNpc.name,
+        nearbyNpc.id
+      );
 
       if (openedImportedDialogue) {
         return;

@@ -24,6 +24,7 @@ export type BuiltInOperationId =
 export type OperationId = BuiltInOperationId | string;
 
 export type Difficulty = "easy" | "normal" | "hard" | "custom";
+export type EnemyDensity = "low" | "normal" | "high";
 
 export interface CampaignProgress {
   version: number; // Schema version for migrations
@@ -37,6 +38,7 @@ export interface CampaignProgress {
 export interface ActiveRunState {
   operationId: OperationId;
   difficulty: Difficulty;
+  enemyDensity?: EnemyDensity;
   floorsTotal: number;
   floorIndex: number; // 0-based
   nodeMapByFloor: Record<number, NodeMap>;
@@ -121,18 +123,22 @@ export interface OperationDefinition {
   id: OperationId;
   name: string;
   description: string;
-  floors: number; // Base floor count (will be multiplied by 10 at runtime)
+  objective?: string;
+  beginningState?: string;
+  endState?: string;
+  theaterId?: string;
+  floors: number; // Authored floor count used directly by theater generation
   recommendedPower?: number; // Base recommended power (will be calculated from floor index)
   unlocksNextOperationId?: OperationId;
   isCustom: boolean;
 }
 
 /**
- * Get effective floor count for an operation (base × 10)
+ * Get effective floor count for an operation.
  */
 export function getEffectiveFloors(opDef: OperationDefinition, customFloors?: number): number {
   const baseFloors = customFloors || opDef.floors;
-  return baseFloors * 10;
+  return baseFloors;
 }
 
 /**
@@ -154,7 +160,11 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
     id: "op_iron_gate",
     name: "IRON GATE",
     description: "Secure the Chaos Rift entrance and clear the corrupted garrison.",
-    floors: 3, // Effective: 30 floors
+    objective: "Establish a forward logistics chain through the Gateworks and break the eastern lockline.",
+    beginningState: "Ingress Yard secured. Causeway mapped. Generator and command sectors dark.",
+    endState: "Objective lock secured with at least one operational C.O.R.E. and a stable supply chain.",
+    theaterId: "op_iron_gate_castellan_gateworks",
+    floors: 3,
     recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_black_spire",
     isCustom: false,
@@ -163,7 +173,7 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
     id: "op_black_spire",
     name: "BLACK SPIRE",
     description: "Capture enemy artillery positions and neutralize long-range threats.",
-    floors: 3, // Effective: 30 floors
+    floors: 3,
     recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_ghost_run",
     isCustom: false,
@@ -172,7 +182,7 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
     id: "op_ghost_run",
     name: "GHOST RUN",
     description: "Disrupt enemy supply lines and eliminate fast-moving skirmishers.",
-    floors: 3, // Effective: 30 floors
+    floors: 3,
     recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_ember_siege",
     isCustom: false,
@@ -181,7 +191,7 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
     id: "op_ember_siege",
     name: "EMBER SIEGE",
     description: "Destroy key enemy fortifications and break through defensive lines.",
-    floors: 3, // Effective: 30 floors
+    floors: 3,
     recommendedPower: 25, // Base, will scale per floor
     unlocksNextOperationId: "op_final_dawn",
     isCustom: false,
@@ -190,14 +200,15 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
     id: "op_final_dawn",
     name: "FINAL DAWN",
     description: "Assault the enemy command center and end the conflict.",
-    floors: 3, // Effective: 30 floors
+    floors: 3,
     recommendedPower: 25, // Base, will scale per floor
     isCustom: false,
   },
   op_custom: {
     id: "op_custom",
     name: "CUSTOM OPERATION",
-    description: "Create a custom operation with your own parameters.",
+    description: "Generate a fully randomized theater operation with custom floor count and combat density.",
+    objective: "Push from the uplink to the descent point on each floor until the final theater is secured.",
     floors: 3, // Default, can be overridden
     isCustom: true,
   },
@@ -208,6 +219,10 @@ getAllImportedOperations().forEach((operation) => {
     id: operation.id,
     name: operation.codename,
     description: operation.description,
+    objective: operation.description,
+    beginningState: "Imported operation staging complete. Theater initialized on the generated floor-grid.",
+    endState: "Imported objective node secured and theater logistics route stabilized.",
+    theaterId: `${operation.id}_castellan_gateworks`,
     floors: Math.max(1, operation.floors.length),
     recommendedPower: operation.recommendedPower,
     unlocksNextOperationId:

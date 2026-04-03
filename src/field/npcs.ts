@@ -45,7 +45,15 @@ export const BUILT_IN_NPCS: BuiltInNpcDefinition[] = [
   { id: "npc_scout", name: "Scout", mapId: "base_camp", tileX: 8, tileY: 12, routeMode: "random", dialogueId: "npc_scout" },
   { id: "npc_engineer", name: "Engineer", mapId: "base_camp", tileX: 14, tileY: 10, routeMode: "random", dialogueId: "npc_engineer" },
   { id: "npc_supply_officer", name: "Supply Officer", mapId: "base_camp", tileX: 20, tileY: 8, routeMode: "random", dialogueId: "npc_supply_officer" },
-  { id: "npc_armorer", name: "Armorer", mapId: "base_camp", tileX: 6, tileY: 6, routeMode: "random", dialogueId: "npc_armorer" },
+  {
+    "id": "npc_test",
+    "name": "Tester",
+    "mapId": "base_camp",
+    "tileX": 4,
+    "tileY": 14,
+    "routeMode": "fixed",
+    "dialogueId": "tester_dialogue",
+  },
   { id: "npc_commander", name: "Commander", mapId: "base_camp", tileX: 10, tileY: 10, routeMode: "random", dialogueId: "npc_commander" },
   { id: "npc_researcher", name: "Researcher", mapId: "base_camp", tileX: 4, tileY: 10, routeMode: "random", dialogueId: "npc_researcher" },
   { id: "npc_sentinel", name: "Sentinel", mapId: "base_camp", tileX: 18, tileY: 12, routeMode: "random", dialogueId: "npc_sentinel" },
@@ -160,7 +168,12 @@ export function updateNpc(
     return npc;
   }
 
-  if (npc.routeMode === "fixed" && npc.routePoints && npc.routePoints.length > 0) {
+  if (npc.routeMode === "fixed") {
+    if (!npc.routePoints || npc.routePoints.length === 0) {
+      npc.state = "idle";
+      return npc;
+    }
+
     const nextPointIndex = npc.routePointIndex ?? 0;
     const targetPoint = npc.routePoints[nextPointIndex % npc.routePoints.length];
     const dx = targetPoint.x - npc.x;

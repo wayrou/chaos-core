@@ -8,6 +8,7 @@ import {
   ActiveRunState,
   OperationId,
   Difficulty,
+  EnemyDensity,
   NodeMap,
   PendingBattleState,
   completeOperation as markOperationComplete,
@@ -45,7 +46,8 @@ import {
 export function startOperationRun(
   operationId: OperationId,
   difficulty: Difficulty = "normal",
-  customFloors?: number
+  customFloors?: number,
+  customEnemyDensity: EnemyDensity = "normal",
 ): CampaignProgress {
   const progress = loadCampaignProgress();
   const opDef = OPERATION_DEFINITIONS[operationId];
@@ -57,14 +59,23 @@ export function startOperationRun(
   // Apply 10× floor scaling
   const rngSeed = generateRunSeed();
   const importedOperation = getImportedOperation(operationId);
+  const isCustomOperation = operationId === "op_custom";
   const floorsTotal = importedOperation
     ? Math.max(1, importedOperation.floors.length)
-    : (customFloors || opDef.floors) * 10;
+    : isCustomOperation
+      ? Math.max(1, customFloors || opDef.floors)
+      : (customFloors || opDef.floors) * 10;
 
   // Generate node maps for all floors
   const nodeMapByFloor = importedOperation
     ? createImportedOperationNodeMaps(importedOperation)
-    : createProceduralNodeMaps(floorsTotal, difficulty, rngSeed);
+    : createProceduralNodeMaps(
+        floorsTotal,
+        difficulty,
+        rngSeed,
+        isCustomOperation ? customEnemyDensity : "normal",
+        !isCustomOperation,
+      );
 
   // Get field mods from game state (purchased from black market)
   const gameState = getGameState();
@@ -74,6 +85,7 @@ export function startOperationRun(
   const activeRun: ActiveRunState = {
     operationId,
     difficulty,
+    enemyDensity: isCustomOperation ? customEnemyDensity : "normal",
     floorsTotal,
     floorIndex: 0,
     nodeMapByFloor,
@@ -94,7 +106,7 @@ export function startOperationRun(
   };
 
   saveCampaignProgress(updated);
-  console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}`);
+  console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}, density: ${isCustomOperation ? customEnemyDensity : "normal"}`);
 
   // Clear field mod inventory from game state (they're now in the active run)
   updateGameState((state) => {
@@ -236,7 +248,7 @@ export function prepareBattleForNode(nodeId: string): CampaignProgress {
   const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
   const node = currentFloorMap.nodes.find(n => n.id === nodeId);
 
-  if (!node || (node.type !== "battle" && node.type !== "boss")) {
+  if (!node || (node.type !== "battle" && node.type !== "boss" && node.type !== "elite")) {
     throw new Error(`Node ${nodeId} is not a battle node`);
   }
 
@@ -245,7 +257,7 @@ export function prepareBattleForNode(nodeId: string): CampaignProgress {
 
   // Generate encounter
   const encounter = generateEncounter(
-    node.type === "boss" ? "eliteBattle" : "battle",
+    node.type === "boss" || node.type === "elite" ? "eliteBattle" : "battle",
     activeRun.floorIndex,
     activeRun.operationId,
     activeRun.difficulty,
@@ -451,7 +463,7 @@ export function recordDefenseDefeat(): CampaignProgress {
 /**
  * Advance to next floor
  */
-export function advanceToNextFloor(): CampaignProgress {
+export function advanceToNextFloor(options: { bypassExitRequirement?: boolean } = {}): CampaignProgress {
   const progress = loadCampaignProgress();
   if (!progress.activeRun) {
     throw new Error("No active run");
@@ -461,7 +473,7 @@ export function advanceToNextFloor(): CampaignProgress {
   const currentFloorMap = activeRun.nodeMapByFloor[activeRun.floorIndex];
 
   // Verify we're at exit node
-  if (activeRun.currentNodeId !== currentFloorMap.exitNodeId) {
+  if (!options.bypassExitRequirement && activeRun.currentNodeId !== currentFloorMap.exitNodeId) {
     throw new Error("Must be at exit node to advance floor");
   }
 
@@ -484,7 +496,9 @@ export function advanceToNextFloor(): CampaignProgress {
         nextFloorIndex,
         activeRun.floorsTotal,
         activeRun.difficulty,
-        activeRun.rngSeed
+        activeRun.rngSeed,
+        activeRun.enemyDensity ?? "normal",
+        activeRun.operationId !== "op_custom",
       );
     });
   }
@@ -650,6 +664,9 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
   const opDef = OPERATION_DEFINITIONS[activeRun.operationId];
   const importedOperation = getImportedOperation(activeRun.operationId);
   const cleared = new Set(activeRun.clearedNodeIds);
+  const customProfile = activeRun.operationId === "op_custom"
+    ? createCustomRunBriefing(activeRun)
+    : null;
 
   // Convert node maps to floors
   const floors: Floor[] = [];
@@ -669,19 +686,24 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
 
     floors.push({
       id: importedOperation?.floors[i]?.id ?? `floor_${i}`,
-      name: importedOperation?.floors[i]?.name ?? `Floor ${i + 1}`,
+      name: importedOperation?.floors[i]?.name ?? customProfile?.floorNames[i] ?? `Floor ${i + 1}`,
       nodes: nodesWithVisitFlag,
     });
   }
 
   return {
     id: activeRun.operationId,
-    codename: opDef.name,
-    description: opDef.description,
+    codename: customProfile?.codename ?? opDef.name,
+    description: customProfile?.description ?? opDef.description,
+    objective: customProfile?.objective ?? opDef.objective ?? opDef.description,
+    recommendedPWR: customProfile?.recommendedPWR ?? opDef.recommendedPower,
+    beginningState: customProfile?.beginningState ?? opDef.beginningState,
+    endState: customProfile?.endState ?? opDef.endState,
     floors,
     currentFloorIndex: activeRun.floorIndex,
     currentRoomId: activeRun.currentNodeId,
     connections: activeRun.nodeMapByFloor[activeRun.floorIndex]?.connections || {}, // Add connections for UI
+    launchSource: "ops_terminal",
   };
 }
 
@@ -699,13 +721,67 @@ function generateRunSeed(): string {
 function createProceduralNodeMaps(
   floorsTotal: number,
   difficulty: Difficulty,
-  rngSeed: string
+  rngSeed: string,
+  enemyDensity: EnemyDensity,
+  includeKeyRooms: boolean,
 ): Record<number, NodeMap> {
   const nodeMapByFloor: Record<number, NodeMap> = {};
   for (let i = 0; i < floorsTotal; i++) {
-    nodeMapByFloor[i] = generateNodeMap(i, floorsTotal, difficulty, rngSeed);
+    nodeMapByFloor[i] = generateNodeMap(i, floorsTotal, difficulty, rngSeed, enemyDensity, includeKeyRooms);
   }
   return nodeMapByFloor;
+}
+
+type CustomRunBriefing = {
+  codename: string;
+  description: string;
+  objective: string;
+  beginningState: string;
+  endState: string;
+  recommendedPWR: number;
+  floorNames: string[];
+};
+
+function createBriefingRng(seed: string): () => number {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  let state = hash >>> 0;
+  return () => {
+    state = Math.imul(state, 1664525) + 1013904223;
+    return (state >>> 0) / 4294967295;
+  };
+}
+
+function pickBriefingToken(tokens: string[], next: () => number): string {
+  return tokens[Math.floor(next() * tokens.length)] ?? tokens[0];
+}
+
+function createCustomRunBriefing(activeRun: ActiveRunState): CustomRunBriefing {
+  const next = createBriefingRng(`${activeRun.rngSeed}:${activeRun.floorsTotal}:${activeRun.enemyDensity ?? "normal"}`);
+  const prefixes = ["BROKEN", "NULL", "SCARLET", "HOLLOW", "IRON", "GLASS", "BLACK", "EMBER", "STATIC"];
+  const suffixes = ["SPIRAL", "LANTERN", "HARBOR", "GAUNTLET", "THRESHOLD", "CASCADE", "CIRCUIT", "MAZE", "DESCENT"];
+  const floorFamilies = ["Rust", "Cinder", "Glass", "Echo", "Shard", "Soot", "Relay", "Wire", "Ash"];
+  const floorLandmarks = ["Crossing", "Vault", "Gallery", "Spine", "Hollows", "Works", "Fork", "Channel", "Lock"];
+  const densityLabel = (activeRun.enemyDensity ?? "normal").toUpperCase();
+
+  const codename = `${pickBriefingToken(prefixes, next)} ${pickBriefingToken(suffixes, next)}`;
+  const recommendedPWR = Math.max(18, Math.round(22 + (activeRun.floorsTotal * 1.5) + (activeRun.difficulty === "hard" ? 5 : activeRun.difficulty === "easy" ? -3 : 0)));
+  const floorNames = Array.from({ length: activeRun.floorsTotal }, (_, floorIndex) => (
+    `Floor ${floorIndex + 1} // ${pickBriefingToken(floorFamilies, next)} ${pickBriefingToken(floorLandmarks, next)}`
+  ));
+
+  return {
+    codename,
+    description: `Procedural theater seeded at runtime. ${activeRun.floorsTotal} randomized floor${activeRun.floorsTotal === 1 ? "" : "s"}, ${densityLabel} enemy density, and adaptive floor-direction vectors.`,
+    objective: "Push from the uplink root to the descent point on each floor and survive until the final theater is secured.",
+    beginningState: "Randomized theater spin-up complete. Floor 1 is live; push outward from the uplink root to the first descent point.",
+    endState: "Final descent point secured. Theater traversal complete.",
+    recommendedPWR,
+    floorNames,
+  };
 }
 
 function createImportedOperationNodeMaps(operation: ImportedOperationDefinition): Record<number, NodeMap> {

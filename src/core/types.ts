@@ -142,10 +142,19 @@ export interface OperationRun {
   id?: string;
   codename: string;
   description: string;
+  objective?: string;
+  recommendedPWR?: number;
+  beginningState?: string;
+  endState?: string;
   floors: Floor[];
   currentFloorIndex: number;
   currentRoomId: RoomId | null;
   connections?: Record<string, string[]>; // nodeId -> connected nodeIds (for branching UI)
+  launchSource?: "ops_terminal" | "atlas";
+  atlasTheaterId?: string;
+  atlasFloorId?: string;
+  theater?: TheaterNetworkState;
+  theaterFloors?: Record<number, TheaterNetworkState>;
 }
 
 export interface PlayerProfile {
@@ -214,6 +223,189 @@ export interface UILayoutState {
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
   inventoryFolders?: Record<string, InventoryFolder>;
+  theaterCommandWindowFrames?: Record<string, {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    minimized: boolean;
+    zIndex: number;
+  }>;
+  theaterCommandWindowColors?: Record<string, string>;
+  theaterCommandViewport?: {
+    panX: number;
+    panY: number;
+    zoom: number;
+  };
+  theaterCommandCoreTab?: "core" | "fortifications";
+  atlasSelectedTheaterId?: string;
+}
+
+// ---------------------------------------------------------
+//  THEATER LOGISTICS / OPERATION NETWORK
+// ---------------------------------------------------------
+
+export type RoomState = "unknown" | "mapped" | "secured";
+export type RoomStatus = RoomState;
+export type AtlasTheaterState = "active" | "warm" | "cold" | "undiscovered";
+
+export interface RadialDirectionVector {
+  x: number;
+  y: number;
+}
+
+export interface AtlasTheaterSummary {
+  theaterId: string;
+  operationId?: string;
+  zoneName: string;
+  floorId: string;
+  floorLabel: string;
+  floorOrdinal: number;
+  sectorLabel: string;
+  radialSlotIndex: number;
+  radialSlotCount: number;
+  angleDeg: number;
+  radialDirection: RadialDirectionVector;
+  ringIndex: number;
+  discovered: boolean;
+  uplinkRoomId: RoomId;
+  outwardDepth: number;
+  operationAvailable: boolean;
+  currentState: AtlasTheaterState;
+  recommendedPwr: number;
+  securedRooms: number;
+  totalKnownRooms: number;
+  activeCores: number;
+  passiveEffectText: string;
+  passiveEffectKind?: "benefit" | "penalty" | "neutral";
+  threatLevel: string;
+  operationCodename?: string;
+  operationDescription?: string;
+}
+
+export interface AtlasFloorMap {
+  floorId: string;
+  floorLabel: string;
+  floorOrdinal: number;
+  isCurrentFloor: boolean;
+  ringIndex: number;
+  theaters: AtlasTheaterSummary[];
+}
+
+export type CoreType =
+  | "supply_depot"
+  | "command_center"
+  | "medical_ward"
+  | "armory"
+  | "mine";
+
+export interface CoreAssignment {
+  type: CoreType;
+  assignedAtTick: number;
+  buildCost: Partial<GameState["resources"]>;
+  upkeepPerTick: Partial<GameState["resources"]>;
+  wadUpkeepPerTick?: number;
+  incomePerTick?: Partial<GameState["resources"]>;
+  supportRadius: number;
+}
+
+export interface FortificationPips {
+  barricade: number;
+  powerRail: number;
+}
+
+export interface TheaterRoom {
+  id: RoomId;
+  theaterId: string;
+  label: string;
+  sectorTag: string;
+  position: { x: number; y: number };
+  localPosition: { x: number; y: number };
+  depthFromUplink: number;
+  isUplinkRoom: boolean;
+  size: { width: number; height: number };
+  adjacency: RoomId[];
+  status: RoomStatus;
+  clearMode?: "battle" | "field" | "empty";
+  fortificationCapacity?: number;
+  secured: boolean;
+  fortified: boolean;
+  coreAssignment: CoreAssignment | null;
+  underThreat: boolean;
+  damaged: boolean;
+  connected: boolean;
+  powered: boolean;
+  supplied: boolean;
+  commsVisible: boolean;
+  fortificationPips: FortificationPips;
+  tacticalEncounter: string | null;
+  tags: string[];
+  isPowerSource?: boolean;
+}
+
+export interface ThreatState {
+  id: string;
+  roomId: RoomId;
+  cause: string;
+  severity: number;
+  spawnedAtTick: number;
+  active: boolean;
+}
+
+export interface TheaterObjectiveCompletion {
+  roomId: RoomId;
+  completedAtTick: number;
+  reward: {
+    wad: number;
+    metalScrap: number;
+    wood: number;
+    chaosShards: number;
+    steamComponents: number;
+  };
+  recapLines: string[];
+}
+
+export interface TheaterDefinition {
+  id: string;
+  name: string;
+  zoneName: string;
+  theaterStatus: "active" | "warm" | "cold";
+  currentState: AtlasTheaterState;
+  operationId: string;
+  objective: string;
+  recommendedPWR: number;
+  beginningState: string;
+  endState: string;
+  floorId: string;
+  floorOrdinal: number;
+  sectorLabel: string;
+  radialSlotIndex: number;
+  radialSlotCount: number;
+  angleDeg: number;
+  radialDirection: RadialDirectionVector;
+  discovered: boolean;
+  operationAvailable: boolean;
+  passiveEffectText: string;
+  threatLevel: string;
+  ingressRoomId: RoomId;
+  uplinkRoomId: RoomId;
+  outwardDepth: number;
+  powerSourceRoomIds: RoomId[];
+  mapAnchor?: { x: number; y: number };
+  layoutStyle?: "vector_lance" | "split_fan" | "central_bloom" | "offset_arc";
+  originLabel?: string;
+}
+
+export interface TheaterNetworkState {
+  definition: TheaterDefinition;
+  rooms: Record<RoomId, TheaterRoom>;
+  currentRoomId: RoomId;
+  selectedRoomId: RoomId;
+  tickCount: number;
+  activeThreats: ThreatState[];
+  recentEvents: string[];
+  objectiveComplete: boolean;
+  completion: TheaterObjectiveCompletion | null;
 }
 
 // ============================================================================
@@ -407,7 +599,7 @@ export interface LoadPenaltyFlags {
 // ---------------------------------------------------------
 
 export interface GameState {
-  phase: "shell" | "battle" | "map" | "field" | "loadout" | "operation";
+  phase: "shell" | "battle" | "map" | "field" | "loadout" | "operation" | "atlas";
   profile: PlayerProfile;
   operation: OperationRun | null;
   unitsById: Record<UnitId, Unit>;
@@ -494,6 +686,11 @@ export interface GameState {
 
   // Lightweight UI persistence for shell/menu layout customizations
   uiLayout?: UILayoutState;
+
+  // Tracks one-time Technica content merges into existing saves.
+  technicaSync?: {
+    starterGearIds?: string[];
+  };
 }
 
 interface GearSlotData {

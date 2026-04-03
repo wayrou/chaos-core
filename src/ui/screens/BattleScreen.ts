@@ -39,6 +39,7 @@ import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
+import { hasTheaterOperation } from "../../core/theaterSystem";
 import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampReturn";
 import { showSystemPing } from "../components/systemPing";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
@@ -51,6 +52,8 @@ import { handleCardPlay } from "../../core/cardHandler";
 
 let isAnimatingEnemyTurn = false;
 let lastBattleStatPingKey: string | null = null;
+let battleResultGateKey: string | null = null;
+let battleResultInputUnlockAtMs = 0;
 
 function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" {
   const returnTo = (battle as any)?.returnTo;
@@ -67,6 +70,48 @@ function returnFromBattle(battle: BattleState | null | undefined): void {
   }
 
   returnFromBaseCampScreen(returnTo);
+}
+
+function syncBattleResultInputGate(battle: BattleState): void {
+  if (battle.phase !== "victory" && battle.phase !== "defeat") {
+    battleResultGateKey = null;
+    battleResultInputUnlockAtMs = 0;
+    return;
+  }
+
+  const nextGateKey = `${battle.id}:${battle.phase}:${battle.turnCount}`;
+  if (battleResultGateKey === nextGateKey) {
+    return;
+  }
+
+  battleResultGateKey = nextGateKey;
+  battleResultInputUnlockAtMs = performance.now() + 350;
+}
+
+function isBattleResultInputReady(): boolean {
+  return battleResultInputUnlockAtMs <= 0 || performance.now() >= battleResultInputUnlockAtMs;
+}
+
+function lockResultButtonUntilReady(button: HTMLElement | null): void {
+  if (!button || isBattleResultInputReady()) {
+    return;
+  }
+
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = true;
+  }
+  button.style.pointerEvents = "none";
+
+  const unlockDelayMs = Math.max(0, battleResultInputUnlockAtMs - performance.now());
+  window.setTimeout(() => {
+    if (!document.body.contains(button)) {
+      return;
+    }
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = false;
+    }
+    button.style.pointerEvents = "auto";
+  }, unlockDelayMs);
 }
 
 // Card type definition
@@ -2093,6 +2138,7 @@ export function renderBattleScreen() {
   }
 
   const battle = localBattleState as BattleState;
+  syncBattleResultInputGate(battle);
   maybeShowBattleStatPing(battle);
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = activeUnit && !activeUnit.isEnemy;
@@ -2676,7 +2722,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
             <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
             <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
             <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">STEAM COMP</div><div class="reward-value">+${r.steamComponents}</div></div>
+            <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
             <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
             ${unlockableId && unlockableId !== "pending" && unlockableName ? `
               <div class="battle-reward-item battle-reward-item--unlockable">
@@ -2686,7 +2732,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
             ` : ""}
           </div>
           <div class="battle-result-footer">
-            <button class="battle-result-btn" id="claimRewardsBtn">CLAIM & CONTINUE</button>
+            <button class="battle-result-btn" id="claimRewardsBtn">CLAIM REWARDS AND CONTINUE</button>
           </div>
         </div>
       </div>
@@ -3781,23 +3827,17 @@ function attachBattleListeners() {
   if (autoWinBtn) {
     autoWinBtn.onclick = () => {
       handleBattleHudDebugAutoWin();
-
-      // Auto-advance: automatically claim rewards and advance to next encounter
-      // Wait a frame for the victory screen to render, then auto-click claim button
-      setTimeout(() => {
-        const claimBtn = document.getElementById("claimRewardsBtn");
-        if (claimBtn) {
-          console.log("[BATTLE DEBUG] Auto-clicking claim rewards button to advance");
-          claimBtn.click();
-        }
-      }, 100);
     };
   }
 
   // Training continue button (for training battles)
   const trainingContinueBtn = document.getElementById("trainingContinueBtn");
   if (trainingContinueBtn) {
+    lockResultButtonUntilReady(trainingContinueBtn);
     trainingContinueBtn.onclick = () => {
+      if (!isBattleResultInputReady()) {
+        return;
+      }
       if (localBattleState) {
         handleTrainingBattleComplete(localBattleState);
       }
@@ -3811,6 +3851,7 @@ function attachBattleListeners() {
     : null;
   if (claimBtn) {
     console.log("[BATTLE] Found claim rewards button, attaching handlers");
+    lockResultButtonUntilReady(claimBtn);
 
     // Clear any existing handlers
     claimBtn.onclick = null;
@@ -3819,6 +3860,10 @@ function attachBattleListeners() {
     claimBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!isBattleResultInputReady()) {
+        console.log("[BATTLE] Result input gate still cooling down; ignoring stale click.");
+        return;
+      }
       console.log("[BATTLE] Claim rewards button clicked (onclick)");
 
       if (!localBattleState) {
@@ -3922,7 +3967,9 @@ function attachBattleListeners() {
           try {
             // Check if this was a defense battle
             const isDefenseBattle = localBattleState.defenseObjective?.type === "survive_turns";
-            if (isDefenseBattle && (window as any).__defenseKeyRoomId) {
+            if (hasTheaterOperation(getGameState().operation)) {
+              markCurrentRoomVisited();
+            } else if (isDefenseBattle && (window as any).__defenseKeyRoomId) {
               // Record defense victory
               import("../../core/campaignManager").then(m => {
                 m.recordDefenseVictory((window as any).__defenseKeyRoomId);
@@ -4009,7 +4056,7 @@ function attachBattleListeners() {
     };
 
     // Ensure button is clickable
-    claimBtn.style.pointerEvents = "auto";
+    claimBtn.style.pointerEvents = isBattleResultInputReady() ? "auto" : "none";
     claimBtn.style.cursor = "pointer";
     claimBtn.style.zIndex = "1001";
   } else if (battle.phase === "victory" || battle.phase === "defeat") {
@@ -4020,7 +4067,11 @@ function attachBattleListeners() {
   // Defeat handlers - retry or abandon
   const retryBtn = document.getElementById("retryRoomBtn");
   if (retryBtn) {
+    lockResultButtonUntilReady(retryBtn);
     retryBtn.onclick = () => {
+      if (!isBattleResultInputReady()) {
+        return;
+      }
       // Check if this is a defense battle
       const isDefenseBattle = (window as any).__isDefenseBattle || false;
 
@@ -4075,7 +4126,11 @@ function attachBattleListeners() {
 
   const abandonBtn = document.getElementById("abandonRunBtn");
   if (abandonBtn) {
+    lockResultButtonUntilReady(abandonBtn);
     abandonBtn.onclick = () => {
+      if (!isBattleResultInputReady()) {
+        return;
+      }
       import("../../core/campaignManager").then(m => {
         m.abandonRun();
         m.syncCampaignToGameState?.();
@@ -4092,7 +4147,11 @@ function attachBattleListeners() {
 
   const defeatBtn = document.getElementById("defeatReturnBtn");
   if (defeatBtn) {
+    lockResultButtonUntilReady(defeatBtn);
     defeatBtn.onclick = () => {
+      if (!isBattleResultInputReady()) {
+        return;
+      }
       cleanupBattlePanHandlers();
       teardownBattleHud();
       localBattleState = null;

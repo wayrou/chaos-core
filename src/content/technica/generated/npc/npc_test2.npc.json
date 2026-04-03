@@ -1,0 +1,12 @@
+{
+  "dialogueId": "tester_dialogue",
+  "id": "npc_test2",
+  "mapId": "base_camp",
+  "metadata": {
+    "role": "tester"
+  },
+  "name": "Tester2",
+  "routeMode": "fixed",
+  "x": 6,
+  "y": 18
+}
