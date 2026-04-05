@@ -5,7 +5,7 @@
 // Debug flag for battle system (15a-15e)
 const DEBUG_BATTLE = false;
 
-import { GameState, Unit, CardId, UnitId, LoadPenaltyFlags } from "./types";
+import { BattleModeContext, GameState, Unit, CardId, UnitId, LoadPenaltyFlags, UnitOwnership } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
 import { generateElevationMap } from "./isometric";
 
@@ -50,6 +50,13 @@ import { StableState, MountPassiveTrait } from "./types";
 import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
 import { getCoverDamageReduction } from "./coverGenerator";
+import {
+  getEchoAttackBonus,
+  getEchoDefenseBonus,
+  getEchoMovementAdjustment,
+  incrementEchoFieldTriggerCount,
+  isEchoBattle,
+} from "./echoFieldEffects";
 
 // Import unlockable system (for battle rewards)
 import { getUnownedUnlockables } from "./unlockables";
@@ -103,6 +110,7 @@ export interface BattleUnitState {
   baseUnitId: UnitId;
   name: string;
   classId: string;
+  loadout?: UnitLoadout & { weapon?: string | null };
   isEnemy: boolean;
   pos: Vec2 | null;
   facing: "north" | "south" | "east" | "west";
@@ -187,6 +195,25 @@ export interface BattleState {
     turnsRemaining: number;
     keyRoomId: string;
   };
+  theaterBonuses?: {
+    squadId: string;
+    squadDisplayName?: string;
+    squadIcon?: string;
+    supplyOnline: boolean;
+    commsOnline: boolean;
+    powerTurretCount: number;
+    enemyPreview: string[];
+    detailedEnemyIntel: boolean;
+  };
+  theaterMeta?: {
+    operationId: string;
+    theaterId: string;
+    roomId: string;
+    squadId: string;
+    deployedUnitIds: UnitId[];
+    autoMode?: "manual" | "cautious" | "daring";
+  };
+  modeContext?: BattleModeContext;
 }
 
 // ----------------------------------------------------------------------------
@@ -385,6 +412,7 @@ export function createBattleUnitState(
   const baseAgi = base.agi ?? (base as any).stats?.agi ?? 3;
   const baseAcc = (base as any).acc ?? (base as any).stats?.acc ?? 80;
   const baseMaxHp = base.maxHp ?? (base as any).stats?.maxHp ?? 12;
+  const baseCurrentHp = Math.max(0, Math.min(baseMaxHp, base.hp ?? baseMaxHp));
 
   let finalAtk = baseAtk + (opts.isEnemy ? 0 : equipStats.atk);
   let finalDef = baseDef + (opts.isEnemy ? 0 : equipStats.def);
@@ -462,15 +490,19 @@ export function createBattleUnitState(
     }
   }
 
+  const hpBonusFromLoadout = finalMaxHp - baseMaxHp;
+  const startingHp = Math.max(0, Math.min(finalMaxHp, baseCurrentHp + hpBonusFromLoadout));
+
   return {
     id: base.id,
     baseUnitId: base.id,
     name: base.name,
     classId: base.unitClass ?? "squire",
+    loadout: { ...loadout, weapon: loadout.primaryWeapon ?? null },
     isEnemy: opts.isEnemy,
     pos: opts.pos,
     facing: opts.isEnemy ? "west" : "east", // Enemies face left, allies face right
-    hp: finalMaxHp,
+    hp: startingHp,
     maxHp: finalMaxHp,
     atk: finalAtk,
     def: finalDef,
@@ -481,7 +513,7 @@ export function createBattleUnitState(
     hand,
     discardPile,
     exhaustedPile,
-    buffs: [],
+    buffs: [...(base.buffs ?? [])],
     equippedWeaponId,
     weaponState,
     clutchActive: false,
@@ -505,8 +537,17 @@ export function computeTurnOrder(
   // Only units with a position and HP > 0 can be in the turn order
   const entries = Object.values(units).filter(u => u.pos != null && u.hp > 0);
   entries.sort((a, b) => {
-    if (b.agi !== a.agi) {
-      return b.agi - a.agi;
+    const aAgiDelta = (a.buffs || [])
+      .filter((buff) => buff.type === "agi_up" || buff.type === "agi_down")
+      .reduce((sum, buff) => sum + buff.amount, 0);
+    const bAgiDelta = (b.buffs || [])
+      .filter((buff) => buff.type === "agi_up" || buff.type === "agi_down")
+      .reduce((sum, buff) => sum + buff.amount, 0);
+    const aInitiative = a.agi + aAgiDelta;
+    const bInitiative = b.agi + bAgiDelta;
+
+    if (bInitiative !== aInitiative) {
+      return bInitiative - aInitiative;
     }
     if (a.id < b.id) return -1;
     if (a.id > b.id) return 1;
@@ -969,12 +1010,13 @@ export function getMountMovementBonus(unit: BattleUnitState): number {
 /**
  * Calculate total movement range for a unit (AGI + mount bonus)
  */
-export function getUnitMovementRange(unit: BattleUnitState): number {
+export function getUnitMovementRange(unit: BattleUnitState, battle?: BattleState | null): number {
   const baseMovement = unit.agi;
   const mountBonus = getMountMovementBonus(unit);
+  const echoAdjustment = battle ? getEchoMovementAdjustment(battle, unit).amount : 0;
   // Swift trait: +1 movement on first turn (turn 1)
   // This would need turn count context, so we skip it here
-  return baseMovement + mountBonus;
+  return Math.max(1, baseMovement + mountBonus + echoAdjustment);
 }
 
 /**
@@ -1082,7 +1124,7 @@ export function canUnitMoveTo(
   const dx = Math.abs(unit.pos.x - dest.x);
   const dy = Math.abs(unit.pos.y - dest.y);
   const distance = dx + dy;
-  const movementRange = getUnitMovementRange(unit);
+  const movementRange = getUnitMovementRange(unit, state);
 
   if (distance === 0 || distance > movementRange) return false;
 
@@ -1107,8 +1149,9 @@ export function getReachableMovementTiles(
   origin: Vec2 = unit.pos ?? { x: 0, y: 0 },
 ): Set<string> {
   if (!unit.pos) return new Set<string>();
+  if (hasStatus(unit, "immobilized")) return new Set<string>();
 
-  const movement = getUnitMovementRange(unit);
+  const movement = getUnitMovementRange(unit, state);
   const reachable = new Set<string>();
   const visited = new Map<string, number>();
   const queue: Array<{ x: number; y: number; cost: number }> = [{ x: origin.x, y: origin.y, cost: 0 }];
@@ -1280,6 +1323,11 @@ export function moveUnit(
     `SLK//MOVE   :: ${unit.name} repositions to (${dest.x}, ${dest.y}).`
   );
 
+  const movementAdjustment = getEchoMovementAdjustment(state, unit);
+  if (movementAdjustment.triggeredPlacements.length > 0) {
+    next = incrementEchoFieldTriggerCount(next, movementAdjustment.triggeredPlacements);
+  }
+
   // Suppressed status clears if unit moves
   if (hasStatus(unit, "suppressed")) {
     next = removeStatus(next, unitId, "suppressed");
@@ -1302,6 +1350,10 @@ export function canUnitAttackTarget(
 
 export function computeHitChance(attacker: BattleUnitState, defender?: BattleUnitState, isRanged: boolean = false): number {
   let baseChance = attacker.acc;
+  const accuracyBuffDelta = (attacker.buffs || [])
+    .filter((buff) => buff.type === "acc_up" || buff.type === "acc_down")
+    .reduce((sum, buff) => sum + buff.amount, 0);
+  baseChance += accuracyBuffDelta;
 
   if (isOverStrainThreshold(attacker)) {
     baseChance -= 20;
@@ -1381,13 +1433,22 @@ export function attackUnit(
     );
   }
 
+  const totalAtkBuff =
+    attacker.buffs?.length
+      ? attacker.buffs
+        .filter((b) => b.type === "atk_up" || b.type === "atk_down")
+        .reduce((sum, b) => sum + b.amount, 0)
+      : 0;
+  const echoAttackBonus = getEchoAttackBonus(state, attacker);
+
   // DEF buffs
   const totalDefBuff =
     defender.buffs?.length
       ? defender.buffs
-        .filter((b) => b.type === "def_up")
+        .filter((b) => b.type === "def_up" || b.type === "def_down")
         .reduce((sum, b) => sum + b.amount, 0)
       : 0;
+  const echoDefenseBonus = getEchoDefenseBonus(state, defender);
 
   // Cover damage reduction (if defender is on cover tile)
   let coverReduction = 0;
@@ -1399,7 +1460,8 @@ export function attackUnit(
   // Mount armored damage reduction
   const armoredReduction = getArmoredDamageReduction(defender);
 
-  let rawDamage = attacker.atk - (defender.def + totalDefBuff + coverReduction + armoredReduction);
+  let rawDamage = (attacker.atk + totalAtkBuff + echoAttackBonus.amount)
+    - (defender.def + totalDefBuff + echoDefenseBonus.amount + coverReduction + armoredReduction);
 
   // Apply Status Effects (Weakened / Vulnerable / Guarded)
   if (hasStatus(attacker, "weakened")) {
@@ -1464,6 +1526,13 @@ export function attackUnit(
   // Guarded is consumed when used vs an attack
   if (hasStatus(defender, "guarded")) {
     next = removeStatus(next, defenderId, "guarded");
+  }
+
+  if (echoAttackBonus.triggeredPlacements.length > 0 || echoDefenseBonus.triggeredPlacements.length > 0) {
+    next = incrementEchoFieldTriggerCount(
+      next,
+      [...echoAttackBonus.triggeredPlacements, ...echoDefenseBonus.triggeredPlacements],
+    );
   }
 
   // Trigger Field Mod: hit (and crit if applicable)
@@ -1594,7 +1663,11 @@ export function performEnemyTurn(state: BattleState): BattleState {
  * Perform auto-battle turn for a friendly unit (15a)
  * Deterministic policy: play best card targeting best enemy, or move toward nearest enemy, or wait
  */
-export function performAutoBattleTurn(state: BattleState, unitId: UnitId): BattleState {
+export function performAutoBattleTurn(
+  state: BattleState,
+  unitId: UnitId,
+  policy: "cautious" | "daring" = "daring",
+): BattleState {
   const unit = state.units[unitId];
   if (!unit || unit.isEnemy || !unit.pos) {
     return state;
@@ -1642,18 +1715,26 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
 
       // Check if it targets enemies
       if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot")) {
-        score += 50; // Prefer attack cards
+        score += policy === "daring" ? 55 : 35;
         // Estimate damage (simplified)
         if (cardName.includes("power") || cardName.includes("execute")) {
-          score += 10; // High damage cards
+          score += policy === "daring" ? 18 : 8;
         } else {
-          score += 5; // Standard damage
+          score += policy === "daring" ? 8 : 4;
         }
       }
 
       // Check for debuffs
       if (cardName.includes("debuff") || cardName.includes("stun")) {
-        score += 10;
+        score += policy === "cautious" ? 18 : 10;
+      }
+
+      if (cardName.includes("guard") || cardName.includes("form")) {
+        score += policy === "cautious" ? 26 : 8;
+      }
+
+      if (cardName.includes("heal") || cardName.includes("aid") || cardName.includes("restore")) {
+        score += policy === "cautious" ? 24 : 12;
       }
     }
 
@@ -1693,7 +1774,7 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
 
   // If no playable card or all cards scored poorly, try to move toward nearest enemy
   if (playableCards.length === 0 || playableCards[0].score <= 0) {
-    if (nearestEnemy.pos && unit.agi > 0) {
+    if (nearestEnemy.pos && getUnitMovementRange(unit, state) > 0) {
       const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
       const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
 
@@ -1714,7 +1795,7 @@ export function performAutoBattleTurn(state: BattleState, unitId: UnitId): Battl
   // If we have a good card but couldn't play it (range/other issues), move toward target
   if (nearestEnemy.pos) {
     const distance = Math.abs(unit.pos.x - nearestEnemy.pos.x) + Math.abs(unit.pos.y - nearestEnemy.pos.y);
-    if (distance > 1 && unit.agi > 0) {
+    if (distance > (policy === "cautious" ? 2 : 1) && getUnitMovementRange(unit, state) > 0) {
       const dx = Math.sign(nearestEnemy.pos.x - unit.pos.x);
       const dy = Math.sign(nearestEnemy.pos.y - unit.pos.y);
 
@@ -1739,9 +1820,6 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
     return state;
   }
 
-  // Check typical clear: all enemies defeated
-  let isWin = false;
-  const count = Object.values(state.units).filter((u) => u.isEnemy).length;
   const units = Object.values(state.units);
   // Only count units with hp > 0 AND a valid position (alive and present on grid)
   const anyPlayers = units.some(u => isPlayerUnit(u) && u.hp > 0 && u.pos != null);
@@ -1755,7 +1833,9 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       activeUnitId: null,
       log: [
         ...state.log,
-        "SLK//ENGAGE :: Player squad offline. Link severed.",
+        isEchoBattle(state)
+          ? "SLK//ECHO  :: Draft squad collapsed. Simulation terminates."
+          : "SLK//ENGAGE :: Player squad offline. Link severed.",
       ],
     };
   }
@@ -1785,6 +1865,29 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
 
   // STANDARD VICTORY: All enemy units dead (for non-defense battles)
   if (!anyEnemies && !state.defenseObjective) {
+    if (isEchoBattle(state)) {
+      return {
+        ...state,
+        phase: "victory",
+        activeUnitId: null,
+        rewards: {
+          wad: 0,
+          metalScrap: 0,
+          wood: 0,
+          chaosShards: 0,
+          steamComponents: 0,
+          squadXp: 0,
+          cards: [],
+          recipe: null,
+          unlockable: null,
+        },
+        log: [
+          ...state.log,
+          "SLK//ECHO  :: Encounter cleared. Draft reward relay unlocked.",
+        ],
+      };
+    }
+
     // Block rewards for training battles
     const isTraining = (state as any).isTraining === true;
     const rewards = isTraining ? {
@@ -1818,7 +1921,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       : [
         ...state.log,
         "SLK//ENGAGE :: All hostiles cleared. Engagement complete.",
-        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components, +${rewards.squadXp ?? 0} S.T.A.T.`,
+        `SLK//REWARD :: +${rewards.wad} WAD, +${rewards.metalScrap} Metal Scrap, +${rewards.wood} Wood, +${rewards.chaosShards} Chaos Shards, +${rewards.steamComponents} Steam Components, +${("squadXp" in rewards ? rewards.squadXp ?? 0 : 0)} S.T.A.T.`,
         ...(cardLog ? [cardLog] : []),
       ];
 
@@ -1854,7 +1957,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
 /**
  * Generate rewards for defense battles (smaller than standard battles)
  */
-function generateDefenseRewards(state: BattleState) {
+function generateDefenseRewards(_state: BattleState) {
   return {
     wad: 25,
     metalScrap: 5,
@@ -2006,15 +2109,16 @@ export function calculateMaxUnitsPerSide(gridWidth: number, gridHeight: number):
 }
 
 export function createTestBattleForCurrentParty(
-  state: GameState
+  state: GameState,
+  gridOverride?: { width: number; height: number },
 ): BattleState | null {
   const partyIds = state.partyUnitIds;
   if (partyIds.length === 0) return null;
 
   // Grid size selection (15b): Random within bounds 4x3 to 8x6
   // Width: 4-8, Height: 3-6
-  const gridWidth = Math.floor(Math.random() * (8 - 4 + 1)) + 4;
-  const gridHeight = Math.floor(Math.random() * (6 - 3 + 1)) + 3;
+  const gridWidth = Math.max(4, Math.floor(gridOverride?.width ?? (Math.floor(Math.random() * (8 - 4 + 1)) + 4)));
+  const gridHeight = Math.max(3, Math.floor(gridOverride?.height ?? (Math.floor(Math.random() * (6 - 3 + 1)) + 3)));
 
   // Generate random elevation map
   const maxElevation = 3;
@@ -2306,7 +2410,7 @@ export function playCard(
 export function drawCards(
   state: BattleState,
   unit: BattleUnitState,
-  count: number = 5
+  _count: number = 5
 ): BattleState {
   return drawCardsForTurn(state, unit);
 }
@@ -2375,7 +2479,7 @@ export function placeUnit(
 /**
  * Quick place all unplaced friendly units automatically
  */
-export function quickPlaceUnits(state: BattleState): BattleState {
+export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership): BattleState {
   if (state.phase !== "placement") return state;
 
   const placementState = state.placementState;
@@ -2383,7 +2487,10 @@ export function quickPlaceUnits(state: BattleState): BattleState {
 
   const friendlyUnits = Object.values(state.units).filter(u => !u.isEnemy);
   const unplacedUnits = friendlyUnits.filter(
-    u => !placementState.placedUnitIds.includes(u.id) && !u.pos
+    u =>
+      !placementState.placedUnitIds.includes(u.id) &&
+      !u.pos &&
+      (!controller || (u.controller ?? "P1") === controller)
   );
 
   let newState = state;
@@ -2407,7 +2514,9 @@ export function quickPlaceUnits(state: BattleState): BattleState {
     placedCount++;
   }
 
-  return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedCount - state.placementState!.placedUnitIds.length} units.`);
+  const placedDelta = placedCount - state.placementState!.placedUnitIds.length;
+  const ownerLabel = controller ? ` for ${controller}` : "";
+  return appendBattleLog(newState, `SLK//PLACE  :: Quick placed ${placedDelta} units${ownerLabel}.`);
 }
 
 /**

@@ -3,7 +3,7 @@
 // ============================================================================
 
 import "./field.css";
-import { FieldMap, FieldNpc, FieldState } from "./types";
+import { FieldMap, FieldNpc, FieldState, InteractionZone, PlayerAvatar } from "./types";
 import { getFieldMap } from "./maps";
 import {
   createPlayerAvatar,
@@ -16,15 +16,37 @@ import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { createCompanion, updateCompanion } from "./companion";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
 import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
-import { getPlayerInput, handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp } from "../core/playerInput";
+import {
+  getPlayerInput,
+  handleKeyDown as handlePlayerInputKeyDown,
+  handleKeyUp as handlePlayerInputKeyUp,
+  isPlayerInputActionEvent,
+} from "../core/playerInput";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
-import { resolvePlayerSpawn, SpawnSource, SpawnResult } from "./spawnResolver";
+import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
 import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import type { BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../core/types";
+import type { PlayerId } from "../core/types";
 import { setBaseCampFieldReturnMap } from "../ui/screens/baseCampReturn";
-import { getActiveRun } from "../core/campaignManager";
 import { getDispatchState } from "../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../core/statTokens";
+import { isHavenAnnexUnlocked, isSchemaNodeUnlocked } from "../core/campaign";
+import {
+  canPlayerUseFieldAction,
+  getFieldActionRestrictionMessage,
+  getPlayerControllerLabel,
+  isLocalCoopActive,
+} from "../core/session";
+import {
+  attachNotesWidgetHandlers,
+  attachStuckNoteHandlers,
+  NOTES_LAYOUT_ID,
+  renderNotesWidget,
+  renderStuckNotesLayer,
+} from "../ui/components/notesWidget";
+import { getActiveQuests, initializeQuestState } from "../quests/questManager";
+import { renderQuestTrackerWidget } from "../ui/components/questTrackerWidget";
+import { showSystemPing } from "../ui/components/systemPing";
 
 // ============================================================================
 // STATE
@@ -76,9 +98,6 @@ function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []
   });
 }
 
-// Spawn debug info (for debug label)
-let lastSpawnResult: SpawnResult | null = null;
-
 // Store last interaction zone position for returning to field from nodes
 let lastInteractionZonePosition: { x: number; y: number; zoneId: string } | null = null;
 
@@ -89,6 +108,7 @@ const MAX_ZOOM = 2.0;
 const ZOOM_STEP = 0.1;
 let fieldPinnedResizeHandler: (() => void) | null = null;
 let fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+let stickyNoteDragResumePending = false;
 
 type PinnedNodeDefinition = {
   action: string;
@@ -105,6 +125,7 @@ type PinnedColorTheme = {
 
 const PINNED_QUAC_LAYOUT_ID = "quac-terminal";
 const PINNED_RESOURCE_LAYOUT_ID = "resource-tracker";
+const PINNED_QUEST_TRACKER_LAYOUT_ID = "quest-tracker";
 
 const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -119,6 +140,7 @@ const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve teams on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
+  { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
@@ -128,7 +150,13 @@ const PINNED_VALID_ITEM_IDS = new Set([
   PINNED_RESOURCE_LAYOUT_ID,
   ...PINNED_NODE_LAYOUT.map((node) => node.action),
   PINNED_QUAC_LAYOUT_ID,
+  NOTES_LAYOUT_ID,
+  PINNED_QUEST_TRACKER_LAYOUT_ID,
 ]);
+const HAVEN_ANNEX_LOCKED_ACTIONS = new Set(["port", "dispatch", "stable"]);
+const HAVEN_ANNEX_LOCK_MESSAGE = "Stable, Dispatch, and Port are sealed behind the HAVEN annex. Complete Operation 3 to unlock them.";
+const SCHEMA_LOCKED_ACTIONS = new Set(["schema"]);
+const SCHEMA_LOCK_MESSAGE = "S.C.H.E.M.A. comes online after Floor 2 is reached through live progression or atlas floor transit.";
 
 const PINNED_COLOR_THEMES: PinnedColorTheme[] = [
   {
@@ -267,65 +295,13 @@ const PINNED_QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> 
   { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
+  { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
   { action: "endless-field-nodes", aliases: ["endless rooms", "debug endless rooms"] },
   { action: "endless-battles", aliases: ["endless battles", "debug endless battles"] },
 ];
-
-function getKeyRoomFacility(mapId: string): string | null {
-  if (!mapId.startsWith("keyroom_")) return null;
-  const keyRoomId = mapId.replace("keyroom_", "");
-  const activeRun = getActiveRun();
-  if (!activeRun) return null;
-
-  for (const rooms of Object.values(activeRun.keyRoomsByFloor || {})) {
-    const match = (rooms || []).find((room) => room.roomNodeId === keyRoomId);
-    if (match) {
-      return match.facility;
-    }
-  }
-
-  return null;
-}
-
-function createKeyRoomNpcs(mapId: string): import("./types").FieldNpc[] {
-  const tileSize = 64;
-  const facility = getKeyRoomFacility(mapId);
-
-  switch (facility) {
-    case "supply_depot":
-      return [
-        createNpc("npc_keyroom_logistics_1", "Storekeeper", 5 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_logistics"),
-        createNpc("npc_keyroom_logistics_2", "Loader", 13 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_logistics"),
-      ];
-    case "medical_ward":
-      return [
-        createNpc("npc_keyroom_medic_1", "Field Medic", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_medic"),
-        createNpc("npc_keyroom_medic_2", "Orderly", 12 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_medic"),
-      ];
-    case "armory":
-      return [
-        createNpc("npc_keyroom_armorer_1", "Armorer", 5 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_armorer"),
-        createNpc("npc_keyroom_armorer_2", "Bench Tech", 13 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_keyroom_armorer"),
-      ];
-    case "command_center":
-      return [
-        createNpc("npc_keyroom_analyst_1", "Signal Analyst", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_keyroom_analyst"),
-        createNpc("npc_keyroom_analyst_2", "Watch Officer", 12 * tileSize + tileSize / 2, 8 * tileSize + tileSize / 2, "npc_keyroom_analyst"),
-      ];
-    case "mine":
-      return [
-        createNpc("npc_keyroom_miner_1", "Excavator", 5 * tileSize + tileSize / 2, 5 * tileSize + tileSize / 2, "npc_keyroom_miner"),
-        createNpc("npc_keyroom_miner_2", "Foreman", 13 * tileSize + tileSize / 2, 9 * tileSize + tileSize / 2, "npc_keyroom_miner"),
-      ];
-    default:
-      return [
-        createNpc("npc_keyroom_sentinel_1", "Sentinel", 6 * tileSize + tileSize / 2, 4 * tileSize + tileSize / 2, "npc_sentinel"),
-      ];
-  }
-}
 
 // ============================================================================
 // GETTERS
@@ -345,8 +321,180 @@ export function storeInteractionZonePosition(zoneId: string, x: number, y: numbe
   lastInteractionZonePosition = { x, y, zoneId };
 }
 
+function getPlayerInteractLabel(playerId: PlayerId): string {
+  return playerId === "P1" ? "E" : "/";
+}
+
+function createRuntimeAvatar(playerId: PlayerId): PlayerAvatar | null {
+  const avatar = getGameState().players[playerId]?.avatar;
+  if (!avatar) {
+    return null;
+  }
+
+  return {
+    x: avatar.x,
+    y: avatar.y,
+    width: 32,
+    height: 32,
+    speed: 240,
+    facing: avatar.facing,
+  };
+}
+
+type InteractionActorContext = {
+  playerId: PlayerId;
+  avatar: PlayerAvatar;
+  zone: InteractionZone;
+};
+
+function getPlayerInteractionContext(playerId: PlayerId): InteractionActorContext | null {
+  if (!currentMap) {
+    return null;
+  }
+
+  const avatar = createRuntimeAvatar(playerId);
+  if (!avatar) {
+    return null;
+  }
+
+  const zoneId = getOverlappingInteractionZone(avatar, currentMap);
+  if (!zoneId) {
+    return null;
+  }
+
+  const zone = getInteractionZone(currentMap, zoneId);
+  if (!zone) {
+    return null;
+  }
+
+  return {
+    playerId,
+    avatar,
+    zone,
+  };
+}
+
+function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
+  const candidates = (["P1", "P2"] as PlayerId[])
+    .filter((playerId) => getGameState().players[playerId]?.active)
+    .map((playerId) => {
+      const avatar = createRuntimeAvatar(playerId);
+      if (!avatar) {
+        return null;
+      }
+
+      const zoneCenterX = (zone.x + zone.width / 2) * 64;
+      const zoneCenterY = (zone.y + zone.height / 2) * 64;
+      const dx = avatar.x - zoneCenterX;
+      const dy = avatar.y - zoneCenterY;
+      return {
+        playerId,
+        distance: Math.sqrt(dx * dx + dy * dy),
+      };
+    })
+    .filter(Boolean) as Array<{ playerId: PlayerId; distance: number }>;
+
+  candidates.sort((left, right) => left.distance - right.distance);
+  return candidates[0]?.playerId ?? null;
+}
+
+function getCombinedInteractionPrompt(): string | null {
+  const state = getGameState();
+  if (!isLocalCoopActive(state)) {
+    const soloContext = getPlayerInteractionContext("P1");
+    return soloContext ? `${getPlayerInteractLabel("P1")} :: ${soloContext.zone.label}` : null;
+  }
+
+  const contexts = (["P1", "P2"] as PlayerId[])
+    .map((playerId) => getPlayerInteractionContext(playerId))
+    .filter(Boolean) as InteractionActorContext[];
+
+  if (contexts.length === 0) {
+    return null;
+  }
+
+  const uniqueZones = new Map<string, InteractionActorContext[]>();
+  contexts.forEach((context) => {
+    const existing = uniqueZones.get(context.zone.id) ?? [];
+    existing.push(context);
+    uniqueZones.set(context.zone.id, existing);
+  });
+
+  const promptParts = Array.from(uniqueZones.values()).map((zoneContexts) => {
+    const labels = zoneContexts
+      .map((context) => `${getPlayerControllerLabel(context.playerId)} [${getPlayerInteractLabel(context.playerId)}]`)
+      .join(" // ");
+    return `${labels} :: ${zoneContexts[0]?.zone.label}`;
+  });
+
+  return promptParts.join(" | ");
+}
+
+function showFieldAuthorityPing(playerId: PlayerId, zone: InteractionZone): void {
+  showSystemPing({
+    type: "info",
+    title: "LOCAL AUTHORITY",
+    message: getFieldActionRestrictionMessage(zone.label),
+    detail: `${getPlayerControllerLabel(playerId)} can still inspect side windows and move in the field.`,
+    channel: "field-local-authority",
+  });
+}
+
+function resumeFieldAfterInteraction(
+  playerId: PlayerId,
+  savedPlayerPos: { x: number; y: number },
+): void {
+  if (!fieldState) {
+    return;
+  }
+
+  fieldState.isPaused = false;
+  const tileSize = 64;
+  const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
+  const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
+  const nextX = savedPlayerPos.x + offsetX;
+  const nextY = savedPlayerPos.y + offsetY;
+
+  updateGameState((state) => {
+    const avatar = state.players[playerId].avatar;
+    if (!avatar) {
+      return state;
+    }
+
+    return {
+      ...state,
+      players: {
+        ...state.players,
+        [playerId]: {
+          ...state.players[playerId],
+          avatar: {
+            ...avatar,
+            x: nextX,
+            y: nextY,
+          },
+        },
+      },
+    };
+  });
+
+  if (playerId === "P1") {
+    fieldState.player.x = nextX;
+    fieldState.player.y = nextY;
+  }
+
+  renderFieldScreen(fieldState.currentMap);
+}
+
 function normalizePinnedQuacCommand(value: string): string {
   return value.toLowerCase().trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ");
+}
+
+function isLockedHavenAnnexAction(action: string): boolean {
+  return HAVEN_ANNEX_LOCKED_ACTIONS.has(action);
+}
+
+function isLockedSchemaAction(action: string): boolean {
+  return SCHEMA_LOCKED_ACTIONS.has(action);
 }
 
 function resolvePinnedQuacCommand(input: string): string | null {
@@ -367,7 +515,20 @@ function resolvePinnedQuacCommand(input: string): string | null {
 
 function readPinnedOverlayItems(): string[] {
   const pinnedItems = getGameState().uiLayout?.baseCampPinnedItems ?? [];
-  return pinnedItems.filter((itemId) => PINNED_VALID_ITEM_IDS.has(itemId));
+  return pinnedItems.filter((itemId) => {
+    if (!PINNED_VALID_ITEM_IDS.has(itemId)) {
+      return false;
+    }
+
+    if (isLockedHavenAnnexAction(itemId) && !isHavenAnnexUnlocked()) {
+      return false;
+    }
+    if (isLockedSchemaAction(itemId) && !isSchemaNodeUnlocked()) {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 function readPinnedOverlayFrames(): Record<string, BaseCampPinnedItemFrame> {
@@ -375,7 +536,10 @@ function readPinnedOverlayFrames(): Record<string, BaseCampPinnedItemFrame> {
 }
 
 function readPinnedOverlayColors(): Record<string, string> {
-  return getGameState().uiLayout?.baseCampItemColors ?? {};
+  const uiLayout = getGameState().uiLayout;
+  const activeLoadoutIndex = Math.max(0, Math.min((uiLayout?.baseCampActiveLoadoutIndex ?? uiLayout?.baseCampResetPresetIndex ?? 0), 1));
+  const activeLoadoutColors = uiLayout?.baseCampLayoutLoadouts?.[`${activeLoadoutIndex}`]?.itemColors;
+  return activeLoadoutColors ?? uiLayout?.baseCampItemColors ?? {};
 }
 
 function persistPinnedOverlayItems(ids: string[]): void {
@@ -417,6 +581,10 @@ function getDefaultPinnedItemColorKey(itemId: string): string {
       return "verdant";
     case PINNED_RESOURCE_LAYOUT_ID:
       return "violet";
+    case NOTES_LAYOUT_ID:
+      return "steel";
+    case PINNED_QUEST_TRACKER_LAYOUT_ID:
+      return "teal";
     case "port":
     case "comms-array":
       return "teal";
@@ -425,6 +593,7 @@ function getDefaultPinnedItemColorKey(itemId: string): string {
       return "oxide";
     case "stable":
       return "moss";
+    case "schema":
     case "codex":
     case "settings":
     case "inventory":
@@ -456,7 +625,6 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
   currentMap = getFieldMap(mapId);
 
   // Initialize or restore player avatars from game state
-  const state = getGameState();
   const tileSize = 64;
   let playerX: number;
   let playerY: number;
@@ -481,13 +649,10 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     );
     playerX = spawnResult.x;
     playerY = spawnResult.y;
-    lastSpawnResult = spawnResult;
   } else if (isResuming && mapId !== "quarters") {
     // Restore from fieldState if available, otherwise from game state
     playerX = fieldState!.player.x;
     playerY = fieldState!.player.y;
-    // No spawn resolution needed for resume
-    lastSpawnResult = null;
   } else {
     // Determine requested spawn position
     let requestedX: number;
@@ -520,19 +685,6 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     if (mapId === "quarters") {
       playerX = requestedX;
       playerY = requestedY;
-      const requestedTileX = Math.floor(requestedX / tileSize);
-      const requestedTileY = Math.floor(requestedY / tileSize);
-      lastSpawnResult = {
-        x: playerX,
-        y: playerY,
-        tileX: Math.floor(playerX / tileSize),
-        tileY: Math.floor(playerY / tileSize),
-        passable: true,
-        usedFallback: false,
-        candidatesScanned: 0,
-        requestedTileX,
-        requestedTileY,
-      };
     } else {
       // Use centralized spawn resolver
       const spawnResult = resolvePlayerSpawn(
@@ -543,7 +695,6 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
 
       playerX = spawnResult.x;
       playerY = spawnResult.y;
-      lastSpawnResult = spawnResult;
 
       // Validate final result - this should never fail, but log if it does
       if (!spawnResult.passable) {
@@ -565,17 +716,23 @@ export function renderFieldScreen(mapId: FieldMap["id"] = "base_camp"): void {
     const players = s.players || {
       P1: {
         id: "P1",
+        slot: "P1",
         active: true,
         color: "#ff8a00",
         inputSource: "keyboard1" as const,
+        presence: "local" as const,
+        authorityRole: "local" as const,
         avatar: null,
         controlledUnitIds: [],
       },
       P2: {
         id: "P2",
+        slot: "P2",
         active: false,
         color: "#6849c2",
         inputSource: "none" as const,
+        presence: "inactive" as const,
+        authorityRole: "local" as const,
         avatar: null,
         controlledUnitIds: [],
       },
@@ -710,8 +867,8 @@ function render(): void {
   const state = getGameState();
   // Ensure players object exists (backward compatibility)
   const players = state.players || {
-    P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
-    P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
+    P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
+    P2: { id: "P2", slot: "P2", active: false, color: "#6849c2", inputSource: "none" as const, presence: "inactive" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
   };
   const p1Avatar = players.P1.avatar;
   const p2Avatar = players.P2.active ? players.P2.avatar : null;
@@ -794,6 +951,7 @@ function render(): void {
         ${npcsHtml}
         ${playerHtml}
         ${companionHtml}
+        ${renderStuckNotesLayer("field", currentMap.id, "field-stuck-note")}
       </div>
     </div>
     
@@ -809,10 +967,29 @@ function render(): void {
   centerViewportOnPlayer();
 
   // Re-attach wheel listener if needed (viewport is recreated on each render)
-  const viewport = fieldRoot.querySelector(".field-viewport");
+  const viewport = fieldRoot.querySelector<HTMLElement>(".field-viewport");
   if (viewport) {
     viewport.addEventListener("wheel", handleWheelZoom, { passive: false });
   }
+
+  attachStuckNoteHandlers(fieldRoot, {
+    onStateChange: () => renderFieldScreen(currentMap?.id ?? "base_camp"),
+    getStickyZoom: () => fieldZoom,
+    onStickyDragStart: () => {
+      if (fieldState && !fieldState.isPaused) {
+        fieldState.isPaused = true;
+        stickyNoteDragResumePending = true;
+      } else {
+        stickyNoteDragResumePending = false;
+      }
+    },
+    onStickyDragEnd: () => {
+      if (fieldState && stickyNoteDragResumePending) {
+        fieldState.isPaused = false;
+      }
+      stickyNoteDragResumePending = false;
+    },
+  });
 }
 
 function centerViewportOnPlayer(): void {
@@ -1248,6 +1425,46 @@ function renderPinnedQuacCard(): string {
   `;
 }
 
+function renderPinnedNotesCard(): string {
+  const state = getGameState();
+  const anchorX = Math.round((state.players?.P1?.avatar?.x ?? 640) + 56);
+  const anchorY = Math.round((state.players?.P1?.avatar?.y ?? 360) - 28);
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--notes">
+      ${renderPinnedOverlayToolbar(NOTES_LAYOUT_ID, "field memos")}
+      <section class="all-nodes-notes-panel" aria-label="Field memos" data-ez-drag-disable="true">
+        <div class="all-nodes-notes-panel__title">FIELD MEMOS</div>
+        ${renderNotesWidget("field-pinned-notes", {
+          className: "notes-widget--esc",
+          placeholder: "Record reminders, squad plans, build routes, or anything else you want to keep pinned to E.S.C.",
+          statusLabel: "AUTO-SAVE ACTIVE // AVAILABLE IN ATLAS + THEATER",
+          titleLabel: "Tab Name",
+          stickyTarget: {
+            surfaceType: "field",
+            surfaceId: fieldState?.currentMap ?? "base_camp",
+            x: anchorX,
+            y: anchorY,
+          },
+        })}
+      </section>
+    </div>
+  `;
+}
+
+function renderPinnedQuestTrackerCard(): string {
+  initializeQuestState();
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--quest-tracker">
+      ${renderPinnedOverlayToolbar(PINNED_QUEST_TRACKER_LAYOUT_ID, "quest tracker")}
+      ${renderQuestTrackerWidget(getActiveQuests(), {
+        className: "quest-tracker-widget--esc",
+        emptyTitle: "NO ACTIVE QUESTS",
+        emptyText: "Accept directives and contracts from the Quest Board to track them here.",
+      })}
+    </div>
+  `;
+}
+
 function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame, colors: Record<string, string>): string {
   const style = [
     `left: ${frame.left}px`,
@@ -1280,6 +1497,22 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
     `;
   }
 
+  if (itemId === NOTES_LAYOUT_ID) {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--notes" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedNotesCard()}
+      </div>
+    `;
+  }
+
+  if (itemId === PINNED_QUEST_TRACKER_LAYOUT_ID) {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--quest-tracker" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedQuestTrackerCard()}
+      </div>
+    `;
+  }
+
   const node = PINNED_NODE_LAYOUT.find((entry) => entry.action === itemId);
   if (!node) return "";
 
@@ -1308,6 +1541,27 @@ function updatePinnedNodesOverlay(): void {
   overlay.innerHTML = pinnedItems
     .map((itemId) => renderPinnedOverlayItem(itemId, frames[itemId], colors))
     .join("");
+  attachNotesWidgetHandlers(overlay, {
+    onStateChange: () => renderFieldScreen(fieldState?.currentMap ?? "base_camp"),
+  });
+  attachStuckNoteHandlers(overlay, {
+    onStateChange: () => renderFieldScreen(fieldState?.currentMap ?? "base_camp"),
+    getStickyZoom: () => fieldZoom,
+    onStickyDragStart: () => {
+      if (fieldState && !fieldState.isPaused) {
+        fieldState.isPaused = true;
+        stickyNoteDragResumePending = true;
+      } else {
+        stickyNoteDragResumePending = false;
+      }
+    },
+    onStickyDragEnd: () => {
+      if (fieldState && stickyNoteDragResumePending) {
+        fieldState.isPaused = false;
+      }
+      stickyNoteDragResumePending = false;
+    },
+  });
 }
 
 function handlePinnedOverlayClick(e: MouseEvent): void {
@@ -1437,7 +1691,7 @@ function setupGlobalListeners(): void {
   document.addEventListener("click", handleAllNodesButtonClick, true);
 
   // Add wheel event listener for zoom
-  const viewport = document.querySelector(".field-viewport");
+  const viewport = document.querySelector<HTMLElement>(".field-viewport");
   if (viewport) {
     viewport.addEventListener("wheel", handleWheelZoom, { passive: false });
   }
@@ -1469,7 +1723,7 @@ function handleWheelZoom(e: WheelEvent): void {
   centerViewportOnPlayer();
 }
 
-function handleAllNodesButtonClick(e: MouseEvent): void {
+function handleAllNodesButtonClick(): void {
   // Button removed - no longer needed
 }
 
@@ -1533,6 +1787,20 @@ function handleKeyDown(e: KeyboardEvent): void {
   // Update player input system
   handlePlayerInputKeyDown(e);
 
+  if (!e.repeat) {
+    if (isPlayerInputActionEvent(e, "P1", "interact")) {
+      handleInteractKey("P1");
+      e.preventDefault();
+      return;
+    }
+
+    if (isPlayerInputActionEvent(e, "P2", "interact")) {
+      handleInteractKey("P2");
+      e.preventDefault();
+      return;
+    }
+  }
+
   // Don't process movement if paused
   if (fieldState?.isPaused) return;
 
@@ -1558,13 +1826,6 @@ function handleKeyDown(e: KeyboardEvent): void {
     case "d":
       movementInput.right = true;
       e.preventDefault();
-      break;
-    case "e":
-      const p1Input = getPlayerInput("P1");
-      if (p1Input.interact) {
-        handleInteractKey();
-        e.preventDefault();
-      }
       break;
   }
 }
@@ -1625,28 +1886,35 @@ function handleFieldObjectClick(e: MouseEvent): void {
   const zone = getInteractionZone(currentMap, zoneId);
   if (!zone) return;
 
-  const savedPlayerPos = { x: fieldState.player.x, y: fieldState.player.y };
+  const actingPlayerId = getNearestPlayerToZone(zone) ?? "P1";
+  const actingAvatar = createRuntimeAvatar(actingPlayerId);
+  if (!actingAvatar) {
+    return;
+  }
+
+  if (!canPlayerUseFieldAction(getGameState(), actingPlayerId, zone.action)) {
+    showFieldAuthorityPing(actingPlayerId, zone);
+    return;
+  }
+
+  const savedPlayerPos = { x: actingAvatar.x, y: actingAvatar.y };
   fieldState.isPaused = true;
 
   handleInteraction(zone, currentMap, () => {
-    if (fieldState) {
-      fieldState.isPaused = false;
-      const tileSize = 64;
-      const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
-      const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
-      fieldState.player.x = savedPlayerPos.x + offsetX;
-      fieldState.player.y = savedPlayerPos.y + offsetY;
-      renderFieldScreen(fieldState.currentMap);
-    }
+    resumeFieldAfterInteraction(actingPlayerId, savedPlayerPos);
   });
 }
 
-function handleInteractKey(): void {
+function handleInteractKey(playerId: PlayerId): void {
   if (!fieldState || !currentMap || fieldState.isPaused) return;
+  const actorAvatar = createRuntimeAvatar(playerId);
+  if (!actorAvatar) {
+    return;
+  }
 
   // Check for NPC interaction first (Headline 15b)
   if (fieldState.npcs) {
-    const nearbyNpc = getNpcInRange(fieldState.player, fieldState.npcs);
+    const nearbyNpc = getNpcInRange(actorAvatar, fieldState.npcs);
     if (nearbyNpc && nearbyNpc.dialogueId) {
       const openedImportedDialogue = showImportedDialogue(
         nearbyNpc.dialogueId,
@@ -1682,26 +1950,21 @@ function handleInteractKey(): void {
     }
   }
 
-  const zoneId = getOverlappingInteractionZone(fieldState.player, currentMap);
-  if (!zoneId) return;
+  const interactionContext = getPlayerInteractionContext(playerId);
+  if (!interactionContext) return;
+  const zone = interactionContext.zone;
 
-  const zone = getInteractionZone(currentMap, zoneId);
-  if (!zone) return;
+  if (!canPlayerUseFieldAction(getGameState(), playerId, zone.action)) {
+    showFieldAuthorityPing(playerId, zone);
+    return;
+  }
 
-  const savedPlayerPos = { x: fieldState.player.x, y: fieldState.player.y };
+  const savedPlayerPos = { x: actorAvatar.x, y: actorAvatar.y };
   fieldState.isPaused = true;
 
   try {
     handleInteraction(zone, currentMap, () => {
-      if (fieldState) {
-        fieldState.isPaused = false;
-        const tileSize = 64;
-        const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
-        const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
-        fieldState.player.x = savedPlayerPos.x + offsetX;
-        fieldState.player.y = savedPlayerPos.y + offsetY;
-        renderFieldScreen(fieldState.currentMap);
-      }
+      resumeFieldAfterInteraction(playerId, savedPlayerPos);
     });
   } catch (error) {
     console.error("[FIELD] Error handling interaction:", error);
@@ -1717,6 +1980,15 @@ function handleInteractKey(): void {
 // ============================================================================
 
 function handleNodeAction(action: string): void {
+  if (isLockedHavenAnnexAction(action) && !isHavenAnnexUnlocked()) {
+    alert(HAVEN_ANNEX_LOCK_MESSAGE);
+    return;
+  }
+  if (isLockedSchemaAction(action) && !isSchemaNodeUnlocked()) {
+    alert(SCHEMA_LOCK_MESSAGE);
+    return;
+  }
+
   if (fieldState) {
     fieldState.isPaused = true;
   }
@@ -1788,6 +2060,11 @@ function handleNodeAction(action: string): void {
         renderStableScreen("field");
       });
       break;
+    case "schema":
+      import("../ui/screens/SchemaScreen").then(({ renderSchemaScreen }) => {
+        renderSchemaScreen("field");
+      });
+      break;
     case "settings":
       import("../ui/screens/SettingsScreen").then(({ renderSettingsScreen }) => {
         renderSettingsScreen("field");
@@ -1835,8 +2112,8 @@ function gameLoop(currentTime: number): void {
     const state = getGameState();
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
-      P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
-      P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
+      P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
+      P2: { id: "P2", slot: "P2", active: false, color: "#6849c2", inputSource: "none" as const, presence: "inactive" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
     };
     const p1 = players.P1;
     const p2 = players.P2;
@@ -1991,29 +2268,7 @@ function gameLoop(currentTime: number): void {
       );
     }
 
-    // Check interaction zones (use P1 for now, could check both)
-    const updatedPlayers = updatedState.players || {
-      P1: { id: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, avatar: null, controlledUnitIds: [] },
-      P2: { id: "P2", active: false, color: "#6849c2", inputSource: "none" as const, avatar: null, controlledUnitIds: [] },
-    };
-    const p1Avatar = updatedPlayers.P1.avatar;
-    if (p1Avatar) {
-      const p1PlayerAvatar = {
-        x: p1Avatar.x,
-        y: p1Avatar.y,
-        width: 32,
-        height: 32,
-        speed: 240,
-        facing: p1Avatar.facing as any,
-      };
-      const overlappingZone = getOverlappingInteractionZone(p1PlayerAvatar, currentMap);
-      if (overlappingZone) {
-        const zone = getInteractionZone(currentMap, overlappingZone);
-        activeInteractionPrompt = zone?.label || null;
-      } else {
-        activeInteractionPrompt = null;
-      }
-    }
+    activeInteractionPrompt = getCombinedInteractionPrompt();
 
     render();
   }

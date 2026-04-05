@@ -23,7 +23,6 @@ import {
 } from "../../core/settings";
 import { getAllThemes, getTheme } from "../../core/themes";
 import {
-  isControllerConnected,
   getConnectedControllers,
   getButtonBindings,
   getButtonName,
@@ -103,7 +102,7 @@ export function renderSettingsScreen(returnTo: "menu" | BaseCampReturnTo = "menu
     </div>
   `;
   
-  attachSettingsListeners(settings);
+  attachSettingsListeners();
   if (returnDestination !== "menu") {
     registerBaseCampReturnHotkey("settings-screen", returnDestination, { allowFieldEKey: true, activeSelector: ".settings-root" });
   } else {
@@ -233,7 +232,7 @@ function renderControlsTab(settings: GameSettings): string {
               <span class="status-text">Controller Connected</span>
             </div>
             ${controllers.map(ctrl => `
-              <div class="controller-info">${ctrl.id}</div>
+              <div class="controller-info">${ctrl.id}${ctrl.assignedPlayer ? ` // ${ctrl.assignedPlayer}` : " // UNASSIGNED"}</div>
             `).join('')}
           ` : `
             <div class="controller-disconnected">
@@ -270,24 +269,24 @@ function renderControlsTab(settings: GameSettings): string {
         <div class="settings-category-header">KEYBOARD CONTROLS</div>
         <div class="keyboard-bindings">
           <div class="binding-item">
-            <span class="binding-action">Movement</span>
-            <span class="binding-keys">WASD / Arrow Keys</span>
+            <span class="binding-action">P1 Movement</span>
+            <span class="binding-keys">WASD</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">Confirm</span>
-            <span class="binding-keys">Enter / Space</span>
+            <span class="binding-action">P1 Confirm / Interact / Attack</span>
+            <span class="binding-keys">Enter / E / Space</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">Cancel</span>
-            <span class="binding-keys">Escape</span>
+            <span class="binding-action">P2 Movement</span>
+            <span class="binding-keys">Arrow Keys</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">End Turn</span>
-            <span class="binding-keys">E</span>
+            <span class="binding-action">P2 Confirm / Interact / Attack</span>
+            <span class="binding-keys">Numpad Enter / Slash / Numpad 0</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">Next/Prev Unit</span>
-            <span class="binding-keys">Tab / Shift+Tab</span>
+            <span class="binding-action">Shared Cancel / Special</span>
+            <span class="binding-keys">Escape or Backspace / Left or Right Shift</span>
           </div>
         </div>
       </div>
@@ -382,7 +381,7 @@ function renderSaveItem(save: SaveInfo): string {
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachSettingsListeners(settings: GameSettings): void {
+function attachSettingsListeners(): void {
   const app = document.getElementById("app");
   if (!app) return;
   
@@ -459,7 +458,9 @@ function attachSettingsListeners(settings: GameSettings): void {
   });
   
   // Selects
-  app.querySelectorAll('select[data-setting]').forEach(select => {
+  app.querySelectorAll('select[data-setting]').forEach(element => {
+    const select = element as HTMLSelectElement;
+
     select.addEventListener("change", async (e) => {
       const sel = e.target as HTMLSelectElement;
       const key = sel.dataset.setting as keyof GameSettings;

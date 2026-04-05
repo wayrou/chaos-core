@@ -2,7 +2,8 @@
 // PLAYER INPUT ABSTRACTION - Local Co-op
 // ============================================================================
 
-import { PlayerId } from "./types";
+import { BUTTON, getAssignedGamepad } from "./controllerSupport";
+import { PlayerId, type PlayerInputSource } from "./types";
 import { getGameState } from "../state/gameStore";
 
 export interface PlayerInputState {
@@ -10,15 +11,20 @@ export interface PlayerInputState {
   down: boolean;
   left: boolean;
   right: boolean;
-  confirm: boolean; // Space/Enter for P1, Right Shift/Enter for P2
-  cancel: boolean; // Escape/Backspace
-  special1: boolean; // Shift for dash, Right Shift for P2 dash
-  attack?: boolean; // Space for attack (field nodes)
-  interact?: boolean; // E for interact
+  confirm: boolean;
+  cancel: boolean;
+  special1: boolean;
+  attack?: boolean;
+  interact?: boolean;
 }
 
-// Global input state tracking
-const keyboard1State: PlayerInputState = {
+type InputAction = keyof PlayerInputState;
+type KeyboardBinding = {
+  codeMap: Partial<Record<string, InputAction>>;
+  keyMap: Partial<Record<string, InputAction>>;
+};
+
+const EMPTY_INPUT_STATE: PlayerInputState = {
   up: false,
   down: false,
   left: false,
@@ -30,193 +36,239 @@ const keyboard1State: PlayerInputState = {
   interact: false,
 };
 
-const keyboard2State: PlayerInputState = {
-  up: false,
-  down: false,
-  left: false,
-  right: false,
-  confirm: false,
-  cancel: false,
-  special1: false,
-  attack: false,
-  interact: false,
+const keyboard1State: PlayerInputState = { ...EMPTY_INPUT_STATE };
+const keyboard2State: PlayerInputState = { ...EMPTY_INPUT_STATE };
+
+const KEYBOARD1_BINDINGS: KeyboardBinding = {
+  codeMap: {
+    KeyW: "up",
+    KeyS: "down",
+    KeyA: "left",
+    KeyD: "right",
+    Space: "attack",
+    KeyE: "interact",
+    Enter: "confirm",
+    Escape: "cancel",
+    ShiftLeft: "special1",
+  },
+  keyMap: {
+    w: "up",
+    W: "up",
+    s: "down",
+    S: "down",
+    a: "left",
+    A: "left",
+    d: "right",
+    D: "right",
+    " ": "attack",
+    e: "interact",
+    E: "interact",
+    Enter: "confirm",
+    Escape: "cancel",
+  },
 };
 
-// Key mappings
-const KEYBOARD1_MAP: Record<string, keyof PlayerInputState> = {
-  "w": "up",
-  "W": "up",
-  "ArrowUp": "up",
-  "s": "down",
-  "S": "down",
-  "ArrowDown": "down",
-  "a": "left",
-  "A": "left",
-  "ArrowLeft": "left",
-  "d": "right",
-  "D": "right",
-  "ArrowRight": "right",
-  " ": "attack", // Space for attack
-  "e": "interact", // E for interact
-  "E": "interact", // E for interact
-  "Enter": "confirm",
-  "Escape": "cancel",
-  "Shift": "special1",
+const KEYBOARD2_BINDINGS: KeyboardBinding = {
+  codeMap: {
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    Numpad0: "attack",
+    Slash: "interact",
+    ControlRight: "interact",
+    NumpadEnter: "confirm",
+    Backspace: "cancel",
+    ShiftRight: "special1",
+  },
+  keyMap: {
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    "/": "interact",
+    Backspace: "cancel",
+  },
 };
 
-const KEYBOARD2_MAP: Record<string, keyof PlayerInputState> = {
-  "ArrowUp": "up",
-  "ArrowDown": "down",
-  "ArrowLeft": "left",
-  "ArrowRight": "right",
-  " ": "attack", // Space for attack (P2 can also use space)
-  "Enter": "confirm",
-  "Backspace": "cancel",
-  "Shift": "special1", // Right Shift for P2 dash
-};
+function getBindingForSource(inputSource: PlayerInputSource): KeyboardBinding | null {
+  switch (inputSource) {
+    case "keyboard1":
+      return KEYBOARD1_BINDINGS;
+    case "keyboard2":
+      return KEYBOARD2_BINDINGS;
+    default:
+      return null;
+  }
+}
 
-/**
- * Get input state for a specific player
- */
+function resolveKeyboardAction(
+  event: Pick<KeyboardEvent, "code" | "key">,
+  bindings: KeyboardBinding,
+): InputAction | null {
+  return bindings.codeMap[event.code] ?? bindings.keyMap[event.key] ?? null;
+}
+
+function updateKeyboardInputState(
+  inputState: PlayerInputState,
+  action: InputAction | null,
+  isPressed: boolean,
+): void {
+  if (!action || !Object.prototype.hasOwnProperty.call(inputState, action)) {
+    return;
+  }
+  (inputState[action] as boolean) = isPressed;
+}
+
+function readGamepadInput(playerId: PlayerId): PlayerInputState {
+  const gamepad = getAssignedGamepad(playerId);
+  if (!gamepad) {
+    return { ...EMPTY_INPUT_STATE };
+  }
+
+  const axisX = gamepad.axes[0] ?? 0;
+  const axisY = gamepad.axes[1] ?? 0;
+  const deadzone = 0.35;
+  const buttons = gamepad.buttons;
+  const isPressed = (buttonIndex: number) => Boolean(buttons[buttonIndex]?.pressed);
+
+  return {
+    up: isPressed(BUTTON.DPAD_UP) || axisY < -deadzone,
+    down: isPressed(BUTTON.DPAD_DOWN) || axisY > deadzone,
+    left: isPressed(BUTTON.DPAD_LEFT) || axisX < -deadzone,
+    right: isPressed(BUTTON.DPAD_RIGHT) || axisX > deadzone,
+    confirm: isPressed(BUTTON.A),
+    cancel: isPressed(BUTTON.B),
+    special1: isPressed(BUTTON.LB) || isPressed(BUTTON.RB),
+    attack: isPressed(BUTTON.A),
+    interact: isPressed(BUTTON.X),
+  };
+}
+
+function mergeInputStates(baseState: PlayerInputState, overlayState: PlayerInputState): PlayerInputState {
+  return {
+    up: baseState.up || overlayState.up,
+    down: baseState.down || overlayState.down,
+    left: baseState.left || overlayState.left,
+    right: baseState.right || overlayState.right,
+    confirm: baseState.confirm || overlayState.confirm,
+    cancel: baseState.cancel || overlayState.cancel,
+    special1: baseState.special1 || overlayState.special1,
+    attack: Boolean(baseState.attack || overlayState.attack),
+    interact: Boolean(baseState.interact || overlayState.interact),
+  };
+}
+
 export function getPlayerInput(playerId: PlayerId): PlayerInputState {
   const state = getGameState();
   const player = state.players[playerId];
-  
+
   if (!player.active) {
-    // Return empty input if player is not active
-    return {
-      up: false,
-      down: false,
-      left: false,
-      right: false,
-      confirm: false,
-      cancel: false,
-      special1: false,
-      attack: false,
-      interact: false,
-    };
+    return { ...EMPTY_INPUT_STATE };
   }
-  
+
+  let inputState: PlayerInputState;
+
   switch (player.inputSource) {
     case "keyboard1":
-      return { ...keyboard1State };
+      inputState = { ...keyboard1State };
+      break;
     case "keyboard2":
-      return { ...keyboard2State };
+      inputState = { ...keyboard2State };
+      break;
     case "gamepad1":
-      // TODO: Implement gamepad support
-      return {
-        up: false,
-        down: false,
-        left: false,
-        right: false,
-        confirm: false,
-        cancel: false,
-        special1: false,
-        attack: false,
-        interact: false,
-      };
+    case "gamepad2":
+      inputState = readGamepadInput(playerId);
+      break;
     default:
-      return {
-        up: false,
-        down: false,
-        left: false,
-        right: false,
-        confirm: false,
-        cancel: false,
-        special1: false,
-        attack: false,
-        interact: false,
-      };
+      inputState = { ...EMPTY_INPUT_STATE };
+      break;
   }
+
+  if (getAssignedGamepad(playerId)) {
+    return mergeInputStates(inputState, readGamepadInput(playerId));
+  }
+
+  return inputState;
 }
 
-/**
- * Handle keydown event and update appropriate input state
- */
+export function isPlayerInputActionEvent(
+  event: Pick<KeyboardEvent, "code" | "key">,
+  playerId: PlayerId,
+  action: InputAction,
+): boolean {
+  const state = getGameState();
+  const player = state.players[playerId];
+  const bindings = getBindingForSource(player.inputSource);
+  if (!bindings) {
+    return false;
+  }
+
+  return resolveKeyboardAction(event, bindings) === action;
+}
+
 export function handleKeyDown(e: KeyboardEvent, playerId?: PlayerId): void {
-  const key = e.key;
-  
-  // If playerId specified, only update that player's input
+  const state = getGameState();
+
   if (playerId) {
-    const state = getGameState();
     const player = state.players[playerId];
     if (!player.active) return;
-    
-    const map = player.inputSource === "keyboard1" ? KEYBOARD1_MAP : KEYBOARD2_MAP;
+
+    const bindings = getBindingForSource(player.inputSource);
+    if (!bindings) return;
+
     const inputState = player.inputSource === "keyboard1" ? keyboard1State : keyboard2State;
-    
-    const action = map[key];
-    if (action && inputState.hasOwnProperty(action)) {
-      (inputState[action] as boolean) = true;
+    const action = resolveKeyboardAction(e, bindings);
+    updateKeyboardInputState(inputState, action, true);
+    if (action) {
       e.preventDefault();
     }
     return;
   }
-  
-  // Otherwise, update both keyboard states
-  const action1 = KEYBOARD1_MAP[key];
-  if (action1 && keyboard1State.hasOwnProperty(action1)) {
-    (keyboard1State[action1] as boolean) = true;
-    e.preventDefault();
-  }
-  
-  const action2 = KEYBOARD2_MAP[key];
-  if (action2 && keyboard2State.hasOwnProperty(action2)) {
-    (keyboard2State[action2] as boolean) = true;
+
+  const p1Bindings = getBindingForSource(state.players.P1.inputSource);
+  const p2Bindings = getBindingForSource(state.players.P2.inputSource);
+  const p1Action = p1Bindings ? resolveKeyboardAction(e, p1Bindings) : null;
+  const p2Action = p2Bindings ? resolveKeyboardAction(e, p2Bindings) : null;
+
+  updateKeyboardInputState(keyboard1State, p1Action, true);
+  updateKeyboardInputState(keyboard2State, p2Action, true);
+
+  if (p1Action || p2Action) {
     e.preventDefault();
   }
 }
 
-/**
- * Handle keyup event and update appropriate input state
- */
 export function handleKeyUp(e: KeyboardEvent, playerId?: PlayerId): void {
-  const key = e.key;
-  
-  // If playerId specified, only update that player's input
+  const state = getGameState();
+
   if (playerId) {
-    const state = getGameState();
     const player = state.players[playerId];
     if (!player.active) return;
-    
-    const map = player.inputSource === "keyboard1" ? KEYBOARD1_MAP : KEYBOARD2_MAP;
+
+    const bindings = getBindingForSource(player.inputSource);
+    if (!bindings) return;
+
     const inputState = player.inputSource === "keyboard1" ? keyboard1State : keyboard2State;
-    
-    const action = map[key];
-    if (action && inputState.hasOwnProperty(action)) {
-      (inputState[action] as boolean) = false;
-    }
+    const action = resolveKeyboardAction(e, bindings);
+    updateKeyboardInputState(inputState, action, false);
     return;
   }
-  
-  // Otherwise, update both keyboard states
-  const action1 = KEYBOARD1_MAP[key];
-  if (action1 && keyboard1State.hasOwnProperty(action1)) {
-    (keyboard1State[action1] as boolean) = false;
-  }
-  
-  const action2 = KEYBOARD2_MAP[key];
-  if (action2 && keyboard2State.hasOwnProperty(action2)) {
-    (keyboard2State[action2] as boolean) = false;
-  }
+
+  const p1Bindings = getBindingForSource(state.players.P1.inputSource);
+  const p2Bindings = getBindingForSource(state.players.P2.inputSource);
+  const p1Action = p1Bindings ? resolveKeyboardAction(e, p1Bindings) : null;
+  const p2Action = p2Bindings ? resolveKeyboardAction(e, p2Bindings) : null;
+
+  updateKeyboardInputState(keyboard1State, p1Action, false);
+  updateKeyboardInputState(keyboard2State, p2Action, false);
 }
 
-/**
- * Reset all input states (useful when switching screens)
- */
 export function resetPlayerInput(): void {
-  Object.keys(keyboard1State).forEach(key => {
+  Object.keys(keyboard1State).forEach((key) => {
     (keyboard1State[key as keyof PlayerInputState] as boolean) = false;
   });
-  Object.keys(keyboard2State).forEach(key => {
+  Object.keys(keyboard2State).forEach((key) => {
     (keyboard2State[key as keyof PlayerInputState] as boolean) = false;
   });
 }
-
-
-
-
-
-
-
-

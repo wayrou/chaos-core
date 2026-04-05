@@ -5,6 +5,7 @@
 // ============================================================================
 
 import { getSettings, subscribeToSettings } from "./settings";
+import type { PlayerSlot } from "./types";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -13,6 +14,8 @@ import { getSettings, subscribeToSettings } from "./settings";
 export interface ControllerState {
   connected: boolean;
   id: string;
+  index: number;
+  assignedPlayer: PlayerSlot | null;
   buttons: ButtonState[];
   axes: number[];
 }
@@ -93,9 +96,13 @@ let isEnabled = true;
 let deadzone = 0.15;
 let vibrationEnabled = true;
 let currentBindings = { ...DEFAULT_BINDINGS };
-let prevButtonStates: boolean[] = new Array(16).fill(false);
+let prevButtonStatesByPad: boolean[][] = [];
+const playerControllerBindings: Record<PlayerSlot, number | null> = {
+  P1: 0,
+  P2: 1,
+};
 
-type ActionListener = (action: GameAction) => void;
+type ActionListener = (action: GameAction, playerId?: PlayerSlot) => void;
 const actionListeners = new Set<ActionListener>();
 
 let navCooldown = 0;
@@ -184,9 +191,10 @@ function pollLoop(): void {
   
   const gamepads = navigator.getGamepads();
   
-  for (const gamepad of gamepads) {
+  for (let index = 0; index < gamepads.length; index++) {
+    const gamepad = gamepads[index];
     if (gamepad) {
-      processGamepad(gamepad);
+      processGamepad(gamepad, index);
     }
   }
 }
@@ -195,32 +203,35 @@ function pollLoop(): void {
 // GAMEPAD PROCESSING
 // ----------------------------------------------------------------------------
 
-function processGamepad(gamepad: Gamepad): void {
+function processGamepad(gamepad: Gamepad, gamepadIndex: number): void {
   const buttons = gamepad.buttons;
+  const previousStates = prevButtonStatesByPad[gamepadIndex] ?? new Array(buttons.length).fill(false);
+  const assignedPlayer = getAssignedPlayerForGamepad(gamepadIndex);
   
   for (let i = 0; i < buttons.length; i++) {
     const pressed = buttons[i].pressed;
-    const wasPressed = prevButtonStates[i];
+    const wasPressed = previousStates[i] ?? false;
     
     if (pressed && !wasPressed) {
-      handleButtonPress(i);
+      handleButtonPress(i, assignedPlayer);
     }
     
-    prevButtonStates[i] = pressed;
+    previousStates[i] = pressed;
   }
+  prevButtonStatesByPad[gamepadIndex] = previousStates;
   
-  processAxesNavigation(gamepad.axes);
+  processAxesNavigation(gamepad.axes, assignedPlayer);
 }
 
-function handleButtonPress(buttonIndex: number): void {
+function handleButtonPress(buttonIndex: number, playerId?: PlayerSlot | null): void {
   for (const [action, buttons] of Object.entries(currentBindings)) {
     if (buttons.includes(buttonIndex)) {
-      triggerAction(action as GameAction);
+      triggerAction(action as GameAction, playerId ?? undefined);
     }
   }
 }
 
-function processAxesNavigation(axes: readonly number[]): void {
+function processAxesNavigation(axes: readonly number[], playerId?: PlayerSlot | null): void {
   if (navCooldown > 0) return;
   
   const leftX = axes[AXIS.LEFT_X] ?? 0;
@@ -231,18 +242,18 @@ function processAxesNavigation(axes: readonly number[]): void {
   
   if (Math.abs(processedX) > Math.abs(processedY)) {
     if (processedX > 0.5) {
-      triggerAction("moveRight");
+      triggerAction("moveRight", playerId ?? undefined);
       navCooldown = NAV_COOLDOWN_MS;
     } else if (processedX < -0.5) {
-      triggerAction("moveLeft");
+      triggerAction("moveLeft", playerId ?? undefined);
       navCooldown = NAV_COOLDOWN_MS;
     }
   } else {
     if (processedY > 0.5) {
-      triggerAction("moveDown");
+      triggerAction("moveDown", playerId ?? undefined);
       navCooldown = NAV_COOLDOWN_MS;
     } else if (processedY < -0.5) {
-      triggerAction("moveUp");
+      triggerAction("moveUp", playerId ?? undefined);
       navCooldown = NAV_COOLDOWN_MS;
     }
   }
@@ -252,15 +263,15 @@ function processAxesNavigation(axes: readonly number[]): void {
 // ACTION HANDLING
 // ----------------------------------------------------------------------------
 
-function triggerAction(action: GameAction): void {
-  console.log(`[CONTROLLER] Action: ${action}`);
+function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
+  console.log(`[CONTROLLER] Action: ${action}${playerId ? ` (${playerId})` : ""}`);
   
   if (handleUIAction(action)) {
     return;
   }
   
   for (const listener of actionListeners) {
-    listener(action);
+    listener(action, playerId);
   }
 }
 
@@ -383,12 +394,19 @@ export const VIBRATION_PATTERNS = {
 
 function onGamepadConnected(event: GamepadEvent): void {
   console.log(`[CONTROLLER] Connected: ${event.gamepad.id}`);
+  bindUnassignedController(event.gamepad.index);
   updateFocusableElements();
   vibrate(100, 0.5);
 }
 
 function onGamepadDisconnected(event: GamepadEvent): void {
   console.log(`[CONTROLLER] Disconnected: ${event.gamepad.id}`);
+  prevButtonStatesByPad[event.gamepad.index] = [];
+  for (const playerId of Object.keys(playerControllerBindings) as PlayerSlot[]) {
+    if (playerControllerBindings[playerId] === event.gamepad.index) {
+      playerControllerBindings[playerId] = null;
+    }
+  }
   document.querySelectorAll(".controller-focused").forEach(el => {
     el.classList.remove("controller-focused");
   });
@@ -404,6 +422,48 @@ function onGamepadDisconnected(event: GamepadEvent): void {
 export function onControllerAction(listener: ActionListener): () => void {
   actionListeners.add(listener);
   return () => actionListeners.delete(listener);
+}
+
+function bindUnassignedController(gamepadIndex: number): void {
+  const assignedPlayer = getAssignedPlayerForGamepad(gamepadIndex);
+  if (assignedPlayer) {
+    return;
+  }
+
+  if (playerControllerBindings.P1 === null) {
+    playerControllerBindings.P1 = gamepadIndex;
+    return;
+  }
+
+  if (playerControllerBindings.P2 === null) {
+    playerControllerBindings.P2 = gamepadIndex;
+  }
+}
+
+function getAssignedPlayerForGamepad(gamepadIndex: number): PlayerSlot | null {
+  for (const playerId of Object.keys(playerControllerBindings) as PlayerSlot[]) {
+    if (playerControllerBindings[playerId] === gamepadIndex) {
+      return playerId;
+    }
+  }
+  return null;
+}
+
+export function bindControllerToPlayer(playerId: PlayerSlot, gamepadIndex: number | null): void {
+  playerControllerBindings[playerId] = gamepadIndex;
+}
+
+export function getControllerBindingForPlayer(playerId: PlayerSlot): number | null {
+  return playerControllerBindings[playerId];
+}
+
+export function getAssignedGamepad(playerId: PlayerSlot): Gamepad | null {
+  const gamepadIndex = playerControllerBindings[playerId];
+  if (gamepadIndex === null || typeof navigator.getGamepads !== "function") {
+    return null;
+  }
+
+  return navigator.getGamepads()[gamepadIndex] ?? null;
 }
 
 /**
@@ -426,11 +486,13 @@ export function getConnectedControllers(): ControllerState[] {
       controllers.push({
         connected: true,
         id: gamepad.id,
+        index: gamepad.index,
+        assignedPlayer: getAssignedPlayerForGamepad(gamepad.index),
         buttons: gamepad.buttons.map((btn, i) => ({
           pressed: btn.pressed,
           value: btn.value,
-          justPressed: btn.pressed && !prevButtonStates[i],
-          justReleased: !btn.pressed && prevButtonStates[i],
+          justPressed: btn.pressed && !(prevButtonStatesByPad[gamepad.index]?.[i] ?? false),
+          justReleased: !btn.pressed && (prevButtonStatesByPad[gamepad.index]?.[i] ?? false),
         })),
         axes: [...gamepad.axes],
       });
