@@ -13,9 +13,13 @@ import { EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, 
 import {
   BattleState,
   advanceTurn,
+  canUnitInteract,
   createTestBattleForCurrentParty,
   evaluateBattleOutcome,
+  getPlacementTilesForUnit,
   getSquadObjectiveControlSide,
+  getUnitInteractionObject,
+  interactWithMapObject,
   moveUnit,
   performEnemyTurn,
   BASE_STRAIN_THRESHOLD,
@@ -32,6 +36,7 @@ import {
   getUnitMovementRange,
   Vec2,
 } from "../../core/battle";
+import { hasLineOfSight } from "../../core/lineOfSight";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { getAllStarterEquipment } from "../../core/equipment";
 import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
@@ -116,9 +121,9 @@ type AutoBattleMoveOption = {
   score: number;
 };
 
-function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" | "menu" {
+function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" | "menu" | "map_builder" {
   const returnTo = (battle as any)?.returnTo;
-  return returnTo === "field" || returnTo === "esc" || returnTo === "basecamp" || returnTo === "operation" || returnTo === "menu"
+  return returnTo === "field" || returnTo === "esc" || returnTo === "basecamp" || returnTo === "operation" || returnTo === "menu" || returnTo === "map_builder"
     ? returnTo
     : "operation";
 }
@@ -462,10 +467,25 @@ function getSquadBattleOutcomeCopy(battle: BattleState): string {
 }
 
 function getLocalPlacementColumn(battle: BattleState): number {
+  const localSpawnTiles = isSquadBattle(battle) && getGameState().session.authorityRole === "client"
+    ? battle.spawnZones?.enemySpawn ?? []
+    : battle.spawnZones?.friendlySpawn ?? [];
+  if (localSpawnTiles.length > 0) {
+    return localSpawnTiles[0].x;
+  }
   if (isSquadBattle(battle) && getGameState().session.authorityRole === "client") {
     return battle.gridWidth - 1;
   }
   return 0;
+}
+
+function getLocalPlacementTiles(battle: BattleState): Vec2[] {
+  const placementUnits = getLocalPlacementUnits(battle);
+  const sampleUnit = placementUnits[0];
+  if (!sampleUnit) {
+    return [];
+  }
+  return getPlacementTilesForUnit(battle, sampleUnit);
 }
 
 function getLocalPlacementUnits(battle: BattleState): BattleUnitState[] {
@@ -574,6 +594,26 @@ function getUnplacedEchoFields(battle: BattleState | null | undefined) {
   return echoContext.availableFields.filter((field) => !placedDraftIds.has(field.draftId));
 }
 
+function renderBattleReturnDestination(returnTo: BaseCampReturnTo | "operation" | "menu" | "map_builder"): void {
+  if (returnTo === "operation") {
+    renderOperationMap();
+    return;
+  }
+  if (returnTo === "menu") {
+    import("./MainMenuScreen").then(({ renderMainMenu }) => {
+      void renderMainMenu();
+    });
+    return;
+  }
+  if (returnTo === "map_builder") {
+    import("./MapBuilderScreen").then(({ renderMapBuilderScreen }) => {
+      renderMapBuilderScreen();
+    });
+    return;
+  }
+  returnFromBaseCampScreen(returnTo);
+}
+
 function returnFromBattle(battle: BattleState | null | undefined): void {
   if (isSquadBattle(battle)) {
     updateGameState((prev) => ({
@@ -588,19 +628,7 @@ function returnFromBattle(battle: BattleState | null | undefined): void {
   }
 
   const returnTo = getBattleReturnTarget(battle);
-  if (returnTo === "operation") {
-    renderOperationMap();
-    return;
-  }
-
-  if (returnTo === "menu") {
-    import("./MainMenuScreen").then(({ renderMainMenu }) => {
-      void renderMainMenu();
-    });
-    return;
-  }
-
-  returnFromBaseCampScreen(returnTo);
+  renderBattleReturnDestination(returnTo);
 }
 
 function syncBattleResultInputGate(battle: BattleState): void {
@@ -2510,6 +2538,10 @@ function getDefaultBattleControllerCursor(
   }
 
   if (isPlacementPhase && battle.placementState) {
+    const placementTiles = getLocalPlacementTiles(battle);
+    if (placementTiles.length > 0) {
+      return placementTiles[Math.min(Math.floor(placementTiles.length / 2), placementTiles.length - 1)];
+    }
     const placementColumn = getLocalPlacementColumn(battle);
     return {
       x: placementColumn,
@@ -3627,11 +3659,15 @@ function canCardTargetUnit(card: Card, activeUnit: BattleUnitState, targetUnit: 
     return false;
   }
   const effectiveRange = getEffectiveCardRange(card, activeUnit);
+  const requiresLineOfSight = effectiveRange > 1 && Boolean(activeUnit.pos && targetUnit.pos);
+  const hasTargetLineOfSight = !requiresLineOfSight || !localBattleState || !activeUnit.pos || !targetUnit.pos
+    ? true
+    : hasLineOfSight(activeUnit.pos, targetUnit.pos, localBattleState);
   if (card.target === "enemy") {
-    return isHostileBattleUnit(activeUnit, targetUnit) && distance <= effectiveRange;
+    return isHostileBattleUnit(activeUnit, targetUnit) && distance <= effectiveRange && hasTargetLineOfSight;
   }
   if (card.target === "ally") {
-    return isAlliedBattleUnit(activeUnit, targetUnit) && (distance <= effectiveRange || effectiveRange === 0);
+    return isAlliedBattleUnit(activeUnit, targetUnit) && (distance <= effectiveRange || effectiveRange === 0) && hasTargetLineOfSight;
   }
   if (card.target === "self") {
     return targetUnit.id === activeUnit.id;
@@ -3959,7 +3995,14 @@ function chooseBestAutoBattleMoveOption(
     }
   });
 
-  return bestOption && bestOption.score > 0 ? bestOption : null;
+  const resolvedBestOption: AutoBattleMoveOption | null = bestOption;
+  const resolvedBestScore = resolvedBestOption
+    ? (resolvedBestOption as AutoBattleMoveOption).score
+    : Number.NEGATIVE_INFINITY;
+  if (resolvedBestScore > 0 && resolvedBestOption) {
+    return resolvedBestOption;
+  }
+  return null;
 }
 
 // ============================================================================
@@ -5032,6 +5075,7 @@ function renderHandPanel(
     const hand = resolveHandCards(activeUnit?.hand ?? []);
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
     const canUndoMove = Boolean(isPlayerTurn && !autoControlled && turnState.hasCommittedMove && !turnState.hasActed);
+    const interactable = localBattleState && activeUnit ? getUnitInteractionObject(localBattleState, activeUnit) : null;
     return `
       <div class="hand-header-floating">
         <div class="hand-info">
@@ -5050,6 +5094,7 @@ function renderHandPanel(
         </div>
         <div class="hand-actions">
           <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
+          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
           <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>END TURN</button>
           <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
         </div>
@@ -5268,6 +5313,7 @@ function renderPlacementUI(battle: BattleState): string {
   const isSkirmishBattle = isSquadBattle(battle);
   const isClientSkirmishView = isSkirmishBattle && getGameState().session.authorityRole === "client";
   const placementColumn = getLocalPlacementColumn(battle);
+  const placementTiles = getLocalPlacementTiles(battle);
   const placementEdgeLabel = placementColumn === 0 ? "left" : "right";
   const placementCounts = getSkirmishPlacementCounts(battle);
   const canConfirm = isEchoFieldMode
@@ -5342,7 +5388,11 @@ function renderPlacementUI(battle: BattleState): string {
     <div class="battle-placement-panel battle-placement-panel--node">
       <div class="placement-header">
         <div class="placement-title">UNIT PLACEMENT</div>
-        <div class="placement-subtitle">Place your units on the ${placementEdgeLabel} edge (x=${placementColumn})</div>
+        <div class="placement-subtitle">${
+          placementTiles.length > 0
+            ? `Deploy on the authored spawn tiles (${placementTiles.length} available).`
+            : `Place your units on the ${placementEdgeLabel} edge (x=${placementColumn})`
+        }</div>
       </div>
       ${theaterBonusBlock}
       ${echoFieldBlock}
@@ -6284,8 +6334,6 @@ function attachBattleListeners() {
     const echoPlacementContext = getEchoContext(localBattleState);
     const isEchoFieldPlacementMode = echoPlacementContext?.placementMode === "fields";
     const isClientSkirmishPlacement = Boolean(localBattleState && isSquadBattle(localBattleState) && getGameState().session.authorityRole === "client");
-    const placementColumn = localBattleState ? getLocalPlacementColumn(localBattleState) : 0;
-
     // Quick Place button
     const quickPlaceBtn = document.getElementById("quickPlaceBtn");
     if (quickPlaceBtn && !isEchoFieldPlacementMode) {
@@ -6451,7 +6499,6 @@ function attachBattleListeners() {
         const { x, y } = coords;
 
         if (!localBattleState || !localBattleState.placementState) return;
-        if (x !== placementColumn) return;
         if (y < 0 || y >= localBattleState.gridHeight) return;
 
         const occupied = Object.values(localBattleState.units).some(
@@ -6481,6 +6528,11 @@ function attachBattleListeners() {
         }
 
         if (!unitToPlace || !localBattleState) return;
+
+        const validPlacementTiles = getPlacementTilesForUnit(localBattleState, unitToPlace);
+        if (!validPlacementTiles.some((tilePos) => tilePos.x === x && tilePos.y === y)) {
+          return;
+        }
 
         if (isClientSkirmishPlacement) {
           void sendLocalSquadPlacementCommand({ type: "place_unit", unitId: unitToPlace.id, x, y });
@@ -6848,6 +6900,22 @@ function attachBattleListeners() {
     };
   }
 
+  const interactBtn = document.getElementById("interactBtn");
+  if (interactBtn) {
+    interactBtn.onclick = () => {
+      if (!localBattleState?.activeUnitId) {
+        return;
+      }
+      const activeUnit = localBattleState.units[localBattleState.activeUnitId];
+      if (!activeUnit || !canUnitInteract(localBattleState, activeUnit)) {
+        return;
+      }
+      const nextState = interactWithMapObject(localBattleState, activeUnit.id);
+      setBattleState(nextState);
+      renderBattleScreen();
+    };
+  }
+
   document.querySelectorAll<HTMLElement>("[data-battle-auto-mode]").forEach((button) => {
     button.onclick = () => {
       const mode = button.getAttribute("data-battle-auto-mode");
@@ -7142,9 +7210,7 @@ function attachBattleListeners() {
         // Training battle - should have been handled by handleTrainingBattleComplete
         // But if we reach here, route to Comms Array
         const returnTo = (battle as any)?.returnTo || "basecamp";
-        import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-          renderCommsArrayScreen(returnTo);
-        });
+        renderBattleReturnDestination(returnTo);
         return;
       }
 
@@ -7516,6 +7582,12 @@ function handleTrainingBattleComplete(battle: BattleState): void {
   const rematchBtn = document.getElementById("rematchBtn");
   if (rematchBtn) {
     rematchBtn.onclick = () => {
+      if (returnTo === "map_builder") {
+        import("./MapBuilderScreen").then(({ relaunchMapBuilderQuickTest }) => {
+          relaunchMapBuilderQuickTest();
+        });
+        return;
+      }
       // Use stored training config to start a new battle directly
       import("./CommsArrayScreen").then(({ getLastTrainingConfig }) => {
         const lastConfig = getLastTrainingConfig();
@@ -7546,10 +7618,7 @@ function handleTrainingBattleComplete(battle: BattleState): void {
             });
           });
         } else {
-          // Fallback: go to Comms Array
-          import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-            renderCommsArrayScreen(returnTo);
-          });
+          renderBattleReturnDestination(returnTo);
         }
       });
     };
@@ -7558,19 +7627,14 @@ function handleTrainingBattleComplete(battle: BattleState): void {
   const changeSettingsBtn = document.getElementById("changeSettingsBtn");
   if (changeSettingsBtn) {
     changeSettingsBtn.onclick = () => {
-      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen(returnTo);
-      });
+      renderBattleReturnDestination(returnTo);
     };
   }
 
   const returnToBaseBtn = document.getElementById("returnToBaseBtn");
   if (returnToBaseBtn) {
     returnToBaseBtn.onclick = () => {
-      // Always return to Comms Array screen after training battle
-      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen(returnTo);
-      });
+      renderBattleReturnDestination(returnTo);
     };
   }
 }

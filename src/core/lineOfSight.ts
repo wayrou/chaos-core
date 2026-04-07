@@ -2,7 +2,7 @@
 // LINE OF SIGHT - Cover blocking for ranged attacks
 // ============================================================================
 
-import { Tile, Vec2, BattleState } from "./battle";
+import { Tile, Vec2, BattleState, getMapObjectsAt, getTileAt } from "./battle";
 
 /**
  * Check if there is line of sight between two cells
@@ -21,8 +21,8 @@ export function hasLineOfSight(
     const tile = lineTiles[i];
     const gridTile = getTileAt(battle, tile.x, tile.y);
     
-    if (!gridTile) continue;
-    
+    if (!gridTile) return false;
+
     // Cover blocks line of sight
     if (gridTile.terrain === "light_cover" || gridTile.terrain === "heavy_cover") {
       if (gridTile.cover && gridTile.cover.hp > 0) {
@@ -32,6 +32,10 @@ export function hasLineOfSight(
     
     // Walls also block (if they exist)
     if (gridTile.terrain === "wall") {
+      return false;
+    }
+
+    if (getMapObjectsAt(battle, tile.x, tile.y).some((objectDef) => objectDef.blocksLineOfSight)) {
       return false;
     }
   }
@@ -72,18 +76,6 @@ function getLineTiles(from: Vec2, to: Vec2): Vec2[] {
   }
   
   return tiles;
-}
-
-/**
- * Get tile at a specific position
- */
-function getTileAt(battle: BattleState, x: number, y: number): Tile | null {
-  if (x < 0 || x >= battle.gridWidth || y < 0 || y >= battle.gridHeight) {
-    return null;
-  }
-  
-  const index = y * battle.gridWidth + x;
-  return battle.tiles[index] || null;
 }
 
 /**

@@ -4,7 +4,7 @@
 // card handling in handleTileClick
 // ============================================================================
 
-import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Tile, Vec2, getEquippedWeapon } from "./battle";
+import { BattleState, BattleUnitState, Tile, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Vec2, getEquippedWeapon, getTileAt } from "./battle";
 import { Card } from "./types";
 import { getCoverDamageReduction, damageCover } from "./coverGenerator";
 import {
@@ -547,11 +547,20 @@ export function handleCardPlay(
 
     let finalDamage = Math.max(1, totalDamage - totalDef);
 
+    const equippedWeapon = getEquippedWeapon(user);
+    const isRangedAttack = Boolean(equippedWeapon && ["gun", "bow", "greatbow"].includes(equippedWeapon.weaponType));
+
     // Apply cover damage reduction if target is on cover
     if (targetUnit.pos) {
       const targetTile = getTileAt(battle, targetUnit.pos.x, targetUnit.pos.y);
       if (targetTile) {
-        const coverReduction = getCoverDamageReduction(targetTile);
+        let coverReduction = getCoverDamageReduction(targetTile);
+        const attackerTile = getTileAt(battle, user.pos.x, user.pos.y);
+        const attackerElevation = attackerTile?.elevation ?? 0;
+        const defenderElevation = targetTile.elevation ?? 0;
+        if (isRangedAttack && attackerElevation >= defenderElevation + 1 && targetTile.terrain === "light_cover") {
+          coverReduction = 0;
+        }
         finalDamage = Math.max(1, finalDamage - coverReduction);
       }
     }
@@ -836,17 +845,6 @@ export function handleCardPlay(
 }
 
 /**
- * Helper to get tile at a position
- */
-function getTileAt(battle: BattleState, x: number, y: number): Tile | null {
-  if (x < 0 || x >= battle.gridWidth || y < 0 || y >= battle.gridHeight) {
-    return null;
-  }
-  const index = y * battle.gridWidth + x;
-  return battle.tiles[index] || null;
-}
-
-/**
  * Damage cover tiles in an area (for AoE attacks)
  */
 export function damageCoverInArea(
@@ -855,29 +853,27 @@ export function damageCoverInArea(
   radius: number,
   damage: number
 ): BattleState {
-  const updatedTiles = [...battle.tiles];
+  const updatedTiles: Tile[] = battle.tiles.map((tile) => ({
+    ...tile,
+    cover: tile.cover ? { ...tile.cover } : tile.cover,
+  }));
   let coverDamaged = false;
 
-  for (let y = 0; y < battle.gridHeight; y++) {
-    for (let x = 0; x < battle.gridWidth; x++) {
-      const dist = Math.abs(x - center.x) + Math.abs(y - center.y);
-      if (dist <= radius) {
-        const tileIndex = y * battle.gridWidth + x;
-        const tile = updatedTiles[tileIndex];
-
-        if (tile && (tile.terrain === "light_cover" || tile.terrain === "heavy_cover")) {
-          const wasCover = tile.terrain === "light_cover" || tile.terrain === "heavy_cover";
-          const damagedTile = damageCover(tile, damage);
-          updatedTiles[tileIndex] = damagedTile;
-
-          // Check if cover was destroyed (was cover, now rubble)
-          if (wasCover && damagedTile.terrain === "rubble") {
-            coverDamaged = true;
-          }
-        }
-      }
+  updatedTiles.forEach((tile, index) => {
+    const dist = Math.abs(tile.pos.x - center.x) + Math.abs(tile.pos.y - center.y);
+    if (dist > radius) {
+      return;
     }
-  }
+    if (tile.terrain !== "light_cover" && tile.terrain !== "heavy_cover") {
+      return;
+    }
+
+    const damagedTile = damageCover(tile, damage);
+    updatedTiles[index] = damagedTile;
+    if (damagedTile.terrain === "rubble") {
+      coverDamaged = true;
+    }
+  });
 
   if (coverDamaged) {
     return {

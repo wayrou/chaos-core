@@ -71,6 +71,11 @@ import {
 // Import unlockable system (for battle rewards)
 import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
+import type {
+  TacticalMapObjectDefinition,
+  TacticalMapZoneSet,
+  TacticalTraversalLinkDefinition,
+} from "./tacticalMaps";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -175,7 +180,12 @@ export interface BattleState {
   roomId: string;
   gridWidth: number;
   gridHeight: number;
+  mapId?: string | null;
   tiles: Tile[];
+  mapObjects?: TacticalMapObjectDefinition[];
+  spawnZones?: Pick<TacticalMapZoneSet, "friendlySpawn" | "enemySpawn">;
+  objectiveZones?: Pick<TacticalMapZoneSet, "relay" | "friendlyBreach" | "enemyBreach" | "extraction">;
+  traversalLinks?: TacticalTraversalLinkDefinition[];
   units: Record<UnitId, BattleUnitState>;
   turnOrder: UnitId[];
   activeUnitId: UnitId | null;
@@ -226,6 +236,7 @@ export interface BattleState {
     autoMode?: "manual" | "undaring" | "daring";
   };
   modeContext?: BattleModeContext;
+  returnTo?: "field" | "esc" | "basecamp" | "operation" | "menu" | "map_builder";
 }
 
 // ----------------------------------------------------------------------------
@@ -1276,12 +1287,50 @@ export function getTileAt(state: BattleState, x: number, y: number): Tile | null
   return state.tiles.find(t => t.pos.x === x && t.pos.y === y) || null;
 }
 
+export function getTraversalDestinations(state: BattleState, from: Vec2): Vec2[] {
+  return (state.traversalLinks ?? [])
+    .flatMap((link) => {
+      if (link.from.x === from.x && link.from.y === from.y) {
+        return [{ ...link.to }];
+      }
+      if (link.bidirectional && link.to.x === from.x && link.to.y === from.y) {
+        return [{ ...link.from }];
+      }
+      return [];
+    });
+}
+
+export function getMapObjectAt(state: BattleState, x: number, y: number): TacticalMapObjectDefinition | null {
+  return state.mapObjects?.find((objectDef) => objectDef.x === x && objectDef.y === y && objectDef.active !== false) ?? null;
+}
+
+export function getMapObjectsAt(state: BattleState, x: number, y: number): TacticalMapObjectDefinition[] {
+  return (state.mapObjects ?? []).filter((objectDef) => objectDef.x === x && objectDef.y === y && objectDef.active !== false);
+}
+
+function blocksMovementForState(objectDef: TacticalMapObjectDefinition): boolean {
+  return objectDef.blocksMovement === true || objectDef.type === "barricade_wall" || objectDef.type === "destructible_wall";
+}
+
+export function hasTraversalBetween(state: BattleState, from: Vec2, to: Vec2): boolean {
+  return getTraversalDestinations(state, from).some((point) => point.x === to.x && point.y === to.y);
+}
+
+export function canTraverseElevationStep(state: BattleState, from: Vec2, to: Vec2): boolean {
+  const fromTile = getTileAt(state, from.x, from.y);
+  const toTile = getTileAt(state, to.x, to.y);
+  if (!fromTile || !toTile) {
+    return false;
+  }
+  const delta = Math.abs((fromTile.elevation ?? 0) - (toTile.elevation ?? 0));
+  return delta <= 1 || hasTraversalBetween(state, from, to) || hasTraversalBetween(state, to, from);
+}
+
 export function isWalkableTile(state: BattleState, pos: Vec2): boolean {
   if (!isInsideBounds(state, pos)) return false;
-  const tile = state.tiles.find(
-    (t) => t.pos.x === pos.x && t.pos.y === pos.y
-  );
-  return Boolean(tile && tile.terrain !== "wall");
+  const tile = getTileAt(state, pos.x, pos.y);
+  const blockingObject = getMapObjectsAt(state, pos.x, pos.y).some(blocksMovementForState);
+  return Boolean(tile && tile.terrain !== "wall" && !blockingObject);
 }
 
 function getLivingUnitAt(state: BattleState, pos: Vec2): BattleUnitState | null {
@@ -1333,7 +1382,8 @@ export function canUnitMoveTo(
   const occupant = getLivingUnitAt(state, dest);
   if (occupant && occupant.id !== unit.id) return false;
 
-  return isWalkableTile(state, dest);
+  if (!isWalkableTile(state, dest)) return false;
+  return canTraverseElevationStep(state, unit.pos, dest);
 }
 
 export function getReachableMovementTiles(
@@ -1375,6 +1425,7 @@ export function getReachableMovementTiles(
 
       const nextPos = { x: nx, y: ny };
       if (!isWalkableTile(state, nextPos)) continue;
+      if (!canTraverseElevationStep(state, { x: current.x, y: current.y }, nextPos)) continue;
 
       const occupant = getLivingUnitAt(state, nextPos);
       const occupiedByOther = occupant && occupant.id !== unit.id;
@@ -1385,6 +1436,24 @@ export function getReachableMovementTiles(
         reachable.add(key);
       }
       queue.push({ x: nx, y: ny, cost: newCost });
+    }
+
+    for (const travelPoint of getTraversalDestinations(state, { x: current.x, y: current.y })) {
+      const key = `${travelPoint.x},${travelPoint.y}`;
+      const newCost = current.cost + 1;
+      if (newCost > movement) continue;
+      if (visited.has(key) && visited.get(key)! <= newCost) continue;
+      if (!isWalkableTile(state, travelPoint)) continue;
+
+      const occupant = getLivingUnitAt(state, travelPoint);
+      const occupiedByOther = occupant && occupant.id !== unit.id;
+      if (!canTraverseOccupiedTile(unit, occupant, false)) continue;
+
+      visited.set(key, newCost);
+      if (!occupiedByOther) {
+        reachable.add(key);
+      }
+      queue.push({ x: travelPoint.x, y: travelPoint.y, cost: newCost });
     }
   }
 
@@ -1472,6 +1541,7 @@ export function getMovePath(
 
       // Check if tile is walkable
       if (!isWalkableTile(state, { x: nx, y: ny })) continue;
+      if (!canTraverseElevationStep(state, { x: current.x, y: current.y }, { x: nx, y: ny })) continue;
 
       const occupant = getLivingUnitAt(state, { x: nx, y: ny });
       const isDestination = nx === dest.x && ny === dest.y;
@@ -1482,10 +1552,158 @@ export function getMovePath(
       visited.set(key, newNode);
       queue.push(newNode);
     }
+
+    for (const travelPoint of getTraversalDestinations(state, { x: current.x, y: current.y })) {
+      const key = `${travelPoint.x},${travelPoint.y}`;
+      const newCost = current.cost + 1;
+      if (newCost > maxCost) continue;
+
+      const existing = visited.get(key);
+      if (existing && existing.cost <= newCost) continue;
+      if (!isWalkableTile(state, travelPoint)) continue;
+
+      const occupant = getLivingUnitAt(state, travelPoint);
+      const isDestination = travelPoint.x === dest.x && travelPoint.y === dest.y;
+      if (!canTraverseOccupiedTile(movingUnit, occupant, isDestination)) continue;
+
+      const newNode = { x: travelPoint.x, y: travelPoint.y, cost: newCost, parent: `${current.x},${current.y}` };
+      visited.set(key, newNode);
+      queue.push(newNode);
+    }
   }
 
   // No path found - return direct path (fallback)
   return [{ x: start.x, y: start.y }, { x: dest.x, y: dest.y }];
+}
+
+function updateMapObjectState(
+  state: BattleState,
+  objectId: string,
+  updater: (objectDef: TacticalMapObjectDefinition) => TacticalMapObjectDefinition | null,
+): BattleState {
+  const nextObjects = (state.mapObjects ?? []).flatMap((objectDef) => {
+    if (objectDef.id !== objectId) {
+      return [objectDef];
+    }
+    const updated = updater(objectDef);
+    return updated ? [updated] : [];
+  });
+  return {
+    ...state,
+    mapObjects: nextObjects,
+  };
+}
+
+export function getUnitInteractionObject(
+  state: BattleState,
+  unit: BattleUnitState | null | undefined,
+): TacticalMapObjectDefinition | null {
+  if (!unit?.pos) {
+    return null;
+  }
+  return getMapObjectsAt(state, unit.pos.x, unit.pos.y).find(
+    (objectDef) =>
+      (objectDef.type === "med_station" || objectDef.type === "ammo_crate")
+      && (objectDef.charges ?? 1) > 0,
+  ) ?? null;
+}
+
+export function canUnitInteract(state: BattleState, unit: BattleUnitState | null | undefined): boolean {
+  return Boolean(getUnitInteractionObject(state, unit));
+}
+
+export function interactWithMapObject(state: BattleState, unitId: UnitId): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+  const objectDef = getUnitInteractionObject(state, unit);
+  if (!objectDef) {
+    return appendBattleLog(state, `SLK//ACT    :: ${unit.name} has nothing usable on this tile.`);
+  }
+
+  if (objectDef.type === "med_station") {
+    const healAmount = Math.min(5, unit.maxHp - unit.hp);
+    const nextState = updateMapObjectState(state, objectDef.id, (current) => ({
+      ...current,
+      charges: Math.max(0, (current.charges ?? 1) - 1),
+      active: (current.charges ?? 1) - 1 > 0,
+    }));
+    return appendBattleLog({
+      ...nextState,
+      units: {
+        ...nextState.units,
+        [unitId]: {
+          ...unit,
+          hp: Math.min(unit.maxHp, unit.hp + 5),
+        },
+      },
+    }, `SLK//ACT    :: ${unit.name} uses a Med Station and restores ${healAmount} HP.`);
+  }
+
+  if (objectDef.type === "ammo_crate") {
+    const equippedWeapon = getEquippedWeapon(unit);
+    const nextWeaponState = unit.weaponState && equippedWeapon?.ammoMax
+      ? {
+          ...unit.weaponState,
+          currentAmmo: equippedWeapon.ammoMax,
+          isJammed: false,
+        }
+      : unit.weaponState;
+    const nextState = updateMapObjectState(state, objectDef.id, (current) => ({
+      ...current,
+      charges: Math.max(0, (current.charges ?? 1) - 1),
+      active: (current.charges ?? 1) - 1 > 0,
+    }));
+    return appendBattleLog({
+      ...nextState,
+      units: {
+        ...nextState.units,
+        [unitId]: {
+          ...unit,
+          weaponState: nextWeaponState,
+        },
+      },
+    }, `SLK//ACT    :: ${unit.name} reloads from an Ammo Crate.`);
+  }
+
+  return state;
+}
+
+function triggerPassiveTileObject(state: BattleState, unitId: UnitId, destination: Vec2): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+  const mine = getMapObjectsAt(state, destination.x, destination.y).find((objectDef) => objectDef.type === "proximity_mine");
+  if (!mine) {
+    return state;
+  }
+
+  const damage = 3;
+  const nextHp = Math.max(0, unit.hp - damage);
+  const updatedState = updateMapObjectState(state, mine.id, (current) => ({
+    ...current,
+    active: false,
+    hidden: false,
+    charges: 0,
+  }));
+  const resolved = {
+    ...updatedState,
+    units: {
+      ...updatedState.units,
+      [unitId]: {
+        ...unit,
+        hp: nextHp,
+      },
+    },
+  };
+  return evaluateBattleOutcome(
+    appendBattleLog(
+      resolved,
+      `SLK//TRAP   :: ${unit.name} triggers a Proximity Mine for ${damage} damage.`,
+    ),
+  );
 }
 
 export function moveUnit(
@@ -1526,7 +1744,7 @@ export function moveUnit(
     next = removeStatus(next, unitId, "suppressed");
   }
 
-  return next;
+  return triggerPassiveTileObject(next, unitId, dest);
 }
 
 // ----------------------------------------------------------------------------
@@ -1541,7 +1759,36 @@ export function canUnitAttackTarget(
   return arePositionsAdjacent(attacker.pos, target.pos);
 }
 
-export function computeHitChance(attacker: BattleUnitState, defender?: BattleUnitState, isRanged: boolean = false): number {
+function getUnitElevation(state: BattleState | null | undefined, unit: BattleUnitState | null | undefined): number {
+  if (!state || !unit?.pos) {
+    return 0;
+  }
+  return getTileAt(state, unit.pos.x, unit.pos.y)?.elevation ?? 0;
+}
+
+function canIgnoreCoverFromElevation(
+  state: BattleState | null | undefined,
+  attacker: BattleUnitState | null | undefined,
+  defender: BattleUnitState | null | undefined,
+): boolean {
+  if (!state || !attacker?.pos || !defender?.pos) {
+    return false;
+  }
+  const attackerElevation = getUnitElevation(state, attacker);
+  const defenderElevation = getUnitElevation(state, defender);
+  if (attackerElevation < defenderElevation + 1) {
+    return false;
+  }
+  const defenderTile = getTileAt(state, defender.pos.x, defender.pos.y);
+  return defenderTile?.terrain === "light_cover";
+}
+
+export function computeHitChance(
+  attacker: BattleUnitState,
+  defender?: BattleUnitState,
+  isRanged: boolean = false,
+  battle?: BattleState | null,
+): number {
   let baseChance = attacker.acc;
   const accuracyBuffDelta = (attacker.buffs || [])
     .filter((buff) => buff.type === "acc_up" || buff.type === "acc_down")
@@ -1563,6 +1810,16 @@ export function computeHitChance(attacker: BattleUnitState, defender?: BattleUni
 
   if (defender && defender.statuses && defender.statuses.some(s => s.type === "marked" && s.sourceId === attacker.id)) {
     baseChance += 10; // +1 die equivalent vs marked
+  }
+
+  if (isRanged && battle && defender) {
+    const attackerElevation = getUnitElevation(battle, attacker);
+    const defenderElevation = getUnitElevation(battle, defender);
+    if (attackerElevation > defenderElevation) {
+      baseChance += 10;
+    } else if (attackerElevation < defenderElevation) {
+      baseChance -= 10;
+    }
   }
 
   return Math.max(10, Math.min(100, baseChance));
@@ -1608,7 +1865,7 @@ export function attackUnit(
   const equipWpn = getEquippedWeapon(attacker);
   const isRanged = equipWpn ? ["gun", "bow", "greatbow"].includes(equipWpn.weaponType) : false;
 
-  let hitChance = computeHitChance(attacker, defender, isRanged);
+  let hitChance = computeHitChance(attacker, defender, isRanged, state);
   const intimidatePenalty = getIntimidateAccuracyPenalty(attacker, defender);
   if (intimidatePenalty !== 0) {
     hitChance = Math.max(10, hitChance + intimidatePenalty);
@@ -1648,6 +1905,9 @@ export function attackUnit(
   if (defender.pos) {
     const defenderTile = getTileAt(state, defender.pos.x, defender.pos.y);
     coverReduction = getCoverDamageReduction(defenderTile);
+    if (isRanged && canIgnoreCoverFromElevation(state, attacker, defender) && defenderTile?.terrain === "light_cover") {
+      coverReduction = 0;
+    }
   }
 
   // Mount armored damage reduction
@@ -2639,6 +2899,23 @@ export function drawCards(
   return drawCardsForTurn(state, unit);
 }
 
+export function getPlacementTilesForUnit(state: BattleState, unit: BattleUnitState): Vec2[] {
+  const zoneTiles = unit.isEnemy
+    ? state.spawnZones?.enemySpawn ?? []
+    : state.spawnZones?.friendlySpawn ?? [];
+  if (zoneTiles.length > 0) {
+    return zoneTiles
+      .filter((point) => Boolean(getTileAt(state, point.x, point.y)))
+      .map((point) => ({ x: point.x, y: point.y }));
+  }
+
+  const edgeX = unit.isEnemy ? state.gridWidth - 1 : 0;
+  return state.tiles
+    .filter((tile) => tile.pos.x === edgeX)
+    .sort((a, b) => a.pos.y - b.pos.y)
+    .map((tile) => ({ x: tile.pos.x, y: tile.pos.y }));
+}
+
 // ----------------------------------------------------------------------------
 // PLACEMENT PHASE FUNCTIONS
 // ----------------------------------------------------------------------------
@@ -2656,12 +2933,9 @@ export function placeUnit(
   const unit = state.units[unitId];
   if (!unit) return state;
 
-  const expectedPlacementX = unit.isEnemy ? state.gridWidth - 1 : 0;
-
-  // Check if position is valid for this side's deployment edge.
-  if (pos.x !== expectedPlacementX || pos.y < 0 || pos.y >= state.gridHeight) {
-    const edgeLabel = expectedPlacementX === 0 ? "left" : "right";
-    return appendBattleLog(state, `SLK//PLACE  :: Invalid placement position. ${unit.name} must deploy on the ${edgeLabel} edge (x=${expectedPlacementX}).`);
+  const validPlacementTiles = getPlacementTilesForUnit(state, unit);
+  if (!validPlacementTiles.some((tile) => tile.x === pos.x && tile.y === pos.y)) {
+    return appendBattleLog(state, `SLK//PLACE  :: Invalid placement position for ${unit.name}.`);
   }
 
   // Check if tile is already occupied
@@ -2728,8 +3002,6 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
   );
 
   let newState = state;
-  // Calculate middle Y position to center units around
-  const middleY = Math.floor(newState.gridHeight / 2);
 
   // Place units centered around their side's deployment edge.
   for (let i = 0; i < unplacedUnits.length; i++) {
@@ -2742,15 +3014,15 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
       continue;
     }
 
-    const offset = Math.floor((i + 1) / 2);
-    const direction = i % 2 === 1 ? -1 : 1;
-    let yPos = middleY + direction * offset;
-    const placementX = unit.isEnemy ? newState.gridWidth - 1 : 0;
+    const candidateTiles = getPlacementTilesForUnit(newState, unit).filter((tile) => !Object.values(newState.units).some(
+      (otherUnit) => otherUnit.hp > 0 && otherUnit.pos && otherUnit.pos.x === tile.x && otherUnit.pos.y === tile.y,
+    ));
+    const targetTile = candidateTiles[i % Math.max(1, candidateTiles.length)] ?? candidateTiles[0];
+    if (!targetTile) {
+      continue;
+    }
 
-    // Clamp to valid grid bounds
-    yPos = Math.max(0, Math.min(newState.gridHeight - 1, yPos));
-
-    newState = placeUnit(newState, unit.id, { x: placementX, y: yPos });
+    newState = placeUnit(newState, unit.id, targetTile);
   }
 
   const placedDelta = newState.placementState!.placedUnitIds.length - state.placementState!.placedUnitIds.length;

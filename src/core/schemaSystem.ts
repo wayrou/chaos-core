@@ -658,6 +658,7 @@ export function createDefaultSchemaUnlockState(): SchemaUnlockState {
   return {
     unlockedCoreTypes: [...SCHEMA_STARTER_CORE_TYPES],
     unlockedFortificationPips: [...SCHEMA_STARTER_FORTIFICATION_TYPES],
+    unlockedFieldAssetTypes: [],
   };
 }
 
@@ -679,6 +680,7 @@ export function normalizeSchemaUnlockState(schema?: Partial<SchemaUnlockState> |
   return {
     unlockedCoreTypes: SCHEMA_CORE_BUILD_ORDER.filter((coreType) => coreSet.has(coreType)),
     unlockedFortificationPips: SCHEMA_FORTIFICATION_ORDER.filter((fortificationType) => fortificationSet.has(fortificationType)),
+    unlockedFieldAssetTypes: [...new Set(schema?.unlockedFieldAssetTypes ?? [])],
   };
 }
 
@@ -689,8 +691,10 @@ export function withNormalizedSchemaState<T extends GameState>(state: T): T {
     current
     && current.unlockedCoreTypes.length === normalized.unlockedCoreTypes.length
     && current.unlockedFortificationPips.length === normalized.unlockedFortificationPips.length
+    && current.unlockedFieldAssetTypes.length === normalized.unlockedFieldAssetTypes.length
     && current.unlockedCoreTypes.every((coreType, index) => normalized.unlockedCoreTypes[index] === coreType)
     && current.unlockedFortificationPips.every((fortificationType, index) => normalized.unlockedFortificationPips[index] === fortificationType)
+    && current.unlockedFieldAssetTypes.every((fieldAssetType, index) => normalized.unlockedFieldAssetTypes[index] === fieldAssetType)
   ) {
     return state;
   }

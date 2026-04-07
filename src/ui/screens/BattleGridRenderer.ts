@@ -43,7 +43,10 @@ export class BattleGridRenderer {
     const sessionState = getGameState().session;
     const squadObjective = battle.modeContext?.kind === "squad" ? battle.modeContext.squad?.objective ?? null : null;
     const isSquadPlacement = isPlacementPhase && battle.modeContext?.kind === "squad" && !isEchoFieldPlacementMode;
-    const placementColumn = isSquadPlacement && sessionState.authorityRole === "client"
+    const localSpawnZone = isSquadPlacement && sessionState.authorityRole === "client"
+      ? battle.spawnZones?.enemySpawn ?? []
+      : battle.spawnZones?.friendlySpawn ?? [];
+    const fallbackPlacementColumn = isSquadPlacement && sessionState.authorityRole === "client"
       ? gridWidth - 1
       : 0;
 
@@ -58,21 +61,36 @@ export class BattleGridRenderer {
       const placementState = battle.placementState;
       const placedCount = placementState.placedUnitIds.reduce((count, unitId) => {
         const placedUnit = battle.units[unitId];
-        if (!placedUnit) {
+        if (!placedUnit || !placedUnit.pos) {
           return count;
         }
+        const placedPos = placedUnit.pos;
+        if (localSpawnZone.length > 0) {
+          const inLocalSpawnZone = localSpawnZone.some(
+            (point) => point.x === placedPos.x && point.y === placedPos.y,
+          );
+          return inLocalSpawnZone ? count + 1 : count;
+        }
         const unitPlacementColumn = placedUnit.isEnemy ? gridWidth - 1 : 0;
-        return unitPlacementColumn === placementColumn ? count + 1 : count;
+        return unitPlacementColumn === fallbackPlacementColumn ? count + 1 : count;
       }, 0);
       const maxUnits = placementState.maxUnitsPerSide;
 
       // Only show placement options if we haven't reached the max unit limit
       if (placedCount < maxUnits) {
-        for (let y = 0; y < gridHeight; y++) {
-          const occupied = units.some(u => u.pos && u.pos.x === placementColumn && u.pos.y === y);
-          // Show tile if not occupied - these are valid placement locations
-          if (!occupied) {
-            placementTiles.add(`${placementColumn},${y}`);
+        if (localSpawnZone.length > 0) {
+          localSpawnZone.forEach((point) => {
+            const occupied = units.some((u) => u.pos && u.pos.x === point.x && u.pos.y === point.y);
+            if (!occupied) {
+              placementTiles.add(`${point.x},${point.y}`);
+            }
+          });
+        } else {
+          for (let y = 0; y < gridHeight; y++) {
+            const occupied = units.some(u => u.pos && u.pos.x === fallbackPlacementColumn && u.pos.y === y);
+            if (!occupied) {
+              placementTiles.add(`${fallbackPlacementColumn},${y}`);
+            }
           }
         }
       }
@@ -97,12 +115,22 @@ export class BattleGridRenderer {
           squadObjective?.controlTiles.some((tilePos) => tilePos.x === x && tilePos.y === y),
         );
         const isFriendlyBreachTile = Boolean(
-          squadObjective?.breachTiles?.friendly?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+          squadObjective?.breachTiles?.friendly?.some((tilePos) => tilePos.x === x && tilePos.y === y)
+          || battle.objectiveZones?.friendlyBreach?.some((tilePos) => tilePos.x === x && tilePos.y === y),
         );
         const isEnemyBreachTile = Boolean(
-          squadObjective?.breachTiles?.enemy?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+          squadObjective?.breachTiles?.enemy?.some((tilePos) => tilePos.x === x && tilePos.y === y)
+          || battle.objectiveZones?.enemyBreach?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+        );
+        const isRelayTile = Boolean(
+          squadObjective?.controlTiles.some((tilePos) => tilePos.x === x && tilePos.y === y)
+          || battle.objectiveZones?.relay?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+        );
+        const isExtractionTile = Boolean(
+          battle.objectiveZones?.extraction?.some((tilePos) => tilePos.x === x && tilePos.y === y),
         );
         const isSquadObjectiveTile = isSquadRelayTile || isFriendlyBreachTile || isEnemyBreachTile;
+        const mapObject = (battle.mapObjects ?? []).find((objectDef) => objectDef.x === x && objectDef.y === y && objectDef.active !== false);
 
         // Find unit at this position (CRITICAL: use exact match)
         const unit = units.find(u =>
@@ -139,17 +167,21 @@ export class BattleGridRenderer {
             classes += ` battle-tile--${terrain} battle-tile--cover-${visualState}`;
           } else if (terrain === "rubble") {
             classes += " battle-tile--rubble";
+          } else if (terrain === "wall") {
+            classes += " battle-tile--wall";
           } else {
             classes += " battle-tile--floor";
           }
         } else {
-          classes += " battle-tile--floor";
+          classes += " battle-tile--void";
         }
 
         if (moveTileSet.has(key)) classes += " battle-tile--move-option";
         if (attackTileSet.has(key)) classes += " battle-tile--attack-option";
         if (placementTiles.has(key)) classes += " battle-tile--placement-option";
         if (isSquadObjectiveTile) classes += " battle-tile--squad-objective";
+        if (isRelayTile) classes += " battle-tile--relay-zone";
+        if (isExtractionTile) classes += " battle-tile--extraction-zone";
         if (isFriendlyBreachTile) classes += " battle-tile--squad-breach-friendly";
         if (isEnemyBreachTile) classes += " battle-tile--squad-breach-enemy";
         if (isEchoFieldPlacementMode) classes += " battle-tile--field-placement-option";
@@ -188,6 +220,37 @@ export class BattleGridRenderer {
                   : "OBJ"
             }</span>`
           : "";
+        const relayMarker = isRelayTile && !objectiveMarker
+          ? `<span class="battle-tile-squad-objective-marker">REL</span>`
+          : "";
+        const extractionMarker = isExtractionTile
+          ? `<span class="battle-tile-squad-objective-marker">EXT</span>`
+          : "";
+        const objectMarker = mapObject
+          ? `<span class="battle-tile-object-marker battle-tile-object-marker--${mapObject.type.replace(/_/g, "-")}">${
+              mapObject.type === "med_station"
+                ? "MED"
+                : mapObject.type === "ammo_crate"
+                  ? "AMMO"
+                  : mapObject.type === "proximity_mine"
+                    ? (mapObject.hidden ? "?" : "MINE")
+                    : mapObject.type === "smoke_emitter"
+                      ? "SMK"
+                      : mapObject.type === "light_tower"
+                        ? "LGT"
+                        : mapObject.type === "portable_ladder"
+                          ? "LDR"
+                          : mapObject.type === "extraction_anchor"
+                            ? "EXT"
+                            : mapObject.type === "barricade_wall"
+                              ? "BAR"
+                              : mapObject.type === "destructible_wall"
+                                ? "WALL"
+                                : mapObject.type === "destructible_cover"
+                                  ? "CVR"
+                                  : "OBJ"
+            }</span>`
+          : "";
         const fieldMarker = centerEchoField
           ? `<span class="battle-tile-echo-marker battle-tile-echo-marker--${centerEchoField.fieldId.replace(/_/g, "-")}">${centerEchoField.fieldId === "ember_zone" ? "E" : centerEchoField.fieldId === "bastion_zone" ? "B" : "F"}</span>`
           : "";
@@ -197,6 +260,9 @@ export class BattleGridRenderer {
                data-y="${y}"
                style="grid-column: ${x + 1}; grid-row: ${y + 1};">
             ${objectiveMarker}
+            ${relayMarker}
+            ${extractionMarker}
+            ${objectMarker}
             ${fieldMarker}
           </div>
         `;

@@ -345,6 +345,7 @@ export interface SkirmishRoundSpec {
   gridWidth: number;
   gridHeight: number;
   objectiveType: SkirmishObjectiveType;
+  mapId?: string | null;
 }
 
 export interface SkirmishPlaylist {
@@ -726,9 +727,27 @@ export type FortificationType =
   | "repairBench"
   | "securityTerminal";
 
+export type FieldAssetType =
+  | "barricade_wall"
+  | "med_station"
+  | "ammo_crate"
+  | "proximity_mine"
+  | "smoke_emitter"
+  | "portable_ladder"
+  | "light_tower"
+  | "box"
+  | "spike_strip"
+  | "blast_charge"
+  | "field_door"
+  | "turret"
+  | "shock_node"
+  | "supply_cache"
+  | "grapple_anchor";
+
 export interface SchemaUnlockState {
   unlockedCoreTypes: CoreType[];
   unlockedFortificationPips: FortificationType[];
+  unlockedFieldAssetTypes: FieldAssetType[];
 }
 
 export interface FoundryUnlockState {
@@ -1064,6 +1083,20 @@ export interface TheaterRoom {
   supplied: boolean;
   commsVisible: boolean;
   commsLinked: boolean;
+  battleMapId?: string | null;
+  placedFieldAssets?: Array<{
+    id: string;
+    type: FieldAssetType;
+    x: number;
+    y: number;
+    active?: boolean;
+    charges?: number;
+  }>;
+  fieldAssetRuntimeState?: Record<string, {
+    destroyed?: boolean;
+    consumed?: boolean;
+    charges?: number;
+  }>;
   supplyFlow: number;
   powerFlow: number;
   commsFlow: number;
@@ -1355,6 +1388,7 @@ export interface SquadBattleContext {
   matchId: string;
   hostSlot: SessionPlayerSlot;
   winCondition: SkirmishObjectiveType;
+  mapId?: string | null;
   slotSides: Record<SessionPlayerSlot, SquadBattleSide | null>;
   slotCallsigns: Record<SessionPlayerSlot, string | null>;
   mapSeed: number;

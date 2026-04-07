@@ -541,6 +541,7 @@ async function grantEverythingToPlayer(): Promise<void> {
       schema: {
         unlockedCoreTypes: getOrderedSchemaCoreTypes(),
         unlockedFortificationPips: getOrderedSchemaFortificationTypes(),
+        unlockedFieldAssetTypes: [],
       },
       foundry: {
         unlockedModuleTypes: getOrderedFoundryModuleTypes(),
