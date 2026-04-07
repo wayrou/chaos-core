@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { OperationId, Difficulty, EncounterDefinition } from "./campaign";
+import { getImportedEncounterUnitsForFloorOrdinal } from "../content/technica";
 import { getEnemyPool } from "./enemies";
 
 // ----------------------------------------------------------------------------
@@ -35,7 +36,11 @@ export function generateEncounter(
   floorIndex: number,
   operationId: OperationId,
   difficulty: Difficulty,
-  rngSeed: string
+  rngSeed: string,
+  context?: {
+    floorId?: string;
+    roomId?: string;
+  }
 ): EncounterDefinition {
   // Create seeded RNG from seed
   const rng = createSeededRNG(rngSeed + `_floor${floorIndex}_${nodeType}`);
@@ -102,6 +107,8 @@ export function generateEncounter(
     gridWidth: width,
     gridHeight: height,
     introText,
+    floorId: context?.floorId,
+    roomId: context?.roomId,
   };
 }
 
@@ -116,10 +123,24 @@ function generateEnemyComposition(
   rng: SeededRNG
 ): EncounterDefinition["enemyUnits"] {
   const composition: EncounterDefinition["enemyUnits"] = [];
-  let remaining = targetCount;
+  const floorOrdinal = floorIndex + 1;
+  const importedEnemies = shuffleWithRng(getImportedEncounterUnitsForFloorOrdinal(floorOrdinal), rng);
+
+  importedEnemies.slice(0, targetCount).forEach((unit) => {
+    composition.push({
+      enemyId: unit.id,
+      count: 1,
+      source: "technica",
+      unitTemplateId: unit.id,
+    });
+  });
+
+  let remaining = Math.max(0, targetCount - composition.length);
 
   if (DEBUG_ENCOUNTERS) {
-    console.log(`[Encounter:Comp] targetCount=${targetCount}, starting composition generation`);
+    console.log(
+      `[Encounter:Comp] targetCount=${targetCount}, imported=${composition.length}, starting composition generation`
+    );
   }
 
   // Filter enemies by floor constraints
@@ -181,6 +202,7 @@ function generateEnemyComposition(
       count: countForType,
       levelMod,
       elite,
+      source: "builtin",
     });
 
     remaining -= countForType;
@@ -192,6 +214,17 @@ function generateEnemyComposition(
   }
 
   return composition;
+}
+
+function shuffleWithRng<TValue>(values: TValue[], rng: SeededRNG): TValue[] {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swapIndex = rng.nextInt(0, index);
+    const current = copy[index];
+    copy[index] = copy[swapIndex];
+    copy[swapIndex] = current;
+  }
+  return copy;
 }
 
 /**

@@ -1,67 +1,63 @@
 {
-  "entryNodeId": "opening",
+  "entryNodeId": "working_bad",
   "id": "untitled_dialogue",
   "metadata": {
-    "linkedNpcId": "npc_test2"
+    "dialogueNpcId": "npc_commander",
+    "dialogueOccurrence": "exclusive",
+    "linkedNpcId": "npc_commander"
   },
   "nodes": [
     {
-      "id": "opening",
-      "nextNodeId": "opening_line_2",
-      "speaker": "Tester2",
-      "text": "This is a test.",
-      "type": "line"
-    },
-    {
-      "id": "opening_line_2",
-      "nextNodeId": "opening_choices",
-      "speaker": "Tester2",
-      "text": "How is it working?",
+      "id": "working_bad",
+      "nextNodeId": "working_bad_choices",
+      "speaker": "Commander",
+      "text": "Pick a choice",
       "type": "line"
     },
     {
       "choices": [
         {
-          "id": "working_good",
-          "targetNodeId": "working_good",
-          "text": "Working good"
+          "id": "choice_1",
+          "targetNodeId": "choice_1",
+          "text": "Choice 1"
         },
         {
-          "id": "working_bad",
-          "targetNodeId": "working_bad",
-          "text": "Working bad"
+          "id": "choice_2",
+          "targetNodeId": "choice_2",
+          "text": "Choice 2"
         }
       ],
-      "id": "opening_choices",
+      "id": "working_bad_choices",
       "type": "choice_set"
     },
     {
-      "id": "working_good",
-      "speaker": "Tester2",
-      "text": "Good! I'm glad.",
+      "id": "choice_1",
+      "nextNodeId": "working_bad_after_choices",
+      "speaker": "Commander",
+      "text": "You picked choice 1",
       "type": "line"
     },
     {
-      "id": "working_bad",
-      "nextNodeId": "working_bad_end",
-      "speaker": "Tester2",
-      "text": "Oh, okay then.",
+      "id": "choice_2",
+      "nextNodeId": "choice_2_end",
+      "speaker": "Narrator",
+      "text": "You picked choice 2",
       "type": "line"
     },
     {
-      "id": "working_bad_end",
+      "id": "choice_2_end",
       "type": "end"
     },
     {
-      "id": "working_bad_line_3",
-      "speaker": "Tester2",
-      "text": "Well, see ya.",
+      "id": "working_bad_after_choices",
+      "speaker": "Narrator",
+      "text": "Well, see ya later.",
       "type": "line"
     }
   ],
   "sceneId": "scene_untitled",
   "source": {
-    "rawSource": "@id untitled_dialogue\n@title Untitled Dialogue\n@scene scene_untitled\n@meta linkedNpcId=npc_test2\n\n:opening\nTester2: This is a test.\nTester2: How is it working?\n? Working good -> working_good\n? Working bad -> working_bad\n\n:working_good\nTester2: Good! I'm glad.\n\n:working_bad\nTester2: Oh, okay then.\nEND\nTester2: Well, see ya.\n"
+    "rawSource": "@id untitled_dialogue\n@title Untitled Dialogue\n@scene scene_untitled\n@meta dialogueNpcId=npc_commander\n@meta linkedNpcId=npc_commander\n@meta dialogueOccurrence=exclusive\n\n:working_bad\nCommander: Pick a choice\n? Choice 1 -> choice_1\n? Choice 2 -> choice_2\n\n:choice_1\nCommander: You picked choice 1\n\n:choice_2\nNarrator: You picked choice 2\nEND\n\n:working_bad_after_choices\nNarrator: Well, see ya later.\n"
   },
   "title": "Untitled Dialogue"
 }

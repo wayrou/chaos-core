@@ -1,0 +1,21 @@
+{
+  "contentId": "codex_haven_foundry_notes",
+  "contentType": "codex",
+  "dependencies": [],
+  "description": "Chaos Core runtime codex entry export.",
+  "entryFile": "codex_haven_foundry_notes.codex.json",
+  "exportType": "codex",
+  "exportedAt": "2026-04-07T01:30:12.501Z",
+  "files": [
+    "manifest.json",
+    "codex_haven_foundry_notes.codex.json",
+    "codex_haven_foundry_notes.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "codex-entry.v1",
+  "title": "Foundry Notes"
+}

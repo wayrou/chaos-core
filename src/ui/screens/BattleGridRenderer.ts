@@ -2,11 +2,11 @@
 // BATTLE GRID RENDERER - Simple, predictable grid rendering
 // ============================================================================
 
-import { BattleState, BattleUnitState } from "../../core/battle";
+import { BattleState, BattleUnitState, isOverStrainThreshold } from "../../core/battle";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { getCoverVisualState } from "../../core/coverGenerator";
 import { getGameState } from "../../state/gameStore";
-import { PlayerId } from "../../core/types";
+import { EchoFieldPlacement, PlayerId } from "../../core/types";
 
 /**
  * Simple, robust battle grid renderer
@@ -22,7 +22,7 @@ export class BattleGridRenderer {
    */
   static render(
     battle: BattleState,
-    selectedCardIdx: number | null,
+    _selectedCardIdx: number | null,
     activeUnit: BattleUnitState | undefined,
     isPlacementPhase: boolean,
     zoom: number,
@@ -30,11 +30,22 @@ export class BattleGridRenderer {
     attackTiles?: Set<string>,
     facingTiles?: Set<string>,
     hoveredTile?: { x: number; y: number } | null,
-    hiddenUnitIds?: Set<string>
+    hiddenUnitIds?: Set<string>,
+    echoFieldPlacements?: EchoFieldPlacement[],
+    echoPlacementMode?: "units" | "fields" | null,
+    selectedEchoFieldDraftId?: string | null,
   ): string {
     const { gridWidth, gridHeight } = battle;
     const units = Object.values(battle.units).filter(u => u.hp > 0 && u.pos);
     const hiddenIds = hiddenUnitIds ?? new Set<string>();
+    const echoPlacements = echoFieldPlacements ?? [];
+    const isEchoFieldPlacementMode = isPlacementPhase && echoPlacementMode === "fields";
+    const sessionState = getGameState().session;
+    const squadObjective = battle.modeContext?.kind === "squad" ? battle.modeContext.squad?.objective ?? null : null;
+    const isSquadPlacement = isPlacementPhase && battle.modeContext?.kind === "squad" && !isEchoFieldPlacementMode;
+    const placementColumn = isSquadPlacement && sessionState.authorityRole === "client"
+      ? gridWidth - 1
+      : 0;
 
     // Determine valid move/attack/placement/facing tiles
     const moveTileSet = moveTiles || new Set<string>();
@@ -42,20 +53,26 @@ export class BattleGridRenderer {
     const facingTileSet = facingTiles || new Set<string>();
     const placementTiles = new Set<string>();
 
-    if (isPlacementPhase && battle.placementState) {
-      // Show all legal placement squares on the left edge (x=0)
-      // Highlight all tiles on the left edge so players know where they can place units
+    if (isPlacementPhase && battle.placementState && !isEchoFieldPlacementMode) {
+      // Show all legal placement squares on the local deployment edge.
       const placementState = battle.placementState;
-      const placedCount = placementState.placedUnitIds.length;
+      const placedCount = placementState.placedUnitIds.reduce((count, unitId) => {
+        const placedUnit = battle.units[unitId];
+        if (!placedUnit) {
+          return count;
+        }
+        const unitPlacementColumn = placedUnit.isEnemy ? gridWidth - 1 : 0;
+        return unitPlacementColumn === placementColumn ? count + 1 : count;
+      }, 0);
       const maxUnits = placementState.maxUnitsPerSide;
 
       // Only show placement options if we haven't reached the max unit limit
       if (placedCount < maxUnits) {
         for (let y = 0; y < gridHeight; y++) {
-          const occupied = units.some(u => u.pos && u.pos.x === 0 && u.pos.y === y);
+          const occupied = units.some(u => u.pos && u.pos.x === placementColumn && u.pos.y === y);
           // Show tile if not occupied - these are valid placement locations
           if (!occupied) {
-            placementTiles.add(`0,${y}`);
+            placementTiles.add(`${placementColumn},${y}`);
           }
         }
       }
@@ -71,6 +88,21 @@ export class BattleGridRenderer {
         const tile = battle.tiles.find(t => t.pos.x === x && t.pos.y === y);
         const elevation = tile?.elevation ?? 0;
         const key = `${x},${y}`;
+        const affectingEchoFields = echoPlacements.filter((placement) => {
+          const distance = Math.abs(placement.x - x) + Math.abs(placement.y - y);
+          return distance <= placement.radius;
+        });
+        const centerEchoField = echoPlacements.find((placement) => placement.x === x && placement.y === y);
+        const isSquadRelayTile = Boolean(
+          squadObjective?.controlTiles.some((tilePos) => tilePos.x === x && tilePos.y === y),
+        );
+        const isFriendlyBreachTile = Boolean(
+          squadObjective?.breachTiles?.friendly?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+        );
+        const isEnemyBreachTile = Boolean(
+          squadObjective?.breachTiles?.enemy?.some((tilePos) => tilePos.x === x && tilePos.y === y),
+        );
+        const isSquadObjectiveTile = isSquadRelayTile || isFriendlyBreachTile || isEnemyBreachTile;
 
         // Find unit at this position (CRITICAL: use exact match)
         const unit = units.find(u =>
@@ -117,6 +149,10 @@ export class BattleGridRenderer {
         if (moveTileSet.has(key)) classes += " battle-tile--move-option";
         if (attackTileSet.has(key)) classes += " battle-tile--attack-option";
         if (placementTiles.has(key)) classes += " battle-tile--placement-option";
+        if (isSquadObjectiveTile) classes += " battle-tile--squad-objective";
+        if (isFriendlyBreachTile) classes += " battle-tile--squad-breach-friendly";
+        if (isEnemyBreachTile) classes += " battle-tile--squad-breach-enemy";
+        if (isEchoFieldPlacementMode) classes += " battle-tile--field-placement-option";
         if (facingTileSet.has(key)) classes += " battle-tile--facing-option";
         if (hoveredTile && hoveredTile.x === x && hoveredTile.y === y) {
           classes += " battle-tile--hovered";
@@ -126,13 +162,42 @@ export class BattleGridRenderer {
           }
         }
         if (elevation > 0) classes += ` battle-tile--elevation-${elevation}`;
+        if (affectingEchoFields.length > 0) {
+          classes += " battle-tile--echo-field";
+          affectingEchoFields.forEach((placement) => {
+            classes += ` battle-tile--echo-${placement.fieldId.replace(/_/g, "-")}`;
+          });
+        }
+        if (centerEchoField) {
+          classes += " battle-tile--echo-field-center";
+          if (selectedEchoFieldDraftId && centerEchoField.draftId === selectedEchoFieldDraftId) {
+            classes += " battle-tile--echo-field-selected";
+          }
+        }
+        if (isSquadRelayTile && squadObjective?.controllingSide) {
+          classes += ` battle-tile--squad-objective-${squadObjective.controllingSide}`;
+        }
 
         // Render tile using CSS grid positioning
+        const objectiveMarker = isSquadObjectiveTile
+          ? `<span class="battle-tile-squad-objective-marker">${
+              squadObjective?.winnerSide
+                ? "WIN"
+                : isFriendlyBreachTile || isEnemyBreachTile
+                  ? "BR"
+                  : "OBJ"
+            }</span>`
+          : "";
+        const fieldMarker = centerEchoField
+          ? `<span class="battle-tile-echo-marker battle-tile-echo-marker--${centerEchoField.fieldId.replace(/_/g, "-")}">${centerEchoField.fieldId === "ember_zone" ? "E" : centerEchoField.fieldId === "bastion_zone" ? "B" : "F"}</span>`
+          : "";
         tilesHtml += `
           <div class="${classes}" 
                data-x="${x}" 
                data-y="${y}"
                style="grid-column: ${x + 1}; grid-row: ${y + 1};">
+            ${objectiveMarker}
+            ${fieldMarker}
           </div>
         `;
 
@@ -167,16 +232,25 @@ export class BattleGridRenderer {
 
           const side = unit.isEnemy ? "battle-unit--enemy" : "battle-unit--ally";
           const act = unit.id === battle.activeUnitId ? "battle-unit--active" : "";
+          const strained = !unit.isEnemy && isOverStrainThreshold(unit) ? "battle-unit--strained" : "";
           const truncName = unit.name.length > 8 ? unit.name.slice(0, 8) + "…" : unit.name;
           const facing = unit.facing ?? (unit.isEnemy ? "west" : "east");
 
           // Get controller info for player units
           let controllerBadge = "";
-          if (!unit.isEnemy && unit.controller) {
+          const shouldShowControllerBadge = Boolean(unit.controller) && (!unit.isEnemy || battle.modeContext?.kind === "squad");
+          if (shouldShowControllerBadge && unit.controller) {
             const state = getGameState();
             const player = state.players[unit.controller as PlayerId];
-            const controllerColor = player?.color || (unit.controller === "P1" ? "#ff8a00" : "#6849c2");
-            const controllerLabel = unit.controller === "P1" ? "P1" : "P2";
+            const controllerColor = player?.color
+              || (unit.controller === "P1"
+                ? "#ff8a00"
+                : unit.controller === "P2"
+                  ? "#6849c2"
+                  : unit.controller === "P3"
+                    ? "#2f8fdd"
+                    : "#319d63");
+            const controllerLabel = unit.controller.toUpperCase();
             controllerBadge = `
               <div class="battle-unit-controller-badge" style="background: ${controllerColor}; color: white; border: 2px solid ${controllerColor};">
                 ${controllerLabel}
@@ -195,7 +269,7 @@ export class BattleGridRenderer {
 
           unitsHtml.push({
             html: `
-              <div class="battle-unit battle-unit--simple ${side} ${act}" 
+              <div class="battle-unit battle-unit--simple ${side} ${act} ${strained}" 
                    data-unit-id="${unit.id}" 
                    data-unit-x="${unit.pos.x}"
                    data-unit-y="${unit.pos.y}"
@@ -206,6 +280,7 @@ export class BattleGridRenderer {
                     <img src="${getBattleUnitPortraitPath(unit.id, unit.baseUnitId)}" alt="${unit.name}" class="battle-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
                   </div>
                   ${controllerBadge}
+                  ${strained ? `<div class="battle-unit-strain-indicator">STRAIN</div>` : ""}
                   <div class="battle-unit-info-overlay">
                     <div class="battle-unit-name">${truncName}</div>
                     <div class="battle-unit-hp">HP ${unit.hp}/${unit.maxHp}</div>
@@ -230,6 +305,24 @@ export class BattleGridRenderer {
     // Calculate grid container size
     const gridWidthPx = gridWidth * this.TILE_SIZE + (gridWidth - 1) * 4 + 24; // tiles + gaps + padding
     const gridHeightPx = gridHeight * this.TILE_SIZE + (gridHeight - 1) * 4 + 24;
+    const shouldShowFacingPrompt = facingTileSet.size > 0 && activeUnit && !activeUnit.isEnemy && activeUnit.pos && !hiddenIds.has(activeUnit.id);
+
+    let facingPromptHtml = "";
+    if (shouldShowFacingPrompt && activeUnit?.pos) {
+      const GRID_PADDING = 12;
+      const GAP = 4;
+      const promptX = GRID_PADDING + activeUnit.pos.x * (this.TILE_SIZE + GAP) + this.TILE_SIZE / 2;
+      const promptY = Math.max(18, GRID_PADDING + activeUnit.pos.y * (this.TILE_SIZE + GAP) - 8);
+      facingPromptHtml = `
+        <div
+          class="battle-facing-prompt"
+          style="left: ${promptX}px; top: ${promptY}px;"
+          aria-live="polite"
+        >
+          SELECT UNIT FACING
+        </div>
+      `;
+    }
 
     return `
       <div class="battle-grid-pan-wrapper">
@@ -246,7 +339,9 @@ export class BattleGridRenderer {
                 ${unitsHtml.map(u => u.html).join('')}
               </div>
               <div class="battle-animation-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2000; overflow: visible;"></div>
-              <div class="battle-grid-overlays"></div>
+              <div class="battle-grid-overlays" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1400; overflow: visible;">
+                ${facingPromptHtml}
+              </div>
             </div>
           </div>
         </div>

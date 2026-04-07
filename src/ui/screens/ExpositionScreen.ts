@@ -4,6 +4,7 @@
 // Terminal/S/COM_OS aesthetic window with exposition text
 // ============================================================================
 
+import { clearControllerContext, onControllerAction } from "../../core/controllerSupport";
 import { renderMainMenu } from "./MainMenuScreen";
 
 export function renderExpositionScreen(): void {
@@ -12,6 +13,7 @@ export function renderExpositionScreen(): void {
     console.error("Missing #app element in index.html");
     return;
   }
+  clearControllerContext();
 
   const expositionText = `In ARDYCIA- bandits, knights, wizards and gunslingers fight for control over cold and rocky terrain. As reports of a dark, growing chasm of evil magic in the north threaten the stability of the Fairhaven empire, a company of soldiers are sent on a secret mission to find the CHAOS CORE and close the rift. Leading the mission is evergreen knight AERISS THORNE- the only soul naive enough to do it...`;
 
@@ -46,12 +48,16 @@ export function renderExpositionScreen(): void {
       </div>
     </div>
   `;
+  document.body.setAttribute("data-screen", "exposition");
+
+  let controllerCleanup: (() => void) | null = null;
 
   // Handle keyboard input to advance
   const handleKeyPress = (e: KeyboardEvent) => {
     e.preventDefault();
     window.removeEventListener("keydown", handleKeyPress);
     window.removeEventListener("click", handleClick);
+    controllerCleanup?.();
     renderMainMenu();
   };
 
@@ -59,10 +65,18 @@ export function renderExpositionScreen(): void {
   const handleClick = () => {
     window.removeEventListener("keydown", handleKeyPress);
     window.removeEventListener("click", handleClick);
+    controllerCleanup?.();
     renderMainMenu();
   };
 
   // Add listeners
   window.addEventListener("keydown", handleKeyPress);
   window.addEventListener("click", handleClick);
+  controllerCleanup = onControllerAction(() => {
+    window.removeEventListener("keydown", handleKeyPress);
+    window.removeEventListener("click", handleClick);
+    controllerCleanup?.();
+    controllerCleanup = null;
+    renderMainMenu();
+  });
 }

@@ -19,22 +19,27 @@ export interface Companion {
   lastBehaviorTime: number;
   attackCooldown: number; // Time remaining until next attack (ms)
   facing: "north" | "south" | "east" | "west";
+  lastPlayerX?: number;
+  lastPlayerY?: number;
 }
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
-const COMPANION_SPEED = 300; // pixels per second (faster than player for more active companion)
+const COMPANION_SPEED = 240; // pixels per second (matches base player pace before dynamic syncing)
 const COMPANION_ATTACK_SPEED = 500; // pixels per second when attacking
 const COMPANION_WIDTH = 28;
 const COMPANION_HEIGHT = 28;
-const FOLLOW_RADIUS = 120; // Distance to maintain from player
-const COMFORT_RADIUS = 60; // Distance where Sable idles
+const FOLLOW_RADIUS = 16; // Distance to maintain from the trailing slot behind the player
+const COMFORT_RADIUS = 10; // Distance where Sable idles in the trailing slot
+const FOLLOW_TRAIL_DISTANCE = 42;
+const FOLLOW_CATCHUP_RADIUS = 72;
+const FOLLOW_TELEPORT_RADIUS = 260;
+const FOLLOW_CATCHUP_BONUS = 60;
 const FETCH_RADIUS = 150; // Radius to search for resources
 const ATTACK_RADIUS = 200; // Radius to search for enemies
 const BEHAVIOR_COOLDOWN = 500; // ms between behavior checks
-const ATTACK_DAMAGE = 3; // Enough to kill light enemies in one hit
 
 // ============================================================================
 // COMPANION CREATION
@@ -86,25 +91,76 @@ export function updateCompanion(
   
   // Update based on current state
   // For Base Camp, we only do follow behavior (no fetch/attack)
-  return updateFollowBehavior(companion, player, deltaTime, map);
+  return updateCompanionFollow(companion, player, deltaTime, map);
 }
 
 // ============================================================================
 // FOLLOW BEHAVIOR
 // ============================================================================
 
-function updateFollowBehavior(
+function getCompanionFollowTarget(player: PlayerAvatar): { x: number; y: number } {
+  switch (player.facing) {
+    case "north":
+      return { x: player.x, y: player.y + FOLLOW_TRAIL_DISTANCE };
+    case "south":
+      return { x: player.x, y: player.y - FOLLOW_TRAIL_DISTANCE };
+    case "east":
+      return { x: player.x - FOLLOW_TRAIL_DISTANCE, y: player.y };
+    case "west":
+      return { x: player.x + FOLLOW_TRAIL_DISTANCE, y: player.y };
+    default:
+      return { x: player.x, y: player.y + FOLLOW_TRAIL_DISTANCE };
+  }
+}
+
+function getCompanionFollowSpeed(companion: Companion, player: PlayerAvatar, deltaTime: number, distance: number): number {
+  const playerTravelDistance =
+    companion.lastPlayerX !== undefined && companion.lastPlayerY !== undefined
+      ? Math.hypot(player.x - companion.lastPlayerX, player.y - companion.lastPlayerY)
+      : 0;
+  const livePlayerSpeed = deltaTime > 0 ? playerTravelDistance / (deltaTime / 1000) : player.speed;
+  const baseFollowSpeed = Math.max(player.speed, livePlayerSpeed);
+  return distance > FOLLOW_CATCHUP_RADIUS ? baseFollowSpeed + FOLLOW_CATCHUP_BONUS : baseFollowSpeed;
+}
+
+function tryMoveCompanion(
+  companion: Companion,
+  targetX: number,
+  targetY: number,
+  map: FieldMap,
+): void {
+  const tileSize = 64;
+  const tileX = Math.floor(targetX / tileSize);
+  const tileY = Math.floor(targetY / tileSize);
+
+  if (tileX >= 0 && tileX < map.width && tileY >= 0 && tileY < map.height && map.tiles[tileY][tileX]?.walkable) {
+    companion.x = targetX;
+    companion.y = targetY;
+  }
+}
+
+export function updateCompanionFollow(
   companion: Companion,
   player: PlayerAvatar,
   deltaTime: number,
   map: FieldMap
 ): Companion {
-  const dx = player.x - companion.x;
-  const dy = player.y - companion.y;
+  const followTarget = getCompanionFollowTarget(player);
+  const dx = followTarget.x - companion.x;
+  const dy = followTarget.y - companion.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
+  const playerDx =
+    companion.lastPlayerX !== undefined && companion.lastPlayerY !== undefined
+      ? player.x - companion.lastPlayerX
+      : 0;
+  const playerDy =
+    companion.lastPlayerX !== undefined && companion.lastPlayerY !== undefined
+      ? player.y - companion.lastPlayerY
+      : 0;
+  const playerMovedDistance = Math.hypot(playerDx, playerDy);
   
   // Determine state based on distance
-  let newState: "idle" | "follow" = companion.state;
+  let newState: "idle" | "follow" = companion.state === "idle" ? "idle" : "follow";
   if (distance > FOLLOW_RADIUS) {
     newState = "follow";
   } else if (distance < COMFORT_RADIUS) {
@@ -114,28 +170,26 @@ function updateFollowBehavior(
   }
   
   // Move toward player if too far
-  if (distance > FOLLOW_RADIUS) {
-    const moveDistance = companion.speed * (deltaTime / 1000);
+  if (distance > FOLLOW_TELEPORT_RADIUS) {
+    tryMoveCompanion(companion, followTarget.x, followTarget.y, map);
+  } else if (distance > FOLLOW_RADIUS) {
+    const followSpeed = getCompanionFollowSpeed(companion, player, deltaTime, distance);
+    const moveDistance = Math.min(distance, followSpeed * (deltaTime / 1000));
     const moveX = (dx / distance) * moveDistance;
     const moveY = (dy / distance) * moveDistance;
-    
-    let newX = companion.x + moveX;
-    let newY = companion.y + moveY;
-    
-    // Simple collision avoidance (don't move into walls)
-    const tileSize = 64;
-    const tileX = Math.floor(newX / tileSize);
-    const tileY = Math.floor(newY / tileSize);
-    
-    if (tileX >= 0 && tileX < map.width && tileY >= 0 && tileY < map.height) {
-      if (map.tiles[tileY][tileX]?.walkable) {
-        companion.x = newX;
-        companion.y = newY;
-      }
-    }
-    
+    const newX = companion.x + moveX;
+    const newY = companion.y + moveY;
+
+    tryMoveCompanion(companion, newX, newY, map);
+
     // Update facing
-    if (Math.abs(dx) > Math.abs(dy)) {
+    if (playerMovedDistance > 1) {
+      if (Math.abs(playerDx) > Math.abs(playerDy)) {
+        companion.facing = playerDx > 0 ? "east" : "west";
+      } else {
+        companion.facing = playerDy > 0 ? "south" : "north";
+      }
+    } else if (Math.abs(dx) > Math.abs(dy)) {
       companion.facing = dx > 0 ? "east" : "west";
     } else {
       companion.facing = dy > 0 ? "south" : "north";
@@ -144,7 +198,10 @@ function updateFollowBehavior(
   
   return {
     ...companion,
+    speed: player.speed,
     state: newState,
+    lastPlayerX: player.x,
+    lastPlayerY: player.y,
   };
 }
 
@@ -160,7 +217,7 @@ export interface FetchTarget {
 
 export function updateCompanionFetch(
   companion: Companion,
-  player: PlayerAvatar,
+  _player: PlayerAvatar,
   target: FetchTarget | null,
   deltaTime: number,
   map: FieldMap
@@ -233,7 +290,7 @@ export interface AttackTarget {
 
 export function updateCompanionAttack(
   companion: Companion,
-  player: PlayerAvatar,
+  _player: PlayerAvatar,
   target: AttackTarget | null,
   deltaTime: number,
   map: FieldMap
@@ -307,7 +364,7 @@ export interface ResourceSparkle {
 
 export function findNearestResource(
   companion: Companion,
-  player: PlayerAvatar,
+  _player: PlayerAvatar,
   sparkles: ResourceSparkle[]
 ): FetchTarget | null {
   const searchRadius = FETCH_RADIUS;
@@ -352,7 +409,7 @@ export interface LightEnemy {
 
 export function findNearestEnemy(
   companion: Companion,
-  player: PlayerAvatar,
+  _player: PlayerAvatar,
   enemies: LightEnemy[]
 ): AttackTarget | null {
   const searchRadius = ATTACK_RADIUS;
@@ -403,4 +460,3 @@ export function checkCompanionReachedTarget(
   
   return distance < threshold;
 }
-

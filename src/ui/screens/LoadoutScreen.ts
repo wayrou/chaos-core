@@ -14,19 +14,27 @@ import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../cor
 import { InventoryState, InventoryItem } from "../../core/types";
 import {
   buildOwnedBaseStorageItems,
+  isPartyAutoStagedLockerItem,
   moveOwnedItemToBaseStorage,
   moveOwnedItemToForwardLocker,
+  PARTY_UNIT_FORWARD_LOCKER_BULK_BU,
+  PARTY_UNIT_FORWARD_LOCKER_MASS_KG,
+  PARTY_UNIT_FORWARD_LOCKER_POWER_W,
+  syncForwardLockerStateForUnitIds,
+  syncPartyForwardLockerState,
 } from "../../core/loadoutInventory";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
+import { buildTheaterDeploymentLaunchPreview, TheaterDeploymentLaunchPreview } from "../../core/theaterDeploymentPreset";
 import {
   buildInventoryFolderTransferSummaries,
   InventoryFolderTransferSummary,
   moveInventoryFolderToBaseStorage,
   moveInventoryFolderToForwardLocker,
 } from "../../core/inventoryFolders";
+import { abandonRun } from "../../core/campaignManager";
+import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
-let operationProceedInFlight = false;
 
 // ============================================================================
 // TYPES
@@ -42,6 +50,14 @@ interface PartyUnitSummary {
   totalPower: number;
 }
 
+interface DeployedSquadSummary {
+  squadId: string;
+  displayName: string;
+  icon: string;
+  colorKey: string;
+  units: PartyUnitSummary[];
+}
+
 // ============================================================================
 // MAIN RENDER
 // ============================================================================
@@ -49,9 +65,18 @@ interface PartyUnitSummary {
 export function renderLoadoutScreen(): void {
   const root = document.getElementById("app");
   if (!root) return;
-  operationProceedInFlight = false;
+  document.body.setAttribute("data-screen", "loadout");
+  clearControllerContext();
 
-  const state = getGameState();
+  const rawState = getGameState();
+  const rawOperation = rawState.operation;
+  const isTheaterOperation = Boolean(rawOperation?.theater);
+  const initialTheaterPreview = isTheaterOperation ? buildTheaterDeploymentLaunchPreview(rawState) : null;
+  const initialDeployUnitIds = initialTheaterPreview?.deployUnitIds ?? rawState.partyUnitIds;
+  const state = isTheaterOperation
+    ? syncForwardLockerStateForUnitIds(rawState, initialDeployUnitIds)
+    : syncPartyForwardLockerState(rawState);
+  const theaterPreview = isTheaterOperation ? buildTheaterDeploymentLaunchPreview(state) : null;
   const operation = state.operation;
 
   if (!operation) {
@@ -62,31 +87,39 @@ export function renderLoadoutScreen(): void {
 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const theaterName = operation.theater?.definition.name ?? "THEATER COMMAND";
+  const deployUnitIds = theaterPreview?.deployUnitIds ?? state.partyUnitIds;
   // Future: modulesById can be used for gear slot calculations
   void getAllModules();
 
   // Build party unit summaries with equipment
-  const partyUnits: PartyUnitSummary[] = state.partyUnitIds.map(unitId => {
+  const partyUnits: PartyUnitSummary[] = deployUnitIds.map(unitId => {
     const unit = state.unitsById[unitId];
     if (!unit) return null;
 
     const loadout = (unit as any).loadout || {};
     const equippedItems: Equipment[] = [];
-    let totalMass = 0;
-    let totalBulk = 0;
-    let totalPower = 0;
+    let totalMass = PARTY_UNIT_FORWARD_LOCKER_MASS_KG;
+    let totalBulk = PARTY_UNIT_FORWARD_LOCKER_BULK_BU;
+    let totalPower = PARTY_UNIT_FORWARD_LOCKER_POWER_W;
 
     // Collect equipped items
-    const slots = ["weapon", "helmet", "chestpiece", "accessory1", "accessory2"];
+    const slots = [
+      loadout.primaryWeapon ?? loadout.weapon ?? null,
+      loadout.secondaryWeapon ?? null,
+      loadout.helmet ?? null,
+      loadout.chestpiece ?? null,
+      loadout.accessory1 ?? null,
+      loadout.accessory2 ?? null,
+    ];
     for (const slot of slots) {
-      const equipId = loadout[slot];
+      const equipId = typeof slot === "string" ? slot : null;
       if (equipId && equipmentById[equipId]) {
         const equip = equipmentById[equipId];
         equippedItems.push(equip);
-        // Estimate load values (equipment doesn't have mass/bulk/power, so use defaults)
-        totalMass += 2; // Default mass per equipment
-        totalBulk += 1; // Default bulk per equipment
-        totalPower += 1; // Default power per equipment
+        const inventoryProfile = equip.inventory;
+        totalMass += inventoryProfile?.massKg ?? 2;
+        totalBulk += inventoryProfile?.bulkBu ?? 1;
+        totalPower += inventoryProfile?.powerW ?? 1;
       }
     }
 
@@ -100,11 +133,16 @@ export function renderLoadoutScreen(): void {
       totalPower,
     };
   }).filter(Boolean) as PartyUnitSummary[];
-
-  // Calculate total forward locker load from all party equipment
-  const totalEquipmentMass = partyUnits.reduce((sum, u) => sum + u.totalMass, 0);
-  const totalEquipmentBulk = partyUnits.reduce((sum, u) => sum + u.totalBulk, 0);
-  const totalEquipmentPower = partyUnits.reduce((sum, u) => sum + u.totalPower, 0);
+  const partyUnitsById = new Map(partyUnits.map((unit) => [unit.id, unit] as const));
+  const deployedSquads: DeployedSquadSummary[] = theaterPreview?.squads.map((squad) => ({
+    squadId: squad.squadId,
+    displayName: squad.displayName,
+    icon: squad.icon,
+    colorKey: squad.colorKey,
+    units: squad.unitIds
+      .map((unitId) => partyUnitsById.get(unitId) ?? null)
+      .filter((unit): unit is PartyUnitSummary => Boolean(unit)),
+  })) ?? [];
 
   // Get inventory state
   const inv: InventoryState = state.inventory;
@@ -115,13 +153,6 @@ export function renderLoadoutScreen(): void {
   const forwardLockerFolders = folderSummaries.filter((folder) => folder.forwardLockerItems.length > 0);
   const load = computeLoad(inv);
   const penalties = computeLoadPenaltyFlags(inv);
-
-  // Add equipment load to forward locker load
-  const effectiveLoad = {
-    mass: load.mass + totalEquipmentMass,
-    bulk: load.bulk + totalEquipmentBulk,
-    power: load.power + totalEquipmentPower,
-  };
 
   // Get current MULE class caps directly from MULE_CLASS_CAPS (always up-to-date)
   const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
@@ -147,8 +178,7 @@ export function renderLoadoutScreen(): void {
               <span class="btn-icon">←</span>
               <span class="btn-text">CANCEL</span>
             </button>
-            <button class="loadout-screen-proceed-btn" id="proceedBtn" ${partyUnits.length === 0 ? 'disabled' : ''}>
-              <span class="loadout-screen-proceed-spinner" aria-hidden="true"></span>
+            <button class="loadout-screen-proceed-btn" id="proceedBtn" ${deployUnitIds.length === 0 ? 'disabled' : ''}>
               <span class="btn-text">PROCEED</span>
               <span class="btn-icon">→</span>
             </button>
@@ -160,11 +190,13 @@ export function renderLoadoutScreen(): void {
             <div class="loadout-screen-section">
               <div class="loadout-screen-section-title">FORWARD LOCKER CAPACITY</div>
               <div class="loadout-screen-capacity-info">
-                Equipment from your party auto-populates the forward locker.
+                ${isTheaterOperation
+                  ? "Theater deployment squads and their equipped gear auto-populate the forward locker."
+                  : "Party units and their equipped gear auto-populate the forward locker."}
               </div>
-              ${renderCapacityBar("MASS", effectiveLoad.mass, caps.mass, "kg")}
-              ${renderCapacityBar("BULK", effectiveLoad.bulk, caps.bulk, "bu")}
-              ${renderCapacityBar("POWER", effectiveLoad.power, caps.power, "w")}
+              ${renderCapacityBar("MASS", load.mass, caps.mass, "kg")}
+              ${renderCapacityBar("BULK", load.bulk, caps.bulk, "bu")}
+              ${renderCapacityBar("POWER", load.power, caps.power, "w")}
               
               ${(penalties.massOver || penalties.bulkOver || penalties.powerOver) ? `
                 <div class="loadout-screen-warning">
@@ -185,8 +217,8 @@ export function renderLoadoutScreen(): void {
                   <span class="loadout-screen-op-value">${theaterName}</span>
                 </div>
                 <div class="loadout-screen-op-detail">
-                  <span class="loadout-screen-op-label">Party Size:</span>
-                  <span class="loadout-screen-op-value">${partyUnits.length} Units</span>
+                  <span class="loadout-screen-op-label">${isTheaterOperation ? "Deploy Size:" : "Party Size:"}</span>
+                  <span class="loadout-screen-op-value">${deployUnitIds.length} Units</span>
                 </div>
               </div>
             </div>
@@ -194,13 +226,18 @@ export function renderLoadoutScreen(): void {
 
           <div class="loadout-screen-right">
             <div class="loadout-screen-section">
-              <div class="loadout-screen-section-title">DEPLOYED UNITS</div>
+              <div class="loadout-screen-section-title">${isTheaterOperation ? "DEPLOYMENT SQUADS" : "DEPLOYED UNITS"}</div>
+              ${theaterPreview ? renderTheaterDeploymentWarning(theaterPreview) : ""}
               <div class="loadout-screen-party">
-                ${partyUnits.length === 0 ? `
+                ${deployUnitIds.length === 0 ? `
                   <div class="loadout-screen-empty">
-                    No units in party! Add units from the Roster.
+                    ${isTheaterOperation
+                      ? "No valid theater deployment units. Update your roster squads before launching."
+                      : "No units in party! Add units from the Roster."}
                   </div>
-                ` : partyUnits.map(unit => renderPartyUnit(unit)).join('')}
+                ` : isTheaterOperation
+                  ? deployedSquads.map((squad) => renderDeployedSquad(squad)).join("")
+                  : partyUnits.map(unit => renderPartyUnit(unit)).join('')}
               </div>
               <button class="loadout-screen-manage-btn" id="manageUnitsBtn">
                 👥 MANAGE UNITS
@@ -277,6 +314,7 @@ export function renderLoadoutScreen(): void {
 
   // Attach event listeners
   attachLoadoutListeners();
+  updateFocusableElements();
 }
 
 // ============================================================================
@@ -336,6 +374,56 @@ function renderPartyUnit(unit: PartyUnitSummary): string {
   `;
 }
 
+function renderDeployedSquad(squad: DeployedSquadSummary): string {
+  return `
+    <div class="loadout-screen-squad" data-loadout-squad-id="${squad.squadId}">
+      <div class="loadout-screen-squad-header">
+        <div class="loadout-screen-squad-title">
+          <span class="loadout-screen-squad-icon">${squad.icon}</span>
+          <span>${squad.displayName}</span>
+        </div>
+        <div class="loadout-screen-squad-count">${squad.units.length} UNIT${squad.units.length === 1 ? "" : "S"}</div>
+      </div>
+      <div class="loadout-screen-squad-units">
+        ${squad.units.map((unit) => renderPartyUnit(unit)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderTheaterDeploymentWarning(preview: TheaterDeploymentLaunchPreview): string {
+  if (preview.skippedUnits.length <= 0) {
+    return "";
+  }
+
+  const reasonLabels: Record<string, string> = {
+    dispatched: "on Dispatch",
+    missing: "missing",
+    duplicate: "duplicated",
+    over_cap: "over squad cap",
+  };
+  const reasonCounts = preview.skippedUnits.reduce<Record<string, number>>((acc, skippedUnit) => {
+    acc[skippedUnit.reason] = (acc[skippedUnit.reason] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summary = Object.entries(reasonCounts)
+    .map(([reason, count]) => `${count} ${reasonLabels[reason] ?? reason}`)
+    .join(" // ");
+  const impactedUnits = preview.skippedUnits
+    .slice(0, 4)
+    .map((skippedUnit) => skippedUnit.unitName ?? skippedUnit.unitId)
+    .join(", ");
+  const overflowCount = Math.max(0, preview.skippedUnits.length - 4);
+
+  return `
+    <div class="loadout-screen-warning loadout-screen-warning--squads">
+      <strong>Launch Preview Adjusted</strong>
+      <div>${summary}</div>
+      <div>${impactedUnits}${overflowCount > 0 ? ` +${overflowCount} more` : ""}</div>
+    </div>
+  `;
+}
+
 function formatClassName(cls: string): string {
   const names: Record<string, string> = {
     squire: "Squire",
@@ -361,21 +449,27 @@ function formatClassName(cls: string): string {
 }
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
+  const isLocked = isPartyAutoStagedLockerItem(item);
   const iconMarkup = item.iconPath
     ? `<img src="${item.iconPath}" alt="${item.name}" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);" />`
     : "";
+  const noteMarkup = isLocked
+    ? `<div class="inv-item-note">${item.kind === "unit" ? "DEPLOY UNIT // AUTO-STAGED" : "EQUIPPED GEAR // AUTO-STAGED"}</div>`
+    : "";
 
   return `
-    <div class="inv-item"
-         draggable="true"
+    <div class="inv-item${isLocked ? " inv-item--locked" : ""}"
+         draggable="${isLocked ? "false" : "true"}"
          data-id="${item.id}"
-         data-bin="${bin}">
+         data-bin="${bin}"
+         data-locked="${isLocked ? "true" : "false"}">
       <div class="inv-item-header">
         ${iconMarkup}
         <div class="inv-item-name">${item.name}</div>
         <div class="inv-item-qty">x${item.quantity}</div>
       </div>
       <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
+      ${noteMarkup}
       <div class="inv-item-stats">
         <span>${item.massKg}kg</span>
         <span>${item.bulkBu}bu</span>
@@ -431,6 +525,14 @@ function attachLoadoutListeners(): void {
   root.querySelector("#backBtn")?.addEventListener("click", () => {
     const launchSource = getGameState().operation?.launchSource;
     // Clear operation and return to operation select
+    if (launchSource === "comms") {
+      try {
+        abandonRun();
+      } catch (error) {
+        console.warn("[LOADOUT] abandon comms run failed", error);
+      }
+    }
+
     updateGameState(prev => ({
       ...prev,
       operation: null,
@@ -440,6 +542,13 @@ function attachLoadoutListeners(): void {
     if (launchSource === "atlas") {
       import("./AtlasScreen").then(({ renderAtlasScreen }) => {
         renderAtlasScreen("esc");
+      });
+      return;
+    }
+
+    if (launchSource === "comms") {
+      import("./CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+        renderCommsArrayScreen("field");
       });
       return;
     }
@@ -455,75 +564,47 @@ function attachLoadoutListeners(): void {
 
   // Proceed button
   root.querySelector("#proceedBtn")?.addEventListener("click", () => {
-    if (operationProceedInFlight) return;
-
-    const state = getGameState();
-    if (state.partyUnitIds.length === 0) {
-      alert("You need at least one unit in your party to proceed!");
-      return;
-    }
-    const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
-    const dispatchedPartyUnits = state.partyUnitIds
-      .map((unitId) => state.unitsById[unitId])
-      .filter((unit) => unit && busyDispatchUnitIds.has(unit.id))
-      .map((unit) => unit!.name);
-
-    if (dispatchedPartyUnits.length > 0) {
-      alert(`These units are still assigned to Dispatch and cannot deploy:\n\n${dispatchedPartyUnits.join("\n")}`);
+    const currentState = getGameState();
+    const isTheaterOperation = Boolean(currentState.operation?.theater);
+    const preview = isTheaterOperation ? buildTheaterDeploymentLaunchPreview(currentState) : null;
+    const deployUnitIds = preview?.deployUnitIds ?? currentState.partyUnitIds;
+    const state = isTheaterOperation
+      ? syncForwardLockerStateForUnitIds(currentState, deployUnitIds)
+      : syncPartyForwardLockerState(currentState);
+    if (deployUnitIds.length === 0) {
+      alert(isTheaterOperation
+        ? "You need at least one valid unit assigned to your theater deployment squads to proceed!"
+        : "You need at least one unit in your party to proceed!");
       return;
     }
 
-    operationProceedInFlight = true;
-    setProceedButtonLoading(root, true);
-    showOperationProceedLoader(root);
+    if (!isTheaterOperation) {
+      const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
+      const dispatchedPartyUnits = state.partyUnitIds
+        .map((unitId) => state.unitsById[unitId])
+        .filter((unit) => unit && busyDispatchUnitIds.has(unit.id))
+        .map((unit) => unit!.name);
 
-    // Auto-populate forward locker from equipped items
-    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-    let totalMass = 0;
-    let totalBulk = 0;
-    let totalPower = 0;
-
-    // Calculate total load from all party equipment
-    state.partyUnitIds.forEach(unitId => {
-      const unit = state.unitsById[unitId];
-      if (!unit) return;
-
-      const loadout = (unit as any).loadout || {};
-      const slots = ["weapon", "helmet", "chestpiece", "accessory1", "accessory2"];
-      
-      for (const slot of slots) {
-        const equipId = loadout[slot];
-        if (equipId && equipmentById[equipId]) {
-          // Add estimated load values
-          totalMass += 2;
-          totalBulk += 1;
-          totalPower += 1;
-        }
-      }
-    });
-
-    window.setTimeout(() => {
-      // Update phase and auto-populate forward locker capacity usage
-      updateGameState(prev => ({
-        ...prev,
-        phase: "operation",
-        inventory: {
-          ...prev.inventory,
-          // Store the equipment load contribution for reference
-          equipmentMassUsed: totalMass,
-          equipmentBulkUsed: totalBulk,
-          equipmentPowerUsed: totalPower,
-        } as any,
-      }));
-
-      operationProceedInFlight = false;
-      if (getGameState().operation?.theater) {
-        renderTheaterCommandScreen();
+      if (dispatchedPartyUnits.length > 0) {
+        alert(`These units are still assigned to Dispatch and cannot deploy:\n\n${dispatchedPartyUnits.join("\n")}`);
         return;
       }
+    }
 
-      renderOperationMapScreen();
-    }, 4000);
+    // Enter operation with the forward locker already synchronized to party units and gear.
+    updateGameState(prev => ({
+      ...(isTheaterOperation
+        ? syncForwardLockerStateForUnitIds(prev, buildTheaterDeploymentLaunchPreview(prev).deployUnitIds)
+        : syncPartyForwardLockerState(prev)),
+      phase: "operation",
+    }));
+
+    if (getGameState().operation?.theater) {
+      renderTheaterCommandScreen();
+      return;
+    }
+
+    renderOperationMapScreen();
   });
 
   // ------------------------------
@@ -533,7 +614,12 @@ function attachLoadoutListeners(): void {
   // Click-to-transfer
   const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
   itemEls.forEach((el) => {
-    el.style.cursor = "pointer";
+    const isLocked = el.dataset.locked === "true";
+    el.style.cursor = isLocked ? "not-allowed" : "pointer";
+
+    if (isLocked) {
+      return;
+    }
 
     el.addEventListener("click", () => {
       const itemId = el.dataset.id;
@@ -572,6 +658,10 @@ function attachLoadoutListeners(): void {
 
   // Drag & Drop
   itemEls.forEach((el) => {
+    if (el.dataset.locked === "true") {
+      return;
+    }
+
     el.addEventListener("dragstart", (event: DragEvent) => {
       if (!event.dataTransfer) return;
       const itemId = el.dataset.id;
@@ -659,35 +749,4 @@ function attachLoadoutListeners(): void {
       renderLoadoutScreen();
     });
   });
-}
-
-function showOperationProceedLoader(root: HTMLElement): void {
-  const existing = root.querySelector(".loadout-screen-proceed-loader");
-  if (existing) existing.remove();
-  const isGeneratedTheater = Boolean(getGameState().operation?.theater);
-
-  const loader = document.createElement("div");
-  loader.className = "loadout-screen-proceed-loader";
-  loader.innerHTML = `
-    <div class="loadout-screen-proceed-loader__icon" aria-hidden="true"></div>
-    <div class="loadout-screen-proceed-loader__text">${isGeneratedTheater ? "LINKING TO GENERATED THEATER..." : "LINKING TO OPERATION THEATER..."}</div>
-  `;
-  root.appendChild(loader);
-}
-
-function setProceedButtonLoading(root: HTMLElement, isLoading: boolean): void {
-  const button = root.querySelector<HTMLButtonElement>("#proceedBtn");
-  if (!button) return;
-
-  button.disabled = isLoading || button.disabled;
-  button.classList.toggle("loadout-screen-proceed-btn--loading", isLoading);
-
-  const text = button.querySelector<HTMLElement>(".btn-text");
-  const icon = button.querySelector<HTMLElement>(".btn-icon");
-  if (text) {
-    text.textContent = isLoading ? "LINKING..." : "PROCEED";
-  }
-  if (icon) {
-    icon.style.opacity = isLoading ? "0" : "1";
-  }
 }

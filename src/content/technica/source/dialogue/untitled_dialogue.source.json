@@ -4,67 +4,15 @@
   "id": "untitled_dialogue",
   "title": "Untitled Dialogue",
   "sceneId": "scene_untitled",
-  "rawSource": "@id untitled_dialogue\n@title Untitled Dialogue\n@scene scene_untitled\n@meta linkedNpcId=npc_test2\n\n:opening\nTester2: This is a test.\nTester2: How is it working?\n? Working good -> working_good\n? Working bad -> working_bad\n\n:working_good\nTester2: Good! I'm glad.\n\n:working_bad\nTester2: Oh, okay then.\nEND\nTester2: Well, see ya.\n",
+  "rawSource": "@id untitled_dialogue\n@title Untitled Dialogue\n@scene scene_untitled\n@meta dialogueNpcId=npc_commander\n@meta linkedNpcId=npc_commander\n@meta dialogueOccurrence=exclusive\n\n:working_bad\nCommander: Pick a choice\n? Choice 1 -> choice_1\n? Choice 2 -> choice_2\n\n:choice_1\nCommander: You picked choice 1\n\n:choice_2\nNarrator: You picked choice 2\nEND\n\n:working_bad_after_choices\nNarrator: Well, see ya later.\n",
   "metadata": {
-    "linkedNpcId": "npc_test2"
+    "dialogueNpcId": "npc_commander",
+    "linkedNpcId": "npc_commander",
+    "dialogueOccurrence": "exclusive"
   },
   "tags": [],
-  "entryLabel": "opening",
+  "entryLabel": "working_bad",
   "labels": [
-    {
-      "id": "opening",
-      "label": "opening",
-      "entries": [
-        {
-          "id": "line_1",
-          "kind": "line",
-          "speaker": "Tester2",
-          "text": "This is a test.",
-          "tags": [],
-          "metadata": {}
-        },
-        {
-          "id": "line_2",
-          "kind": "line",
-          "speaker": "Tester2",
-          "text": "How is it working?",
-          "tags": [],
-          "metadata": {}
-        },
-        {
-          "id": "choice_1",
-          "kind": "choice",
-          "text": "Working good",
-          "target": "working_good",
-          "tags": [],
-          "setFlags": {},
-          "metadata": {}
-        },
-        {
-          "id": "choice_2",
-          "kind": "choice",
-          "text": "Working bad",
-          "target": "working_bad",
-          "tags": [],
-          "setFlags": {},
-          "metadata": {}
-        }
-      ]
-    },
-    {
-      "id": "working_good",
-      "label": "working_good",
-      "entries": [
-        {
-          "id": "line_1",
-          "kind": "line",
-          "speaker": "Tester2",
-          "text": "Good! I'm glad.",
-          "tags": [],
-          "metadata": {}
-        }
-      ]
-    },
     {
       "id": "working_bad",
       "label": "working_bad",
@@ -72,31 +20,91 @@
         {
           "id": "line_1",
           "kind": "line",
-          "speaker": "Tester2",
-          "text": "Oh, okay then.",
+          "speaker": "Commander",
+          "text": "Pick a choice",
+          "tags": [],
+          "metadata": {}
+        },
+        {
+          "id": "choice_1",
+          "kind": "choice",
+          "text": "Choice 1",
+          "target": "choice_1",
+          "tags": [],
+          "setFlags": {},
+          "metadata": {}
+        },
+        {
+          "id": "choice_2",
+          "kind": "choice",
+          "text": "Choice 2",
+          "target": "choice_2",
+          "tags": [],
+          "setFlags": {},
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "id": "choice_1",
+      "label": "choice_1",
+      "entries": [
+        {
+          "id": "line_1",
+          "kind": "line",
+          "speaker": "Commander",
+          "text": "You picked choice 1",
+          "tags": [],
+          "metadata": {}
+        }
+      ],
+      "autoContinueTarget": "working_bad_after_choices",
+      "choiceClusterId": "working_bad::choice_1",
+      "choiceSourceBranchId": "working_bad"
+    },
+    {
+      "id": "choice_2",
+      "label": "choice_2",
+      "entries": [
+        {
+          "id": "line_1",
+          "kind": "line",
+          "speaker": "Narrator",
+          "text": "You picked choice 2",
           "tags": [],
           "metadata": {}
         },
         {
           "id": "end_1",
           "kind": "end"
-        },
+        }
+      ],
+      "autoContinueTarget": "working_bad_after_choices",
+      "choiceClusterId": "working_bad::choice_1",
+      "choiceSourceBranchId": "working_bad"
+    },
+    {
+      "id": "working_bad_after_choices",
+      "label": "working_bad_after_choices",
+      "entries": [
         {
-          "id": "line_2",
+          "id": "line_1",
           "kind": "line",
-          "speaker": "Tester2",
-          "text": "Well, see ya.",
+          "speaker": "Narrator",
+          "text": "Well, see ya later.",
           "tags": [],
           "metadata": {}
         }
-      ]
+      ],
+      "choiceSourceBranchId": "working_bad",
+      "continuationForChoiceClusterId": "working_bad::choice_1"
     }
   ],
   "stats": {
     "labelCount": 3,
-    "lineCount": 5,
+    "lineCount": 4,
     "choiceCount": 2
   },
   "createdAt": "2026-04-02T23:39:22.411Z",
-  "updatedAt": "2026-04-03T01:41:21.015Z"
+  "updatedAt": "2026-04-06T02:43:36.245Z"
 }

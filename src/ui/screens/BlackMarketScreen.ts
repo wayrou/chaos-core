@@ -147,13 +147,6 @@ export function renderBlackMarketScreen(returnTo: BaseCampReturnTo = "basecamp")
         <div class="blackmarket-content-wrapper">
           <!-- Left Column: Main Content -->
           <div class="blackmarket-main-panel">
-            <div class="blackmarket-info">
-              <div class="blackmarket-info-text">
-                Field mods purchased here will be available for your next operation run.
-                Equip them to unit hardpoints in the loadout screen before starting a run.
-              </div>
-            </div>
-
             <div class="blackmarket-inventory">
               <div class="blackmarket-inventory-title">YOUR INVENTORY (${currentInventory.length})</div>
               <div class="blackmarket-inventory-list">

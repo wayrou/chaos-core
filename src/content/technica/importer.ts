@@ -4,21 +4,30 @@ import { hasGameState, updateGameState } from "../../state/gameStore";
 import {
   registerImportedCard,
   registerImportedClass,
+  registerImportedCodexEntry,
   registerImportedDialogue,
+  registerImportedFieldEnemyDefinition,
+  registerImportedFieldMod,
   registerImportedFieldMap,
   registerImportedGear,
   registerImportedItem,
+  registerImportedMailEntry,
   registerImportedNpc,
   registerImportedOperation,
   registerImportedQuest,
   registerImportedUnit,
 } from "./index";
+import { syncImportedMailUnlocks } from "../../core/mailSystem";
 import type {
   ImportedCard,
   ImportedClassDefinition,
+  ImportedCodexEntry,
   ImportedDialogue,
+  ImportedFieldEnemyDefinition,
+  ImportedFieldMod,
   ImportedGear,
   ImportedItem,
+  ImportedMailEntry,
   ImportedNpcTemplate,
   ImportedOperationDefinition,
   ImportedUnitTemplate,
@@ -27,15 +36,19 @@ import type {
 export interface TechnicaManifestDependency {
   contentType:
     | "map"
+    | "mail"
     | "quest"
     | "dialogue"
+    | "field_enemy"
     | "npc"
     | "item"
     | "gear"
     | "card"
+    | "fieldmod"
     | "unit"
     | "operation"
     | "class"
+    | "codex"
     | "scene";
   id: string;
   relation: string;
@@ -45,8 +58,8 @@ export interface TechnicaManifest {
   schemaVersion: string;
   sourceApp: "Technica";
   sourceAppVersion?: string;
-  exportType: "map" | "quest" | "dialogue" | "npc" | "item" | "gear" | "card" | "unit" | "operation" | "class";
-  contentType: "map" | "quest" | "dialogue" | "npc" | "item" | "gear" | "card" | "unit" | "operation" | "class";
+  exportType: "map" | "mail" | "quest" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
+  contentType: "map" | "mail" | "quest" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
   targetGame: string;
   targetSchemaVersion: string;
   exportedAt: string;
@@ -89,6 +102,28 @@ function isDialogue(value: unknown): value is ImportedDialogue {
   return Boolean(value && typeof value === "object" && "id" in value && "entryNodeId" in value && "nodes" in value);
 }
 
+function isMailEntry(value: unknown): value is ImportedMailEntry {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "from" in value &&
+      "subject" in value &&
+      "bodyPages" in value
+  );
+}
+
+function isFieldEnemyDefinition(value: unknown): value is ImportedFieldEnemyDefinition {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "stats" in value &&
+      "spawn" in value
+  );
+}
+
 function isItem(value: unknown): value is ImportedItem {
   return Boolean(value && typeof value === "object" && "id" in value && "kind" in value && "quantity" in value);
 }
@@ -109,6 +144,17 @@ function isCard(value: unknown): value is ImportedCard {
       "type" in value &&
       "effects" in value &&
       "targetType" in value
+  );
+}
+
+function isFieldMod(value: unknown): value is ImportedFieldMod {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "trigger" in value &&
+      ("effectFlow" in value || "effects" in value)
   );
 }
 
@@ -139,6 +185,17 @@ function isOperationDefinition(value: unknown): value is ImportedOperationDefini
   return Boolean(value && typeof value === "object" && "id" in value && "codename" in value && "floors" in value);
 }
 
+function isCodexEntry(value: unknown): value is ImportedCodexEntry {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "title" in value &&
+      "entryType" in value &&
+      "content" in value
+  );
+}
+
 function resolveAssetPath(path: string | undefined, options?: ImportTechnicaOptions): string | undefined {
   if (!path) {
     return undefined;
@@ -167,6 +224,16 @@ function withResolvedNpcAssets(npc: ImportedNpcTemplate, options?: ImportTechnic
   };
 }
 
+function withResolvedFieldEnemyAssets(
+  definition: ImportedFieldEnemyDefinition,
+  options?: ImportTechnicaOptions,
+): ImportedFieldEnemyDefinition {
+  return {
+    ...definition,
+    spritePath: resolveAssetPath(definition.spritePath, options),
+  };
+}
+
 export function validateTechnicaManifest(manifest: TechnicaManifest): void {
   if (manifest.sourceApp !== "Technica") {
     throw new Error("Unsupported source app in import manifest.");
@@ -183,6 +250,10 @@ export function validateTechnicaManifest(manifest: TechnicaManifest): void {
 
 function syncImportedItemToGameState(item: ImportedItem): void {
   if (!hasGameState()) {
+    return;
+  }
+
+  if (item.acquisition?.startsWithPlayer === false) {
     return;
   }
 
@@ -257,6 +328,7 @@ function syncImportedCardToGameState(card: ImportedCard): void {
         targetType: card.targetType,
         range: card.range,
         effects: [...card.effects],
+        effectFlow: card.effectFlow,
         artPath: card.artPath,
       },
     },
@@ -268,7 +340,11 @@ function syncImportedCardToGameState(card: ImportedCard): void {
 }
 
 function syncImportedUnitToGameState(unit: ImportedUnitTemplate): void {
-  if (!hasGameState() || (unit.startingInRoster === false && !unit.deployInParty)) {
+  if (
+    !hasGameState() ||
+    unit.spawnRole === "enemy" ||
+    (unit.startingInRoster === false && !unit.deployInParty)
+  ) {
     return;
   }
 
@@ -366,6 +442,25 @@ export function importTechnicaEntry(
       registerImportedDialogue(entryData);
       return entryData.id;
 
+    case "mail":
+      if (!isMailEntry(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core mail shape.");
+      }
+      registerImportedMailEntry(entryData);
+      if (options?.syncToGameState) {
+        syncImportedMailUnlocks();
+      }
+      return entryData.id;
+
+    case "field_enemy": {
+      if (!isFieldEnemyDefinition(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core field enemy shape.");
+      }
+      const resolvedDefinition = withResolvedFieldEnemyAssets(entryData, options);
+      registerImportedFieldEnemyDefinition(resolvedDefinition);
+      return resolvedDefinition.id;
+    }
+
     case "item": {
       if (!isItem(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core inventory item shape.");
@@ -411,6 +506,13 @@ export function importTechnicaEntry(
       return resolvedCard.id;
     }
 
+    case "fieldmod":
+      if (!isFieldMod(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core field mod shape.");
+      }
+      registerImportedFieldMod(entryData);
+      return entryData.id;
+
     case "class":
       if (!isClassDefinition(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core class definition shape.");
@@ -433,6 +535,13 @@ export function importTechnicaEntry(
         throw new Error("Entry data does not match the expected Chaos Core operation shape.");
       }
       registerImportedOperation(entryData);
+      return entryData.id;
+
+    case "codex":
+      if (!isCodexEntry(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core codex entry shape.");
+      }
+      registerImportedCodexEntry(entryData);
       return entryData.id;
 
     default:

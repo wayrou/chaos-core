@@ -12,6 +12,7 @@ import {
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
 import {
+  DEFAULT_SETTINGS,
   getSettings,
   updateSettings,
   resetSettings,
@@ -23,11 +24,18 @@ import {
 } from "../../core/settings";
 import { getAllThemes, getTheme } from "../../core/themes";
 import {
+  clearControllerContext,
   getConnectedControllers,
-  getButtonBindings,
-  getButtonName,
+  getControllerBindings,
+  getBindingLabel,
+  getControllerAssignments,
+  findActionsUsingBinding,
+  GAME_ACTIONS,
   getActionName,
   GameAction,
+  isControllerBindingCaptureActive,
+  startControllerBindingCapture,
+  cancelControllerBindingCapture,
   updateFocusableElements,
 } from "../../core/controllerSupport";
 import {
@@ -48,6 +56,7 @@ import { SCROLLINK_BUILD_LABEL } from "../../core/appVersion";
 type SettingsTab = "general" | "controls" | "saves";
 let currentTab: SettingsTab = "general";
 let returnDestination: "menu" | BaseCampReturnTo = "menu";
+let pendingRebindAction: GameAction | null = null;
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -58,6 +67,8 @@ export function renderSettingsScreen(returnTo: "menu" | BaseCampReturnTo = "menu
   
   const app = document.getElementById("app");
   if (!app) return;
+  document.body.setAttribute("data-screen", "settings");
+  clearControllerContext();
   
   const settings = getSettings();
   const categories = getSettingsByCategory();
@@ -217,10 +228,21 @@ function renderSettingItem(desc: SettingDescriptor, settings: GameSettings): str
 
 function renderControlsTab(settings: GameSettings): string {
   const controllers = getConnectedControllers();
-  const bindings = getButtonBindings();
-  
+  const bindings = getControllerBindings();
+  const assignments = getControllerAssignments();
   const controlSettings = SETTING_DESCRIPTORS.filter(d => d.category === 'controls');
-  
+
+  const renderAssignmentSummary = (playerId: "P1" | "P2") => {
+    const assignedIndex = assignments[playerId];
+    const assignedController = controllers.find((controller) => controller.index === assignedIndex);
+    return `
+      <div class="binding-item">
+        <span class="binding-action">${playerId} Assignment</span>
+        <span class="binding-buttons">${assignedController ? `${assignedController.id} // Pad ${assignedController.index}` : "UNASSIGNED"}</span>
+      </div>
+    `;
+  };
+
   return /*html*/ `
     <div class="settings-controls">
       <div class="settings-category">
@@ -243,6 +265,31 @@ function renderControlsTab(settings: GameSettings): string {
           `}
         </div>
       </div>
+
+      <div class="settings-category">
+        <div class="settings-category-header">CONTROLLER ASSIGNMENTS</div>
+        <div class="bindings-list">
+          ${renderAssignmentSummary("P1")}
+          ${renderAssignmentSummary("P2")}
+        </div>
+        <div class="bindings-list">
+          ${(["P1", "P2"] as const).map((playerId) => `
+            <div class="binding-item">
+              <span class="binding-action">${playerId}</span>
+              <span class="binding-buttons">
+                ${controllers.map((controller) => `
+                  <button class="binding-button" type="button" data-controller-assign-player="${playerId}" data-controller-assign-index="${controller.index}">
+                    PAD ${controller.index}
+                  </button>
+                `).join("")}
+                <button class="binding-button" type="button" data-controller-assign-player="${playerId}" data-controller-assign-index="">
+                  CLEAR
+                </button>
+              </span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
       
       <div class="settings-category">
         <div class="settings-category-header">CONTROLLER SETTINGS</div>
@@ -254,39 +301,51 @@ function renderControlsTab(settings: GameSettings): string {
       <div class="settings-category">
         <div class="settings-category-header">BUTTON BINDINGS</div>
         <div class="bindings-list">
-          ${Object.entries(bindings).map(([action, buttons]) => `
+          ${GAME_ACTIONS.map((action) => `
             <div class="binding-item">
-              <span class="binding-action">${getActionName(action as GameAction)}</span>
+              <span class="binding-action">${getActionName(action)}</span>
               <span class="binding-buttons">
-                ${buttons.map(b => `<span class="binding-button">${getButtonName(b)}</span>`).join(' ')}
+                ${(bindings[action] ?? []).map((binding) => `<span class="binding-button">${getBindingLabel(binding)}</span>`).join(' ')}
+                <button
+                  class="binding-button"
+                  type="button"
+                  data-controller-rebind-action="${action}"
+                  ${pendingRebindAction === action ? 'data-controller-default-focus="true"' : ""}
+                >
+                  ${pendingRebindAction === action ? "LISTENING..." : "REBIND"}
+                </button>
               </span>
             </div>
           `).join('')}
         </div>
+        <div class="data-actions">
+          <button class="settings-reset-btn" id="resetControllerBindingsBtn" type="button">RESET CONTROLLER BINDINGS</button>
+          ${pendingRebindAction ? `<div class="data-action-warning">Press any controller button or stick direction to bind ${getActionName(pendingRebindAction)}.</div>` : ""}
+        </div>
       </div>
       
       <div class="settings-category">
-        <div class="settings-category-header">KEYBOARD CONTROLS</div>
+        <div class="settings-category-header">LIVE PROMPT PREVIEW</div>
         <div class="keyboard-bindings">
           <div class="binding-item">
-            <span class="binding-action">P1 Movement</span>
-            <span class="binding-keys">WASD</span>
+            <span class="binding-action">Confirm</span>
+            <span class="binding-keys">${(bindings.confirm ?? []).map(getBindingLabel).join(" / ")}</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">P1 Confirm / Interact / Attack</span>
-            <span class="binding-keys">Enter / E / Space</span>
+            <span class="binding-action">Cancel</span>
+            <span class="binding-keys">${(bindings.cancel ?? []).map(getBindingLabel).join(" / ")}</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">P2 Movement</span>
-            <span class="binding-keys">Arrow Keys</span>
+            <span class="binding-action">Attack</span>
+            <span class="binding-keys">${(bindings.attack ?? []).map(getBindingLabel).join(" / ")}</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">P2 Confirm / Interact / Attack</span>
-            <span class="binding-keys">Numpad Enter / Slash / Numpad 0</span>
+            <span class="binding-action">Interact</span>
+            <span class="binding-keys">${(bindings.interact ?? []).map(getBindingLabel).join(" / ")}</span>
           </div>
           <div class="binding-item">
-            <span class="binding-action">Shared Cancel / Special</span>
-            <span class="binding-keys">Escape or Backspace / Left or Right Shift</span>
+            <span class="binding-action">Toggle Surface Mode</span>
+            <span class="binding-keys">${(bindings.toggleSurfaceMode ?? []).map(getBindingLabel).join(" / ")}</span>
           </div>
         </div>
       </div>
@@ -389,6 +448,10 @@ function attachSettingsListeners(): void {
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = () => {
+      if (isControllerBindingCaptureActive()) {
+        cancelControllerBindingCapture();
+        pendingRebindAction = null;
+      }
       unregisterBaseCampReturnHotkey("settings-screen");
       if (returnDestination !== "menu") {
         returnFromBaseCampScreen(returnDestination);
@@ -410,6 +473,10 @@ function attachSettingsListeners(): void {
   const resetBtn = document.getElementById("resetBtn");
   if (resetBtn) {
     resetBtn.onclick = async () => {
+      if (isControllerBindingCaptureActive()) {
+        cancelControllerBindingCapture();
+        pendingRebindAction = null;
+      }
       if (confirm("Reset all settings to defaults?")) {
         await resetSettings();
         renderSettingsScreen(returnDestination);
@@ -485,6 +552,87 @@ function attachSettingsListeners(): void {
       }
     }
   });
+
+  app.querySelectorAll<HTMLElement>("[data-controller-assign-player]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const playerId = button.dataset.controllerAssignPlayer as "P1" | "P2" | undefined;
+      if (playerId !== "P1" && playerId !== "P2") {
+        return;
+      }
+
+      const controllerIndex = button.dataset.controllerAssignIndex;
+      const nextAssignments = {
+        ...(getSettings().controllerAssignments ?? { P1: 0, P2: 1 }),
+        [playerId]: controllerIndex === "" ? null : Number(controllerIndex),
+      };
+
+      await updateSettings({
+        controllerAssignments: nextAssignments,
+      });
+      renderSettingsScreen(returnDestination);
+    });
+  });
+
+  app.querySelectorAll<HTMLElement>("[data-controller-rebind-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.controllerRebindAction as GameAction | undefined;
+      if (!action) {
+        return;
+      }
+
+      if (pendingRebindAction === action) {
+        cancelControllerBindingCapture();
+        pendingRebindAction = null;
+        renderSettingsScreen(returnDestination);
+        return;
+      }
+
+      pendingRebindAction = action;
+      renderSettingsScreen(returnDestination);
+      startControllerBindingCapture({
+        onCapture: async (binding) => {
+          const conflictingActions = findActionsUsingBinding(binding, { excludeAction: action });
+          if (conflictingActions.length > 0) {
+            alert(`${getBindingLabel(binding)} is already assigned to ${conflictingActions.map(getActionName).join(", ")}.`);
+            pendingRebindAction = null;
+            renderSettingsScreen(returnDestination);
+            return;
+          }
+
+          const nextBindings = {
+            ...getSettings().controllerBindings,
+            [action]: [binding],
+          };
+
+          pendingRebindAction = null;
+          await updateSettings({
+            controllerBindings: nextBindings,
+          });
+          renderSettingsScreen(returnDestination);
+        },
+        onCancel: () => {
+          pendingRebindAction = null;
+          renderSettingsScreen(returnDestination);
+        },
+      });
+    });
+  });
+
+  const resetControllerBindingsBtn = document.getElementById("resetControllerBindingsBtn");
+  if (resetControllerBindingsBtn) {
+    resetControllerBindingsBtn.addEventListener("click", async () => {
+      if (isControllerBindingCaptureActive()) {
+        cancelControllerBindingCapture();
+        pendingRebindAction = null;
+      }
+
+      await updateSettings({
+        controllerBindings: { ...DEFAULT_SETTINGS.controllerBindings },
+        controllerAssignments: { ...DEFAULT_SETTINGS.controllerAssignments },
+      });
+      renderSettingsScreen(returnDestination);
+    });
+  }
   
   // Load saves if on saves tab
   if (currentTab === "saves") {

@@ -65,7 +65,7 @@ export function renderQuestBoardScreen(returnTo: BaseCampReturnTo = "basecamp"):
       <div class="quest-board-header town-screen__header">
         <div class="quest-board-header-left town-screen__titleblock">
           <h1 class="quest-board-title">QUEST BOARD</h1>
-          <div class="quest-board-subtitle">S/COM_OS // OPERATIONS_TERMINAL</div>
+          <div class="quest-board-subtitle">H.A.V.E.N. // THEATER DIRECTIVES + CONTRACTS</div>
         </div>
         <div class="quest-board-header-right town-screen__header-right">
           <div class="quest-board-stats-group">
@@ -118,7 +118,7 @@ function renderAvailableQuests(quests: Quest[]): string {
       <div class="quest-board-empty">
         <div class="empty-icon">📭</div>
         <div class="empty-title">NO AVAILABLE QUESTS</div>
-        <div class="empty-text">Check back later for new operations.</div>
+        <div class="empty-text">No new theater directives are waiting at HAVEN.</div>
       </div>
     `;
   }
@@ -142,7 +142,7 @@ function renderActiveQuests(quests: Quest[]): string {
         <div class="quest-window quest-window--story">
           <div class="quest-window-header">
             <h2 class="quest-window-title">STORY QUESTS</h2>
-            <div class="quest-window-subtitle">Main campaign objectives</div>
+            <div class="quest-window-subtitle">Authored theater directives</div>
           </div>
           <div class="quest-window-body">
             <div class="quest-list">
@@ -154,13 +154,13 @@ function renderActiveQuests(quests: Quest[]): string {
         <div class="quest-window quest-window--story">
           <div class="quest-window-header">
             <h2 class="quest-window-title">STORY QUESTS</h2>
-            <div class="quest-window-subtitle">Main campaign objectives</div>
+            <div class="quest-window-subtitle">Authored theater directives</div>
           </div>
           <div class="quest-window-body">
             <div class="quest-board-empty">
               <div class="empty-icon">📋</div>
               <div class="empty-title">NO STORY QUESTS</div>
-              <div class="empty-text">Complete operations to unlock story quests.</div>
+              <div class="empty-text">No standing directives are currently waiting for deployment.</div>
             </div>
           </div>
         </div>
@@ -171,7 +171,7 @@ function renderActiveQuests(quests: Quest[]): string {
         <div class="quest-window quest-window--endless">
           <div class="quest-window-header">
             <h2 class="quest-window-title">ENDLESS QUESTS</h2>
-            <div class="quest-window-subtitle">Auto-generated · Complete for rewards</div>
+            <div class="quest-window-subtitle">Auto-generated theater contracts</div>
           </div>
           <div class="quest-window-body">
             <div class="quest-list">
@@ -183,13 +183,13 @@ function renderActiveQuests(quests: Quest[]): string {
         <div class="quest-window quest-window--endless">
           <div class="quest-window-header">
             <h2 class="quest-window-title">ENDLESS QUESTS</h2>
-            <div class="quest-window-subtitle">Auto-generated · Complete for rewards</div>
+            <div class="quest-window-subtitle">Auto-generated theater contracts</div>
           </div>
           <div class="quest-window-body">
             <div class="quest-board-empty">
               <div class="empty-icon">⚡</div>
               <div class="empty-title">NO ENDLESS QUESTS</div>
-              <div class="empty-text">Quests are automatically generated. Check back soon!</div>
+              <div class="empty-text">New atlas-aligned contracts will spool in automatically.</div>
             </div>
           </div>
         </div>

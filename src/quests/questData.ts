@@ -10,171 +10,161 @@ import {
 } from "../content/technica";
 
 /**
- * Quest database - all available quest definitions
- * TODO: Move to JSON file or external data source for easier editing
+ * Quest database - authored standing contracts aligned to the theater / atlas runtime.
+ * Imported Technica quests still coexist with these.
  */
 export const QUEST_DATABASE: Record<string, Quest> = {
-  // Tier 1 - Beginner Quests
-  quest_hunt_scouts: {
-    id: "quest_hunt_scouts",
-    title: "Scout Patrol",
-    description: "Eliminate 3 enemy scouts in the field. Standard engagement protocol.",
-    questType: "hunt",
-    difficultyTier: 1,
-    objectives: [
-      {
-        id: "obj_kill_enemies",
-        type: "kill_enemies",
-        target: 3,
-        current: 0,
-        required: 3,
-        description: "Defeat 3 enemies in battle",
-      },
-    ],
-    rewards: {
-      wad: 50,
-      xp: 100,
-      resources: {
-        metalScrap: 5,
-      },
-    },
-    status: "available",
-  },
-
-  quest_collect_metal: {
-    id: "quest_collect_metal",
-    title: "Scrap Collection",
-    description: "Gather 10 Metal Scrap from field operations or battles.",
-    questType: "collection",
-    difficultyTier: 1,
-    objectives: [
-      {
-        id: "obj_collect_metal",
-        type: "collect_resource",
-        target: "metalScrap",
-        current: 0,
-        required: 10,
-        description: "Collect 10 Metal Scrap",
-      },
-    ],
-    rewards: {
-      wad: 30,
-      resources: {
-        metalScrap: 5, // Bonus on top of collected
-      },
-    },
-    status: "available",
-  },
-
-  quest_clear_first_floor: {
-    id: "quest_clear_first_floor",
-    title: "Floor Clearance",
-    description: "Complete all nodes on the first floor of an operation.",
+  quest_secure_foothold: {
+    id: "quest_secure_foothold",
+    title: "Secure The Foothold",
+    description: "Chart and secure the first logistics spine around HAVEN.",
     questType: "clear",
     difficultyTier: 1,
     objectives: [
       {
-        id: "obj_clear_floor",
-        type: "clear_node",
+        id: "obj_secure_floor_one_rooms",
+        type: "secure_rooms",
         target: "floor_1",
         current: 0,
+        required: 6,
+        description: "Secure 6 rooms across Floor 1 sectors",
+        criteria: {
+          floorOrdinal: 1,
+        },
+      },
+    ],
+    rewards: {
+      wad: 80,
+      xp: 100,
+      resources: {
+        metalScrap: 8,
+        wood: 4,
+      },
+    },
+    status: "available",
+  },
+
+  quest_establish_command: {
+    id: "quest_establish_command",
+    title: "Establish Command",
+    description: "Field a command C.O.R.E. so theater squads can stay under direct control.",
+    questType: "delivery",
+    difficultyTier: 1,
+    objectives: [
+      {
+        id: "obj_build_command_center",
+        type: "build_core",
+        target: "command_center",
+        current: 0,
         required: 1,
-        description: "Clear all nodes on Floor 1",
+        description: "Build 1 Command Center C.O.R.E. on Floor 1",
+        criteria: {
+          floorOrdinal: 1,
+          coreType: "command_center",
+        },
       },
     ],
     rewards: {
       wad: 100,
-      xp: 200,
+      xp: 125,
       resources: {
-        metalScrap: 10,
-        wood: 5,
-      },
-    },
-    status: "available",
-  },
-
-  // Tier 2 - Intermediate Quests
-  quest_hunt_elite: {
-    id: "quest_hunt_elite",
-    title: "Elite Elimination",
-    description: "Defeat 5 enemies in tactical battles. Focus on quality engagements.",
-    questType: "hunt",
-    difficultyTier: 2,
-    objectives: [
-      {
-        id: "obj_kill_enemies",
-        type: "kill_enemies",
-        target: 5,
-        current: 0,
-        required: 5,
-        description: "Defeat 5 enemies in battle",
-      },
-    ],
-    rewards: {
-      wad: 150,
-      xp: 300,
-      resources: {
-        metalScrap: 10,
-        wood: 5,
         chaosShards: 2,
+        steamComponents: 2,
       },
-      cards: ["core_basic_attack"], // Example card reward
     },
     status: "available",
   },
 
-  quest_delivery_equipment: {
-    id: "quest_delivery_equipment",
-    title: "Equipment Delivery",
-    description: "Craft or acquire 1 piece of equipment and add it to your inventory.",
+  quest_restore_power_lane: {
+    id: "quest_restore_power_lane",
+    title: "Restore Power Lane",
+    description: "Rebuild a working power route deep enough to hold a contested branch.",
     questType: "delivery",
     difficultyTier: 2,
     objectives: [
       {
-        id: "obj_acquire_equipment",
-        type: "collect_item",
-        target: "equipment",
+        id: "obj_route_power_floor_one",
+        type: "route_power",
+        target: 40,
         current: 0,
-        required: 1,
-        description: "Acquire 1 piece of equipment",
+        required: 40,
+        description: "Route 40 W to an objective or relay room on Floor 1",
+        criteria: {
+          floorOrdinal: 1,
+          roomTag: "objective",
+        },
       },
     ],
     rewards: {
-      wad: 200,
+      wad: 140,
+      xp: 160,
       resources: {
-        steamComponents: 3,
+        metalScrap: 10,
+        steamComponents: 4,
       },
     },
     status: "available",
   },
 
-  // Tier 3 - Advanced Quests
-  quest_boss_hunt: {
-    id: "quest_boss_hunt",
-    title: "Boss Elimination",
-    description: "Defeat a boss enemy in an operation. High risk, high reward.",
-    questType: "hunt",
-    difficultyTier: 3,
+  quest_signal_lock: {
+    id: "quest_signal_lock",
+    title: "Signal Lock",
+    description: "Bring the floor under comms control so HAVEN can coordinate deeper pushes.",
+    questType: "exploration",
+    difficultyTier: 2,
     objectives: [
       {
-        id: "obj_kill_boss",
-        type: "kill_specific_enemy",
-        target: "boss",
+        id: "obj_establish_comms_floor_one",
+        type: "establish_comms",
+        target: 30,
         current: 0,
-        required: 1,
-        description: "Defeat 1 boss enemy",
+        required: 30,
+        description: "Establish 30 BW in an objective or relay room on Floor 1",
+        criteria: {
+          floorOrdinal: 1,
+          roomTag: "objective",
+        },
       },
     ],
     rewards: {
-      wad: 500,
-      xp: 500,
+      wad: 150,
+      xp: 180,
       resources: {
-        metalScrap: 20,
-        wood: 10,
-        chaosShards: 5,
-        steamComponents: 5,
+        chaosShards: 3,
+        wood: 6,
       },
-      equipment: [], // Will be populated with random equipment
+    },
+    status: "available",
+  },
+
+  quest_floor_one_stabilized: {
+    id: "quest_floor_one_stabilized",
+    title: "Floor One Stabilized",
+    description: "Complete enough sector objectives to lock down the first ring around HAVEN.",
+    questType: "clear",
+    difficultyTier: 3,
+    objectives: [
+      {
+        id: "obj_complete_floor_one_sectors",
+        type: "complete_sector_objectives",
+        target: "floor_1",
+        current: 0,
+        required: 4,
+        description: "Complete 4 sector objectives on Floor 1",
+        criteria: {
+          floorOrdinal: 1,
+        },
+      },
+    ],
+    rewards: {
+      wad: 220,
+      xp: 250,
+      resources: {
+        metalScrap: 12,
+        wood: 8,
+        chaosShards: 4,
+        steamComponents: 4,
+      },
     },
     status: "available",
   },
@@ -187,7 +177,7 @@ export function getAvailableQuests(): Quest[] {
   return [
     ...Object.values(QUEST_DATABASE).filter((quest) => !isTechnicaContentDisabled("quest", quest.id)),
     ...getAllImportedQuests(),
-  ].filter(q => q.status === "available");
+  ].filter((q) => q.status === "available");
 }
 
 /**
@@ -209,9 +199,9 @@ export function cloneQuest(quest: Quest): Quest {
     ...quest,
     status: "active",
     acceptedAt: Date.now(),
-    objectives: quest.objectives.map(obj => ({
+    objectives: quest.objectives.map((obj) => ({
       ...obj,
-      current: 0, // Reset progress
+      current: 0,
     })),
   };
 }

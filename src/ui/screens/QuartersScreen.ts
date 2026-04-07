@@ -8,6 +8,7 @@ import {
   getUnreadCount,
   markMailRead,
   MailItem,
+  syncImportedMailUnlocks,
 } from "../../core/mailSystem";
 import {
   getQuartersBuffsState,
@@ -97,6 +98,8 @@ export function renderQuartersScreen(
 ): void {
   const root = document.getElementById("app");
   if (!root) return;
+
+  syncImportedMailUnlocks();
 
   // If called from field mode, render the quarters field map instead
   if (returnTo === "field" && !initialPanel) {

@@ -8,9 +8,12 @@ import { GameState } from "../core/types";
 import { getAllStarterEquipment } from "../core/equipment";
 import { getAllImportedGear } from "../content/technica";
 import { createNewGameState } from "../core/initialState";
+import { withNormalizedLobbyState } from "../core/multiplayerLobby";
 import { withNormalizedNotesState } from "../core/notesSystem";
 import { withNormalizedSessionState } from "../core/session";
+import { withNormalizedFoundryState } from "../core/foundrySystem";
 import { withNormalizedSchemaState } from "../core/schemaSystem";
+import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -60,7 +63,15 @@ function syncPublishedTechnicaGear(state: GameState): GameState {
 }
 
 function syncSchemaState(state: GameState): GameState {
-  return withNormalizedSessionState(withNormalizedNotesState(withNormalizedSchemaState(state)));
+  return withNormalizedLobbyState(
+    withNormalizedSessionState(
+      withNormalizedNotesState(
+        withNormalizedFoundryState(
+          withNormalizedSchemaState(withNormalizedTheaterDeploymentPresetState(state)),
+        ),
+      ),
+    ),
+  );
 }
 
 // ----------------------------------------------------------------------------

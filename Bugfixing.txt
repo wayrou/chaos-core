@@ -1,0 +1,18 @@
+Bug fixing:
+-In the atlas screen, make sure that the sector operations window doesn't overlap the floor switcher
+by default.
+-Auto equip and auto-equip all buttons don't work within unit management screens.
+-"debug: give all equipment" needs to actually give the user all the equipment in the game
+-Annex building currently isn't working- clicking to build an annex doesn't do anything
+
+Card changes:
+-The "Move+" card currently doesn't grant 2 extra movement to the user. Upon use, the user should
+immediately be able to move two more squares.
+-Revise "wait" card effect to end the unit's turn immediately and reduce strain by 2.
+-The user should be able to turn each unit on auto from the active unit window, with the settings
+of daring and undaring. This unit will move and play cards on its own until auto is switched off.
+-The volley card currently doesn' affect more than one enemy unit- it should target all nearby 
+enemy units.
+
+New features:
+-Upgraded battle victory screen

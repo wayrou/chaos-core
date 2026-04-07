@@ -54,7 +54,15 @@ export const BUILT_IN_NPCS: BuiltInNpcDefinition[] = [
     "routeMode": "fixed",
     "dialogueId": "tester_dialogue",
   },
-  { id: "npc_commander", name: "Commander", mapId: "base_camp", tileX: 10, tileY: 10, routeMode: "random", dialogueId: "npc_commander" },
+  {
+    "id": "npc_commander",
+    "name": "Commander",
+    "mapId": "base_camp",
+    "tileX": 43,
+    "tileY": 8,
+    "routeMode": "random",
+    "dialogueId": "npc_commander",
+  },
   { id: "npc_researcher", name: "Researcher", mapId: "base_camp", tileX: 4, tileY: 10, routeMode: "random", dialogueId: "npc_researcher" },
   { id: "npc_sentinel", name: "Sentinel", mapId: "base_camp", tileX: 18, tileY: 12, routeMode: "random", dialogueId: "npc_sentinel" },
 ];
@@ -318,10 +326,8 @@ export const NPC_DIALOGUE: Record<string, string[]> = {
     "Good gear makes the difference between life and death out there.",
     "Stop by the shop if you need upgrades. I keep it stocked.",
   ],
-  npc_commander: [
-    "Operations are running smoothly, but we need more intel.",
-    "The field nodes are our primary source of intelligence.",
-    "Keep pushing forward, commander. We're counting on you.",
+  "npc_commander": [
+    "Oh, okay then.",
   ],
   npc_researcher: [
     "I've been studying the chaos shards we've collected.",

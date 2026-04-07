@@ -340,10 +340,9 @@ export function calculateBattleRewards(template: BattleTemplate): {
  */
 export async function rollUnlockableReward(): Promise<string | null> {
   const { getRewardEligibleUnlockables, getUnownedUnlockables } = await import("./unlockables");
-  const { getAllOwnedUnlockableIds } = await import("./unlockableOwnership");
-  
-  const owned = getAllOwnedUnlockableIds();
-  const allOwnedIds = [...owned.chassis, ...owned.doctrines];
+const { getAllOwnedUnlockableIdList } = await import("./unlockableOwnership");
+
+const allOwnedIds = getAllOwnedUnlockableIdList();
   
   const eligible = getRewardEligibleUnlockables();
   const unowned = getUnownedUnlockables(allOwnedIds);

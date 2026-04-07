@@ -7,16 +7,11 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderRosterScreen } from "./RosterScreen";
 import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
-import { renderOperationMapScreen } from "./OperationMapScreen";
-import { saveGame, loadGame } from "../../core/saveSystem";
-import { getSettings, updateSettings } from "../../core/settings";
-import { initControllerSupport } from "../../core/controllerSupport";
 
 import {
   Equipment,
   WeaponEquipment,
   UnitLoadout,
-  EquipSlot,
   UnitClass,
   calculateEquipmentStats,
   getAllStarterEquipment,
@@ -25,18 +20,33 @@ import {
   buildDeckFromLoadout,
   canEquipWeapon,
   EquipmentCard,
-  CLASS_WEAPON_RESTRICTIONS,
 } from "../../core/equipment";
-import { getUnitPortraitPath } from "../../core/portraits";
+import { getUnitManagementStandIconPath } from "../../core/portraits";
 import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
 import { HardpointState, FieldModInstance } from "../../core/fieldMods";
-import { getFieldModDef, getAllFieldModDefs } from "../../core/fieldModDefinitions";
-import { getTriggerLabel } from "../../core/fieldModStrings";
+import { getFieldModDef } from "../../core/fieldModDefinitions";
 
 type UnitDetailReturnTo = "basecamp" | "field" | "esc" | "loadout" | "operation";
+type LoadoutSlot = keyof UnitLoadout;
+const SAMPLE_DRAW_HAND_SIZE = 5;
+
+interface UnitDetailSampleDrawState {
+  unitId: string;
+  deckSignature: string;
+  drawPile: string[];
+  discardPile: string[];
+  hand: string[];
+  drawCount: number;
+}
+
 let currentUnitDetailReturnTo: UnitDetailReturnTo = "basecamp";
 let unitDetailEscHandler: ((e: KeyboardEvent) => void) | null = null;
+let unitDetailSampleDrawState: UnitDetailSampleDrawState | null = null;
+
+function returnToActiveOperationRoster(): void {
+  renderRosterScreen("operation");
+}
 
 function unregisterUnitDetailReturnHotkey(): void {
   if (!unitDetailEscHandler) return;
@@ -44,7 +54,7 @@ function unregisterUnitDetailReturnHotkey(): void {
   unitDetailEscHandler = null;
 }
 
-function registerUnitDetailReturnHotkey(unitId: string, returnTo: UnitDetailReturnTo): void {
+function registerUnitDetailReturnHotkey(_unitId: string, returnTo: UnitDetailReturnTo): void {
   unregisterUnitDetailReturnHotkey();
 
   unitDetailEscHandler = (e: KeyboardEvent) => {
@@ -60,7 +70,7 @@ function registerUnitDetailReturnHotkey(unitId: string, returnTo: UnitDetailRetu
     unregisterUnitDetailReturnHotkey();
 
     if (returnTo === "operation") {
-      renderOperationMapScreen();
+      returnToActiveOperationRoster();
       return;
     }
 
@@ -94,8 +104,8 @@ function formatClassName(cls: UnitClass): string {
   return names[cls] || cls;
 }
 
-function formatSlotName(slot: EquipSlot): string {
-  const names: Record<EquipSlot, string> = {
+function formatSlotName(slot: LoadoutSlot): string {
+  const names: Record<LoadoutSlot, string> = {
     primaryWeapon: "Primary Weapon",
     secondaryWeapon: "Secondary Weapon",
     helmet: "Helmet",
@@ -126,6 +136,113 @@ function getDeckCardGlyph(type: EquipmentCard["type"]): string {
   }
 }
 
+function shuffleSampleDeck<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function getSampleDeckSignature(unitId: string, deck: string[]): string {
+  return `${unitId}::${deck.join("|")}`;
+}
+
+function resetUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
+  if (deck.length === 0) {
+    unitDetailSampleDrawState = null;
+    return null;
+  }
+
+  unitDetailSampleDrawState = {
+    unitId,
+    deckSignature: getSampleDeckSignature(unitId, deck),
+    drawPile: shuffleSampleDeck(deck),
+    discardPile: [],
+    hand: [],
+    drawCount: 0,
+  };
+
+  return unitDetailSampleDrawState;
+}
+
+function ensureUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
+  const deckSignature = getSampleDeckSignature(unitId, deck);
+  if (!unitDetailSampleDrawState || unitDetailSampleDrawState.deckSignature !== deckSignature) {
+    return resetUnitDetailSampleDrawState(unitId, deck);
+  }
+  return unitDetailSampleDrawState;
+}
+
+function drawNextUnitDetailSampleHand(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
+  const state = ensureUnitDetailSampleDrawState(unitId, deck);
+  if (!state) return null;
+
+  let drawPile = [...state.drawPile];
+  let discardPile = [...state.discardPile];
+
+  if (state.hand.length > 0) {
+    discardPile.push(...state.hand);
+  }
+
+  const hand: string[] = [];
+  while (hand.length < SAMPLE_DRAW_HAND_SIZE && (drawPile.length > 0 || discardPile.length > 0)) {
+    if (drawPile.length === 0 && discardPile.length > 0) {
+      drawPile = shuffleSampleDeck(discardPile);
+      discardPile = [];
+    }
+
+    const nextCard = drawPile.shift();
+    if (!nextCard) break;
+    hand.push(nextCard);
+  }
+
+  unitDetailSampleDrawState = {
+    ...state,
+    drawPile,
+    discardPile,
+    hand,
+    drawCount: state.drawCount + 1,
+  };
+
+  return unitDetailSampleDrawState;
+}
+
+function renderDeckCard(
+  card: EquipmentCard,
+  options: {
+    footerStats?: string[];
+    extraClasses?: string[];
+  } = {},
+): string {
+  const typeClass = `deck-card--${card.type}`;
+  const footerBits = (options.footerStats ?? [])
+    .filter(Boolean)
+    .map((value) => `<span class="deck-card-stat">${value}</span>`)
+    .join("");
+  const classes = ["deck-card", typeClass, ...(options.extraClasses ?? [])]
+    .filter(Boolean)
+    .join(" ");
+
+  return `
+    <div class="${classes}">
+      <div class="deck-card-cost">${card.strainCost}</div>
+      <div class="deck-card-type">${card.type.toUpperCase()}</div>
+      <div class="deck-card-art">
+        <span class="deck-card-glyph">${getDeckCardGlyph(card.type)}</span>
+      </div>
+      <div class="deck-card-name-banner">
+        <span class="deck-card-name">${card.name}</span>
+      </div>
+      <div class="deck-card-desc">${card.description}</div>
+      <div class="deck-card-footer">
+        ${footerBits || `<span class="deck-card-stat">DECK</span>`}
+      </div>
+    </div>
+  `;
+}
+
 export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -135,7 +252,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
   const unit = state.unitsById[unitId];
   if (!unit) {
     if (returnTo === "operation") {
-      renderOperationMapScreen();
+      returnToActiveOperationRoster();
     } else {
       renderRosterScreen(returnTo === "loadout" ? "loadout" : returnTo);
     }
@@ -168,7 +285,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
   const equipmentPool = (state as any).equipmentPool || Object.keys(equipmentById);
 
-  const slots: EquipSlot[] = ["primaryWeapon", "secondaryWeapon", "helmet", "chestpiece", "accessory1", "accessory2"];
+  const slots: LoadoutSlot[] = ["primaryWeapon", "secondaryWeapon", "helmet", "chestpiece", "accessory1", "accessory2"];
 
   const equipSlotsHtml = slots
     .map((slot) => {
@@ -231,49 +348,34 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     })
     .join("");
 
-  // Auto-equip button (15d)
-  const autoEquipButton = `
-    <div class="auto-equip-section">
-      <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
-    </div>
-  `;
+  const sampleDrawState = ensureUnitDetailSampleDrawState(unitId, deck);
+  const uniqueCardCount = new Set(deck).size;
 
-  const cardCounts: Record<string, number> = {};
-  for (const cardId of deck) {
-    cardCounts[cardId] = (cardCounts[cardId] || 0) + 1;
-  }
-
-  const deckCardsHtml = Object.entries(cardCounts)
-    .map(([cardId, count]) => {
+  const deckCardsHtml = deck
+    .map((cardId) => {
       const card = cardsById[cardId];
       if (!card) return "";
 
-      const typeClass = `deck-card--${card.type}`;
-      const footerBits = [
-        card.range ? `<span class="deck-card-stat">${card.range}</span>` : "",
-        count > 1 ? `<span class="deck-card-stat">x${count}</span>` : "",
-      ].filter(Boolean).join("");
-
-      return `
-        <div class="deck-card ${typeClass}">
-          <div class="deck-card-cost">${card.strainCost}</div>
-          <div class="deck-card-type">${card.type.toUpperCase()}</div>
-          <div class="deck-card-art">
-            <span class="deck-card-glyph">${getDeckCardGlyph(card.type)}</span>
-          </div>
-          <div class="deck-card-name-banner">
-            <span class="deck-card-name">${card.name}</span>
-          </div>
-          <div class="deck-card-desc">${card.description}</div>
-          <div class="deck-card-footer">
-            ${footerBits || `<span class="deck-card-stat">DECK</span>`}
-          </div>
-        </div>
-      `;
+      return renderDeckCard(card, {
+        footerStats: card.range ? [card.range, "DECK"] : ["DECK"],
+        extraClasses: ["deck-card--compiled"],
+      });
     })
     .join("");
 
-  const portraitPath = getUnitPortraitPath(unitId);
+  const sampleHandHtml = (sampleDrawState?.hand ?? [])
+    .map((cardId) => {
+      const card = cardsById[cardId];
+      if (!card) return "";
+
+      return renderDeckCard(card, {
+        footerStats: card.range ? [card.range, "HAND"] : ["HAND"],
+        extraClasses: ["deck-card--sample"],
+      });
+    })
+    .join("");
+
+  const portraitPath = getUnitManagementStandIconPath();
 
   // Calculate PWR for the unit
   const pwr = (unit as any).pwr ?? calculatePWR({
@@ -290,7 +392,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
         <div class="unitdetail-header">
           <div class="unitdetail-header-left">
             <div class="unitdetail-portrait">
-              <img src="${portraitPath}" alt="${unit.name}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+              <img src="${portraitPath}" alt="${unit.name}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Unit_Stand_Test.png';" />
             </div>
             <div class="unitdetail-header-text">
               <div class="unitdetail-name">${unit.name}</div>
@@ -349,7 +451,55 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
             </div>
           </div>
 
-          <div class="unitdetail-columns">
+          <div class="unitdetail-section unitdetail-section--deck">
+            <div class="unitdetail-deck-toolbar">
+              <div class="unitdetail-deck-heading">
+                <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
+                <div class="unitdetail-deck-summary">
+                  <span class="unitdetail-deck-chip">UNIQUE ${uniqueCardCount}</span>
+                  <span class="unitdetail-deck-chip">DRAW PILE ${sampleDrawState?.drawPile.length ?? deck.length}</span>
+                  <span class="unitdetail-deck-chip">HAND ${sampleDrawState?.hand.length ?? 0}</span>
+                  <span class="unitdetail-deck-chip">DISCARD ${sampleDrawState?.discardPile.length ?? 0}</span>
+                </div>
+              </div>
+              <div class="unitdetail-deck-actions">
+                <div class="unitdetail-deck-actions-copy">
+                  Draw ${SAMPLE_DRAW_HAND_SIZE} cards, discard the current hand, and reshuffle automatically to keep testing the deck flow.
+                </div>
+                <div class="unitdetail-deck-action-row">
+                  <button class="unitdetail-sample-draw-btn" id="unitdetailSampleDrawBtn" ${deck.length === 0 ? "disabled" : ""}>
+                    ${sampleDrawState?.drawCount ? "DRAW NEXT HAND" : "SAMPLE DRAW"}
+                  </button>
+                  <button class="unitdetail-sample-reset-btn" id="unitdetailSampleResetBtn" ${deck.length === 0 ? "disabled" : ""}>
+                    RESET SAMPLE
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="unitdetail-sample-panel">
+              <div class="unitdetail-sample-header">
+                <div class="unitdetail-sample-title">
+                  SAMPLE HAND ${sampleDrawState?.drawCount ? `#${sampleDrawState.drawCount}` : "READY"}
+                </div>
+                <div class="unitdetail-sample-copy">
+                  ${sampleDrawState?.drawCount
+                    ? "Each new draw discards the current hand and keeps cycling through the compiled deck."
+                    : "Press SAMPLE DRAW to preview how this loadout opens before deployment."}
+                </div>
+              </div>
+              <div class="deck-grid deck-grid--sample">
+                ${sampleHandHtml || '<div class="unitdetail-sample-empty">No sample hand yet. Draw to see five live cards from the compiled deck.</div>'}
+              </div>
+            </div>
+
+            <div class="unitdetail-deck-grid-heading">FULL DECK GRID</div>
+            <div class="deck-grid deck-grid--compiled">
+              ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
+            </div>
+          </div>
+
+          <div class="unitdetail-columns unitdetail-columns--management">
             <div class="unitdetail-column">
               <div class="unitdetail-section">
                 <div class="unitdetail-section-title">EQUIPMENT (5 SLOTS)</div>
@@ -358,15 +508,6 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
                 </div>
                 <div class="equip-slots-grid">
                   ${equipSlotsHtml}
-                </div>
-              </div>
-            </div>
-
-            <div class="unitdetail-column">
-              <div class="unitdetail-section">
-                <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
-                <div class="deck-grid">
-                  ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
                 </div>
               </div>
             </div>
@@ -423,7 +564,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
   // Change/Equip buttons
   root.querySelectorAll(".equip-change-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      const slot = (e.target as HTMLElement).getAttribute("data-slot") as EquipSlot;
+      const slot = (e.target as HTMLElement).getAttribute("data-slot") as LoadoutSlot;
       if (slot) {
         openEquipModal(unitId, slot, unitClass, loadout, equipmentById, equipmentPool);
       }
@@ -434,7 +575,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
   root.querySelectorAll(".equip-unequip-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const slot = (e.target as HTMLElement).getAttribute("data-slot") as EquipSlot;
+      const slot = (e.target as HTMLElement).getAttribute("data-slot") as LoadoutSlot;
       if (slot) {
         unequipItem(unitId, slot);
       }
@@ -500,6 +641,22 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     });
   }
 
+  const sampleDrawBtn = root.querySelector("#unitdetailSampleDrawBtn");
+  if (sampleDrawBtn) {
+    sampleDrawBtn.addEventListener("click", () => {
+      drawNextUnitDetailSampleHand(unitId, deck);
+      renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+    });
+  }
+
+  const sampleResetBtn = root.querySelector("#unitdetailSampleResetBtn");
+  if (sampleResetBtn) {
+    sampleResetBtn.addEventListener("click", () => {
+      resetUnitDetailSampleDrawState(unitId, deck);
+      renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+    });
+  }
+
   // Hardpoint slot buttons
   root.querySelectorAll(".hardpoint-slot-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -522,7 +679,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
 function openEquipModal(
   unitId: string,
-  slot: EquipSlot,
+  slot: LoadoutSlot,
   unitClass: UnitClass,
   currentLoadout: UnitLoadout,
   equipmentById: Record<string, Equipment>,
@@ -783,7 +940,7 @@ function closeWeaponDetailModal(): void {
   }
 }
 
-function equipItem(unitId: string, slot: EquipSlot, equipId: string): void {
+function equipItem(unitId: string, slot: LoadoutSlot, equipId: string): void {
   updateGameState((prev) => {
     const unit = prev.unitsById[unitId];
     if (!unit) return prev;
@@ -827,7 +984,8 @@ export function autoEquipUnit(
   unitId: string,
   unitClass: UnitClass,
   equipmentById: Record<string, Equipment>,
-  equipmentPool: string[]
+  equipmentPool: string[],
+  rerender: boolean = true,
 ): void {
   const state = getGameState();
   const unit = state.unitsById[unitId];
@@ -841,20 +999,14 @@ export function autoEquipUnit(
 
   // Get available equipment
   const availableEquipment = equipmentPool
-    .map(id => equipmentById[id])
-    .filter(eq => eq !== undefined);
-
-  // Get weapon restrictions for this class
-  const allowedWeaponTypes = CLASS_WEAPON_RESTRICTIONS[unitClass] || [];
+    .map((id) => equipmentById[id])
+    .filter((eq): eq is Equipment => Boolean(eq));
 
   // Wait: The autoEquip logic is only picking the "best weapon", we want to pick the top 2 here actually
   // Find top 2 best weapons
   const bestWeapons = availableEquipment
-    .filter(eq => eq.slot === "weapon")
-    .filter(eq => {
-      const weaponType = (eq as WeaponEquipment).weaponType;
-      return allowedWeaponTypes.includes(weaponType);
-    })
+    .filter((eq) => eq.slot === "weapon")
+    .filter((eq) => canEquipWeapon(unitClass, (eq as WeaponEquipment).weaponType))
     .sort((a, b) => scoreGear(b) - scoreGear(a))
     .slice(0, 2);
 
@@ -903,10 +1055,12 @@ export function autoEquipUnit(
     };
   });
 
-  renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+  if (rerender) {
+    renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+  }
 }
 
-function unequipItem(unitId: string, slot: EquipSlot): void {
+function unequipItem(unitId: string, slot: LoadoutSlot): void {
   updateGameState((prev) => {
     const unit = prev.unitsById[unitId];
     if (!unit) return prev;
@@ -946,25 +1100,56 @@ function unequipItem(unitId: string, slot: EquipSlot): void {
 // HARDPOINTS SECTION
 // ----------------------------------------------------------------------------
 
+function getStoredUnitHardpoints(unitId: string): HardpointState {
+  const state = getGameState();
+  const activeRun = loadCampaignProgress().activeRun;
+  return activeRun?.unitHardpoints?.[unitId] || state.unitHardpoints?.[unitId] || [null, null];
+}
+
+function getStoredFieldModInventory(): FieldModInstance[] {
+  const state = getGameState();
+  const activeRun = loadCampaignProgress().activeRun;
+  return activeRun?.runFieldModInventory || state.runFieldModInventory || [];
+}
+
+function saveHardpointState(
+  unitId: string,
+  unitHardpoints: HardpointState,
+  fieldModInventory: FieldModInstance[],
+): void {
+  const progress = loadCampaignProgress();
+  if (progress.activeRun) {
+    saveCampaignProgress({
+      ...progress,
+      activeRun: {
+        ...progress.activeRun,
+        unitHardpoints: {
+          ...(progress.activeRun.unitHardpoints || {}),
+          [unitId]: unitHardpoints,
+        },
+        runFieldModInventory: fieldModInventory,
+      },
+    });
+    return;
+  }
+
+  updateGameState((prev) => ({
+    ...prev,
+    unitHardpoints: {
+      ...(prev.unitHardpoints || {}),
+      [unitId]: unitHardpoints,
+    },
+    runFieldModInventory: fieldModInventory,
+  }));
+}
+
 function renderHardpointsSection(unitId: string): string {
   const campaignProgress = loadCampaignProgress();
   const activeRun = campaignProgress.activeRun;
 
   // Get hardpoint state for this unit (2 slots per unit)
-  const unitHardpoints: HardpointState = activeRun?.unitHardpoints?.[unitId] || [null, null];
-  const runInventory = activeRun?.runFieldModInventory || [];
-
-  // Only show hardpoints section if there's an active run
-  if (!activeRun) {
-    return `
-      <div class="unitdetail-section">
-        <div class="unitdetail-section-title">HARDPOINTS (2 SLOTS)</div>
-        <div class="hardpoints-empty-message">
-          Hardpoints are only available during active operations.
-        </div>
-      </div>
-    `;
-  }
+  const unitHardpoints: HardpointState = getStoredUnitHardpoints(unitId);
+  const runInventory = getStoredFieldModInventory();
 
   const hardpointSlotsHtml = unitHardpoints.map((modInstance, index) => {
     const slotNumber = index + 1;
@@ -1002,7 +1187,9 @@ function renderHardpointsSection(unitId: string): string {
     `;
   }).join("");
 
-  // Available mods in run inventory
+  const inventoryLabel = activeRun ? "AVAILABLE FIELD MODS" : "FIELD MOD LOCKER";
+
+  // Available mods in locker inventory
   const availableModsHtml = runInventory.length > 0
     ? runInventory.map(modInstance => {
       const modDef = getFieldModDef(modInstance.defId);
@@ -1021,7 +1208,7 @@ function renderHardpointsSection(unitId: string): string {
           </div>
         `;
     }).join("")
-    : '<div class="hardpoints-empty-inventory">No field mods available in run inventory.</div>';
+    : '<div class="hardpoints-empty-inventory">No field mods currently available.</div>';
 
   return `
     <div class="unitdetail-section">
@@ -1030,7 +1217,7 @@ function renderHardpointsSection(unitId: string): string {
         ${hardpointSlotsHtml}
       </div>
       <div class="hardpoints-inventory">
-        <div class="hardpoints-inventory-title">AVAILABLE FIELD MODS</div>
+        <div class="hardpoints-inventory-title">${inventoryLabel}</div>
         <div class="hardpoints-inventory-list">
           ${availableModsHtml}
         </div>
@@ -1044,13 +1231,8 @@ function renderHardpointsSection(unitId: string): string {
 // ----------------------------------------------------------------------------
 
 function openHardpointModal(unitId: string, hardpointIndex: number): void {
-  const campaignProgress = loadCampaignProgress();
-  const activeRun = campaignProgress.activeRun;
-
-  if (!activeRun) return;
-
-  const unitHardpoints: HardpointState = activeRun.unitHardpoints?.[unitId] || [null, null];
-  const runInventory = activeRun.runFieldModInventory || [];
+  const unitHardpoints: HardpointState = getStoredUnitHardpoints(unitId);
+  const runInventory = getStoredFieldModInventory();
   const currentMod = unitHardpoints[hardpointIndex];
 
   // If there's a mod, remove it
@@ -1061,20 +1243,7 @@ function openHardpointModal(unitId: string, hardpointIndex: number): void {
     // Return mod to inventory
     const newInventory = [...runInventory, currentMod];
 
-    const progress = loadCampaignProgress();
-    if (progress.activeRun) {
-      saveCampaignProgress({
-        ...progress,
-        activeRun: {
-          ...progress.activeRun,
-          unitHardpoints: {
-            ...(progress.activeRun.unitHardpoints || {}),
-            [unitId]: newHardpoints,
-          },
-          runFieldModInventory: newInventory,
-        },
-      });
-    }
+    saveHardpointState(unitId, newHardpoints, newInventory);
 
     renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
     return;
@@ -1085,13 +1254,8 @@ function openHardpointModal(unitId: string, hardpointIndex: number): void {
 }
 
 function openHardpointSelectModal(unitId: string, modInstanceId: string | null, targetHardpointIndex?: number): void {
-  const campaignProgress = loadCampaignProgress();
-  const activeRun = campaignProgress.activeRun;
-
-  if (!activeRun) return;
-
-  const unitHardpoints: HardpointState = activeRun.unitHardpoints?.[unitId] || [null, null];
-  const runInventory = activeRun.runFieldModInventory || [];
+  const unitHardpoints: HardpointState = getStoredUnitHardpoints(unitId);
+  const runInventory = getStoredFieldModInventory();
 
   // If modInstanceId provided, find available hardpoints
   // If targetHardpointIndex provided, use that
@@ -1118,20 +1282,7 @@ function openHardpointSelectModal(unitId: string, modInstanceId: string | null, 
     // Remove from inventory
     const newInventory = runInventory.filter(m => m.instanceId !== modInstanceId);
 
-    const progress = loadCampaignProgress();
-    if (progress.activeRun) {
-      saveCampaignProgress({
-        ...progress,
-        activeRun: {
-          ...progress.activeRun,
-          unitHardpoints: {
-            ...(progress.activeRun.unitHardpoints || {}),
-            [unitId]: newHardpoints,
-          },
-          runFieldModInventory: newInventory,
-        },
-      });
-    }
+    saveHardpointState(unitId, newHardpoints, newInventory);
 
     renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
   }

@@ -1,6 +1,8 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import {
   computeLoad,
+  getMuleUpgradeWadCost,
+  getNextMuleClass,
   upgradeMuleClass,
   MULE_CLASS_CAPS,
 } from "../../core/inventory";
@@ -22,8 +24,13 @@ import {
   registerBaseCampReturnHotkey,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
+
+function formatWadAmount(amount: number): string {
+  return new Intl.NumberFormat("en-US").format(Math.max(0, Math.floor(amount)));
+}
 
 function renderBar(label: string, current: number, cap: number, unit: string): string {
   const pct = current / cap;
@@ -132,8 +139,20 @@ function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
   const muleBtn = root.querySelector<HTMLButtonElement>(".mule-upgrade-btn");
   if (muleBtn) {
     muleBtn.addEventListener("click", () => {
+      const currentState = getGameState();
+      const cost = getMuleUpgradeWadCost(currentState.inventory.muleClass);
+      const nextClass = getNextMuleClass(currentState.inventory.muleClass);
+      if (!nextClass || cost === null) {
+        return;
+      }
+      if ((currentState.wad ?? 0) < cost) {
+        alert(`Insufficient WAD. Need ${formatWadAmount(cost)} to upgrade M.U.L.E. Class ${currentState.inventory.muleClass} to ${nextClass}.`);
+        return;
+      }
+
       updateGameState((prev) => ({
         ...prev,
+        wad: Math.max(0, (prev.wad ?? 0) - cost),
         inventory: upgradeMuleClass(prev.inventory),
       }));
       renderInventoryScreen(returnTo);
@@ -271,6 +290,8 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
     console.error("Missing #app element in index.html");
     return;
   }
+  document.body.setAttribute("data-screen", "inventory");
+  clearControllerContext();
 
   const state = getGameState();
   const inv: InventoryState = state.inventory;
@@ -281,6 +302,10 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
   const forwardLockerFolders = folderSummaries.filter((folder) => folder.forwardLockerItems.length > 0);
   const load = computeLoad(inv);
   const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
+  const nextMuleClass = getNextMuleClass(inv.muleClass);
+  const muleUpgradeWadCost = getMuleUpgradeWadCost(inv.muleClass);
+  const canUpgradeMule = Boolean(nextMuleClass && muleUpgradeWadCost !== null);
+  const canAffordMuleUpgrade = canUpgradeMule && (state.wad ?? 0) >= (muleUpgradeWadCost ?? 0);
   const caps = {
     mass: muleCaps.massKg,
     bulk: muleCaps.bulkBu,
@@ -319,15 +344,17 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
               <div class="mule-class-display">
                 <div class="mule-class-label">MULE SYSTEM</div>
                 <div class="mule-class-value">CLASS ${inv.muleClass}</div>
+                <div class="inventory-column-subtitle">
+                  ${nextMuleClass && muleUpgradeWadCost !== null
+                    ? `Next Class ${nextMuleClass} // Upgrade Cost ${formatWadAmount(muleUpgradeWadCost)} WAD // Current WAD ${formatWadAmount(state.wad ?? 0)}`
+                    : `Maximum M.U.L.E. class reached // Current WAD ${formatWadAmount(state.wad ?? 0)}`}
+                </div>
               </div>
-              <button class="mule-upgrade-btn" type="button">UPGRADE MULE</button>
-            </div>
-
-            <div class="mule-upgrade">
-              <div class="loadout-section-title">LOADOUT SYNC</div>
-              <div class="inventory-column-subtitle">
-                This node now mirrors the ops-terminal inventory management section. Folder bundles and individual staged items carry straight into operation setup.
-              </div>
+              <button class="mule-upgrade-btn" type="button" ${!canUpgradeMule || !canAffordMuleUpgrade ? "disabled" : ""}>
+                ${nextMuleClass && muleUpgradeWadCost !== null
+                  ? `UPGRADE TO ${nextMuleClass} // ${formatWadAmount(muleUpgradeWadCost)} WAD`
+                  : "MULE MAXED"}
+              </button>
             </div>
           </div>
 
@@ -392,4 +419,5 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
   `;
 
   attachInventoryManagementListeners(returnTo);
+  updateFocusableElements();
 }

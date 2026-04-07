@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "mail_foundry_dispatch",
+  "sender": "Quartermaster Vey",
+  "subject": "Foundry Allotment Approved",
+  "category": "official",
+  "content": "Your requisition for the foundry stabilizer kit has been approved. Report to the lower stores before next deployment.\n\nBring the sealant canister with you. Maintenance signed off on the transfer, but they want visual confirmation before they release the second crate.",
+  "unlockAfterFloor": 0,
+  "requiredDialogueIds": [
+    "npc_commander"
+  ],
+  "requiredGearIds": [],
+  "requiredItemIds": [
+    "item_foundry_sealant"
+  ],
+  "requiredSchemaIds": [],
+  "requiredFieldModIds": [],
+  "createdAt": "2026-04-07T02:57:33.748Z",
+  "updatedAt": "2026-04-07T03:16:04.936Z"
+}

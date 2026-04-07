@@ -12,8 +12,10 @@ export type CardId = string;
 export type RoomId = string;
 export const LOCAL_PLAYER_IDS = ["P1", "P2"] as const;
 export const SESSION_PLAYER_SLOTS = ["P1", "P2", "P3", "P4"] as const;
+export const NETWORK_PLAYER_SLOTS = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"] as const;
 export type PlayerSlot = typeof LOCAL_PLAYER_IDS[number];
 export type SessionPlayerSlot = typeof SESSION_PLAYER_SLOTS[number];
+export type NetworkPlayerSlot = typeof NETWORK_PLAYER_SLOTS[number];
 export type PlayerId = PlayerSlot;
 export type PlayerInputSource =
   | "keyboard1"
@@ -31,6 +33,11 @@ export type UnitOwnership = PlayerSlot;
 export type EconomyPreset = "shared" | "partitioned";
 export type ResourceTransferKind = "wad" | "resource" | "item";
 export type ReconnectStagingState = "haven" | "staging" | "theater" | "battle" | "disconnected" | "rejoining";
+export type LobbyTransportState = "local_preview" | "hosting" | "joining" | "connected" | "reconnecting" | "closed";
+export type SkirmishObjectiveType = "elimination" | "control_relay" | "breakthrough";
+export type LobbyChallengeStatus = "pending" | "accepted" | "declined" | "cancelled";
+export type LobbySkirmishIntermissionDecision = "redraft" | "reuse";
+export type LobbyCoopOperationsStatus = "staging" | "active";
 
 export type WeaponType =
   | "sword"
@@ -259,6 +266,19 @@ export interface TheaterAssignment {
   stagingState: ReconnectStagingState;
 }
 
+export interface PendingTheaterBattleConfirmationState {
+  roomId: RoomId;
+  previousRoomId: RoomId;
+  roomLabel: string;
+  squadId: string | null;
+}
+
+export type CoopTheaterCommand =
+  | { type: "move_to_room"; roomId: RoomId }
+  | { type: "confirm_pending_battle" }
+  | { type: "fallback_pending_battle" }
+  | { type: "refuse_defense"; roomId?: RoomId | null };
+
 export interface SessionPlayerState {
   slot: SessionPlayerSlot;
   presence: PlayerPresence;
@@ -297,9 +317,127 @@ export interface SessionState {
   pendingTransfers: TradeTransfer[];
   players: Record<SessionPlayerSlot, SessionPlayerState>;
   theaterAssignments: Record<SessionPlayerSlot, TheaterAssignment>;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
   activeBattleId: string | null;
   campaign: CampaignState;
 }
+
+export interface LobbyAvatarState {
+  x: number;
+  y: number;
+  facing: "north" | "south" | "east" | "west";
+  mapId: string | null;
+  updatedAt: number;
+}
+
+export interface LobbyMember {
+  slot: NetworkPlayerSlot;
+  callsign: string;
+  presence: PlayerPresence;
+  authorityRole: AuthorityRole;
+  connected: boolean;
+  joinedAt: number;
+  lastHeartbeatAt: number | null;
+}
+
+export interface SkirmishRoundSpec {
+  id: string;
+  gridWidth: number;
+  gridHeight: number;
+  objectiveType: SkirmishObjectiveType;
+}
+
+export interface SkirmishPlaylist {
+  rounds: SkirmishRoundSpec[];
+}
+
+export interface LobbyChallenge {
+  challengeId: string;
+  challengerSlot: NetworkPlayerSlot;
+  challengeeSlot: NetworkPlayerSlot;
+  challengerCallsign: string;
+  challengeeCallsign: string;
+  playlist: SkirmishPlaylist;
+  status: LobbyChallengeStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LobbySkirmishActivity {
+  activityId: string;
+  challengerSlot: NetworkPlayerSlot;
+  challengeeSlot: NetworkPlayerSlot;
+  challengerCallsign: string;
+  challengeeCallsign: string;
+  playlist: SkirmishPlaylist;
+  currentRoundIndex: number;
+  status: "draft" | "confirmation" | "battle" | "result" | "intermission";
+  matchSnapshot: string;
+  activeBattlePayload: string | null;
+  nextRoundDecision: LobbySkirmishIntermissionDecision | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LobbyCoopParticipantState {
+  slot: NetworkPlayerSlot;
+  callsign: string;
+  authorityRole: AuthorityRole;
+  selected: boolean;
+  connected: boolean;
+  presence: PlayerPresence;
+  sessionSlot: SessionPlayerSlot | null;
+  stagingState: ReconnectStagingState;
+  lastSafeMapId: string | null;
+}
+
+export interface LobbyCoopOperationsActivity {
+  activityId: string;
+  sessionId: string | null;
+  status: LobbyCoopOperationsStatus;
+  selectedSlots: NetworkPlayerSlot[];
+  economyPreset: EconomyPreset;
+  participants: Record<NetworkPlayerSlot, LobbyCoopParticipantState>;
+  operationSnapshot: string | null;
+  battleSnapshot: string | null;
+  operationPhase: GameState["phase"] | null;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
+  createdAt: number;
+  launchedAt: number | null;
+  updatedAt: number;
+}
+
+export type LobbyActivity =
+  | { kind: "idle" }
+  | { kind: "skirmish"; skirmish: LobbySkirmishActivity }
+  | { kind: "coop_operations"; coopOperations: LobbyCoopOperationsActivity };
+
+export interface LobbyState {
+  protocolVersion: number;
+  lobbyId: string;
+  joinCode: string;
+  hostSlot: NetworkPlayerSlot;
+  localSlot: NetworkPlayerSlot | null;
+  returnContext?: LobbyReturnContext | null;
+  transportState: LobbyTransportState;
+  members: Record<NetworkPlayerSlot, LobbyMember | null>;
+  avatars: Record<NetworkPlayerSlot, LobbyAvatarState | null>;
+  pendingChallenge: LobbyChallenge | null;
+  activity: LobbyActivity;
+  updatedAt: number;
+}
+
+export type LobbyReturnContext =
+  | { kind: "menu" }
+  | { kind: "esc" }
+  | { kind: "operation" }
+  | {
+      kind: "field";
+      mapId: string;
+      x?: number;
+      y?: number;
+      facing?: "north" | "south" | "east" | "west";
+    };
 
 export interface BaseCampItemSize {
   colSpan: number;
@@ -314,6 +452,12 @@ export interface BaseCampPinnedItemFrame {
   top: number;
   width: number;
   height: number;
+}
+
+export interface BaseCampFieldNodeLayout {
+  x: number;
+  y: number;
+  hidden?: boolean;
 }
 
 export interface BaseCampLayoutLoadout {
@@ -366,7 +510,9 @@ export interface UILayoutState {
   baseCampItemSizes?: Record<string, BaseCampItemSize>;
   baseCampItemColors?: Record<string, string>;
   baseCampPinnedItemFrames?: Record<string, BaseCampPinnedItemFrame>;
+  baseCampFieldNodeLayouts?: Record<string, BaseCampFieldNodeLayout>;
   baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
+  minimapExploredByMap?: Record<string, string[]>;
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
   inventoryFolders?: Record<string, InventoryFolder>;
@@ -386,7 +532,12 @@ export interface UILayoutState {
     zoom: number;
   };
   theaterCommandCoreTab?: "room" | "core" | "fortifications";
+  theaterCommandNodeTab?: "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications";
   theaterCommandMapMode?: TheaterMapMode;
+  theaterCommandAutomationWindowOpen?: boolean;
+  theaterCommandSelectedAnnexId?: string | null;
+  theaterCommandSelectedModuleId?: string | null;
+  theaterCommandSelectedEdgeId?: string | null;
   atlasSelectedTheaterId?: string;
   opsTerminalAtlasViewport?: {
     panX: number;
@@ -437,7 +588,7 @@ export type TheaterMapMode = "supply" | "power" | "comms" | "command";
 export type TheaterIntelLevel = 0 | 1 | 2;
 export type TheaterKeyType = "triangle" | "square" | "circle" | "spade" | "star";
 export type TheaterSquadStatus = "idle" | "moving" | "pinned" | "threatened" | "out_of_contact";
-export type TheaterSquadAutomationMode = "manual" | "cautious" | "daring";
+export type TheaterSquadAutomationMode = "manual" | "undaring" | "daring";
 export type TheaterSquadAutoStatus = "idle" | "intercepting" | "pushing" | "recovering" | "holding";
 export type TheaterRoomClass = "standard" | "mega";
 export type TheaterThreatType = "patrol" | "siege";
@@ -580,6 +731,192 @@ export interface SchemaUnlockState {
   unlockedFortificationPips: FortificationType[];
 }
 
+export interface FoundryUnlockState {
+  unlockedModuleTypes: AutomationModuleType[];
+  unlockedPartitionTypes: PartitionType[];
+}
+
+export type AnnexFrameType =
+  | "lightweight_annex"
+  | "standard_annex"
+  | "heavy_annex";
+
+export type AnnexAttachmentEdge = "north" | "east" | "south" | "west";
+
+export type AutomationModuleCategory =
+  | "sensor"
+  | "logic"
+  | "actuator"
+  | "buffer"
+  | "storage"
+  | "stabilizer"
+  | "router";
+
+export type AutomationModuleType =
+  | "threat_sensor"
+  | "motion_sensor"
+  | "power_sensor"
+  | "supply_threshold_sensor"
+  | "bandwidth_sensor"
+  | "room_state_sensor"
+  | "loom_terminal"
+  | "and_gate"
+  | "or_gate"
+  | "not_gate"
+  | "threshold_switch"
+  | "delay_timer"
+  | "turret_controller"
+  | "cache_release"
+  | "power_redirector"
+  | "bandwidth_redirector"
+  | "artillery_uplink"
+  | "door_controller"
+  | "capacitor"
+  | "supply_cache"
+  | "bandwidth_buffer"
+  | "latch"
+  | "memory_cell"
+  | "delay_buffer"
+  | "accumulator"
+  | "power_stabilizer"
+  | "supply_stabilizer"
+  | "comms_stabilizer"
+  | "power_router"
+  | "supply_router"
+  | "bandwidth_router"
+  | "signal_splitter"
+  | "signal_relay"
+  | "signal_merger"
+  | "cross_branch_relay";
+
+export type PartitionType = "blast_door";
+
+export interface AutomationTargetRef {
+  kind: "node" | "edge";
+  nodeId?: string | null;
+  edgeId?: string | null;
+}
+
+export type AutomationSignalValue =
+  | {
+      kind: "boolean";
+      value: boolean;
+    }
+  | {
+      kind: "number";
+      value: number;
+    }
+  | {
+      kind: "empty";
+      value: 0;
+    };
+
+export interface AutomationSignalSnapshot {
+  moduleId: string;
+  label: string;
+  output: AutomationSignalValue;
+  active: boolean;
+}
+
+export interface AnnexFrameDefinition {
+  id: AnnexFrameType;
+  displayName: string;
+  frameCategory: "light" | "standard" | "heavy";
+  buildCost: Partial<ResourceWallet>;
+  durability: number;
+  slotBonus: number;
+  restrictions?: string[];
+}
+
+export interface AnnexInstance {
+  annexId: string;
+  parentNodeId: string;
+  parentRoomId: RoomId;
+  frameType: AnnexFrameType;
+  attachedEdge: AnnexAttachmentEdge;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  moduleSlotCapacity: number;
+  moduleSlots: Array<string | null>;
+  integrity: number;
+  inheritedControl: boolean;
+  inheritedSupply: number;
+  inheritedPower: number;
+  inheritedComms: number;
+}
+
+export interface ModuleDefinition {
+  id: AutomationModuleType;
+  displayName: string;
+  category: AutomationModuleCategory;
+  description: string;
+  buildCost: Partial<ResourceWallet>;
+  powerRequirement?: number;
+  commsRequirement?: number;
+  localOnly?: boolean;
+  remoteTargetMinBw?: number;
+  placeholder?: boolean;
+}
+
+export interface ModuleInstanceConfig {
+  monitorTarget?: AutomationTargetRef | null;
+  target?: AutomationTargetRef | null;
+  secondaryTarget?: AutomationTargetRef | null;
+  inputModuleIds?: string[];
+  comparison?: ">=" | "<=";
+  threshold?: number;
+  delayTicks?: number;
+  transferAmount?: number;
+  floorAmount?: number;
+  desiredDoorState?: "open" | "closed";
+}
+
+export interface ModuleInstance {
+  instanceId: string;
+  moduleType: AutomationModuleType;
+  category: AutomationModuleCategory;
+  installedNodeId: string;
+  installedRoomId?: RoomId | null;
+  installedAnnexId?: string | null;
+  configuration: ModuleInstanceConfig;
+  active: boolean;
+}
+
+export interface PartitionDefinition {
+  id: PartitionType;
+  displayName: string;
+  partitionType: PartitionType;
+  buildCost: Partial<ResourceWallet>;
+  powerRequirement?: number;
+}
+
+export interface PartitionInstance {
+  edgeId: string;
+  partitionType: PartitionType;
+  state: "open" | "closed";
+  automationHooks?: {
+    controllingModuleIds?: string[];
+  };
+}
+
+export interface TheaterAutomationModuleRuntime {
+  lastOutput: AutomationSignalValue;
+  active: boolean;
+  latched: boolean;
+  timerTicks: number;
+  storedAmount: number;
+  lastTriggeredTick: number;
+}
+
+export interface TheaterAutomationRuntimeState {
+  moduleInstancesById: Record<string, ModuleInstance>;
+  moduleRuntimeById: Record<string, TheaterAutomationModuleRuntime>;
+  powerOverlayByRoomId: Record<RoomId, number>;
+  supplyOverlayByRoomId: Record<RoomId, number>;
+  commsOverlayByRoomId: Record<RoomId, number>;
+  activeSignalSnapshots: AutomationSignalSnapshot[];
+}
+
 export type CoreNetworkOutputMode = "fixed" | "add_input";
 
 export interface CoreBuildDefinition {
@@ -654,6 +991,18 @@ export interface TheaterObjectiveDefinition {
   progress: TheaterObjectiveProgress;
 }
 
+export interface TheaterSquadPreset {
+  squadId: string;
+  displayName: string;
+  icon: string;
+  colorKey: string;
+  unitIds: UnitId[];
+}
+
+export interface TheaterDeploymentPreset {
+  squads: TheaterSquadPreset[];
+}
+
 export interface TheaterSquadState {
   squadId: string;
   displayName: string;
@@ -661,6 +1010,7 @@ export interface TheaterSquadState {
   colorKey: string;
   unitIds: UnitId[];
   currentRoomId: RoomId;
+  currentNodeId?: string;
   currentTheaterId: string;
   bwRequired: number;
   bwAvailable: number;
@@ -700,6 +1050,9 @@ export interface TheaterRoom {
   clearMode?: "battle" | "field" | "empty";
   fortificationCapacity?: number;
   coreSlotCapacity?: number;
+  moduleSlotCapacity?: number;
+  moduleSlots?: Array<string | null>;
+  moduleSlotUpgradeLevel?: number;
   secured: boolean;
   fortified: boolean;
   coreAssignment: CoreAssignment | null;
@@ -803,6 +1156,11 @@ export interface TheaterNetworkState {
   rooms: Record<RoomId, TheaterRoom>;
   currentRoomId: RoomId;
   selectedRoomId: RoomId;
+  currentNodeId?: string;
+  selectedNodeId?: string;
+  annexesById?: Record<string, AnnexInstance>;
+  partitionsByEdgeId?: Record<string, PartitionInstance>;
+  automation?: TheaterAutomationRuntimeState;
   squads: TheaterSquadState[];
   selectedSquadId: string | null;
   tickCount: number;
@@ -968,9 +1326,46 @@ export interface EchoBattleContext {
   startUnitIds: UnitId[];
 }
 
+export interface SquadBattleTurnState {
+  unitId: string | null;
+  hasMoved: boolean;
+  hasCommittedMove: boolean;
+  hasActed: boolean;
+  movementRemaining: number;
+  originalPosition: { x: number; y: number } | null;
+  isFacingSelection: boolean;
+}
+
+export type SquadBattleSide = "friendly" | "enemy";
+
+export interface SquadBattleObjectiveState {
+  kind: "control_relay" | "breakthrough";
+  label: string;
+  description: string;
+  controlTiles: Array<{ x: number; y: number }>;
+  breachTiles?: Record<SquadBattleSide, Array<{ x: number; y: number }>>;
+  targetScore: number;
+  score: Record<SquadBattleSide, number>;
+  controllingSide: SquadBattleSide | null;
+  winnerSide: SquadBattleSide | null;
+  extractedUnitIds?: UnitId[];
+}
+
+export interface SquadBattleContext {
+  matchId: string;
+  hostSlot: SessionPlayerSlot;
+  winCondition: SkirmishObjectiveType;
+  slotSides: Record<SessionPlayerSlot, SquadBattleSide | null>;
+  slotCallsigns: Record<SessionPlayerSlot, string | null>;
+  mapSeed: number;
+  objective?: SquadBattleObjectiveState | null;
+  turnState?: SquadBattleTurnState | null;
+}
+
 export interface BattleModeContext {
-  kind: "story" | "training" | "endless" | "echo";
+  kind: "story" | "training" | "endless" | "echo" | "squad";
   echo?: EchoBattleContext;
+  squad?: SquadBattleContext;
 }
 
 export interface EchoRunState {
@@ -1111,7 +1506,7 @@ export type MuleWeightClass = "E" | "D" | "C" | "B" | "A" | "S";
 export interface InventoryItem {
   id: string;
   name: string;
-  kind: "resource" | "equipment" | "consumable";
+  kind: "resource" | "equipment" | "consumable" | "unit";
   stackable: boolean;
   quantity: number;
   massKg: number;
@@ -1152,9 +1547,11 @@ export interface GameState {
   profile: PlayerProfile;
   operation: OperationRun | null;
   session: SessionState;
+  lobby: LobbyState | null;
   unitsById: Record<UnitId, Unit>;
   cardsById: Record<CardId, Card>;
   partyUnitIds: UnitId[];
+  theaterDeploymentPreset: TheaterDeploymentPreset;
 
   // Card Library - all cards the player owns (Headline 11da)
   cardLibrary: Record<string, number>;  // cardId -> count owned
@@ -1174,6 +1571,7 @@ export interface GameState {
   // Legacy numeric counters (kept for compatibility but not used in UI)
   resources: ResourceWallet;
   schema?: SchemaUnlockState;
+  foundry?: FoundryUnlockState;
 
   inventory: InventoryState;
 
@@ -1213,6 +1611,7 @@ export interface GameState {
   };
   // Field Mods System - Run inventory (synced from ActiveRunState)
   runFieldModInventory?: import("./fieldMods").FieldModInstance[];
+  unitHardpoints?: Record<UnitId, import("./fieldMods").HardpointState>;
 
   // Gear Builder System - Unlock flags
   unlockedChassisIds?: string[];
@@ -1220,6 +1619,7 @@ export interface GameState {
 
   // Codex System - Meta progression
   unlockedCodexEntries?: string[];
+  completedDialogueIds?: string[];
 
   // Dispatch / Expeditions
   dispatch?: import("./dispatchSystem").DispatchState;

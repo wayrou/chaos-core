@@ -1,3 +1,5 @@
+import { playSystemPingSfx } from "../../core/audioSystem";
+
 export type SystemPingType = "success" | "error" | "info";
 
 export interface SystemPingOptions {
@@ -55,6 +57,7 @@ export function showSystemPing(options: SystemPingOptions): void {
   } = options;
 
   const stack = ensureSystemPingStack();
+  playSystemPingSfx(type);
 
   if (channel && replaceChannel) {
     stack.querySelectorAll<HTMLElement>(`.system-ping[data-channel="${channel}"]`).forEach((existing) => {

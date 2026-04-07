@@ -5,6 +5,7 @@
 import { getStarterRecipeIds } from "./crafting";
 import { getImportedStarterItems } from "../content/technica";
 import { createDefaultSchemaUnlockState } from "./schemaSystem";
+import { createDefaultFoundryState } from "./foundrySystem";
 
 import {
   getStarterCardLibrary,
@@ -43,6 +44,7 @@ import type { ImportedOperationDefinition, ImportedUnitTemplate } from "../conte
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
 import { createDefaultSessionState } from "./session";
+import { createDefaultTheaterDeploymentPreset } from "./theaterDeploymentPreset";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -550,6 +552,9 @@ export function createNewGameState(): GameStateWithEquipment {
   const profile = createDefaultProfile(rosterUnitIds);
   const operation = createOperationIronGate();
   const importedStarterItems = getImportedStarterItems().map((item) => ({ ...item }));
+  const partyUnitIds = Object.values(unitsById)
+    .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
+    .map((unit) => unit.id);
 
   // Equipment system data
   const equipmentById: Record<string, Equipment> = {};
@@ -598,11 +603,11 @@ export function createNewGameState(): GameStateWithEquipment {
         },
       },
     }),
+    lobby: null,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-    partyUnitIds: Object.values(unitsById)
-      .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
-      .map((unit) => unit.id),
+    partyUnitIds,
+    theaterDeploymentPreset: createDefaultTheaterDeploymentPreset(partyUnitIds),
 
     wad: 0,
     resources: {
@@ -612,6 +617,7 @@ export function createNewGameState(): GameStateWithEquipment {
       steamComponents: 0,
     },
     schema: createDefaultSchemaUnlockState(),
+    foundry: createDefaultFoundryState(),
 
     // Starter card library
     cardLibrary: Object.fromEntries(
@@ -657,6 +663,8 @@ export function createNewGameState(): GameStateWithEquipment {
     // Unit Recruitment System (Headline 14az)
     recruitmentCandidates: undefined, // Will be generated when Tavern is opened
     unitClassProgress: {},
+    runFieldModInventory: [],
+    unitHardpoints: {},
 
     // Local Co-op System - Initialize players
     players: {
@@ -714,6 +722,7 @@ export function createNewGameState(): GameStateWithEquipment {
     ],
 
     unlockedCodexEntries: [],
+    completedDialogueIds: [],
   };
 
   // Initialize unit controllers to P1 by default

@@ -1,5 +1,6 @@
 import {
   SESSION_PLAYER_SLOTS,
+  type SkirmishObjectiveType,
   type AuthorityRole,
   type PlayerPresence,
   type SessionPlayerSlot,
@@ -8,12 +9,14 @@ import {
 export const SQUAD_ONLINE_PROTOCOL_VERSION = 1;
 export const SQUAD_ONLINE_STORAGE_KEY = "chaos_core_squad_online_match";
 export const SQUAD_ONLINE_MIN_PLAYERS = 2;
-export const SQUAD_ONLINE_MAX_PLAYERS = 4;
+export const SQUAD_ONLINE_MAX_PLAYERS = 2;
+export const DEFAULT_SKIRMISH_GRID_WIDTH = 8;
+export const DEFAULT_SKIRMISH_GRID_HEIGHT = 5;
 
 export type SquadMatchPhase = "lobby" | "draft" | "confirmation" | "battle" | "result";
 export type SquadTransportState = "local_preview" | "hosting" | "joining" | "connected" | "reconnecting" | "closed";
 export type SquadDraftOptionCategory = "unit" | "equipment" | "tactical";
-export type SquadWinCondition = "elimination" | "objective";
+export type SquadWinCondition = SkirmishObjectiveType;
 
 export interface SquadLobbyMember {
   slot: SessionPlayerSlot;
@@ -58,6 +61,8 @@ export interface SquadMatchRules {
   maxPlayers: number;
   targetSquadSize: number;
   mapSeed: number;
+  gridWidth: number;
+  gridHeight: number;
   winCondition: SquadWinCondition;
 }
 
@@ -90,7 +95,7 @@ export interface SquadMatchState extends MatchSnapshot {
 }
 
 export type MatchCommand =
-  | { type: "create_lobby"; callsign: string; maxPlayers?: number }
+  | { type: "create_lobby"; callsign: string; maxPlayers?: number; winCondition?: SquadWinCondition; gridWidth?: number; gridHeight?: number }
   | { type: "join_lobby"; callsign: string; slot?: SessionPlayerSlot }
   | { type: "leave_lobby"; slot: SessionPlayerSlot }
   | { type: "set_ready"; slot: SessionPlayerSlot; ready?: boolean }
@@ -135,6 +140,31 @@ const TACTICAL_OPTIONS = [
 
 function clampMaxPlayers(maxPlayers = SQUAD_ONLINE_MIN_PLAYERS): number {
   return Math.max(SQUAD_ONLINE_MIN_PLAYERS, Math.min(SQUAD_ONLINE_MAX_PLAYERS, Math.floor(maxPlayers)));
+}
+
+function clampGridWidth(gridWidth = DEFAULT_SKIRMISH_GRID_WIDTH): number {
+  return Math.max(4, Math.min(10, Math.floor(gridWidth)));
+}
+
+function clampGridHeight(gridHeight = DEFAULT_SKIRMISH_GRID_HEIGHT): number {
+  return Math.max(3, Math.min(8, Math.floor(gridHeight)));
+}
+
+function normalizeSquadWinCondition(winCondition?: SquadWinCondition | "objective"): SquadWinCondition {
+  if (winCondition === "control_relay" || winCondition === "breakthrough") {
+    return winCondition;
+  }
+  return winCondition === "objective" ? "control_relay" : "elimination";
+}
+
+export function getSquadWinConditionLabel(winCondition: SquadWinCondition): string {
+  if (winCondition === "control_relay") {
+    return "Control Relay";
+  }
+  if (winCondition === "breakthrough") {
+    return "Breakthrough";
+  }
+  return "Elimination";
 }
 
 function createEmptyMemberSlots(): Record<SessionPlayerSlot, SquadLobbyMember | null> {
@@ -221,8 +251,12 @@ function createDraftPool(seed: number, size: number): SquadDraftOption[] {
   return shuffleWithSeed(combined, seed).slice(0, Math.max(size, 6));
 }
 
+function getEligibleSlots(match: SquadMatchState): SessionPlayerSlot[] {
+  return SESSION_PLAYER_SLOTS.slice(0, clampMaxPlayers(match.maxPlayers));
+}
+
 function getOccupiedSlots(match: SquadMatchState): SessionPlayerSlot[] {
-  return SESSION_PLAYER_SLOTS.filter((slot) => {
+  return getEligibleSlots(match).filter((slot) => {
     const member = match.members[slot];
     return Boolean(member && member.connected);
   });
@@ -233,14 +267,21 @@ export function getNextOpenSquadSlot(match: SquadMatchState): SessionPlayerSlot 
   if (occupied >= match.maxPlayers) {
     return null;
   }
-  return SESSION_PLAYER_SLOTS.find((slot) => !match.members[slot]) ?? null;
+  return getEligibleSlots(match).find((slot) => !match.members[slot]) ?? null;
 }
 
-export function createSquadOnlineMatch(hostCallsign: string, maxPlayers = 2): SquadMatchState {
+export function createSquadOnlineMatch(
+  hostCallsign: string,
+  maxPlayers = 2,
+  winCondition: SquadWinCondition = "elimination",
+  gridWidth = DEFAULT_SKIRMISH_GRID_WIDTH,
+  gridHeight = DEFAULT_SKIRMISH_GRID_HEIGHT,
+): SquadMatchState {
   const now = Date.now();
   const matchId = `squad_${now.toString(36)}`;
   const members = createEmptyMemberSlots();
   members.P1 = createLobbyMember("P1", hostCallsign.trim() || "HOST", "host", "local");
+  const normalizedWinCondition = normalizeSquadWinCondition(winCondition);
 
   return {
     protocolVersion: SQUAD_ONLINE_PROTOCOL_VERSION,
@@ -253,7 +294,9 @@ export function createSquadOnlineMatch(hostCallsign: string, maxPlayers = 2): Sq
       maxPlayers: clampMaxPlayers(maxPlayers),
       targetSquadSize: 3,
       mapSeed: hashSeed(`${matchId}:map`),
-      winCondition: "elimination",
+      gridWidth: clampGridWidth(gridWidth),
+      gridHeight: clampGridHeight(gridHeight),
+      winCondition: normalizedWinCondition,
     },
     members,
     draft: null,
@@ -307,6 +350,27 @@ export function removeSquadLobbyMember(match: SquadMatchState, slot: SessionPlay
     members: {
       ...match.members,
       [slot]: null,
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+export function markSquadMemberDisconnected(match: SquadMatchState, slot: SessionPlayerSlot): SquadMatchState {
+  const member = match.members[slot];
+  if (!member || slot === match.hostSlot) {
+    return match;
+  }
+
+  return {
+    ...match,
+    members: {
+      ...match.members,
+      [slot]: {
+        ...member,
+        connected: false,
+        presence: "disconnected",
+        lastHeartbeatAt: Date.now(),
+      },
     },
     updatedAt: Date.now(),
   };
@@ -552,6 +616,12 @@ export function rehydrateSquadMatchState(
 ): SquadMatchState {
   return {
     ...snapshot,
+    rules: {
+      ...snapshot.rules,
+      gridWidth: clampGridWidth(snapshot.rules?.gridWidth ?? DEFAULT_SKIRMISH_GRID_WIDTH),
+      gridHeight: clampGridHeight(snapshot.rules?.gridHeight ?? DEFAULT_SKIRMISH_GRID_HEIGHT),
+      winCondition: normalizeSquadWinCondition(snapshot.rules?.winCondition),
+    },
     joinCode: createJoinCode(snapshot.matchId),
     localSlot,
     transportState: "local_preview",
@@ -568,7 +638,13 @@ export function applySquadMatchCommand(
 
   switch (command.type) {
     case "create_lobby":
-      return createSquadOnlineMatch(command.callsign, command.maxPlayers);
+      return createSquadOnlineMatch(
+        command.callsign,
+        command.maxPlayers,
+        command.winCondition,
+        command.gridWidth,
+        command.gridHeight,
+      );
     case "join_lobby":
       return addPreviewPeerToSquadMatch(match!, command.callsign, command.slot);
     case "leave_lobby":
@@ -612,7 +688,15 @@ export function loadSquadMatchState(): SquadMatchState | null {
     if (parsed?.mode !== "squad") {
       return null;
     }
-    return parsed;
+    return {
+      ...parsed,
+      rules: {
+        ...parsed.rules,
+        gridWidth: clampGridWidth(parsed.rules?.gridWidth ?? DEFAULT_SKIRMISH_GRID_WIDTH),
+        gridHeight: clampGridHeight(parsed.rules?.gridHeight ?? DEFAULT_SKIRMISH_GRID_HEIGHT),
+        winCondition: normalizeSquadWinCondition(parsed.rules?.winCondition),
+      },
+    };
   } catch {
     return null;
   }
@@ -624,8 +708,8 @@ export function clearSquadMatchState(): void {
 
 export function getSquadLobbySummary(match: SquadMatchState | null): string {
   if (!match) {
-    return "No active Squad online session.";
+    return "No active Skirmish online session.";
   }
   const members = getConnectedSquadMembers(match);
-  return `${members.length}/${match.maxPlayers} operators linked // phase ${match.phase.toUpperCase()} // join code ${match.joinCode}`;
+  return `${members.length}/${match.maxPlayers} operators linked // ${getSquadWinConditionLabel(match.rules.winCondition).toUpperCase()} // GRID ${match.rules.gridWidth}x${match.rules.gridHeight} // phase ${match.phase.toUpperCase()} // join code ${match.joinCode}`;
 }

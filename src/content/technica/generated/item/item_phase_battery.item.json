@@ -1,0 +1,15 @@
+{
+  "bulkBu": 1,
+  "description": "Portable surge cell for field repairs, doors, and improvised power routing.",
+  "id": "item_phase_battery",
+  "kind": "consumable",
+  "massKg": 1,
+  "metadata": {
+    "rarity": "field_issue",
+    "useCase": "support"
+  },
+  "name": "Phase Battery",
+  "powerW": 20,
+  "quantity": 3,
+  "stackable": true
+}

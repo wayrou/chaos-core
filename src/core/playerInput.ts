@@ -2,7 +2,13 @@
 // PLAYER INPUT ABSTRACTION - Local Co-op
 // ============================================================================
 
-import { BUTTON, getAssignedGamepad } from "./controllerSupport";
+import {
+  getAssignedGamepad,
+  getControllerActionLabel,
+  isGamepadActionActive,
+  markKeyboardInputActive,
+  shouldSuppressGameplayInput,
+} from "./controllerSupport";
 import { PlayerId, type PlayerInputSource } from "./types";
 import { getGameState } from "../state/gameStore";
 
@@ -122,26 +128,20 @@ function updateKeyboardInputState(
 
 function readGamepadInput(playerId: PlayerId): PlayerInputState {
   const gamepad = getAssignedGamepad(playerId);
-  if (!gamepad) {
+  if (!gamepad || shouldSuppressGameplayInput(playerId)) {
     return { ...EMPTY_INPUT_STATE };
   }
 
-  const axisX = gamepad.axes[0] ?? 0;
-  const axisY = gamepad.axes[1] ?? 0;
-  const deadzone = 0.35;
-  const buttons = gamepad.buttons;
-  const isPressed = (buttonIndex: number) => Boolean(buttons[buttonIndex]?.pressed);
-
   return {
-    up: isPressed(BUTTON.DPAD_UP) || axisY < -deadzone,
-    down: isPressed(BUTTON.DPAD_DOWN) || axisY > deadzone,
-    left: isPressed(BUTTON.DPAD_LEFT) || axisX < -deadzone,
-    right: isPressed(BUTTON.DPAD_RIGHT) || axisX > deadzone,
-    confirm: isPressed(BUTTON.A),
-    cancel: isPressed(BUTTON.B),
-    special1: isPressed(BUTTON.LB) || isPressed(BUTTON.RB),
-    attack: isPressed(BUTTON.A),
-    interact: isPressed(BUTTON.X),
+    up: isGamepadActionActive(playerId, "moveUp"),
+    down: isGamepadActionActive(playerId, "moveDown"),
+    left: isGamepadActionActive(playerId, "moveLeft"),
+    right: isGamepadActionActive(playerId, "moveRight"),
+    confirm: isGamepadActionActive(playerId, "confirm"),
+    cancel: isGamepadActionActive(playerId, "cancel"),
+    special1: isGamepadActionActive(playerId, "tabPrev") || isGamepadActionActive(playerId, "tabNext"),
+    attack: isGamepadActionActive(playerId, "attack"),
+    interact: isGamepadActionActive(playerId, "interact"),
   };
 }
 
@@ -208,6 +208,7 @@ export function isPlayerInputActionEvent(
 }
 
 export function handleKeyDown(e: KeyboardEvent, playerId?: PlayerId): void {
+  markKeyboardInputActive();
   const state = getGameState();
 
   if (playerId) {
@@ -271,4 +272,86 @@ export function resetPlayerInput(): void {
   Object.keys(keyboard2State).forEach((key) => {
     (keyboard2State[key as keyof PlayerInputState] as boolean) = false;
   });
+}
+
+function getKeyboardActionLabelForSource(inputSource: PlayerInputSource, action: InputAction): string {
+  if (inputSource === "keyboard2") {
+    switch (action) {
+      case "up":
+        return "UP";
+      case "down":
+        return "DOWN";
+      case "left":
+        return "LEFT";
+      case "right":
+        return "RIGHT";
+      case "confirm":
+        return "NUM ENTER";
+      case "cancel":
+        return "BACKSPACE";
+      case "special1":
+        return "SHIFT";
+      case "attack":
+        return "NUM 0";
+      case "interact":
+        return "/";
+      default:
+        return String(action).toUpperCase();
+    }
+  }
+
+  switch (action) {
+    case "up":
+      return "W";
+    case "down":
+      return "S";
+    case "left":
+      return "A";
+    case "right":
+      return "D";
+    case "confirm":
+      return "ENTER";
+    case "cancel":
+      return "ESC";
+    case "special1":
+      return "SHIFT";
+    case "attack":
+      return "SPACE";
+    case "interact":
+      return "E";
+    default:
+      return String(action).toUpperCase();
+  }
+}
+
+function mapInputActionToControllerAction(action: InputAction): Parameters<typeof getControllerActionLabel>[0] {
+  switch (action) {
+    case "up":
+      return "moveUp";
+    case "down":
+      return "moveDown";
+    case "left":
+      return "moveLeft";
+    case "right":
+      return "moveRight";
+    case "confirm":
+      return "confirm";
+    case "cancel":
+      return "cancel";
+    case "special1":
+      return "tabNext";
+    case "attack":
+      return "attack";
+    case "interact":
+      return "interact";
+  }
+}
+
+export function getPlayerActionLabel(playerId: PlayerId, action: InputAction): string {
+  if (getAssignedGamepad(playerId)) {
+    return getControllerActionLabel(mapInputActionToControllerAction(action));
+  }
+
+  const player = getGameState().players[playerId];
+  return getKeyboardActionLabelForSource(player.inputSource, action);
 }

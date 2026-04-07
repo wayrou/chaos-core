@@ -1,18 +1,21 @@
 @id untitled_dialogue
 @title Untitled Dialogue
 @scene scene_untitled
-@meta linkedNpcId=npc_test2
-
-:opening
-Tester2: This is a test.
-Tester2: How is it working?
-? Working good -> working_good
-? Working bad -> working_bad
-
-:working_good
-Tester2: Good! I'm glad.
+@meta dialogueNpcId=npc_commander
+@meta linkedNpcId=npc_commander
+@meta dialogueOccurrence=exclusive
 
 :working_bad
-Tester2: Oh, okay then.
+Commander: Pick a choice
+? Choice 1 -> choice_1
+? Choice 2 -> choice_2
+
+:choice_1
+Commander: You picked choice 1
+
+:choice_2
+Narrator: You picked choice 2
 END
-Tester2: Well, see ya.
+
+:working_bad_after_choices
+Narrator: Well, see ya later.

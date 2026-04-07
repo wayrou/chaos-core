@@ -4,12 +4,40 @@
 // ============================================================================
 
 import "../../field/field.css";
-import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame } from "../../core/types";
+import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame, MountId, UnitId } from "../../core/types";
 import { getDispatchState } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { getGameState, resetToNewGame, updateGameState } from "../../state/gameStore";
-import { renderFieldScreen } from "../../field/FieldScreen";
-import { setBaseCampFieldReturnMap } from "./baseCampReturn";
+import { getActiveQuests, initializeQuestState } from "../../quests/questManager";
+import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen } from "../../field/FieldScreen";
+import { buildFieldMinimapModel, drawFieldMinimapCanvas, MINIMAP_LAYOUT_ID } from "../../field/fieldMinimap";
+import { getBaseCampFieldReturnMap, setBaseCampFieldReturnMap } from "./baseCampReturn";
+import {
+  BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
+  DISPATCH_UNLOCK_FLOOR_ORDINAL,
+  FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL,
+  HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL,
+  OPERATION_DEFINITIONS,
+  PORT_UNLOCK_FLOOR_ORDINAL,
+  SCHEMA_UNLOCK_FLOOR_ORDINAL,
+  STABLE_UNLOCK_FLOOR_ORDINAL,
+  isBlackMarketNodeUnlocked,
+  isDispatchNodeUnlocked,
+  isFoundryAnnexUnlocked,
+  isHavenBuildModeUnlocked,
+  isPortNodeUnlocked,
+  isSchemaNodeUnlocked,
+  isStableNodeUnlocked,
+  loadCampaignProgress,
+  saveCampaignProgress,
+} from "../../core/campaign";
+import type { OperationId } from "../../core/campaign";
+import { setCurrentOpsTerminalAtlasFloorOrdinal } from "../../core/opsTerminalAtlas";
+import { attachNotesWidgetHandlers, NOTES_LAYOUT_ID, renderNotesWidget } from "../components/notesWidget";
+import { renderQuestTrackerWidget } from "../components/questTrackerWidget";
+import { setMusicCue } from "../../core/audioSystem";
+import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { showSystemPing } from "../components/systemPing";
 
 let lastFieldMap: string = "base_camp";
 let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
@@ -44,6 +72,8 @@ type GridMetrics = {
 type WorkspaceLayoutPreset = {
   name: string;
   layouts: Record<string, WorkspaceItemLayout>;
+  minimizedItems?: string[];
+  itemColors?: Record<string, string>;
 };
 
 type BaseCampColorTheme = {
@@ -54,21 +84,22 @@ type BaseCampColorTheme = {
 
 const QUAC_LAYOUT_ID = "quac-terminal";
 const RESOURCE_LAYOUT_ID = "resource-tracker";
+const QUEST_TRACKER_LAYOUT_ID = "quest-tracker";
 const DRAG_THRESHOLD_PX = 8;
 const WORKSPACE_ROW_HEIGHT_PX = 24;
 const MIN_ITEM_ROW_SPAN = 4;
 const AUTO_SCROLL_MARGIN_PX = 72;
 const AUTO_SCROLL_STEP_PX = 24;
-const BASE_CAMP_LAYOUT_VERSION = 6;
+const BASE_CAMP_LAYOUT_VERSION = 9;
 const BASE_CAMP_LOADOUT_COUNT = 2;
 const DEFAULT_LOADOUT_PRESET_INDEXES = [0, 2] as const;
-const LEGACY_WORKSPACE_COLUMN_COUNT = 4;
-const LEGACY_TO_WIDE_COLUMN_SCALE = 3;
 const DEFAULT_NODE_ROW_SPAN = 5;
 const DEFAULT_RESOURCE_COL_SPAN = 3;
 const DEFAULT_RESOURCE_ROW_SPAN = 9;
 const DEFAULT_QUAC_COL_SPAN = 5;
 const DEFAULT_QUAC_ROW_SPAN = 10;
+const DEFAULT_MINIMAP_COL_SPAN = 5;
+const DEFAULT_MINIMAP_ROW_SPAN = 8;
 
 const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -83,12 +114,22 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve units on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
+  { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
+  { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
+  { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
 ];
 
-const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID];
+const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID, MINIMAP_LAYOUT_ID, NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID];
+const ESC_DEBUG_PORT_STABLE_ACTIONS = new Set(["port", "stable", "dispatch"]);
+const SCHEMA_LOCK_MESSAGE = `S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
+const PORT_LOCK_MESSAGE = `PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
+const STABLE_LOCK_MESSAGE = `STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
+const DISPATCH_LOCK_MESSAGE = `DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
+const BLACK_MARKET_LOCK_MESSAGE = `BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
+const FOUNDRY_ANNEX_LOCK_MESSAGE = `FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 
 const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: DEFAULT_RESOURCE_COL_SPAN, rowSpan: DEFAULT_RESOURCE_ROW_SPAN },
@@ -103,11 +144,17 @@ const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   port: { gridX: 1, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   quarters: { gridX: 2, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   stable: { gridX: 3, gridY: 10, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "black-market": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  schema: { gridX: 1, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "foundry-annex": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   dispatch: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   codex: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   settings: { gridX: 5, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "comms-array": { gridX: 6, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: DEFAULT_QUAC_COL_SPAN, rowSpan: DEFAULT_QUAC_ROW_SPAN },
+  [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 11, colSpan: DEFAULT_MINIMAP_COL_SPAN, rowSpan: DEFAULT_MINIMAP_ROW_SPAN },
+  [NOTES_LAYOUT_ID]: { gridX: 8, gridY: 19, colSpan: 5, rowSpan: 9 },
+  [QUEST_TRACKER_LAYOUT_ID]: { gridX: 8, gridY: 28, colSpan: 5, rowSpan: 9 },
 };
 
 function cloneLayoutMap(layouts: Record<string, WorkspaceItemLayout>): Record<string, WorkspaceItemLayout> {
@@ -119,6 +166,10 @@ function cloneLayoutMap(layouts: Record<string, WorkspaceItemLayout>): Record<st
 function createLayoutPreset(
   name: string,
   overrides: Partial<Record<string, WorkspaceItemLayout>>,
+  options?: {
+    minimizedItems?: string[];
+    itemColors?: Record<string, string>;
+  },
 ): WorkspaceLayoutPreset {
   const layouts = cloneLayoutMap(DEFAULT_ITEM_LAYOUTS);
   Object.entries(overrides).forEach(([itemId, layout]) => {
@@ -126,11 +177,49 @@ function createLayoutPreset(
     layouts[itemId] = { ...(layouts[itemId] ?? DEFAULT_ITEM_LAYOUTS[itemId] ?? { gridX: 1, gridY: 1, colSpan: 1, rowSpan: MIN_ITEM_ROW_SPAN }), ...layout };
   });
 
-  return { name, layouts };
+  return {
+    name,
+    layouts,
+    minimizedItems: [...(options?.minimizedItems ?? [])],
+    itemColors: { ...(options?.itemColors ?? {}) },
+  };
 }
 
 const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
-  createLayoutPreset("COMMAND", {}),
+  createLayoutPreset("COMMAND", {
+    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 7 },
+    inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 8 },
+    "ops-terminal": { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 8 },
+    roster: { gridX: 6, gridY: 8, colSpan: 2, rowSpan: 4 },
+    [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: 5, rowSpan: 8 },
+    [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 9, colSpan: 5, rowSpan: 8 },
+    quarters: { gridX: 2, gridY: 11, colSpan: 1, rowSpan: 4 },
+    tavern: { gridX: 3, gridY: 11, colSpan: 1, rowSpan: 4 },
+    shop: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: 4 },
+    "quest-board": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: 4 },
+    "gear-workbench": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: 4 },
+    loadout: { gridX: 4, gridY: 15, colSpan: 1, rowSpan: 4 },
+    "comms-array": { gridX: 8, gridY: 15, colSpan: 1, rowSpan: 4 },
+    codex: { gridX: 9, gridY: 15, colSpan: 1, rowSpan: 4 },
+    settings: { gridX: 10, gridY: 15, colSpan: 1, rowSpan: 4 },
+  }, {
+    minimizedItems: [NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID, "port", "dispatch", "stable", "black-market", "schema", "foundry-annex"],
+    itemColors: {
+      [RESOURCE_LAYOUT_ID]: "violet",
+      inventory: "steel",
+      "ops-terminal": "oxide",
+      roster: "oxide",
+      [QUAC_LAYOUT_ID]: "verdant",
+      [MINIMAP_LAYOUT_ID]: "steel",
+      [NOTES_LAYOUT_ID]: "violet",
+      [QUEST_TRACKER_LAYOUT_ID]: "violet",
+      "comms-array": "teal",
+      "black-market": "oxide",
+      "foundry-annex": "steel",
+      codex: "steel",
+      settings: "steel",
+    },
+  }),
   createLayoutPreset("BROADCAST", {
     [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 4, rowSpan: 7 },
     [QUAC_LAYOUT_ID]: { gridX: 5, gridY: 1, colSpan: 8, rowSpan: 8 },
@@ -145,27 +234,52 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     port: { gridX: 7, gridY: 14, colSpan: 2, rowSpan: 5 },
     quarters: { gridX: 9, gridY: 14, colSpan: 2, rowSpan: 5 },
     stable: { gridX: 11, gridY: 14, colSpan: 2, rowSpan: 5 },
+    schema: { gridX: 7, gridY: 19, colSpan: 2, rowSpan: 4 },
     codex: { gridX: 1, gridY: 18, colSpan: 2, rowSpan: 4 },
     settings: { gridX: 3, gridY: 18, colSpan: 2, rowSpan: 4 },
     "comms-array": { gridX: 5, gridY: 19, colSpan: 3, rowSpan: 4 },
+    [NOTES_LAYOUT_ID]: { gridX: 9, gridY: 14, colSpan: 4, rowSpan: 9 },
+    [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 23, colSpan: 4, rowSpan: 7 },
   }),
   createLayoutPreset("TACTICAL", {
-    [QUAC_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 4, rowSpan: 12 },
-    [RESOURCE_LAYOUT_ID]: { gridX: 10, gridY: 1, colSpan: 3, rowSpan: 9 },
-    "ops-terminal": { gridX: 5, gridY: 1, colSpan: 2, rowSpan: 5 },
-    roster: { gridX: 7, gridY: 1, colSpan: 2, rowSpan: 5 },
-    loadout: { gridX: 5, gridY: 6, colSpan: 2, rowSpan: 5 },
-    inventory: { gridX: 7, gridY: 6, colSpan: 2, rowSpan: 5 },
-    "gear-workbench": { gridX: 5, gridY: 11, colSpan: 2, rowSpan: 5 },
-    shop: { gridX: 7, gridY: 11, colSpan: 2, rowSpan: 5 },
-    tavern: { gridX: 10, gridY: 10, colSpan: 3, rowSpan: 5 },
-    "quest-board": { gridX: 1, gridY: 13, colSpan: 2, rowSpan: 5 },
-    port: { gridX: 3, gridY: 13, colSpan: 2, rowSpan: 5 },
-    quarters: { gridX: 5, gridY: 16, colSpan: 2, rowSpan: 5 },
-    stable: { gridX: 7, gridY: 16, colSpan: 2, rowSpan: 5 },
-    codex: { gridX: 9, gridY: 15, colSpan: 2, rowSpan: 5 },
-    settings: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 5 },
-    "comms-array": { gridX: 1, gridY: 18, colSpan: 3, rowSpan: 4 },
+    [NOTES_LAYOUT_ID]: { gridX: 7, gridY: 1, colSpan: 2, rowSpan: 11 },
+    [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 1, colSpan: 2, rowSpan: 11 },
+    [RESOURCE_LAYOUT_ID]: { gridX: 11, gridY: 1, colSpan: 2, rowSpan: 6 },
+    inventory: { gridX: 11, gridY: 7, colSpan: 2, rowSpan: 4 },
+    [MINIMAP_LAYOUT_ID]: { gridX: 7, gridY: 12, colSpan: 4, rowSpan: 8 },
+    loadout: { gridX: 11, gridY: 11, colSpan: 1, rowSpan: 5 },
+    codex: { gridX: 12, gridY: 11, colSpan: 1, rowSpan: 4 },
+    settings: { gridX: 12, gridY: 15, colSpan: 1, rowSpan: 4 },
+  }, {
+    minimizedItems: [
+      "ops-terminal",
+      "roster",
+      "gear-workbench",
+      "shop",
+      "tavern",
+      "quest-board",
+      "quarters",
+      "port",
+      "dispatch",
+      "stable",
+      "black-market",
+      "schema",
+      "foundry-annex",
+      "comms-array",
+      QUAC_LAYOUT_ID,
+    ],
+    itemColors: {
+      [NOTES_LAYOUT_ID]: "steel",
+      [QUEST_TRACKER_LAYOUT_ID]: "steel",
+      [RESOURCE_LAYOUT_ID]: "violet",
+      [MINIMAP_LAYOUT_ID]: "steel",
+      inventory: "verdant",
+      loadout: "amber",
+      "black-market": "oxide",
+      "foundry-annex": "steel",
+      codex: "steel",
+      settings: "steel",
+    },
   }),
   createLayoutPreset("CATALOG", {
     [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 8 },
@@ -180,10 +294,13 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     port: { gridX: 1, gridY: 9, colSpan: 2, rowSpan: 5 },
     quarters: { gridX: 3, gridY: 9, colSpan: 2, rowSpan: 5 },
     stable: { gridX: 5, gridY: 9, colSpan: 2, rowSpan: 5 },
+    schema: { gridX: 1, gridY: 22, colSpan: 2, rowSpan: 4 },
     codex: { gridX: 7, gridY: 9, colSpan: 2, rowSpan: 5 },
     settings: { gridX: 9, gridY: 9, colSpan: 2, rowSpan: 5 },
     "comms-array": { gridX: 11, gridY: 9, colSpan: 2, rowSpan: 5 },
     [QUAC_LAYOUT_ID]: { gridX: 1, gridY: 14, colSpan: 12, rowSpan: 8 },
+    [NOTES_LAYOUT_ID]: { gridX: 9, gridY: 22, colSpan: 4, rowSpan: 6 },
+    [QUEST_TRACKER_LAYOUT_ID]: { gridX: 1, gridY: 22, colSpan: 8, rowSpan: 6 },
   }),
 ];
 
@@ -321,7 +438,6 @@ const BASE_CAMP_COLOR_THEME_MAP = new Map(BASE_CAMP_COLOR_THEMES.map((theme) => 
 
 const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
-  { action: "atlas", aliases: ["atlas", "a t l a s", "adaptive theater logistics and survey", "theater command map", "strategic map", "metamap"] },
   { action: "roster", aliases: ["roster", "unit roster", "units", "party", "manage units"] },
   { action: "loadout", aliases: ["loadout", "gear", "equipment", "equip", "locker"] },
   { action: "inventory", aliases: ["inventory", "items", "assets", "storage", "owned items"] },
@@ -333,16 +449,228 @@ const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "mission board", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
+  { action: "black-market", aliases: ["black market", "black-market", "mods", "field mods", "contraband"] },
+  { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
+  { action: "foundry-annex", aliases: ["foundry", "annex", "foundry annex", "foundry + annex"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
-  { action: "endless-field-nodes", aliases: ["endless rooms", "debug endless rooms"] },
-  { action: "endless-battles", aliases: ["endless battles", "debug endless battles"] },
-  { action: "debug-wad", aliases: ["debug wad", "money", "give wad", "add wad"] },
+  { action: "debug-wad", aliases: ["debug wad", "money", "give wad", "add wad", "give everything", "unlock all"] },
+  { action: "debug-atlas-floor-bypass", aliases: ["atlas floor bypass", "floor bypass", "debug atlas next floor", "atlas unlock next floor"] },
+  { action: "debug-floor-12-status", aliases: ["floor 12", "floor 12 unlock", "floor 12 status", "unlock floor 12", "final completion unlock"] },
 ];
+
+async function grantEverythingToPlayer(): Promise<void> {
+  const [
+    { getCodexDatabase },
+    { ALL_CHASSIS },
+    { ALL_DOCTRINES },
+    { RECIPE_DATABASE },
+    { getAllModules, getAllStarterEquipment },
+    { getOrderedFoundryModuleTypes, getOrderedFoundryPartitionTypes },
+    { createOwnedMount, getAllMounts },
+    { getOrderedSchemaCoreTypes, getOrderedSchemaFortificationTypes },
+    { createDefaultClassProgress, getAvailableClasses },
+  ] = await Promise.all([
+    import("../../core/codexSystem"),
+    import("../../data/gearChassis"),
+    import("../../data/gearDoctrines"),
+    import("../../core/crafting"),
+    import("../../core/equipment"),
+    import("../../core/foundrySystem"),
+    import("../../core/mounts"),
+    import("../../core/schemaSystem"),
+    import("../../core/classes"),
+  ]);
+
+  const allEquipment = getAllStarterEquipment();
+  const allEquipmentIds = Object.keys(allEquipment);
+  const allModules = getAllModules();
+  const allRecipeIds = Object.keys(RECIPE_DATABASE);
+  const allChassisIds = ALL_CHASSIS.map((chassis) => chassis.id);
+  const allDoctrineIds = ALL_DOCTRINES.map((doctrine) => doctrine.id);
+  const allCodexEntryIds = getCodexDatabase().map((entry) => entry.id);
+  const allMountIds = Object.keys(getAllMounts()) as MountId[];
+  const availableClasses = getAvailableClasses();
+
+  updateGameState((state) => {
+    const nextUnitClassProgress = { ...(state.unitClassProgress ?? {}) };
+
+    Object.keys(state.unitsById).forEach((unitId) => {
+      const resolvedUnitId = unitId as UnitId;
+      const currentProgress = nextUnitClassProgress[resolvedUnitId] ?? createDefaultClassProgress(resolvedUnitId);
+      nextUnitClassProgress[resolvedUnitId] = {
+        ...currentProgress,
+        unlockedClasses: [...availableClasses],
+        classRanks: { ...currentProgress.classRanks },
+      };
+    });
+
+    const stable = state.stable;
+    const existingOwnedMounts = stable?.ownedMounts ?? [];
+    const ownedMountIds = new Set(existingOwnedMounts.map((mount) => mount.mountId));
+    const mergedOwnedMounts = [
+      ...existingOwnedMounts,
+      ...allMountIds
+        .filter((mountId) => !ownedMountIds.has(mountId))
+        .map((mountId) => createOwnedMount(mountId)),
+    ];
+
+    return {
+      ...state,
+      wad: 999999,
+      resources: {
+        metalScrap: 99999,
+        wood: 99999,
+        chaosShards: 99999,
+        steamComponents: 99999,
+      },
+      equipmentById: {
+        ...allEquipment,
+        ...(state.equipmentById ?? {}),
+      },
+      modulesById: {
+        ...allModules,
+        ...(state.modulesById ?? {}),
+      },
+      equipmentPool: Array.from(new Set([...(state.equipmentPool ?? []), ...allEquipmentIds])),
+      knownRecipeIds: allRecipeIds,
+      unlockedChassisIds: allChassisIds,
+      unlockedDoctrineIds: allDoctrineIds,
+      unlockedCodexEntries: allCodexEntryIds,
+      schema: {
+        unlockedCoreTypes: getOrderedSchemaCoreTypes(),
+        unlockedFortificationPips: getOrderedSchemaFortificationTypes(),
+      },
+      foundry: {
+        unlockedModuleTypes: getOrderedFoundryModuleTypes(),
+        unlockedPartitionTypes: getOrderedFoundryPartitionTypes(),
+      },
+      stable: {
+        ...(stable ?? {}),
+        unlockedMountIds: allMountIds,
+        ownedMounts: mergedOwnedMounts,
+      },
+      unitClassProgress: nextUnitClassProgress,
+    };
+  });
+
+  const campaignProgress = loadCampaignProgress();
+  saveCampaignProgress({
+    ...campaignProgress,
+    unlockedOperations: Object.keys(OPERATION_DEFINITIONS) as OperationId[],
+    schemaNodeUnlocked: true,
+    highestReachedFloorOrdinal: 99,
+  });
+
+  showSystemPing({
+    type: "success",
+    title: "DEBUG // GIVE EVERYTHING",
+    message: "Inventory, unlocks, and campaign progression maxed.",
+    detail: "All gear, recipes, codex entries, operations, node gates, and builder unlocks granted.",
+    channel: "esc-dev-debug",
+  });
+}
+
+function syncFloor12UnlockStatus(): void {
+  const campaignProgress = loadCampaignProgress();
+  const targetFloorOrdinal = Math.max(12, Number(campaignProgress.opsTerminalAtlas?.currentFloorOrdinal ?? 1));
+  let nextProgress = campaignProgress;
+
+  try {
+    setCurrentOpsTerminalAtlasFloorOrdinal(targetFloorOrdinal, campaignProgress, true);
+    nextProgress = loadCampaignProgress();
+  } catch (error) {
+    console.warn("[ESC] Failed to sync atlas floor during Floor 12 debug unlock:", error);
+    nextProgress = campaignProgress;
+  }
+
+  saveCampaignProgress({
+    ...nextProgress,
+    highestReachedFloorOrdinal: Math.max(12, Number(nextProgress.highestReachedFloorOrdinal ?? 1)),
+    schemaNodeUnlocked: true,
+  });
+
+  showSystemPing({
+    type: "success",
+    title: "DEBUG // FLOOR 12 STATUS",
+    message: `Campaign progression synced to Floor ${String(Math.max(12, Number(nextProgress.highestReachedFloorOrdinal ?? targetFloorOrdinal))).padStart(2, "0")}.`,
+    detail: "Floor-gated ESC nodes, atlas final reset access, and related milestone unlocks are now available.",
+    channel: "esc-dev-debug",
+  });
+}
 
 function normalizeQuacCommand(value: string): string {
   return value.toLowerCase().trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ");
+}
+
+function isLockedHavenAnnexAction(action: string): boolean {
+  if (ESC_DEBUG_PORT_STABLE_ACTIONS.has(action) && Boolean(getGameState().uiLayout?.escDebugPortStableUnlock)) {
+    return false;
+  }
+  if (action === "port") {
+    return !isPortNodeUnlocked();
+  }
+  if (action === "stable") {
+    return !isStableNodeUnlocked();
+  }
+  if (action === "dispatch") {
+    return !isDispatchNodeUnlocked();
+  }
+  return false;
+}
+
+function isLockedSchemaAction(action: string): boolean {
+  return action === "schema" && !isSchemaNodeUnlocked();
+}
+
+function isLockedBlackMarketAction(action: string): boolean {
+  return action === "black-market" && !isBlackMarketNodeUnlocked();
+}
+
+function isLockedFoundryAnnexAction(action: string): boolean {
+  return action === "foundry-annex" && !isFoundryAnnexUnlocked();
+}
+
+function getLockedActionMessage(action: string): string | null {
+  switch (action) {
+    case "schema":
+      return SCHEMA_LOCK_MESSAGE;
+    case "port":
+      return PORT_LOCK_MESSAGE;
+    case "stable":
+      return STABLE_LOCK_MESSAGE;
+    case "dispatch":
+      return DISPATCH_LOCK_MESSAGE;
+    case "black-market":
+      return BLACK_MARKET_LOCK_MESSAGE;
+    case "foundry-annex":
+      return FOUNDRY_ANNEX_LOCK_MESSAGE;
+    default:
+      return null;
+  }
+}
+
+function getAvailableNodeLayout(): NodeDefinition[] {
+  return DEFAULT_NODE_LAYOUT.filter((node) => {
+    if (isLockedHavenAnnexAction(node.action)) {
+      return false;
+    }
+    if (isLockedSchemaAction(node.action)) {
+      return false;
+    }
+    if (isLockedBlackMarketAction(node.action)) {
+      return false;
+    }
+    if (isLockedFoundryAnnexAction(node.action)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function getAvailableLayoutOrder(): string[] {
+  return [RESOURCE_LAYOUT_ID, ...getAvailableNodeLayout().map((node) => node.action), QUAC_LAYOUT_ID, MINIMAP_LAYOUT_ID, NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID];
 }
 
 function resolveQuacCommand(input: string): string | null {
@@ -364,27 +692,29 @@ function resolveQuacCommand(input: string): string | null {
 function readNodeLayout(): NodeDefinition[] {
   const state = getGameState();
   const savedOrder = state.uiLayout?.baseCampNodeOrder;
+  const availableNodes = getAvailableNodeLayout();
   if (!savedOrder || savedOrder.length === 0) {
-    return [...DEFAULT_NODE_LAYOUT];
+    return availableNodes;
   }
 
-  const nodeMap = new Map(DEFAULT_NODE_LAYOUT.map((node) => [node.action, node]));
+  const nodeMap = new Map(availableNodes.map((node) => [node.action, node]));
   const ordered = savedOrder.map((action) => nodeMap.get(action)).filter((node): node is NodeDefinition => Boolean(node));
-  const missing = DEFAULT_NODE_LAYOUT.filter((node) => !savedOrder.includes(node.action));
+  const missing = availableNodes.filter((node) => !savedOrder.includes(node.action));
   return [...ordered, ...missing];
 }
 
 function readLayoutOrder(): string[] {
   const state = getGameState();
   const savedOrder = state.uiLayout?.baseCampItemOrder;
-  const validIds = new Set(DEFAULT_LAYOUT_ORDER);
+  const availableLayoutOrder = getAvailableLayoutOrder();
+  const validIds = new Set(availableLayoutOrder);
 
   if (!savedOrder || savedOrder.length === 0) {
-    return [...DEFAULT_LAYOUT_ORDER];
+    return availableLayoutOrder;
   }
 
   const ordered = savedOrder.filter((id) => validIds.has(id));
-  const missing = DEFAULT_LAYOUT_ORDER.filter((id) => !ordered.includes(id));
+  const missing = availableLayoutOrder.filter((id) => !ordered.includes(id));
   return [...ordered, ...missing];
 }
 
@@ -404,10 +734,10 @@ function getDefaultLoadout(index: number): ResolvedBaseCampLoadout {
   const presetIndex = DEFAULT_LOADOUT_PRESET_INDEXES[clamp(index, 0, BASE_CAMP_LOADOUT_COUNT - 1)] ?? DEFAULT_LOADOUT_PRESET_INDEXES[0];
   const preset = BASE_CAMP_LAYOUT_PRESETS[presetIndex] ?? BASE_CAMP_LAYOUT_PRESETS[0];
   return {
-    minimizedItems: [],
+    minimizedItems: [...(preset.minimizedItems ?? [])],
     itemSizes: serializeLayoutRecord(preset.layouts),
     pinnedItems: [],
-    itemColors: {},
+    itemColors: { ...(preset.itemColors ?? {}) },
     pinnedItemFrames: {},
   };
 }
@@ -634,6 +964,12 @@ function getDefaultItemColorKey(itemId: string): string {
       return "verdant";
     case RESOURCE_LAYOUT_ID:
       return "violet";
+    case MINIMAP_LAYOUT_ID:
+      return "steel";
+    case NOTES_LAYOUT_ID:
+      return "steel";
+    case QUEST_TRACKER_LAYOUT_ID:
+      return "teal";
     case "port":
     case "comms-array":
       return "teal";
@@ -642,6 +978,10 @@ function getDefaultItemColorKey(itemId: string): string {
       return "oxide";
     case "stable":
       return "moss";
+    case "black-market":
+      return "oxide";
+    case "foundry-annex":
+      return "steel";
     case "codex":
     case "settings":
     case "inventory":
@@ -677,32 +1017,6 @@ function minHeightToRowSpan(minHeight: number | undefined): number {
   return Math.max(MIN_ITEM_ROW_SPAN, Math.round(minHeight / WORKSPACE_ROW_HEIGHT_PX));
 }
 
-function migrateLegacyStoredLayout(itemId: string, layout: BaseCampItemSize | undefined): BaseCampItemSize | undefined {
-  if (!layout) {
-    return layout;
-  }
-
-  const occupiedMaxColumn = (layout.gridX ?? 1) + Math.max((layout.colSpan ?? 1) - 1, 0);
-  if (occupiedMaxColumn > LEGACY_WORKSPACE_COLUMN_COUNT) {
-    return layout;
-  }
-
-  const translated: BaseCampItemSize = {
-    ...layout,
-    gridX: layout.gridX !== undefined ? ((layout.gridX - 1) * LEGACY_TO_WIDE_COLUMN_SCALE) + 1 : layout.gridX,
-  };
-
-  if (itemId === RESOURCE_LAYOUT_ID) {
-    translated.colSpan = Math.max(DEFAULT_RESOURCE_COL_SPAN, layout.colSpan * LEGACY_TO_WIDE_COLUMN_SCALE);
-    translated.rowSpan = Math.max(DEFAULT_RESOURCE_ROW_SPAN, layout.rowSpan ?? DEFAULT_RESOURCE_ROW_SPAN);
-  } else if (itemId === QUAC_LAYOUT_ID) {
-    translated.colSpan = Math.max(DEFAULT_QUAC_COL_SPAN, layout.colSpan * LEGACY_TO_WIDE_COLUMN_SCALE);
-    translated.rowSpan = Math.max(DEFAULT_QUAC_ROW_SPAN, layout.rowSpan ?? DEFAULT_QUAC_ROW_SPAN);
-  }
-
-  return translated;
-}
-
 function ensureBaseCampLayoutVersion(): void {
   const state = getGameState();
   const currentVersion = state.uiLayout?.baseCampLayoutVersion ?? 0;
@@ -710,45 +1024,20 @@ function ensureBaseCampLayoutVersion(): void {
     return;
   }
 
-  const existingSizes = state.uiLayout?.baseCampItemSizes ?? {};
-  const migratedSizes = Object.fromEntries(
-    Object.entries(existingSizes).map(([itemId, layout]) => [itemId, migrateLegacyStoredLayout(itemId, layout)]),
-  ) as Record<string, BaseCampItemSize>;
   const activeLoadoutIndex = readActiveLoadoutIndex(state);
-  const savedLoadouts = state.uiLayout?.baseCampLayoutLoadouts ?? {};
   const migratedLoadouts = Object.fromEntries(
     Array.from({ length: BASE_CAMP_LOADOUT_COUNT }, (_, index) => {
       const key = getLoadoutStorageKey(index);
-      const sourceLoadout = savedLoadouts[key];
-      const baseLoadout = normalizeLoadoutState(sourceLoadout, index);
-      const migratedItemSizes = Object.fromEntries(
-        Object.entries(baseLoadout.itemSizes).map(([itemId, layout]) => [itemId, migrateLegacyStoredLayout(itemId, layout) ?? layout]),
-      ) as Record<string, BaseCampItemSize>;
-
-      if (!state.uiLayout?.baseCampLayoutLoadouts && index === activeLoadoutIndex) {
-        return [
-          key,
-          {
-            minimizedItems: state.uiLayout?.baseCampMinimizedItems ?? baseLoadout.minimizedItems,
-            itemSizes: {
-              ...baseLoadout.itemSizes,
-              ...migratedSizes,
-            },
-            pinnedItems: state.uiLayout?.baseCampPinnedItems ?? baseLoadout.pinnedItems,
-            itemColors: state.uiLayout?.baseCampItemColors ?? baseLoadout.itemColors,
-            pinnedItemFrames: state.uiLayout?.baseCampPinnedItemFrames ?? baseLoadout.pinnedItemFrames,
-          },
-        ];
-      }
+      const baseLoadout = getDefaultLoadout(index);
 
       return [
         key,
         {
-          minimizedItems: baseLoadout.minimizedItems,
-          itemSizes: migratedItemSizes,
-          pinnedItems: baseLoadout.pinnedItems,
-          itemColors: baseLoadout.itemColors,
-          pinnedItemFrames: baseLoadout.pinnedItemFrames,
+          minimizedItems: [...baseLoadout.minimizedItems],
+          itemSizes: { ...baseLoadout.itemSizes },
+          pinnedItems: [...baseLoadout.pinnedItems],
+          itemColors: { ...baseLoadout.itemColors },
+          pinnedItemFrames: { ...baseLoadout.pinnedItemFrames },
         },
       ];
     }),
@@ -926,6 +1215,7 @@ function getRenderedWorkspaceLayouts(grid: HTMLElement): Map<string, WorkspaceIt
     .filter(Boolean);
   return buildResolvedWorkspaceLayouts(order, readItemSizes(), getGridMetrics(grid).columnCount);
 }
+void getRenderedWorkspaceLayouts;
 
 function getPointerGridPosition(grid: HTMLElement, clientX: number, clientY: number, colSpan: number, rowSpan: number): WorkspaceItemLayout {
   const metrics = getGridMetrics(grid);
@@ -1128,12 +1418,23 @@ function renderRosterNodePip(): string {
   `;
 }
 
+function renderSchemaNodePip(): string {
+  return `
+    <span class="node-pip node-pip--idle">
+      <span class="node-pip-label">Status</span>
+      <span class="node-pip-value">Placeholder terminal online</span>
+    </span>
+  `;
+}
+
 function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
   const variantClass = node.variant ? ` ${node.variant}` : "";
   const pip = node.action === "dispatch"
     ? renderDispatchNodePip()
     : node.action === "roster"
       ? renderRosterNodePip()
+      : node.action === "schema"
+        ? renderSchemaNodePip()
       : "";
   return `
     <div class="all-nodes-item-shell">
@@ -1222,6 +1523,96 @@ function renderQuacContent(isPinned: boolean): string {
   `;
 }
 
+function renderNotesContent(isPinned: boolean): string {
+  const state = getGameState();
+  const anchorX = Math.round((state.players?.P1?.avatar?.x ?? 640) + 56);
+  const anchorY = Math.round((state.players?.P1?.avatar?.y ?? 360) - 28);
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--notes">
+      ${renderItemToolbar(NOTES_LAYOUT_ID, "field memos", { isPinned })}
+      <section class="all-nodes-notes-panel" aria-label="Field memos" data-ez-drag-disable="true">
+        <div class="all-nodes-notes-panel__title">FIELD MEMOS</div>
+        ${renderNotesWidget("esc-notes", {
+          className: "notes-widget--esc",
+          placeholder: "Record reminders, squad plans, build routes, or anything else you want to keep pinned to E.S.C.",
+          statusLabel: "AUTO-SAVE ACTIVE // AVAILABLE IN ATLAS + THEATER",
+          titleLabel: "Tab Name",
+          stickyTarget: {
+            surfaceType: "field",
+            surfaceId: lastFieldMap,
+            x: anchorX,
+            y: anchorY,
+          },
+        })}
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${NOTES_LAYOUT_ID}" aria-label="Resize field memos"></button>
+    </div>
+  `;
+}
+
+function renderQuestTrackerContent(isPinned: boolean): string {
+  const quests = getActiveQuests();
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--quest-tracker">
+      ${renderItemToolbar(QUEST_TRACKER_LAYOUT_ID, "quest tracker", { isPinned })}
+      ${renderQuestTrackerWidget(quests, {
+        className: "quest-tracker-widget--esc",
+        emptyTitle: "NO ACTIVE QUESTS",
+        emptyText: "Accept directives and endless contracts from the Quest Board to track them here.",
+      })}
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${QUEST_TRACKER_LAYOUT_ID}" aria-label="Resize quest tracker"></button>
+    </div>
+  `;
+}
+
+function resolveEscMinimapModel() {
+  const runtimeMap = getCurrentFieldRuntimeMap();
+  const runtimeFieldState = getCurrentFieldRuntimeState();
+  const resolvedMapId = lastFieldMap || getBaseCampFieldReturnMap() || runtimeFieldState?.currentMap || runtimeMap?.id || null;
+  return buildFieldMinimapModel(resolvedMapId, {
+    runtimeMap,
+    runtimeFieldState,
+  });
+}
+
+function renderMinimapContent(isPinned: boolean): string {
+  const model = resolveEscMinimapModel();
+  const subtitle = model ? `${model.mapName} // ${model.width}x${model.height}` : "NO FIELD DATA AVAILABLE";
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--minimap">
+      ${renderItemToolbar(MINIMAP_LAYOUT_ID, "minimap", { isPinned })}
+      <section class="all-nodes-minimap-panel" aria-label="Field minimap">
+        <div class="all-nodes-minimap-header">
+          <div class="all-nodes-minimap-heading">
+            <span class="all-nodes-minimap-kicker">MINIMAP</span>
+            <span class="all-nodes-minimap-subtitle">${subtitle}</span>
+          </div>
+          ${model ? `<span class="all-nodes-minimap-readout">${model.discoveredCount} scan cells</span>` : ""}
+        </div>
+        <div class="all-nodes-minimap-frame">
+          ${model
+            ? `<canvas class="all-nodes-minimap-canvas" data-esc-minimap-canvas aria-label="Minimap canvas for ${model.mapName}"></canvas>`
+            : `
+              <div class="all-nodes-minimap-empty">
+                <span class="all-nodes-minimap-empty-title">SCAN CACHE EMPTY</span>
+                <span class="all-nodes-minimap-empty-text">Enter a field zone to initialize cartography data for this node.</span>
+              </div>
+            `}
+        </div>
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${MINIMAP_LAYOUT_ID}" aria-label="Resize minimap"></button>
+    </div>
+  `;
+}
+
+function drawEscMinimap(root: HTMLElement): void {
+  const canvas = root.querySelector<HTMLCanvasElement>("[data-esc-minimap-canvas]");
+  if (!canvas) {
+    return;
+  }
+  drawFieldMinimapCanvas(canvas, resolveEscMinimapModel(), { transparent: false });
+}
+
 function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): string {
   if (itemId === RESOURCE_LAYOUT_ID) {
     return `
@@ -1241,6 +1632,33 @@ function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): s
     `;
   }
 
+  if (itemId === NOTES_LAYOUT_ID) {
+    return `
+      <button class="all-nodes-dock-item" type="button" data-restore-id="${itemId}" aria-label="Restore operator notes">
+        <span class="dock-icon">N</span>
+        <span class="dock-label">NOTES</span>
+      </button>
+    `;
+  }
+
+  if (itemId === QUEST_TRACKER_LAYOUT_ID) {
+    return `
+      <button class="all-nodes-dock-item" type="button" data-restore-id="${itemId}" aria-label="Restore quest tracker">
+        <span class="dock-icon">Q</span>
+        <span class="dock-label">TRACK</span>
+      </button>
+    `;
+  }
+
+  if (itemId === MINIMAP_LAYOUT_ID) {
+    return `
+      <button class="all-nodes-dock-item" type="button" data-restore-id="${itemId}" aria-label="Restore minimap">
+        <span class="dock-icon">M</span>
+        <span class="dock-label">MAP</span>
+      </button>
+    `;
+  }
+
   const node = nodeMap.get(itemId);
   if (!node) return "";
 
@@ -1253,15 +1671,21 @@ function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): s
 }
 
 export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
+  setMusicCue("haven-esc");
   const root = document.getElementById("app");
   if (!root) return;
+  document.body.setAttribute("data-screen", "esc-all-nodes");
+  clearControllerContext();
 
   cleanupAllNodesWindowListeners();
   ensureBaseCampLayoutVersion();
+  initializeQuestState();
 
   if (fromFieldMap) {
     lastFieldMap = fromFieldMap;
     setBaseCampFieldReturnMap(fromFieldMap);
+  } else {
+    lastFieldMap = lastFieldMap || getBaseCampFieldReturnMap();
   }
 
   const state = getGameState();
@@ -1280,6 +1704,9 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const pinned = new Set(readPinnedItems());
   const itemColors = readItemColorKeys();
   const activeLoadoutIndex = readActiveLoadoutIndex();
+  const atlasFloorBypassEnabled = Boolean(state.uiLayout?.opsTerminalAtlasDebugFloorBypass);
+  const campaignProgress = loadCampaignProgress();
+  const buildModeUnlocked = isHavenBuildModeUnlocked(campaignProgress);
   const activeOrder = fullOrder.filter((id) => !minimized.has(id));
   const dockOrder = fullOrder.filter((id) => minimized.has(id));
 
@@ -1295,10 +1722,6 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
           <p class="all-nodes-menu-subtitle">AERISS // PROFILE</p>
         </div>
         <div class="all-nodes-header-actions">
-          <button class="all-nodes-atlas-btn" id="allNodesAtlasBtn" type="button">
-            <span class="all-nodes-atlas-btn__kicker">HAVEN NODE</span>
-            <span class="all-nodes-atlas-btn__label">A.T.L.A.S.</span>
-          </button>
           <div class="all-nodes-view-switcher" aria-label="E.S.C. layout view switcher">
             <span class="all-nodes-view-switcher-label">VIEW</span>
             <button class="all-nodes-view-switcher-btn${activeLoadoutIndex === 0 ? " all-nodes-view-switcher-btn--active" : ""}" type="button" data-loadout-index="0">1</button>
@@ -1326,6 +1749,30 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
             `;
           }
 
+          if (itemId === NOTES_LAYOUT_ID) {
+            return `
+              <div class="all-nodes-grid-item all-nodes-grid-item--notes" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+                ${renderNotesContent(pinned.has(itemId))}
+              </div>
+            `;
+          }
+
+          if (itemId === QUEST_TRACKER_LAYOUT_ID) {
+            return `
+              <div class="all-nodes-grid-item all-nodes-grid-item--quest-tracker" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+                ${renderQuestTrackerContent(pinned.has(itemId))}
+              </div>
+            `;
+          }
+
+          if (itemId === MINIMAP_LAYOUT_ID) {
+            return `
+              <div class="all-nodes-grid-item all-nodes-grid-item--minimap" data-layout-id="${itemId}" ${renderItemThemeAttributes(itemId, itemColors)}>
+                ${renderMinimapContent(pinned.has(itemId))}
+              </div>
+            `;
+          }
+
           const node = nodeMap.get(itemId);
           if (!node) return "";
 
@@ -1344,17 +1791,17 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
       <footer class="all-nodes-menu-footer town-screen__footer">
         <div class="all-nodes-debug-section">
           <span class="debug-label">[DEV]</span>
-          <button class="all-nodes-debug-btn" data-action="endless-field-nodes">
-            <span class="debug-icon">INF</span>
-            <span class="debug-text">ENDLESS ROOMS</span>
-          </button>
-          <button class="all-nodes-debug-btn" data-action="endless-battles">
-            <span class="debug-icon">BTL</span>
-            <span class="debug-text">ENDLESS BATTLES</span>
-          </button>
           <button class="all-nodes-debug-btn" data-action="debug-wad">
-            <span class="debug-icon">WAD</span>
-            <span class="debug-text">+999999 WAD</span>
+            <span class="debug-icon">ALL</span>
+            <span class="debug-text">GIVE EVERYTHING</span>
+          </button>
+          <button class="all-nodes-debug-btn" data-action="debug-floor-12-status">
+            <span class="debug-icon">F12</span>
+            <span class="debug-text">SYNC FLOOR 12 STATUS</span>
+          </button>
+          <button class="all-nodes-debug-btn" data-action="debug-atlas-floor-bypass">
+            <span class="debug-icon">FLR</span>
+            <span class="debug-text">ATLAS NEXT FLOOR ${atlasFloorBypassEnabled ? "FREE" : "LOCKED"}</span>
           </button>
         </div>
         <div class="all-nodes-footer-actions">
@@ -1362,6 +1809,15 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
             <span class="hint-key">[ESC]</span>
             <span class="hint-text">Return to Field</span>
           </div>
+          ${buildModeUnlocked ? `
+            <button
+              class="all-nodes-build-mode-btn"
+              id="allNodesBuildModeBtn"
+              type="button"
+            >
+              HAVEN BUILD MODE
+            </button>
+          ` : ""}
           <button class="all-nodes-quit-title-btn" id="allNodesQuitTitleBtn" type="button">
             QUIT TO TITLE SCREEN
           </button>
@@ -1373,8 +1829,13 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   `;
 
   applyWorkspaceLayoutStyles(root);
+  requestAnimationFrame(() => drawEscMinimap(root));
   queuePinnedItemFrameSync(root);
   attachAllNodesMenuListeners();
+  attachNotesWidgetHandlers(root, {
+    onStateChange: () => renderAllNodesMenuScreen(lastFieldMap),
+  });
+  updateFocusableElements();
 }
 
 function attachAllNodesMenuListeners(): void {
@@ -1393,11 +1854,6 @@ function attachAllNodesMenuListeners(): void {
       }
     });
   });
-
-  root.querySelector<HTMLElement>("#allNodesAtlasBtn")?.addEventListener("click", () => {
-    handleNodeAction("atlas");
-  });
-
   root.querySelectorAll<HTMLElement>(".all-nodes-view-switcher-btn[data-loadout-index]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1509,6 +1965,23 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
+  root.querySelector<HTMLElement>("#allNodesBuildModeBtn")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (!isHavenBuildModeUnlocked(loadCampaignProgress())) {
+      showSystemPing({
+        type: "warning",
+        title: "BUILD MODE LOCKED",
+        message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock HAVEN build mode.`,
+        channel: "esc-build-mode",
+      });
+      return;
+    }
+
+    syncPinnedItemFrames(document);
+    cleanupAllNodesWindowListeners();
+    renderFieldScreen("base_camp", { openBuildMode: true });
+  });
+
   root.querySelector<HTMLElement>("#allNodesQuitTitleBtn")?.addEventListener("click", async (event) => {
     event.preventDefault();
     cleanupAllNodesWindowListeners();
@@ -1588,7 +2061,7 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt")) {
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label")) {
         return;
       }
 
@@ -1854,15 +2327,20 @@ function handleModeSwitch(mode: string | undefined): void {
 }
 
 function handleNodeAction(action: string): void {
+  if (
+    isLockedHavenAnnexAction(action)
+    || isLockedSchemaAction(action)
+    || isLockedBlackMarketAction(action)
+    || isLockedFoundryAnnexAction(action)
+  ) {
+    alert(getLockedActionMessage(action) ?? "This node is not unlocked yet.");
+    return;
+  }
+
   syncPinnedItemFrames(document);
   cleanupAllNodesWindowListeners();
 
   switch (action) {
-    case "atlas":
-      import("./AtlasScreen").then(({ renderAtlasScreen }) => {
-        renderAtlasScreen("esc");
-      });
-      break;
     case "shop":
       import("./ShopScreen").then(({ renderShopScreen }) => {
         renderShopScreen("esc");
@@ -1934,6 +2412,21 @@ function handleNodeAction(action: string): void {
         renderStableScreen("esc");
       });
       break;
+    case "black-market":
+      import("./BlackMarketScreen").then(({ renderBlackMarketScreen }) => {
+        renderBlackMarketScreen("esc");
+      });
+      break;
+    case "schema":
+      import("./SchemaScreen").then(({ renderSchemaScreen }) => {
+        renderSchemaScreen("esc");
+      });
+      break;
+    case "foundry-annex":
+      import("./FoundryAnnexScreen").then(({ renderFoundryAnnexScreen }) => {
+        renderFoundryAnnexScreen("esc");
+      });
+      break;
     case "codex":
       import("./CodexScreen").then(({ renderCodexScreen }) => {
         renderCodexScreen("esc");
@@ -1949,28 +2442,34 @@ function handleNodeAction(action: string): void {
         renderCommsArrayScreen("esc");
       });
       break;
-    case "endless-field-nodes":
-      import("./FieldNodeRoomScreen").then(({ renderFieldNodeRoomScreen }) => {
-        const initialSeed = Math.floor(Math.random() * 1000000);
-        renderFieldNodeRoomScreen("endless_room_0", initialSeed, true);
-      });
-      break;
-    case "endless-battles":
-      import("./BattleScreen").then(({ startEndlessBattleMode }) => {
-        startEndlessBattleMode();
-      });
-      break;
     case "debug-wad":
+      void grantEverythingToPlayer()
+        .then(() => {
+          renderAllNodesMenuScreen();
+        })
+        .catch((error) => {
+          console.error("[ESC] Failed to grant debug inventory:", error);
+          showSystemPing({
+            type: "error",
+            title: "DEBUG // GIVE EVERYTHING",
+            message: "Grant failed.",
+            detail: error instanceof Error ? error.message : "Unknown error.",
+            channel: "esc-dev-debug",
+          });
+        });
+      break;
+    case "debug-atlas-floor-bypass":
       updateGameState((state) => ({
         ...state,
-        wad: 999999,
-        resources: {
-          metalScrap: 99999,
-          wood: 99999,
-          chaosShards: 99999,
-          steamComponents: 99999,
+        uiLayout: {
+          ...(state.uiLayout ?? {}),
+          opsTerminalAtlasDebugFloorBypass: !Boolean(state.uiLayout?.opsTerminalAtlasDebugFloorBypass),
         },
       }));
+      renderAllNodesMenuScreen();
+      break;
+    case "debug-floor-12-status":
+      syncFloor12UnlockStatus();
       renderAllNodesMenuScreen();
       break;
   }

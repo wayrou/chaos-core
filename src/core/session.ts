@@ -1,12 +1,17 @@
 import {
+  LOCAL_PLAYER_IDS,
+  NETWORK_PLAYER_SLOTS,
   SESSION_PLAYER_SLOTS,
   type AuthorityRole,
   type CampaignState,
   type EconomyPreset,
   type GameState,
+  type LobbyState,
+  type NetworkPlayerSlot,
   type PlayerInputSource,
   type PlayerPresence,
   type PlayerSlot,
+  type PendingTheaterBattleConfirmationState,
   type ResourcePool,
   type ResourceWallet,
   type ReconnectStagingState,
@@ -36,6 +41,10 @@ const LOCAL_COOP_RESTRICTED_FIELD_ACTIONS = new Set<string>([
   "schema",
 ]);
 
+function isLocalPlayerSlot(slot: SessionPlayerSlot): slot is PlayerSlot {
+  return slot === "P1" || slot === "P2";
+}
+
 function cloneResourceWallet(wallet?: Partial<ResourceWallet> | null): ResourceWallet {
   return {
     metalScrap: wallet?.metalScrap ?? 0,
@@ -61,6 +70,19 @@ function createCampaignStateSeed(operationId: string | null = null): CampaignSta
       schemaUnlockIds: [],
     },
   };
+}
+
+function clonePendingTheaterBattleConfirmation(
+  pending: PendingTheaterBattleConfirmationState | null | undefined,
+): PendingTheaterBattleConfirmationState | null {
+  return pending
+    ? {
+        roomId: pending.roomId,
+        previousRoomId: pending.previousRoomId,
+        roomLabel: pending.roomLabel,
+        squadId: pending.squadId ?? null,
+      }
+    : null;
 }
 
 function getDefaultPlayerPresence(active: boolean): PlayerPresence {
@@ -104,6 +126,20 @@ function createTheaterAssignment(slot: SessionPlayerSlot): TheaterAssignment {
     roomId: null,
     stagingState: "haven",
   };
+}
+
+function getCoopParticipantNetworkSlot(
+  lobby: LobbyState,
+  sessionSlot: SessionPlayerSlot,
+): NetworkPlayerSlot | null {
+  if (lobby.activity.kind !== "coop_operations") {
+    return null;
+  }
+  const match = NETWORK_PLAYER_SLOTS.find((slot) =>
+    lobby.activity.coopOperations.participants[slot]?.selected
+    && lobby.activity.coopOperations.participants[slot]?.sessionSlot === sessionSlot,
+  );
+  return match ?? null;
 }
 
 export function createDefaultSessionState(
@@ -153,6 +189,7 @@ export function createDefaultSessionState(
       acc[slot] = createTheaterAssignment(slot);
       return acc;
     }, {} as SessionState["theaterAssignments"]),
+    pendingTheaterBattleConfirmation: null,
     activeBattleId: null,
     campaign: createCampaignStateSeed(seed?.operation?.id ?? null),
   };
@@ -215,6 +252,24 @@ function normalizeSessionPlayer(
     player?.controlledUnitIds ?? [],
   );
   const previous = existing ?? fallback;
+  if (state.session?.mode === "coop_operations") {
+    const isLocalParticipant = previous.presence === "local";
+    const nextStagingState = previous.connected
+      ? normalizeStagingState(previous.stagingState, true, state.phase, controlledBattleUnits.length > 0)
+      : previous.stagingState === "rejoining"
+        ? "rejoining"
+        : "disconnected";
+    return {
+      ...previous,
+      slot,
+      inputSource: isLocalParticipant ? state.players.P1.inputSource : "remote",
+      controlledUnitIds: isLocalParticipant ? [...state.players.P1.controlledUnitIds] : [...previous.controlledUnitIds],
+      stagingState: nextStagingState,
+      lastSafeMapId: isLocalParticipant && state.players.P1.avatar
+        ? previous.lastSafeMapId ?? "base_camp"
+        : previous.lastSafeMapId,
+    };
+  }
   if (!player) {
     return {
       ...previous,
@@ -243,6 +298,41 @@ function normalizeSessionPlayer(
   };
 }
 
+function getPlayerPreferredTheaterSquadId(state: GameState, slot: PlayerSlot): string | null {
+  const theater = state.operation?.theater;
+  if (!theater || theater.squads.length <= 0) {
+    return null;
+  }
+
+  const controlledUnitIds = new Set(state.players[slot].controlledUnitIds);
+  const rankedSquads = theater.squads
+    .map((squad) => ({
+      squadId: squad.squadId,
+      matchCount: squad.unitIds.filter((unitId) => controlledUnitIds.has(unitId)).length,
+      selected: squad.squadId === theater.selectedSquadId,
+    }))
+    .sort((left, right) => {
+      if (right.matchCount !== left.matchCount) {
+        return right.matchCount - left.matchCount;
+      }
+      if (left.selected !== right.selected) {
+        return left.selected ? -1 : 1;
+      }
+      return left.squadId.localeCompare(right.squadId);
+    });
+
+  const bestMatch = rankedSquads[0] ?? null;
+  if (bestMatch && bestMatch.matchCount > 0) {
+    return bestMatch.squadId;
+  }
+
+  return slot === "P1"
+    ? theater.selectedSquadId ?? theater.squads[0]?.squadId ?? null
+    : theater.squads.length === 1
+      ? theater.squads[0]?.squadId ?? null
+      : null;
+}
+
 function normalizeTheaterAssignment(
   state: GameState,
   slot: SessionPlayerSlot,
@@ -250,26 +340,99 @@ function normalizeTheaterAssignment(
 ): TheaterAssignment {
   const previous = existing ?? createTheaterAssignment(slot);
   const activeTheater = state.operation?.theater;
-  const selectedSquadId = activeTheater?.selectedSquadId ?? null;
-  const selectedRoomId = activeTheater?.selectedRoomId ?? activeTheater?.currentRoomId ?? null;
-  const ownsSelectedSquad = Boolean(
-    slot === "P1" || state.players.P2.active
-      ? selectedSquadId
-      : null,
-  );
+  if (state.session?.mode === "coop_operations") {
+    const sessionPlayer = state.session.players?.[slot] ?? null;
+    if (!activeTheater) {
+      return {
+        ...previous,
+        playerId: slot,
+        theaterId: null,
+        roomId: null,
+        stagingState: sessionPlayer?.connected
+          ? previous.stagingState === "battle"
+            ? "staging"
+            : previous.stagingState
+          : previous.stagingState === "rejoining"
+            ? "rejoining"
+            : "disconnected",
+      };
+    }
+
+    const squadIdIsValid = previous.squadId
+      ? activeTheater.squads.some((squad) => squad.squadId === previous.squadId)
+      : false;
+    const fallbackSquadId = squadIdIsValid
+      ? previous.squadId
+      : activeTheater.squads.length === 1
+        ? activeTheater.squads[0]?.squadId ?? null
+        : previous.squadId;
+    const assignedSquad = fallbackSquadId
+      ? activeTheater.squads.find((squad) => squad.squadId === fallbackSquadId) ?? null
+      : null;
+
+    return {
+      ...previous,
+      playerId: slot,
+      theaterId: activeTheater.definition.id,
+      squadId: assignedSquad?.squadId ?? previous.squadId ?? null,
+      roomId: assignedSquad?.currentRoomId ?? previous.roomId ?? activeTheater.currentRoomId,
+      stagingState: !sessionPlayer?.connected
+        ? previous.stagingState === "rejoining"
+          ? "rejoining"
+          : "disconnected"
+        : state.phase === "battle"
+          ? "battle"
+          : "theater",
+    };
+  }
+  const isLocalSlot = isLocalPlayerSlot(slot);
+  const isActiveLocalPlayer = isLocalSlot && state.players[slot].active;
+  if (!activeTheater) {
+    return {
+      ...previous,
+      playerId: slot,
+      theaterId: null,
+      squadId: null,
+      roomId: null,
+      stagingState: isActiveLocalPlayer ? "haven" : "disconnected",
+    };
+  }
+  if (isLocalSlot && !state.players[slot].active) {
+    return {
+      ...previous,
+      playerId: slot,
+      theaterId: null,
+      squadId: null,
+      roomId: null,
+      stagingState: "disconnected",
+    };
+  }
+
+  const squadIdIsValid = previous.squadId
+    ? activeTheater.squads.some((squad) => squad.squadId === previous.squadId)
+    : false;
+  const preferredSquadId =
+    squadIdIsValid
+      ? previous.squadId
+      : isLocalPlayerSlot(slot) && state.players[slot].active
+        ? getPlayerPreferredTheaterSquadId(state, slot)
+        : previous.squadId;
+  const assignedSquad = preferredSquadId
+    ? activeTheater.squads.find((squad) => squad.squadId === preferredSquadId) ?? null
+    : null;
 
   return {
     ...previous,
     playerId: slot,
-    theaterId: activeTheater?.definition.id ?? previous.theaterId ?? null,
-    squadId: ownsSelectedSquad ? selectedSquadId : previous.squadId,
-    roomId: ownsSelectedSquad ? selectedRoomId : previous.roomId,
+    theaterId: activeTheater.definition.id,
+    squadId: isActiveLocalPlayer ? assignedSquad?.squadId ?? null : previous.squadId,
+    roomId: isActiveLocalPlayer ? assignedSquad?.currentRoomId ?? null : previous.roomId,
     stagingState: state.phase === "battle"
       ? "battle"
-      : activeTheater
+      : isActiveLocalPlayer
         ? "theater"
-        : (slot === "P1" || slot === "P2") && state.players[slot].active
-          ? "haven"
+        : state.session?.players?.[slot]?.connected
+          ? previous.stagingState
           : "disconnected",
   };
 }
@@ -277,14 +440,21 @@ function normalizeTheaterAssignment(
 export function withNormalizedSessionState(state: GameState): GameState {
   const currentSession = state.session ?? createDefaultSessionState(state);
   const sharedPool = createResourcePool(state.wad, state.resources);
-  const nextPlayers = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
-    acc[slot] = normalizeSessionPlayer(state, slot, currentSession.players?.[slot]);
-    return acc;
-  }, {} as SessionState["players"]);
   const nextAssignments = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
     acc[slot] = normalizeTheaterAssignment(state, slot, currentSession.theaterAssignments?.[slot]);
     return acc;
   }, {} as SessionState["theaterAssignments"]);
+  const nextPlayers = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+    const normalizedPlayer = normalizeSessionPlayer(state, slot, currentSession.players?.[slot]);
+    const assignment = nextAssignments[slot];
+    acc[slot] = {
+      ...normalizedPlayer,
+      currentTheaterId: assignment.theaterId,
+      assignedSquadId: assignment.squadId,
+      lastSafeRoomId: assignment.roomId ?? normalizedPlayer.lastSafeRoomId,
+    };
+    return acc;
+  }, {} as SessionState["players"]);
   const nextSession: SessionState = {
     ...currentSession,
     mode: normalizeMode(currentSession.mode, state.players.P2.active),
@@ -303,6 +473,9 @@ export function withNormalizedSessionState(state: GameState): GameState {
     },
     players: nextPlayers,
     theaterAssignments: nextAssignments,
+    pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+      currentSession.pendingTheaterBattleConfirmation,
+    ),
     campaign: currentSession.campaign ?? createCampaignStateSeed(state.operation?.id ?? null),
   };
 
@@ -380,6 +553,168 @@ export function setPlayerJoinState(
           controlledUnitIds: [...state.players.P2.controlledUnitIds],
         },
       },
+    },
+  });
+}
+
+export function getTheaterAssignedPlayerSlots(state: GameState, squadId: string | null): PlayerSlot[] {
+  if (!squadId) {
+    return [];
+  }
+  return LOCAL_PLAYER_IDS.filter((slot) =>
+    state.players[slot].active && state.session.theaterAssignments?.[slot]?.squadId === squadId,
+  );
+}
+
+export function assignLocalPlayerToTheaterSquad(
+  state: GameState,
+  playerId: PlayerSlot,
+  squadId: string | null,
+): GameState {
+  if (!state.players[playerId].active) {
+    return state;
+  }
+
+  const activeTheater = state.operation?.theater;
+  if (!activeTheater) {
+    return state;
+  }
+
+  const assignedSquad = squadId
+    ? activeTheater.squads.find((squad) => squad.squadId === squadId) ?? null
+    : null;
+  if (squadId && !assignedSquad) {
+    return state;
+  }
+
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  const currentAssignment = currentSession.theaterAssignments?.[playerId] ?? createTheaterAssignment(playerId);
+
+  return withNormalizedSessionState({
+    ...state,
+    session: {
+      ...currentSession,
+      theaterAssignments: {
+        ...currentSession.theaterAssignments,
+        [playerId]: {
+          ...currentAssignment,
+          playerId,
+          theaterId: activeTheater.definition.id,
+          squadId: assignedSquad?.squadId ?? null,
+          roomId: assignedSquad?.currentRoomId ?? null,
+          stagingState: assignedSquad ? "theater" : "staging",
+        },
+      },
+    },
+  });
+}
+
+export function launchCoopOperationsSessionFromLobby(
+  state: GameState,
+  lobby: LobbyState,
+): GameState {
+  if (lobby.activity.kind !== "coop_operations") {
+    return state;
+  }
+
+  const activity = lobby.activity.coopOperations;
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  const localNetworkSlot = lobby.localSlot;
+  const nextPlayers = SESSION_PLAYER_SLOTS.reduce((acc, sessionSlot) => {
+    const networkSlot = getCoopParticipantNetworkSlot(lobby, sessionSlot);
+    const participant = networkSlot ? activity.participants[networkSlot] : null;
+    const isLocalParticipant = Boolean(networkSlot && networkSlot === localNetworkSlot);
+    const previous = currentSession.players?.[sessionSlot] ?? createSessionPlayerState(sessionSlot, "remote", false, []);
+
+    acc[sessionSlot] = participant
+      ? {
+          ...previous,
+          slot: sessionSlot,
+          presence: isLocalParticipant ? "local" : participant.connected ? "remote" : "disconnected",
+          authorityRole: participant.authorityRole,
+          connected: participant.connected,
+          inputSource: isLocalParticipant ? state.players.P1.inputSource : "remote",
+          controlledUnitIds: isLocalParticipant ? [...state.players.P1.controlledUnitIds] : [],
+          stagingState: participant.connected ? participant.stagingState : "rejoining",
+          currentTheaterId: null,
+          assignedSquadId: null,
+          lastSafeRoomId: null,
+          lastSafeMapId: participant.lastSafeMapId ?? "base_camp",
+        }
+      : {
+          ...previous,
+          slot: sessionSlot,
+          presence: "inactive",
+          authorityRole: "client",
+          connected: false,
+          inputSource: "remote",
+          controlledUnitIds: [],
+          stagingState: "disconnected",
+          currentTheaterId: null,
+          assignedSquadId: null,
+          lastSafeRoomId: null,
+          lastSafeMapId: null,
+        };
+    return acc;
+  }, {} as SessionState["players"]);
+
+  const nextAssignments = SESSION_PLAYER_SLOTS.reduce((acc, sessionSlot) => {
+    const participant = (() => {
+      const networkSlot = getCoopParticipantNetworkSlot(lobby, sessionSlot);
+      return networkSlot ? activity.participants[networkSlot] : null;
+    })();
+    acc[sessionSlot] = {
+      playerId: sessionSlot,
+      theaterId: null,
+      squadId: null,
+      roomId: null,
+      stagingState: participant?.connected ? participant.stagingState : participant ? "rejoining" : "disconnected",
+    };
+    return acc;
+  }, {} as SessionState["theaterAssignments"]);
+
+  return withNormalizedSessionState({
+    ...state,
+    currentBattle: state.currentBattle?.modeContext?.kind === "squad" ? null : state.currentBattle,
+    phase: "field",
+    session: {
+      ...currentSession,
+      mode: "coop_operations",
+      authorityRole: localNetworkSlot === lobby.hostSlot ? "host" : "client",
+      ownerSlot: "P1",
+      maxPlayers: Math.max(2, Math.min(SESSION_PLAYER_SLOTS.length, activity.selectedSlots.length || 1)),
+      activeBattleId: null,
+      pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+        activity.pendingTheaterBattleConfirmation,
+      ),
+      resourceLedger: {
+        ...currentSession.resourceLedger,
+        preset: activity.economyPreset,
+      },
+      players: nextPlayers,
+      theaterAssignments: nextAssignments,
+      campaign: currentSession.campaign ?? createCampaignStateSeed(state.operation?.id ?? null),
+    },
+  });
+}
+
+export function clearCoopOperationsSession(state: GameState): GameState {
+  if (state.session.mode !== "coop_operations") {
+    return state;
+  }
+  const resetSession = createDefaultSessionState(state);
+  return withNormalizedSessionState({
+    ...state,
+    operation: null,
+    currentBattle: null,
+    phase: "field",
+    session: {
+      ...resetSession,
+      resourceLedger: {
+        ...resetSession.resourceLedger,
+        shared: createResourcePool(state.wad, state.resources),
+      },
+      pendingTheaterBattleConfirmation: null,
     },
   });
 }

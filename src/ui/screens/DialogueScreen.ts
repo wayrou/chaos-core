@@ -5,6 +5,11 @@
 
 import { getAllImportedDialogues, getImportedDialogue } from "../../content/technica";
 import type { DialogueChoice, DialogueEffect, DialogueNode, ImportedDialogue } from "../../content/technica/types";
+import { NPC_DIALOGUE } from "../../field/npcs";
+import { getGameState, updateGameState } from "../../state/gameStore";
+import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "../../core/campaign";
+import { getSchemaUnlockState } from "../../core/schemaSystem";
+import type { GameState } from "../../core/types";
 
 type LegacyDialogueContent = {
   kind: "legacy";
@@ -20,11 +25,286 @@ type GraphDialogueContent = {
 
 type DialogueContent = LegacyDialogueContent | GraphDialogueContent;
 
+type DialogueOccurrenceMode = "exclusive" | "random_pool";
+
+type DialogueOccurrenceRules = {
+  npcId: string;
+  mode: DialogueOccurrenceMode;
+  poolWeight: number;
+  unlockAfterFloor: number;
+  requiredQuestIds: string[];
+  requiredGearIds: string[];
+  requiredItemIds: string[];
+  requiredFieldModIds: string[];
+  requiredSchemaIds: string[];
+};
+
+type NpcDialogueSelection =
+  | {
+      kind: "imported";
+      dialogue: ImportedDialogue;
+      npcName: string;
+    }
+  | {
+      kind: "legacy";
+      npcName: string;
+      lines: string[];
+    };
+
 let currentContent: DialogueContent | null = null;
 let currentLineIndex = 0;
 let currentNodeId: string | null = null;
+let currentDialogueId: string | null = null;
 let onCloseCallback: (() => void) | null = null;
 const dialogueFlags = new Map<string, string | number | boolean>();
+
+function parseStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean)));
+  }
+
+  if (typeof value === "string") {
+    return Array.from(
+      new Set(
+        value
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  return [];
+}
+
+function parseDialogueOccurrenceRules(metadata: Record<string, unknown> | undefined): DialogueOccurrenceRules {
+  const npcId = typeof metadata?.dialogueNpcId === "string" && metadata.dialogueNpcId.trim()
+    ? metadata.dialogueNpcId.trim()
+    : typeof metadata?.linkedNpcId === "string" && metadata.linkedNpcId.trim()
+      ? metadata.linkedNpcId.trim()
+      : "";
+
+  const mode = metadata?.dialogueOccurrence === "random_pool" ? "random_pool" : "exclusive";
+  const rawPoolWeight = Number(metadata?.dialoguePoolWeight ?? 1);
+  const rawUnlockFloor = Number(metadata?.dialogueUnlockAfterFloor ?? 0);
+
+  return {
+    npcId,
+    mode,
+    poolWeight: Number.isFinite(rawPoolWeight) && rawPoolWeight > 0 ? Math.round(rawPoolWeight) : 1,
+    unlockAfterFloor: Number.isFinite(rawUnlockFloor) && rawUnlockFloor > 0 ? Math.round(rawUnlockFloor) : 0,
+    requiredQuestIds: parseStringList(metadata?.dialogueRequireQuestIds),
+    requiredGearIds: parseStringList(metadata?.dialogueRequireGearIds),
+    requiredItemIds: parseStringList(metadata?.dialogueRequireItemIds),
+    requiredFieldModIds: parseStringList(metadata?.dialogueRequireFieldModIds),
+    requiredSchemaIds: parseStringList(metadata?.dialogueRequireSchemaIds)
+  };
+}
+
+function getOwnedGearIds(state: GameState): Set<string> {
+  return new Set(Object.keys(state.equipmentById ?? {}));
+}
+
+function getOwnedItemIds(state: GameState): Set<string> {
+  const itemIds = new Set<string>();
+
+  Object.entries(state.consumables ?? {}).forEach(([itemId, quantity]) => {
+    if (Number(quantity) > 0) {
+      itemIds.add(itemId);
+    }
+  });
+
+  [...(state.inventory?.baseStorage ?? []), ...(state.inventory?.forwardLocker ?? [])].forEach((item) => {
+    if (Number(item.quantity ?? 0) > 0) {
+      itemIds.add(item.id);
+    }
+  });
+
+  return itemIds;
+}
+
+function getOwnedFieldModIds(state: GameState): Set<string> {
+  const campaignProgress = loadCampaignProgress();
+  const fieldModIds = new Set<string>();
+
+  [...(state.runFieldModInventory ?? [])].forEach((instance) => {
+    if (instance?.defId) {
+      fieldModIds.add(instance.defId);
+    }
+  });
+
+  [...(campaignProgress.queuedFieldModsForNextRun ?? []), ...(campaignProgress.activeRun?.runFieldModInventory ?? [])].forEach(
+    (instance) => {
+      if (instance?.defId) {
+        fieldModIds.add(instance.defId);
+      }
+    }
+  );
+
+  return fieldModIds;
+}
+
+function getUnlockedSchemaIds(state: GameState): Set<string> {
+  const schemaState = getSchemaUnlockState(state);
+  return new Set([...schemaState.unlockedCoreTypes, ...schemaState.unlockedFortificationPips]);
+}
+
+function areRequirementsMet(dialogue: ImportedDialogue, npcId: string): boolean {
+  const rules = parseDialogueOccurrenceRules(dialogue.metadata);
+  if (rules.npcId && rules.npcId !== npcId) {
+    return false;
+  }
+
+  const state = getGameState();
+  const highestReachedFloorOrdinal = getHighestReachedFloorOrdinal(loadCampaignProgress());
+  if (rules.unlockAfterFloor > 0 && highestReachedFloorOrdinal < rules.unlockAfterFloor) {
+    return false;
+  }
+
+  const completedQuestIds = new Set(state.quests?.completedQuests ?? []);
+  if (rules.requiredQuestIds.some((questId) => !completedQuestIds.has(questId))) {
+    return false;
+  }
+
+  const ownedGearIds = getOwnedGearIds(state);
+  if (rules.requiredGearIds.some((gearId) => !ownedGearIds.has(gearId))) {
+    return false;
+  }
+
+  const ownedItemIds = getOwnedItemIds(state);
+  if (rules.requiredItemIds.some((itemId) => !ownedItemIds.has(itemId))) {
+    return false;
+  }
+
+  const ownedFieldModIds = getOwnedFieldModIds(state);
+  if (rules.requiredFieldModIds.some((fieldModId) => !ownedFieldModIds.has(fieldModId))) {
+    return false;
+  }
+
+  const unlockedSchemaIds = getUnlockedSchemaIds(state);
+  if (rules.requiredSchemaIds.some((schemaId) => !unlockedSchemaIds.has(schemaId))) {
+    return false;
+  }
+
+  return true;
+}
+
+function pickWeightedCandidate<TValue>(candidates: Array<{ value: TValue; weight: number }>): TValue | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const totalWeight = candidates.reduce((sum, candidate) => sum + Math.max(1, candidate.weight), 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const candidate of candidates) {
+    roll -= Math.max(1, candidate.weight);
+    if (roll <= 0) {
+      return candidate.value;
+    }
+  }
+
+  return candidates[candidates.length - 1]?.value ?? null;
+}
+
+function pickExclusiveDialogue(candidates: ImportedDialogue[], preferredDialogueId: string): ImportedDialogue | null {
+  const sortedCandidates = [...candidates].sort((left, right) => {
+    const leftPriority = left.id === preferredDialogueId ? 0 : 1;
+    const rightPriority = right.id === preferredDialogueId ? 0 : 1;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  return sortedCandidates[0] ?? null;
+}
+
+function selectNpcDialogue(dialogueId: string, npcId: string, npcName: string): NpcDialogueSelection | null {
+  const allImportedDialogues = getAllImportedDialogues();
+  const exactDialogue = getImportedDialogue(dialogueId);
+  const exactDialogueRules = exactDialogue ? parseDialogueOccurrenceRules(exactDialogue.metadata) : null;
+  const attachedDialogues = allImportedDialogues
+    .map((dialogue) => ({
+      dialogue,
+      rules: parseDialogueOccurrenceRules(dialogue.metadata)
+    }))
+    .filter(({ dialogue, rules }) => rules.npcId === npcId && areRequirementsMet(dialogue, npcId));
+
+  const exclusiveDialogue = pickExclusiveDialogue(
+    attachedDialogues
+      .filter(({ rules }) => rules.mode === "exclusive")
+      .map(({ dialogue }) => dialogue),
+    dialogueId
+  );
+
+  if (exclusiveDialogue) {
+    return {
+      kind: "imported",
+      dialogue: exclusiveDialogue,
+      npcName
+    };
+  }
+
+  if (
+    exactDialogue &&
+    (!exactDialogueRules?.npcId || exactDialogueRules.npcId === npcId) &&
+    exactDialogueRules?.mode !== "random_pool" &&
+    areRequirementsMet(exactDialogue, npcId)
+  ) {
+    return {
+      kind: "imported",
+      dialogue: exactDialogue,
+      npcName
+    };
+  }
+
+  const poolCandidates: Array<{ value: NpcDialogueSelection; weight: number }> = attachedDialogues
+    .filter(({ rules }) => rules.mode === "random_pool")
+    .map(({ dialogue, rules }) => ({
+      value: {
+        kind: "imported" as const,
+        dialogue,
+        npcName
+      },
+      weight: rules.poolWeight
+    }));
+
+  const legacyLines = NPC_DIALOGUE[dialogueId];
+  if (Array.isArray(legacyLines) && legacyLines.length > 0) {
+    poolCandidates.push({
+      value: {
+        kind: "legacy",
+        npcName,
+        lines: legacyLines
+      },
+      weight: 1
+    });
+  }
+
+  const pooledSelection = pickWeightedCandidate(poolCandidates);
+  if (pooledSelection) {
+    return pooledSelection;
+  }
+
+  if (exactDialogue && areRequirementsMet(exactDialogue, npcId)) {
+    return {
+      kind: "imported",
+      dialogue: exactDialogue,
+      npcName
+    };
+  }
+
+  if (Array.isArray(legacyLines) && legacyLines.length > 0) {
+    return {
+      kind: "legacy",
+      npcName,
+      lines: legacyLines
+    };
+  }
+
+  return null;
+}
 
 function getNode(dialogue: ImportedDialogue, nodeId: string): DialogueNode | null {
   return dialogue.nodes.find((node) => node.id === nodeId) || null;
@@ -79,6 +359,7 @@ function getVisibleChoices(node: Extract<DialogueNode, { type: "choice_set" }>):
 }
 
 export function showDialogue(npcName: string, dialogueLines: string[], onClose?: () => void): void {
+  dialogueFlags.clear();
   currentContent = {
     kind: "legacy",
     npcName,
@@ -86,15 +367,55 @@ export function showDialogue(npcName: string, dialogueLines: string[], onClose?:
   };
   currentLineIndex = 0;
   currentNodeId = null;
+  currentDialogueId = null;
   onCloseCallback = onClose || null;
 
   renderDialogue();
   attachDialogueListeners();
 }
 
+export function showNpcDialogue(
+  dialogueId: string,
+  npcName: string,
+  npcId: string,
+  onClose?: () => void
+): boolean {
+  const selection = selectNpcDialogue(dialogueId, npcId, npcName);
+  if (!selection) {
+    return false;
+  }
+
+  dialogueFlags.clear();
+  currentLineIndex = 0;
+  currentNodeId = null;
+  currentDialogueId = null;
+  onCloseCallback = onClose || null;
+
+  if (selection.kind === "legacy") {
+    currentDialogueId = dialogueId;
+    currentContent = selection;
+    renderDialogue();
+    attachDialogueListeners();
+    return true;
+  }
+
+  currentContent = {
+    kind: "graph",
+    dialogue: selection.dialogue,
+    npcName: npcName || getDialogueSpeakerFallback(selection.dialogue)
+  };
+  currentDialogueId = selection.dialogue.id;
+  currentNodeId = selection.dialogue.entryNodeId;
+
+  advanceGraphUntilRenderable();
+  renderDialogue();
+  attachDialogueListeners();
+  return true;
+}
+
 function resolveImportedDialogue(dialogueId: string, fallbackNpcId?: string): ImportedDialogue | null {
   const exactDialogue = getImportedDialogue(dialogueId);
-  if (exactDialogue) {
+  if (exactDialogue && (!fallbackNpcId || areRequirementsMet(exactDialogue, fallbackNpcId))) {
     return exactDialogue;
   }
 
@@ -104,7 +425,7 @@ function resolveImportedDialogue(dialogueId: string, fallbackNpcId?: string): Im
 
   return (
     getAllImportedDialogues().find(
-      (dialogue) => String(dialogue.metadata?.linkedNpcId ?? "").trim() === fallbackNpcId
+      (dialogue) => parseDialogueOccurrenceRules(dialogue.metadata).npcId === fallbackNpcId && areRequirementsMet(dialogue, fallbackNpcId)
     ) || null
   );
 }
@@ -120,12 +441,14 @@ export function showImportedDialogue(
     return false;
   }
 
+  dialogueFlags.clear();
   currentContent = {
     kind: "graph",
     dialogue,
     npcName: fallbackNpcName || getDialogueSpeakerFallback(dialogue)
   };
   currentLineIndex = 0;
+  currentDialogueId = dialogue.id;
   currentNodeId = dialogue.entryNodeId;
   onCloseCallback = onClose || null;
 
@@ -145,6 +468,7 @@ export function closeDialogue(): void {
   currentContent = null;
   currentLineIndex = 0;
   currentNodeId = null;
+  currentDialogueId = null;
 
   const panel = document.getElementById("dialoguePanel");
   if (panel) {
@@ -155,6 +479,26 @@ export function closeDialogue(): void {
     onCloseCallback();
     onCloseCallback = null;
   }
+}
+
+function markCurrentDialogueCompleted(): void {
+  if (!currentDialogueId) {
+    return;
+  }
+
+  const dialogueId = currentDialogueId;
+
+  updateGameState((state) => {
+    const completedDialogueIds = state.completedDialogueIds ?? [];
+    if (completedDialogueIds.includes(dialogueId)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      completedDialogueIds: [...completedDialogueIds, dialogueId]
+    };
+  });
 }
 
 function advanceGraphUntilRenderable(): void {
@@ -299,6 +643,7 @@ function renderDialogue(): void {
         </div>
       `;
     } else if (node.type === "end") {
+      markCurrentDialogueCompleted();
       closeDialogue();
       return;
     }
@@ -320,6 +665,7 @@ function advanceLegacyDialogue(): void {
     renderDialogue();
     attachDialogueListeners();
   } else {
+    markCurrentDialogueCompleted();
     closeDialogue();
   }
 }
@@ -345,18 +691,21 @@ function advanceGraphDialogue(choiceId?: string): void {
     applyEffects(choice.effects);
     currentNodeId = choice.targetNodeId;
   } else if (node.type === "end") {
+    markCurrentDialogueCompleted();
     closeDialogue();
     return;
   }
 
   advanceGraphUntilRenderable();
   if (!currentNodeId) {
+    markCurrentDialogueCompleted();
     closeDialogue();
     return;
   }
 
   const nextNode = getCurrentNode();
   if (nextNode?.type === "end") {
+    markCurrentDialogueCompleted();
     closeDialogue();
     return;
   }

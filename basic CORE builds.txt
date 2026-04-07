@@ -1,0 +1,89 @@
+Medical Ward
+Role: casualty control, recovery, stabilization
+Requirements to be online:
+50crates of supply
+50watts of power
+Strategic function
+Gives post-battle healing to squads operating within 100bw comms of connected range
+Tactical battle tie-in
+Squads within 100bw comms are granted health recovery post-battle.
+Incapacitated units can only be revived when their squad reaches a Medical Ward.
+Network identity
+Works best when supplied and with strong comms. 
+a good “rear line” C.O.R.E., not usually ideal on the frontier unless the player is sustaining a forward push
+Failure / damage consequences
+prolonged campaigns become riskier 
+
+Armory
+Role: ammunition, combat readiness, munitions support
+Requirements to be online:
+100crates of supply
+50watts of power
+Strategic function
+improves readiness for connected squads
+Tactical battle tie-in
+Connected battles within 100bw comms start with an attack buff, improving opening offensive tempo.
+Network identity
+Needs heavy resource connection
+Failure / damage consequences
+offensive momentum falls apart
+
+Command Center
+Role: local control, coordination, threat response
+Requirements to be online:
+50crates of supply
+100watts of power
+Strategic function
+Improves comms in connected rooms, taking an input source of >1bw and outputting it to 100bw of comms (as long as it has the 100watts power to be online)
+Tactical battle tie-in
+Connected battles within 100bw comms start with a defense buff, improving opening offensive tempo.
+Network identity
+Requires heavy power network
+ideal for chokepoints, intersections, and high-value sectors
+Failure / damage consequences
+redeploy and response options get worse
+nearby network becomes less stable and less informed
+
+Mine 
+Role: extraction, raw material generation
+Requirements to be online:
+50crates of supply
+50watts of power
+Strategic function
+generates a steady trickle of metal and timber per tick.
+good long-term value but weaker immediate battle support
+Tactical tie-in
+Improves post-battle resource gain in connected rooms with 50bw comms.
+Network identity
+wants secure adjacency and protection
+not usually a frontline C.O.R.E. unless the player is gambling
+best in sectors with natural resource tags
+Failure / damage consequences
+income drops
+construction plans become harder to sustain
+the player feels long-term economic pain instead of immediate battle pain
+
+Refinery
+Role: Just like mine, but generates steam per tick.
+Requirements to be online:
+50crates of supply
+100watts of power
+Tactical tie-in
+Improves post-battle resource gain in connected rooms with 50bw comms.
+Supply depot
+Role: logistics anchor, resource distribution
+Requirements to be online:
+50crates of supply
+50watts of power
+Strategic function
+Improves supply in connected rooms, taking an input source of >1crates and outputting it to 100crates of supply (as long as it has the 100watts power to be online)
+Tactical tie-in
+Squad battles within 50bw of comms gives the player gear and consumable rewards post-battle.
+Network identity
+one of the most foundational C.O.R.E.s
+defines the backbone of a push
+often worth protecting over flashier buildings
+Failure / damage consequences
+downstream rooms become cut off
+multiple other C.O.R.E.s may weaken at once
+one lost Depot can cause a cascading logistics collapse

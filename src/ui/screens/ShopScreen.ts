@@ -20,9 +20,10 @@ import {
 } from "../../core/gearWorkbench";
 import { getAllStarterEquipment } from "../../core/equipment";
 import { getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
-import { getAllOwnedUnlockableIds } from "../../core/unlockableOwnership";
+import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
+import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -219,6 +220,8 @@ let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables"
 export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
+  document.body.setAttribute("data-screen", "shop");
+  clearControllerContext();
   
   const state = getGameState();
   const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
@@ -263,7 +266,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
         </button>
         <button class="shop-tab ${currentTab === 'unlockables' ? 'shop-tab--active' : ''}" data-tab="unlockables">
           <span class="tab-icon">🔓</span>
-          <span class="tab-text">WEAPON PARTS</span>
+          <span class="tab-text">UNLOCKS</span>
         </button>
         <button class="shop-tab ${currentTab === 'sell' ? 'shop-tab--active' : ''}" data-tab="sell">
           <span class="tab-icon">💰</span>
@@ -305,6 +308,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   `;
   
   attachShopListeners(returnTo);
+  updateFocusableElements();
 }
 
 function renderShopContent(state: any): string {
@@ -338,9 +342,7 @@ function renderShopContent(state: any): string {
     case "unlockables":
       // Generate unlockable items dynamically
       try {
-        const owned = getAllOwnedUnlockableIds();
-        const allOwnedIds = [...owned.chassis, ...owned.doctrines];
-        const unowned = getUnownedUnlockables(allOwnedIds);
+        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList());
         
         // Convert to ShopItem format
         items = unowned.map(unlock => ({
@@ -352,13 +354,13 @@ function renderShopContent(state: any): string {
           rarity: unlock.rarity,
         }));
         
-        sectionTitle = "WEAPON PARTS";
-        sectionDesc = "Chassis, doctrines, and field modifications for the gear builder.";
+        sectionTitle = "UNLOCKABLES";
+        sectionDesc = "Permanent unlocks including chassis, doctrines, tactical mods, and Haven decor pieces.";
       } catch (err) {
         console.warn("[SHOP] Could not load unlockables:", err);
         items = [];
-        sectionTitle = "WEAPON PARTS";
-        sectionDesc = "No weapon parts available.";
+        sectionTitle = "UNLOCKABLES";
+        sectionDesc = "No unlocks available.";
       }
       break;
     case "sell":
@@ -839,8 +841,8 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
         </div>
         <div class="shop-pak-results" id="shopPakResults" hidden>
           <p class="modal-subtitle">${subtitle}</p>
-          <div class="shop-pak-reveal-grid">
-            ${cardIds.map((cardId, index) => renderPAKRevealCard(cardId, index)).join("")}
+          <div class="shop-pak-reveal-status" id="shopPakRevealStatus">Awaiting decompression...</div>
+          <div class="shop-pak-reveal-grid" id="shopPakRevealGrid">
           </div>
         </div>
       </div>
@@ -859,6 +861,8 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
   const progressBar = modal.querySelector<HTMLElement>("#shopPakProgressBar");
   const resultsEl = modal.querySelector<HTMLElement>("#shopPakResults");
   const loaderEl = modal.querySelector<HTMLElement>("#shopPakLoader");
+  const revealGridEl = modal.querySelector<HTMLElement>("#shopPakRevealGrid");
+  const revealStatusEl = modal.querySelector<HTMLElement>("#shopPakRevealStatus");
   const closeBtn = modal.querySelector<HTMLButtonElement>("#closeModalBtn");
   const titleEl = modal.querySelector<HTMLElement>(".modal-title");
   const logLines = [
@@ -872,13 +876,16 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
   let closed = false;
   let revealTimer: number | null = null;
   let logTimer: number | null = null;
+  let revealedCount = 0;
 
   const cleanupTimers = () => {
     if (logTimer !== null) {
       window.clearInterval(logTimer);
+      logTimer = null;
     }
     if (revealTimer !== null) {
       window.clearTimeout(revealTimer);
+      revealTimer = null;
     }
   };
 
@@ -889,14 +896,67 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
     setTimeout(() => modal.remove(), 300);
   };
 
-  const revealCards = () => {
+  const finishReveal = () => {
+    if (closed) return;
+    titleEl && (titleEl.textContent = `${itemName} DECOMPRESSED`);
+    if (revealStatusEl) {
+      revealStatusEl.textContent = `Recovered ${revealedCount}/${cardIds.length} tactical data cards.`;
+    }
+    if (closeBtn) {
+      closeBtn.disabled = false;
+      closeBtn.textContent = "CONFIRM";
+    }
+  };
+
+  const revealNextCard = () => {
+    if (closed) return;
+    if (!revealGridEl) {
+      finishReveal();
+      return;
+    }
+    if (revealedCount >= cardIds.length) {
+      finishReveal();
+      return;
+    }
+
+    revealGridEl.insertAdjacentHTML("beforeend", renderPAKRevealCard(cardIds[revealedCount], revealedCount));
+    const newestCard = revealGridEl.lastElementChild as HTMLElement | null;
+    newestCard?.classList.add("shop-pak-reveal-card--enter");
+
+    revealedCount += 1;
+    if (revealStatusEl) {
+      revealStatusEl.textContent = `Recovered card ${revealedCount}/${cardIds.length}...`;
+    }
+    if (closeBtn) {
+      closeBtn.textContent = `REVEALING ${revealedCount}/${cardIds.length}`;
+    }
+
+    revealTimer = window.setTimeout(() => {
+      newestCard?.classList.remove("shop-pak-reveal-card--enter");
+      if (revealedCount >= cardIds.length) {
+        finishReveal();
+        return;
+      }
+      revealNextCard();
+    }, 280);
+  };
+
+  const beginCardReveal = () => {
     if (closed) return;
     loaderEl?.setAttribute("hidden", "true");
     resultsEl?.removeAttribute("hidden");
-    titleEl && (titleEl.textContent = `${itemName} DECOMPRESSED`);
-    if (closeBtn) {
-      closeBtn.disabled = false;
+    titleEl && (titleEl.textContent = `${itemName} CARD REVEAL`);
+    if (revealGridEl) {
+      revealGridEl.innerHTML = "";
     }
+    if (revealStatusEl) {
+      revealStatusEl.textContent = "Decompression complete. Revealing tactical rewards...";
+    }
+    if (closeBtn) {
+      closeBtn.disabled = true;
+      closeBtn.textContent = `REVEALING 0/${cardIds.length}`;
+    }
+    revealTimer = window.setTimeout(revealNextCard, 320);
   };
 
   if (logEl && progressBar) {
@@ -905,7 +965,7 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
 
       if (logIndex >= logLines.length) {
         cleanupTimers();
-        revealTimer = window.setTimeout(revealCards, 350);
+        revealTimer = window.setTimeout(beginCardReveal, 350);
         return;
       }
 
@@ -920,7 +980,7 @@ function showPurchaseModal(itemName: string, cardIds: string[], subtitle: string
       logIndex += 1;
     }, 260);
   } else {
-    revealCards();
+    beginCardReveal();
   }
 
   closeBtn?.addEventListener("click", () => {

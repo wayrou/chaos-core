@@ -7,7 +7,9 @@ import {
   getAllImportedOperations,
   isTechnicaContentDisabled,
 } from "../content/technica";
-import { RoomNode } from "./types";
+import { getGameState } from "../state/gameStore";
+import { CoreType, RoomNode, TheaterSprawlDirection } from "./types";
+import type { OpsTerminalAtlasState } from "./opsTerminalAtlas";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -31,6 +33,9 @@ export interface CampaignProgress {
   completedOperations: OperationId[];
   unlockedOperations: OperationId[];
   activeRun: ActiveRunState | null;
+  opsTerminalAtlas?: OpsTerminalAtlasState;
+  schemaNodeUnlocked?: boolean;
+  highestReachedFloorOrdinal?: number;
   // Field Mods System - Black Market queue
   queuedFieldModsForNextRun?: import("./fieldMods").FieldModInstance[];
 }
@@ -39,6 +44,7 @@ export interface ActiveRunState {
   operationId: OperationId;
   difficulty: Difficulty;
   enemyDensity?: EnemyDensity;
+  sprawlDirection?: TheaterSprawlDirection;
   floorsTotal: number;
   floorIndex: number; // 0-based
   nodeMapByFloor: Record<number, NodeMap>;
@@ -94,10 +100,14 @@ export interface EncounterDefinition {
     count: number;
     levelMod?: number;
     elite?: boolean;
+    source?: "builtin" | "technica";
+    unitTemplateId?: string;
   }>;
   gridWidth: number;
   gridHeight: number;
   introText?: string;
+  floorId?: string;
+  roomId?: string;
 }
 
 // Key Room System Types
@@ -245,6 +255,52 @@ Object.keys(OPERATION_DEFINITIONS).forEach((operationId) => {
 
 const CAMPAIGN_STORAGE_KEY = "chaoscore_campaign_progress";
 const CAMPAIGN_VERSION = 1;
+export const SCHEMA_UNLOCK_FLOOR_ORDINAL = 2;
+export const ADVANCED_CORE_TIER_UNLOCK_FLOOR_ORDINAL = 3;
+export const PORT_UNLOCK_FLOOR_ORDINAL = 4;
+export const STABLE_UNLOCK_FLOOR_ORDINAL = 5;
+export const DISPATCH_UNLOCK_FLOOR_ORDINAL = 6;
+export const BLACK_MARKET_UNLOCK_FLOOR_ORDINAL = 7;
+export const PROTOTYPE_CORE_TIER_UNLOCK_FLOOR_ORDINAL = 8;
+export const FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL = 9;
+export const HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL = 10;
+export const FINAL_RESET_UNLOCK_FLOOR_ORDINAL = 12;
+
+export const ADVANCED_SCHEMA_CORE_TYPES: CoreType[] = [
+  "logistics_hub",
+  "forward_maintenance_bay",
+  "emergency_supply_cache",
+  "operations_planning_cell",
+  "quartermaster_cell",
+  "stable",
+  "survey_array",
+  "recovery_yard",
+  "transit_hub",
+  "tavern",
+];
+
+export const PROTOTYPE_SCHEMA_CORE_TYPES: CoreType[] = [
+  "prototype_systems_lab",
+  "forward_fire_support_post",
+  "tactics_school",
+  "fabrication_bay",
+];
+
+export const MASTER_UNLOCK_GUIDE = [
+  { floorOrdinal: 0, label: "Opening Cutscene", kind: "cutscene" },
+  { floorOrdinal: 1, label: "A.T.L.A.S. / Ops Terminal Online", kind: "system" },
+  { floorOrdinal: 2, label: "Schema Node", kind: "node" },
+  { floorOrdinal: 3, label: "Advanced C.O.R.E. Tier", kind: "system" },
+  { floorOrdinal: 4, label: "Port Node", kind: "node" },
+  { floorOrdinal: 5, label: "Stable Node", kind: "node" },
+  { floorOrdinal: 6, label: "Dispatch Node", kind: "node" },
+  { floorOrdinal: 7, label: "Black Market Node", kind: "node" },
+  { floorOrdinal: 8, label: "Experimental / Prototype C.O.R.E. Tier", kind: "system" },
+  { floorOrdinal: 9, label: "Foundry + Annex", kind: "placeholder" },
+  { floorOrdinal: 10, label: "HAVEN Build Mode", kind: "system" },
+  { floorOrdinal: 11, label: "No New Unlock", kind: "reserved" },
+  { floorOrdinal: 12, label: "Final Completion Unlock", kind: "endgame" },
+] as const;
 
 function getDefaultUnlockedOperationIds(): OperationId[] {
   const builtInDefaults = ["op_iron_gate"].filter(
@@ -255,6 +311,45 @@ function getDefaultUnlockedOperationIds(): OperationId[] {
     .filter((operationId) => operationId !== "op_custom" && operationId !== "op_iron_gate");
 
   return Array.from(new Set<OperationId>([...builtInDefaults, ...importedOperationIds]));
+}
+
+function getDerivedHighestReachedFloorOrdinal(progress: Partial<CampaignProgress> | null | undefined): number {
+  const activeRunFloorOrdinal = Math.max(1, (progress?.activeRun?.floorIndex ?? 0) + 1);
+  const atlasCurrentFloorOrdinal = Math.max(1, progress?.opsTerminalAtlas?.currentFloorOrdinal ?? 1);
+  const atlasGeneratedFloorOrdinal = Math.max(
+    1,
+    ...Object.values(progress?.opsTerminalAtlas?.floorsById ?? {}).map((floor) => Math.max(1, floor.floorOrdinal ?? 1)),
+  );
+  const liveOperationFloorOrdinal = (() => {
+    try {
+      return Math.max(1, (getGameState().operation?.currentFloorIndex ?? 0) + 1);
+    } catch {
+      return 1;
+    }
+  })();
+
+  return Math.max(activeRunFloorOrdinal, atlasCurrentFloorOrdinal, atlasGeneratedFloorOrdinal, liveOperationFloorOrdinal);
+}
+
+export function getHighestReachedFloorOrdinal(progress: Partial<CampaignProgress> | null | undefined): number {
+  const storedFloorOrdinal = Math.max(1, Number(progress?.highestReachedFloorOrdinal ?? 1));
+  return Math.max(storedFloorOrdinal, getDerivedHighestReachedFloorOrdinal(progress));
+}
+
+function hasReachedFloorOrdinal(
+  floorOrdinal: number,
+  progress: Partial<CampaignProgress> | null | undefined,
+): boolean {
+  return getHighestReachedFloorOrdinal(progress) >= floorOrdinal;
+}
+
+function normalizeCampaignProgress(progress: CampaignProgress): CampaignProgress {
+  return {
+    ...progress,
+    unlockedOperations: Array.from(new Set([...(progress.unlockedOperations ?? []), ...getDefaultUnlockedOperationIds()])),
+    schemaNodeUnlocked: Boolean(progress.schemaNodeUnlocked || getHighestReachedFloorOrdinal(progress) >= SCHEMA_UNLOCK_FLOOR_ORDINAL),
+    highestReachedFloorOrdinal: getHighestReachedFloorOrdinal(progress),
+  };
 }
 
 /**
@@ -270,10 +365,7 @@ export function loadCampaignProgress(): CampaignProgress {
         console.warn("[CAMPAIGN] Version mismatch, resetting progress");
         return createDefaultCampaignProgress();
       }
-      return {
-        ...parsed,
-        unlockedOperations: Array.from(new Set([...(parsed.unlockedOperations ?? []), ...getDefaultUnlockedOperationIds()])),
-      };
+      return normalizeCampaignProgress(parsed);
     }
   } catch (error) {
     console.error("[CAMPAIGN] Failed to load progress:", error);
@@ -288,7 +380,7 @@ export function loadCampaignProgress(): CampaignProgress {
 export function saveCampaignProgress(progress: CampaignProgress): void {
   try {
     const toSave = {
-      ...progress,
+      ...normalizeCampaignProgress(progress),
       version: CAMPAIGN_VERSION,
     };
     localStorage.setItem(CAMPAIGN_STORAGE_KEY, JSON.stringify(toSave));
@@ -307,6 +399,8 @@ export function createDefaultCampaignProgress(): CampaignProgress {
     completedOperations: [],
     unlockedOperations: getDefaultUnlockedOperationIds(),
     activeRun: null,
+    schemaNodeUnlocked: false,
+    highestReachedFloorOrdinal: 1,
   };
 }
 
@@ -337,6 +431,101 @@ export function isOperationCompleted(
   progress: CampaignProgress
 ): boolean {
   return progress.completedOperations.includes(operationId);
+}
+
+function isEscDebugHavenAnnexUnlocked(): boolean {
+  try {
+    return Boolean(getGameState().uiLayout?.escDebugPortStableUnlock);
+  } catch {
+    return false;
+  }
+}
+
+export function isHavenAnnexUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(
+    isPortNodeUnlocked(progress)
+    || isStableNodeUnlocked(progress)
+    || isDispatchNodeUnlocked(progress),
+  );
+}
+
+export function isSchemaNodeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(progress.schemaNodeUnlocked || getHighestReachedFloorOrdinal(progress) >= SCHEMA_UNLOCK_FLOOR_ORDINAL);
+}
+
+export function isAdvancedCoreTierUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(ADVANCED_CORE_TIER_UNLOCK_FLOOR_ORDINAL, progress);
+}
+
+export function isPrototypeCoreTierUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(PROTOTYPE_CORE_TIER_UNLOCK_FLOOR_ORDINAL, progress);
+}
+
+export function getSchemaCoreUnlockFloorOrdinal(coreType: CoreType): number {
+  if (PROTOTYPE_SCHEMA_CORE_TYPES.includes(coreType)) {
+    return PROTOTYPE_CORE_TIER_UNLOCK_FLOOR_ORDINAL;
+  }
+  if (ADVANCED_SCHEMA_CORE_TYPES.includes(coreType)) {
+    return ADVANCED_CORE_TIER_UNLOCK_FLOOR_ORDINAL;
+  }
+  return 1;
+}
+
+export function isSchemaCoreTierAvailable(
+  coreType: CoreType,
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(getSchemaCoreUnlockFloorOrdinal(coreType), progress);
+}
+
+export function isPortNodeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(isEscDebugHavenAnnexUnlocked() || hasReachedFloorOrdinal(PORT_UNLOCK_FLOOR_ORDINAL, progress));
+}
+
+export function isStableNodeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(isEscDebugHavenAnnexUnlocked() || hasReachedFloorOrdinal(STABLE_UNLOCK_FLOOR_ORDINAL, progress));
+}
+
+export function isDispatchNodeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(isEscDebugHavenAnnexUnlocked() || hasReachedFloorOrdinal(DISPATCH_UNLOCK_FLOOR_ORDINAL, progress));
+}
+
+export function isBlackMarketNodeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL, progress);
+}
+
+export function isFoundryAnnexUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL, progress);
+}
+
+export function isHavenBuildModeUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL, progress);
+}
+
+export function isFinalResetUnlocked(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return hasReachedFloorOrdinal(FINAL_RESET_UNLOCK_FLOOR_ORDINAL, progress);
 }
 
 /**

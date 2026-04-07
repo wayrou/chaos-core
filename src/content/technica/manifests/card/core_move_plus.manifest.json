@@ -1,0 +1,22 @@
+{
+  "contentId": "core_move_plus",
+  "contentType": "card",
+  "dependencies": [],
+  "description": "Chaos Core runtime battle card export.",
+  "entryFile": "core_move_plus.card.json",
+  "exportType": "card",
+  "exportedAt": "2026-04-04T06:37:03.798Z",
+  "files": [
+    "manifest.json",
+    "core_move_plus.card.json",
+    "core_move_plus.source.json",
+    "assets/core_move_plus.art.png",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "battle-card.v1",
+  "title": "Move+"
+}

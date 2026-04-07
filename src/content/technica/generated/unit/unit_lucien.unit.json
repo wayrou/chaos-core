@@ -10,6 +10,7 @@
   "name": "Lucien",
   "pwr": 42,
   "recruitCost": 120,
+  "spawnRole": "player",
   "startingInRoster": true,
   "stats": {
     "acc": 7,

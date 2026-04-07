@@ -28,6 +28,16 @@ export const MULE_CLASS_CAPS: Record<
   S: { massKg: 200, bulkBu: 150, powerW: 650 },
 };
 
+export const MULE_CLASS_ORDER: MuleWeightClass[] = ["E", "D", "C", "B", "A", "S"];
+
+export const MULE_UPGRADE_WAD_COSTS: Partial<Record<MuleWeightClass, number>> = {
+  E: 5000,
+  D: 15000,
+  C: 45000,
+  B: 125000,
+  A: 300000,
+};
+
 // -------------------------------------------------------------
 //  LOAD CALCULATION
 // -------------------------------------------------------------
@@ -119,12 +129,21 @@ export function transferItem(
 //  MULE UPGRADE
 // -------------------------------------------------------------
 
-export function upgradeMuleClass(inv: InventoryState): InventoryState {
-  const order: MuleWeightClass[] = ["E", "D", "C", "B", "A", "S"];
-  const idx = order.indexOf(inv.muleClass);
-  if (idx < 0 || idx === order.length - 1) return inv;
+export function getNextMuleClass(muleClass: MuleWeightClass): MuleWeightClass | null {
+  const idx = MULE_CLASS_ORDER.indexOf(muleClass);
+  if (idx < 0 || idx === MULE_CLASS_ORDER.length - 1) {
+    return null;
+  }
+  return MULE_CLASS_ORDER[idx + 1];
+}
 
-  const nextClass = order[idx + 1];
+export function getMuleUpgradeWadCost(muleClass: MuleWeightClass): number | null {
+  return MULE_UPGRADE_WAD_COSTS[muleClass] ?? null;
+}
+
+export function upgradeMuleClass(inv: InventoryState): InventoryState {
+  const nextClass = getNextMuleClass(inv.muleClass);
+  if (!nextClass) return inv;
   const caps = MULE_CLASS_CAPS[nextClass];
 
   return {

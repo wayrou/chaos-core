@@ -1,490 +1,382 @@
 // ============================================================================
-// QUEST SYSTEM - RANDOM QUEST GENERATOR (Headline 15)
-// Generates endless, randomly parameterized quests from templates
+// QUEST SYSTEM - RANDOM QUEST GENERATOR
+// Generates endless theater-aligned contracts from the current A.T.L.A.S. floor
 // ============================================================================
 
-import { Quest, QuestObjective, QuestReward, QuestType, QuestDifficultyTier } from "./types";
-
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
+import type { CoreType } from "../core/types";
+import { loadOpsTerminalAtlasProgress } from "../core/opsTerminalAtlas";
+import type { OpsTerminalAtlasSectorState } from "../core/opsTerminalAtlas";
+import { Quest, QuestDifficultyTier, QuestObjective, QuestReward } from "./types";
 
 const GENERATED_QUEST_PREFIX = "gen_quest_";
 let questIdCounter = 0;
 
-// Resource types for collection quests
-const RESOURCE_TYPES = ["metalScrap", "wood", "chaosShards", "steamComponents"] as const;
-type ResourceType = typeof RESOURCE_TYPES[number];
-
-const RESOURCE_NAMES: Record<ResourceType, string> = {
-  metalScrap: "Metal Scrap",
-  wood: "Wood",
-  chaosShards: "Chaos Shards",
-  steamComponents: "Steam Components",
-};
-
-const RESOURCE_ICONS: Record<ResourceType, string> = {
-  metalScrap: "🔩",
-  wood: "🪵",
-  chaosShards: "💎",
-  steamComponents: "⚙️",
-};
-
-// ============================================================================
-// QUEST TEMPLATES
-// ============================================================================
-
-interface QuestTemplate {
-  id: string;
-  questType: QuestType;
-  titleTemplates: string[];
-  descriptionTemplates: string[];
-  objectiveType: QuestObjective["type"];
-  // Ranges for random values
-  minTarget: number;
-  maxTarget: number;
-  // Reward scaling (multiplied by target count)
-  baseWad: number;
-  wadPerTarget: number;
-  baseXp: number;
-  xpPerTarget: number;
-  // Optional resource rewards
-  resourceRewardChance: number;
-  resourceRewardMin: number;
-  resourceRewardMax: number;
-  // Difficulty tier range
-  minTier: QuestDifficultyTier;
-  maxTier: QuestDifficultyTier;
-}
-
-const QUEST_TEMPLATES: QuestTemplate[] = [
-  // Kill enemies quests
-  {
-    id: "kill_enemies",
-    questType: "hunt",
-    titleTemplates: [
-      "Combat Patrol",
-      "Enemy Sweep",
-      "Hostiles Elimination",
-      "Field Engagement",
-      "Tactical Strike",
-    ],
-    descriptionTemplates: [
-      "Defeat {target} enemies in tactical battles or field operations.",
-      "Eliminate {target} hostile units. Any engagement counts.",
-      "Engage and destroy {target} enemies. Standard combat protocols.",
-      "Clear {target} hostiles from the operational area.",
-    ],
-    objectiveType: "kill_enemies",
-    minTarget: 3,
-    maxTarget: 15,
-    baseWad: 20,
-    wadPerTarget: 8,
-    baseXp: 50,
-    xpPerTarget: 15,
-    resourceRewardChance: 0.6,
-    resourceRewardMin: 2,
-    resourceRewardMax: 8,
-    minTier: 1,
-    maxTier: 3,
-  },
-  
-  // Complete battles quests
-  {
-    id: "complete_battles",
-    questType: "hunt",
-    titleTemplates: [
-      "Battle Ready",
-      "Combat Veteran",
-      "Engagement Protocol",
-      "Tactical Operations",
-      "Front Line Duty",
-    ],
-    descriptionTemplates: [
-      "Complete {target} tactical battles successfully.",
-      "Win {target} combat engagements. Victory is required.",
-      "Finish {target} battles with your squad intact.",
-      "Demonstrate combat prowess in {target} separate battles.",
-    ],
-    objectiveType: "complete_battle",
-    minTarget: 1,
-    maxTarget: 5,
-    baseWad: 40,
-    wadPerTarget: 25,
-    baseXp: 80,
-    xpPerTarget: 40,
-    resourceRewardChance: 0.7,
-    resourceRewardMin: 3,
-    resourceRewardMax: 12,
-    minTier: 1,
-    maxTier: 4,
-  },
-  
-  // Collect resources quests (will be specialized per resource type)
-  {
-    id: "collect_metal",
-    questType: "collection",
-    titleTemplates: [
-      "Scrap Salvage",
-      "Metal Recovery",
-      "Industrial Harvest",
-      "Salvage Run",
-      "Resource Extraction",
-    ],
-    descriptionTemplates: [
-      "Gather {target} Metal Scrap from operations or field exploration.",
-      "Collect {target} Metal Scrap. Battles and exploration both count.",
-      "Secure {target} units of Metal Scrap for base operations.",
-    ],
-    objectiveType: "collect_resource",
-    minTarget: 5,
-    maxTarget: 30,
-    baseWad: 15,
-    wadPerTarget: 3,
-    baseXp: 30,
-    xpPerTarget: 5,
-    resourceRewardChance: 0.4,
-    resourceRewardMin: 2,
-    resourceRewardMax: 6,
-    minTier: 1,
-    maxTier: 2,
-  },
-  
-  {
-    id: "collect_wood",
-    questType: "collection",
-    titleTemplates: [
-      "Timber Harvest",
-      "Wood Gathering",
-      "Forest Salvage",
-      "Material Collection",
-    ],
-    descriptionTemplates: [
-      "Gather {target} Wood from field exploration or battles.",
-      "Collect {target} Wood for base construction needs.",
-      "Secure {target} units of Wood from the field.",
-    ],
-    objectiveType: "collect_resource",
-    minTarget: 5,
-    maxTarget: 25,
-    baseWad: 15,
-    wadPerTarget: 3,
-    baseXp: 30,
-    xpPerTarget: 5,
-    resourceRewardChance: 0.4,
-    resourceRewardMin: 2,
-    resourceRewardMax: 6,
-    minTier: 1,
-    maxTier: 2,
-  },
-  
-  {
-    id: "collect_shards",
-    questType: "collection",
-    titleTemplates: [
-      "Chaos Extraction",
-      "Shard Hunt",
-      "Arcane Harvest",
-      "Power Collection",
-    ],
-    descriptionTemplates: [
-      "Acquire {target} Chaos Shards from any source.",
-      "Collect {target} Chaos Shards. These rare materials are in high demand.",
-      "Gather {target} Chaos Shards for research purposes.",
-    ],
-    objectiveType: "collect_resource",
-    minTarget: 3,
-    maxTarget: 15,
-    baseWad: 25,
-    wadPerTarget: 6,
-    baseXp: 50,
-    xpPerTarget: 10,
-    resourceRewardChance: 0.3,
-    resourceRewardMin: 1,
-    resourceRewardMax: 4,
-    minTier: 2,
-    maxTier: 3,
-  },
-  
-  {
-    id: "collect_steam",
-    questType: "collection",
-    titleTemplates: [
-      "Component Salvage",
-      "Tech Recovery",
-      "Steam Harvest",
-      "Mechanical Collection",
-    ],
-    descriptionTemplates: [
-      "Gather {target} Steam Components from operations.",
-      "Collect {target} Steam Components for workshop projects.",
-      "Secure {target} Steam Components from the field.",
-    ],
-    objectiveType: "collect_resource",
-    minTarget: 3,
-    maxTarget: 12,
-    baseWad: 25,
-    wadPerTarget: 6,
-    baseXp: 50,
-    xpPerTarget: 10,
-    resourceRewardChance: 0.3,
-    resourceRewardMin: 1,
-    resourceRewardMax: 4,
-    minTier: 2,
-    maxTier: 3,
-  },
-  
-  // Clear floors quest
-  {
-    id: "clear_floors",
-    questType: "clear",
-    titleTemplates: [
-      "Deep Dive",
-      "Floor Clearance",
-      "Dungeon Sweep",
-      "Operation Complete",
-      "Full Clear",
-    ],
-    descriptionTemplates: [
-      "Clear {target} dungeon floor(s) completely.",
-      "Complete all rooms on {target} floor(s) of any operation.",
-      "Achieve full clearance on {target} operation floor(s).",
-    ],
-    objectiveType: "clear_node",
-    minTarget: 1,
-    maxTarget: 3,
-    baseWad: 75,
-    wadPerTarget: 50,
-    baseXp: 150,
-    xpPerTarget: 100,
-    resourceRewardChance: 0.8,
-    resourceRewardMin: 5,
-    resourceRewardMax: 15,
-    minTier: 2,
-    maxTier: 4,
-  },
-  
-  // Exploration quest (field nodes)
-  {
-    id: "explore_nodes",
-    questType: "exploration",
-    titleTemplates: [
-      "Field Recon",
-      "Exploration Mission",
-      "Unknown Territory",
-      "Scouting Run",
-      "Discovery Protocol",
-    ],
-    descriptionTemplates: [
-      "Explore {target} field node room(s) in operations.",
-      "Complete exploration of {target} mystery dungeon room(s).",
-      "Clear {target} field exploration zone(s).",
-    ],
-    objectiveType: "clear_node",
-    minTarget: 1,
-    maxTarget: 4,
-    baseWad: 30,
-    wadPerTarget: 20,
-    baseXp: 60,
-    xpPerTarget: 30,
-    resourceRewardChance: 0.7,
-    resourceRewardMin: 3,
-    resourceRewardMax: 10,
-    minTier: 1,
-    maxTier: 3,
-  },
+const CORE_OPTIONS: Array<{ coreType: CoreType; label: string }> = [
+  { coreType: "command_center", label: "Command Center" },
+  { coreType: "generator", label: "Generator" },
+  { coreType: "supply_depot", label: "Supply Depot" },
+  { coreType: "mine", label: "Mine" },
 ];
 
-// ============================================================================
-// GENERATION FUNCTIONS
-// ============================================================================
+interface GenerationContext {
+  floorOrdinal: number;
+  floorLabel: string;
+  sectors: OpsTerminalAtlasSectorState[];
+}
 
-/**
- * Generate a unique quest ID
- */
+interface GeneratedQuestTemplate {
+  id: string;
+  weight: number;
+  factory: (context: GenerationContext) => Quest;
+}
+
 function generateQuestId(): string {
-  questIdCounter++;
+  questIdCounter += 1;
   return `${GENERATED_QUEST_PREFIX}${Date.now()}_${questIdCounter}`;
 }
 
-/**
- * Pick a random element from an array
- */
-function randomChoice<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+function randomChoice<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)] ?? items[0];
 }
 
-/**
- * Generate a random integer between min and max (inclusive)
- */
 function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  const lower = Math.min(min, max);
+  const upper = Math.max(min, max);
+  return lower + Math.floor(Math.random() * (upper - lower + 1));
 }
 
-/**
- * Determine difficulty tier based on target value and template ranges
- */
-function calculateTier(
-  targetValue: number,
-  minTarget: number,
-  maxTarget: number,
-  minTier: QuestDifficultyTier,
-  maxTier: QuestDifficultyTier
-): QuestDifficultyTier {
-  const range = maxTarget - minTarget;
-  const position = (targetValue - minTarget) / range;
-  const tierRange = maxTier - minTier;
-  const tier = Math.round(minTier + position * tierRange) as QuestDifficultyTier;
-  return Math.max(minTier, Math.min(maxTier, tier)) as QuestDifficultyTier;
-}
-
-/**
- * Generate a random resource reward
- */
-function generateResourceReward(
-  template: QuestTemplate,
-  targetValue: number
-): QuestReward["resources"] | undefined {
-  if (Math.random() > template.resourceRewardChance) {
-    return undefined;
+function pickWeightedTemplate(templates: GeneratedQuestTemplate[]): GeneratedQuestTemplate {
+  const totalWeight = templates.reduce((sum, template) => sum + template.weight, 0);
+  const roll = Math.random() * totalWeight;
+  let cursor = 0;
+  for (const template of templates) {
+    cursor += template.weight;
+    if (roll <= cursor) {
+      return template;
+    }
   }
+  return templates[templates.length - 1];
+}
 
-  const resourceType = randomChoice(RESOURCE_TYPES);
-  const baseAmount = randomInt(template.resourceRewardMin, template.resourceRewardMax);
-  const scaledAmount = Math.ceil(baseAmount * (1 + targetValue * 0.1));
+function createReward(
+  tier: QuestDifficultyTier,
+  wadBase: number,
+  wadBonus: number,
+  resourceScale = 1,
+): QuestReward {
+  return {
+    wad: wadBase + (tier * wadBonus),
+    xp: 45 + (tier * 35),
+    resources: {
+      metalScrap: Math.max(2, Math.round((tier + 1) * resourceScale)),
+      wood: Math.max(1, Math.round(tier * resourceScale)),
+      chaosShards: tier >= 3 ? Math.max(1, Math.round(resourceScale)) : 0,
+      steamComponents: tier >= 2 ? Math.max(1, Math.round(resourceScale)) : 0,
+    },
+  };
+}
+
+function getGenerationContext(): GenerationContext {
+  const progress = loadOpsTerminalAtlasProgress();
+  const atlas = progress.opsTerminalAtlas;
+  const floors = Object.values(atlas?.floorsById ?? {});
+  const floor =
+    floors.find((entry) => entry.floorOrdinal === atlas?.currentFloorOrdinal)
+    ?? floors[0]
+    ?? {
+      floorOrdinal: 1,
+      floorLabel: "Floor 1",
+      sectors: [],
+    };
 
   return {
-    [resourceType]: scaledAmount,
-  } as QuestReward["resources"];
+    floorOrdinal: floor.floorOrdinal,
+    floorLabel: floor.floorLabel,
+    sectors: floor.sectors ?? [],
+  };
 }
 
-/**
- * Get the resource target type for collection quests
- */
-function getResourceTarget(templateId: string): ResourceType | null {
-  switch (templateId) {
-    case "collect_metal": return "metalScrap";
-    case "collect_wood": return "wood";
-    case "collect_shards": return "chaosShards";
-    case "collect_steam": return "steamComponents";
-    default: return null;
+function formatSector(sector: OpsTerminalAtlasSectorState | undefined): string {
+  if (!sector) {
+    return "the current floor";
   }
+  return `${sector.sectorLabel} // ${sector.zoneName}`;
 }
 
-/**
- * Generate a single random quest
- */
-export function generateRandomQuest(): Quest {
-  // Pick a random template
-  const template = randomChoice(QUEST_TEMPLATES);
-  
-  // Generate target value
-  const targetValue = randomInt(template.minTarget, template.maxTarget);
-  
-  // Calculate tier
-  const tier = calculateTier(
-    targetValue,
-    template.minTarget,
-    template.maxTarget,
-    template.minTier,
-    template.maxTier
-  );
-  
-  // Generate title and description
-  const title = randomChoice(template.titleTemplates);
-  const descriptionTemplate = randomChoice(template.descriptionTemplates);
-  const description = descriptionTemplate.replace("{target}", targetValue.toString());
-  
-  // Calculate rewards
-  const wad = Math.ceil(template.baseWad + template.wadPerTarget * targetValue);
-  const xp = Math.ceil(template.baseXp + template.xpPerTarget * targetValue);
-  
-  // Generate resource reward
-  const resourceReward = generateResourceReward(template, targetValue);
-  
-  // Build objective
-  const resourceTarget = getResourceTarget(template.id);
+function createSecureRoomsQuest(context: GenerationContext): Quest {
+  const target = randomInt(5, 10);
+  const tier = target >= 9 ? 3 : target >= 7 ? 2 : 1;
   const objective: QuestObjective = {
-    id: `obj_${template.id}`,
-    type: template.objectiveType,
-    target: resourceTarget || targetValue,
+    id: "obj_secure_rooms_floor",
+    type: "secure_rooms",
+    target: `floor_${context.floorOrdinal}`,
     current: 0,
-    required: targetValue,
-    description: description,
+    required: target,
+    description: `Secure ${target} rooms on ${context.floorLabel}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+    },
   };
-  
-  // Build rewards
-  const rewards: QuestReward = {
-    wad,
-    xp,
-  };
-  
-  if (resourceReward) {
-    rewards.resources = resourceReward;
-  }
-  
-  // Create quest
-  const quest: Quest = {
+
+  return {
     id: generateQuestId(),
-    title,
-    description,
-    questType: template.questType,
+    title: "Floor Sweep Contract",
+    description: `H.A.V.E.N. wants more of ${context.floorLabel} under direct control before the next push.`,
+    questType: "clear",
     difficultyTier: tier,
     objectives: [objective],
-    rewards,
+    rewards: createReward(tier, 70, 20, 2.25),
     status: "active",
     acceptedAt: Date.now(),
     metadata: {
       isGenerated: true,
-      templateId: template.id,
+      templateId: "secure_rooms_floor",
     },
   };
-  
-  return quest;
 }
 
-/**
- * Generate multiple random quests
- */
+function createSectorBreachQuest(context: GenerationContext): Quest {
+  const sector = randomChoice(context.sectors);
+  const target = randomInt(3, 6);
+  const tier = target >= 6 ? 3 : target >= 5 ? 2 : 1;
+  const objective: QuestObjective = {
+    id: "obj_secure_rooms_sector",
+    type: "secure_rooms",
+    target: sector?.sectorLabel ?? `floor_${context.floorOrdinal}`,
+    current: 0,
+    required: target,
+    description: `Secure ${target} rooms in ${formatSector(sector)}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+      sectorLabel: sector?.sectorLabel,
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: sector ? `${sector.zoneName} Breach` : "Sector Breach",
+    description: `Push a controlled route into ${formatSector(sector)} and keep the aperture-side branch stable.`,
+    questType: "exploration",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 80, 18, 2),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "secure_rooms_sector",
+    },
+  };
+}
+
+function createBuildCoreQuest(context: GenerationContext): Quest {
+  const core = randomChoice(CORE_OPTIONS);
+  const required = randomInt(1, 2);
+  const tier = required === 2 ? 3 : core.coreType === "mine" || core.coreType === "generator" ? 2 : 1;
+  const objective: QuestObjective = {
+    id: "obj_build_core",
+    type: "build_core",
+    target: core.coreType,
+    current: 0,
+    required,
+    description: `Build ${required} ${core.label} C.O.R.E.${required > 1 ? "s" : ""} on ${context.floorLabel}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+      coreType: core.coreType,
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: `${core.label} Requisition`,
+    description: `Logistics command is authorizing new ${core.label.toLowerCase()} builds on ${context.floorLabel}.`,
+    questType: "delivery",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 90, 22, 2.5),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "build_core",
+    },
+  };
+}
+
+function createRoutePowerQuest(context: GenerationContext): Quest {
+  const sector = randomChoice(context.sectors);
+  const required = randomInt(35, 70);
+  const tier = required >= 60 ? 4 : required >= 50 ? 3 : 2;
+  const objective: QuestObjective = {
+    id: "obj_route_power",
+    type: "route_power",
+    target: required,
+    current: 0,
+    required,
+    description: `Route ${required} W to an objective room in ${formatSector(sector)}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+      sectorLabel: sector?.sectorLabel,
+      roomTag: "objective",
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: "Power Lane Contract",
+    description: `Run a stable wattage lane into ${formatSector(sector)} so H.A.V.E.N. can sustain the branch.`,
+    questType: "delivery",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 110, 24, 2.75),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "route_power",
+    },
+  };
+}
+
+function createCommsQuest(context: GenerationContext): Quest {
+  const sector = randomChoice(context.sectors);
+  const required = randomInt(24, 60);
+  const tier = required >= 50 ? 4 : required >= 40 ? 3 : 2;
+  const objective: QuestObjective = {
+    id: "obj_establish_comms",
+    type: "establish_comms",
+    target: required,
+    current: 0,
+    required,
+    description: `Establish ${required} BW in an objective room in ${formatSector(sector)}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+      sectorLabel: sector?.sectorLabel,
+      roomTag: "objective",
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: "Signal Spine Contract",
+    description: `Extend manual-control bandwidth into ${formatSector(sector)} and hold the link.`,
+    questType: "exploration",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 110, 26, 2.75),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "establish_comms",
+    },
+  };
+}
+
+function createSupplyQuest(context: GenerationContext): Quest {
+  const sector = randomChoice(context.sectors);
+  const required = randomInt(20, 50);
+  const tier = required >= 40 ? 3 : required >= 30 ? 2 : 1;
+  const objective: QuestObjective = {
+    id: "obj_deliver_supply",
+    type: "deliver_supply",
+    target: required,
+    current: 0,
+    required,
+    description: `Route ${required} crates/tick to an objective room in ${formatSector(sector)}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+      sectorLabel: sector?.sectorLabel,
+      roomTag: "objective",
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: "Supply Feed Contract",
+    description: `Feed a working supply line into ${formatSector(sector)} before the theater goes cold.`,
+    questType: "collection",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 90, 20, 2.5),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "deliver_supply",
+    },
+  };
+}
+
+function createSectorObjectiveQuest(context: GenerationContext): Quest {
+  const required = randomInt(1, 3);
+  const tier = required >= 3 ? 4 : required === 2 ? 3 : 2;
+  const objective: QuestObjective = {
+    id: "obj_complete_sector_objectives",
+    type: "complete_sector_objectives",
+    target: `floor_${context.floorOrdinal}`,
+    current: 0,
+    required,
+    description: `Complete ${required} sector objective${required > 1 ? "s" : ""} on ${context.floorLabel}`,
+    criteria: {
+      floorOrdinal: context.floorOrdinal,
+    },
+  };
+
+  return {
+    id: generateQuestId(),
+    title: "Ring Stabilization",
+    description: `Bring more of ${context.floorLabel} online by completing additional sector objectives.`,
+    questType: "clear",
+    difficultyTier: tier,
+    objectives: [objective],
+    rewards: createReward(tier, 120, 28, 3),
+    status: "active",
+    acceptedAt: Date.now(),
+    metadata: {
+      isGenerated: true,
+      templateId: "complete_sector_objectives",
+    },
+  };
+}
+
+const QUEST_TEMPLATES: GeneratedQuestTemplate[] = [
+  { id: "secure_rooms_floor", weight: 3, factory: createSecureRoomsQuest },
+  { id: "secure_rooms_sector", weight: 2, factory: createSectorBreachQuest },
+  { id: "build_core", weight: 2, factory: createBuildCoreQuest },
+  { id: "route_power", weight: 2, factory: createRoutePowerQuest },
+  { id: "establish_comms", weight: 2, factory: createCommsQuest },
+  { id: "deliver_supply", weight: 2, factory: createSupplyQuest },
+  { id: "complete_sector_objectives", weight: 1, factory: createSectorObjectiveQuest },
+];
+
+export function generateRandomQuest(): Quest {
+  const context = getGenerationContext();
+  const template = pickWeightedTemplate(QUEST_TEMPLATES);
+  return template.factory(context);
+}
+
 export function generateRandomQuests(count: number): Quest[] {
+  const context = getGenerationContext();
   const quests: Quest[] = [];
-  const usedTemplates = new Set<string>();
-  
-  for (let i = 0; i < count; i++) {
-    // Try to use different templates for variety
+  const usedTemplateIds = new Set<string>();
+
+  for (let index = 0; index < count; index += 1) {
+    let template = pickWeightedTemplate(QUEST_TEMPLATES);
     let attempts = 0;
-    let quest: Quest;
-    
-    do {
-      quest = generateRandomQuest();
-      attempts++;
-    } while (
-      usedTemplates.has(quest.metadata?.templateId) && 
-      attempts < 10 &&
-      usedTemplates.size < QUEST_TEMPLATES.length
-    );
-    
-    if (quest.metadata?.templateId) {
-      usedTemplates.add(quest.metadata.templateId);
+
+    while (usedTemplateIds.has(template.id) && attempts < 10 && usedTemplateIds.size < QUEST_TEMPLATES.length) {
+      template = pickWeightedTemplate(QUEST_TEMPLATES);
+      attempts += 1;
     }
-    
-    quests.push(quest);
+
+    usedTemplateIds.add(template.id);
+    quests.push(template.factory(context));
   }
-  
+
   return quests;
 }
 
-/**
- * Check if a quest is a generated quest (vs static database quest)
- */
 export function isGeneratedQuest(quest: Quest): boolean {
   return quest.id.startsWith(GENERATED_QUEST_PREFIX) || quest.metadata?.isGenerated === true;
 }
-
-
-
-
-
-
-
-

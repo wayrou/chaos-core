@@ -24,7 +24,7 @@ import { getImportedOperation } from "../content/technica";
 import type { ImportedOperationDefinition } from "../content/technica/types";
 import { generateNodeMap } from "./nodeMapGenerator";
 import { generateEncounter } from "./encounterGenerator";
-import { OperationRun, Floor, RoomNode } from "./types";
+import { OperationRun, Floor, RoomNode, TheaterSprawlDirection } from "./types";
 import { getGameState, updateGameState } from "../state/gameStore";
 import {
   activateQueuedTavernMealForRun,
@@ -48,6 +48,7 @@ export function startOperationRun(
   difficulty: Difficulty = "normal",
   customFloors?: number,
   customEnemyDensity: EnemyDensity = "normal",
+  customSprawlDirection: TheaterSprawlDirection = "east",
 ): CampaignProgress {
   const progress = loadCampaignProgress();
   const opDef = OPERATION_DEFINITIONS[operationId];
@@ -86,6 +87,7 @@ export function startOperationRun(
     operationId,
     difficulty,
     enemyDensity: isCustomOperation ? customEnemyDensity : "normal",
+    sprawlDirection: isCustomOperation ? customSprawlDirection : undefined,
     floorsTotal,
     floorIndex: 0,
     nodeMapByFloor,
@@ -97,7 +99,9 @@ export function startOperationRun(
     retries: 0,
     nodesCleared: 1,
     runFieldModInventory: purchasedFieldMods, // Transfer purchased mods to active run
-    unitHardpoints: {}, // Initialize empty hardpoints
+    unitHardpoints: Object.fromEntries(
+      Object.entries(gameState.unitHardpoints || {}).map(([unitId, hardpoints]) => [unitId, [...hardpoints]])
+    ),
   };
 
   const updated = {
@@ -106,7 +110,9 @@ export function startOperationRun(
   };
 
   saveCampaignProgress(updated);
-  console.log(`[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}, density: ${isCustomOperation ? customEnemyDensity : "normal"}`);
+  console.log(
+    `[CAMPAIGN] Started operation: ${operationId}, difficulty: ${difficulty}, floors: ${floorsTotal}, density: ${isCustomOperation ? customEnemyDensity : "normal"}, sprawl: ${isCustomOperation ? customSprawlDirection : "atlas"}`,
+  );
 
   // Clear field mod inventory from game state (they're now in the active run)
   updateGameState((state) => {
@@ -261,7 +267,11 @@ export function prepareBattleForNode(nodeId: string): CampaignProgress {
     activeRun.floorIndex,
     activeRun.operationId,
     activeRun.difficulty,
-    encounterSeed
+    encounterSeed,
+    {
+      floorId: getImportedOperation(activeRun.operationId)?.floors[activeRun.floorIndex]?.id ?? `floor_${activeRun.floorIndex}`,
+      roomId: nodeId,
+    }
   );
 
   const pendingBattle: PendingBattleState = {
@@ -505,6 +515,7 @@ export function advanceToNextFloor(options: { bypassExitRequirement?: boolean } 
 
   const updated = {
     ...progress,
+    schemaNodeUnlocked: progress.schemaNodeUnlocked || nextFloorIndex >= 1,
     activeRun: {
       ...activeRun,
       floorIndex: nextFloorIndex,
@@ -704,6 +715,7 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
     currentRoomId: activeRun.currentNodeId,
     connections: activeRun.nodeMapByFloor[activeRun.floorIndex]?.connections || {}, // Add connections for UI
     launchSource: "ops_terminal",
+    sprawlDirection: activeRun.sprawlDirection,
   };
 }
 
@@ -766,6 +778,7 @@ function createCustomRunBriefing(activeRun: ActiveRunState): CustomRunBriefing {
   const floorFamilies = ["Rust", "Cinder", "Glass", "Echo", "Shard", "Soot", "Relay", "Wire", "Ash"];
   const floorLandmarks = ["Crossing", "Vault", "Gallery", "Spine", "Hollows", "Works", "Fork", "Channel", "Lock"];
   const densityLabel = (activeRun.enemyDensity ?? "normal").toUpperCase();
+  const directionLabel = formatSprawlDirection(activeRun.sprawlDirection ?? "east");
 
   const codename = `${pickBriefingToken(prefixes, next)} ${pickBriefingToken(suffixes, next)}`;
   const recommendedPWR = Math.max(18, Math.round(22 + (activeRun.floorsTotal * 1.5) + (activeRun.difficulty === "hard" ? 5 : activeRun.difficulty === "easy" ? -3 : 0)));
@@ -775,13 +788,36 @@ function createCustomRunBriefing(activeRun: ActiveRunState): CustomRunBriefing {
 
   return {
     codename,
-    description: `Procedural theater seeded at runtime. ${activeRun.floorsTotal} randomized floor${activeRun.floorsTotal === 1 ? "" : "s"}, ${densityLabel} enemy density, and adaptive floor-direction vectors.`,
+    description: `Procedural theater seeded at runtime. ${activeRun.floorsTotal} randomized floor${activeRun.floorsTotal === 1 ? "" : "s"}, ${densityLabel} enemy density, and ${directionLabel} theater sprawl.`,
     objective: "Push from the uplink root to the descent point on each floor and survive until the final theater is secured.",
     beginningState: "Randomized theater spin-up complete. Floor 1 is live; push outward from the uplink root to the first descent point.",
     endState: "Final descent point secured. Theater traversal complete.",
     recommendedPWR,
     floorNames,
   };
+}
+
+function formatSprawlDirection(direction: TheaterSprawlDirection): string {
+  switch (direction) {
+    case "north":
+      return "northbound";
+    case "northeast":
+      return "northeast-bound";
+    case "east":
+      return "eastbound";
+    case "southeast":
+      return "southeast-bound";
+    case "south":
+      return "southbound";
+    case "southwest":
+      return "southwest-bound";
+    case "west":
+      return "westbound";
+    case "northwest":
+      return "northwest-bound";
+    default:
+      return "eastbound";
+  }
 }
 
 function createImportedOperationNodeMaps(operation: ImportedOperationDefinition): Record<number, NodeMap> {

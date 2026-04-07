@@ -5,6 +5,7 @@
 
 import { getGameState, updateGameState } from "../state/gameStore";
 import { UnlockableDefinition, UnlockableType, getUnlockableById, getUnlockablesByType } from "./unlockables";
+import { getDecorState, grantDecorItem } from "./decorSystem";
 
 // ----------------------------------------------------------------------------
 // OWNERSHIP API
@@ -31,6 +32,8 @@ export function hasUnlock(unlockableId: string): boolean {
       // Field mods are always available (they're not permanently unlocked)
       // But we can track them if needed in the future
       return true; // For now, field mods are always available
+    case "decor":
+      return getDecorState(state).owned.includes(unlockableId);
     default:
       return false;
   }
@@ -76,6 +79,12 @@ export function grantUnlock(unlockableId: string, reason?: string): void {
       // But we can track them for future use
       console.log(`[UNLOCKABLES] Field mod unlocked: ${unlockable.displayName}${reason ? ` (${reason})` : ""}`);
       break;
+
+    case "decor":
+      if (grantDecorItem(unlockableId)) {
+        console.log(`[UNLOCKABLES] Granted decor: ${unlockable.displayName}${reason ? ` (${reason})` : ""}`);
+      }
+      break;
       
     default:
       console.warn(`[UNLOCKABLES] Unknown unlockable type: ${(unlockable as any).type}`);
@@ -101,6 +110,10 @@ export function listUnlocksByType(type: UnlockableType): UnlockableDefinition[] 
     case "field_mod":
       // Field mods are always available (not permanently unlocked)
       return allOfType;
+
+    case "decor":
+      const ownedDecorIds = getDecorState(state).owned;
+      return allOfType.filter(u => ownedDecorIds.includes(u.id));
       
     default:
       return [];
@@ -121,6 +134,16 @@ export function getAllOwnedUnlockableIds(): {
   };
 }
 
+export function getAllOwnedUnlockableIdList(): string[] {
+  const state = getGameState();
+  const owned = getAllOwnedUnlockableIds();
+  return [
+    ...owned.chassis,
+    ...owned.doctrines,
+    ...getDecorState(state).owned,
+  ];
+}
+
 /**
  * Initialize ownership from save data
  */
@@ -131,4 +154,3 @@ export function initializeOwnership(chassisIds: string[], doctrineIds: string[])
     unlockedDoctrineIds: doctrineIds,
   }));
 }
-

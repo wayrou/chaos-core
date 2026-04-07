@@ -1,0 +1,21 @@
+{
+  "contentId": "core_overwatch",
+  "contentType": "card",
+  "dependencies": [],
+  "description": "Chaos Core runtime battle card export.",
+  "entryFile": "core_overwatch.card.json",
+  "exportType": "card",
+  "exportedAt": "2026-04-05T07:04:37.493Z",
+  "files": [
+    "manifest.json",
+    "core_overwatch.card.json",
+    "core_overwatch.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "battle-card.v1",
+  "title": "Overwatch"
+}

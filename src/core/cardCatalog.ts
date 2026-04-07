@@ -2,6 +2,7 @@ import { getAllEquipmentCards, EquipmentCard } from "./equipment";
 import { Card, CardEffect } from "./types";
 import { getImportedCard, isTechnicaContentDisabled } from "../content/technica";
 import type { ImportedCard } from "../content/technica/types";
+import { createEffectFlowFromLegacyCardEffects } from "./effectFlow";
 
 type BattleCardTarget = "enemy" | "ally" | "self" | "tile";
 
@@ -18,6 +19,7 @@ export interface ResolvedBattleCard {
   defBuff?: number;
   atkBuff?: number;
   effects: CardEffect[];
+  effectFlow?: ReturnType<typeof createEffectFlowFromLegacyCardEffects>;
   artPath?: string;
 }
 
@@ -186,6 +188,11 @@ function parseEffectsFromDescription(description: string, target: BattleCardTarg
     addEffect(effects, { type: "atk_down", amount: parseInt(atkDownMatch[1], 10), duration: 1, stat: "atk" });
   }
 
+  const agiDownMatch = description.match(/-(\d+)\s*AGI/i);
+  if (agiDownMatch) {
+    addEffect(effects, { type: "agi_down", amount: parseInt(agiDownMatch[1], 10), duration: 1, stat: "agi" });
+  }
+
   const moveBoostMatch = lower.match(/move\s+(\d+)\s+extra\s+tiles?/);
   if (moveBoostMatch) {
     addEffect(effects, { type: "move", tiles: parseInt(moveBoostMatch[1], 10) });
@@ -229,6 +236,7 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
     range: parseRange(card.range),
     description,
     effects,
+    effectFlow: createEffectFlowFromLegacyCardEffects(effects, target === "ally" ? "ally" : target),
   };
 
   if (card.damage !== undefined) resolved.damage = card.damage;
@@ -256,6 +264,7 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
     range: card.range,
     description: card.description,
     effects: [...card.effects],
+    effectFlow: card.effectFlow ?? createEffectFlowFromLegacyCardEffects(card.effects, card.targetType),
   };
 
   if (card.damage !== undefined) resolved.damage = card.damage;
@@ -312,6 +321,7 @@ export function toCoreCard(card: ResolvedBattleCard): Card {
     targetType: card.target === "ally" ? "ally" : card.target,
     range: card.range,
     effects: [...card.effects],
+    effectFlow: card.effectFlow,
     artPath: card.artPath,
   };
 }
