@@ -4,7 +4,21 @@
 // Game settings management with persistence
 // ============================================================================
 
+import type { PlayerSlot } from "./types";
 import { applyTheme, ThemeId } from "./themes";
+
+export type ControllerBindingKind = "button" | "axis";
+export type ControllerAxisDirection = "positive" | "negative";
+
+export interface ControllerBindingDescriptor {
+  kind: ControllerBindingKind;
+  code: number;
+  direction?: ControllerAxisDirection;
+  threshold?: number;
+}
+
+export type ControllerActionBindingMap = Record<string, ControllerBindingDescriptor[]>;
+export type ControllerAssignmentSettings = Record<PlayerSlot, number | null>;
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -33,6 +47,8 @@ export interface GameSettings {
   controllerEnabled: boolean;
   controllerVibration: boolean;
   controllerDeadzone: number;
+  controllerBindings: ControllerActionBindingMap;
+  controllerAssignments: ControllerAssignmentSettings;
 
   // Accessibility
   highContrastMode: boolean;
@@ -60,6 +76,48 @@ export const DEFAULT_SETTINGS: GameSettings = {
   controllerEnabled: true,
   controllerVibration: true,
   controllerDeadzone: 15,
+  controllerBindings: {
+    confirm: [{ kind: "button", code: 0 }],
+    cancel: [{ kind: "button", code: 1 }],
+    menu: [{ kind: "button", code: 9 }],
+    pause: [{ kind: "button", code: 9 }],
+    moveUp: [
+      { kind: "button", code: 12 },
+      { kind: "axis", code: 1, direction: "negative", threshold: 0.35 },
+    ],
+    moveDown: [
+      { kind: "button", code: 13 },
+      { kind: "axis", code: 1, direction: "positive", threshold: 0.35 },
+    ],
+    moveLeft: [
+      { kind: "button", code: 14 },
+      { kind: "axis", code: 0, direction: "negative", threshold: 0.35 },
+    ],
+    moveRight: [
+      { kind: "button", code: 15 },
+      { kind: "axis", code: 0, direction: "positive", threshold: 0.35 },
+    ],
+    nextUnit: [{ kind: "button", code: 5 }],
+    prevUnit: [{ kind: "button", code: 4 }],
+    endTurn: [{ kind: "button", code: 3 }],
+    openInventory: [{ kind: "button", code: 8 }],
+    openMap: [{ kind: "button", code: 2 }],
+    attack: [{ kind: "button", code: 0 }],
+    interact: [{ kind: "button", code: 2 }],
+    dash: [{ kind: "button", code: 5 }],
+    tabPrev: [{ kind: "button", code: 4 }],
+    tabNext: [{ kind: "button", code: 5 }],
+    zoomOut: [{ kind: "button", code: 6 }],
+    zoomIn: [{ kind: "button", code: 7 }],
+    toggleSurfaceMode: [{ kind: "button", code: 10 }],
+    toggleLayoutMode: [{ kind: "button", code: 11 }],
+    windowPrimary: [{ kind: "button", code: 2 }],
+    windowSecondary: [{ kind: "button", code: 3 }],
+  },
+  controllerAssignments: {
+    P1: 0,
+    P2: 1,
+  },
 
   highContrastMode: false,
   largeText: false,

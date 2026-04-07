@@ -1,3 +1,9 @@
+import { getAllImportedMailEntries } from "../content/technica";
+import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "./campaign";
+import { getSchemaUnlockState } from "./schemaSystem";
+import type { GameState } from "./types";
+import { getGameState, updateGameState } from "../state/gameStore";
+
 // ============================================================================
 // QUARTERS - MAIL SYSTEM
 // ============================================================================
@@ -10,7 +16,7 @@ export interface MailItem {
   from: string;
   subject: string;
   bodyPages: string[];
-  receivedAt: number; // Timestamp or operation index
+  receivedAt: number;
   read: boolean;
 }
 
@@ -18,11 +24,24 @@ export interface MailState {
   inbox: MailItem[];
 }
 
+type MailTemplate = Omit<MailItem, "receivedAt" | "read">;
+
+interface UnlockableImportedMailTemplate extends MailTemplate {
+  unlockAfterFloor?: number;
+  requiredDialogueIds?: string[];
+  requiredGearIds?: string[];
+  requiredItemIds?: string[];
+  requiredSchemaIds?: string[];
+  requiredFieldModIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // ============================================================================
 // SAMPLE MAIL DATA
 // ============================================================================
 
-const SAMPLE_MAIL: Omit<MailItem, "receivedAt" | "read">[] = [
+const SAMPLE_MAIL: MailTemplate[] = [
   {
     id: "mail_welcome",
     category: "system",
@@ -81,11 +100,11 @@ const SAMPLE_MAIL: Omit<MailItem, "receivedAt" | "read">[] = [
     subject: "Quarters Features",
     bodyPages: [
       "QUARTERS GUIDE:",
-      "• Mailbox: Check for messages after operations",
-      "• Bunk: Rest to receive a small buff for your next run",
-      "• Pinboard: Review completed operations and failures",
-      "• Footlocker: Manage and place decorative items",
-      "• Sable: Interact with your companion in her corner",
+      "- Mailbox: Check for messages after operations",
+      "- Bunk: Rest to receive a small buff for your next run",
+      "- Pinboard: Review completed operations and failures",
+      "- Footlocker: Manage and place decorative items",
+      "- Sable: Interact with your companion in her corner",
     ],
   },
   {
@@ -110,152 +129,304 @@ const SAMPLE_MAIL: Omit<MailItem, "receivedAt" | "read">[] = [
   },
 ];
 
+function normalizeMailCategory(value: unknown): MailCategory {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "personal":
+    case "official":
+    case "system":
+      return String(value).trim().toLowerCase() as MailCategory;
+    default:
+      return "system";
+  }
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean)));
+}
+
+function normalizeImportedMailEntry(
+  entry: ReturnType<typeof getAllImportedMailEntries>[number]
+): UnlockableImportedMailTemplate {
+  const bodyPages = Array.isArray(entry.bodyPages)
+    ? entry.bodyPages.map((page) => String(page).trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: entry.id,
+    category: normalizeMailCategory(entry.category),
+    from: String(entry.from ?? "S/COM_OS"),
+    subject: String(entry.subject ?? entry.id),
+    bodyPages: bodyPages.length > 0 ? bodyPages : [String(entry.subject ?? entry.id)],
+    unlockAfterFloor:
+      Number.isFinite(Number(entry.unlockAfterFloor)) && Number(entry.unlockAfterFloor) > 0
+        ? Math.round(Number(entry.unlockAfterFloor))
+        : 0,
+    requiredDialogueIds: toStringList(entry.requiredDialogueIds),
+    requiredGearIds: toStringList(entry.requiredGearIds),
+    requiredItemIds: toStringList(entry.requiredItemIds),
+    requiredSchemaIds: toStringList(entry.requiredSchemaIds),
+    requiredFieldModIds: toStringList(entry.requiredFieldModIds),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function getImportedMailDatabase(): UnlockableImportedMailTemplate[] {
+  return getAllImportedMailEntries().map(normalizeImportedMailEntry);
+}
+
+function getMailTemplateById(mailId: string): (MailTemplate | UnlockableImportedMailTemplate) | null {
+  return (
+    getImportedMailDatabase().find((entry) => entry.id === mailId) ??
+    SAMPLE_MAIL.find((entry) => entry.id === mailId) ??
+    null
+  );
+}
+
+function createMailItem(template: MailTemplate | UnlockableImportedMailTemplate, receivedAt: number): MailItem {
+  return {
+    id: template.id,
+    category: template.category,
+    from: template.from,
+    subject: template.subject,
+    bodyPages: [...template.bodyPages],
+    receivedAt,
+    read: false,
+  };
+}
+
+function getOwnedGearIds(state: GameState): Set<string> {
+  return new Set(Object.keys(state.equipmentById ?? {}));
+}
+
+function getOwnedItemIds(state: GameState): Set<string> {
+  const itemIds = new Set<string>();
+
+  Object.entries(state.consumables ?? {}).forEach(([itemId, quantity]) => {
+    if (Number(quantity) > 0) {
+      itemIds.add(itemId);
+    }
+  });
+
+  [...(state.inventory?.baseStorage ?? []), ...(state.inventory?.forwardLocker ?? [])].forEach((item) => {
+    if (Number(item.quantity ?? 0) > 0) {
+      itemIds.add(item.id);
+    }
+  });
+
+  return itemIds;
+}
+
+function getOwnedFieldModIds(state: GameState): Set<string> {
+  const campaignProgress = loadCampaignProgress();
+  const fieldModIds = new Set<string>();
+
+  [...(state.runFieldModInventory ?? [])].forEach((instance) => {
+    if (instance?.defId) {
+      fieldModIds.add(instance.defId);
+    }
+  });
+
+  [...(campaignProgress.queuedFieldModsForNextRun ?? []), ...(campaignProgress.activeRun?.runFieldModInventory ?? [])].forEach(
+    (instance) => {
+      if (instance?.defId) {
+        fieldModIds.add(instance.defId);
+      }
+    }
+  );
+
+  return fieldModIds;
+}
+
+function getUnlockedSchemaIds(state: GameState): Set<string> {
+  const schemaState = getSchemaUnlockState(state);
+  return new Set([...schemaState.unlockedCoreTypes, ...schemaState.unlockedFortificationPips]);
+}
+
+function areImportedMailRequirementsMet(entry: UnlockableImportedMailTemplate, state: GameState): boolean {
+  const highestReachedFloorOrdinal = getHighestReachedFloorOrdinal(loadCampaignProgress());
+  if ((entry.unlockAfterFloor ?? 0) > 0 && highestReachedFloorOrdinal < (entry.unlockAfterFloor ?? 0)) {
+    return false;
+  }
+
+  const completedDialogueIds = new Set(state.completedDialogueIds ?? []);
+  if ((entry.requiredDialogueIds ?? []).some((dialogueId) => !completedDialogueIds.has(dialogueId))) {
+    return false;
+  }
+
+  const ownedGearIds = getOwnedGearIds(state);
+  if ((entry.requiredGearIds ?? []).some((gearId) => !ownedGearIds.has(gearId))) {
+    return false;
+  }
+
+  const ownedItemIds = getOwnedItemIds(state);
+  if ((entry.requiredItemIds ?? []).some((itemId) => !ownedItemIds.has(itemId))) {
+    return false;
+  }
+
+  const unlockedSchemaIds = getUnlockedSchemaIds(state);
+  if ((entry.requiredSchemaIds ?? []).some((schemaId) => !unlockedSchemaIds.has(schemaId))) {
+    return false;
+  }
+
+  const ownedFieldModIds = getOwnedFieldModIds(state);
+  if ((entry.requiredFieldModIds ?? []).some((fieldModId) => !ownedFieldModIds.has(fieldModId))) {
+    return false;
+  }
+
+  return true;
+}
+
 // ============================================================================
 // MAIL MANAGEMENT
 // ============================================================================
 
-/**
- * Get mail state from game state (with defaults)
- */
 export function getMailState(state: { quarters?: { mail?: MailState } }): MailState {
   return state.quarters?.mail ?? { inbox: [] };
 }
 
-/**
- * Add mail to inbox
- */
-export function addMail(
-  mailId: string,
-  receivedAt: number = Date.now()
-): MailItem | null {
-  const template = SAMPLE_MAIL.find(m => m.id === mailId);
+export function addMail(mailId: string, receivedAt: number = Date.now()): MailItem | null {
+  const template = getMailTemplateById(mailId);
   if (!template) {
     console.warn(`[MAIL] Mail template not found: ${mailId}`);
     return null;
   }
 
-  const mail: MailItem = {
-    ...template,
-    receivedAt,
-    read: false,
-  };
+  const mail = createMailItem(template, receivedAt);
 
-  // Import here to avoid circular dependency
-  import("../state/gameStore").then(({ updateGameState }) => {
-    updateGameState(state => {
-      const quarters = state.quarters ?? {};
-      const mailState = quarters.mail ?? { inbox: [] };
-      
-      // Check if mail already exists
-      if (mailState.inbox.some(m => m.id === mailId)) {
-        return state;
-      }
+  updateGameState((state) => {
+    const quarters = state.quarters ?? {};
+    const mailState = quarters.mail ?? { inbox: [] };
 
-      return {
-        ...state,
-        quarters: {
-          ...quarters,
-          mail: {
-            inbox: [...mailState.inbox, mail],
-          },
+    if (mailState.inbox.some((entry) => entry.id === mailId)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      quarters: {
+        ...quarters,
+        mail: {
+          inbox: [...mailState.inbox, mail],
         },
-      };
-    });
+      },
+    };
   });
 
   return mail;
 }
 
-/**
- * Mark mail as read
- */
 export function markMailRead(mailId: string): void {
-  import("../state/gameStore").then(({ updateGameState }) => {
-    updateGameState(state => {
-      const quarters = state.quarters ?? {};
-      const mailState = quarters.mail ?? { inbox: [] };
-      
-      return {
-        ...state,
-        quarters: {
-          ...quarters,
-          mail: {
-            inbox: mailState.inbox.map(m =>
-              m.id === mailId ? { ...m, read: true } : m
-            ),
-          },
+  updateGameState((state) => {
+    const quarters = state.quarters ?? {};
+    const mailState = quarters.mail ?? { inbox: [] };
+
+    return {
+      ...state,
+      quarters: {
+        ...quarters,
+        mail: {
+          inbox: mailState.inbox.map((mail) => (mail.id === mailId ? { ...mail, read: true } : mail)),
         },
-      };
-    });
+      },
+    };
   });
 }
 
-/**
- * Get unread mail count
- */
 export function getUnreadCount(state: { quarters?: { mail?: MailState } }): number {
   const mailState = getMailState(state);
-  return mailState.inbox.filter(m => !m.read).length;
+  return mailState.inbox.filter((mail) => !mail.read).length;
 }
 
-/**
- * Get mail by ID
- */
 export function getMailById(
   state: { quarters?: { mail?: MailState } },
   mailId: string
 ): MailItem | null {
   const mailState = getMailState(state);
-  return mailState.inbox.find(m => m.id === mailId) ?? null;
+  return mailState.inbox.find((mail) => mail.id === mailId) ?? null;
+}
+
+export function syncImportedMailUnlocks(): string[] {
+  const state = getGameState();
+  const deliveredIds = new Set(getMailState(state).inbox.map((mail) => mail.id));
+  const eligibleEntries = getImportedMailDatabase().filter(
+    (entry) => !deliveredIds.has(entry.id) && areImportedMailRequirementsMet(entry, state)
+  );
+
+  if (eligibleEntries.length === 0) {
+    return [];
+  }
+
+  updateGameState((current) => {
+    const quarters = current.quarters ?? {};
+    const mailState = quarters.mail ?? { inbox: [] };
+    const nextInbox = [...mailState.inbox];
+    const existingIds = new Set(nextInbox.map((mail) => mail.id));
+    let nextReceivedAt = Date.now();
+
+    eligibleEntries.forEach((entry) => {
+      if (existingIds.has(entry.id)) {
+        return;
+      }
+
+      nextInbox.push(createMailItem(entry, nextReceivedAt));
+      existingIds.add(entry.id);
+      nextReceivedAt += 1;
+    });
+
+    return {
+      ...current,
+      quarters: {
+        ...quarters,
+        mail: {
+          inbox: nextInbox,
+        },
+      },
+    };
+  });
+
+  return eligibleEntries.map((entry) => entry.id);
 }
 
 // ============================================================================
 // MAIL TRIGGERS
 // ============================================================================
 
-/**
- * Trigger mail after operation completion
- */
 export function triggerMailOnOperationComplete(success: boolean): void {
-  // Add mail based on success/failure
-  import("../state/gameStore").then(({ getGameState }) => {
-    const currentState = getGameState();
-    const mailState = getMailState(currentState);
-    
-    if (success) {
-      // Check if first success mail already sent
-      const hasFirstSuccess = mailState.inbox.some(m => m.id === "mail_first_success");
-      
-      if (!hasFirstSuccess) {
-        addMail("mail_first_success");
-      } else {
-        // Random chance for other success mails
-        if (Math.random() < 0.3) {
-          const options = ["mail_personal_1", "mail_official_1"];
-          const selected = options[Math.floor(Math.random() * options.length)];
-          addMail(selected);
-        }
-      }
-    } else {
-      // Failure mail
-      const hasFirstFailure = mailState.inbox.some(m => m.id === "mail_first_failure");
-      
-      if (!hasFirstFailure) {
-        addMail("mail_first_failure");
-      }
+  const currentState = getGameState();
+  const mailState = getMailState(currentState);
+
+  if (success) {
+    const hasFirstSuccess = mailState.inbox.some((mail) => mail.id === "mail_first_success");
+
+    if (!hasFirstSuccess) {
+      addMail("mail_first_success");
+    } else if (Math.random() < 0.3) {
+      const options = ["mail_personal_1", "mail_official_1"];
+      const selected = options[Math.floor(Math.random() * options.length)];
+      addMail(selected);
     }
-  });
+  } else {
+    const hasFirstFailure = mailState.inbox.some((mail) => mail.id === "mail_first_failure");
+
+    if (!hasFirstFailure) {
+      addMail("mail_first_failure");
+    }
+  }
+
+  syncImportedMailUnlocks();
 }
 
-/**
- * Trigger mail on returning to base camp (optional, low chance)
- */
 export function triggerMailOnBaseCampReturn(): void {
-  // Small chance for random mail
   if (Math.random() < 0.1) {
     const options = ["mail_personal_2", "mail_official_2"];
     const selected = options[Math.floor(Math.random() * options.length)];
     addMail(selected);
   }
-}
 
+  syncImportedMailUnlocks();
+}

@@ -22,12 +22,15 @@ import {
   loadGame,
 } from "../../core/saveSystem";
 import { initializeSettings } from "../../core/settings";
-import { initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
+import { clearControllerContext, initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
 import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
 import { initializeTechnicaContentLibrary } from "../../content/technica/library";
+import { setMusicCue } from "../../core/audioSystem";
 import { renderImportContentScreen } from "./ImportContentScreen";
 import chaosCoreLogo from "../../assets/cc logo.png";
+import { createDefaultCampaignProgress, saveCampaignProgress } from "../../core/campaign";
+import { clearActiveEchoRun, startEchoRunSession } from "../../core/echoRuns";
 
 const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
 const FLOATING_TERMINAL_TITLES = [
@@ -49,6 +52,8 @@ type TerminalElements = {
 type MainMenuActionId =
   | "continue"
   | "new-op"
+  | "multiplayer"
+  | "echo-runs"
   | "load"
   | "settings"
   | "import-content"
@@ -69,12 +74,20 @@ type MainMenuBackgroundTheme = {
   vars: Record<string, string>;
 };
 
+type MainMenuLayoutRecord = Partial<Record<MainMenuActionId, MainMenuButtonLayout>>;
+
+type SavedMainMenuButtonLayoutPayload = {
+  version: number;
+  layout: MainMenuLayoutRecord;
+};
+
 const MAIN_MENU_LAYOUT_STORAGE_KEY = "chaoscore_mainmenu_button_layout";
+const MAIN_MENU_LAYOUT_VERSION = 3;
 const MAIN_MENU_BACKGROUND_STORAGE_KEY = "chaoscore_mainmenu_background_theme";
 const MAIN_MENU_DRAG_THRESHOLD = 6;
-const MAIN_MENU_GRID_SIZE = 28;
-const MAIN_MENU_MIN_WIDTH = 196;
-const MAIN_MENU_MIN_HEIGHT = 64;
+const MAIN_MENU_GRID_SIZE = 4;
+const MAIN_MENU_MIN_WIDTH = 112;
+const MAIN_MENU_MIN_HEIGHT = 44;
 const MAIN_MENU_MINIMIZED_HEIGHT = 58;
 const MAIN_MENU_MINIMIZED_WIDTH = 58;
 const MAIN_MENU_THEMES = [
@@ -244,12 +257,15 @@ async function initializeGame(): Promise<void> {
 
 export async function renderMainMenu(): Promise<void> {
   await initializeGame();
+  setMusicCue("main-menu");
   
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element");
     return;
   }
+  document.body.setAttribute("data-screen", "main-menu");
+  clearControllerContext();
   
   const hasContinue = await canContinue();
   const saves = await listSaves();
@@ -440,7 +456,7 @@ function buildMainMenuButtonTiles(
 
   if (hasContinue) {
     tiles.push(`
-      <div class="mainmenu-action-tile mainmenu-action-tile--primary" data-mainmenu-tile="continue">
+      <div class="mainmenu-action-tile mainmenu-action-tile--featured" data-mainmenu-tile="continue">
         <div class="mainmenu-action-tile__controls">
           <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="continue" aria-label="Cycle continue color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -457,7 +473,7 @@ function buildMainMenuButtonTiles(
   }
 
   tiles.push(`
-    <div class="mainmenu-action-tile" data-mainmenu-tile="new-op">
+    <div class="mainmenu-action-tile ${hasContinue ? "mainmenu-action-tile--compact" : "mainmenu-action-tile--featured"}" data-mainmenu-tile="new-op">
       <div class="mainmenu-action-tile__controls">
         <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="new-op" aria-label="Cycle new operation color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -471,9 +487,41 @@ function buildMainMenuButtonTiles(
     </div>
   `);
 
+  tiles.push(`
+    <div class="mainmenu-action-tile mainmenu-action-tile--featured" data-mainmenu-tile="echo-runs">
+      <div class="mainmenu-action-tile__controls">
+        <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="echo-runs" aria-label="Cycle echo runs color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="echo-runs" aria-label="Minimize echo runs">_</button>
+      </div>
+      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--stable" data-action="echo-runs" type="button">
+        <span class="btn-icon node-icon">◈</span>
+        <span class="btn-text node-label">ECHO RUNS</span>
+        <span class="btn-subtitle node-desc">Draft-only simulation mode</span>
+      </button>
+      <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="echo-runs" aria-label="Resize echo runs"></button>
+    </div>
+  `);
+
+  tiles.push(`
+    <div class="mainmenu-action-tile mainmenu-action-tile--featured" data-mainmenu-tile="multiplayer">
+      <div class="mainmenu-action-tile__controls">
+        <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="multiplayer" aria-label="Cycle multiplayer color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="multiplayer" aria-label="Minimize multiplayer">_</button>
+      </div>
+      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility" data-action="multiplayer" type="button">
+        <span class="btn-icon node-icon">COM</span>
+        <span class="btn-text node-label">MULTIPLAYER</span>
+        <span class="btn-subtitle node-desc">Lobby, Skirmish, Co-Op Ops</span>
+      </button>
+      <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="multiplayer" aria-label="Resize multiplayer"></button>
+    </div>
+  `);
+
   if (hasLoad) {
     tiles.push(`
-      <div class="mainmenu-action-tile" data-mainmenu-tile="load">
+      <div class="mainmenu-action-tile mainmenu-action-tile--compact" data-mainmenu-tile="load">
         <div class="mainmenu-action-tile__controls">
           <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="load" aria-label="Cycle load game color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -489,7 +537,7 @@ function buildMainMenuButtonTiles(
   }
 
   tiles.push(`
-    <div class="mainmenu-action-tile" data-mainmenu-tile="settings">
+    <div class="mainmenu-action-tile mainmenu-action-tile--compact" data-mainmenu-tile="settings">
       <div class="mainmenu-action-tile__controls">
         <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="settings" aria-label="Cycle settings color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -501,7 +549,7 @@ function buildMainMenuButtonTiles(
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="settings" aria-label="Resize settings"></button>
     </div>
-    <div class="mainmenu-action-tile mainmenu-action-tile--wide" data-mainmenu-tile="import-content">
+    <div class="mainmenu-action-tile mainmenu-action-tile--compact" data-mainmenu-tile="import-content">
       <div class="mainmenu-action-tile__controls">
         <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="import-content" aria-label="Cycle import content color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -514,7 +562,7 @@ function buildMainMenuButtonTiles(
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="import-content" aria-label="Resize import content"></button>
     </div>
-    <div class="mainmenu-action-tile mainmenu-action-tile--small" data-mainmenu-tile="exit">
+    <div class="mainmenu-action-tile mainmenu-action-tile--compact" data-mainmenu-tile="exit">
       <div class="mainmenu-action-tile__controls">
         <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="exit" aria-label="Cycle exit color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
@@ -533,12 +581,19 @@ function buildMainMenuButtonTiles(
 
 function getDefaultMainMenuTileSize(actionId: MainMenuActionId): { width: number; height: number } {
   switch (actionId) {
+    case "continue":
+      return { width: 387, height: 163 };
+    case "echo-runs":
+    case "multiplayer":
+      return { width: 359, height: 163 };
+    case "new-op":
+    case "load":
+    case "settings":
     case "import-content":
-      return { width: 336, height: 92 };
     case "exit":
-      return { width: 220, height: 66 };
+      return { width: 191, height: 61 };
     default:
-      return { width: 280, height: 74 };
+      return { width: 359, height: 163 };
   }
 }
 
@@ -557,15 +612,30 @@ function normalizeMainMenuButtonLayout(
     y: partial?.y ?? fallback.y,
     width: clampedSize.width,
     height: clampedSize.height,
-    minimized: partial?.minimized ?? false,
-    themeIndex: partial?.themeIndex ?? 0,
+    minimized: partial?.minimized ?? fallback.minimized,
+    themeIndex: partial?.themeIndex ?? fallback.themeIndex,
   };
 }
 
 function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> {
   try {
     const raw = localStorage.getItem(MAIN_MENU_LAYOUT_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> : {};
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as SavedMainMenuButtonLayoutPayload | Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+    if (
+      parsed
+      && typeof parsed === "object"
+      && "version" in parsed
+      && parsed.version === MAIN_MENU_LAYOUT_VERSION
+      && "layout" in parsed
+      && parsed.layout
+      && typeof parsed.layout === "object"
+    ) {
+      return parsed.layout as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+    }
+    return {};
   } catch (error) {
     console.warn("[MAINMENU] Failed to load button layout", error);
     return {};
@@ -574,7 +644,11 @@ function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Parti
 
 function saveMainMenuButtonLayout(layout: Partial<Record<MainMenuActionId, MainMenuButtonLayout>>): void {
   try {
-    localStorage.setItem(MAIN_MENU_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+    const payload: SavedMainMenuButtonLayoutPayload = {
+      version: MAIN_MENU_LAYOUT_VERSION,
+      layout,
+    };
+    localStorage.setItem(MAIN_MENU_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
     console.warn("[MAINMENU] Failed to save button layout", error);
   }
@@ -584,24 +658,69 @@ function getDefaultMainMenuButtonLayout(
   hasContinue: boolean,
   hasLoad: boolean,
 ): Partial<Record<MainMenuActionId, MainMenuButtonLayout>> {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const leftBand = Math.min(width * 0.48, 720);
-  const anchorY = Math.max(height * 0.43, 320);
+  const referenceWidth = 3412;
+  const referenceHeight = 1364;
+  const scaleX = window.innerWidth / referenceWidth;
+  const scaleY = window.innerHeight / referenceHeight;
+  const scaleWidth = (value: number) => Math.round(value * scaleX);
+  const scaleHeight = (value: number) => Math.round(value * scaleY);
+  const scaledX = (value: number) => Math.round(value * scaleX);
+  const scaledY = (value: number) => Math.round(value * scaleY);
+  const continueSize = clampMainMenuTileSize(scaleWidth(387), scaleHeight(163));
+  const featuredSize = clampMainMenuTileSize(scaleWidth(359), scaleHeight(163));
+  const compactSize = clampMainMenuTileSize(scaleWidth(191), scaleHeight(61));
   const defaults: Partial<Record<MainMenuActionId, MainMenuButtonLayout>> = {
-    "new-op": { x: leftBand * 0.18, y: anchorY + 72, ...getDefaultMainMenuTileSize("new-op"), minimized: false, themeIndex: 0 },
-    settings: { x: leftBand * 0.63, y: anchorY + 138, ...getDefaultMainMenuTileSize("settings"), minimized: false, themeIndex: 2 },
-    "import-content": { x: leftBand * 0.1, y: anchorY + 205, ...getDefaultMainMenuTileSize("import-content"), minimized: false, themeIndex: 1 },
-    exit: { x: leftBand * 0.67, y: anchorY + 248, ...getDefaultMainMenuTileSize("exit"), minimized: false, themeIndex: 3 },
+    "echo-runs": {
+      x: scaledX(661),
+      y: scaledY(664),
+      ...featuredSize,
+      minimized: false,
+      themeIndex: 0,
+    },
+    multiplayer: {
+      x: scaledX(661),
+      y: scaledY(860),
+      ...featuredSize,
+      minimized: false,
+      themeIndex: 1,
+    },
   };
+  const compactActions: MainMenuActionId[] = [];
 
   if (hasContinue) {
-    defaults.continue = { x: leftBand * 0.06, y: anchorY - 8, ...getDefaultMainMenuTileSize("continue"), minimized: false, themeIndex: 0 };
+    defaults.continue = {
+      x: scaledX(129),
+      y: scaledY(664),
+      ...continueSize,
+      minimized: false,
+      themeIndex: 3,
+    };
+    compactActions.push("new-op");
+  } else {
+    defaults["new-op"] = {
+      x: scaledX(129),
+      y: scaledY(664),
+      ...continueSize,
+      minimized: false,
+      themeIndex: 3,
+    };
   }
 
   if (hasLoad) {
-    defaults.load = { x: leftBand * 0.58, y: anchorY + (hasContinue ? 2 : -6), ...getDefaultMainMenuTileSize("load"), minimized: false, themeIndex: 2 };
+    compactActions.push("load");
   }
+
+  compactActions.push("settings", "import-content", "exit");
+
+  compactActions.forEach((actionId, index) => {
+    defaults[actionId] = {
+      x: scaledX(325),
+      y: scaledY(944 + index * 84),
+      ...compactSize,
+      minimized: false,
+      themeIndex: 2,
+    };
+  });
 
   return defaults;
 }
@@ -695,6 +814,7 @@ function upgradeMainMenuToWorkspace(
 
   const defaultLayout = getDefaultMainMenuButtonLayout(hasContinue, hasLoad);
   const savedLayout = loadSavedMainMenuButtonLayout();
+  const hasSavedLayout = Object.keys(savedLayout).length > 0;
   const layout = Object.fromEntries(
     Object.entries(defaultLayout).map(([actionId, fallback]) => [
       actionId,
@@ -729,7 +849,9 @@ function upgradeMainMenuToWorkspace(
 
   requestAnimationFrame(() => {
     applyPositions();
-    saveMainMenuButtonLayout(layout);
+    if (hasSavedLayout) {
+      saveMainMenuButtonLayout(layout);
+    }
   });
 
   window.addEventListener("resize", applyPositions, { passive: true });
@@ -1158,6 +1280,8 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       
       const result = await loadMostRecent();
       if (result.success && result.state) {
+        clearActiveEchoRun();
+        saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
         setGameState(result.state);
         enableAutosave(() => getGameState());
         renderFieldScreen("base_camp");
@@ -1172,16 +1296,50 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   // New Operation button
   const newOpBtn = root.querySelector<HTMLButtonElement>('button[data-action="new-op"]');
   if (newOpBtn) {
-    newOpBtn.addEventListener("click", () => {
+    newOpBtn.addEventListener("click", async () => {
       if (saves.length > 0) {
         if (!confirm("Starting a new operation will not delete your existing saves. Continue?")) {
           return;
         }
       }
-      
+
+      newOpBtn.disabled = true;
+      const originalHtml = newOpBtn.innerHTML;
+      newOpBtn.innerHTML = `<span class="btn-text">Starting...</span>`;
+
+      clearActiveEchoRun();
+      saveCampaignProgress(createDefaultCampaignProgress());
       resetToNewGame();
+      const freshState = getGameState();
+
+      const saveResult = await saveGame(SAVE_SLOTS.AUTOSAVE, freshState);
+      if (!saveResult.success) {
+        console.warn("[MAINMENU] Failed to initialize fresh autosave for new operation:", saveResult.error);
+      }
+
       enableAutosave(() => getGameState());
       renderFieldScreen("base_camp");
+
+      newOpBtn.disabled = false;
+      newOpBtn.innerHTML = originalHtml;
+    });
+  }
+
+  const echoRunsBtn = root.querySelector<HTMLButtonElement>('button[data-action="echo-runs"]');
+  if (echoRunsBtn) {
+    echoRunsBtn.addEventListener("click", async () => {
+      clearActiveEchoRun();
+      startEchoRunSession();
+      const { renderEchoRunScreen } = await import("./EchoRunScreen");
+      renderEchoRunScreen();
+    });
+  }
+
+  const multiplayerBtn = root.querySelector<HTMLButtonElement>('button[data-action="multiplayer"]');
+  if (multiplayerBtn) {
+    multiplayerBtn.addEventListener("click", async () => {
+      const { renderCommsArrayScreen } = await import("./CommsArrayScreen");
+      renderCommsArrayScreen("menu");
     });
   }
   
@@ -1374,6 +1532,8 @@ function openLoadModal(saves: SaveInfo[]): void {
         if (slot) {
           const result = await loadGame(slot);
           if (result.success && result.state) {
+            clearActiveEchoRun();
+            saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
             setGameState(result.state);
             enableAutosave(() => getGameState());
             modal.style.display = "none";

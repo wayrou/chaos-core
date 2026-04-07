@@ -1,0 +1,16 @@
+{
+  "content": "The HAVEN generator lattice can be stabilized with redundant steam bafflers, but every field crew report warns that the gain in output also raises long-term maintenance burden.",
+  "createdAt": "2026-04-07T00:37:20.086Z",
+  "entryType": "tech",
+  "id": "codex_haven_foundry_notes",
+  "requiredDialogueIds": [],
+  "requiredFieldModIds": [],
+  "requiredGearIds": [],
+  "requiredItemIds": [],
+  "requiredSchemaIds": [],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "title": "Foundry Notes",
+  "unlockAfterFloor": 2,
+  "updatedAt": "2026-04-07T00:37:54.157Z"
+}

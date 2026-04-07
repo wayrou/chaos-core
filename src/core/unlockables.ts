@@ -6,12 +6,13 @@
 import { ALL_CHASSIS, GearChassis } from "../data/gearChassis";
 import { ALL_DOCTRINES, GearDoctrine } from "../data/gearDoctrines";
 import { getAllFieldModDefs } from "./fieldModDefinitions";
+import { getAllDecorItems } from "./decorSystem";
 
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type UnlockableType = "chassis" | "doctrine" | "field_mod";
+export type UnlockableType = "chassis" | "doctrine" | "field_mod" | "decor";
 
 export interface UnlockableDefinition {
   id: string;
@@ -101,6 +102,23 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       sourceRules: {
         shopEligible: true,
         rewardEligible: true,
+      },
+    };
+  }
+
+  // Add all decor unlocks
+  for (const decor of getAllDecorItems()) {
+    registry[decor.id] = {
+      id: decor.id,
+      type: "decor",
+      displayName: decor.name,
+      description: decor.description,
+      rarity: decor.rarityTag ?? "common",
+      tags: [`decor:${decor.tileWidth}x${decor.tileHeight}`],
+      cost: decor.shopCostWad ? { wad: decor.shopCostWad } : undefined,
+      sourceRules: {
+        shopEligible: decor.sourceRules?.shopEligible !== false,
+        rewardEligible: decor.sourceRules?.rewardEligible !== false,
       },
     };
   }
@@ -196,4 +214,3 @@ export function getUnownedUnlockables(
   
   return candidates.filter(u => !ownedSet.has(u.id));
 }
-

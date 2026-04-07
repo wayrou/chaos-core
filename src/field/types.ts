@@ -38,7 +38,7 @@ export interface InteractionZone {
   y: number;
   width: number;
   height: number;
-  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "gear_workbench" | "port" | "dispatch" | "quarters" | "black_market" | "stable" | "comms-array" | "mini_core" | "fcp_test" | "free_zone_entry" | "base_camp_entry" | "custom";
+  action: "shop" | "workshop" | "roster" | "loadout" | "ops_terminal" | "quest_board" | "tavern" | "gear_workbench" | "port" | "dispatch" | "quarters" | "black_market" | "stable" | "schema" | "foundry-annex" | "comms-array" | "mini_core" | "fcp_test" | "free_zone_entry" | "base_camp_entry" | "custom";
   label: string;
   metadata?: Record<string, any>;
 }
@@ -76,6 +76,65 @@ export interface FieldNpc {
   stateDuration: number; // How long to stay in current state
 }
 
+export interface FieldEnemy {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  hp: number;
+  maxHp: number;
+  speed: number;
+  facing: "north" | "south" | "east" | "west";
+  lastMoveTime: number;
+  deathAnimTime?: number;
+  vx: number;
+  vy: number;
+  knockbackTime: number;
+  aggroRange: number;
+  sourceObjectId?: string;
+  sourceDefinitionId?: string;
+  spawnKey?: string;
+  kind?: string;
+  spriteKey?: string;
+  spritePath?: string;
+  drops?: {
+    wad?: number;
+    resources?: {
+      metalScrap?: number;
+      wood?: number;
+      chaosShards?: number;
+      steamComponents?: number;
+    };
+    items?: Array<{
+      id: string;
+      quantity: number;
+      chance: number;
+    }>;
+  };
+}
+
+export interface FieldProjectile {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  lifetime: number;
+  maxLifetime: number;
+}
+
+export interface FieldCombatState {
+  isAttacking: boolean;
+  attackCooldown: number;
+  attackAnimTime: number;
+  isRangedMode: boolean;
+  energyCells: number;
+  maxEnergyCells: number;
+}
+
 export interface FieldState {
   currentMap: FieldMapId;
   player: PlayerAvatar;
@@ -83,4 +142,7 @@ export interface FieldState {
   activeInteraction: string | null; // ID of active interaction zone
   companion?: import("./companion").Companion; // Sable companion (Headline 15a)
   npcs?: FieldNpc[]; // NPCs for Base Camp (Headline 15b)
+  fieldEnemies?: FieldEnemy[];
+  combat?: FieldCombatState;
+  projectiles?: FieldProjectile[];
 }

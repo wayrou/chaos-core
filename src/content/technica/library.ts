@@ -96,6 +96,28 @@ function isDialogueShape(value: unknown): value is { id: string; title: string }
   );
 }
 
+function isMailShape(value: unknown): value is { id: string; subject: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "subject" in value &&
+      "from" in value &&
+      "bodyPages" in value
+  );
+}
+
+function isFieldEnemyShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "stats" in value &&
+      "spawn" in value
+  );
+}
+
 function isGearShape(value: unknown): value is { id: string; name: string } {
   return Boolean(
     value &&
@@ -161,6 +183,17 @@ function isClassShape(value: unknown): value is { id: string; name: string } {
   );
 }
 
+function isCodexShape(value: unknown): value is { id: string; title: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "title" in value &&
+      "entryType" in value &&
+      "content" in value
+  );
+}
+
 function createSyntheticManifest(fileName: string, entryData: unknown): TechnicaManifest | null {
   const exportedAt = new Date().toISOString();
 
@@ -215,6 +248,44 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
       contentId: entryData.id,
       title: entryData.title,
       description: "Standalone Technica dialogue runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isMailShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "mail",
+      contentType: "mail",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "mail-entry.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.subject,
+      description: "Standalone Technica mail runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isFieldEnemyShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "field_enemy",
+      contentType: "field_enemy",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "field-enemy.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica field enemy runtime file.",
       entryFile: fileName,
       dependencies: [],
       files: [fileName]
@@ -335,6 +406,25 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
     };
   }
 
+  if (isCodexShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "codex",
+      contentType: "codex",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "codex-entry.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.title,
+      description: "Standalone Technica codex runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
   return null;
 }
 
@@ -420,8 +510,6 @@ function getDependencyWarnings(
       exists = buckets.questIds.has(dependency.id);
     } else if (dependency.contentType === "dialogue") {
       exists = buckets.dialogueIds.has(dependency.id);
-    } else if (dependency.contentType === "gear") {
-      exists = buckets.gearIds.has(dependency.id);
     } else if (dependency.contentType === "item") {
       exists = buckets.itemIds.has(dependency.id);
     } else if (dependency.contentType === "card") {
@@ -430,8 +518,6 @@ function getDependencyWarnings(
       exists = buckets.unitIds.has(dependency.id);
     } else if (dependency.contentType === "operation") {
       exists = buckets.operationIds.has(dependency.id);
-    } else if (dependency.contentType === "class") {
-      exists = buckets.classIds.has(dependency.id);
     } else if (dependency.contentType === "scene") {
       exists = buckets.sceneIds.has(dependency.id);
     }
@@ -566,14 +652,19 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
     },
     {
       map: 0,
+      mail: 0,
       quest: 0,
       dialogue: 0,
+      field_enemy: 0,
+      npc: 0,
       gear: 0,
       item: 0,
       card: 0,
+      fieldmod: 0,
       unit: 0,
       operation: 0,
-      class: 0
+      class: 0,
+      codex: 0
     }
   );
 }

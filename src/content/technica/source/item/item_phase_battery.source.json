@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "item_phase_battery",
+  "name": "Phase Battery",
+  "description": "Portable surge cell for field repairs, doors, and improvised power routing.",
+  "kind": "consumable",
+  "stackable": true,
+  "quantity": 3,
+  "massKg": 1,
+  "bulkBu": 1,
+  "powerW": 20,
+  "metadata": {
+    "useCase": "support",
+    "rarity": "field_issue"
+  },
+  "createdAt": "2026-04-05T03:18:43.051Z",
+  "updatedAt": "2026-04-05T03:18:43.051Z"
+}

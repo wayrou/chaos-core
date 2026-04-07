@@ -3,8 +3,11 @@
 // Temporary run-scoped augments that provide triggered effects
 // ============================================================================
 
+import type { EffectFlowDocument } from "./effectFlow";
+
 export type FieldModRarity = "common" | "uncommon" | "rare";
 export type FieldModScope = "unit" | "squad";
+export type FieldModStackMode = "linear" | "additive";
 
 export type FieldModTrigger =
   | "battle_start"
@@ -36,12 +39,14 @@ export interface FieldModDef {
   rarity: FieldModRarity;
   scope: FieldModScope;          // unit by default, rare can be squad
   trigger: FieldModTrigger;
-  effect: FieldModEffect;
-  stackMode: "linear" | "additive";
+  effect?: FieldModEffect;
+  effectFlow?: EffectFlowDocument;
+  stackMode: FieldModStackMode;
   chance?: number;               // 0..1 for proc chance; omit = always triggers
   maxStacks?: number;
   tags?: string[];
   cost?: number;                 // for Black Market
+  unlockAfterOperationFloor?: number;
 }
 
 export interface FieldModInstance {

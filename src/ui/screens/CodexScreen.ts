@@ -3,9 +3,10 @@ import {
   CodexCategory,
   CodexEntry,
   getUnlockedCodexEntries,
-  CODEX_DATABASE,
+  getCodexDatabase,
   debugUnlockAllCodexEntries,
 } from "../../core/codexSystem";
+import { getTechnicaCodexUpdatedEventName } from "../../content/technica/notifier";
 import { renderMainMenu } from "./MainMenuScreen";
 import {
   BaseCampReturnTo,
@@ -18,6 +19,7 @@ import {
 let activeCategory: CodexCategory = "Lore";
 let activeEntry: CodexEntry | null = null;
 let returnDestination: BaseCampReturnTo | "menu" = "basecamp";
+let codexUpdateListenerRegistered = false;
 
 const CODEX_CATEGORY_LABELS: Record<CodexCategory, string> = {
   Lore: "Recovered history, campaign notes, and recovered fragments.",
@@ -33,7 +35,7 @@ function getEntriesForCategory(category: CodexCategory): CodexEntry[] {
 function getCategoryCounts(category: CodexCategory): { unlocked: number; total: number } {
   return {
     unlocked: getEntriesForCategory(category).length,
-    total: CODEX_DATABASE.filter((entry) => entry.category === category).length,
+    total: getCodexDatabase().filter((entry) => entry.category === category).length,
   };
 }
 
@@ -117,6 +119,7 @@ export function renderCodexScreen(returnTo: BaseCampReturnTo | "menu" = "basecam
   if (!root) return;
 
   returnDestination = returnTo;
+  registerCodexUpdateListener();
   const entries = getEntriesForCategory(activeCategory);
   ensureActiveEntry();
   const activeCounts = getCategoryCounts(activeCategory);
@@ -133,7 +136,7 @@ export function renderCodexScreen(returnTo: BaseCampReturnTo | "menu" = "basecam
           <div class="codex-header-right town-screen__header-right">
             <div class="codex-stats">
               <span class="codex-stats__label">UNLOCKED</span>
-              <span class="codex-stats__value">${totalUnlocked} / ${CODEX_DATABASE.length}</span>
+              <span class="codex-stats__value">${totalUnlocked} / ${getCodexDatabase().length}</span>
             </div>
             <button class="codex-back-btn town-screen__back-btn" id="codexBackBtn">
               <span class="btn-icon">←</span>
@@ -235,4 +238,19 @@ function attachListeners(): void {
   } else {
     unregisterBaseCampReturnHotkey("codex-screen");
   }
+}
+
+function registerCodexUpdateListener(): void {
+  if (codexUpdateListenerRegistered || typeof window === "undefined") {
+    return;
+  }
+
+  codexUpdateListenerRegistered = true;
+  window.addEventListener(getTechnicaCodexUpdatedEventName(), () => {
+    if (!document.querySelector(".codex-root")) {
+      return;
+    }
+
+    renderCodexScreen(returnDestination);
+  });
 }

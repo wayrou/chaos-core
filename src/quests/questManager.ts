@@ -1,38 +1,36 @@
 // ============================================================================
 // QUEST SYSTEM - QUEST MANAGER
-// Updated for Headline 15: Endless randomly generated quests
+// Theater / atlas aligned quest runtime and endless contract management
 // ============================================================================
 
-import { Quest, QuestId, QuestState, ObjectiveType } from "./types";
+import type { GameState } from "../core/types";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { getQuestById, cloneQuest, getAvailableQuests as getAvailableQuestsFromData } from "./questData";
-import { grantQuestRewards } from "./questRewards";
 import { generateRandomQuest, generateRandomQuests } from "./questGenerator";
-import { showSystemPing } from "../ui/components/systemPing";
+import { syncQuestProgressFromSnapshotState } from "./questRuntime";
+import { ObjectiveType, Quest, QuestId, QuestState } from "./types";
 
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
+const MAX_ACTIVE_QUESTS = 5;
+const INITIAL_GENERATED_QUESTS = 3;
+const AUTO_REPLENISH = true;
 
-const MAX_ACTIVE_QUESTS = 5; // Maximum number of active quests
-const INITIAL_GENERATED_QUESTS = 3; // How many random quests to start with
-const AUTO_REPLENISH = true; // Whether to auto-generate new quests when one is completed
+const SNAPSHOT_OBJECTIVE_TYPES = new Set<ObjectiveType>([
+  "secure_rooms",
+  "complete_sector_objectives",
+  "complete_floor",
+  "build_core",
+  "route_power",
+  "establish_comms",
+  "deliver_supply",
+  "complete_operation",
+  "reach_floor",
+]);
 
-// ============================================================================
-// QUEST STATE MANAGEMENT
-// ============================================================================
-
-/**
- * Get current quest state from game state
- */
 export function getQuestState(): QuestState {
   const state = getGameState();
   return state.quests || createEmptyQuestState();
 }
 
-/**
- * Create empty quest state
- */
 function createEmptyQuestState(): QuestState {
   return {
     availableQuests: [],
@@ -45,63 +43,83 @@ function createEmptyQuestState(): QuestState {
   };
 }
 
-/**
- * Initialize quest state in game state
- * If no quests exist, generates initial random quests
- */
+function parseRequiredQuestIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean)));
+}
+
+function areQuestRequirementsMet(quest: Quest): boolean {
+  const requiredQuestIds = parseRequiredQuestIds(quest.metadata?.requiredQuestIds);
+  if (requiredQuestIds.length === 0) {
+    return true;
+  }
+
+  const completedQuestIds = new Set(getQuestState().completedQuests);
+  return requiredQuestIds.every((questId) => completedQuestIds.has(questId));
+}
+
+function addGeneratedQuestsToState(state: GameState, count: number): GameState {
+  const questState = state.quests ?? createEmptyQuestState();
+  const availableSlots = Math.max(0, (questState.maxActiveQuests || MAX_ACTIVE_QUESTS) - questState.activeQuests.length);
+  const resolvedCount = Math.min(availableSlots, Math.max(0, Math.floor(count)));
+  if (resolvedCount <= 0) {
+    return state;
+  }
+
+  const newQuests = generateRandomQuests(resolvedCount);
+  return {
+    ...state,
+    quests: {
+      ...questState,
+      activeQuests: [...questState.activeQuests, ...newQuests],
+      generatedQuestCount: (questState.generatedQuestCount || 0) + newQuests.length,
+    },
+  };
+}
+
+function settleQuestState(state: GameState, replenishGenerated = false): GameState {
+  const syncedState = syncQuestProgressFromSnapshotState(state);
+  if (!replenishGenerated || !AUTO_REPLENISH || !syncedState.quests) {
+    return syncedState;
+  }
+
+  const generatedCount = syncedState.quests.activeQuests.filter((quest) => quest.metadata?.isGenerated).length;
+  const needed = INITIAL_GENERATED_QUESTS - generatedCount;
+  return needed > 0 ? addGeneratedQuestsToState(syncedState, needed) : syncedState;
+}
+
 export function initializeQuestState(): void {
   const state = getGameState();
+
   if (!state.quests) {
-    // Create initial state with generated quests
-    const initialQuests = generateRandomQuests(INITIAL_GENERATED_QUESTS);
-    
-    updateGameState(s => ({
-      ...s,
+    const seededState = settleQuestState({
+      ...state,
       quests: {
         ...createEmptyQuestState(),
-        activeQuests: initialQuests,
-        generatedQuestCount: initialQuests.length,
+        activeQuests: generateRandomQuests(INITIAL_GENERATED_QUESTS),
+        generatedQuestCount: INITIAL_GENERATED_QUESTS,
       },
-    }));
-    
-    console.log(`[QUEST] Initialized quest state with ${initialQuests.length} generated quests`);
-  } else if (state.quests.activeQuests.length === 0 && AUTO_REPLENISH) {
-    // If no active quests, generate some
-    replenishQuests();
+    });
+
+    updateGameState(() => seededState);
+    console.log(`[QUEST] Initialized quest state with ${seededState.quests?.activeQuests.length ?? 0} theater-aligned generated quests`);
+    return;
   }
+
+  updateGameState((current) => settleQuestState(current, true));
 }
 
-/**
- * Replenish quests to maintain INITIAL_GENERATED_QUESTS active
- */
 export function replenishQuests(): void {
-  const questState = getQuestState();
-  const currentCount = questState.activeQuests.length;
-  const needed = INITIAL_GENERATED_QUESTS - currentCount;
-  
-  if (needed <= 0) return;
-  
-  const newQuests = generateRandomQuests(needed);
-  
-  updateGameState(s => ({
-    ...s,
-    quests: {
-      ...s.quests!,
-      activeQuests: [...s.quests!.activeQuests, ...newQuests],
-      generatedQuestCount: (s.quests!.generatedQuestCount || 0) + newQuests.length,
-    },
-  }));
-  
-  console.log(`[QUEST] Replenished ${newQuests.length} quest(s). Total active: ${currentCount + newQuests.length}`);
+  updateGameState((state) => settleQuestState(state, true));
 }
 
-// ============================================================================
-// QUEST ACCEPTANCE
-// ============================================================================
+export function syncQuestProgressInStore(): void {
+  updateGameState((state) => settleQuestState(state, false));
+}
 
-/**
- * Accept a quest (move from available to active)
- */
 export function acceptQuest(questId: QuestId): boolean {
   const quest = getQuestById(questId);
   if (!quest) {
@@ -109,28 +127,26 @@ export function acceptQuest(questId: QuestId): boolean {
     return false;
   }
 
-  const questState = getQuestState();
-  
-  // Check if already active
-  if (questState.activeQuests.some(q => q.id === questId)) {
-    console.warn(`[QUEST] Quest already active: ${questId}`);
+  if (!areQuestRequirementsMet(quest)) {
+    console.warn(`[QUEST] Quest requirements not met: ${questId}`);
     return false;
   }
 
-  // Check max active quests
+  const questState = getQuestState();
+  if (questState.activeQuests.some((activeQuest) => activeQuest.id === questId)) {
+    console.warn(`[QUEST] Quest already active: ${questId}`);
+    return false;
+  }
   if (questState.activeQuests.length >= questState.maxActiveQuests) {
     console.warn(`[QUEST] Max active quests reached (${questState.maxActiveQuests})`);
     return false;
   }
 
-  // Clone quest and set to active
-  const activeQuest = cloneQuest(quest);
-
-  updateGameState(state => ({
+  updateGameState((state) => settleQuestState({
     ...state,
     quests: {
-      ...state.quests!,
-      activeQuests: [...state.quests!.activeQuests, activeQuest],
+      ...(state.quests ?? createEmptyQuestState()),
+      activeQuests: [...(state.quests?.activeQuests ?? []), cloneQuest(quest)],
     },
   }));
 
@@ -138,274 +154,138 @@ export function acceptQuest(questId: QuestId): boolean {
   return true;
 }
 
-// ============================================================================
-// QUEST PROGRESS UPDATES
-// ============================================================================
-
-/**
- * Update quest objective progress
- */
 export function updateQuestProgress(
   objectiveType: ObjectiveType,
   target: string | number,
-  amount: number = 1
+  amount = 1,
 ): void {
-  const questState = getQuestState();
-  let updated = false;
+  updateGameState((state) => {
+    const questState = state.quests ?? createEmptyQuestState();
+    let changed = false;
 
-  const updatedQuests = questState.activeQuests.map(quest => {
-    const updatedObjectives = quest.objectives.map(obj => {
-      // Check if this objective matches the event
-      if (obj.type !== objectiveType) return obj;
-      if (obj.target !== target && obj.type !== "kill_enemies") return obj;
+    const nextActiveQuests = questState.activeQuests.map((quest) => {
+      let questChanged = false;
 
-      // Special handling for kill_enemies (any enemy counts)
-      if (obj.type === "kill_enemies" && typeof target === "number") {
-        // This is a generic kill count, update it
-        const newCurrent = Math.min(obj.current + amount, obj.required);
-        if (newCurrent !== obj.current) {
-          updated = true;
-          return { ...obj, current: newCurrent };
+      const nextObjectives = quest.objectives.map((objective) => {
+        if (SNAPSHOT_OBJECTIVE_TYPES.has(objective.type) || objective.type !== objectiveType) {
+          return objective;
         }
-      } else if (obj.target === target) {
-        // Exact match
-        const newCurrent = Math.min(obj.current + amount, obj.required);
-        if (newCurrent !== obj.current) {
-          updated = true;
-          return { ...obj, current: newCurrent };
-        }
-      }
 
-      return obj;
+        const isGenericKill = objective.type === "kill_enemies" && typeof target === "number";
+        const isAnyBattle = objective.type === "complete_battle" && objective.target === "any";
+        const matchesTarget = isGenericKill || isAnyBattle || objective.target === target;
+        if (!matchesTarget) {
+          return objective;
+        }
+
+        const nextCurrent = Math.min(objective.required, objective.current + amount);
+        if (nextCurrent === objective.current) {
+          return objective;
+        }
+
+        changed = true;
+        questChanged = true;
+        return {
+          ...objective,
+          current: nextCurrent,
+        };
+      });
+
+      return questChanged
+        ? {
+            ...quest,
+            objectives: nextObjectives,
+          }
+        : quest;
     });
 
-    // Check if all objectives are complete
-    const allComplete = updatedObjectives.every(obj => obj.current >= obj.required);
-    if (allComplete && quest.status === "active") {
-      // Quest is complete!
-      completeQuest(quest.id);
-      return quest;
+    if (!changed) {
+      return settleQuestState(state, false);
     }
 
-    return {
-      ...quest,
-      objectives: updatedObjectives,
-    };
-  });
-
-  if (updated) {
-    updateGameState(state => ({
+    return settleQuestState({
       ...state,
       quests: {
-        ...state.quests!,
-        activeQuests: updatedQuests,
+        ...questState,
+        activeQuests: nextActiveQuests,
       },
-    }));
-  }
+    }, false);
+  });
 }
 
-/**
- * Complete a quest and grant rewards
- * For endless quest system: auto-generates replacement quest
- */
-function completeQuest(questId: QuestId): void {
+export function failQuest(questId: QuestId): void {
   const questState = getQuestState();
-  const quest = questState.activeQuests.find(q => q.id === questId);
-  
+  const quest = questState.activeQuests.find((activeQuest) => activeQuest.id === questId);
   if (!quest) {
-    console.warn(`[QUEST] Cannot complete quest: ${questId} (not found in active quests)`);
     return;
   }
 
-  // Grant rewards
-  grantQuestRewards(quest);
-
-  // Move to completed and increment counter
-  updateGameState(state => ({
+  updateGameState((state) => ({
     ...state,
     quests: {
-      ...state.quests!,
-      activeQuests: state.quests!.activeQuests.filter(q => q.id !== questId),
-      completedQuests: [...state.quests!.completedQuests, questId],
-      totalQuestsCompleted: (state.quests!.totalQuestsCompleted || 0) + 1,
-    },
-  }));
-
-  console.log(`[QUEST] ✓ Completed quest: ${quest.title}`);
-  
-  // Show notification
-  showQuestCompletionNotification(quest);
-  
-  // Auto-replenish if enabled (for endless quest system)
-  if (AUTO_REPLENISH) {
-    // Small delay to let the completion feel meaningful
-    setTimeout(() => {
-      replenishQuests();
-    }, 500);
-  }
-}
-
-/**
- * Show a notification when a quest is completed
- */
-function showQuestCompletionNotification(quest: Quest): void {
-  const rewardParts: string[] = [];
-  if (quest.rewards.wad) rewardParts.push(`${quest.rewards.wad} WAD`);
-  if (quest.rewards.xp) rewardParts.push(`${quest.rewards.xp} XP`);
-
-  showSystemPing({
-    title: "QUEST COMPLETE",
-    message: quest.title,
-    detail: rewardParts.length > 0 ? rewardParts.join(" • ") : undefined,
-    type: "success",
-    channel: "quest-complete",
-  });
-  return;
-
-  // Create notification element
-  const notification = document.createElement("div");
-  notification.className = "quest-completion-notification";
-  notification.innerHTML = `
-    <div class="quest-notification-icon">✓</div>
-    <div class="quest-notification-content">
-      <div class="quest-notification-title">QUEST COMPLETE</div>
-      <div class="quest-notification-name">${quest.title}</div>
-      <div class="quest-notification-rewards">
-        ${quest.rewards.wad ? `<span>💰 ${quest.rewards.wad} WAD</span>` : ''}
-        ${quest.rewards.xp ? `<span>⭐ ${quest.rewards.xp} XP</span>` : ''}
-      </div>
-    </div>
-  `;
-  
-  document.body.appendChild(notification);
-  
-  // Trigger animation
-  requestAnimationFrame(() => {
-    notification.classList.add("quest-notification--visible");
-  });
-  
-  // Remove after animation
-  setTimeout(() => {
-    notification.classList.remove("quest-notification--visible");
-    setTimeout(() => {
-      notification.remove();
-    }, 300);
-  }, 3000);
-}
-
-/**
- * Fail a quest (optional - for time-limited or failure conditions)
- */
-export function failQuest(questId: QuestId): void {
-  const questState = getQuestState();
-  const quest = questState.activeQuests.find(q => q.id === questId);
-  
-  if (!quest) return;
-
-  updateGameState(state => ({
-    ...state,
-    quests: {
-      ...state.quests!,
-      activeQuests: state.quests!.activeQuests.filter(q => q.id !== questId),
-      failedQuests: [...state.quests!.failedQuests, questId],
+      ...(state.quests ?? createEmptyQuestState()),
+      activeQuests: (state.quests?.activeQuests ?? []).filter((activeQuest) => activeQuest.id !== questId),
+      failedQuests: [...(state.quests?.failedQuests ?? []), questId],
     },
   }));
 
   console.log(`[QUEST] Failed quest: ${quest.title}`);
 }
 
-// ============================================================================
-// QUEST QUERIES
-// ============================================================================
-
-/**
- * Get all active quests
- */
 export function getActiveQuests(): Quest[] {
   return getQuestState().activeQuests;
 }
 
-/**
- * Get all available quests (from database, filtered by status)
- */
 export function getAvailableQuests(): Quest[] {
   const questState = getQuestState();
-  
-  // Filter out already completed or active quests
   return getAvailableQuestsFromData().filter(
-    q => !questState.completedQuests.includes(q.id) &&
-         !questState.activeQuests.some(aq => aq.id === q.id)
-  );
+    (quest) => !questState.completedQuests.includes(quest.id)
+      && !questState.activeQuests.some((activeQuest) => activeQuest.id === quest.id),
+  ).filter(areQuestRequirementsMet);
 }
 
-/**
- * Get quest by ID from active quests
- */
 export function getActiveQuest(questId: QuestId): Quest | null {
-  return getQuestState().activeQuests.find(q => q.id === questId) || null;
+  return getQuestState().activeQuests.find((quest) => quest.id === questId) || null;
 }
 
-/**
- * Check if a quest is completed
- */
 export function isQuestCompleted(questId: QuestId): boolean {
   return getQuestState().completedQuests.includes(questId);
 }
 
-/**
- * Get total quests completed (lifetime)
- */
 export function getTotalQuestsCompleted(): number {
   return getQuestState().totalQuestsCompleted || 0;
 }
 
-/**
- * Force generate a new quest immediately
- */
 export function generateNewQuest(): Quest {
-  const newQuest = generateRandomQuest();
-  
-  updateGameState(s => ({
-    ...s,
+  const quest = generateRandomQuest();
+  updateGameState((state) => ({
+    ...state,
     quests: {
-      ...s.quests!,
-      activeQuests: [...s.quests!.activeQuests, newQuest],
-      generatedQuestCount: (s.quests!.generatedQuestCount || 0) + 1,
+      ...(state.quests ?? createEmptyQuestState()),
+      activeQuests: [...(state.quests?.activeQuests ?? []), quest],
+      generatedQuestCount: (state.quests?.generatedQuestCount || 0) + 1,
     },
   }));
-  
-  console.log(`[QUEST] Generated new quest: ${newQuest.title}`);
-  return newQuest;
+  console.log(`[QUEST] Generated new quest: ${quest.title}`);
+  return quest;
 }
 
-/**
- * Abandon a quest (remove without completing)
- */
 export function abandonQuest(questId: QuestId): boolean {
   const questState = getQuestState();
-  const quest = questState.activeQuests.find(q => q.id === questId);
-  
+  const quest = questState.activeQuests.find((activeQuest) => activeQuest.id === questId);
   if (!quest) {
     console.warn(`[QUEST] Cannot abandon quest: ${questId} (not found)`);
     return false;
   }
-  
-  updateGameState(s => ({
-    ...s,
+
+  updateGameState((state) => settleQuestState({
+    ...state,
     quests: {
-      ...s.quests!,
-      activeQuests: s.quests!.activeQuests.filter(q => q.id !== questId),
+      ...(state.quests ?? createEmptyQuestState()),
+      activeQuests: (state.quests?.activeQuests ?? []).filter((activeQuest) => activeQuest.id !== questId),
     },
-  }));
-  
+  }, true));
+
   console.log(`[QUEST] Abandoned quest: ${quest.title}`);
-  
-  // Replenish to keep quest count up
-  if (AUTO_REPLENISH) {
-    setTimeout(() => {
-      replenishQuests();
-    }, 100);
-  }
-  
   return true;
 }

@@ -4,6 +4,9 @@
 
 import { UnitId } from "./types";
 
+const DEFAULT_UNIT_PORTRAIT_PATH = "/assets/portraits/units/core/Test_Portrait.png";
+const UNIT_MANAGEMENT_STAND_ICON_PATH = "/assets/portraits/units/core/Unit_Stand_Test.png";
+
 /**
  * Gets the portrait path for a unit based on its ID.
  * Looks for portraits in public/assets/portraits/units/{category}/{unitId}_Portrait.png
@@ -11,7 +14,7 @@ import { UnitId } from "./types";
  */
 export function getUnitPortraitPath(unitId: UnitId | string | undefined): string {
   if (!unitId) {
-    return "/assets/portraits/units/core/Test_Portrait.png";
+    return DEFAULT_UNIT_PORTRAIT_PATH;
   }
 
   // Try different possible paths based on unit ID structure
@@ -27,6 +30,10 @@ export function getUnitPortraitPath(unitId: UnitId | string | undefined): string
   
   // Return the path (the actual file existence will be handled by the browser)
   return standardPath;
+}
+
+export function getUnitManagementStandIconPath(): string {
+  return UNIT_MANAGEMENT_STAND_ICON_PATH;
 }
 
 /**

@@ -1,4 +1,6 @@
 import type { EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
+import type { EffectFlowDocument } from "../../core/effectFlow";
+import type { FieldModScope, FieldModRarity, FieldModTrigger, FieldModStackMode } from "../../core/fieldMods";
 import type { CardEffect, InventoryItem } from "../../core/types";
 import type { FieldMap } from "../../field/types";
 import type { Quest } from "../../quests/types";
@@ -72,6 +74,28 @@ export interface ImportedDialogue {
 export interface ImportedItem extends InventoryItem {
   description?: string;
   iconPath?: string;
+  archetype?: "standard" | "weapon_chassis";
+  acquisition?: {
+    startsWithPlayer?: boolean;
+    havenShop?: {
+      unlockFloor?: number;
+      notes?: string;
+    };
+    fieldMapResource?: {
+      mapId?: string;
+      resourceNodeId?: string;
+      notes?: string;
+    };
+    enemyDrop?: {
+      enemyUnitIds?: string[];
+      notes?: string;
+    };
+    otherSourcesNotes?: string;
+  };
+  weaponChassis?: {
+    stability?: number;
+    cardSlots?: number;
+  };
   metadata?: Record<string, unknown>;
 }
 
@@ -109,10 +133,60 @@ export interface ImportedCard {
   range: number;
   damage?: number;
   effects: CardEffect[];
+  effectFlow?: EffectFlowDocument;
   sourceClassId?: string;
   sourceEquipmentId?: string;
   artPath?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface ImportedFieldMod {
+  id: string;
+  name: string;
+  description: string;
+  effects?: string;
+  trigger: FieldModTrigger;
+  chance?: number;
+  stackMode: FieldModStackMode;
+  maxStacks?: number;
+  effectFlow?: EffectFlowDocument;
+  scope: FieldModScope;
+  cost?: number;
+  rarity: FieldModRarity;
+  unlockAfterOperationFloor?: number;
+  requiredQuestIds?: string[];
+}
+
+export interface ImportedCodexEntry {
+  id: string;
+  title: string;
+  entryType: "lore" | "faction" | "bestiary" | "tech";
+  content: string;
+  unlockAfterFloor?: number;
+  requiredDialogueIds?: string[];
+  requiredQuestIds?: string[];
+  requiredGearIds?: string[];
+  requiredItemIds?: string[];
+  requiredSchemaIds?: string[];
+  requiredFieldModIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ImportedMailEntry {
+  id: string;
+  category: "personal" | "official" | "system";
+  from: string;
+  subject: string;
+  bodyPages: string[];
+  unlockAfterFloor?: number;
+  requiredDialogueIds?: string[];
+  requiredGearIds?: string[];
+  requiredItemIds?: string[];
+  requiredSchemaIds?: string[];
+  requiredFieldModIds?: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ImportedClassDefinition {
@@ -129,12 +203,23 @@ export interface ImportedClassDefinition {
   };
   weaponTypes: WeaponType[];
   unlockConditions: Array<{
-    type: "always_unlocked" | "class_rank" | "milestone" | "special";
+    type: "always_unlocked" | "class_rank" | "quest_completed" | "milestone" | "special";
     requiredClassId?: string;
+    requiredQuestId?: string;
     requiredRank?: number;
     description?: string;
   }>;
   innateAbility?: string;
+  trainingGrid?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    cost: number;
+    row: number;
+    col: number;
+    requires?: string[];
+    benefit?: string;
+  }>;
   metadata?: Record<string, unknown>;
 }
 
@@ -143,6 +228,9 @@ export interface ImportedUnitTemplate {
   name: string;
   description?: string;
   currentClassId: string;
+  spawnRole?: "player" | "enemy";
+  enemySpawnFloorOrdinals?: number[];
+  requiredQuestIds?: string[];
   stats: {
     maxHp: number;
     atk: number;
@@ -212,20 +300,60 @@ export interface ImportedNpcTemplate {
   metadata?: Record<string, unknown>;
 }
 
+export interface ImportedFieldEnemyDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  kind?: string;
+  spriteKey?: string;
+  spritePath?: string;
+  stats: {
+    maxHp: number;
+    speed: number;
+    aggroRange: number;
+    width: number;
+    height: number;
+  };
+  spawn: {
+    mapIds?: string[];
+    floorOrdinals?: number[];
+    count?: number;
+  };
+  drops?: {
+    wad?: number;
+    resources?: {
+      metalScrap?: number;
+      wood?: number;
+      chaosShards?: number;
+      steamComponents?: number;
+    };
+    items?: Array<{
+      id: string;
+      quantity?: number;
+      chance?: number;
+    }>;
+  };
+  metadata?: Record<string, unknown>;
+}
+
 export type ImportedFieldMap = FieldMap;
 export type ImportedQuest = Quest;
 
 export type TechnicaContentType =
   | "dialogue"
+  | "mail"
   | "quest"
   | "map"
+  | "field_enemy"
   | "npc"
   | "item"
   | "gear"
   | "card"
+  | "fieldmod"
   | "unit"
   | "operation"
-  | "class";
+  | "class"
+  | "codex";
 
 export interface DisabledTechnicaContent {
   id: string;

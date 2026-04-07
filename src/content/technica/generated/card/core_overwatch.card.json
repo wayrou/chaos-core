@@ -1,0 +1,17 @@
+{
+  "category": "utility",
+  "description": "Stun an enemy for one turn.",
+  "effects": [
+    {
+      "amount": 1,
+      "type": "stun"
+    }
+  ],
+  "id": "core_overwatch",
+  "name": "Overwatch",
+  "range": 5,
+  "rarity": "common",
+  "strainCost": 6,
+  "targetType": "enemy",
+  "type": "core"
+}

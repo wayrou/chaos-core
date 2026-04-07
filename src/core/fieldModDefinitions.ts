@@ -5,6 +5,7 @@
 
 import { FieldModDef } from "./fieldMods";
 import { getTriggerLabel } from "./fieldModStrings";
+import { getAllImportedFieldMods } from "../content/technica";
 
 export const FIELD_MOD_DEFINITIONS: Record<string, FieldModDef> = {
   // ============================================================================
@@ -209,10 +210,28 @@ export const FIELD_MOD_DEFINITIONS: Record<string, FieldModDef> = {
 };
 
 export function getAllFieldModDefs(): FieldModDef[] {
-  return Object.values(FIELD_MOD_DEFINITIONS);
+  const imported = getAllImportedFieldMods().map<FieldModDef>((fieldMod) => ({
+    id: fieldMod.id,
+    name: fieldMod.name,
+    description: fieldMod.description,
+    rarity: fieldMod.rarity,
+    scope: fieldMod.scope,
+    trigger: fieldMod.trigger,
+    effect: undefined,
+    effectFlow: fieldMod.effectFlow,
+    stackMode: fieldMod.stackMode,
+    chance: fieldMod.chance,
+    maxStacks: fieldMod.maxStacks,
+    cost: fieldMod.cost,
+    unlockAfterOperationFloor: fieldMod.unlockAfterOperationFloor,
+  }));
+
+  const merged = new Map<string, FieldModDef>(Object.values(FIELD_MOD_DEFINITIONS).map((entry) => [entry.id, entry]));
+  imported.forEach((entry) => merged.set(entry.id, entry));
+  return Array.from(merged.values());
 }
 
 export function getFieldModDef(id: string): FieldModDef | undefined {
-  return FIELD_MOD_DEFINITIONS[id];
+  return getAllFieldModDefs().find((entry) => entry.id === id);
 }
 

@@ -92,7 +92,7 @@ function getNormalizedProgress(state: GameState, unitId: UnitId): UnitClassProgr
 }
 
 function formatClassCount(progress: UnitClassProgress): string {
-  return `${progress.unlockedClasses.length} / ${getAvailableClasses().length}`;
+  return `${progress.unlockedClasses.length}`;
 }
 
 function renderSummaryPanel(unit: Unit, progress: UnitClassProgress, statBank: number): string {

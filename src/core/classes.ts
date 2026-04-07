@@ -3,6 +3,7 @@ import {
   getImportedClass,
   isTechnicaContentDisabled,
 } from "../content/technica";
+import { isQuestCompleted } from "../quests/questManager";
 
 // ============================================================================
 // CLASS SYSTEM - Headline 14
@@ -49,11 +50,13 @@ export interface ClassDefinition {
   weaponTypes: WeaponType[];
   unlockConditions: UnlockCondition[];
   innateAbility?: string;
+  trainingGrid?: ClassGridNode[];
 }
 
 export interface UnlockCondition {
-  type: "always_unlocked" | "class_rank" | "milestone" | "special";
+  type: "always_unlocked" | "class_rank" | "quest_completed" | "milestone" | "special";
   requiredClass?: ClassId;
+  requiredQuestId?: string;
   requiredRank?: number;
   description?: string;
 }
@@ -523,10 +526,21 @@ function importedClassToDefinition(classDefinition: ReturnType<typeof getImporte
     unlockConditions: classDefinition.unlockConditions.map((condition) => ({
       type: condition.type,
       requiredClass: condition.requiredClassId,
+      requiredQuestId: condition.requiredQuestId,
       requiredRank: condition.requiredRank,
       description: condition.description,
     })),
     innateAbility: classDefinition.innateAbility,
+    trainingGrid: classDefinition.trainingGrid?.map((node) => ({
+      id: node.id,
+      name: node.name,
+      description: node.description,
+      cost: node.cost,
+      row: node.row,
+      col: node.col,
+      requires: [...(node.requires ?? [])],
+      benefit: node.benefit,
+    })),
   };
 }
 
@@ -584,6 +598,12 @@ export function isClassUnlocked(
         }
         const rank = progress.classRanks[condition.requiredClass] || 0;
         return rank >= condition.requiredRank;
+
+      case "quest_completed":
+        if (!condition.requiredQuestId) {
+          return false;
+        }
+        return isQuestCompleted(condition.requiredQuestId);
 
       case "milestone":
       case "special":
@@ -644,6 +664,14 @@ export function getUnlockRequirementsText(classId: ClassId): string[] {
         }
         break;
 
+      case "quest_completed":
+        if (condition.description) {
+          texts.push(condition.description);
+        } else if (condition.requiredQuestId) {
+          texts.push(`Complete quest ${condition.requiredQuestId}`);
+        }
+        break;
+
       case "milestone":
       case "special":
         if (condition.description) {
@@ -676,6 +704,12 @@ function getInnateAbilityBody(classDef: ClassDefinition): string {
 
 export function getClassAbilityGrid(classId: ClassId): ClassGridNode[] {
   const classDef = getClassDefinition(classId);
+  if (classDef.trainingGrid && classDef.trainingGrid.length > 0) {
+    return classDef.trainingGrid.map((node) => ({
+      ...node,
+      requires: [...(node.requires ?? [])],
+    }));
+  }
   const weaponLine = classDef.weaponTypes.map(formatWeaponType).join(" / ");
   const tierCost = classDef.tier * 10;
 

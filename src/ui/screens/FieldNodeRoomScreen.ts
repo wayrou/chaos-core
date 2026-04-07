@@ -6,10 +6,17 @@
 
 import { updateGameState, getGameState } from "../../state/gameStore";
 import { renderOperationMapScreen } from "./OperationMapScreen";
-import { hasTheaterOperation, secureTheaterRoomInState } from "../../core/theaterSystem";
+import {
+  getPreparedTheaterOperation,
+  hasTheaterOperation,
+  secureTheaterRoomInState,
+} from "../../core/theaterSystem";
+import { SCHEMA_CORE_DEFINITIONS } from "../../core/schemaSystem";
+import type { CoreType } from "../../core/types";
 import { updateQuestProgress } from "../../quests/questManager";
 import {
   createCompanion,
+  updateCompanionFollow,
   updateCompanionFetch,
   updateCompanionAttack,
   findNearestResource,
@@ -21,6 +28,7 @@ import { handleKeyDown as handlePlayerInputKeyDown } from "../../core/playerInpu
 import { tryJoinAsP2, dropOutP2 } from "../../core/coop";
 import { showSystemPing } from "../components/systemPing";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
+import { showDialogue } from "./DialogueScreen";
 
 // ============================================================================
 // TYPES
@@ -63,6 +71,17 @@ interface FieldNodeSparkle {
   resourceType: "metalScrap" | "wood" | "chaosShards" | "steamComponents";
   amount: number;
   collected: boolean;
+}
+
+interface FieldNodeNpc {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  glyph: string;
+  dialogue: string[];
 }
 
 interface FieldNodeTile {
@@ -109,11 +128,15 @@ interface Projectile {
 
 interface FieldNodeRoomState {
   roomId: string;
+  mode: "combat" | "facility";
+  facilityType: CoreType | null;
+  facilityLabel: string | null;
   width: number;
   height: number;
   tiles: FieldNodeTile[][];
   player: FieldNodePlayer;
   enemies: FieldNodeEnemy[];
+  npcs: FieldNodeNpc[];
   chests: FieldNodeChest[];
   sparkles: FieldNodeSparkle[];
   exitPosition: { x: number; y: number };
@@ -141,6 +164,7 @@ let lastFrameTime = 0;
 let isEndlessMode = false;
 let endlessRoomCount = 0;
 let isPausedForExit = false;
+let fieldNodeReturnTarget: "operation_map" | "theater" | "atlas" | "basecamp" = "operation_map";
 let movementInput = {
   up: false,
   down: false,
@@ -155,6 +179,7 @@ let movementInput = {
 const TILE_SIZE = 64;
 const PLAYER_SIZE = 48;
 const ENEMY_SIZE = 40;
+const FIELD_NPC_SIZE = 34;
 const ATTACK_COOLDOWN = 400; // ms
 const ATTACK_DURATION = 200; // ms
 const ATTACK_RANGE = 70; // pixels (melee)
@@ -194,6 +219,246 @@ interface Corridor {
   from: number;
   to: number;
   path: { x: number; y: number }[];
+}
+
+function getFacilityResourceTypes(coreType: CoreType): Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> {
+  switch (coreType) {
+    case "supply_depot":
+      return ["wood", "metalScrap"];
+    case "command_center":
+      return ["chaosShards", "steamComponents"];
+    case "medical_ward":
+      return ["chaosShards", "wood"];
+    case "armory":
+      return ["metalScrap", "steamComponents"];
+    case "mine":
+      return ["metalScrap", "wood", "chaosShards"];
+    case "generator":
+      return ["steamComponents", "metalScrap"];
+    case "refinery":
+      return ["steamComponents", "chaosShards", "metalScrap"];
+    default: {
+      const definition = SCHEMA_CORE_DEFINITIONS[coreType];
+      switch (definition?.category) {
+        case "command":
+          return ["chaosShards", "steamComponents"];
+        case "combat":
+          return ["metalScrap", "steamComponents"];
+        case "industry":
+          return ["metalScrap", "wood", "steamComponents"];
+        case "logistics":
+          return ["wood", "metalScrap"];
+        case "support":
+          return ["chaosShards", "wood"];
+        default:
+          return ["metalScrap", "wood"];
+      }
+    }
+  }
+}
+
+function getFacilityNpcBlueprints(coreType: CoreType): Array<{ name: string; glyph: string; dialogue: string[]; tileX: number; tileY: number; }> {
+  switch (coreType) {
+    case "supply_depot":
+      return [
+        {
+          name: "Quartermaster",
+          glyph: "▣",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "This depot is stable now. I can keep the squads fed if the crates keep flowing.",
+            "Everything here is staged by urgency. Grab what matters and leave the clutter.",
+          ],
+        },
+        {
+          name: "Loader",
+          glyph: "▲",
+          tileX: 9,
+          tileY: 7,
+          dialogue: [
+            "We turned a dead room into a working stock line in one shift.",
+            "If it looks messy, that just means the line is moving.",
+          ],
+        },
+      ];
+    case "command_center":
+      return [
+        {
+          name: "Signal Officer",
+          glyph: "◉",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "Every relay here sharpens the map. Lose this room and the theater goes dim.",
+            "We are holding the room open so your assault routes stay readable.",
+          ],
+        },
+        {
+          name: "Analyst",
+          glyph: "◆",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "Telemetry is cleaner from here than it ever was in the field.",
+            "Full bandwidth means we can read hostile posture before the breach.",
+          ],
+        },
+      ];
+    case "medical_ward":
+      return [
+        {
+          name: "Field Medic",
+          glyph: "✚",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "It is not pretty, but this ward keeps the line breathing.",
+            "The closer the med bay is to the front, the more chances we keep alive.",
+          ],
+        },
+        {
+          name: "Triage Tech",
+          glyph: "◈",
+          tileX: 9,
+          tileY: 7,
+          dialogue: [
+            "Bandages, tonic, sealant, repeat. That is the rhythm in a room like this.",
+            "If the generators hold, I can keep the recovery benches lit all night.",
+          ],
+        },
+      ];
+    case "armory":
+      return [
+        {
+          name: "Armorer",
+          glyph: "■",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "Frontline armories are ugly by design. Fast repairs beat pretty racks.",
+            "Bring me metal and steam and I can keep the squads shooting.",
+          ],
+        },
+        {
+          name: "Fitment Tech",
+          glyph: "⬢",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "I tune gear here between alarms. Half the work is making the next fight survivable.",
+            "The room stays up, the weapons stay honest.",
+          ],
+        },
+      ];
+    case "mine":
+      return [
+        {
+          name: "Prospector",
+          glyph: "⬣",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "This shaft keeps paying out if we keep the braces standing.",
+            "Metal, timber, shards. The walls tell you what they are hiding if you listen.",
+          ],
+        },
+        {
+          name: "Foreman",
+          glyph: "▲",
+          tileX: 10,
+          tileY: 7,
+          dialogue: [
+            "Everyone thinks the hard part is digging. The hard part is hauling it back alive.",
+            "We keep the carts moving and the squads get paid in scrap.",
+          ],
+        },
+      ];
+    case "generator":
+      return [
+        {
+          name: "Grid Tech",
+          glyph: "✦",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "This generator room is the heartbeat for every powered route nearby.",
+            "When the watt flow spikes, you can feel the whole theater breathe easier.",
+          ],
+        },
+        {
+          name: "Switch Operator",
+          glyph: "◉",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "We babysit the rails so the doors, turrets, and uplinks stay awake.",
+            "A quiet generator room is usually a good sign.",
+          ],
+        },
+      ];
+    case "refinery":
+      return [
+        {
+          name: "Refiner",
+          glyph: "◆",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "The vents here still breathe. We just taught them to pay us in steam.",
+            "Every processed component coming out of this room keeps the machines hungry.",
+          ],
+        },
+        {
+          name: "Boiler Tech",
+          glyph: "✚",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "Heat, pressure, patience. Miss one and the whole room gets loud fast.",
+            "It smells like trouble in here, which means it is working.",
+          ],
+        },
+      ];
+    default: {
+      const definition = SCHEMA_CORE_DEFINITIONS[coreType];
+      return [
+        {
+          name: "Site Keeper",
+          glyph: "◉",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            `${definition?.displayName ?? "This core"} is still rough around the edges, but the room is functional.`,
+            "Captured rooms feel different once people start using them for something other than surviving.",
+          ],
+        },
+        {
+          name: "Shift Lead",
+          glyph: "◆",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "We are keeping this room alive while the theater settles around it.",
+            "Even a placeholder site becomes useful once a crew has claimed it.",
+          ],
+        },
+      ];
+    }
+  }
+}
+
+function createFacilityNpcs(coreType: CoreType): FieldNodeNpc[] {
+  return getFacilityNpcBlueprints(coreType).map((npc, index) => ({
+    id: `facility_npc_${coreType}_${index}`,
+    name: npc.name,
+    glyph: npc.glyph,
+    x: npc.tileX * TILE_SIZE + TILE_SIZE / 2,
+    y: npc.tileY * TILE_SIZE + TILE_SIZE / 2,
+    width: FIELD_NPC_SIZE,
+    height: FIELD_NPC_SIZE,
+    dialogue: npc.dialogue,
+  }));
 }
 
 function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState {
@@ -521,6 +786,9 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
   
   return {
     roomId,
+    mode: "combat",
+    facilityType: null,
+    facilityLabel: null,
     width: totalWidth,
     height: totalHeight,
     tiles,
@@ -544,9 +812,109 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       maxEnergyCells: 5, // Maximum energy cells that can be stored
     },
     enemies,
+    npcs: [],
     chests,
     sparkles,
     exitPosition: { x: exitX, y: exitY },
+    isPaused: false,
+    isCompleted: false,
+    companion,
+    collectedResources: {
+      metalScrap: 0,
+      wood: 0,
+      chaosShards: 0,
+      steamComponents: 0,
+      wad: 0,
+    },
+    statReward: 0,
+    projectiles: [],
+  };
+}
+
+function generateCoreFacilityRoom(roomId: string, seed: number, coreType: CoreType): FieldNodeRoomState {
+  const rng = createSeededRandom(seed);
+  const width = 18;
+  const height = 12;
+  const tiles: FieldNodeTile[][] = [];
+
+  for (let y = 0; y < height; y++) {
+    tiles[y] = [];
+    for (let x = 0; x < width; x++) {
+      const isEdge = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+      const isSupportColumn =
+        !isEdge
+        && y > 2
+        && y < height - 2
+        && (x === 6 || x === 11)
+        && y !== Math.floor(height / 2);
+      const walkable = !isEdge && !isSupportColumn;
+      tiles[y][x] = {
+        x,
+        y,
+        walkable,
+        type: walkable ? "floor" : "wall",
+      };
+    }
+  }
+
+  const exitPosition = { x: width - 3, y: height - 2 };
+  tiles[exitPosition.y][exitPosition.x] = {
+    x: exitPosition.x,
+    y: exitPosition.y,
+    walkable: true,
+    type: "exit",
+  };
+
+  const playerX = 2 * TILE_SIZE + TILE_SIZE / 2;
+  const playerY = (height - 2) * TILE_SIZE + TILE_SIZE / 2;
+  const resourceTypes = getFacilityResourceTypes(coreType);
+  const sparkleSpots = [
+    { x: 4, y: 8 },
+    { x: 8, y: 3 },
+    { x: 13, y: 6 },
+  ];
+  const sparkles: FieldNodeSparkle[] = sparkleSpots.map((spot, index) => ({
+    id: `facility_sparkle_${index}`,
+    x: spot.x * TILE_SIZE + TILE_SIZE / 2,
+    y: spot.y * TILE_SIZE + TILE_SIZE / 2,
+    resourceType: resourceTypes[index % resourceTypes.length] ?? "metalScrap",
+    amount: 1 + Math.floor(rng() * 2),
+    collected: false,
+  }));
+  const companion = createCompanion(playerX - 40, playerY - 40);
+
+  return {
+    roomId,
+    mode: "facility",
+    facilityType: coreType,
+    facilityLabel: SCHEMA_CORE_DEFINITIONS[coreType]?.displayName ?? "Captured Facility",
+    width,
+    height,
+    tiles,
+    player: {
+      x: playerX,
+      y: playerY,
+      width: PLAYER_SIZE,
+      height: PLAYER_SIZE,
+      speed: 180,
+      facing: "east",
+      isAttacking: false,
+      attackCooldown: 0,
+      attackAnimTime: 0,
+      hp: PLAYER_MAX_HP,
+      maxHp: PLAYER_MAX_HP,
+      invulnerabilityTime: 0,
+      vx: 0,
+      vy: 0,
+      isRangedMode: false,
+      energyCells: 0,
+      maxEnergyCells: 5,
+    },
+    enemies: [],
+    npcs: createFacilityNpcs(coreType),
+    chests: [],
+    sparkles,
+    exitPosition,
     isPaused: false,
     isCompleted: false,
     companion,
@@ -575,7 +943,36 @@ function createSeededRandom(seed: number): () => number {
 // MAIN RENDER
 // ============================================================================
 
-export function renderFieldNodeRoomScreen(roomId: string, seed?: number, endless: boolean = false): void {
+function returnFromFieldNode(): void {
+  switch (fieldNodeReturnTarget) {
+    case "theater":
+      import("./TheaterCommandScreen").then(({ renderTheaterCommandScreen }) => {
+        renderTheaterCommandScreen();
+      });
+      return;
+    case "atlas":
+      import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
+        renderOperationSelectScreen("basecamp");
+      });
+      return;
+    case "basecamp":
+      import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+        renderFieldScreen("base_camp");
+      });
+      return;
+    case "operation_map":
+    default:
+      renderOperationMapScreen();
+      return;
+  }
+}
+
+export function renderFieldNodeRoomScreen(
+  roomId: string,
+  seed?: number,
+  endless: boolean = false,
+  returnTarget?: "operation_map" | "theater" | "atlas" | "basecamp",
+): void {
   const root = document.getElementById("app");
   if (!root) return;
   
@@ -585,10 +982,17 @@ export function renderFieldNodeRoomScreen(roomId: string, seed?: number, endless
     endlessRoomCount = 0;
     isPausedForExit = false;
   }
+  fieldNodeReturnTarget = returnTarget
+    ?? (hasTheaterOperation(getGameState().operation) ? "theater" : "operation_map");
   
   // Generate room if needed
   const actualSeed = seed ?? Math.floor(Math.random() * 1000000);
-  roomState = generateFieldNodeRoom(roomId, actualSeed);
+  const activeTheaterRoom = fieldNodeReturnTarget === "theater"
+    ? getPreparedTheaterOperation(getGameState())?.theater?.rooms?.[roomId]
+    : null;
+  roomState = activeTheaterRoom?.coreAssignment
+    ? generateCoreFacilityRoom(roomId, actualSeed, activeTheaterRoom.coreAssignment.type)
+    : generateFieldNodeRoom(roomId, actualSeed);
   
   // Reset input state
   movementInput = {
@@ -617,7 +1021,21 @@ function render(): void {
   const root = document.getElementById("app");
   if (!root) return;
   
-  const { width, height, tiles, player, enemies, chests, sparkles, exitPosition, collectedResources, companion } = roomState;
+  const {
+    width,
+    height,
+    mode,
+    facilityLabel,
+    tiles,
+    player,
+    enemies,
+    npcs,
+    chests,
+    sparkles,
+    exitPosition,
+    collectedResources,
+    companion,
+  } = roomState;
   
   // Calculate viewport to center on player
   const viewportWidth = Math.min(width * TILE_SIZE, window.innerWidth - 40);
@@ -631,6 +1049,11 @@ function render(): void {
     player.y - viewportHeight / 2,
     height * TILE_SIZE - viewportHeight
   ));
+  const headerText = isEndlessMode
+    ? `ENDLESS MODE - ROOM ${endlessRoomCount + 1}`
+    : mode === "facility"
+      ? `${facilityLabel ?? "CAPTURED FACILITY"} // FIELD OFFICE`
+      : "EXPLORATION ZONE";
   
   // Use base camp-like structure for visual consistency
   root.innerHTML = `
@@ -639,15 +1062,15 @@ function render(): void {
       <div class="field-node-header-bar">
         <div class="field-node-header-title">
           <span class="header-icon">🗺️</span>
-          <span class="header-text">${isEndlessMode ? `ENDLESS MODE — ROOM ${endlessRoomCount + 1}` : 'EXPLORATION ZONE'}</span>
+          <span class="header-text">${headerText}</span>
         </div>
         <div class="field-node-header-controls">
           <span class="key-hint">WASD</span> Move
-          <span class="key-hint">SPACE</span> Attack
           <span class="key-hint">E</span> Interact
           <span class="key-hint">SHIFT</span> Dash
           ${isEndlessMode ? '<span class="key-hint">ESC</span> Exit' : ''}
-          <span class="key-hint">TAB</span> ${roomState?.player.isRangedMode ? 'Ranged' : 'Melee'}
+          ${mode === "facility" ? "" : `<span class="key-hint">SPACE</span> Attack`}
+          ${mode === "facility" ? "" : `<span class="key-hint">TAB</span> ${roomState?.player.isRangedMode ? 'Ranged' : 'Melee'}`}
         </div>
       </div>
       
@@ -676,6 +1099,7 @@ function render(): void {
           ${renderSparkles(sparkles)}
           ${renderChests(chests)}
           ${renderEnemies(enemies)}
+          ${renderNpcs(npcs)}
           ${renderPlayer(player)}
           ${renderCompanion(companion)}
           ${renderAttackEffect(player)}
@@ -688,9 +1112,9 @@ function render(): void {
       <div class="field-node-status-bar">
         <div class="field-node-stats-row">
           <div class="stat-box">
-            <span class="stat-icon">👾</span>
-            <span class="stat-value">${enemies.filter(e => e.hp > 0 && !e.deathAnimTime).length}</span>
-            <span class="stat-label">ENEMIES</span>
+            <span class="stat-icon">${mode === "facility" ? "👥" : "👾"}</span>
+            <span class="stat-value">${mode === "facility" ? npcs.length : enemies.filter(e => e.hp > 0 && !e.deathAnimTime).length}</span>
+            <span class="stat-label">${mode === "facility" ? "CREW" : "ENEMIES"}</span>
           </div>
           <div class="stat-box">
             <span class="stat-icon">📦</span>
@@ -801,6 +1225,20 @@ function renderEnemies(enemies: FieldNodeEnemy[]): string {
         </div>
       `;
     }).join('');
+}
+
+function renderNpcs(npcs: FieldNodeNpc[]): string {
+  return npcs.map((npc) => `
+    <div class="field-npc" style="
+      left: ${npc.x - npc.width / 2}px;
+      top: ${npc.y - npc.height / 2}px;
+      width: ${npc.width}px;
+      height: ${npc.height}px;
+    ">
+      <div class="field-npc-name">${npc.name}</div>
+      <div class="field-npc-sprite">${npc.glyph}</div>
+    </div>
+  `).join("");
 }
 
 function renderPlayer(player: FieldNodePlayer): string {
@@ -1040,14 +1478,18 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
   }
   
   // Handle ranged mode toggle
-  if (movementInput.toggleRanged) {
+  if (movementInput.toggleRanged && roomState.mode !== "facility") {
     player.isRangedMode = !player.isRangedMode;
     movementInput.toggleRanged = false;
     render(); // Update UI to show mode change
+  } else if (roomState.mode === "facility") {
+    movementInput.toggleRanged = false;
   }
   
   // Handle attack input
-  if (movementInput.attack && player.attackCooldown <= 0 && !player.isAttacking) {
+  if (roomState.mode === "facility") {
+    movementInput.attack = false;
+  } else if (movementInput.attack && player.attackCooldown <= 0 && !player.isAttacking) {
     if (player.isRangedMode) {
       // Ranged attacks require energy cells
       if (player.energyCells > 0) {
@@ -1593,25 +2035,12 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
     }
   } else {
     // Follow behavior (fallback)
-    const dx = player.x - companion.x;
-    const dy = player.y - companion.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    if (distance > 120) {
-      const moveDistance = companion.speed * (deltaTime / 1000);
-      const moveX = (dx / distance) * moveDistance;
-      const moveY = (dy / distance) * moveDistance;
-      
-      companion.x += moveX;
-      companion.y += moveY;
-      
-      // Update facing
-      if (Math.abs(dx) > Math.abs(dy)) {
-        companion.facing = dx > 0 ? "east" : "west";
-      } else {
-        companion.facing = dy > 0 ? "south" : "north";
-      }
-    }
+    roomState.companion = updateCompanionFollow(
+      companion,
+      player,
+      deltaTime,
+      { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any,
+    );
   }
 }
 
@@ -1709,7 +2138,7 @@ function handlePlayerDeath(): void {
       renderFieldScreen("base_camp");
     });
   } else {
-    renderOperationMapScreen();
+    returnFromFieldNode();
   }
 }
 
@@ -1832,6 +2261,50 @@ function interactWithChest(): void {
   }
 }
 
+function interactWithNpc(): boolean {
+  if (!roomState || roomState.npcs.length <= 0) return false;
+
+  const { player, npcs } = roomState;
+  const interactRange = 58;
+  let nearestNpc: FieldNodeNpc | null = null;
+  let nearestDistance = Infinity;
+
+  for (const npc of npcs) {
+    const distance = Math.sqrt(
+      Math.pow(npc.x - player.x, 2) + Math.pow(npc.y - player.y, 2),
+    );
+    if (distance < interactRange && distance < nearestDistance) {
+      nearestNpc = npc;
+      nearestDistance = distance;
+    }
+  }
+
+  if (!nearestNpc) {
+    return false;
+  }
+
+  roomState.isPaused = true;
+  showDialogue(
+    nearestNpc.name,
+    nearestNpc.dialogue.length > 0
+      ? nearestNpc.dialogue
+      : [`${nearestNpc.name} acknowledges your presence.`],
+    () => {
+      if (roomState) {
+        roomState.isPaused = false;
+      }
+    },
+  );
+  return true;
+}
+
+function interactWithNearbyObject(): void {
+  if (interactWithNpc()) {
+    return;
+  }
+  interactWithChest();
+}
+
 // ============================================================================
 // ROOM COMPLETION
 // ============================================================================
@@ -1936,7 +2409,7 @@ function completeRoom(): void {
             renderFieldScreen("base_camp");
           });
         } else {
-          renderOperationMapScreen();
+          returnFromFieldNode();
         }
       });
     }
@@ -2029,8 +2502,8 @@ function handleKeyDown(e: KeyboardEvent): void {
       movementInput.toggleRanged = true;
       e.preventDefault();
       break;
-    case "e": // Interact with chests
-      interactWithChest();
+    case "e": // Interact with nearby NPCs or chests
+      interactWithNearbyObject();
       e.preventDefault();
       break;
     case "escape":

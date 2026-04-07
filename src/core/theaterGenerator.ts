@@ -9,7 +9,13 @@ import {
   TheaterDefinition,
   TheaterNetworkState,
   TheaterRoom,
+  TheaterSprawlDirection,
 } from "./types";
+import {
+  createEmptyFortificationPips,
+  normalizeFortificationPips,
+} from "./schemaSystem";
+import { createEmptyTheaterAutomationState } from "./theaterAutomation";
 
 type TheaterLayoutStyle = NonNullable<TheaterDefinition["layoutStyle"]>;
 type TheaterRoomRole =
@@ -17,6 +23,7 @@ type TheaterRoomRole =
   | "frontline"
   | "relay"
   | "field"
+  | "resource_pocket"
   | "core"
   | "power"
   | "elite"
@@ -25,7 +32,25 @@ type TheaterRoomRole =
 type TheaterRoomSeed = Pick<
   TheaterRoom,
   "id" | "label" | "sectorTag" | "localPosition" | "depthFromUplink" | "isUplinkRoom" | "size" | "adjacency" | "status" | "secured" | "tacticalEncounter" | "tags"
-> & Partial<TheaterRoom>;
+> & Omit<Partial<TheaterRoom>, "fortificationPips"> & {
+  fortificationPips?: Partial<TheaterRoom["fortificationPips"]>;
+};
+
+function getDefaultModuleSlotCapacity(room: Pick<TheaterRoom, "isUplinkRoom" | "roomClass" | "tags">): number {
+  if (room.roomClass === "mega") {
+    return 2;
+  }
+  if (
+    room.isUplinkRoom
+    || room.tags.includes("relay")
+    || room.tags.includes("core_candidate")
+    || room.tags.includes("command_suitable")
+    || room.tags.includes("uplink")
+  ) {
+    return 1;
+  }
+  return 0;
+}
 
 type TheaterProfile = {
   prefix: string;
@@ -66,11 +91,15 @@ type SeededRng = {
   pick: <T>(items: T[]) => T;
 };
 
-const MAP_WIDTH = 3200;
-const MAP_HEIGHT = 2200;
-const DEFAULT_MAP_ANCHOR = { x: 520, y: 1100 };
-const THEATER_DEPTH_STEP = 380;
-const THEATER_LATERAL_STEP = 320;
+const MAP_WIDTH = 4400;
+const MAP_HEIGHT = 3200;
+const MAP_CENTER_X = Math.round(MAP_WIDTH / 2);
+const MAP_CENTER_Y = Math.round(MAP_HEIGHT / 2);
+const EDGE_MARGIN_X = 620;
+const EDGE_MARGIN_Y = 420;
+const DEFAULT_MAP_ANCHOR = { x: EDGE_MARGIN_X, y: MAP_CENTER_Y };
+const THEATER_DEPTH_STEP = 430;
+const THEATER_LATERAL_STEP = 360;
 
 const THEATER_ROOM_BASE: Omit<
   TheaterRoom,
@@ -78,18 +107,38 @@ const THEATER_ROOM_BASE: Omit<
 > = {
   fortified: false,
   coreAssignment: null,
+  coreSlots: [null],
+  coreSlotCapacity: 1,
+  roomClass: "standard",
   underThreat: false,
   damaged: false,
   connected: false,
   powered: false,
   supplied: false,
   commsVisible: false,
-  fortificationPips: {
-    barricade: 0,
-    powerRail: 0,
-  },
+  commsLinked: false,
+  supplyFlow: 0,
+  powerFlow: 0,
+  commsFlow: 0,
+  intelLevel: 0,
+  fortificationPips: createEmptyFortificationPips(),
   isPowerSource: false,
+  abandoned: false,
+  requiredKeyType: null,
+  grantsKeyType: null,
+  keyCollected: false,
+  enemySite: null,
 };
+
+function createEmptyKeyInventory() {
+  return {
+    triangle: false,
+    square: false,
+    circle: false,
+    spade: false,
+    star: false,
+  };
+}
 
 const DEFAULT_PROFILE: TheaterProfile = {
   prefix: "thr",
@@ -98,7 +147,7 @@ const DEFAULT_PROFILE: TheaterProfile = {
   passiveEffectText: "Passive Flux // Theater topology is unstable and resists long-range prediction.",
   threatLevel: "High",
   currentState: "active",
-  ingressLabels: ["Ingress Yard", "Staging Lock", "Transit Breach"],
+  ingressLabels: ["Ingress Aperture", "Staging Aperture", "Transit Aperture"],
   frontlineLabels: ["Broken Causeway", "Pressure Gate", "Forward Choke"],
   relayLabels: ["Signal Junction", "Relay Gallery", "Conduit Hub"],
   fieldLabels: ["Freight Annex", "Survey Pocket", "Sweep Channel"],
@@ -115,7 +164,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR E-01",
     passiveEffectText: "Passive Benefit // Forward relay trims early deploy strain and stabilizes the lockline push.",
     threatLevel: "High",
-    ingressLabels: ["Ingress Yard", "Breach Court", "Entry Causeway"],
+    ingressLabels: ["Gateworks Aperture", "Breach Aperture", "Entry Aperture"],
     frontlineLabels: ["Broken Causeway", "Gate Checkpoint", "Shielded Span"],
     relayLabels: ["Signal Junction", "Overwatch Split", "Relay Spine"],
     fieldLabels: ["Freight Annex", "Cold Storage Spur", "Scrap Transit"],
@@ -130,7 +179,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR N-02",
     passiveEffectText: "Passive Penalty // Artillery shear rattles power rails and exposes long lanes to fire.",
     threatLevel: "Severe",
-    ingressLabels: ["Spire Foot", "Anchor Lift", "Base Chapel"],
+    ingressLabels: ["Spire Aperture", "Anchor Aperture", "Base Aperture"],
     frontlineLabels: ["Shard Ramp", "Gunline Arch", "Broken Stair"],
     relayLabels: ["Ballast Gallery", "Signal Niche", "Spire Switchyard"],
     fieldLabels: ["Powder Loft", "Survey Ledge", "Windbreak Crawl"],
@@ -145,7 +194,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR W-05",
     passiveEffectText: "Passive Benefit // Phase vents shorten recovery windows between room pushes.",
     threatLevel: "High",
-    ingressLabels: ["Ghost Dock", "Phase Lock", "Transit Mouth"],
+    ingressLabels: ["Ghost Aperture", "Phase Aperture", "Transit Aperture"],
     frontlineLabels: ["Silent Span", "Transit Choke", "Echo Lane"],
     relayLabels: ["Signal Drift", "Relay Hollow", "Spectral Switch"],
     fieldLabels: ["Cargo Pocket", "Survey Berm", "Dry Channel"],
@@ -160,7 +209,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR S-04",
     passiveEffectText: "Passive Penalty // Emberfall heats the grid and strains every exposed support lane.",
     threatLevel: "Severe",
-    ingressLabels: ["Ash Sluice", "Siege Lock", "Cinder Threshold"],
+    ingressLabels: ["Ash Aperture", "Siege Aperture", "Cinder Aperture"],
     frontlineLabels: ["Burnt Ramp", "Siege Furrow", "Cracked Emplacement"],
     relayLabels: ["Cinder Junction", "War Relay", "Bastion Spine"],
     fieldLabels: ["Ash Store", "Survey Furnace", "Coal Slip"],
@@ -175,7 +224,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR C-00",
     passiveEffectText: "Passive Benefit // Citadel relays amplify command coverage across the floor.",
     threatLevel: "Critical",
-    ingressLabels: ["Dawn Vestibule", "Citadel Lock", "First Court"],
+    ingressLabels: ["Dawn Aperture", "Citadel Aperture", "Crown Aperture"],
     frontlineLabels: ["Judgment Hall", "Crown Span", "Aurora Gate"],
     relayLabels: ["Command Junction", "Relay Basilica", "Crown Spine"],
     fieldLabels: ["Archive Walk", "Survey Cloister", "Dust Quadrant"],
@@ -190,7 +239,7 @@ const PROFILE_BY_OPERATION: Record<string, Partial<TheaterProfile>> = {
     sectorLabel: "SECTOR X-99",
     passiveEffectText: "Passive Flux // Procedural theater topology mutates every floor insertion.",
     threatLevel: "Variable",
-    ingressLabels: ["Procedural Lock", "Adaptive Ingress", "Survey Breach"],
+    ingressLabels: ["Procedural Aperture", "Adaptive Aperture", "Survey Aperture"],
     frontlineLabels: ["Flux Choke", "Fracture Lane", "Adaptive Span"],
     relayLabels: ["Survey Junction", "Logistics Spine", "Thread Relay"],
     fieldLabels: ["Dust Pocket", "Harvest Annex", "Unmapped Pocket"],
@@ -243,6 +292,17 @@ const LAYOUT_TEMPLATES: Record<TheaterLayoutStyle, LayoutNodeTemplate[]> = {
     { key: "elite", role: "elite", localPosition: { x: 3.85, y: 0.6 }, depthFromUplink: 4, adjacency: ["relay", "power", "objective"] },
     { key: "objective", role: "objective", localPosition: { x: 4.65, y: 0.95 }, depthFromUplink: 5, adjacency: ["elite"] },
   ],
+};
+
+const DIRECTION_ANGLE_MAP: Record<TheaterSprawlDirection, number> = {
+  east: 0,
+  southeast: 45,
+  south: 90,
+  southwest: 135,
+  west: 180,
+  northwest: 225,
+  north: 270,
+  northeast: 315,
 };
 
 function createDirection(angleDeg: number): RadialDirectionVector {
@@ -327,26 +387,83 @@ function getAngleBucket(angleDeg: number): "east" | "south" | "west" | "north" {
   return "north";
 }
 
+function getRequestedSprawlDirection(operation: OperationRun): TheaterSprawlDirection | null {
+  return operation.sprawlDirection ?? null;
+}
+
+function createDirectionalAnchor(
+  direction: TheaterSprawlDirection,
+  style: Exclude<TheaterLayoutStyle, "central_bloom">,
+  rng: SeededRng,
+): { x: number; y: number } {
+  const edgeY = MAP_CENTER_Y + rng.nextInt(-240, 240);
+  const edgeX = MAP_CENTER_X + rng.nextInt(-360, 360);
+  const offsetX = Math.round(MAP_WIDTH * 0.29);
+  const offsetY = Math.round(MAP_HEIGHT * 0.24);
+  const edgeAnchors: Record<TheaterSprawlDirection, { x: number; y: number }> = {
+    east: { x: EDGE_MARGIN_X, y: edgeY },
+    southeast: { x: EDGE_MARGIN_X + 180 + rng.nextInt(-100, 100), y: EDGE_MARGIN_Y + 140 + rng.nextInt(-80, 120) },
+    south: { x: edgeX, y: EDGE_MARGIN_Y },
+    southwest: { x: MAP_WIDTH - EDGE_MARGIN_X - 180 + rng.nextInt(-100, 100), y: EDGE_MARGIN_Y + 140 + rng.nextInt(-80, 120) },
+    west: { x: MAP_WIDTH - EDGE_MARGIN_X, y: edgeY },
+    northwest: { x: MAP_WIDTH - EDGE_MARGIN_X - 180 + rng.nextInt(-100, 100), y: MAP_HEIGHT - EDGE_MARGIN_Y - 140 + rng.nextInt(-120, 80) },
+    north: { x: edgeX, y: MAP_HEIGHT - EDGE_MARGIN_Y },
+    northeast: { x: EDGE_MARGIN_X + 180 + rng.nextInt(-100, 100), y: MAP_HEIGHT - EDGE_MARGIN_Y - 140 + rng.nextInt(-120, 80) },
+  };
+
+  if (style === "offset_arc") {
+    return {
+      east: { x: offsetX, y: MAP_CENTER_Y - 260 + rng.nextInt(-180, 180) },
+      southeast: { x: offsetX + rng.nextInt(-160, 160), y: offsetY + rng.nextInt(-90, 120) },
+      south: { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: offsetY },
+      southwest: { x: MAP_WIDTH - offsetX + rng.nextInt(-160, 160), y: offsetY + rng.nextInt(-90, 120) },
+      west: { x: MAP_WIDTH - offsetX, y: MAP_CENTER_Y + 260 + rng.nextInt(-180, 180) },
+      northwest: { x: MAP_WIDTH - offsetX + rng.nextInt(-160, 160), y: MAP_HEIGHT - offsetY + rng.nextInt(-120, 90) },
+      north: { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: MAP_HEIGHT - offsetY },
+      northeast: { x: offsetX + rng.nextInt(-160, 160), y: MAP_HEIGHT - offsetY + rng.nextInt(-120, 90) },
+    }[direction];
+  }
+
+  return edgeAnchors[direction];
+}
+
 function createPresentation(
+  operation: OperationRun,
   floorIndex: number,
   atlasSummary: AtlasTheaterSummary | null,
   rng: SeededRng,
 ): LayoutPresentation {
-  const layoutStyles: TheaterLayoutStyle[] = ["vector_lance", "split_fan", "central_bloom", "offset_arc"];
+  const preferredDirection = getRequestedSprawlDirection(operation);
+  const layoutStyles: TheaterLayoutStyle[] = preferredDirection
+    ? ["vector_lance", "split_fan", "offset_arc"]
+    : ["vector_lance", "split_fan", "central_bloom", "offset_arc"];
   const style = layoutStyles[(floorIndex + rng.nextInt(0, layoutStyles.length - 1)) % layoutStyles.length] ?? "vector_lance";
   const allowedAngles = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
-  const angleDeg = floorIndex === 0 && atlasSummary
-    ? atlasSummary.angleDeg
-    : allowedAngles[(floorIndex * 3 + rng.nextInt(0, allowedAngles.length - 1)) % allowedAngles.length] ?? 0;
+  const angleDeg =
+    floorIndex === 0 && atlasSummary
+      ? atlasSummary.angleDeg
+      : preferredDirection
+        ? DIRECTION_ANGLE_MAP[preferredDirection]
+        : allowedAngles[(floorIndex * 3 + rng.nextInt(0, allowedAngles.length - 1)) % allowedAngles.length] ?? 0;
   const direction = createDirection(angleDeg);
+
+  if (preferredDirection && style !== "central_bloom") {
+    return {
+      angleDeg,
+      radialDirection: direction,
+      mapAnchor: createDirectionalAnchor(preferredDirection, style, rng),
+      layoutStyle: style,
+      originLabel: style === "split_fan" ? "FAN INSERT" : style === "offset_arc" ? "OFFSET BREACH" : "EDGE INSERT",
+    };
+  }
 
   if (style === "central_bloom") {
     return {
       angleDeg,
       radialDirection: direction,
       mapAnchor: {
-        x: Math.round((MAP_WIDTH / 2) + rng.nextInt(-180, 180)),
-        y: Math.round((MAP_HEIGHT / 2) + rng.nextInt(-150, 150)),
+        x: Math.round((MAP_WIDTH / 2) + rng.nextInt(-240, 240)),
+        y: Math.round((MAP_HEIGHT / 2) + rng.nextInt(-220, 220)),
       },
       layoutStyle: style,
       originLabel: "CENTER BREACH",
@@ -355,14 +472,16 @@ function createPresentation(
 
   if (style === "offset_arc") {
     const bucket = getAngleBucket(angleDeg);
+    const offsetX = Math.round(MAP_WIDTH * 0.29);
+    const offsetY = Math.round(MAP_HEIGHT * 0.24);
     const mapAnchor =
       bucket === "east"
-        ? { x: 980, y: 920 + rng.nextInt(-160, 160) }
+        ? { x: offsetX, y: MAP_CENTER_Y - 260 + rng.nextInt(-180, 180) }
         : bucket === "south"
-          ? { x: 1600 + rng.nextInt(-260, 260), y: 520 }
+          ? { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: offsetY }
           : bucket === "west"
-            ? { x: 2220, y: 1280 + rng.nextInt(-160, 160) }
-            : { x: 1600 + rng.nextInt(-260, 260), y: 1680 };
+            ? { x: MAP_WIDTH - offsetX, y: MAP_CENTER_Y + 260 + rng.nextInt(-180, 180) }
+            : { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: MAP_HEIGHT - offsetY };
     return {
       angleDeg,
       radialDirection: direction,
@@ -375,12 +494,12 @@ function createPresentation(
   const edgeBucket = getAngleBucket(angleDeg);
   const mapAnchor =
     edgeBucket === "east"
-      ? { x: 460, y: 1100 + rng.nextInt(-180, 180) }
+      ? { x: EDGE_MARGIN_X, y: MAP_CENTER_Y + rng.nextInt(-240, 240) }
       : edgeBucket === "south"
-        ? { x: 1600 + rng.nextInt(-260, 260), y: 360 }
+        ? { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: EDGE_MARGIN_Y }
         : edgeBucket === "west"
-          ? { x: 2740, y: 1100 + rng.nextInt(-180, 180) }
-          : { x: 1600 + rng.nextInt(-260, 260), y: 1840 };
+          ? { x: MAP_WIDTH - EDGE_MARGIN_X, y: MAP_CENTER_Y + rng.nextInt(-240, 240) }
+          : { x: MAP_CENTER_X + rng.nextInt(-360, 360), y: MAP_HEIGHT - EDGE_MARGIN_Y };
 
   return {
     angleDeg,
@@ -424,6 +543,8 @@ function getRoomSize(role: TheaterRoomRole): { width: number; height: number } {
   switch (role) {
     case "ingress":
       return { width: 250, height: 146 };
+    case "resource_pocket":
+      return { width: 520, height: 292 };
     case "objective":
       return { width: 278, height: 164 };
     case "elite":
@@ -442,6 +563,8 @@ function getClearMode(role: TheaterRoomRole, rng: SeededRng): "battle" | "field"
       return "empty";
     case "field":
       return "field";
+    case "resource_pocket":
+      return rng.nextFloat() < 0.55 ? "battle" : "field";
     case "core":
       return rng.nextFloat() < 0.42 ? "battle" : "empty";
     default:
@@ -458,15 +581,17 @@ function getTagsForRole(role: TheaterRoomRole): string[] {
     case "relay":
       return ["junction"];
     case "field":
-      return ["core_candidate", "resource_metal", "resource_wood"];
+      return ["core_candidate", "metal_rich", "timber_rich", "salvage_rich"];
+    case "resource_pocket":
+      return ["core_candidate", "resource_pocket", "salvage_rich"];
     case "core":
-      return ["core_candidate"];
+      return ["core_candidate", "command_suitable"];
     case "power":
-      return ["power_source"];
+      return ["power_source", "steam_vent"];
     case "elite":
       return ["elite", "frontier"];
     case "objective":
-      return ["objective", "elite"];
+      return ["objective", "elite", "survey_highground"];
     default:
       return [];
   }
@@ -481,6 +606,8 @@ function getLabelPool(profile: TheaterProfile, role: TheaterRoomRole): string[] 
     case "relay":
       return profile.relayLabels;
     case "field":
+      return profile.fieldLabels;
+    case "resource_pocket":
       return profile.fieldLabels;
     case "core":
       return profile.coreLabels;
@@ -499,6 +626,19 @@ function createRoom(
   definition: TheaterDefinition,
   room: TheaterRoomSeed,
 ): TheaterRoom {
+  const coreSlots = Array.isArray(room.coreSlots)
+    ? room.coreSlots.map((assignment) => assignment ? {
+      ...assignment,
+      buildCost: { ...assignment.buildCost },
+      upkeepPerTick: { ...assignment.upkeepPerTick },
+      incomePerTick: { ...assignment.incomePerTick },
+    } : null)
+    : [room.coreAssignment ? {
+      ...room.coreAssignment,
+      buildCost: { ...room.coreAssignment.buildCost },
+      upkeepPerTick: { ...room.coreAssignment.upkeepPerTick },
+      incomePerTick: { ...room.coreAssignment.incomePerTick },
+    } : null];
   return {
     ...THEATER_ROOM_BASE,
     theaterId: definition.id,
@@ -506,10 +646,129 @@ function createRoom(
     position: room.position ?? projectTheaterPosition(definition, room.localPosition),
     clearMode: room.clearMode ?? (room.tacticalEncounter ? "battle" : "empty"),
     fortificationCapacity: room.fortificationCapacity ?? 3,
-    fortificationPips: {
-      barricade: room.fortificationPips?.barricade ?? THEATER_ROOM_BASE.fortificationPips.barricade,
-      powerRail: room.fortificationPips?.powerRail ?? THEATER_ROOM_BASE.fortificationPips.powerRail,
-    },
+    fortificationPips: normalizeFortificationPips(room.fortificationPips),
+    roomClass: room.roomClass ?? "standard",
+    coreSlotCapacity: Math.max(1, room.coreSlotCapacity ?? coreSlots.length ?? 1),
+    moduleSlotCapacity: Math.max(0, room.moduleSlotCapacity ?? getDefaultModuleSlotCapacity({
+      isUplinkRoom: room.isUplinkRoom,
+      roomClass: room.roomClass ?? "standard",
+      tags: room.tags,
+    })),
+    moduleSlots: Array.from({
+      length: Math.max(0, room.moduleSlotCapacity ?? getDefaultModuleSlotCapacity({
+        isUplinkRoom: room.isUplinkRoom,
+        roomClass: room.roomClass ?? "standard",
+        tags: room.tags,
+      })),
+    }, (_, index) => room.moduleSlots?.[index] ?? null),
+    moduleSlotUpgradeLevel: Math.max(0, Number(room.moduleSlotUpgradeLevel ?? 0)),
+    coreSlots,
+    coreAssignment: room.coreAssignment ?? coreSlots.find((assignment) => assignment !== null) ?? null,
+    enemySite: room.enemySite ? { ...room.enemySite } : null,
+    battleSizeOverride: room.battleSizeOverride ? { ...room.battleSizeOverride } : undefined,
+  };
+}
+
+function uniqueRoomTags(tags: string[]): string[] {
+  return [...new Set(tags.filter(Boolean))];
+}
+
+function chooseAffinityTags(rng: SeededRng, count: number): string[] {
+  const pool = ["metal_rich", "timber_rich", "steam_vent"];
+  const picked: string[] = [];
+  while (picked.length < count && pool.length > 0) {
+    const next = rng.pick(pool);
+    picked.push(next);
+    pool.splice(pool.indexOf(next), 1);
+  }
+  return picked;
+}
+
+function pickMegaRoomSeed(roomSeeds: TheaterRoomSeed[], rng: SeededRng): TheaterRoomSeed | null {
+  if (rng.nextFloat() > 0.6) {
+    return null;
+  }
+
+  const candidates = roomSeeds
+    .filter((seed) => (
+      !seed.isUplinkRoom
+      && !seed.secured
+      && !seed.tags.includes("objective")
+      && !seed.tags.includes("elite")
+      && (
+        seed.clearMode === "field"
+        || seed.tags.includes("metal_rich")
+        || seed.tags.includes("timber_rich")
+        || seed.tags.includes("salvage_rich")
+      )
+    ))
+    .sort((left, right) => (
+      right.depthFromUplink - left.depthFromUplink
+      || Math.abs(right.localPosition.y) - Math.abs(left.localPosition.y)
+    ));
+
+  if (candidates.length <= 0) {
+    return null;
+  }
+
+  return candidates[Math.min(candidates.length - 1, rng.nextInt(0, Math.min(2, candidates.length - 1)))] ?? candidates[0];
+}
+
+function applyMegaRoomSeed(seed: TheaterRoomSeed, rng: SeededRng): void {
+  const affinityTags = chooseAffinityTags(rng, 2);
+  seed.roomClass = "mega";
+  seed.coreSlotCapacity = 4;
+  seed.coreSlots = [null, null, null, null];
+  seed.fortificationCapacity = 8;
+  seed.battleSizeOverride = { width: 10, height: 8 };
+  seed.size = getRoomSize("resource_pocket");
+  seed.tags = uniqueRoomTags([
+    ...seed.tags.filter((tag) => tag !== "enemy_staging"),
+    "resource_pocket",
+    "core_candidate",
+    "salvage_rich",
+    ...affinityTags,
+  ]);
+  if (seed.clearMode === "empty") {
+    seed.clearMode = "field";
+  }
+}
+
+function pickStagingRoomSeed(roomSeeds: TheaterRoomSeed[], excludedRoomId: RoomId | null, rng: SeededRng): TheaterRoomSeed | null {
+  const candidates = roomSeeds
+    .filter((seed) => (
+      seed.id !== excludedRoomId
+      && !seed.isUplinkRoom
+      && !seed.secured
+      && !seed.tags.includes("objective")
+      && (seed.depthFromUplink >= 3 || seed.tags.includes("elite") || seed.tags.includes("frontier"))
+    ))
+    .sort((left, right) => (
+      right.depthFromUplink - left.depthFromUplink
+      || Math.abs(right.localPosition.y) - Math.abs(left.localPosition.y)
+    ));
+
+  if (candidates.length <= 0) {
+    return null;
+  }
+
+  return candidates[Math.min(candidates.length - 1, rng.nextInt(0, Math.min(3, candidates.length - 1)))] ?? candidates[0];
+}
+
+function applyStagingRoomSeed(seed: TheaterRoomSeed, definition: TheaterDefinition, rng: SeededRng): void {
+  seed.tags = uniqueRoomTags([
+    ...seed.tags,
+    "enemy_staging",
+    "frontier",
+  ]);
+  seed.clearMode = "battle";
+  seed.tacticalEncounter = seed.tacticalEncounter ?? `${definition.id}_staging_${seed.id}`;
+  seed.enemySite = {
+    type: "staging",
+    reserveStrength: rng.nextInt(2, 4),
+    dispatchInterval: rng.nextInt(3, 5),
+    nextDispatchTick: rng.nextInt(2, 4),
+    patrolStrength: rng.nextInt(1, 3),
   };
 }
 
@@ -566,19 +825,62 @@ function jitterTemplatePosition(
   };
 }
 
+function stretchTemplatePosition(
+  basePosition: { x: number; y: number },
+  role: TheaterRoomRole,
+  style: TheaterLayoutStyle,
+  rng: SeededRng,
+): { x: number; y: number } {
+  if (role === "ingress") {
+    return { ...basePosition };
+  }
+
+  const forwardScale =
+    role === "objective"
+      ? 1.5 + (rng.nextFloat() * 0.25)
+      : role === "elite"
+        ? 1.34 + (rng.nextFloat() * 0.22)
+        : 1.18 + (rng.nextFloat() * 0.24);
+  const lateralScale =
+    style === "central_bloom"
+      ? 1.2 + (rng.nextFloat() * 0.24)
+      : 1.34 + (rng.nextFloat() * 0.34);
+  const laneBias =
+    Math.abs(basePosition.y) < 0.35 && role !== "objective"
+      ? (rng.nextFloat() < 0.5 ? -1 : 1) * (0.18 + (rng.nextFloat() * 0.46))
+      : 0;
+  const forwardBias =
+    role === "objective"
+      ? 0.4 + (rng.nextFloat() * 0.8)
+      : role === "elite"
+        ? 0.22 + (rng.nextFloat() * 0.42)
+        : rng.nextFloat() * 0.28;
+
+  return {
+    x: roundLocalCoordinate((basePosition.x * forwardScale) + forwardBias),
+    y: roundLocalCoordinate((basePosition.y * lateralScale) + laneBias),
+  };
+}
+
 function createExpandedLayoutTemplate(style: TheaterLayoutStyle, rng: SeededRng): LayoutNodeTemplate[] {
   const baseTemplate = (LAYOUT_TEMPLATES[style] ?? LAYOUT_TEMPLATES.vector_lance).map((node, index) => ({
     ...node,
-    localPosition: jitterTemplatePosition(node.localPosition, node.role, style, rng, index),
+    localPosition: jitterTemplatePosition(
+      stretchTemplatePosition(node.localPosition, node.role, style, rng),
+      node.role,
+      style,
+      rng,
+      index,
+    ),
     adjacency: [...node.adjacency],
   }));
 
-  const extraRoomCount = 2 + rng.nextInt(0, style === "central_bloom" ? 3 : 2);
+  const extraRoomCount = 5 + rng.nextInt(1, style === "central_bloom" ? 4 : 5);
   for (let index = 0; index < extraRoomCount; index++) {
     const eligibleParents = baseTemplate.filter((node) => (
       node.role !== "objective" &&
       node.depthFromUplink >= 1 &&
-      node.depthFromUplink <= 4
+      node.depthFromUplink <= 6
     ));
     const parent = eligibleParents.length > 0 ? rng.pick(eligibleParents) : null;
     if (!parent) {
@@ -587,26 +889,26 @@ function createExpandedLayoutTemplate(style: TheaterLayoutStyle, rng: SeededRng)
 
     const rolePool: TheaterRoomRole[] =
       parent.depthFromUplink >= 3
-        ? ["field", "core", "relay", "field", "core", "elite"]
-        : ["field", "core", "relay", "field", "core"];
+        ? ["field", "core", "relay", "field", "core", "elite", "power"]
+        : ["field", "core", "relay", "field", "core", "power"];
     const role = rng.pick(rolePool);
     const branchDepth =
       role === "elite"
         ? Math.max(4, parent.depthFromUplink + 1)
         : parent.depthFromUplink + 1;
-    const depthFromUplink = Math.min(5, branchDepth);
+    const depthFromUplink = Math.min(7, branchDepth);
     const lateralSeed =
       Math.abs(parent.localPosition.y) < 0.5
-        ? (rng.nextFloat() < 0.5 ? -1 : 1) * (0.95 + rng.nextFloat() * 1.35)
-        : parent.localPosition.y + (rng.nextFloat() < 0.5 ? -1 : 1) * (0.55 + rng.nextFloat() * 1.05);
+        ? (rng.nextFloat() < 0.5 ? -1 : 1) * (1.15 + rng.nextFloat() * 1.75)
+        : parent.localPosition.y + (rng.nextFloat() < 0.5 ? -1 : 1) * (0.9 + rng.nextFloat() * 1.4);
 
     const spurKey = `spur_${index}`;
     baseTemplate.push({
       key: spurKey,
       role,
       localPosition: {
-        x: roundLocalCoordinate(parent.localPosition.x + 0.95 + (rng.nextFloat() * 1.65) + ((depthFromUplink - parent.depthFromUplink - 1) * 0.3)),
-        y: roundLocalCoordinate(lateralSeed + ((rng.nextFloat() - 0.5) * 0.75)),
+        x: roundLocalCoordinate(parent.localPosition.x + 1.2 + (rng.nextFloat() * 2.15) + ((depthFromUplink - parent.depthFromUplink - 1) * 0.45)),
+        y: roundLocalCoordinate(lateralSeed + ((rng.nextFloat() - 0.5) * 1.1)),
       },
       depthFromUplink,
       adjacency: [parent.key],
@@ -619,7 +921,7 @@ function createExpandedLayoutTemplate(style: TheaterLayoutStyle, rng: SeededRng)
         candidate.key !== parent.key &&
         candidate.role !== "objective" &&
         Math.abs(candidate.depthFromUplink - depthFromUplink) <= 1 &&
-        Math.abs(candidate.localPosition.x - parent.localPosition.x) <= 2.6
+        Math.abs(candidate.localPosition.x - parent.localPosition.x) <= 3.4
       ));
       if (secondaryCandidates.length > 0) {
         connectTemplateNodes(baseTemplate, spurKey, rng.pick(secondaryCandidates).key);
@@ -653,7 +955,7 @@ function buildRoomSeeds(
 
     return {
       id: roomId,
-      label: `${rng.pick(labelPool)}${node.role === "objective" && floorIndex === operation.floors.length - 1 ? " // FINAL" : ""}`,
+      label: rng.pick(labelPool),
       sectorTag: createSectorTag(node.depthFromUplink, node.localPosition.y),
       localPosition: node.localPosition,
       depthFromUplink: node.depthFromUplink,
@@ -666,11 +968,24 @@ function buildRoomSeeds(
       tags,
       clearMode,
       fortified: node.role === "ingress",
+      roomClass: "standard",
+      coreSlotCapacity: 1,
+      coreSlots: [null],
       fortificationCapacity: node.role === "ingress" ? 4 : node.role === "objective" ? 4 : 3,
       fortificationPips: node.role === "ingress" ? { barricade: 1, powerRail: 1 } : undefined,
       isPowerSource: node.role === "ingress" || node.role === "power",
     };
   });
+
+  const megaRoomSeed = pickMegaRoomSeed(roomSeeds, rng);
+  if (megaRoomSeed) {
+    applyMegaRoomSeed(megaRoomSeed, rng);
+  }
+
+  const stagingRoomSeed = pickStagingRoomSeed(roomSeeds, megaRoomSeed?.id ?? null, rng);
+  if (stagingRoomSeed) {
+    applyStagingRoomSeed(stagingRoomSeed, definition, rng);
+  }
 
   const rooms = Object.fromEntries(
     roomSeeds.map((room) => [room.id, createRoom(definition, room)]),
@@ -680,12 +995,107 @@ function buildRoomSeeds(
   return { rooms, uplinkRoomId, powerSourceRoomIds };
 }
 
+function hasAlternateEdgeRoute(
+  rooms: Record<RoomId, TheaterRoom>,
+  fromRoomId: RoomId,
+  toRoomId: RoomId,
+): boolean {
+  const queue: RoomId[] = [fromRoomId];
+  const visited = new Set<RoomId>([fromRoomId]);
+
+  while (queue.length > 0) {
+    const currentRoomId = queue.shift()!;
+    const room = rooms[currentRoomId];
+    if (!room) {
+      continue;
+    }
+
+    for (const adjacentId of room.adjacency) {
+      const isIgnoredDirectEdge =
+        (currentRoomId === fromRoomId && adjacentId === toRoomId)
+        || (currentRoomId === toRoomId && adjacentId === fromRoomId);
+      if (isIgnoredDirectEdge) {
+        continue;
+      }
+      if (adjacentId === toRoomId) {
+        return true;
+      }
+      if (visited.has(adjacentId) || !rooms[adjacentId]) {
+        continue;
+      }
+      visited.add(adjacentId);
+      queue.push(adjacentId);
+    }
+  }
+
+  return false;
+}
+
+function assignPowerGatedPassages(
+  rooms: Record<RoomId, TheaterRoom>,
+  rng: SeededRng,
+): void {
+  Object.values(rooms).forEach((room) => {
+    room.powerGateWatts = { ...(room.powerGateWatts ?? {}) };
+  });
+
+  const candidates: Array<{ roomId: RoomId; adjacentId: RoomId }> = [];
+  const seenEdges = new Set<string>();
+
+  Object.values(rooms).forEach((room) => {
+    room.adjacency.forEach((adjacentId) => {
+      const adjacentRoom = rooms[adjacentId];
+      if (!adjacentRoom) {
+        return;
+      }
+
+      const edgeKey = [room.id, adjacentId].sort().join("__");
+      if (seenEdges.has(edgeKey)) {
+        return;
+      }
+      seenEdges.add(edgeKey);
+
+      if (room.isUplinkRoom || adjacentRoom.isUplinkRoom) {
+        return;
+      }
+      if (Math.min(room.depthFromUplink, adjacentRoom.depthFromUplink) < 2) {
+        return;
+      }
+      if (!hasAlternateEdgeRoute(rooms, room.id, adjacentId)) {
+        return;
+      }
+
+      candidates.push({ roomId: room.id, adjacentId });
+    });
+  });
+
+  let gatedCount = 0;
+  const maxGateCount = Math.max(1, Math.min(4, Math.ceil(candidates.length * 0.35)));
+
+  candidates.forEach(({ roomId, adjacentId }) => {
+    if (gatedCount >= maxGateCount || rng.nextFloat() > 0.4) {
+      return;
+    }
+
+    const room = rooms[roomId];
+    const adjacentRoom = rooms[adjacentId];
+    if (!room || !adjacentRoom) {
+      return;
+    }
+
+    const wattsRequired = rng.nextInt(1, 5) * 100;
+    room.powerGateWatts![adjacentId] = wattsRequired;
+    adjacentRoom.powerGateWatts![roomId] = wattsRequired;
+    gatedCount += 1;
+  });
+}
+
 export function createGeneratedTheaterFloor(operation: OperationRun, floorIndex: number): TheaterNetworkState {
   const atlasSummary = floorIndex === 0 ? resolveAtlasSummaryForOperation(operation) : null;
   const seed = resolveRunSeed(operation, floorIndex);
   const rng = createSeededRng(seed);
   const profile = resolveProfile(operation, floorIndex, atlasSummary);
-  const presentation = createPresentation(floorIndex, atlasSummary, rng);
+  const presentation = createPresentation(operation, floorIndex, atlasSummary, rng);
   const floor = operation.floors[floorIndex];
   const isFinalFloor = floorIndex >= operation.floors.length - 1;
   const floorIdBase = atlasSummary?.floorId ?? operation.atlasFloorId ?? `${operation.id ?? profile.prefix}_floor`;
@@ -715,7 +1125,7 @@ export function createGeneratedTheaterFloor(operation: OperationRun, floorIndex:
     beginningState,
     endState,
     floorId,
-    floorOrdinal: floorIndex + 1,
+    floorOrdinal: atlasSummary?.floorOrdinal ?? (floorIndex + 1),
     sectorLabel: atlasSummary?.sectorLabel ?? profile.sectorLabel,
     radialSlotIndex: atlasSummary?.radialSlotIndex ?? ((floorIndex + rng.nextInt(0, 3)) % 6),
     radialSlotCount: atlasSummary?.radialSlotCount ?? 6,
@@ -727,14 +1137,17 @@ export function createGeneratedTheaterFloor(operation: OperationRun, floorIndex:
     threatLevel: profile.threatLevel,
     ingressRoomId: "",
     uplinkRoomId: "",
-    outwardDepth: 5,
+    outwardDepth: 7,
     powerSourceRoomIds: [],
     mapAnchor: presentation.mapAnchor,
     layoutStyle: presentation.layoutStyle,
     originLabel: presentation.originLabel,
+    floorKeyInventory: createEmptyKeyInventory(),
   };
 
   const { rooms, uplinkRoomId, powerSourceRoomIds } = buildRoomSeeds(operation, floorIndex, profile, definition, presentation.layoutStyle, rng);
+  assignPowerGatedPassages(rooms, rng);
+  definition.outwardDepth = Math.max(0, ...Object.values(rooms).map((room) => room.depthFromUplink));
   definition.ingressRoomId = uplinkRoomId;
   definition.uplinkRoomId = uplinkRoomId;
   definition.powerSourceRoomIds = powerSourceRoomIds;
@@ -744,11 +1157,19 @@ export function createGeneratedTheaterFloor(operation: OperationRun, floorIndex:
     rooms,
     currentRoomId: uplinkRoomId,
     selectedRoomId: uplinkRoomId,
+    currentNodeId: uplinkRoomId,
+    selectedNodeId: uplinkRoomId,
+    annexesById: {},
+    partitionsByEdgeId: {},
+    automation: createEmptyTheaterAutomationState(),
+    squads: [],
+    selectedSquadId: null,
     tickCount: 0,
     activeThreats: [],
     recentEvents: [
       `S/COM :: ${profile.zoneName} synchronized on ${floorName}. Root origin ${presentation.originLabel}; theater vector ${Math.round(normalizeAngle(presentation.angleDeg))} degrees.`,
     ],
+    objectiveDefinition: null,
     objectiveComplete: false,
     completion: null,
   };

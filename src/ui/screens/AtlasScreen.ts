@@ -1,7 +1,6 @@
 import {
   createAtlasOperation,
   getAtlasFloorMaps,
-  getAtlasTheaterSummary,
 } from "../../core/atlasSystem";
 import { AtlasFloorMap, AtlasTheaterSummary, GameState } from "../../core/types";
 import { ensureOperationHasTheater, getTheaterStarterResources } from "../../core/theaterSystem";
@@ -84,7 +83,9 @@ function getFloorRing(floor: AtlasFloorMap): { inner: number; outer: number } {
 
 function getSelectedTheater(floors: AtlasFloorMap[], state: GameState): AtlasTheaterSummary {
   const persistedSelection = state.uiLayout?.atlasSelectedTheaterId ?? null;
-  const selectedFromState = persistedSelection ? getAtlasTheaterSummary(persistedSelection) : null;
+  const selectedFromState = persistedSelection
+    ? floors.flatMap((floor) => floor.theaters).find((theater) => theater.theaterId === persistedSelection) ?? null
+    : null;
   if (selectedFromState?.discovered) {
     return selectedFromState;
   }
@@ -95,6 +96,26 @@ function getSelectedTheater(floors: AtlasFloorMap[], state: GameState): AtlasThe
     ?? floors.find((floor) => floor.isCurrentFloor)?.theaters[0];
 
   return currentFloorSelection ?? floors[0].theaters[0];
+}
+
+function normalizeAtlasFloorStates(
+  floors: AtlasFloorMap[],
+  state: GameState,
+): AtlasFloorMap[] {
+  const activeTheaterId = state.operation?.atlasTheaterId ?? state.uiLayout?.atlasSelectedTheaterId ?? null;
+  return floors.map((floor) => ({
+    ...floor,
+    theaters: floor.theaters.map((theater) => ({
+      ...theater,
+      currentState: !theater.discovered
+        ? "undiscovered"
+        : !floor.isCurrentFloor
+          ? "cold"
+          : activeTheaterId === theater.theaterId
+            ? "active"
+            : "warm",
+    })),
+  }));
 }
 
 function persistAtlasSelection(theaterId: string): void {
@@ -187,7 +208,47 @@ function renderAtlasMap(floors: AtlasFloorMap[], selectedTheaterId: string): str
   `;
 }
 
-function renderDetailPanel(selectedTheater: AtlasTheaterSummary): string {
+function getFloorQuickSelectTarget(floor: AtlasFloorMap, selectedTheaterId: string): string | null {
+  if (floor.theaters.some((theater) => theater.theaterId === selectedTheaterId)) {
+    return selectedTheaterId;
+  }
+
+  return floor.theaters.find((theater) => theater.operationAvailable)?.theaterId
+    ?? floor.theaters[0]?.theaterId
+    ?? null;
+}
+
+function renderFloorQuickList(floors: AtlasFloorMap[], selectedTheater: AtlasTheaterSummary): string {
+  const buttons = floors
+    .map((floor) => {
+      const targetTheaterId = getFloorQuickSelectTarget(floor, selectedTheater.theaterId);
+      const theaterCount = floor.theaters.length;
+      return `
+        <button
+          class="atlas-floor-quick-btn${floor.floorOrdinal === selectedTheater.floorOrdinal ? " atlas-floor-quick-btn--selected" : ""}${floor.isCurrentFloor ? " atlas-floor-quick-btn--current" : ""}"
+          type="button"
+          data-atlas-floor-ordinal="${floor.floorOrdinal}"
+          data-atlas-floor-target="${targetTheaterId ?? ""}"
+          ${targetTheaterId ? "" : "disabled"}
+        >
+          <span class="atlas-floor-quick-btn__label">${escapeHtml(floor.floorLabel)}</span>
+          <span class="atlas-floor-quick-btn__meta">${theaterCount} sector${theaterCount === 1 ? "" : "s"}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="atlas-detail-panel-copy atlas-detail-panel-copy--floor-list">
+      <div class="atlas-detail-copy-label">Quick Floor Select</div>
+      <div class="atlas-floor-quick-list">
+        ${buttons}
+      </div>
+    </div>
+  `;
+}
+
+function renderDetailPanel(floors: AtlasFloorMap[], selectedTheater: AtlasTheaterSummary): string {
   const operationLabel = selectedTheater.operationAvailable
     ? `AVAILABLE // ${selectedTheater.operationCodename ?? "DEPLOYABLE"}`
     : "STANDBY // NO CURRENT OPERATION";
@@ -195,6 +256,7 @@ function renderDetailPanel(selectedTheater: AtlasTheaterSummary): string {
   return `
     <div class="atlas-detail-card">
       <div class="atlas-detail-eyebrow">SELECTED THEATER</div>
+      ${renderFloorQuickList(floors, selectedTheater)}
       <h2 class="atlas-detail-title">${escapeHtml(selectedTheater.zoneName)}</h2>
       <div class="atlas-detail-location">${escapeHtml(selectedTheater.sectorLabel)} // ${escapeHtml(selectedTheater.floorLabel)}</div>
 
@@ -261,13 +323,13 @@ export function renderAtlasScreen(returnTo: BaseCampReturnTo = "esc"): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const floors = getAtlasFloorMaps();
+  const state = getGameState();
+  const floors = normalizeAtlasFloorStates(getAtlasFloorMaps(), state);
   if (floors.length === 0) {
     root.innerHTML = `<div class="atlas-root"><div class="atlas-empty">No discovered theaters are currently available.</div></div>`;
     return;
   }
 
-  const state = getGameState();
   const selectedTheater = getSelectedTheater(floors, state);
 
   if (state.phase !== "atlas" || state.uiLayout?.atlasSelectedTheaterId !== selectedTheater.theaterId) {
@@ -293,7 +355,7 @@ export function renderAtlasScreen(returnTo: BaseCampReturnTo = "esc"): void {
             ${renderAtlasMap(floors, selectedTheater.theaterId)}
           </section>
           <aside class="atlas-side-panel">
-            ${renderDetailPanel(selectedTheater)}
+            ${renderDetailPanel(floors, selectedTheater)}
           </aside>
         </div>
       </div>
@@ -320,6 +382,16 @@ export function renderAtlasScreen(returnTo: BaseCampReturnTo = "esc"): void {
       const theaterId = element.dataset.atlasPathId;
       if (!theaterId) return;
       console.log("[ATLAS] theater selected", theaterId);
+      persistAtlasSelection(theaterId);
+      renderAtlasScreen(returnTo);
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-atlas-floor-target]").forEach((element) => {
+    element.addEventListener("click", () => {
+      const theaterId = element.dataset.atlasFloorTarget;
+      if (!theaterId) return;
+      console.log("[ATLAS] floor selected", element.dataset.atlasFloorOrdinal, theaterId);
       persistAtlasSelection(theaterId);
       renderAtlasScreen(returnTo);
     });

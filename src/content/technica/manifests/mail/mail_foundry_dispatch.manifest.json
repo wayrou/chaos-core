@@ -1,0 +1,21 @@
+{
+  "contentId": "mail_foundry_dispatch",
+  "contentType": "mail",
+  "dependencies": [],
+  "description": "Chaos Core runtime mail export.",
+  "entryFile": "mail_foundry_dispatch.mail.json",
+  "exportType": "mail",
+  "exportedAt": "2026-04-07T03:16:09.562Z",
+  "files": [
+    "manifest.json",
+    "mail_foundry_dispatch.mail.json",
+    "mail_foundry_dispatch.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "mail-entry.v1",
+  "title": "Foundry Allotment Approved"
+}

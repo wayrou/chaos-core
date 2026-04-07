@@ -17,7 +17,27 @@ export type ObjectiveType =
   | "talk_to_npc"
   | "complete_battle"
   | "spend_wad"
-  | "craft_item";
+  | "craft_item"
+  | "secure_rooms"
+  | "complete_sector_objectives"
+  | "complete_floor"
+  | "build_core"
+  | "route_power"
+  | "establish_comms"
+  | "deliver_supply"
+  | "complete_operation"
+  | "reach_floor";
+
+export interface QuestObjectiveCriteria {
+  floorOrdinal?: number;
+  floorId?: string;
+  theaterId?: string;
+  operationId?: string;
+  sectorLabel?: string;
+  roomId?: string;
+  roomTag?: string;
+  coreType?: import("../core/types").CoreType | string;
+}
 
 export interface QuestObjective {
   id: string;
@@ -26,6 +46,7 @@ export interface QuestObjective {
   current: number;
   required: number;
   description: string;
+  criteria?: QuestObjectiveCriteria;
 }
 
 export interface QuestReward {
@@ -75,6 +96,5 @@ export interface QuestState {
   totalQuestsCompleted?: number;  // Lifetime counter for completed quests
   generatedQuestCount?: number;   // How many generated quests have been created
 }
-
 
 

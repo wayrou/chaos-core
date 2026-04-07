@@ -2,24 +2,62 @@
 // FIELD MOD BATTLE INTEGRATION - Wires Field Mods into battle system
 // ============================================================================
 
-import { emit, ProcContext, ProcResult } from "./fieldModProcEngine";
-import { FieldModTrigger, FieldModInstance, HardpointState } from "./fieldMods";
+import { appendBattleLog, type BattleState } from "./battle";
+import { getActiveEchoRun, getEchoModifierHardpoints } from "./echoRuns";
+import { applyEffectFlowToBattle } from "./effectFlow";
+import { emit, type ProcContext, type ProcResult } from "./fieldModProcEngine";
+import type { FieldModInstance, FieldModTrigger, HardpointState } from "./fieldMods";
 import { getAllFieldModDefs } from "./fieldModDefinitions";
-import { BattleState } from "./battle";
-import { UnitId } from "./types";
 import { getActiveRun } from "./campaignManager";
 import { getGameState } from "../state/gameStore";
+import type { UnitId } from "./types";
+
+function createSeededRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function hashSeed(text: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createProcRandom(
+  battle: BattleState,
+  eventSequence: number,
+  resultIndex: number,
+  executionIndex: number
+) {
+  const seed = hashSeed(`${battle.id}:${battle.turnCount}:${eventSequence}:${resultIndex}:${executionIndex}`);
+  return createSeededRng(seed);
+}
 
 // Get Field Mod state from run
 function getFieldModState(): {
   unitHardpoints: Record<UnitId, HardpointState>;
   runInventory: FieldModInstance[];
 } {
+  const echoRun = getActiveEchoRun();
+  if (echoRun) {
+    const unitIds = echoRun.squadUnitIds.filter((unitId) => echoRun.unitsById[unitId]);
+    return {
+      unitHardpoints: getEchoModifierHardpoints(unitIds) as Record<UnitId, HardpointState>,
+      runInventory: echoRun.tacticalModifiers,
+    };
+  }
+
   const activeRun = getActiveRun();
   const state = getGameState();
-  
+
   return {
-    unitHardpoints: activeRun?.unitHardpoints || {},
+    unitHardpoints: activeRun?.unitHardpoints || state.unitHardpoints || {},
     runInventory: activeRun?.runFieldModInventory || state.runFieldModInventory || [],
   };
 }
@@ -28,149 +66,41 @@ function getFieldModState(): {
 function applyProcResults(
   battle: BattleState,
   results: ProcResult[],
-  _eventSequence: number // Reserved for future deterministic event handling
+  eventSequence: number
 ): BattleState {
   let next = battle;
-  const allMods = getAllFieldModDefs();
-  
-  for (const result of results) {
-    const modDef = allMods.find(m => m.id === result.modId);
-    if (!modDef) continue;
-    
-    // Log the proc
+
+  results.forEach((result, resultIndex) => {
     if (result.logMessage) {
-      next = {
-        ...next,
-        log: [...next.log, `SLK//MOD    :: ${result.logMessage}`],
-      };
+      next = appendBattleLog(next, `SLK//MOD    :: ${result.logMessage}`);
     }
-    
-    // Apply effects
-    switch (result.effect.kind) {
-      case "deal_damage":
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target || target.isEnemy === false) continue; // Only damage enemies
-          
-          const damage = result.effect.amount;
-          const newHp = Math.max(0, target.hp - damage);
-          
-          if (newHp <= 0) {
-            // Unit killed
-            const newUnits = { ...next.units };
-            delete newUnits[targetId];
-            const newTurnOrder = next.turnOrder.filter(id => id !== targetId);
-            next = {
-              ...next,
-              units: newUnits,
-              turnOrder: newTurnOrder,
-              log: [...next.log, `SLK//MOD    :: ${target.name} eliminated by ${result.modName}.`],
-            };
-          } else {
-            next = {
-              ...next,
-              units: {
-                ...next.units,
-                [targetId]: { ...target, hp: newHp },
-              },
-              log: [...next.log, `SLK//MOD    :: ${result.modName} deals ${damage} damage to ${target.name}.`],
-            };
-          }
-        }
-        break;
-        
-      case "gain_shield":
-        // Shield system not fully implemented - use temporary HP boost as placeholder
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target) continue;
-          
-          const shieldAmount = result.effect.amount;
-          const newHp = Math.min(target.maxHp, target.hp + shieldAmount);
-          
-          next = {
-            ...next,
-            units: {
-              ...next.units,
-              [targetId]: { ...target, hp: newHp },
-            },
-            log: [...next.log, `SLK//MOD    :: ${result.modName} grants ${shieldAmount} shield to ${target.name}.`],
-          };
-        }
-        break;
-        
-      case "draw":
-        // Draw cards (placeholder - would need proper card draw logic)
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target) continue;
-          
-          const drawAmount = result.effect.amount;
-          // Placeholder: just log it
-          next = {
-            ...next,
-            log: [...next.log, `SLK//MOD    :: ${result.modName} draws ${drawAmount} card(s) for ${target.name}.`],
-          };
-        }
-        break;
-        
-      case "apply_status":
-        // Status effects placeholder
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target) continue;
-          
-          next = {
-            ...next,
-            log: [...next.log, `SLK//MOD    :: ${result.modName} applies ${result.effect.status} (${result.effect.stacks} stacks) to ${target.name}.`],
-          };
-        }
-        break;
-        
-      case "summon_drone":
-        // Drone summoning placeholder
-        next = {
-          ...next,
-          log: [...next.log, `SLK//MOD    :: ${result.modName} deploys ${result.effect.count} combat drone(s).`],
-        };
-        break;
-        
-      case "reduce_cost_next_card":
-        // Cost reduction placeholder (would need to track per unit)
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target) continue;
-          
-          next = {
-            ...next,
-            log: [...next.log, `SLK//MOD    :: ${result.modName} reduces next card cost by ${result.effect.amount} for ${target.name}.`],
-          };
-        }
-        break;
-        
-      case "gain_resource":
-        // Resource gain - handled outside battle
-        next = {
-          ...next,
-          log: [...next.log, `SLK//MOD    :: ${result.modName} grants ${result.effect.amount} ${result.effect.resource}.`],
-        };
-        break;
-        
-      case "knockback":
-        // Knockback placeholder
-        for (const targetId of result.targetUnitIds) {
-          const target = next.units[targetId];
-          if (!target) continue;
-          
-          next = {
-            ...next,
-            log: [...next.log, `SLK//MOD    :: ${result.modName} knocks back ${target.name} ${result.effect.tiles} tiles.`],
-          };
-        }
-        break;
+
+    const stackCount = Math.max(1, result.stacks || 1);
+    const sourceUnitId = result.ownerUnitId ?? next.activeUnitId ?? null;
+    const selectedTargetUnitId = result.targetUnitId ?? null;
+    const executeFlow = (amountMultiplier: number, executionIndex: number) => {
+      next = applyEffectFlowToBattle(next, result.effectFlow, {
+        sourceUnitId,
+        selectedTargetUnitId,
+        hitTargetUnitId: selectedTargetUnitId,
+        isCrit: result.isCrit,
+        isKill: result.isKill,
+        sourceLabel: result.modName,
+        amountMultiplier,
+        random: createProcRandom(next, eventSequence, resultIndex, executionIndex),
+      });
+    };
+
+    if (result.stackMode === "linear") {
+      executeFlow(stackCount, 0);
+      return;
     }
-  }
-  
+
+    for (let executionIndex = 0; executionIndex < stackCount; executionIndex += 1) {
+      executeFlow(1, executionIndex);
+    }
+  });
+
   return next;
 }
 
@@ -186,20 +116,20 @@ export function triggerFieldMods(
 ): BattleState {
   const { unitHardpoints, runInventory } = getFieldModState();
   const allMods = getAllFieldModDefs();
-  
+
   const procCtx: ProcContext = {
     battleState: battle,
     triggeringUnitId,
     eventSequence,
     ...context,
   };
-  
+
   const results = emit(trigger, procCtx, allMods, unitHardpoints, runInventory);
-  
+
   if (results.length === 0) {
     return battle;
   }
-  
+
   return applyProcResults(battle, results, eventSequence);
 }
 
@@ -225,8 +155,8 @@ export function triggerHit(
   attackerId: UnitId,
   targetId: UnitId,
   damageAmount: number,
-  isCrit: boolean = false,
-  eventSequence: number = 0
+  isCrit = false,
+  eventSequence = 0
 ): BattleState {
   let next = triggerFieldMods(
     "hit",
@@ -235,7 +165,7 @@ export function triggerHit(
     { targetUnitId: targetId, damageAmount, isCrit },
     eventSequence
   );
-  
+
   if (isCrit) {
     next = triggerFieldMods(
       "crit",
@@ -245,7 +175,7 @@ export function triggerHit(
       eventSequence + 1
     );
   }
-  
+
   return next;
 }
 
@@ -256,7 +186,7 @@ export function triggerKill(
   battle: BattleState,
   killerId: UnitId,
   killedId: UnitId,
-  eventSequence: number = 0
+  eventSequence = 0
 ): BattleState {
   return triggerFieldMods(
     "kill",
@@ -274,7 +204,7 @@ export function triggerCardPlayed(
   battle: BattleState,
   unitId: UnitId,
   cardId: string,
-  eventSequence: number = 0
+  eventSequence = 0
 ): BattleState {
   return triggerFieldMods(
     "card_played",
@@ -284,4 +214,3 @@ export function triggerCardPlayed(
     eventSequence
   );
 }
-

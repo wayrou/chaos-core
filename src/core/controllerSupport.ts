@@ -1,18 +1,24 @@
 // ============================================================================
-// CHAOS CORE - CONTROLLER SUPPORT (Headline 12b)
-// src/core/controllerSupport.ts
-// Gamepad input handling for full controller support
+// CHAOS CORE - CONTROLLER SUPPORT
+// Shared controller runtime for UI focus, grid/map cursors, layout mode, and
+// gameplay input bindings.
 // ============================================================================
 
-import { getSettings, subscribeToSettings } from "./settings";
-
-// ----------------------------------------------------------------------------
-// TYPES
-// ----------------------------------------------------------------------------
+import {
+  DEFAULT_SETTINGS,
+  type ControllerActionBindingMap,
+  type ControllerAssignmentSettings,
+  type ControllerBindingDescriptor,
+  getSettings,
+  subscribeToSettings,
+} from "./settings";
+import type { PlayerSlot } from "./types";
 
 export interface ControllerState {
   connected: boolean;
   id: string;
+  index: number;
+  assignedPlayer: PlayerSlot | null;
   buttons: ButtonState[];
   axes: number[];
 }
@@ -24,7 +30,37 @@ export interface ButtonState {
   justReleased: boolean;
 }
 
-// Standard gamepad button indices
+export type ControllerMode = "focus" | "cursor" | "layout";
+export type ControllerInputMode = "keyboard" | "controller";
+
+export interface ControllerDebugState {
+  focus?: string;
+  hovered?: string;
+  window?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface ControllerContext {
+  id: string;
+  defaultMode?: ControllerMode;
+  focusRoot?: HTMLElement | null | (() => HTMLElement | null);
+  focusSelector?: string;
+  defaultFocusSelector?: string;
+  onAction?: (action: GameAction, playerId?: PlayerSlot, mode?: ControllerMode) => boolean;
+  onFocusAction?: (action: GameAction, playerId?: PlayerSlot) => boolean;
+  onCursorAction?: (action: GameAction, playerId?: PlayerSlot) => boolean;
+  onLayoutAction?: (action: GameAction, playerId?: PlayerSlot) => boolean;
+  onModeChange?: (mode: ControllerMode) => void;
+  suppressGameplayInput?: boolean | ((playerId?: PlayerSlot, mode?: ControllerMode) => boolean);
+  getDebugState?: () => ControllerDebugState;
+}
+
+export interface ControllerBindingCapture {
+  onCapture: (binding: ControllerBindingDescriptor) => void;
+  onCancel?: () => void;
+}
+
 export const BUTTON = {
   A: 0,
   B: 1,
@@ -44,7 +80,6 @@ export const BUTTON = {
   DPAD_RIGHT: 15,
 } as const;
 
-// Axis indices
 export const AXIS = {
   LEFT_X: 0,
   LEFT_Y: 1,
@@ -52,7 +87,6 @@ export const AXIS = {
   RIGHT_Y: 3,
 } as const;
 
-// Input actions
 export type GameAction =
   | "confirm"
   | "cancel"
@@ -66,98 +100,199 @@ export type GameAction =
   | "endTurn"
   | "openInventory"
   | "openMap"
-  | "pause";
+  | "pause"
+  | "attack"
+  | "interact"
+  | "dash"
+  | "tabPrev"
+  | "tabNext"
+  | "zoomIn"
+  | "zoomOut"
+  | "toggleSurfaceMode"
+  | "toggleLayoutMode"
+  | "windowPrimary"
+  | "windowSecondary";
 
-// Default button bindings
-export const DEFAULT_BINDINGS: Record<GameAction, number[]> = {
-  confirm: [BUTTON.A],
-  cancel: [BUTTON.B],
-  menu: [BUTTON.START],
-  moveUp: [BUTTON.DPAD_UP],
-  moveDown: [BUTTON.DPAD_DOWN],
-  moveLeft: [BUTTON.DPAD_LEFT],
-  moveRight: [BUTTON.DPAD_RIGHT],
-  nextUnit: [BUTTON.RB],
-  prevUnit: [BUTTON.LB],
-  endTurn: [BUTTON.Y],
-  openInventory: [BUTTON.SELECT],
-  openMap: [BUTTON.X],
-  pause: [BUTTON.START],
+export const GAME_ACTIONS: GameAction[] = [
+  "confirm",
+  "cancel",
+  "menu",
+  "moveUp",
+  "moveDown",
+  "moveLeft",
+  "moveRight",
+  "nextUnit",
+  "prevUnit",
+  "endTurn",
+  "openInventory",
+  "openMap",
+  "pause",
+  "attack",
+  "interact",
+  "dash",
+  "tabPrev",
+  "tabNext",
+  "zoomIn",
+  "zoomOut",
+  "toggleSurfaceMode",
+  "toggleLayoutMode",
+  "windowPrimary",
+  "windowSecondary",
+];
+
+export const DEFAULT_CONTROLLER_BINDINGS: Record<GameAction, ControllerBindingDescriptor[]> = {
+  confirm: [{ kind: "button", code: BUTTON.A }],
+  cancel: [{ kind: "button", code: BUTTON.B }],
+  menu: [{ kind: "button", code: BUTTON.START }],
+  moveUp: [
+    { kind: "button", code: BUTTON.DPAD_UP },
+    { kind: "axis", code: AXIS.LEFT_Y, direction: "negative", threshold: 0.35 },
+  ],
+  moveDown: [
+    { kind: "button", code: BUTTON.DPAD_DOWN },
+    { kind: "axis", code: AXIS.LEFT_Y, direction: "positive", threshold: 0.35 },
+  ],
+  moveLeft: [
+    { kind: "button", code: BUTTON.DPAD_LEFT },
+    { kind: "axis", code: AXIS.LEFT_X, direction: "negative", threshold: 0.35 },
+  ],
+  moveRight: [
+    { kind: "button", code: BUTTON.DPAD_RIGHT },
+    { kind: "axis", code: AXIS.LEFT_X, direction: "positive", threshold: 0.35 },
+  ],
+  nextUnit: [{ kind: "button", code: BUTTON.RB }],
+  prevUnit: [{ kind: "button", code: BUTTON.LB }],
+  endTurn: [{ kind: "button", code: BUTTON.Y }],
+  openInventory: [{ kind: "button", code: BUTTON.SELECT }],
+  openMap: [{ kind: "button", code: BUTTON.X }],
+  pause: [{ kind: "button", code: BUTTON.START }],
+  attack: [{ kind: "button", code: BUTTON.A }],
+  interact: [{ kind: "button", code: BUTTON.X }],
+  dash: [{ kind: "button", code: BUTTON.RB }],
+  tabPrev: [{ kind: "button", code: BUTTON.LB }],
+  tabNext: [{ kind: "button", code: BUTTON.RB }],
+  zoomIn: [{ kind: "button", code: BUTTON.RT }],
+  zoomOut: [{ kind: "button", code: BUTTON.LT }],
+  toggleSurfaceMode: [{ kind: "button", code: BUTTON.L3 }],
+  toggleLayoutMode: [{ kind: "button", code: BUTTON.R3 }],
+  windowPrimary: [{ kind: "button", code: BUTTON.X }],
+  windowSecondary: [{ kind: "button", code: BUTTON.Y }],
 };
 
-// ----------------------------------------------------------------------------
-// STATE
-// ----------------------------------------------------------------------------
+export const DEFAULT_BINDINGS: Record<GameAction, number[]> = Object.fromEntries(
+  GAME_ACTIONS.map((action) => [
+    action,
+    DEFAULT_CONTROLLER_BINDINGS[action]
+      .filter((binding) => binding.kind === "button")
+      .map((binding) => binding.code),
+  ]),
+) as Record<GameAction, number[]>;
 
 let isEnabled = true;
 let deadzone = 0.15;
 let vibrationEnabled = true;
-let currentBindings = { ...DEFAULT_BINDINGS };
-let prevButtonStates: boolean[] = new Array(16).fill(false);
+let currentBindings = normalizeBindingMap(DEFAULT_SETTINGS.controllerBindings);
+let controllerAssignments: ControllerAssignmentSettings = {
+  P1: DEFAULT_SETTINGS.controllerAssignments.P1,
+  P2: DEFAULT_SETTINGS.controllerAssignments.P2,
+};
+let lastInputMode: ControllerInputMode = "keyboard";
 
-type ActionListener = (action: GameAction) => void;
-const actionListeners = new Set<ActionListener>();
-
-let navCooldown = 0;
-const NAV_COOLDOWN_MS = 150;
+const actionListeners = new Set<(action: GameAction, playerId?: PlayerSlot) => void>();
 
 let focusableElements: HTMLElement[] = [];
 let currentFocusIndex = 0;
+let focusObserver: MutationObserver | null = null;
+let focusRefreshRaf: number | null = null;
 
-// ----------------------------------------------------------------------------
-// INITIALIZATION
-// ----------------------------------------------------------------------------
+let currentContext: ControllerContext | null = null;
+let currentMode: ControllerMode = "focus";
+let suppressFocusRefresh = false;
+
+let captureState: (ControllerBindingCapture & { primed: boolean }) | null = null;
 
 let animationFrameId: number | null = null;
-let lastFrameTime = 0;
 let initialized = false;
+let navCooldown = 0;
+const NAV_COOLDOWN_MS = 150;
+let lastFrameTime = 0;
+const BUTTON_PRESS_THRESHOLD = 0.35;
 
-/**
- * Initialize controller support
- */
+const previousActionStatesByPad: Record<number, Partial<Record<GameAction, boolean>>> = {};
+const previousButtonStatesByPad: boolean[][] = [];
+const previousAxisDigitalByPad: Record<number, Record<string, boolean>> = {};
+
+const DEBUG_OVERLAY_ID = "controllerDebugOverlay";
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "a[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+  "[data-controller-focusable='true']",
+].join(", ");
+
 export function initControllerSupport(): void {
-  if (initialized) return;
-  
-  try {
-    const settings = getSettings();
-    isEnabled = settings.controllerEnabled;
-    vibrationEnabled = settings.controllerVibration;
-    deadzone = settings.controllerDeadzone / 100;
-  } catch {
-    // Settings not initialized yet, use defaults
+  if (initialized) {
+    return;
   }
-  
-  subscribeToSettings((newSettings) => {
-    isEnabled = newSettings.controllerEnabled;
-    vibrationEnabled = newSettings.controllerVibration;
-    deadzone = newSettings.controllerDeadzone / 100;
+
+  try {
+    applySettings(getSettings());
+  } catch {
+    applySettings(DEFAULT_SETTINGS);
+  }
+
+  subscribeToSettings((settings) => {
+    applySettings(settings);
   });
-  
+
   window.addEventListener("gamepadconnected", onGamepadConnected);
   window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
-  
   startPolling();
+  ensureFocusObserver();
+  ensureDebugOverlay();
+  syncDebugOverlay();
   initialized = true;
-  
   console.log("[CONTROLLER] Initialized");
 }
 
-/**
- * Shutdown controller support
- */
 export function shutdownControllerSupport(): void {
   stopPolling();
+  focusObserver?.disconnect();
+  focusObserver = null;
+  clearScheduledFocusRefresh();
   window.removeEventListener("gamepadconnected", onGamepadConnected);
   window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
+  currentContext = null;
+  focusableElements = [];
   initialized = false;
 }
 
-// ----------------------------------------------------------------------------
-// POLLING
-// ----------------------------------------------------------------------------
+function applySettings(settings: {
+  controllerEnabled: boolean;
+  controllerVibration: boolean;
+  controllerDeadzone: number;
+  controllerBindings?: ControllerActionBindingMap;
+  controllerAssignments?: ControllerAssignmentSettings;
+}): void {
+  isEnabled = settings.controllerEnabled;
+  vibrationEnabled = settings.controllerVibration;
+  deadzone = Math.max(0, Math.min(0.9, settings.controllerDeadzone / 100));
+  currentBindings = normalizeBindingMap(settings.controllerBindings);
+  controllerAssignments = {
+    P1: settings.controllerAssignments?.P1 ?? DEFAULT_SETTINGS.controllerAssignments.P1,
+    P2: settings.controllerAssignments?.P2 ?? DEFAULT_SETTINGS.controllerAssignments.P2,
+  };
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+}
 
 function startPolling(): void {
-  if (animationFrameId !== null) return;
+  if (animationFrameId !== null) {
+    return;
+  }
   lastFrameTime = performance.now();
   pollLoop();
 }
@@ -171,200 +306,848 @@ function stopPolling(): void {
 
 function pollLoop(): void {
   animationFrameId = requestAnimationFrame(pollLoop);
-  
-  if (!isEnabled) return;
-  
+  if (!isEnabled || typeof navigator.getGamepads !== "function") {
+    return;
+  }
+
   const now = performance.now();
   const deltaTime = now - lastFrameTime;
   lastFrameTime = now;
-  
+
   if (navCooldown > 0) {
     navCooldown = Math.max(0, navCooldown - deltaTime);
   }
-  
+
   const gamepads = navigator.getGamepads();
-  
-  for (const gamepad of gamepads) {
-    if (gamepad) {
-      processGamepad(gamepad);
+  for (let index = 0; index < gamepads.length; index++) {
+    const gamepad = gamepads[index];
+    if (!gamepad) {
+      continue;
     }
+    processGamepad(gamepad, index);
   }
 }
 
-// ----------------------------------------------------------------------------
-// GAMEPAD PROCESSING
-// ----------------------------------------------------------------------------
+function processGamepad(gamepad: Gamepad, gamepadIndex: number): void {
+  const previousButtons = previousButtonStatesByPad[gamepadIndex] ?? new Array(gamepad.buttons.length).fill(false);
+  const previousActionStates = previousActionStatesByPad[gamepadIndex] ?? {};
+  const previousAxisDigital = previousAxisDigitalByPad[gamepadIndex] ?? {};
+  const assignedPlayer = getAssignedPlayerForGamepad(gamepadIndex);
 
-function processGamepad(gamepad: Gamepad): void {
-  const buttons = gamepad.buttons;
-  
-  for (let i = 0; i < buttons.length; i++) {
-    const pressed = buttons[i].pressed;
-    const wasPressed = prevButtonStates[i];
-    
-    if (pressed && !wasPressed) {
-      handleButtonPress(i);
+  if (captureState) {
+    const captureBinding = detectCapturedBinding(gamepad, previousButtons, previousAxisDigital);
+    updatePreviousRawStates(gamepad, gamepadIndex);
+    if (captureBinding) {
+      const activeCapture = captureState;
+      captureState = null;
+      activeCapture.onCapture(captureBinding);
+      syncDebugOverlay();
     }
-    
-    prevButtonStates[i] = pressed;
-  }
-  
-  processAxesNavigation(gamepad.axes);
-}
-
-function handleButtonPress(buttonIndex: number): void {
-  for (const [action, buttons] of Object.entries(currentBindings)) {
-    if (buttons.includes(buttonIndex)) {
-      triggerAction(action as GameAction);
-    }
-  }
-}
-
-function processAxesNavigation(axes: readonly number[]): void {
-  if (navCooldown > 0) return;
-  
-  const leftX = axes[AXIS.LEFT_X] ?? 0;
-  const leftY = axes[AXIS.LEFT_Y] ?? 0;
-  
-  const processedX = Math.abs(leftX) > deadzone ? leftX : 0;
-  const processedY = Math.abs(leftY) > deadzone ? leftY : 0;
-  
-  if (Math.abs(processedX) > Math.abs(processedY)) {
-    if (processedX > 0.5) {
-      triggerAction("moveRight");
-      navCooldown = NAV_COOLDOWN_MS;
-    } else if (processedX < -0.5) {
-      triggerAction("moveLeft");
-      navCooldown = NAV_COOLDOWN_MS;
-    }
-  } else {
-    if (processedY > 0.5) {
-      triggerAction("moveDown");
-      navCooldown = NAV_COOLDOWN_MS;
-    } else if (processedY < -0.5) {
-      triggerAction("moveUp");
-      navCooldown = NAV_COOLDOWN_MS;
-    }
-  }
-}
-
-// ----------------------------------------------------------------------------
-// ACTION HANDLING
-// ----------------------------------------------------------------------------
-
-function triggerAction(action: GameAction): void {
-  console.log(`[CONTROLLER] Action: ${action}`);
-  
-  if (handleUIAction(action)) {
     return;
   }
-  
+
+  const currentActionStates: Partial<Record<GameAction, boolean>> = {};
+  for (const action of GAME_ACTIONS) {
+    const active = isActionActiveForGamepad(gamepad, action);
+    currentActionStates[action] = active;
+    const wasActive = Boolean(previousActionStates[action]);
+
+    if (isNavigationAction(action)) {
+      if (active && (!wasActive || navCooldown <= 0)) {
+        triggerAction(action, assignedPlayer ?? undefined);
+        navCooldown = NAV_COOLDOWN_MS;
+      }
+      continue;
+    }
+
+    if (active && !wasActive) {
+      triggerAction(action, assignedPlayer ?? undefined);
+    }
+  }
+
+  previousActionStatesByPad[gamepadIndex] = currentActionStates;
+  updatePreviousRawStates(gamepad, gamepadIndex);
+}
+
+function updatePreviousRawStates(gamepad: Gamepad, gamepadIndex: number): void {
+  previousButtonStatesByPad[gamepadIndex] = gamepad.buttons.map((button) => isGamepadButtonPressed(button));
+  const axisDigital: Record<string, boolean> = {};
+  Object.values(AXIS).forEach((axisIndex) => {
+    axisDigital[`${axisIndex}:positive`] = isAxisDirectionActive(gamepad.axes[axisIndex] ?? 0, "positive", 0.35);
+    axisDigital[`${axisIndex}:negative`] = isAxisDirectionActive(gamepad.axes[axisIndex] ?? 0, "negative", 0.35);
+  });
+  previousAxisDigitalByPad[gamepadIndex] = axisDigital;
+}
+
+function normalizeBinding(binding: ControllerBindingDescriptor): ControllerBindingDescriptor {
+  return {
+    kind: binding.kind === "axis" ? "axis" : "button",
+    code: Number(binding.code ?? 0),
+    direction: binding.kind === "axis"
+      ? (binding.direction === "positive" ? "positive" : "negative")
+      : undefined,
+    threshold: binding.kind === "axis"
+      ? clampThreshold(binding.threshold)
+      : undefined,
+  };
+}
+
+function normalizeBindingMap(bindings?: ControllerActionBindingMap | null): Record<GameAction, ControllerBindingDescriptor[]> {
+  const normalized = {} as Record<GameAction, ControllerBindingDescriptor[]>;
+  GAME_ACTIONS.forEach((action) => {
+    const nextBindings = bindings?.[action];
+    normalized[action] = nextBindings && nextBindings.length > 0
+      ? nextBindings.map(normalizeBinding)
+      : DEFAULT_CONTROLLER_BINDINGS[action].map(normalizeBinding);
+  });
+  return normalized;
+}
+
+function clampThreshold(value: number | undefined): number {
+  const threshold = Number.isFinite(value) ? Number(value) : 0.35;
+  return Math.max(0.15, Math.min(0.95, threshold));
+}
+
+function isAxisDirectionActive(value: number, direction: "positive" | "negative", threshold: number): boolean {
+  return direction === "positive"
+    ? value >= threshold
+    : value <= -threshold;
+}
+
+function isGamepadButtonPressed(button: GamepadButton | undefined, threshold: number = BUTTON_PRESS_THRESHOLD): boolean {
+  if (!button) {
+    return false;
+  }
+  return Boolean(button.pressed || button.value >= threshold);
+}
+
+function isBindingActive(gamepad: Gamepad, binding: ControllerBindingDescriptor): boolean {
+  if (binding.kind === "button") {
+    return isGamepadButtonPressed(gamepad.buttons[binding.code]);
+  }
+  const axisValue = gamepad.axes[binding.code] ?? 0;
+  return isAxisDirectionActive(axisValue, binding.direction ?? "positive", clampThreshold(binding.threshold));
+}
+
+function isActionActiveForGamepad(gamepad: Gamepad, action: GameAction): boolean {
+  const bindings = currentBindings[action] ?? DEFAULT_CONTROLLER_BINDINGS[action];
+  return bindings.some((binding) => isBindingActive(gamepad, binding));
+}
+
+function detectCapturedBinding(
+  gamepad: Gamepad,
+  previousButtons: boolean[],
+  previousAxisDigital: Record<string, boolean>,
+): ControllerBindingDescriptor | null {
+  if (!captureState) {
+    return null;
+  }
+
+  const hasAnyActiveRawInput = gamepad.buttons.some((button) => isGamepadButtonPressed(button))
+    || gamepad.axes.some((axis) => Math.abs(axis) >= Math.max(deadzone + 0.05, 0.35));
+
+  if (!captureState.primed) {
+    if (!hasAnyActiveRawInput) {
+      captureState.primed = true;
+    }
+    return null;
+  }
+
+  for (let buttonIndex = 0; buttonIndex < gamepad.buttons.length; buttonIndex++) {
+    const pressed = isGamepadButtonPressed(gamepad.buttons[buttonIndex]);
+    const wasPressed = Boolean(previousButtons[buttonIndex]);
+    if (pressed && !wasPressed) {
+      return { kind: "button", code: buttonIndex };
+    }
+  }
+
+  const threshold = Math.max(deadzone + 0.05, 0.4);
+  for (const axisIndex of Object.values(AXIS)) {
+    const axisValue = gamepad.axes[axisIndex] ?? 0;
+    const positiveKey = `${axisIndex}:positive`;
+    const negativeKey = `${axisIndex}:negative`;
+    const positiveActive = isAxisDirectionActive(axisValue, "positive", threshold);
+    const negativeActive = isAxisDirectionActive(axisValue, "negative", threshold);
+
+    if (positiveActive && !previousAxisDigital[positiveKey]) {
+      return { kind: "axis", code: axisIndex, direction: "positive", threshold };
+    }
+    if (negativeActive && !previousAxisDigital[negativeKey]) {
+      return { kind: "axis", code: axisIndex, direction: "negative", threshold };
+    }
+  }
+
+  return null;
+}
+
+function isNavigationAction(action: GameAction): boolean {
+  return action === "moveUp"
+    || action === "moveDown"
+    || action === "moveLeft"
+    || action === "moveRight";
+}
+
+export function getButtonBindings(): Record<GameAction, number[]> {
+  return Object.fromEntries(
+    GAME_ACTIONS.map((action) => [
+      action,
+      (currentBindings[action] ?? [])
+        .filter((binding) => binding.kind === "button")
+        .map((binding) => binding.code),
+    ]),
+  ) as Record<GameAction, number[]>;
+}
+
+export function getControllerBindings(): Record<GameAction, ControllerBindingDescriptor[]> {
+  return Object.fromEntries(
+    GAME_ACTIONS.map((action) => [action, (currentBindings[action] ?? []).map((binding) => ({ ...binding }))]),
+  ) as Record<GameAction, ControllerBindingDescriptor[]>;
+}
+
+export function getControllerAssignments(): ControllerAssignmentSettings {
+  return {
+    P1: controllerAssignments.P1,
+    P2: controllerAssignments.P2,
+  };
+}
+
+export function getControllerActionLabel(action: GameAction): string {
+  const bindings = currentBindings[action] ?? DEFAULT_CONTROLLER_BINDINGS[action];
+  if (bindings.length <= 0) {
+    return "UNBOUND";
+  }
+  return bindings.map(getBindingLabel).join(" / ");
+}
+
+export function getBindingLabel(binding: ControllerBindingDescriptor): string {
+  if (binding.kind === "button") {
+    return getButtonName(binding.code);
+  }
+
+  const axisName = binding.code === AXIS.LEFT_X
+    ? "LS H"
+    : binding.code === AXIS.LEFT_Y
+      ? "LS V"
+      : binding.code === AXIS.RIGHT_X
+        ? "RS H"
+        : binding.code === AXIS.RIGHT_Y
+          ? "RS V"
+          : `AXIS ${binding.code}`;
+  const direction = binding.direction === "negative"
+    ? (binding.code === AXIS.LEFT_X || binding.code === AXIS.RIGHT_X ? "-" : "UP")
+    : (binding.code === AXIS.LEFT_X || binding.code === AXIS.RIGHT_X ? "+" : "DOWN");
+  return `${axisName} ${direction}`;
+}
+
+export function findActionsUsingBinding(
+  binding: ControllerBindingDescriptor,
+  options?: { excludeAction?: GameAction },
+): GameAction[] {
+  return GAME_ACTIONS.filter((action) => {
+    if (options?.excludeAction && action === options.excludeAction) {
+      return false;
+    }
+
+    return (currentBindings[action] ?? []).some((entry) => bindingsMatch(entry, binding));
+  });
+}
+
+function bindingsMatch(left: ControllerBindingDescriptor, right: ControllerBindingDescriptor): boolean {
+  return left.kind === right.kind
+    && left.code === right.code
+    && (left.direction ?? undefined) === (right.direction ?? undefined);
+}
+
+export function startControllerBindingCapture(config: ControllerBindingCapture): void {
+  captureState = {
+    ...config,
+    primed: false,
+  };
+  syncDebugOverlay();
+}
+
+export function cancelControllerBindingCapture(): void {
+  if (!captureState) {
+    return;
+  }
+  const nextCapture = captureState;
+  captureState = null;
+  nextCapture.onCancel?.();
+  syncDebugOverlay();
+}
+
+export function isControllerBindingCaptureActive(): boolean {
+  return Boolean(captureState);
+}
+
+function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
+  markControllerInputActive();
+  console.log(`[CONTROLLER] Action: ${action}${playerId ? ` (${playerId})` : ""}`);
+
+  if (handleContextAction(action, playerId)) {
+    return;
+  }
+
+  if (!currentContext && handleDefaultFocusAction(action)) {
+    return;
+  }
+
   for (const listener of actionListeners) {
-    listener(action);
+    listener(action, playerId);
   }
 }
 
-function handleUIAction(action: GameAction): boolean {
+function handleContextAction(action: GameAction, playerId?: PlayerSlot): boolean {
+  if (!currentContext) {
+    return false;
+  }
+
+  if (action === "toggleLayoutMode" && currentContext.onLayoutAction) {
+    setControllerMode(currentMode === "layout"
+      ? (currentContext.onCursorAction ? "cursor" : "focus")
+      : "layout");
+    return true;
+  }
+
+  if (action === "toggleSurfaceMode" && currentContext.onCursorAction) {
+    setControllerMode(currentMode === "cursor" ? "focus" : "cursor");
+    return true;
+  }
+
+  if (action === "cancel" && currentMode === "layout") {
+    setControllerMode(currentContext.onCursorAction ? "cursor" : "focus");
+    return true;
+  }
+
+  if (currentMode === "layout" && currentContext.onLayoutAction?.(action, playerId)) {
+    return true;
+  }
+
+  if (currentMode === "cursor" && currentContext.onCursorAction?.(action, playerId)) {
+    return true;
+  }
+
+  if (currentMode === "focus") {
+    if (currentContext.onFocusAction?.(action, playerId)) {
+      return true;
+    }
+    if (handleDefaultFocusAction(action)) {
+      return true;
+    }
+  }
+
+  return currentContext.onAction?.(action, playerId, currentMode) ?? false;
+}
+
+function handleDefaultFocusAction(action: GameAction): boolean {
   switch (action) {
     case "moveUp":
-      navigateFocus(-1);
+      navigateFocus("up");
       return true;
     case "moveDown":
-      navigateFocus(1);
+      navigateFocus("down");
+      return true;
+    case "moveLeft":
+      navigateFocus("left");
+      return true;
+    case "moveRight":
+      navigateFocus("right");
       return true;
     case "confirm":
       activateFocusedElement();
+      return true;
+    case "tabPrev":
+    case "prevUnit":
+      navigateFocus("left");
+      return true;
+    case "tabNext":
+    case "nextUnit":
+      navigateFocus("right");
       return true;
     default:
       return false;
   }
 }
 
-// ----------------------------------------------------------------------------
-// UI FOCUS NAVIGATION
-// ----------------------------------------------------------------------------
+export function registerControllerContext(context: ControllerContext): () => void {
+  currentContext = context;
+  currentMode = context.defaultMode ?? "focus";
+  scheduleFocusRefresh();
+  currentContext.onModeChange?.(currentMode);
+  syncDebugOverlay();
+  return () => {
+    if (currentContext?.id === context.id) {
+      currentContext = null;
+      currentMode = "focus";
+      scheduleFocusRefresh();
+      syncDebugOverlay();
+    }
+  };
+}
 
-/**
- * Update the list of focusable elements
- */
-export function updateFocusableElements(): void {
-  focusableElements = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [tabindex]:not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), a[href]'
-    )
-  );
-  
-  focusableElements.forEach((el, index) => {
-    el.classList.add("controller-focusable");
-    el.dataset.focusIndex = String(index);
-  });
-  
-  if (focusableElements.length > 0 && !document.activeElement?.classList.contains("controller-focusable")) {
-    currentFocusIndex = 0;
-    setFocus(0);
+export function clearControllerContext(contextId?: string): void {
+  if (!currentContext) {
+    return;
+  }
+  if (contextId && currentContext.id !== contextId) {
+    return;
+  }
+  currentContext = null;
+  currentMode = "focus";
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+}
+
+export function getControllerMode(): ControllerMode {
+  return currentMode;
+}
+
+export function setControllerMode(mode: ControllerMode): void {
+  if (currentMode === mode) {
+    return;
+  }
+  currentMode = mode;
+  currentContext?.onModeChange?.(currentMode);
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+}
+
+export function getLastInputMode(): ControllerInputMode {
+  return lastInputMode;
+}
+
+export function markKeyboardInputActive(): void {
+  lastInputMode = "keyboard";
+  syncDebugOverlay();
+}
+
+export function markControllerInputActive(): void {
+  lastInputMode = "controller";
+  syncDebugOverlay();
+}
+
+export function shouldSuppressGameplayInput(playerId?: PlayerSlot): boolean {
+  if (!currentContext) {
+    return false;
+  }
+
+  if (typeof currentContext.suppressGameplayInput === "function") {
+    return currentContext.suppressGameplayInput(playerId, currentMode);
+  }
+
+  return Boolean(currentContext.suppressGameplayInput);
+}
+
+function ensureDebugOverlay(): void {
+  if (!(import.meta as any)?.env?.DEV) {
+    return;
+  }
+
+  if (document.getElementById(DEBUG_OVERLAY_ID)) {
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = DEBUG_OVERLAY_ID;
+  overlay.className = "controller-debug-overlay";
+  overlay.setAttribute("aria-hidden", "true");
+  document.body.appendChild(overlay);
+}
+
+function syncDebugOverlay(): void {
+  const overlay = document.getElementById(DEBUG_OVERLAY_ID);
+  if (!overlay) {
+    return;
+  }
+
+  const assignments = `P1:${controllerAssignments.P1 ?? "NONE"} P2:${controllerAssignments.P2 ?? "NONE"}`;
+  const contextId = currentContext?.id ?? "none";
+  const debugState = currentContext?.getDebugState?.() ?? {};
+  const screen = document.body.getAttribute("data-screen") ?? document.querySelector("[data-screen]")?.getAttribute("data-screen") ?? "unknown";
+  const focusLabel = debugState.focus ?? getFocusedElementDebugLabel() ?? "none";
+  const hoverLabel = debugState.hovered ?? "none";
+  const windowLabel = debugState.window ?? "none";
+  const coords = Number.isFinite(debugState.x) && Number.isFinite(debugState.y)
+    ? `${debugState.x},${debugState.y}`
+    : "--";
+
+  overlay.innerHTML = `
+    <div>CURSOR_PROOF_CONTROLLER_COUCH screen:${escapeHtml(screen)} context:${escapeHtml(contextId)} mode:${escapeHtml(currentMode)} input:${escapeHtml(lastInputMode)}</div>
+    <div>focus:${escapeHtml(focusLabel)} hovered:${escapeHtml(hoverLabel)} window:${escapeHtml(windowLabel)} coords:${escapeHtml(coords)} controllers:${escapeHtml(assignments)}</div>
+  `;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getFocusedElementDebugLabel(): string | null {
+  const element = focusableElements[currentFocusIndex] ?? (document.activeElement as HTMLElement | null);
+  if (!element) {
+    return null;
+  }
+  const text = (element.getAttribute("aria-label")
+    || element.textContent
+    || element.getAttribute("data-controller-window")
+    || element.id
+    || element.className
+    || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return text.slice(0, 56) || element.tagName.toLowerCase();
+}
+
+function ensureFocusObserver(): void {
+  if (focusObserver || typeof MutationObserver === "undefined") {
+    return;
+  }
+
+  const startObserver = () => {
+    const target = document.body;
+    if (!target) {
+      window.setTimeout(startObserver, 50);
+      return;
+    }
+
+    focusObserver = new MutationObserver(() => {
+      if (suppressFocusRefresh) {
+        return;
+      }
+      scheduleFocusRefresh();
+    });
+
+    focusObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["disabled", "hidden", "class", "style", "data-controller-exclude", "data-controller-focusable"],
+    });
+  };
+
+  startObserver();
+}
+
+function clearScheduledFocusRefresh(): void {
+  if (focusRefreshRaf !== null) {
+    cancelAnimationFrame(focusRefreshRaf);
+    focusRefreshRaf = null;
   }
 }
 
-function navigateFocus(delta: number): void {
-  if (focusableElements.length === 0) {
+function scheduleFocusRefresh(): void {
+  clearScheduledFocusRefresh();
+  focusRefreshRaf = requestAnimationFrame(() => {
+    focusRefreshRaf = null;
+    updateFocusableElements();
+  });
+}
+
+export function updateFocusableElements(): void {
+  const root = resolveFocusRoot();
+  const nextFocusable = Array.from(
+    root.querySelectorAll<HTMLElement>(currentContext?.focusSelector || FOCUSABLE_SELECTOR),
+  ).filter(isElementFocusable);
+
+  const previousFocus = focusableElements[currentFocusIndex]
+    ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+
+  focusableElements = nextFocusable;
+  focusableElements.forEach((element, index) => {
+    element.classList.add("controller-focusable");
+    element.dataset.focusIndex = String(index);
+  });
+
+  if (focusableElements.length <= 0) {
+    currentFocusIndex = 0;
+    syncDebugOverlay();
+    return;
+  }
+
+  const existingIndex = previousFocus
+    ? focusableElements.findIndex((element) => element === previousFocus)
+    : -1;
+
+  if (existingIndex >= 0) {
+    currentFocusIndex = existingIndex;
+    focusableElements[currentFocusIndex]?.classList.add("controller-focused");
+    syncDebugOverlay();
+    return;
+  }
+
+  const defaultFocus = resolveDefaultFocusable(root);
+  if (defaultFocus) {
+    setFocusByElement(defaultFocus);
+    return;
+  }
+
+  currentFocusIndex = clampIndex(currentFocusIndex, focusableElements.length);
+  setFocus(currentFocusIndex);
+}
+
+function resolveFocusRoot(): ParentNode {
+  const configuredRoot = typeof currentContext?.focusRoot === "function"
+    ? currentContext.focusRoot()
+    : currentContext?.focusRoot;
+  return configuredRoot ?? document;
+}
+
+function resolveDefaultFocusable(root: ParentNode): HTMLElement | null {
+  const selector = currentContext?.defaultFocusSelector ?? "[data-controller-default-focus='true']";
+  if (!selector) {
+    return null;
+  }
+  const candidate = root.querySelector<HTMLElement>(selector);
+  return candidate && isElementFocusable(candidate) ? candidate : null;
+}
+
+function isElementFocusable(element: HTMLElement): boolean {
+  if (element.dataset.controllerExclude === "true") {
+    return false;
+  }
+  if (element.hasAttribute("disabled")) {
+    return false;
+  }
+  if (element.getAttribute("aria-hidden") === "true") {
+    return false;
+  }
+  if (element.tabIndex < 0 && element.dataset.controllerFocusable !== "true") {
+    const tagName = element.tagName.toLowerCase();
+    if (!["button", "input", "select", "textarea", "a"].includes(tagName)) {
+      return false;
+    }
+  }
+
+  const style = window.getComputedStyle(element);
+  if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+type FocusDirection = "up" | "down" | "left" | "right";
+
+function navigateFocus(direction: FocusDirection): void {
+  if (focusableElements.length <= 0) {
     updateFocusableElements();
   }
-  
-  if (focusableElements.length === 0) return;
-  
-  const newIndex = (currentFocusIndex + delta + focusableElements.length) % focusableElements.length;
-  setFocus(newIndex);
+  if (focusableElements.length <= 0) {
+    return;
+  }
+
+  const current = focusableElements[currentFocusIndex] ?? focusableElements[0];
+  const currentRect = current.getBoundingClientRect();
+  const currentCenterX = currentRect.left + currentRect.width / 2;
+  const currentCenterY = currentRect.top + currentRect.height / 2;
+
+  let bestIndex = currentFocusIndex;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  focusableElements.forEach((candidate, index) => {
+    if (index === currentFocusIndex) {
+      return;
+    }
+
+    const rect = candidate.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const deltaX = centerX - currentCenterX;
+    const deltaY = centerY - currentCenterY;
+
+    if (direction === "up" && deltaY >= -4) return;
+    if (direction === "down" && deltaY <= 4) return;
+    if (direction === "left" && deltaX >= -4) return;
+    if (direction === "right" && deltaX <= 4) return;
+
+    const primaryDistance = direction === "left" || direction === "right"
+      ? Math.abs(deltaX)
+      : Math.abs(deltaY);
+    const secondaryDistance = direction === "left" || direction === "right"
+      ? Math.abs(deltaY)
+      : Math.abs(deltaX);
+    const score = primaryDistance + (secondaryDistance * 0.35);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+
+  if (bestIndex !== currentFocusIndex) {
+    setFocus(bestIndex);
+    return;
+  }
+
+  const wrappedIndex = direction === "up" || direction === "left"
+    ? currentFocusIndex - 1
+    : currentFocusIndex + 1;
+  setFocus((wrappedIndex + focusableElements.length) % focusableElements.length);
+}
+
+function setFocusByElement(element: HTMLElement): void {
+  const index = focusableElements.findIndex((candidate) => candidate === element);
+  if (index >= 0) {
+    setFocus(index);
+  }
 }
 
 function setFocus(index: number): void {
-  focusableElements.forEach(el => el.classList.remove("controller-focused"));
-  
-  currentFocusIndex = index;
-  const element = focusableElements[index];
-  
-  if (element) {
-    element.classList.add("controller-focused");
-    element.focus();
-    element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (focusableElements.length <= 0) {
+    return;
   }
+
+  focusableElements.forEach((element) => element.classList.remove("controller-focused"));
+  currentFocusIndex = clampIndex(index, focusableElements.length);
+  const element = focusableElements[currentFocusIndex];
+  if (!element) {
+    syncDebugOverlay();
+    return;
+  }
+
+  suppressFocusRefresh = true;
+  element.classList.add("controller-focused");
+  element.focus({ preventScroll: true });
+  suppressFocusRefresh = false;
+  element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  syncDebugOverlay();
 }
 
 function activateFocusedElement(): void {
   const element = focusableElements[currentFocusIndex];
-  
-  if (element) {
-    element.click();
-    vibrate(50);
+  if (!element) {
+    return;
   }
+
+  if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) {
+    element.click();
+  } else if (typeof element.click === "function") {
+    element.click();
+  }
+
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    element.focus();
+  }
+  vibrate(50, 0.3);
 }
 
-// ----------------------------------------------------------------------------
-// VIBRATION
-// ----------------------------------------------------------------------------
+function clampIndex(index: number, length: number): number {
+  if (length <= 0) {
+    return 0;
+  }
+  if (!Number.isFinite(index)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(length - 1, index));
+}
 
-/**
- * Trigger controller vibration
- */
-export function vibrate(durationMs: number, intensity: number = 1.0): void {
-  if (!vibrationEnabled) return;
-  
-  const gamepads = navigator.getGamepads();
-  
-  for (const gamepad of gamepads) {
-    if (gamepad?.vibrationActuator) {
-      gamepad.vibrationActuator.playEffect("dual-rumble", {
-        startDelay: 0,
-        duration: durationMs,
-        weakMagnitude: intensity * 0.5,
-        strongMagnitude: intensity,
-      }).catch(() => {});
+export function isControllerConnected(): boolean {
+  return typeof navigator.getGamepads === "function"
+    ? Array.from(navigator.getGamepads()).some((gamepad) => gamepad !== null)
+    : false;
+}
+
+export function getConnectedControllers(): ControllerState[] {
+  if (typeof navigator.getGamepads !== "function") {
+    return [];
+  }
+
+  const controllers: ControllerState[] = [];
+  for (const gamepad of navigator.getGamepads()) {
+    if (!gamepad) {
+      continue;
+    }
+
+    controllers.push({
+      connected: true,
+      id: gamepad.id,
+      index: gamepad.index,
+      assignedPlayer: getAssignedPlayerForGamepad(gamepad.index),
+      buttons: gamepad.buttons.map((button, buttonIndex) => ({
+        pressed: isGamepadButtonPressed(button),
+        value: button.value,
+        justPressed: isGamepadButtonPressed(button) && !(previousButtonStatesByPad[gamepad.index]?.[buttonIndex] ?? false),
+        justReleased: !isGamepadButtonPressed(button) && Boolean(previousButtonStatesByPad[gamepad.index]?.[buttonIndex]),
+      })),
+      axes: [...gamepad.axes],
+    });
+  }
+
+  return controllers;
+}
+
+export function bindControllerToPlayer(playerId: PlayerSlot, gamepadIndex: number | null): void {
+  controllerAssignments[playerId] = gamepadIndex;
+  syncDebugOverlay();
+}
+
+export function getControllerBindingForPlayer(playerId: PlayerSlot): number | null {
+  return controllerAssignments[playerId];
+}
+
+function getAssignedPlayerForGamepad(gamepadIndex: number): PlayerSlot | null {
+  for (const playerId of Object.keys(controllerAssignments) as PlayerSlot[]) {
+    if (controllerAssignments[playerId] === gamepadIndex) {
+      return playerId;
     }
   }
+  return null;
 }
 
-/**
- * Vibration patterns
- */
+function bindUnassignedController(gamepadIndex: number): void {
+  if (getAssignedPlayerForGamepad(gamepadIndex)) {
+    return;
+  }
+
+  if (controllerAssignments.P1 === null) {
+    controllerAssignments.P1 = gamepadIndex;
+    return;
+  }
+  if (controllerAssignments.P2 === null) {
+    controllerAssignments.P2 = gamepadIndex;
+  }
+}
+
+export function getAssignedGamepad(playerId: PlayerSlot): Gamepad | null {
+  const gamepadIndex = controllerAssignments[playerId];
+  if (gamepadIndex === null || typeof navigator.getGamepads !== "function") {
+    return null;
+  }
+  return navigator.getGamepads()[gamepadIndex] ?? null;
+}
+
+export function isGamepadActionActive(playerId: PlayerSlot, action: GameAction): boolean {
+  const gamepad = getAssignedGamepad(playerId);
+  if (!gamepad || !isEnabled) {
+    return false;
+  }
+  return isActionActiveForGamepad(gamepad, action);
+}
+
+export function vibrate(durationMs: number, intensity: number = 1.0): void {
+  if (!vibrationEnabled || typeof navigator.getGamepads !== "function") {
+    return;
+  }
+
+  const gamepads = navigator.getGamepads();
+  for (const gamepad of gamepads) {
+    if (!gamepad?.vibrationActuator) {
+      continue;
+    }
+    gamepad.vibrationActuator.playEffect("dual-rumble", {
+      startDelay: 0,
+      duration: durationMs,
+      weakMagnitude: intensity * 0.5,
+      strongMagnitude: intensity,
+    }).catch(() => {});
+  }
+}
+
 export const VIBRATION_PATTERNS = {
   confirm: () => vibrate(50, 0.3),
   cancel: () => vibrate(30, 0.2),
@@ -377,79 +1160,6 @@ export const VIBRATION_PATTERNS = {
   },
 };
 
-// ----------------------------------------------------------------------------
-// EVENT HANDLERS
-// ----------------------------------------------------------------------------
-
-function onGamepadConnected(event: GamepadEvent): void {
-  console.log(`[CONTROLLER] Connected: ${event.gamepad.id}`);
-  updateFocusableElements();
-  vibrate(100, 0.5);
-}
-
-function onGamepadDisconnected(event: GamepadEvent): void {
-  console.log(`[CONTROLLER] Disconnected: ${event.gamepad.id}`);
-  document.querySelectorAll(".controller-focused").forEach(el => {
-    el.classList.remove("controller-focused");
-  });
-}
-
-// ----------------------------------------------------------------------------
-// PUBLIC API
-// ----------------------------------------------------------------------------
-
-/**
- * Subscribe to controller actions
- */
-export function onControllerAction(listener: ActionListener): () => void {
-  actionListeners.add(listener);
-  return () => actionListeners.delete(listener);
-}
-
-/**
- * Check if a controller is connected
- */
-export function isControllerConnected(): boolean {
-  const gamepads = navigator.getGamepads();
-  return gamepads.some(gp => gp !== null);
-}
-
-/**
- * Get connected controllers
- */
-export function getConnectedControllers(): ControllerState[] {
-  const gamepads = navigator.getGamepads();
-  const controllers: ControllerState[] = [];
-  
-  for (const gamepad of gamepads) {
-    if (gamepad) {
-      controllers.push({
-        connected: true,
-        id: gamepad.id,
-        buttons: gamepad.buttons.map((btn, i) => ({
-          pressed: btn.pressed,
-          value: btn.value,
-          justPressed: btn.pressed && !prevButtonStates[i],
-          justReleased: !btn.pressed && prevButtonStates[i],
-        })),
-        axes: [...gamepad.axes],
-      });
-    }
-  }
-  
-  return controllers;
-}
-
-/**
- * Get button bindings
- */
-export function getButtonBindings(): Record<GameAction, number[]> {
-  return { ...currentBindings };
-}
-
-/**
- * Get button name
- */
 export function getButtonName(buttonIndex: number): string {
   const names: Record<number, string> = {
     [BUTTON.A]: "A",
@@ -460,21 +1170,18 @@ export function getButtonName(buttonIndex: number): string {
     [BUTTON.RB]: "RB",
     [BUTTON.LT]: "LT",
     [BUTTON.RT]: "RT",
-    [BUTTON.SELECT]: "Select",
-    [BUTTON.START]: "Start",
+    [BUTTON.SELECT]: "VIEW",
+    [BUTTON.START]: "MENU",
     [BUTTON.L3]: "L3",
     [BUTTON.R3]: "R3",
-    [BUTTON.DPAD_UP]: "D-Up",
-    [BUTTON.DPAD_DOWN]: "D-Down",
-    [BUTTON.DPAD_LEFT]: "D-Left",
-    [BUTTON.DPAD_RIGHT]: "D-Right",
+    [BUTTON.DPAD_UP]: "DPAD UP",
+    [BUTTON.DPAD_DOWN]: "DPAD DOWN",
+    [BUTTON.DPAD_LEFT]: "DPAD LEFT",
+    [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
   };
-  return names[buttonIndex] ?? `Button ${buttonIndex}`;
+  return names[buttonIndex] ?? `BTN ${buttonIndex}`;
 }
 
-/**
- * Get action name
- */
 export function getActionName(action: GameAction): string {
   const names: Record<GameAction, string> = {
     confirm: "Confirm",
@@ -487,9 +1194,52 @@ export function getActionName(action: GameAction): string {
     nextUnit: "Next Unit",
     prevUnit: "Previous Unit",
     endTurn: "End Turn",
-    openInventory: "Inventory",
-    openMap: "Map",
+    openInventory: "Open Inventory",
+    openMap: "Open Map",
     pause: "Pause",
+    attack: "Attack",
+    interact: "Interact",
+    dash: "Dash",
+    tabPrev: "Previous Tab",
+    tabNext: "Next Tab",
+    zoomIn: "Zoom In",
+    zoomOut: "Zoom Out",
+    toggleSurfaceMode: "Toggle Surface Mode",
+    toggleLayoutMode: "Toggle Layout Mode",
+    windowPrimary: "Window Primary",
+    windowSecondary: "Window Secondary",
   };
   return names[action] ?? action;
+}
+
+function onGamepadConnected(event: GamepadEvent): void {
+  console.log(`[CONTROLLER] Connected: ${event.gamepad.id}`);
+  bindUnassignedController(event.gamepad.index);
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+  vibrate(100, 0.5);
+}
+
+function onGamepadDisconnected(event: GamepadEvent): void {
+  console.log(`[CONTROLLER] Disconnected: ${event.gamepad.id}`);
+  previousButtonStatesByPad[event.gamepad.index] = [];
+  previousActionStatesByPad[event.gamepad.index] = {};
+  previousAxisDigitalByPad[event.gamepad.index] = {};
+
+  for (const playerId of Object.keys(controllerAssignments) as PlayerSlot[]) {
+    if (controllerAssignments[playerId] === event.gamepad.index) {
+      controllerAssignments[playerId] = null;
+    }
+  }
+
+  document.querySelectorAll(".controller-focused").forEach((element) => {
+    element.classList.remove("controller-focused");
+  });
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+}
+
+export function onControllerAction(listener: (action: GameAction, playerId?: PlayerSlot) => void): () => void {
+  actionListeners.add(listener);
+  return () => actionListeners.delete(listener);
 }

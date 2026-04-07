@@ -4,6 +4,8 @@
 
 import { getStarterRecipeIds } from "./crafting";
 import { getImportedStarterItems } from "../content/technica";
+import { createDefaultSchemaUnlockState } from "./schemaSystem";
+import { createDefaultFoundryState } from "./foundrySystem";
 
 import {
   getStarterCardLibrary,
@@ -41,6 +43,8 @@ import {
 import type { ImportedOperationDefinition, ImportedUnitTemplate } from "../content/technica/types";
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
+import { createDefaultSessionState } from "./session";
+import { createDefaultTheaterDeploymentPreset } from "./theaterDeploymentPreset";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -132,6 +136,12 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
   const agiMatch = desc.match(/\+(\d+)\s+agi/i) || desc.match(/gain\s+\+?(\d+)\s+agi/i);
   if (agiMatch) {
     effects.push({ type: "agi_up", amount: parseInt(agiMatch[1], 10), duration: 1 });
+  }
+
+  // AGI debuff
+  const agiDownMatch = desc.match(/-(\d+)\s+agi/i) || desc.match(/inflict\s+-?(\d+)\s+agi/i);
+  if (agiDownMatch) {
+    effects.push({ type: "agi_down", amount: parseInt(agiDownMatch[1], 10), duration: 1, stat: "agi" });
   }
 
   // ACC buff
@@ -244,8 +254,19 @@ interface UnitWithEquipment extends Unit {
   traits?: string[];
 }
 
+function createEmptyLoadout(): UnitLoadout {
+  return {
+    primaryWeapon: null,
+    secondaryWeapon: null,
+    helmet: null,
+    chestpiece: null,
+    accessory1: null,
+    accessory2: null,
+  };
+}
+
 function importedUnitToRuntimeUnit(unit: ImportedUnitTemplate): UnitWithEquipment | null {
-  if (unit.startingInRoster === false && !unit.deployInParty) {
+  if (unit.spawnRole === "enemy" || (unit.startingInRoster === false && !unit.deployInParty)) {
     return null;
   }
 
@@ -272,14 +293,8 @@ function importedUnitToRuntimeUnit(unit: ImportedUnitTemplate): UnitWithEquipmen
       acc: unit.stats.acc,
     },
     deck: [],
-    loadout: {
-      primaryWeapon: unit.loadout.primaryWeapon || null,
-      secondaryWeapon: unit.loadout.secondaryWeapon || null,
-      helmet: unit.loadout.helmet || null,
-      chestpiece: unit.loadout.chestpiece || null,
-      accessory1: unit.loadout.accessory1 || null,
-      accessory2: unit.loadout.accessory2 || null,
-    },
+    // Fresh saves currently start with no equipped gear regardless of template defaults.
+    loadout: createEmptyLoadout(),
     affinities: createDefaultAffinities(),
     pwr: unit.pwr,
     recruitCost: unit.recruitCost,
@@ -322,14 +337,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         acc: 90,
       },
       deck: baseDeck,
-      loadout: {
-        primaryWeapon: "weapon_emberclaw_repeater", // Mechanical weapon for testing
-        secondaryWeapon: null,
-        helmet: "armor_ironguard_helm",
-        chestpiece: "armor_steelplate_cuirass",
-        accessory1: "accessory_steel_signet_ring",
-        accessory2: null,
-      },
+      loadout: createEmptyLoadout(),
       affinities: createDefaultAffinities(),
       startingInRoster: true,
       deployInParty: true,
@@ -356,14 +364,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         acc: 95,
       },
       deck: baseDeck,
-      loadout: {
-        primaryWeapon: "weapon_elm_recurve_bow",
-        secondaryWeapon: null,
-        helmet: "armor_rangers_hood",
-        chestpiece: "armor_leather_jerkin",
-        accessory1: "accessory_eagle_eye_lens",
-        accessory2: null,
-      },
+      loadout: createEmptyLoadout(),
       affinities: createDefaultAffinities(),
       startingInRoster: true,
       deployInParty: true,
@@ -390,14 +391,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
         acc: 85,
       },
       deck: baseDeck,
-      loadout: {
-        primaryWeapon: "weapon_oak_battlestaff",
-        secondaryWeapon: null,
-        helmet: "armor_mystic_circlet",
-        chestpiece: "armor_mages_robe",
-        accessory1: "accessory_vitality_charm",
-        accessory2: null,
-      },
+      loadout: createEmptyLoadout(),
       affinities: createDefaultAffinities(),
       startingInRoster: true,
       deployInParty: true,
@@ -535,9 +529,7 @@ function createDefaultProfile(rosterUnitIds: UnitId[]): PlayerProfile {
  * Create the equipment pool (all available equipment IDs)
  */
 function createEquipmentPool(): string[] {
-  return Object.values(getAllStarterEquipment())
-    .filter((equipment) => (equipment as { inventory?: { startingOwned?: boolean } }).inventory?.startingOwned !== false)
-    .map((equipment) => equipment.id);
+  return [];
 }
 
 /**
@@ -560,9 +552,12 @@ export function createNewGameState(): GameStateWithEquipment {
   const profile = createDefaultProfile(rosterUnitIds);
   const operation = createOperationIronGate();
   const importedStarterItems = getImportedStarterItems().map((item) => ({ ...item }));
+  const partyUnitIds = Object.values(unitsById)
+    .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
+    .map((unit) => unit.id);
 
   // Equipment system data
-  const equipmentById = getAllStarterEquipment();
+  const equipmentById: Record<string, Equipment> = {};
   const modulesById = getAllModules();
   const equipmentPool = createEquipmentPool();
 
@@ -574,11 +569,45 @@ export function createNewGameState(): GameStateWithEquipment {
     phase: "shell",
     profile,
     operation,
+    session: createDefaultSessionState({
+      wad: 0,
+      resources: {
+        metalScrap: 0,
+        wood: 0,
+        chaosShards: 0,
+        steamComponents: 0,
+      },
+      operation,
+      players: {
+        P1: {
+          id: "P1",
+          slot: "P1",
+          active: true,
+          color: "#ff8a00",
+          inputSource: "keyboard1",
+          presence: "local",
+          authorityRole: "local",
+          avatar: null,
+          controlledUnitIds: [],
+        },
+        P2: {
+          id: "P2",
+          slot: "P2",
+          active: false,
+          color: "#6849c2",
+          inputSource: "none",
+          presence: "inactive",
+          authorityRole: "local",
+          avatar: null,
+          controlledUnitIds: [],
+        },
+      },
+    }),
+    lobby: null,
     unitsById: unitsById as unknown as Record<UnitId, Unit>,
     cardsById,
-    partyUnitIds: Object.values(unitsById)
-      .filter((unit) => (unit as UnitWithEquipment).deployInParty === true)
-      .map((unit) => unit.id),
+    partyUnitIds,
+    theaterDeploymentPreset: createDefaultTheaterDeploymentPreset(partyUnitIds),
 
     wad: 0,
     resources: {
@@ -587,6 +616,8 @@ export function createNewGameState(): GameStateWithEquipment {
       chaosShards: 0,
       steamComponents: 0,
     },
+    schema: createDefaultSchemaUnlockState(),
+    foundry: createDefaultFoundryState(),
 
     // Starter card library
     cardLibrary: Object.fromEntries(
@@ -632,22 +663,30 @@ export function createNewGameState(): GameStateWithEquipment {
     // Unit Recruitment System (Headline 14az)
     recruitmentCandidates: undefined, // Will be generated when Tavern is opened
     unitClassProgress: {},
+    runFieldModInventory: [],
+    unitHardpoints: {},
 
     // Local Co-op System - Initialize players
     players: {
       P1: {
         id: "P1",
+        slot: "P1",
         active: true,
         color: "#ff8a00", // Orange for P1
         inputSource: "keyboard1",
+        presence: "local",
+        authorityRole: "local",
         avatar: null, // Will be set when entering field mode
         controlledUnitIds: [], // Will be populated when entering battle
       },
       P2: {
         id: "P2",
+        slot: "P2",
         active: false,
         color: "#6849c2", // Purple for P2
         inputSource: "none",
+        presence: "inactive",
+        authorityRole: "local",
         avatar: null,
         controlledUnitIds: [],
       },
@@ -683,6 +722,7 @@ export function createNewGameState(): GameStateWithEquipment {
     ],
 
     unlockedCodexEntries: [],
+    completedDialogueIds: [],
   };
 
   // Initialize unit controllers to P1 by default

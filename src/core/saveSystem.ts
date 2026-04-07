@@ -5,6 +5,8 @@
 // ============================================================================
 
 import { GameState } from "./types";
+import { CampaignProgress, createDefaultCampaignProgress, loadCampaignProgress } from "./campaign";
+import { withNormalizedTheaterDeploymentPresetState } from "./theaterDeploymentPreset";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -32,8 +34,18 @@ export interface SaveResult {
 export interface LoadResult {
   success: boolean;
   state?: GameState;
+  campaignProgress?: CampaignProgress;
   error?: string;
 }
+
+type PersistedSaveState = GameState & {
+  _saveMetadata?: {
+    version: number;
+    timestamp: number;
+    slot: SaveSlot;
+  };
+  _campaignProgressSnapshot?: CampaignProgress;
+};
 
 // Save slot constants
 export const SAVE_SLOTS = {
@@ -139,7 +151,9 @@ function localStorageListSaves(): SaveInfo[] {
       try {
         const saveStr = localStorage.getItem(STORAGE_PREFIX + slot);
         if (saveStr) {
-          const state = JSON.parse(saveStr) as GameState;
+          const state = JSON.parse(saveStr) as PersistedSaveState;
+          delete state._saveMetadata;
+          delete state._campaignProgressSnapshot;
           preview = extractSavePreview(state);
         }
       } catch {
@@ -180,13 +194,14 @@ function extractSavePreview(state: GameState): SavePreview {
  */
 export async function saveGame(slot: SaveSlot, state: GameState): Promise<SaveResult> {
   try {
-    const saveData = {
+    const saveData: PersistedSaveState = {
       ...state,
       _saveMetadata: {
         version: 1,
         timestamp: Date.now(),
         slot,
       },
+      _campaignProgressSnapshot: loadCampaignProgress(),
     };
     
     const json = JSON.stringify(saveData);
@@ -273,14 +288,17 @@ export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
       return { success: false, error: "No save file found" };
     }
     
-    const state = JSON.parse(json) as GameState;
-    delete (state as any)._saveMetadata;
+    const persistedState = JSON.parse(json) as PersistedSaveState;
+    const campaignProgress = persistedState._campaignProgressSnapshot ?? createDefaultCampaignProgress();
+    delete persistedState._saveMetadata;
+    delete persistedState._campaignProgressSnapshot;
+    const state = withNormalizedTheaterDeploymentPresetState(persistedState as GameState);
     
     // Run migration for old crafted weapons
     migrateCraftedWeapons(state);
     
     console.log(`[LOAD] Game loaded from slot: ${slot}`);
-    return { success: true, state };
+    return { success: true, state, campaignProgress };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
     console.error(`[LOAD] Failed to load game:`, error);

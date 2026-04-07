@@ -8,6 +8,12 @@ import { GameState } from "../core/types";
 import { getAllStarterEquipment } from "../core/equipment";
 import { getAllImportedGear } from "../content/technica";
 import { createNewGameState } from "../core/initialState";
+import { withNormalizedLobbyState } from "../core/multiplayerLobby";
+import { withNormalizedNotesState } from "../core/notesSystem";
+import { withNormalizedSessionState } from "../core/session";
+import { withNormalizedFoundryState } from "../core/foundrySystem";
+import { withNormalizedSchemaState } from "../core/schemaSystem";
+import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -37,10 +43,6 @@ function syncPublishedTechnicaGear(state: GameState): GameState {
 
     nextEquipmentById[gear.id] = runtimeEquipment[gear.id] ?? gear;
 
-    if (gear.inventory?.startingOwned !== false && !nextEquipmentPool.includes(gear.id)) {
-      nextEquipmentPool.push(gear.id);
-    }
-
     syncedGearIds.add(gear.id);
     changed = true;
   });
@@ -60,6 +62,18 @@ function syncPublishedTechnicaGear(state: GameState): GameState {
   };
 }
 
+function syncSchemaState(state: GameState): GameState {
+  return withNormalizedLobbyState(
+    withNormalizedSessionState(
+      withNormalizedNotesState(
+        withNormalizedFoundryState(
+          withNormalizedSchemaState(withNormalizedTheaterDeploymentPresetState(state)),
+        ),
+      ),
+    ),
+  );
+}
+
 // ----------------------------------------------------------------------------
 // CORE API
 // ----------------------------------------------------------------------------
@@ -69,9 +83,9 @@ function syncPublishedTechnicaGear(state: GameState): GameState {
  */
 export function getGameState(): GameState {
   if (!_gameState) {
-    _gameState = syncPublishedTechnicaGear(createNewGameState());
+    _gameState = syncSchemaState(syncPublishedTechnicaGear(createNewGameState()));
   } else {
-    _gameState = syncPublishedTechnicaGear(_gameState);
+    _gameState = syncSchemaState(syncPublishedTechnicaGear(_gameState));
   }
   return _gameState;
 }
@@ -80,7 +94,7 @@ export function getGameState(): GameState {
  * Replace the entire game state and notify listeners
  */
 export function setGameState(newState: GameState): void {
-  _gameState = syncPublishedTechnicaGear(newState);
+  _gameState = syncSchemaState(syncPublishedTechnicaGear(newState));
   notifyListeners();
 }
 
@@ -271,13 +285,19 @@ export function getBattleState(): GameState["currentBattle"] {
 // OPERATION HELPERS
 // ----------------------------------------------------------------------------
 
-export function updateOperation(updates: Partial<GameState["operation"]>): void {
+export function updateOperation(updates: Partial<NonNullable<GameState["operation"]>>): void {
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates as Record<string, unknown>).filter(([, value]) => value !== undefined),
+  ) as Partial<NonNullable<GameState["operation"]>>;
+
   updateGameState(state => ({
     ...state,
-    operation: {
-      ...state.operation,
-      ...updates,
-    },
+    operation: state.operation
+      ? ({
+          ...state.operation,
+          ...definedUpdates,
+        } as NonNullable<GameState["operation"]>)
+      : state.operation,
   }));
 }
 

@@ -2,9 +2,10 @@
 // LOCAL CO-OP SYSTEM - Drop-in/Drop-out and Unit Redistribution
 // ============================================================================
 
-import { GameState, PlayerId, UnitId } from "./types";
+import { GameState, PlayerId } from "./types";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { FieldAvatar } from "./types";
+import { setPlayerJoinState } from "./session";
 
 const MAX_TETHER_DISTANCE = 6 * 64; // 6 tiles in pixels (assuming 64px tiles)
 
@@ -12,25 +13,32 @@ const MAX_TETHER_DISTANCE = 6 * 64; // 6 tiles in pixels (assuming 64px tiles)
  * Redistribute units between P1 and P2 when P2 joins or leaves
  */
 export function redistributeUnitsForCoop(state: GameState): GameState {
-  const p1 = state.players.P1;
-  const p2 = state.players.P2;
-  
+  const p1 = {
+    ...state.players.P1,
+    controlledUnitIds: [] as string[],
+  };
+  const p2 = {
+    ...state.players.P2,
+    controlledUnitIds: [] as string[],
+  };
+  const nextUnitsById = { ...state.unitsById };
+
   // Collect all player-controlled unit IDs
   const playerUnitIds = state.partyUnitIds.filter(unitId => {
     const unit = state.unitsById[unitId];
     return unit && !unit.isEnemy;
   });
-  
+
   if (p2.active && playerUnitIds.length > 0) {
     // Distribute units evenly between P1 and P2
-    p1.controlledUnitIds = [];
-    p2.controlledUnitIds = [];
-    
     playerUnitIds.forEach((unitId, index) => {
       const controller: PlayerId = index % 2 === 0 ? "P1" : "P2";
-      const unit = state.unitsById[unitId];
+      const unit = nextUnitsById[unitId];
       if (unit) {
-        unit.controller = controller;
+        nextUnitsById[unitId] = {
+          ...unit,
+          controller,
+        };
         if (controller === "P1") {
           p1.controlledUnitIds.push(unitId);
         } else {
@@ -41,17 +49,27 @@ export function redistributeUnitsForCoop(state: GameState): GameState {
   } else {
     // P2 not active - assign all units to P1
     p1.controlledUnitIds = [...playerUnitIds];
-    p2.controlledUnitIds = [];
-    
+
     playerUnitIds.forEach(unitId => {
-      const unit = state.unitsById[unitId];
+      const unit = nextUnitsById[unitId];
       if (unit) {
-        unit.controller = "P1";
+        nextUnitsById[unitId] = {
+          ...unit,
+          controller: "P1",
+        };
       }
     });
   }
-  
-  return state;
+
+  return {
+    ...state,
+    unitsById: nextUnitsById,
+    players: {
+      ...state.players,
+      P1: p1,
+      P2: p2,
+    },
+  };
 }
 
 /**
@@ -61,7 +79,6 @@ export function redistributeUnitsForCoop(state: GameState): GameState {
 export function tryJoinAsP2(): boolean {
   const state = getGameState();
   const p2 = state.players.P2;
-  const p1 = state.players.P1;
   
   // Don't allow join during battle
   if (state.phase === "battle" || state.currentBattle !== null) {
@@ -79,6 +96,8 @@ export function tryJoinAsP2(): boolean {
     newP2.active = true;
     newP2.inputSource = "keyboard2";
     newP2.color = "#6849c2";
+    newP2.presence = "local";
+    newP2.authorityRole = "local";
     
     // Spawn P2 avatar near P1
     if (s.players.P1.avatar) {
@@ -114,7 +133,7 @@ export function tryJoinAsP2(): boolean {
       },
     };
     
-    return redistributeUnitsForCoop(newState);
+    return setPlayerJoinState(redistributeUnitsForCoop(newState), "P2", true);
   });
   
   showCoopMessage("Player 2 joined the expedition", "#6849c2");
@@ -129,7 +148,6 @@ export function tryJoinAsP2(): boolean {
 export function dropOutP2(): boolean {
   const state = getGameState();
   const p2 = state.players.P2;
-  const p1 = state.players.P1;
   
   if (!p2.active) {
     return false;
@@ -142,32 +160,25 @@ export function dropOutP2(): boolean {
   }
   
   updateGameState(s => {
-    // Reassign units back to P1
-    const newUnitsById = { ...s.unitsById };
-    for (const unitId of p2.controlledUnitIds) {
-      const unit = newUnitsById[unitId];
-      if (unit) {
-        unit.controller = "P1";
-        p1.controlledUnitIds.push(unitId);
-      }
-    }
-    
     const newP2 = {
       ...s.players.P2,
       active: false,
       avatar: null,
       inputSource: "none" as const,
+      presence: "inactive" as const,
+      authorityRole: "local" as const,
       controlledUnitIds: [],
     };
-    
-    return {
+
+    const nextState = redistributeUnitsForCoop({
       ...s,
-      unitsById: newUnitsById,
       players: {
         ...s.players,
         P2: newP2,
       },
-    };
+    });
+
+    return setPlayerJoinState(nextState, "P2", false);
   });
   
   showCoopMessage("Player 2 left. Aeriss now controls all units.", "#ff8a00");
@@ -238,7 +249,7 @@ export function checkTetherDistance(
  * If movement would exceed max distance, prevent it
  */
 export function applyTetherConstraint(
-  currentPos: { x: number; y: number },
+  _currentPos: { x: number; y: number },
   desiredPos: { x: number; y: number },
   otherAvatar: FieldAvatar
 ): { x: number; y: number } {

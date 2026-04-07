@@ -1,7 +1,9 @@
 // src/ui/screens/ScrollLinkBoot.ts
-import { renderExpositionScreen } from "./ExpositionScreen";
+import { setMusicCue } from "../../core/audioSystem";
+import { renderMainMenu } from "./MainMenuScreen";
 
 export function renderScrollLinkBoot() {
+  setMusicCue("boot");
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element in index.html");
@@ -87,7 +89,7 @@ export function renderScrollLinkBoot() {
     if (index >= total) {
       clearInterval(interval);
       setTimeout(() => {
-        renderExpositionScreen();
+        void renderMainMenu();
       }, 700);
     }
   }, 400);

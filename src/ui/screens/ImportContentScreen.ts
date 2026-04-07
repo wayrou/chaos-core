@@ -23,6 +23,15 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "dialogue") {
     return "DIALOGUE";
   }
+  if (entry.manifest.contentType === "mail") {
+    return "MAIL";
+  }
+  if (entry.manifest.contentType === "field_enemy") {
+    return "FIELD ENEMY";
+  }
+  if (entry.manifest.contentType === "npc") {
+    return "NPC";
+  }
   if (entry.manifest.contentType === "gear") {
     return "GEAR";
   }
@@ -32,13 +41,19 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "card") {
     return "CARD";
   }
+  if (entry.manifest.contentType === "fieldmod") {
+    return "FIELD MOD";
+  }
   if (entry.manifest.contentType === "unit") {
     return "UNIT";
   }
   if (entry.manifest.contentType === "operation") {
     return "OPERATION";
   }
-  return "CLASS";
+  if (entry.manifest.contentType === "class") {
+    return "CLASS";
+  }
+  return "CODEX";
 }
 
 function getEntryActionLabel(entry: InstalledTechnicaContent): string | null {
@@ -265,7 +280,18 @@ export function renderImportContentScreen(): void {
 
   const installedEntries = getInstalledTechnicaContent();
   const counts = getInstalledTechnicaCounts();
-  const systemsCount = counts.gear + counts.item + counts.card + counts.unit + counts.operation + counts.class;
+  const enemyCount = counts.field_enemy;
+  const systemsCount =
+    counts.mail +
+    counts.npc +
+    counts.gear +
+    counts.item +
+    counts.card +
+    counts.fieldmod +
+    counts.unit +
+    counts.operation +
+    counts.class +
+    counts.codex;
 
   app.innerHTML = `
     <div class="import-content-root town-screen ard-noise">
@@ -287,6 +313,10 @@ export function renderImportContentScreen(): void {
             <div class="import-content-count">
               <span>DIALOGUE</span>
               <strong>${counts.dialogue}</strong>
+            </div>
+            <div class="import-content-count">
+              <span>ENEMIES</span>
+              <strong>${enemyCount}</strong>
             </div>
             <div class="import-content-count">
               <span>SYSTEMS</span>
@@ -318,7 +348,7 @@ export function renderImportContentScreen(): void {
             <input id="importContentFileInput" type="file" accept=".zip,.json" multiple hidden />
           </div>
           <div class="import-content-notes">
-            <span>Maps open from here. Quests, dialogue, gear, items, cards, units, operations, and classes sync into the live runtime.</span>
+            <span>Maps open from here. Field enemies, quests, dialogue, mail, NPCs, gear, items, cards, units, operations, classes, and codex entries sync into the live runtime.</span>
           </div>
         </section>
 

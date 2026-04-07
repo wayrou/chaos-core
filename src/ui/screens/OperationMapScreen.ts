@@ -14,6 +14,7 @@ import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
 import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
+import { setMusicCue } from "../../core/audioSystem";
 import { GameState, RoomNode, RoomType, OperationRun } from "../../core/types";
 import { canAdvanceToNextFloor } from "../../core/procedural";
 import { syncCampaignToGameState, getAvailableNodes, isNodeAccessible } from "../../core/campaignSync";
@@ -32,12 +33,22 @@ import {
   hasTheaterOperation,
   secureTheaterRoomInState,
 } from "../../core/theaterSystem";
+import {
+  clearControllerContext,
+  getControllerActionLabel,
+  getControllerMode,
+  type ControllerMode,
+  registerControllerContext,
+  setControllerMode,
+  updateFocusableElements,
+} from "../../core/controllerSupport";
 // Supply chain removed for now
 
 // ============================================================================
 // FEATURE FLAG - NEW MAP UX
 // ============================================================================
 const FEATURE_NEW_MAP_UX = true;
+void FEATURE_NEW_MAP_UX;
 
 // ============================================================================
 // UX STATE - Node Interaction
@@ -82,6 +93,7 @@ let opmapContextPanelFrame = {
   width: 360,
   height: 0,
 };
+let cleanupOperationMapControllerContext: (() => void) | null = null;
 
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
@@ -380,29 +392,27 @@ function centerOnStartNode(): void {
   let targetNodeIndex = -1;
 
   if (nodes.length > 0) {
-    // 1. First choice: current active node
-    if (operation.currentRoomId) {
-      targetNodeIndex = nodes.findIndex(n => n.id === operation.currentRoomId);
-      if (targetNodeIndex >= 0) targetNode = nodes[targetNodeIndex];
-    }
-
-    // 2. Second choice: node without incoming connections (start)
-    if (!targetNode) {
-      for (let i = 0; i < nodes.length; i++) {
-        const node = nodes[i];
-        let hasIncoming = false;
-        for (const other of nodes) {
-          if (other.connections?.includes(node.id)) {
-            hasIncoming = true;
-            break;
-          }
-        }
-        if (!hasIncoming) {
-          targetNode = node;
-          targetNodeIndex = i;
+    // 1. First choice: node without incoming connections (start)
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      let hasIncoming = false;
+      for (const other of nodes) {
+        if (other.connections?.includes(node.id)) {
+          hasIncoming = true;
           break;
         }
       }
+      if (!hasIncoming) {
+        targetNode = node;
+        targetNodeIndex = i;
+        break;
+      }
+    }
+
+    // 2. Second choice: current active node
+    if (!targetNode && operation.currentRoomId) {
+      targetNodeIndex = nodes.findIndex(n => n.id === operation.currentRoomId);
+      if (targetNodeIndex >= 0) targetNode = nodes[targetNodeIndex];
     }
 
     // 3. Fallback to first node
@@ -495,6 +505,252 @@ function centerOnCurrentNode(): void {
   centerOnStartNode(); // Use start node for now
 }
 
+function getDefaultSelectedNodeId(nodes: RoomNode[], operation: OperationRun | null): string | null {
+  if (operation?.currentRoomId && nodes.some((node) => node.id === operation.currentRoomId)) {
+    return operation.currentRoomId;
+  }
+
+  const availableNodeIds = getAvailableNodes();
+  const availableNode = nodes.find((node) => availableNodeIds.includes(node.id));
+  if (availableNode) {
+    return availableNode.id;
+  }
+
+  return nodes[0]?.id ?? null;
+}
+
+function getControllerSelectableNodes(nodes: RoomNode[], operation: OperationRun | null): RoomNode[] {
+  const availableNodeIds = getAvailableNodes();
+  const activeRun = getActiveRun();
+  const clearedNodeIds = new Set<string>(activeRun?.clearedNodeIds ?? []);
+
+  return nodes.filter((node) => (
+    node.id === operation?.currentRoomId
+    || availableNodeIds.includes(node.id)
+    || clearedNodeIds.has(node.id)
+  ));
+}
+
+function syncSelectedOperationNodeVisual(): void {
+  document.querySelectorAll<HTMLElement>(".opmap-node").forEach((nodeEl) => {
+    const roomId = nodeEl.getAttribute("data-room-id");
+    nodeEl.classList.toggle("opmap-node--selected", roomId === selectedNodeId);
+  });
+}
+
+function centerOnOperationNode(nodeId: string): void {
+  const targetNodeEl = document.querySelector(`.opmap-node[data-room-id="${nodeId}"]`) as HTMLElement | null;
+  const mapContainer = document.querySelector(".opmap-floor-map-full") as HTMLElement | null;
+  const viewport = document.querySelector(".opmap-floor-background") as HTMLElement | null;
+  if (!targetNodeEl || !mapContainer || !viewport) {
+    return;
+  }
+
+  const previousTransform = mapContainer.style.transform;
+  const previousOrigin = mapContainer.style.transformOrigin;
+  mapContainer.style.transform = "translate(0px, 0px) scale(1)";
+  mapContainer.style.transformOrigin = "center center";
+  void mapContainer.offsetHeight;
+
+  const nodeRect = targetNodeEl.getBoundingClientRect();
+  const containerRect = mapContainer.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const nodeCenterXRelative = nodeRect.left - containerRect.left + nodeRect.width / 2;
+  const nodeCenterYRelative = nodeRect.top - containerRect.top + nodeRect.height / 2;
+  const containerXRelative = containerRect.left - viewportRect.left;
+  const containerYRelative = containerRect.top - viewportRect.top;
+  const nodeCenterInViewportX = containerXRelative + nodeCenterXRelative;
+  const nodeCenterInViewportY = containerYRelative + nodeCenterYRelative;
+
+  panState.x = (viewportRect.width / 2) - nodeCenterInViewportX;
+  panState.y = (viewportRect.height / 2) - nodeCenterInViewportY;
+
+  mapContainer.style.transformOrigin = previousOrigin;
+  mapContainer.style.transform = previousTransform;
+  applyMapTransform();
+}
+
+function setSelectedOperationNode(
+  nodeId: string | null,
+  nodes: RoomNode[],
+  operation: OperationRun | null,
+  floor: ReturnType<typeof getCurrentFloor> | null,
+  options: { center?: boolean } = {},
+): void {
+  if (!nodeId) {
+    return;
+  }
+
+  const node = nodes.find((entry) => entry.id === nodeId);
+  if (!node) {
+    return;
+  }
+
+  selectedNodeId = nodeId;
+  hoveredNodeId = nodeId;
+  if (operation && floor) {
+    updateContextPanel(node, floor.nodes || floor.rooms || [], operation, floor);
+  }
+  syncSelectedOperationNodeVisual();
+  if (options.center) {
+    centerOnOperationNode(nodeId);
+  }
+}
+
+function moveSelectedOperationNode(
+  direction: "up" | "down" | "left" | "right",
+  nodes: RoomNode[],
+  operation: OperationRun | null,
+  floor: ReturnType<typeof getCurrentFloor> | null,
+): void {
+  const candidates = getControllerSelectableNodes(nodes, operation);
+  const currentNode = candidates.find((node) => node.id === selectedNodeId)
+    ?? candidates.find((node) => node.id === operation?.currentRoomId)
+    ?? candidates[0];
+  if (!currentNode) {
+    return;
+  }
+
+  const currentX = (currentNode.position?.y ?? 0);
+  const currentY = -(currentNode.position?.x ?? 0);
+  let bestNode: RoomNode | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  candidates.forEach((candidate) => {
+    if (candidate.id === currentNode.id) {
+      return;
+    }
+    const candidateX = candidate.position?.y ?? 0;
+    const candidateY = -(candidate.position?.x ?? 0);
+    const dx = candidateX - currentX;
+    const dy = candidateY - currentY;
+
+    if (direction === "up" && dy >= -0.05) return;
+    if (direction === "down" && dy <= 0.05) return;
+    if (direction === "left" && dx >= -0.05) return;
+    if (direction === "right" && dx <= 0.05) return;
+
+    const primary = direction === "left" || direction === "right" ? Math.abs(dx) : Math.abs(dy);
+    const secondary = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx);
+    const score = primary + (secondary * 0.35);
+    if (score < bestScore) {
+      bestScore = score;
+      bestNode = candidate;
+    }
+  });
+
+  const nextNode = bestNode ?? candidates[0];
+  if (!nextNode) {
+    return;
+  }
+
+  setSelectedOperationNode(nextNode.id, nodes, operation, floor, { center: true });
+}
+
+function nudgeOperationMapZoom(delta: number): void {
+  panState.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, panState.zoom + delta));
+  applyMapTransform();
+  updateZoomDisplay();
+}
+
+function moveOperationContextPanelByController(delta: { x?: number; y?: number; width?: number; height?: number }): void {
+  opmapContextPanelFrame = clampOperationWindowFrame({
+    ...opmapContextPanelFrame,
+    x: opmapContextPanelFrame.x + (delta.x ?? 0),
+    y: opmapContextPanelFrame.y + (delta.y ?? 0),
+    width: opmapContextPanelFrame.width + (delta.width ?? 0),
+    height: opmapContextPanelFrame.height + (delta.height ?? 0),
+  });
+  applyOperationContextPanelFrame();
+}
+
+function handleOperationMapControllerAction(
+  action: string,
+  mode: ControllerMode,
+  nodes: RoomNode[],
+  operation: OperationRun | null,
+  floor: ReturnType<typeof getCurrentFloor> | null,
+  canAdvance: boolean,
+): boolean {
+  if (mode === "layout") {
+    switch (action) {
+      case "moveUp":
+        moveOperationContextPanelByController({ y: -28 });
+        return true;
+      case "moveDown":
+        moveOperationContextPanelByController({ y: 28 });
+        return true;
+      case "moveLeft":
+        moveOperationContextPanelByController({ x: -28 });
+        return true;
+      case "moveRight":
+        moveOperationContextPanelByController({ x: 28 });
+        return true;
+      case "zoomIn":
+        moveOperationContextPanelByController({ width: 28 });
+        return true;
+      case "zoomOut":
+        moveOperationContextPanelByController({ width: -28 });
+        return true;
+      case "windowPrimary":
+        opmapContextPanelFrame = clampOperationWindowFrame({ x: 16, y: 16, width: 360, height: opmapContextPanelFrame.height });
+        applyOperationContextPanelFrame();
+        return true;
+      case "windowSecondary":
+        resetPan();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  if (mode === "cursor") {
+    switch (action) {
+      case "moveUp":
+        moveSelectedOperationNode("up", nodes, operation, floor);
+        return true;
+      case "moveDown":
+        moveSelectedOperationNode("down", nodes, operation, floor);
+        return true;
+      case "moveLeft":
+        moveSelectedOperationNode("left", nodes, operation, floor);
+        return true;
+      case "moveRight":
+        moveSelectedOperationNode("right", nodes, operation, floor);
+        return true;
+      case "confirm": {
+        const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
+        if (selectedNode) {
+          const nodeEl = document.querySelector<HTMLElement>(`.opmap-node[data-room-id="${selectedNode.id}"]`);
+          if (nodeEl && nodeEl.getAttribute("data-is-locked") !== "true" && getAvailableNodes().includes(selectedNode.id)) {
+            nodeEl.click();
+            return true;
+          }
+          if (canAdvance && nodeEl?.getAttribute("data-room-type") === "boss") {
+            document.getElementById("opmapAdvanceNodeBtn")?.click();
+            return true;
+          }
+        }
+        return false;
+      }
+      case "zoomIn":
+        nudgeOperationMapZoom(ZOOM_SENSITIVITY);
+        return true;
+      case "zoomOut":
+        nudgeOperationMapZoom(-ZOOM_SENSITIVITY);
+        return true;
+      case "cancel":
+        setControllerMode("focus");
+        updateFocusableElements();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  return false;
+}
+
 // Advance to the next available room via keyboard
 function advanceToNextRoom(): void {
   const state = getGameState();
@@ -528,11 +784,15 @@ function advanceToNextRoom(): void {
 // ============================================================================
 
 export function renderOperationMapScreen(): void {
+  setMusicCue("atlas");
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element");
     return;
   }
+  document.body.setAttribute("data-screen", "operation-map");
+  cleanupOperationMapControllerContext?.();
+  cleanupOperationMapControllerContext = null;
 
   const stateBeforeLegacySync = getGameState();
   if (hasTheaterOperation(stateBeforeLegacySync.operation)) {
@@ -547,6 +807,7 @@ export function renderOperationMapScreen(): void {
   const operation = getCurrentOperation(state);
 
   if (!operation) {
+    clearControllerContext();
     root.innerHTML = `
       <div class="opmap-root">
         <div class="opmap-card">
@@ -575,6 +836,9 @@ export function renderOperationMapScreen(): void {
   }
 
   const nodes = floor.nodes || floor.rooms || [];
+  selectedNodeId = getDefaultSelectedNodeId(nodes, operation);
+  const controllerPanHint = `${getControllerActionLabel("moveUp")} / ${getControllerActionLabel("moveLeft")}`;
+  const controllerZoomHint = `${getControllerActionLabel("zoomOut")} / ${getControllerActionLabel("zoomIn")}`;
 
   // ------------------------------------------------------------------------
   // Hotfix: enforce battle density so the map feels combat-forward.
@@ -649,7 +913,7 @@ export function renderOperationMapScreen(): void {
         <button class="opmap-back-btn-compact" id="opmapBackBtn">← BACK</button>
         <div class="opmap-pan-controls-compact">
           <div class="opmap-pan-hint-compact">
-            <span class="opmap-pan-keys">WASD</span> pan · <span class="opmap-pan-keys">SCROLL</span> zoom
+            <span class="opmap-pan-keys">WASD / ARROWS / ${controllerPanHint}</span> pan · <span class="opmap-pan-keys">SCROLL / ${controllerZoomHint}</span> zoom
           </div>
           <button class="opmap-pan-reset-compact" id="resetPanBtn">⟲ CENTER</button>
         </div>
@@ -677,6 +941,28 @@ export function renderOperationMapScreen(): void {
     requestAnimationFrame(() => {
       attachEventListeners(nodes, currentRoomIndex);
       setupOperationWindowInteractions();
+      setSelectedOperationNode(selectedNodeId, nodes, operation, floor, { center: false });
+      cleanupOperationMapControllerContext = registerControllerContext({
+        id: "operation-map",
+        defaultMode: "cursor",
+        focusRoot: () => document.querySelector(".opmap-root"),
+        defaultFocusSelector: "#opmapBackBtn",
+        onCursorAction: (action) => handleOperationMapControllerAction(action, "cursor", nodes, operation, floor, canAdvance),
+        onLayoutAction: (action) => handleOperationMapControllerAction(action, "layout", nodes, operation, floor, canAdvance),
+        onFocusAction: (action) => {
+          if (action === "cancel") {
+            document.getElementById("opmapBackBtn")?.click();
+            return true;
+          }
+          return false;
+        },
+        getDebugState: () => ({
+          hovered: hoveredNodeId ?? selectedNodeId ?? "none",
+          window: getControllerMode() === "layout" ? "context" : "map",
+          focus: document.querySelector<HTMLElement>(`.opmap-node[data-room-id="${selectedNodeId}"]`)?.getAttribute("data-room-label") ?? undefined,
+        }),
+      });
+      updateFocusableElements();
       // Center camera on start node after DOM is ready
       centerOnStartNode();
       // Some browsers/layouts still need one extra tick for accurate bounds.
@@ -1111,6 +1397,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number, canAdv
     const isCurrent = node.id === currentRoomId;
     const isAvailable = availableNodeIds.includes(node.id);
     const isRevealed = revealedNodeIds.has(node.id);
+    const isSelected = node.id === selectedNodeId;
 
     // Check if captured (for key rooms)
     const keyRoomsByFloor = activeRun?.keyRoomsByFloor || {};
@@ -1141,6 +1428,7 @@ function renderRoguelikeMap(nodes: RoomNode[], _currentRoomIndex: number, canAdv
     else statusClass = 'opmap-node--locked';
 
     if (isCompletedNode) statusClass += ' opmap-node--completed';
+    if (isSelected) statusClass += ' opmap-node--selected';
 
     // Room type class
     const typeClass = `opmap-node--${node.type || 'unknown'}`;
@@ -1463,6 +1751,15 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
     resetPan();
   });
 
+  root.querySelector("#opmapBackBtn")?.addEventListener("click", () => {
+    if (!confirm("Return to Base Camp? Your current operation will remain active so you can resume it later.")) {
+      return;
+    }
+
+    cleanupPanHandlers();
+    renderFieldScreen("base_camp");
+  });
+
   // Abandon button
   const abandonBtn = root.querySelector("#opmapAbandonBtn") as HTMLButtonElement | null;
   console.log("[OPMAP] Looking for abandon button, found:", abandonBtn);
@@ -1533,7 +1830,10 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 
       const node = (floor.nodes || floor.rooms || []).find(n => n.id === roomId);
       if (node) {
+        hoveredNodeId = roomId;
+        selectedNodeId = roomId;
         updateContextPanel(node, floor.nodes || floor.rooms || [], operation, floor);
+        syncSelectedOperationNodeVisual();
         nodeEl.classList.add("opmap-node--hovered");
       }
     }, true);
@@ -1542,8 +1842,11 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
       const target = e.target as HTMLElement;
       const nodeEl = target.closest(".opmap-node") as HTMLElement;
       if (nodeEl) {
+        hoveredNodeId = null;
         nodeEl.classList.remove("opmap-node--hovered");
-        // Optionally reset to default, or keep last hovered node visible
+        if (selectedNodeId && operation && floor) {
+          setSelectedOperationNode(selectedNodeId, floor.nodes || floor.rooms || [], operation, floor);
+        }
       }
     }, true);
 
@@ -1558,6 +1861,8 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 
       const roomId = nodeEl.getAttribute("data-room-id");
       const isLocked = nodeEl.getAttribute("data-is-locked") === "true";
+      selectedNodeId = roomId;
+      syncSelectedOperationNodeVisual();
 
       if (roomId && !isLocked) {
         const isAvailable = availableNodeIds.includes(roomId);
@@ -1920,7 +2225,7 @@ function enterBattleRoom(room: RoomNode): void {
     // Store battle in state (add turnIndex for types.ts compatibility)
     updateGameState(prev => ({
       ...prev,
-      currentBattle: { ...battle, turnIndex: 0 } as any,
+      currentBattle: battle,
       phase: "battle",
     }));
 
@@ -1988,7 +2293,7 @@ function enterKeyRoom(room: RoomNode): void {
     // Store battle in state (add turnIndex for types.ts compatibility)
     updateGameState(prev => ({
       ...prev,
-      currentBattle: { ...battle, turnIndex: 0 } as any,
+      currentBattle: battle,
       phase: "battle",
     }));
 
@@ -2042,7 +2347,7 @@ function enterEliteRoom(room: RoomNode): void {
     // Store battle in state
     updateGameState(prev => ({
       ...prev,
-      currentBattle: { ...battle, turnIndex: 0 } as any,
+      currentBattle: battle,
       phase: "battle",
     }));
 

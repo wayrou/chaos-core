@@ -8,6 +8,50 @@ import {
   getImportedFieldMap,
   isTechnicaContentDisabled,
 } from "../content/technica";
+import { getGameState } from "../state/gameStore";
+import {
+  isBlackMarketNodeUnlocked,
+  isDispatchNodeUnlocked,
+  isFoundryAnnexUnlocked,
+  isPortNodeUnlocked,
+  isSchemaNodeUnlocked,
+  isStableNodeUnlocked,
+} from "../core/campaign";
+import {
+  getBaseCampNodeDefinitions,
+  getBaseCampNodeLayout,
+  isBaseCampNodeUnlocked,
+} from "./baseCampBuild";
+import { getPlacedFieldDecor } from "../core/decorSystem";
+
+function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
+  for (let y = top; y < top + height; y += 1) {
+    for (let x = left; x < left + width; x += 1) {
+      const tile = map.tiles[y]?.[x];
+      if (!tile) {
+        continue;
+      }
+      tile.walkable = true;
+      if (tile.type === "wall") {
+        tile.type = "floor";
+      }
+    }
+  }
+}
+
+function ensureNodeFootprintsWalkable(map: FieldMap): FieldMap {
+  map.objects.forEach((object) => {
+    if (object.type === "station") {
+      setMapAreaWalkable(map, object.x, object.y, object.width, object.height);
+    }
+  });
+
+  map.interactionZones.forEach((zone) => {
+    setMapAreaWalkable(map, zone.x, zone.y, zone.width, zone.height);
+  });
+
+  return map;
+}
 
 // ============================================================================
 // BASE CAMP MAP
@@ -2022,38 +2066,38 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 31,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 34,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 6,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -2318,44 +2362,44 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 30,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 31,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 34,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 7,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -2620,44 +2664,44 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 30,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 31,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 34,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 8,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -3260,20 +3304,20 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 36,
           "y": 10,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 37,
           "y": 10,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 38,
           "y": 10,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 39,
@@ -3544,98 +3588,98 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 33,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 34,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 35,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 36,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 37,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 38,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 39,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 40,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 41,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 42,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 43,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 44,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 45,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 46,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 47,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 48,
           "y": 11,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -3846,14 +3890,14 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 33,
           "y": 12,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 34,
           "y": 12,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 35,
@@ -3936,8 +3980,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 12,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -4148,14 +4192,14 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 33,
           "y": 13,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 34,
           "y": 13,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 35,
@@ -4238,8 +4282,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 13,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -4438,14 +4482,14 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 31,
           "y": 14,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 14,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
@@ -4462,8 +4506,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 35,
           "y": 14,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
@@ -4540,8 +4584,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 14,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -4734,20 +4778,20 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 30,
           "y": 15,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 31,
           "y": 15,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 15,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
@@ -4764,14 +4808,14 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 35,
           "y": 15,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 15,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -4842,8 +4886,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 15,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -5036,44 +5080,44 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 30,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 31,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 34,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 16,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -5144,8 +5188,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 16,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -5189,7 +5233,7 @@ function createBaseCampMap(): FieldMap {
           "x": 5,
           "y": 17,
           "walkable": true,
-          "type": "grass",
+          "type": "stone",
         },
         {
           "x": 6,
@@ -5338,44 +5382,44 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 30,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 31,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 32,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 33,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 34,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 17,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -5446,8 +5490,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 17,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -5664,20 +5708,20 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 34,
           "y": 18,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 18,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 18,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -5748,8 +5792,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 18,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -5966,20 +6010,20 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 34,
           "y": 19,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 19,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 19,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
@@ -6050,8 +6094,8 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 48,
           "y": 19,
-          "walkable": true,
-          "type": "stone",
+          "walkable": false,
+          "type": "wall",
         },
         {
           "x": 49,
@@ -6268,86 +6312,86 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 34,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 35,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 38,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 39,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 40,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 41,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 42,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 43,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 44,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 45,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 46,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 47,
           "y": 20,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 48,
@@ -6576,80 +6620,80 @@ function createBaseCampMap(): FieldMap {
         {
           "x": 35,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 36,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 37,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 38,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 39,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 40,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 41,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 42,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 43,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 44,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 45,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 46,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 47,
           "y": 21,
-          "walkable": false,
-          "type": "wall",
+          "walkable": true,
+          "type": "stone",
         },
         {
           "x": 48,
@@ -7657,30 +7701,6 @@ function createBaseCampMap(): FieldMap {
         },
       },
       {
-        "id": "port_station",
-        "x": 25,
-        "y": 15,
-        "width": 2,
-        "height": 2,
-        "type": "station",
-        "sprite": "port",
-        "metadata": {
-          "name": "Port",
-        },
-      },
-      {
-        "id": "dispatch_station",
-        "x": 40,
-        "y": 12,
-        "width": 2,
-        "height": 2,
-        "type": "station",
-        "sprite": "dispatch",
-        "metadata": {
-          "name": "Dispatch",
-        },
-      },
-      {
         "id": "quarters_station",
         "x": 7,
         "y": 3,
@@ -7693,9 +7713,33 @@ function createBaseCampMap(): FieldMap {
         },
       },
       {
+        "id": "schema_station",
+        "x": 37,
+        "y": 13,
+        "width": 2,
+        "height": 2,
+        "type": "station",
+        "sprite": "schema",
+        "metadata": {
+          "name": "S.C.H.E.M.A.",
+        },
+      },
+      {
+        "id": "foundry_annex_station",
+        "x": 43,
+        "y": 16,
+        "width": 2,
+        "height": 2,
+        "type": "station",
+        "sprite": "foundry_annex",
+        "metadata": {
+          "name": "Foundry + Annex",
+        },
+      },
+      {
         "id": "black_market_station",
-        "x": 2,
-        "y": 17,
+        "x": 37,
+        "y": 19,
         "width": 2,
         "height": 2,
         "type": "station",
@@ -7705,21 +7749,9 @@ function createBaseCampMap(): FieldMap {
         },
       },
       {
-        "id": "comms_array_station",
-        "x": 40,
-        "y": 8,
-        "width": 2,
-        "height": 2,
-        "type": "station",
-        "sprite": "comms_array",
-        "metadata": {
-          "name": "Comms Array",
-        },
-      },
-      {
         "id": "stable_station",
-        "x": 44,
-        "y": 8,
+        "x": 43,
+        "y": 13,
         "width": 2,
         "height": 2,
         "type": "station",
@@ -7729,15 +7761,39 @@ function createBaseCampMap(): FieldMap {
         },
       },
       {
-        "id": "mini_core_station",
-        "x": 42,
-        "y": 12,
+        "id": "dispatch_station",
+        "x": 37,
+        "y": 16,
         "width": 2,
         "height": 2,
         "type": "station",
-        "sprite": "mini_core",
+        "sprite": "dispatch",
         "metadata": {
-          "name": "Mini Core",
+          "name": "Dispatch",
+        },
+      },
+      {
+        "id": "port_station",
+        "x": 42,
+        "y": 18,
+        "width": 2,
+        "height": 2,
+        "type": "station",
+        "sprite": "port",
+        "metadata": {
+          "name": "Port",
+        },
+      },
+      {
+        "id": "comms_array_station",
+        "x": 30,
+        "y": 14,
+        "width": 2,
+        "height": 2,
+        "type": "station",
+        "sprite": "comms_array",
+        "metadata": {
+          "name": "Comms Array",
         },
       },
     ],
@@ -7806,24 +7862,6 @@ function createBaseCampMap(): FieldMap {
         "label": "WORKSHOP",
       },
       {
-        "id": "interact_port",
-        "x": 25,
-        "y": 15,
-        "width": 2,
-        "height": 2,
-        "action": "port",
-        "label": "PORT",
-      },
-      {
-        "id": "interact_dispatch",
-        "x": 40,
-        "y": 12,
-        "width": 2,
-        "height": 2,
-        "action": "dispatch",
-        "label": "DISPATCH",
-      },
-      {
         "id": "interact_quarters",
         "x": 7,
         "y": 3,
@@ -7833,43 +7871,286 @@ function createBaseCampMap(): FieldMap {
         "label": "QUARTERS",
       },
       {
+        "id": "interact_schema",
+        "x": 37,
+        "y": 13,
+        "width": 2,
+        "height": 2,
+        "action": "schema",
+        "label": "S.C.H.E.M.A.",
+      },
+      {
+        "id": "interact_foundry_annex",
+        "x": 43,
+        "y": 16,
+        "width": 2,
+        "height": 2,
+        "action": "foundry-annex",
+        "label": "FOUNDRY + ANNEX",
+      },
+      {
         "id": "interact_black_market",
-        "x": 2,
-        "y": 17,
+        "x": 37,
+        "y": 19,
         "width": 2,
         "height": 2,
         "action": "black_market",
         "label": "BLACK MARKET",
       },
       {
-        "id": "interact_comms_array",
-        "x": 40,
-        "y": 8,
-        "width": 2,
-        "height": 2,
-        "action": "comms-array",
-        "label": "COMMS ARRAY",
-      },
-      {
         "id": "interact_stable",
-        "x": 44,
-        "y": 8,
+        "x": 43,
+        "y": 13,
         "width": 2,
         "height": 2,
         "action": "stable",
         "label": "STABLE",
       },
       {
-        "id": "interact_mini_core",
-        "x": 42,
-        "y": 12,
+        "id": "interact_dispatch",
+        "x": 37,
+        "y": 16,
         "width": 2,
         "height": 2,
-        "action": "mini_core",
-        "label": "MINI CORE",
+        "action": "dispatch",
+        "label": "DISPATCH",
+      },
+      {
+        "id": "interact_port",
+        "x": 42,
+        "y": 18,
+        "width": 2,
+        "height": 2,
+        "action": "port",
+        "label": "PORT",
+      },
+      {
+        "id": "interact_comms_array",
+        "x": 30,
+        "y": 14,
+        "width": 2,
+        "height": 2,
+        "action": "comms-array",
+        "label": "COMMS ARRAY",
       },
     ],
   };
+}
+
+function cloneFieldMap(map: FieldMap): FieldMap {
+  return {
+    ...map,
+    tiles: map.tiles.map((row) => row.map((tile) => ({ ...tile }))),
+    objects: map.objects.map((object) => ({
+      ...object,
+      metadata: object.metadata ? { ...object.metadata } : undefined,
+    })),
+    interactionZones: map.interactionZones.map((zone) => ({
+      ...zone,
+      metadata: zone.metadata ? { ...zone.metadata } : undefined,
+    })),
+  };
+}
+
+function setTile(
+  map: FieldMap,
+  x: number,
+  y: number,
+  walkable: boolean,
+  type: FieldMap["tiles"][number][number]["type"],
+): void {
+  const row = map.tiles[y];
+  const tile = row?.[x];
+  if (!row || !tile) {
+    return;
+  }
+
+  row[x] = {
+    ...tile,
+    walkable,
+    type,
+  };
+}
+
+function fillRect(
+  map: FieldMap,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+  walkable: boolean,
+  type: FieldMap["tiles"][number][number]["type"],
+): void {
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      setTile(map, x, y, walkable, type);
+    }
+  }
+}
+
+function normalizeGroundTilesToFloor(map: FieldMap): void {
+  for (const row of map.tiles) {
+    for (const tile of row) {
+      if (!tile.walkable) {
+        continue;
+      }
+
+      tile.type = "floor";
+    }
+  }
+}
+
+function moveObject(
+  objects: FieldObject[],
+  objectId: string,
+  x: number,
+  y: number,
+): void {
+  const object = objects.find((entry) => entry.id === objectId);
+  if (!object) {
+    return;
+  }
+
+  object.x = x;
+  object.y = y;
+}
+
+function moveInteractionZone(
+  zones: InteractionZone[],
+  zoneId: string,
+  x: number,
+  y: number,
+): void {
+  const zone = zones.find((entry) => entry.id === zoneId);
+  if (!zone) {
+    return;
+  }
+
+  zone.x = x;
+  zone.y = y;
+}
+
+function applyBaseCampBuildLayout(map: FieldMap): void {
+  const state = getGameState();
+  const uiLayout = state.uiLayout;
+
+  getBaseCampNodeDefinitions().forEach((definition) => {
+    if (!isBaseCampNodeUnlocked(definition.id)) {
+      return;
+    }
+
+    const layout = getBaseCampNodeLayout(uiLayout, definition.id);
+    if (layout.hidden) {
+      map.objects = map.objects.filter((object) => object.id !== definition.objectId);
+      map.interactionZones = map.interactionZones.filter((zone) => zone.id !== definition.zoneId);
+      return;
+    }
+
+    moveObject(map.objects, definition.objectId, layout.x, layout.y);
+    moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);
+  });
+
+  getPlacedFieldDecor(state, map.id).forEach(({ placement, decor }) => {
+    map.objects.push({
+      id: `field_decor_${placement.placementId}`,
+      x: placement.x,
+      y: placement.y,
+      width: decor.tileWidth,
+      height: decor.tileHeight,
+      type: "decoration",
+      sprite: decor.spriteKey,
+      metadata: {
+        name: decor.name,
+        decorId: decor.id,
+        placementId: placement.placementId,
+        spriteKey: decor.spriteKey,
+      },
+    });
+  });
+}
+
+function createConfiguredBaseCampMap(): FieldMap {
+  const map = cloneFieldMap(createBaseCampMap());
+
+  map.objects = map.objects.filter((object) => object.id !== "mini_core_station");
+  map.interactionZones = map.interactionZones.filter(
+    (zone) => zone.id !== "interact_mini_core" && zone.id !== "interact_haven_annex_gate",
+  );
+
+  normalizeGroundTilesToFloor(map);
+
+  moveObject(map.objects, "comms_array_station", 30, 14);
+
+  moveInteractionZone(map.interactionZones, "interact_comms_array", 30, 14);
+
+  // Keep Comms Array reachable from the start.
+  fillRect(map, 29, 13, 32, 17, true, "floor");
+
+  // Keep the HAVEN annex physically open at all times; the actual facility nodes
+  // simply appear as they unlock.
+  fillRect(map, 35, 12, 47, 21, true, "floor");
+
+  for (let x = 34; x <= 48; x += 1) {
+    setTile(map, x, 11, false, "wall");
+    setTile(map, x, 22, false, "wall");
+  }
+
+  for (let y = 11; y <= 22; y += 1) {
+    setTile(map, 34, y, false, "wall");
+    setTile(map, 48, y, false, "wall");
+  }
+
+  moveObject(map.objects, "stable_station", 43, 13);
+  moveObject(map.objects, "dispatch_station", 37, 16);
+  moveObject(map.objects, "black_market_station", 46, 18);
+  moveObject(map.objects, "port_station", 43, 18);
+
+  moveInteractionZone(map.interactionZones, "interact_stable", 43, 13);
+  moveInteractionZone(map.interactionZones, "interact_dispatch", 37, 16);
+  moveInteractionZone(map.interactionZones, "interact_black_market", 46, 18);
+  moveInteractionZone(map.interactionZones, "interact_port", 43, 18);
+
+  // Keep a two-tile wide passage under the Comms Array so the annex-side lane
+  // is always physically accessible even before its facilities unlock.
+  fillRect(map, 33, 15, 34, 20, true, "floor");
+
+  // Give Foundry a reachable upper-right lane near Loadout without leaving a
+  // disconnected dead strip at the very top-right of the map.
+  fillRect(map, 29, 5, 36, 8, true, "floor");
+
+  if (!isPortNodeUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "port_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_port");
+  }
+
+  if (!isDispatchNodeUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "dispatch_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_dispatch");
+  }
+
+  if (!isStableNodeUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "stable_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_stable");
+  }
+
+  if (!isBlackMarketNodeUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "black_market_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_black_market");
+  }
+
+  if (!isSchemaNodeUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "schema_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_schema");
+  }
+
+  if (!isFoundryAnnexUnlocked()) {
+    map.objects = map.objects.filter((object) => object.id !== "foundry_annex_station");
+    map.interactionZones = map.interactionZones.filter((zone) => zone.id !== "interact_foundry_annex");
+  }
+
+  applyBaseCampBuildLayout(map);
+
+  return map;
 }
 
 // ============================================================================
@@ -8099,6 +8380,124 @@ function createQuartersMap(): FieldMap {
   };
 }
 
+// ============================================================================
+// NETWORK LOBBY MAP
+// ============================================================================
+
+function createNetworkLobbyMap(): FieldMap {
+  const width = 22;
+  const height = 14;
+  const tiles: FieldMap["tiles"] = [];
+
+  for (let y = 0; y < height; y++) {
+    tiles[y] = [];
+    for (let x = 0; x < width; x++) {
+      const isBoundary = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+      const isRaisedTable = x >= 8 && x <= 13 && y >= 5 && y <= 8;
+      const isConsoleBlock = (x >= 3 && x <= 5 && y >= 3 && y <= 4) || (x >= 16 && x <= 18 && y >= 3 && y <= 4);
+      tiles[y][x] = {
+        x,
+        y,
+        walkable: !isBoundary && !isRaisedTable && !isConsoleBlock,
+        type: isBoundary ? "wall" : isRaisedTable || isConsoleBlock ? "stone" : "floor",
+      };
+    }
+  }
+
+  const objects: FieldObject[] = [
+    {
+      id: "lobby_skirmish_console",
+      x: 3,
+      y: 3,
+      width: 3,
+      height: 2,
+      type: "station",
+      sprite: "console",
+      metadata: { name: "Skirmish Console" },
+    },
+    {
+      id: "lobby_ops_table",
+      x: 8,
+      y: 5,
+      width: 6,
+      height: 4,
+      type: "station",
+      sprite: "ops_table",
+      metadata: { name: "Operations Table" },
+    },
+    {
+      id: "lobby_comms_uplink",
+      x: 16,
+      y: 3,
+      width: 3,
+      height: 2,
+      type: "station",
+      sprite: "uplink",
+      metadata: { name: "Comms Uplink" },
+    },
+    {
+      id: "lobby_lounge_bench",
+      x: 5,
+      y: 10,
+      width: 4,
+      height: 1,
+      type: "decoration",
+      sprite: "bench",
+      metadata: { name: "Lounge Bench" },
+    },
+    {
+      id: "lobby_ready_bench",
+      x: 13,
+      y: 10,
+      width: 4,
+      height: 1,
+      type: "decoration",
+      sprite: "bench",
+      metadata: { name: "Ready Bench" },
+    },
+  ];
+
+  return {
+    id: "network_lobby",
+    name: "Multiplayer Lobby",
+    width,
+    height,
+    tiles,
+    objects,
+    interactionZones: [
+      {
+        id: "network_lobby_skirmish_console",
+        x: 3,
+        y: 3,
+        width: 3,
+        height: 2,
+        action: "custom",
+        label: "SKIRMISH CONSOLE",
+        metadata: { handlerId: "lobby_skirmish_console" },
+      },
+      {
+        id: "network_lobby_ops_table",
+        x: 8,
+        y: 5,
+        width: 6,
+        height: 4,
+        action: "custom",
+        label: "OPERATIONS TABLE",
+        metadata: { handlerId: "lobby_ops_table" },
+      },
+      {
+        id: "network_lobby_comms_uplink",
+        x: 16,
+        y: 3,
+        width: 3,
+        height: 2,
+        action: "comms-array",
+        label: "COMMS UPLINK",
+      },
+    ],
+  };
+}
+
 // KEY ROOM MAPS (Dynamic)
 function createKeyRoomMap(mapId: string): FieldMap {
   // Extract key room ID from map ID (format: "keyroom_<roomNodeId>")
@@ -8166,6 +8565,7 @@ const maps = new Map<FieldMap["id"], FieldMap>([
   ...(isTechnicaContentDisabled("map", "base_camp") ? [] : [["base_camp", createBaseCampMap()] as const]),
   ...(isTechnicaContentDisabled("map", "free_zone_1") ? [] : [["free_zone_1", createFreeZoneMap()] as const]),
   ...(isTechnicaContentDisabled("map", "quarters") ? [] : [["quarters", createQuartersMap()] as const]),
+  ["network_lobby", createNetworkLobbyMap()] as const,
 ]);
 
 for (const importedMap of getAllImportedFieldMaps()) {
@@ -8175,13 +8575,16 @@ for (const importedMap of getAllImportedFieldMaps()) {
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   // Handle dynamic key room maps
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
-    return createKeyRoomMap(mapId);
+    return ensureNodeFootprintsWalkable(createKeyRoomMap(mapId));
+  }
+  if (mapId === "base_camp" && !isTechnicaContentDisabled("map", "base_camp")) {
+    return ensureNodeFootprintsWalkable(createConfiguredBaseCampMap());
   }
   const map = maps.get(mapId) || getImportedFieldMap(mapId);
   if (!map) {
     throw new Error(`Field map not found: ${mapId}`);
   }
-  return map;
+  return ensureNodeFootprintsWalkable(map);
 }
 
 export function getAllMapIds(): FieldMap["id"][] {

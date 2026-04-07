@@ -204,7 +204,7 @@ function startDefenseBattle(keyRoomId: string): void {
     // Store battle in state
     updateGameState(prev => ({
       ...prev,
-      currentBattle: { ...battle, turnIndex: 0 } as any,
+      currentBattle: battle,
       phase: "battle",
     }));
 

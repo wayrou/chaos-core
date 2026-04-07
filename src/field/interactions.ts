@@ -16,7 +16,24 @@ import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
 import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
 import { renderStableScreen } from "../ui/screens/StableScreen";
 import { renderDispatchScreen } from "../ui/screens/DispatchScreen";
+import { renderSchemaScreen } from "../ui/screens/SchemaScreen";
+import { renderFoundryAnnexScreen } from "../ui/screens/FoundryAnnexScreen";
 import { showImportedDialogue } from "../ui/screens/DialogueScreen";
+import { getGameState } from "../state/gameStore";
+import {
+  BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
+  DISPATCH_UNLOCK_FLOOR_ORDINAL,
+  FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL,
+  PORT_UNLOCK_FLOOR_ORDINAL,
+  SCHEMA_UNLOCK_FLOOR_ORDINAL,
+  STABLE_UNLOCK_FLOOR_ORDINAL,
+  isBlackMarketNodeUnlocked,
+  isDispatchNodeUnlocked,
+  isFoundryAnnexUnlocked,
+  isPortNodeUnlocked,
+  isSchemaNodeUnlocked,
+  isStableNodeUnlocked,
+} from "../core/campaign";
 
 /**
  * Handle interaction with a zone
@@ -42,7 +59,19 @@ export function handleInteraction(
       break;
 
     case "ops_terminal":
-      renderOperationSelectScreen("field");
+      import("../ui/screens/CommsArrayScreen").then(async ({ openSharedCoopOperationsEntry }) => {
+        try {
+          const handledByCoop = await openSharedCoopOperationsEntry();
+          if (handledByCoop) {
+            return;
+          }
+          renderOperationSelectScreen("field");
+        } catch (error) {
+          console.error("[FIELD] Ops Terminal failed to open:", error);
+          alert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
+          onResume();
+        }
+      });
       break;
 
     case "quest_board":
@@ -65,10 +94,20 @@ export function handleInteraction(
       break;
 
     case "port":
+      if (!isPortNodeUnlocked()) {
+        alert(`PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
       renderPortScreen("field");
       break;
 
     case "dispatch":
+      if (!isDispatchNodeUnlocked()) {
+        alert(`DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
       renderDispatchScreen("field");
       break;
 
@@ -80,11 +119,39 @@ export function handleInteraction(
       break;
 
     case "black_market":
+      if (!isBlackMarketNodeUnlocked()) {
+        alert(`BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
       renderBlackMarketScreen("field");
       break;
 
     case "stable":
+      if (!isStableNodeUnlocked()) {
+        alert(`STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
       renderStableScreen("field");
+      break;
+
+    case "schema":
+      if (!isSchemaNodeUnlocked()) {
+        alert(`S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
+      renderSchemaScreen("field");
+      break;
+
+    case "foundry-annex":
+      if (!isFoundryAnnexUnlocked()) {
+        alert(`FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        onResume();
+        break;
+      }
+      renderFoundryAnnexScreen("field");
       break;
 
     case "comms-array":
@@ -168,6 +235,31 @@ export function handleInteraction(
 
       if (zone.metadata?.handlerId === "open_board") {
         renderQuestBoardScreen("field");
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "lobby_skirmish_console") {
+        import("../ui/screens/CommsArrayScreen").then(({ openCurrentLobbySkirmish, renderCommsArrayScreen }) => {
+          const lobby = getGameState().lobby;
+          if (lobby?.activity.kind === "skirmish") {
+            openCurrentLobbySkirmish();
+            return;
+          }
+          renderCommsArrayScreen("field");
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "lobby_ops_table") {
+        import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
+          renderCommsArrayScreen("field");
+        });
+        break;
+      }
+
+      if (typeof zone.metadata?.lockedMessage === "string") {
+        alert(zone.metadata.lockedMessage);
+        onResume();
         break;
       }
 

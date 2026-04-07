@@ -7,8 +7,22 @@
 import { BattleState, BattleUnitState, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Tile, Vec2, getEquippedWeapon } from "./battle";
 import { Card } from "./types";
 import { getCoverDamageReduction, damageCover } from "./coverGenerator";
+import {
+  getEchoAttackBonus,
+  getEchoDefenseBonus,
+  incrementEchoFieldTriggerCount,
+} from "./echoFieldEffects";
 
 import { getAllStarterEquipment } from "./equipment";
+import { applyEffectFlowToBattle } from "./effectFlow";
+
+function isHostileTarget(user: BattleUnitState, targetUnit: BattleUnitState | null | undefined): boolean {
+  return Boolean(targetUnit && targetUnit.isEnemy !== user.isEnemy);
+}
+
+function isAlliedTarget(user: BattleUnitState, targetUnit: BattleUnitState | null | undefined): boolean {
+  return Boolean(targetUnit && targetUnit.isEnemy === user.isEnemy);
+}
 
 function addTimedBuff(
   battle: BattleState,
@@ -116,11 +130,46 @@ export function handleCardPlay(
     return b;
   }
 
+  if ((card as any).effectFlow) {
+    if (card.targetType === "enemy" && (!isHostileTarget(user, targetUnit) || !targetUnit?.pos)) {
+      return null;
+    }
+
+    if (card.targetType === "ally" && (!isAlliedTarget(user, targetUnit) || !targetUnit?.pos)) {
+      return null;
+    }
+
+    if (card.targetType === "self" && (targetPos.x !== user.pos.x || targetPos.y !== user.pos.y)) {
+      return null;
+    }
+
+    let b = appendBattleLog(battle, `SLK//CARD  :: ${user.name} plays ${card.name}.`);
+    b = applyEffectFlowToBattle(b, (card as any).effectFlow, {
+      sourceUnitId: user.id,
+      selectedTargetUnitId: targetUnit?.id ?? (card.targetType === "self" ? user.id : null),
+      selectedTilePos: targetPos,
+      hitTargetUnitId: targetUnit?.id ?? null,
+      sourceLabel: `${user.name}'s ${card.name}`,
+    });
+
+    const currentUser = b.units[user.id];
+    if (!currentUser) {
+      return b;
+    }
+
+    b = applyStrain(b, currentUser, card.strainCost);
+    if (b.units[user.id]) {
+      b = discardCardFromHand(b, user.id, card.id);
+    }
+
+    return b;
+  }
+
   // ========================================
   // ALLY-TARGET CARDS (heals, buffs)
   // ========================================
   if (card.targetType === "ally") {
-    if (!targetUnit || targetUnit.isEnemy || !targetUnit.pos) {
+    if (!isAlliedTarget(user, targetUnit) || !targetUnit?.pos) {
       return null;
     }
 
@@ -449,7 +498,7 @@ export function handleCardPlay(
   // ========================================
   if (card.targetType === "enemy") {
     // Must have a valid enemy target
-    if (!targetUnit || !targetUnit.isEnemy || !targetUnit.pos) {
+    if (!isHostileTarget(user, targetUnit) || !targetUnit?.pos) {
       return null;
     }
 
@@ -486,12 +535,15 @@ export function handleCardPlay(
       .filter(buff => buff.type === "atk_up")
       .reduce((sum, buff) => sum + buff.amount, 0);
     totalDamage += atkBuffs;
+    const echoAttackBonus = getEchoAttackBonus(b, user);
+    totalDamage += echoAttackBonus.amount;
 
     // Reduce by target's DEF + DEF buffs
     const defBuffs = (targetUnit.buffs || [])
       .filter(buff => buff.type === "def_up")
       .reduce((sum, buff) => sum + buff.amount, 0);
-    const totalDef = targetUnit.def + defBuffs;
+    const echoDefenseBonus = getEchoDefenseBonus(b, targetUnit);
+    const totalDef = targetUnit.def + defBuffs + echoDefenseBonus.amount;
 
     let finalDamage = Math.max(1, totalDamage - totalDef);
 
@@ -537,7 +589,13 @@ export function handleCardPlay(
       const eff = effect as any;
 
       // Debuffs
-      if (eff.type === "debuff" || eff.type === "def_down" || eff.type === "atk_down" || eff.type === "acc_down") {
+      if (
+        eff.type === "debuff" ||
+        eff.type === "def_down" ||
+        eff.type === "atk_down" ||
+        eff.type === "agi_down" ||
+        eff.type === "acc_down"
+      ) {
         const stat = eff.stat || eff.type.replace("_down", "");
         const amount = eff.amount ?? 2;
         const duration = eff.duration ?? 1;
@@ -728,6 +786,13 @@ export function handleCardPlay(
 
     // Log
     b = appendBattleLog(b, `SLK//HIT    :: ${user.name} ${logMessages.join("; ")}.`);
+
+    if (echoAttackBonus.triggeredPlacements.length > 0 || echoDefenseBonus.triggeredPlacements.length > 0) {
+      b = incrementEchoFieldTriggerCount(
+        b,
+        [...echoAttackBonus.triggeredPlacements, ...echoDefenseBonus.triggeredPlacements],
+      );
+    }
 
     // Check victory/defeat
     b = evaluateBattleOutcome(b);

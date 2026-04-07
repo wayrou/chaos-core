@@ -6,9 +6,13 @@ import type {
   DisabledTechnicaContent,
   ImportedCard,
   ImportedClassDefinition,
+  ImportedCodexEntry,
   ImportedDialogue,
+  ImportedFieldEnemyDefinition,
+  ImportedFieldMod,
   ImportedGear,
   ImportedItem,
+  ImportedMailEntry,
   ImportedNpcTemplate,
   ImportedOperationDefinition,
   ImportedUnitTemplate,
@@ -28,25 +32,54 @@ type ImportMetaWithOptionalGlob = ImportMeta & {
 const importedMaps = new Map<string, FieldMap>();
 const importedQuests = new Map<string, Quest>();
 const importedDialogues = new Map<string, ImportedDialogue>();
+const importedMailEntries = new Map<string, ImportedMailEntry>();
 const importedItems = new Map<string, ImportedItem>();
+const importedFieldEnemies = new Map<string, ImportedFieldEnemyDefinition>();
 const importedNpcs = new Map<string, ImportedNpcTemplate>();
 const importedGear = new Map<string, ImportedGear>();
 const importedCards = new Map<string, ImportedCard>();
+const importedFieldMods = new Map<string, ImportedFieldMod>();
 const importedClasses = new Map<string, ImportedClassDefinition>();
 const importedUnits = new Map<string, ImportedUnitTemplate>();
 const importedOperations = new Map<string, ImportedOperationDefinition>();
+const importedCodexEntries = new Map<string, ImportedCodexEntry>();
 const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
   ["dialogue", new Set()],
+  ["mail", new Set()],
   ["quest", new Set()],
   ["map", new Set()],
+  ["field_enemy", new Set()],
   ["npc", new Set()],
   ["item", new Set()],
   ["gear", new Set()],
   ["card", new Set()],
+  ["fieldmod", new Set()],
   ["unit", new Set()],
   ["operation", new Set()],
   ["class", new Set()],
+  ["codex", new Set()],
 ]);
+
+const GENERATED_RUNTIME_FILE_EXTENSIONS: Record<TechnicaContentType, string> = {
+  dialogue: ".dialogue.json",
+  mail: ".mail.json",
+  quest: ".quest.json",
+  map: ".fieldmap.json",
+  field_enemy: ".field_enemy.json",
+  npc: ".npc.json",
+  item: ".item.json",
+  gear: ".gear.json",
+  card: ".card.json",
+  fieldmod: ".fieldmod.json",
+  unit: ".unit.json",
+  operation: ".operation.json",
+  class: ".class.json",
+  codex: ".codex.json",
+};
+
+function getImportedUnitSpawnRole(unit: ImportedUnitTemplate): "player" | "enemy" {
+  return unit.spawnRole === "enemy" ? "enemy" : "player";
+}
 
 function loadGeneratedRegistry<TValue extends { id: string }>(
   modules: Record<string, JsonModule<TValue>>,
@@ -55,6 +88,33 @@ function loadGeneratedRegistry<TValue extends { id: string }>(
   Object.values(modules).forEach((module) => {
     register(module.default);
   });
+}
+
+function buildGeneratedRuntimePath(contentType: TechnicaContentType, contentId: string): string {
+  return `/src/content/technica/generated/${contentType}/${encodeURIComponent(contentId)}${GENERATED_RUNTIME_FILE_EXTENSIONS[contentType]}`;
+}
+
+async function fetchGeneratedRuntimeEntry<TValue>(contentType: TechnicaContentType, contentId: string): Promise<TValue | null> {
+  if (typeof window === "undefined" || !import.meta.env.DEV || !contentId.trim()) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${buildGeneratedRuntimePath(contentType, contentId)}?t=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as TValue;
+  } catch {
+    return null;
+  }
 }
 
 if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
@@ -87,11 +147,26 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   );
 
   loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedFieldEnemyDefinition>>("./generated/field_enemy/*.field_enemy.json", {
+      eager: true,
+    }) as Record<string, JsonModule<ImportedFieldEnemyDefinition>>,
+    registerImportedFieldEnemyDefinition
+  );
+
+  loadGeneratedRegistry(
     import.meta.glob<JsonModule<ImportedDialogue>>("./generated/dialogue/*.dialogue.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedDialogue>
     >,
     registerImportedDialogue
+  );
+
+  loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedMailEntry>>("./generated/mail/*.mail.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedMailEntry>
+    >,
+    registerImportedMailEntry
   );
 
   loadGeneratedRegistry(
@@ -127,6 +202,14 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   );
 
   loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedFieldMod>>("./generated/fieldmod/*.fieldmod.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedFieldMod>
+    >,
+    registerImportedFieldMod
+  );
+
+  loadGeneratedRegistry(
     import.meta.glob<JsonModule<ImportedClassDefinition>>("./generated/class/*.class.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedClassDefinition>
@@ -147,6 +230,14 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
       eager: true,
     }) as Record<string, JsonModule<ImportedOperationDefinition>>,
     registerImportedOperation
+  );
+
+  loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedCodexEntry>>("./generated/codex/*.codex.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedCodexEntry>
+    >,
+    registerImportedCodexEntry
   );
 }
 
@@ -184,6 +275,18 @@ export function getAllImportedQuests(): Quest[] {
   return Array.from(importedQuests.values());
 }
 
+export function registerImportedFieldEnemyDefinition(definition: ImportedFieldEnemyDefinition): void {
+  importedFieldEnemies.set(definition.id, definition);
+}
+
+export function getImportedFieldEnemyDefinition(definitionId: string): ImportedFieldEnemyDefinition | null {
+  return importedFieldEnemies.get(definitionId) || null;
+}
+
+export function getAllImportedFieldEnemyDefinitions(): ImportedFieldEnemyDefinition[] {
+  return Array.from(importedFieldEnemies.values());
+}
+
 export function registerImportedDialogue(dialogue: ImportedDialogue): void {
   importedDialogues.set(dialogue.id, dialogue);
 }
@@ -198,6 +301,18 @@ export function getAllImportedDialogues(): ImportedDialogue[] {
 
 export function hasImportedDialogue(dialogueId: string): boolean {
   return importedDialogues.has(dialogueId);
+}
+
+export function registerImportedMailEntry(entry: ImportedMailEntry): void {
+  importedMailEntries.set(entry.id, entry);
+}
+
+export function getImportedMailEntry(entryId: string): ImportedMailEntry | null {
+  return importedMailEntries.get(entryId) || null;
+}
+
+export function getAllImportedMailEntries(): ImportedMailEntry[] {
+  return Array.from(importedMailEntries.values());
 }
 
 export function registerImportedItem(item: ImportedItem): void {
@@ -255,6 +370,18 @@ export function registerImportedCard(card: ImportedCard): void {
     strainCost: card.strainCost,
     artPath: card.artPath,
   });
+}
+
+export function registerImportedFieldMod(fieldMod: ImportedFieldMod): void {
+  importedFieldMods.set(fieldMod.id, fieldMod);
+}
+
+export function getImportedFieldMod(fieldModId: string): ImportedFieldMod | null {
+  return importedFieldMods.get(fieldModId) || null;
+}
+
+export function getAllImportedFieldMods(): ImportedFieldMod[] {
+  return Array.from(importedFieldMods.values());
 }
 
 export function registerImportedBattleCard(card: ImportedCard): void {
@@ -330,7 +457,19 @@ export function getAllImportedUnitTemplates(): ImportedUnitTemplate[] {
 }
 
 export function getImportedRosterUnits(): ImportedUnitTemplate[] {
-  return getAllImportedUnits().filter((entry) => entry.startingInRoster !== false);
+  return getAllImportedUnits().filter(
+    (entry) => getImportedUnitSpawnRole(entry) !== "enemy" && entry.startingInRoster !== false
+  );
+}
+
+export function getImportedEncounterUnitsForFloorOrdinal(floorOrdinal: number): ImportedUnitTemplate[] {
+  return getAllImportedUnits().filter((entry) => {
+    if (getImportedUnitSpawnRole(entry) !== "enemy") {
+      return false;
+    }
+
+    return (entry.enemySpawnFloorOrdinals ?? []).includes(floorOrdinal);
+  });
 }
 
 export function registerImportedOperation(operation: ImportedOperationDefinition): void {
@@ -345,6 +484,140 @@ export function getAllImportedOperations(): ImportedOperationDefinition[] {
   return Array.from(importedOperations.values());
 }
 
+export function registerImportedCodexEntry(entry: ImportedCodexEntry): void {
+  importedCodexEntries.set(entry.id, entry);
+}
+
+export function getImportedCodexEntry(entryId: string): ImportedCodexEntry | null {
+  return importedCodexEntries.get(entryId) || null;
+}
+
+export function getAllImportedCodexEntries(): ImportedCodexEntry[] {
+  return Array.from(importedCodexEntries.values());
+}
+
 export function isTechnicaContentDisabled(contentType: TechnicaContentType, contentId: string): boolean {
   return disabledContentIds.get(contentType)?.has(contentId) ?? false;
+}
+
+export async function reloadGeneratedTechnicaEntry(
+  contentType: TechnicaContentType,
+  contentId: string
+): Promise<boolean> {
+  switch (contentType) {
+    case "map": {
+      const entry = await fetchGeneratedRuntimeEntry<FieldMap>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedFieldMap(entry);
+      return true;
+    }
+    case "quest": {
+      const entry = await fetchGeneratedRuntimeEntry<Quest>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedQuest(entry);
+      return true;
+    }
+    case "field_enemy": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedFieldEnemyDefinition>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedFieldEnemyDefinition(entry);
+      return true;
+    }
+    case "dialogue": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedDialogue>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedDialogue(entry);
+      return true;
+    }
+    case "mail": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedMailEntry>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedMailEntry(entry);
+      return true;
+    }
+    case "item": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedItem>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedItem(entry);
+      return true;
+    }
+    case "npc": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedNpcTemplate>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedNpc(entry);
+      return true;
+    }
+    case "gear": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedGear>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedGear(entry);
+      return true;
+    }
+    case "card": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedCard>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedCard(entry);
+      return true;
+    }
+    case "fieldmod": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedFieldMod>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedFieldMod(entry);
+      return true;
+    }
+    case "class": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedClassDefinition>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedClass(entry);
+      return true;
+    }
+    case "unit": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedUnitTemplate>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedUnit(entry);
+      return true;
+    }
+    case "operation": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedOperationDefinition>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedOperation(entry);
+      return true;
+    }
+    case "codex": {
+      const entry = await fetchGeneratedRuntimeEntry<ImportedCodexEntry>(contentType, contentId);
+      if (!entry) {
+        return false;
+      }
+      registerImportedCodexEntry(entry);
+      return true;
+    }
+    default:
+      return false;
+  }
 }

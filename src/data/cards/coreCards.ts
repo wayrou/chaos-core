@@ -2,13 +2,13 @@ import { EquipmentCard } from "../../core/equipment";
 
 export const CORE_CARDS: EquipmentCard[] = [
     {
-        id: "core_move_plus",
-        name: "Move+",
-        type: "core",
-        strainCost: 6,
-        description: "Move 2 extra tiles this turn.",
-        range: "R(0-0)",
-    },
+    "id": "core_move_plus",
+    "name": "Move+",
+    "type": "core",
+    "strainCost": 6,
+    "description": "Move 2 tiles.",
+    "range": "R(Self)",
+  },
     {
         id: "core_basic_attack",
         name: "Basic Attack",
@@ -27,13 +27,13 @@ export const CORE_CARDS: EquipmentCard[] = [
         range: "R(1-2)",
     },
     {
-        id: "core_overwatch",
-        name: "Overwatch",
-        type: "core",
-        strainCost: 6,
-        description: "Attack enemy that enters range.",
-        range: "R(2-5)",
-    },
+    "id": "core_overwatch",
+    "name": "Overwatch",
+    "type": "core",
+    "strainCost": 6,
+    "description": "Stun an enemy for one turn.",
+    "range": "R(5)",
+  },
     {
         id: "core_guard",
         name: "Guard",
