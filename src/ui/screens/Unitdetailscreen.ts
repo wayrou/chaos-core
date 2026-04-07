@@ -502,7 +502,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
           <div class="unitdetail-columns unitdetail-columns--management">
             <div class="unitdetail-column">
               <div class="unitdetail-section">
-                <div class="unitdetail-section-title">EQUIPMENT (5 SLOTS)</div>
+                <div class="unitdetail-section-title">EQUIPMENT (6 SLOTS)</div>
                 <div class="auto-equip-section">
                   <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
                 </div>

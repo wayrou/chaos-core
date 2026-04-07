@@ -289,6 +289,7 @@ function createDefaultPlaylist(): SkirmishPlaylist {
         gridWidth: 8,
         gridHeight: 5,
         objectiveType: "elimination",
+        mapId: "builtin_bunker_breach",
       },
     ],
   };
@@ -1078,7 +1079,14 @@ export function createSkirmishMatchFromPlaylist(
   challengeeCallsign: string,
   round: SkirmishRoundSpec,
 ): SquadMatchState {
-  let match = createSquadOnlineMatch(challengerCallsign, 2, round.objectiveType, round.gridWidth, round.gridHeight);
+  let match = createSquadOnlineMatch(
+    challengerCallsign,
+    2,
+    round.objectiveType,
+    round.gridWidth,
+    round.gridHeight,
+    round.mapId ?? null,
+  );
   match = {
     ...match,
     transportState: "local_preview",

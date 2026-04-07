@@ -57,6 +57,7 @@ import {
   findNextOpenLobbySlot,
   findReconnectableLobbySlot,
   getActiveLobbyPlaylistRound,
+  getDefaultLobbyPlaylist,
   getLobbyLocalSkirmishMatch,
   launchCoopOperationsActivity,
   loadLobbyState,
@@ -73,6 +74,7 @@ import {
   updateLobbySkirmishSnapshot,
   upsertLobbyMember,
 } from "../../core/multiplayerLobby";
+import { getTacticalMapById, getTacticalMapCatalog } from "../../core/tacticalMaps";
 import {
   clearCoopOperationsSession,
   launchCoopOperationsSessionFromLobby,
@@ -118,6 +120,8 @@ let trainingConfig: TrainingConfig = {
 
 // Store last training config for rematch
 let lastTrainingConfig: TrainingConfig | null = null;
+let skirmishPlaylistDraft: SkirmishPlaylist = getDefaultLobbyPlaylist();
+let selectedChallengeTargetSlot: NetworkPlayerSlot | null = null;
 
 type CustomOperationConfig = {
   difficulty: Difficulty;
@@ -524,15 +528,64 @@ function getSkirmishObjectivePreviewCells(round: Pick<SkirmishRoundSpec, "gridWi
   return [];
 }
 
-function renderSkirmishObjectivePreview(round: Pick<SkirmishRoundSpec, "gridWidth" | "gridHeight" | "objectiveType">): string {
-  const previewCells = getSkirmishObjectivePreviewCells(round);
-  const cellMarkup = Array.from({ length: round.gridHeight }, (_, y) =>
-    Array.from({ length: round.gridWidth }, (_, x) => {
-      const isFriendlyDeploy = x === 0;
-      const isEnemyDeploy = x === round.gridWidth - 1;
-      const previewCell = previewCells.find((cell) => cell.x === x && cell.y === y);
+function clonePlaylist(playlist: SkirmishPlaylist): SkirmishPlaylist {
+  return {
+    rounds: playlist.rounds.map((round) => ({ ...round })),
+  };
+}
+
+function normalizeRoundForSelectedMap(round: SkirmishRoundSpec): SkirmishRoundSpec {
+  const tacticalMap = getTacticalMapById(round.mapId ?? null);
+  if (!tacticalMap) {
+    return round;
+  }
+  return {
+    ...round,
+    gridWidth: tacticalMap.width,
+    gridHeight: tacticalMap.height,
+  };
+}
+
+function getPlaylistValidation(playlist: SkirmishPlaylist): { valid: boolean; messages: string[] } {
+  const messages: string[] = [];
+  playlist.rounds.forEach((round, index) => {
+    const tacticalMap = getTacticalMapById(round.mapId ?? null);
+    if (tacticalMap && !tacticalMap.supportedModes.includes(round.objectiveType)) {
+      messages.push(`Round ${index + 1}: ${tacticalMap.name} does not support ${getSquadWinConditionLabel(round.objectiveType)}.`);
+    }
+  });
+  return {
+    valid: messages.length === 0,
+    messages,
+  };
+}
+
+function renderSkirmishObjectivePreview(round: Pick<SkirmishRoundSpec, "gridWidth" | "gridHeight" | "objectiveType" | "mapId">): string {
+  const tacticalMap = getTacticalMapById(round.mapId ?? null);
+  const width = tacticalMap?.width ?? round.gridWidth;
+  const height = tacticalMap?.height ?? round.gridHeight;
+  const previewCells = tacticalMap ? [] : getSkirmishObjectivePreviewCells(round);
+  const cellMarkup = Array.from({ length: height }, (_, y) =>
+    Array.from({ length: width }, (_, x) => {
+      const hasTile = tacticalMap ? tacticalMap.tiles.some((tile) => tile.x === x && tile.y === y) : true;
+      const isFriendlyDeploy = tacticalMap
+        ? tacticalMap.zones.friendlySpawn.some((point) => point.x === x && point.y === y)
+        : x === 0;
+      const isEnemyDeploy = tacticalMap
+        ? tacticalMap.zones.enemySpawn.some((point) => point.x === x && point.y === y)
+        : x === width - 1;
+      const previewCell = tacticalMap
+        ? tacticalMap.zones.relay.some((point) => point.x === x && point.y === y)
+          ? { kind: "relay" as const }
+          : tacticalMap.zones.friendlyBreach.some((point) => point.x === x && point.y === y)
+            ? { kind: "friendly_breach" as const }
+            : tacticalMap.zones.enemyBreach.some((point) => point.x === x && point.y === y)
+              ? { kind: "enemy_breach" as const }
+              : null
+        : previewCells.find((cell) => cell.x === x && cell.y === y) ?? null;
       const classes = [
         "skirmish-objective-preview__cell",
+        !hasTile ? "skirmish-objective-preview__cell--void" : "",
         isFriendlyDeploy ? "skirmish-objective-preview__cell--friendly-deploy" : "",
         isEnemyDeploy ? "skirmish-objective-preview__cell--enemy-deploy" : "",
         previewCell ? `skirmish-objective-preview__cell--${previewCell.kind}` : "",
@@ -550,7 +603,7 @@ function renderSkirmishObjectivePreview(round: Pick<SkirmishRoundSpec, "gridWidt
 
   return `
     <div class="skirmish-objective-preview">
-      <div class="skirmish-objective-preview__grid" style="grid-template-columns: repeat(${round.gridWidth}, 1fr);">
+      <div class="skirmish-objective-preview__grid" style="grid-template-columns: repeat(${width}, 1fr);">
         ${cellMarkup}
       </div>
       <div class="skirmish-objective-preview__legend">
@@ -1121,8 +1174,9 @@ function hydrateCoopOperationFromLobby(lobby: LobbyState): OperationRun | null {
   if (lobby.activity.kind !== "coop_operations") {
     return null;
   }
-  const parsedOperation = parseCoopOperationSnapshot(lobby.activity.coopOperations.operationSnapshot);
-  const parsedBattle = parseCoopBattleSnapshot(lobby.activity.coopOperations.battleSnapshot);
+  const coopActivity = lobby.activity.coopOperations;
+  const parsedOperation = parseCoopOperationSnapshot(coopActivity.operationSnapshot);
+  const parsedBattle = parseCoopBattleSnapshot(coopActivity.battleSnapshot);
   updateGameState((state) => {
     const nextState = launchCoopOperationsSessionFromLobby(state, lobby);
     if (parsedBattle) {
@@ -1137,7 +1191,7 @@ function hydrateCoopOperationFromLobby(lobby: LobbyState): OperationRun | null {
       ...nextState,
       operation: parsedOperation ?? nextState.operation,
       currentBattle: null,
-      phase: lobby.activity.coopOperations.operationPhase ?? nextState.phase,
+      phase: coopActivity.operationPhase ?? nextState.phase,
     };
   });
   return parsedOperation;
@@ -2228,6 +2282,90 @@ function renderSkirmishStagingScreen(returnTo: CommsReturnTo = activeCommsReturn
   attachCommsArrayListeners(returnTo);
 }
 
+function getChallengeableLobbySlots(lobby: LobbyState | null | undefined): NetworkPlayerSlot[] {
+  if (!lobby || lobby.activity.kind !== "idle" || !lobby.localSlot) {
+    return [];
+  }
+  return NETWORK_PLAYER_SLOTS.filter((slot) => slot !== lobby.localSlot && Boolean(lobby.members[slot]?.connected));
+}
+
+function renderSkirmishPlaylistEditor(lobby: LobbyState | null | undefined): string {
+  const mapCatalog = getTacticalMapCatalog();
+  const allMaps = [...mapCatalog.builtInMaps, ...mapCatalog.customMaps];
+  const challengeableSlots = getChallengeableLobbySlots(lobby);
+  const selectedTarget = selectedChallengeTargetSlot && challengeableSlots.includes(selectedChallengeTargetSlot)
+    ? selectedChallengeTargetSlot
+    : challengeableSlots[0] ?? null;
+  const validation = getPlaylistValidation(skirmishPlaylistDraft);
+  const canIssueChallenge = Boolean(
+    lobby
+    && selectedTarget
+    && lobby.activity.kind === "idle"
+    && validation.valid,
+  );
+
+  return `
+    <div class="settings-category" style="margin-top: 1rem;">
+      <div class="settings-category-header">SKIRMISH PLAYLIST EDITOR</div>
+      <div class="config-note">
+        <span class="note-icon">M</span>
+        <span>Build a custom round list, pick an authored map for each round, and launch the playlist directly into the lobby challenge flow.</span>
+      </div>
+      <div class="comms-array-playlist-editor">
+        ${skirmishPlaylistDraft.rounds.map((round, index) => {
+          const normalizedRound = normalizeRoundForSelectedMap(round);
+          const selectedMap = getTacticalMapById(normalizedRound.mapId ?? null);
+          return `
+            <div class="comms-array-playlist-round">
+              <div class="comms-array-playlist-round__header">
+                <strong>ROUND ${index + 1}</strong>
+                ${skirmishPlaylistDraft.rounds.length > 1 ? `<button class="comms-array-btn" type="button" data-skirmish-remove-round="${round.id}">REMOVE</button>` : ""}
+              </div>
+              <div class="config-row">
+                <label class="config-label">Objective:</label>
+                <select class="config-select" data-skirmish-round-objective="${round.id}">
+                  ${(["elimination", "control_relay", "breakthrough"] as const).map((objectiveType) => `
+                    <option value="${objectiveType}" ${normalizedRound.objectiveType === objectiveType ? "selected" : ""}>${getSquadWinConditionLabel(objectiveType)}</option>
+                  `).join("")}
+                </select>
+              </div>
+              <div class="config-row">
+                <label class="config-label">Map:</label>
+                <select class="config-select" data-skirmish-round-map="${round.id}">
+                  <option value="" ${normalizedRound.mapId ? "" : "selected"}>Legacy Generated Arena</option>
+                  ${allMaps.map((map) => `<option value="${map.id}" ${normalizedRound.mapId === map.id ? "selected" : ""}>${escapeHtml(map.name)} // ${escapeHtml(map.theme.replace(/_/g, " "))}</option>`).join("")}
+                </select>
+              </div>
+              <div class="config-note">
+                <span class="note-icon">></span>
+                <span>${selectedMap ? `${escapeHtml(selectedMap.metadata.author)} // ${escapeHtml(selectedMap.metadata.tags.join(", "))}` : `GRID ${normalizedRound.gridWidth}x${normalizedRound.gridHeight} // generated cover`}</span>
+              </div>
+              ${renderSkirmishObjectivePreview(normalizedRound)}
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <div class="comms-array-button-group" style="margin-top: 1rem;">
+        <button class="comms-array-btn" type="button" id="addSkirmishRoundBtn">ADD ROUND</button>
+        <select class="config-select" id="skirmishChallengeTargetSelect" ${challengeableSlots.length > 0 ? "" : "disabled"}>
+          ${challengeableSlots.length > 0
+            ? challengeableSlots.map((slot) => `<option value="${slot}" ${selectedTarget === slot ? "selected" : ""}>CHALLENGE ${slot} // ${escapeHtml(lobby?.members[slot]?.callsign ?? slot)}</option>`).join("")
+            : `<option value="">No remote fighter linked</option>`}
+        </select>
+        <button class="comms-array-btn comms-array-btn--primary" type="button" id="issueSkirmishChallengeBtn" ${canIssueChallenge ? "" : "disabled"}>
+          ISSUE SKIRMISH CHALLENGE
+        </button>
+      </div>
+      ${validation.messages.length > 0 ? `
+        <div class="config-note config-note--stacked">
+          <span class="note-icon">!</span>
+          ${validation.messages.map((message) => `<span>${escapeHtml(message)}</span>`).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderSquadOnlineSection(): string {
   const state = getGameState();
   const lobby = getResolvedLobbyState();
@@ -2344,6 +2482,8 @@ function renderSquadOnlineSection(): string {
               ${renderSkirmishObjectivePreview(pendingChallenge.playlist.rounds[0] ?? { id: "preview", gridWidth: 8, gridHeight: 5, objectiveType: "elimination" })}
             </div>
           ` : ""}
+
+          ${renderSkirmishPlaylistEditor(lobby)}
 
           ${lobby?.activity.kind === "coop_operations" ? `
             <div class="config-note">
@@ -2970,6 +3110,107 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
       commitSquadMatchUpdate(nextMatch, returnTo, `${slot} recorded as the winner.`, "success");
     });
   });
+
+  const addSkirmishRoundBtn = document.getElementById("addSkirmishRoundBtn");
+  if (addSkirmishRoundBtn) {
+    addSkirmishRoundBtn.addEventListener("click", () => {
+      const lastRound = skirmishPlaylistDraft.rounds[skirmishPlaylistDraft.rounds.length - 1];
+      const nextRound = normalizeRoundForSelectedMap({
+        id: `round_${Date.now().toString(36)}`,
+        gridWidth: lastRound?.gridWidth ?? 8,
+        gridHeight: lastRound?.gridHeight ?? 5,
+        objectiveType: lastRound?.objectiveType ?? "elimination",
+        mapId: lastRound?.mapId ?? null,
+      });
+      skirmishPlaylistDraft = {
+        rounds: [...skirmishPlaylistDraft.rounds, nextRound],
+      };
+      renderCommsArrayScreen(returnTo);
+    });
+  }
+
+  document.querySelectorAll<HTMLButtonElement>("[data-skirmish-remove-round]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const roundId = button.dataset.skirmishRemoveRound;
+      if (!roundId) {
+        return;
+      }
+      skirmishPlaylistDraft = {
+        rounds: skirmishPlaylistDraft.rounds.filter((round) => round.id !== roundId),
+      };
+      if (skirmishPlaylistDraft.rounds.length <= 0) {
+        skirmishPlaylistDraft = getDefaultLobbyPlaylist();
+      }
+      renderCommsArrayScreen(returnTo);
+    });
+  });
+
+  document.querySelectorAll<HTMLSelectElement>("[data-skirmish-round-objective]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const roundId = select.dataset.skirmishRoundObjective;
+      if (!roundId) {
+        return;
+      }
+      skirmishPlaylistDraft = {
+        rounds: skirmishPlaylistDraft.rounds.map((round) => {
+          if (round.id !== roundId) {
+            return round;
+          }
+          return {
+            ...round,
+            objectiveType: select.value as SquadWinCondition,
+          };
+        }),
+      };
+      renderCommsArrayScreen(returnTo);
+    });
+  });
+
+  document.querySelectorAll<HTMLSelectElement>("[data-skirmish-round-map]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const roundId = select.dataset.skirmishRoundMap;
+      if (!roundId) {
+        return;
+      }
+      skirmishPlaylistDraft = {
+        rounds: skirmishPlaylistDraft.rounds.map((round) => {
+          if (round.id !== roundId) {
+            return round;
+          }
+          return normalizeRoundForSelectedMap({
+            ...round,
+            mapId: select.value || null,
+          });
+        }),
+      };
+      renderCommsArrayScreen(returnTo);
+    });
+  });
+
+  const skirmishChallengeTargetSelect = document.getElementById("skirmishChallengeTargetSelect") as HTMLSelectElement | null;
+  if (skirmishChallengeTargetSelect) {
+    skirmishChallengeTargetSelect.addEventListener("change", () => {
+      selectedChallengeTargetSlot = (skirmishChallengeTargetSelect.value || null) as NetworkPlayerSlot | null;
+    });
+  }
+
+  const issueSkirmishChallengeBtn = document.getElementById("issueSkirmishChallengeBtn");
+  if (issueSkirmishChallengeBtn) {
+    issueSkirmishChallengeBtn.addEventListener("click", async () => {
+      const validation = getPlaylistValidation(skirmishPlaylistDraft);
+      if (!validation.valid) {
+        showNotification(validation.messages[0] ?? "Skirmish playlist is not valid.", "error");
+        return;
+      }
+      const targetSlot = (skirmishChallengeTargetSelect?.value || selectedChallengeTargetSlot) as NetworkPlayerSlot | "";
+      if (!targetSlot) {
+        showNotification("No remote fighter is selected for the challenge.", "error");
+        return;
+      }
+      await requestLobbySkirmishChallenge(targetSlot as NetworkPlayerSlot, clonePlaylist(skirmishPlaylistDraft));
+      renderCommsArrayScreen(returnTo);
+    });
+  }
   
   // Training config controls
   const gridWidthSelect = document.getElementById("gridWidthSelect") as HTMLSelectElement;

@@ -11,6 +11,12 @@ import {
   type Unit,
 } from "./types";
 import type { SquadDraftPick, SquadMatchState } from "./squadOnline";
+import { getTacticalMapById } from "./tacticalMaps";
+import {
+  applyTacticalMapToBattleState,
+  createBattleTilesFromTacticalMap,
+  createSquadObjectiveStateFromTacticalMap,
+} from "./tacticalBattle";
 
 export const SQUAD_BATTLE_PROTOCOL_VERSION = 1;
 const SQUAD_OBJECTIVE_TARGET_SCORE = 3;
@@ -273,8 +279,16 @@ function createBreakthroughBreachTiles(width: number, height: number): Record<Sq
 
 function createSquadObjectiveState(match: SquadMatchState): SquadBattleObjectiveState | null {
   const { gridWidth, gridHeight, winCondition } = match.rules;
+  const authoredMap = getTacticalMapById(match.rules.mapId ?? null);
   if (winCondition === "elimination") {
     return null;
+  }
+
+  if (authoredMap) {
+    const authoredObjective = createSquadObjectiveStateFromTacticalMap(authoredMap, winCondition);
+    if (authoredObjective) {
+      return authoredObjective;
+    }
   }
 
   if (winCondition === "breakthrough") {
@@ -453,6 +467,11 @@ function createDraftedUnitsForSlot(
 }
 
 function createArenaTiles(match: SquadMatchState): Tile[] {
+  const authoredMap = getTacticalMapById(match.rules.mapId ?? null);
+  if (authoredMap) {
+    return createBattleTilesFromTacticalMap(authoredMap);
+  }
+
   const arenaWidth = match.rules.gridWidth;
   const arenaHeight = match.rules.gridHeight;
   const baseTiles: Tile[] = [];
@@ -533,7 +552,8 @@ export function createSquadBattleState(match: SquadMatchState, gameState: GameSt
   );
   const objective = createSquadObjectiveState(match);
 
-  return {
+  const authoredMap = getTacticalMapById(match.rules.mapId ?? null);
+  let battle: BattleState = {
     id: match.battleStateId ?? `battle_${match.matchId}`,
     floorId: "squad_arena",
     roomId: match.matchId,
@@ -567,6 +587,7 @@ export function createSquadBattleState(match: SquadMatchState, gameState: GameSt
         matchId: match.matchId,
         hostSlot: match.hostSlot,
         winCondition: match.rules.winCondition,
+        mapId: match.rules.mapId ?? null,
         slotSides,
         slotCallsigns,
         mapSeed: match.rules.mapSeed,
@@ -574,6 +595,14 @@ export function createSquadBattleState(match: SquadMatchState, gameState: GameSt
       },
     },
   };
+  if (authoredMap) {
+    battle = applyTacticalMapToBattleState(battle, authoredMap);
+    battle.log = [
+      ...battle.log,
+      `SLK//MAP    :: Authored tactical map online: ${authoredMap.name}.`,
+    ];
+  }
+  return battle;
 }
 
 export function createSquadBattlePayload(match: SquadMatchState, battle: BattleState): string {

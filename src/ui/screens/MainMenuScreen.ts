@@ -52,6 +52,7 @@ type TerminalElements = {
 type MainMenuActionId =
   | "continue"
   | "new-op"
+  | "map-builder"
   | "multiplayer"
   | "echo-runs"
   | "load"
@@ -82,7 +83,7 @@ type SavedMainMenuButtonLayoutPayload = {
 };
 
 const MAIN_MENU_LAYOUT_STORAGE_KEY = "chaoscore_mainmenu_button_layout";
-const MAIN_MENU_LAYOUT_VERSION = 3;
+const MAIN_MENU_LAYOUT_VERSION = 4;
 const MAIN_MENU_BACKGROUND_STORAGE_KEY = "chaoscore_mainmenu_background_theme";
 const MAIN_MENU_DRAG_THRESHOLD = 6;
 const MAIN_MENU_GRID_SIZE = 4;
@@ -519,6 +520,22 @@ function buildMainMenuButtonTiles(
     </div>
   `);
 
+  tiles.push(`
+    <div class="mainmenu-action-tile mainmenu-action-tile--featured" data-mainmenu-tile="map-builder">
+      <div class="mainmenu-action-tile__controls">
+        <span class="mainmenu-action-tile__grip all-nodes-item-grip" aria-hidden="true">::</span>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="map-builder" aria-label="Cycle map builder color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
+        <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="map-builder" aria-label="Minimize map builder">_</button>
+      </div>
+      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility" data-action="map-builder" type="button">
+        <span class="btn-icon node-icon">MAP</span>
+        <span class="btn-text node-label">MAP BUILDER</span>
+        <span class="btn-subtitle node-desc">Custom Skirmish Maps & Quick Tests</span>
+      </button>
+      <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="map-builder" aria-label="Resize map builder"></button>
+    </div>
+  `);
+
   if (hasLoad) {
     tiles.push(`
       <div class="mainmenu-action-tile mainmenu-action-tile--compact" data-mainmenu-tile="load">
@@ -584,6 +601,7 @@ function getDefaultMainMenuTileSize(actionId: MainMenuActionId): { width: number
     case "continue":
       return { width: 387, height: 163 };
     case "echo-runs":
+    case "map-builder":
     case "multiplayer":
       return { width: 359, height: 163 };
     case "new-op":
@@ -683,6 +701,13 @@ function getDefaultMainMenuButtonLayout(
       ...featuredSize,
       minimized: false,
       themeIndex: 1,
+    },
+    "map-builder": {
+      x: scaledX(1044),
+      y: scaledY(860),
+      ...featuredSize,
+      minimized: false,
+      themeIndex: 3,
     },
   };
   const compactActions: MainMenuActionId[] = [];
@@ -1340,6 +1365,14 @@ function attachMenuListeners(saves: SaveInfo[]): void {
     multiplayerBtn.addEventListener("click", async () => {
       const { renderCommsArrayScreen } = await import("./CommsArrayScreen");
       renderCommsArrayScreen("menu");
+    });
+  }
+
+  const mapBuilderBtn = root.querySelector<HTMLButtonElement>('button[data-action="map-builder"]');
+  if (mapBuilderBtn) {
+    mapBuilderBtn.addEventListener("click", async () => {
+      const { renderMapBuilderScreen } = await import("./MapBuilderScreen");
+      renderMapBuilderScreen();
     });
   }
   

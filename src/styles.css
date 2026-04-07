@@ -36282,3 +36282,267 @@ body {
     flex-wrap: wrap;
   }
 }
+
+.battle-tile--void {
+  background: rgba(8, 10, 16, 0.86);
+  border-color: rgba(78, 90, 120, 0.12);
+  opacity: 0.44;
+}
+
+.battle-tile--relay-zone,
+.battle-tile--extraction-zone {
+  box-shadow: inset 0 0 0 2px rgba(255, 214, 102, 0.32);
+}
+
+.battle-tile-object-marker {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: rgba(15, 18, 28, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f1e7c5;
+  z-index: 2;
+}
+
+.battle-tile-object-marker--proximity-mine {
+  color: #ff8e6f;
+}
+
+.battle-tile-object-marker--med-station,
+.battle-tile-object-marker--ammo-crate {
+  color: #bfeecf;
+}
+
+.map-builder-screen {
+  min-height: 100vh;
+  padding: 26px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 181, 96, 0.18), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(88, 160, 255, 0.12), transparent 30%),
+    linear-gradient(180deg, #120f12, #090b10);
+  color: #f3ead2;
+}
+
+.map-builder-header,
+.map-builder-layout {
+  display: flex;
+  gap: 18px;
+}
+
+.map-builder-header {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.map-builder-title {
+  margin: 4px 0;
+  font-size: 38px;
+  letter-spacing: 0.08em;
+}
+
+.map-builder-kicker,
+.map-builder-subtitle,
+.map-builder-panel__title,
+.map-builder-note,
+.map-builder-message {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.map-builder-kicker,
+.map-builder-subtitle,
+.map-builder-note {
+  font-size: 11px;
+  color: rgba(243, 234, 210, 0.74);
+}
+
+.map-builder-actions,
+.map-builder-tool-grid,
+.map-builder-library-list,
+.map-builder-mode-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.map-builder-sidebar {
+  width: 360px;
+  display: grid;
+  gap: 14px;
+}
+
+.map-builder-main {
+  flex: 1;
+  display: grid;
+  gap: 14px;
+}
+
+.map-builder-panel {
+  border: 1px solid rgba(255, 215, 150, 0.16);
+  background: rgba(16, 18, 27, 0.82);
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.map-builder-panel label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: rgba(243, 234, 210, 0.86);
+}
+
+.map-builder-panel input,
+.map-builder-panel select {
+  background: rgba(8, 11, 18, 0.88);
+  color: #f3ead2;
+  border: 1px solid rgba(255, 215, 150, 0.16);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.map-builder-tool,
+.map-builder-library-item {
+  border: 1px solid rgba(255, 215, 150, 0.14);
+  background: rgba(29, 32, 46, 0.88);
+  color: #f3ead2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.map-builder-tool.is-active {
+  background: rgba(255, 186, 94, 0.18);
+  border-color: rgba(255, 207, 138, 0.42);
+}
+
+.map-builder-validation.is-valid {
+  color: #aee0b7;
+}
+
+.map-builder-validation.is-invalid {
+  color: #ffb5a0;
+}
+
+.map-builder-validation-list {
+  display: grid;
+  gap: 6px;
+}
+
+.map-builder-validation-item {
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.map-builder-validation-item--error {
+  background: rgba(149, 47, 27, 0.22);
+}
+
+.map-builder-validation-item--warning {
+  background: rgba(121, 91, 28, 0.22);
+}
+
+.map-builder-canvas {
+  display: grid;
+  gap: 6px;
+  transform: scale(var(--map-builder-zoom, 1));
+  transform-origin: top left;
+}
+
+.map-builder-cell {
+  position: relative;
+  min-height: 84px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(18, 21, 30, 0.88);
+  color: #f3ead2;
+}
+
+.map-builder-cell--void {
+  background: rgba(9, 11, 18, 0.68);
+  color: rgba(243, 234, 210, 0.3);
+}
+
+.map-builder-cell--surface-metal { background: rgba(45, 51, 60, 0.94); }
+.map-builder-cell--surface-stone { background: rgba(57, 53, 49, 0.94); }
+.map-builder-cell--surface-dirt { background: rgba(69, 51, 40, 0.94); }
+.map-builder-cell--surface-grate { background: rgba(34, 43, 45, 0.94); }
+.map-builder-cell--surface-industrial { background: rgba(34, 37, 50, 0.94); }
+.map-builder-cell--surface-ruin { background: rgba(54, 44, 39, 0.94); }
+
+.map-builder-cell--friendly-spawn { box-shadow: inset 0 0 0 2px rgba(104, 182, 255, 0.55); }
+.map-builder-cell--enemy-spawn { box-shadow: inset 0 0 0 2px rgba(255, 108, 86, 0.55); }
+.map-builder-cell--relay { box-shadow: inset 0 0 0 2px rgba(255, 220, 120, 0.55); }
+.map-builder-cell--friendly-breach { box-shadow: inset 0 0 0 2px rgba(155, 231, 189, 0.55); }
+.map-builder-cell--enemy-breach { box-shadow: inset 0 0 0 2px rgba(255, 170, 114, 0.55); }
+.map-builder-cell--extraction { box-shadow: inset 0 0 0 2px rgba(208, 178, 255, 0.55); }
+.map-builder-cell--traversal-source { outline: 2px solid #fff1b8; }
+
+.map-builder-cell__coord,
+.map-builder-cell__elevation,
+.map-builder-cell__object {
+  position: absolute;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.map-builder-cell__coord { left: 6px; top: 6px; opacity: 0.62; }
+.map-builder-cell__elevation { right: 6px; top: 6px; }
+.map-builder-cell__object { left: 6px; bottom: 6px; color: #ffd7a0; }
+
+.map-builder-message {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 11px;
+}
+
+.map-builder-message--success { background: rgba(49, 115, 66, 0.22); }
+.map-builder-message--error { background: rgba(135, 44, 24, 0.26); }
+.map-builder-message--info { background: rgba(48, 67, 110, 0.26); }
+
+.comms-array-playlist-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.comms-array-playlist-round {
+  border: 1px solid rgba(255, 215, 150, 0.12);
+  background: rgba(9, 11, 19, 0.56);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.comms-array-playlist-round__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.skirmish-objective-preview__cell--void {
+  opacity: 0.3;
+  background: rgba(12, 13, 20, 0.82);
+}
+
+@media (max-width: 1100px) {
+  .map-builder-layout {
+    flex-direction: column;
+  }
+
+  .map-builder-sidebar {
+    width: 100%;
+  }
+}

@@ -63,6 +63,7 @@ export interface SquadMatchRules {
   mapSeed: number;
   gridWidth: number;
   gridHeight: number;
+  mapId?: string | null;
   winCondition: SquadWinCondition;
 }
 
@@ -276,6 +277,7 @@ export function createSquadOnlineMatch(
   winCondition: SquadWinCondition = "elimination",
   gridWidth = DEFAULT_SKIRMISH_GRID_WIDTH,
   gridHeight = DEFAULT_SKIRMISH_GRID_HEIGHT,
+  mapId: string | null = null,
 ): SquadMatchState {
   const now = Date.now();
   const matchId = `squad_${now.toString(36)}`;
@@ -296,6 +298,7 @@ export function createSquadOnlineMatch(
       mapSeed: hashSeed(`${matchId}:map`),
       gridWidth: clampGridWidth(gridWidth),
       gridHeight: clampGridHeight(gridHeight),
+      mapId,
       winCondition: normalizedWinCondition,
     },
     members,
@@ -620,6 +623,7 @@ export function rehydrateSquadMatchState(
       ...snapshot.rules,
       gridWidth: clampGridWidth(snapshot.rules?.gridWidth ?? DEFAULT_SKIRMISH_GRID_WIDTH),
       gridHeight: clampGridHeight(snapshot.rules?.gridHeight ?? DEFAULT_SKIRMISH_GRID_HEIGHT),
+      mapId: snapshot.rules?.mapId ?? null,
       winCondition: normalizeSquadWinCondition(snapshot.rules?.winCondition),
     },
     joinCode: createJoinCode(snapshot.matchId),
@@ -644,6 +648,7 @@ export function applySquadMatchCommand(
         command.winCondition,
         command.gridWidth,
         command.gridHeight,
+        null,
       );
     case "join_lobby":
       return addPreviewPeerToSquadMatch(match!, command.callsign, command.slot);
@@ -694,6 +699,7 @@ export function loadSquadMatchState(): SquadMatchState | null {
         ...parsed.rules,
         gridWidth: clampGridWidth(parsed.rules?.gridWidth ?? DEFAULT_SKIRMISH_GRID_WIDTH),
         gridHeight: clampGridHeight(parsed.rules?.gridHeight ?? DEFAULT_SKIRMISH_GRID_HEIGHT),
+        mapId: parsed.rules?.mapId ?? null,
         winCondition: normalizeSquadWinCondition(parsed.rules?.winCondition),
       },
     };
