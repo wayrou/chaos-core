@@ -14,7 +14,17 @@ import {
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
-import { createCompanion, updateCompanion } from "./companion";
+import { showAlertDialog } from "../ui/components/confirmDialog";
+import {
+  checkCompanionReachedTarget,
+  createCompanion,
+  findNearestEnemy,
+  findNearestResource,
+  updateCompanion,
+  updateCompanionAttack,
+  updateCompanionFetch,
+  updateCompanionFollow,
+} from "./companion";
 import { hasLiveFieldEnemies, isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
 import { showDialogue, showNpcDialogue } from "../ui/screens/DialogueScreen";
@@ -67,6 +77,7 @@ import {
   BASIC_RESOURCE_KEYS,
   createEmptyResourceWallet,
   getResourceEntries,
+  type ResourceKey,
   type ResourceWallet,
 } from "../core/resources";
 import {
@@ -98,7 +109,16 @@ import {
 import { getActiveQuests, initializeQuestState, updateQuestProgress } from "../quests/questManager";
 import { renderQuestTrackerWidget } from "../ui/components/questTrackerWidget";
 import { showSystemPing } from "../ui/components/systemPing";
-import { setMusicCue } from "../core/audioSystem";
+import { playPlaceholderSfx, setMusicCue } from "../core/audioSystem";
+import {
+  subscribeToFeedback,
+  triggerFeedback,
+  type FeedbackRequest,
+} from "../core/feedback";
+import {
+  enhanceTerminalUiButtons,
+  startTerminalTyping,
+} from "../ui/components/terminalFeedback";
 import { createLobbyPlaylist, shouldRenderLobbyAvatar } from "../core/multiplayerLobby";
 import { getSquadWinConditionLabel } from "../core/squadOnline";
 import {
@@ -134,7 +154,7 @@ import {
 } from "../core/escAvailability";
 import {
   getOuterDeckSubareaByMapId,
-  isOuterDeckExpeditionActive,
+  isOuterDeckBranchMap,
   isOuterDeckSubareaCleared,
   markOuterDeckSubareaCleared,
 } from "../core/outerDecks";
@@ -157,6 +177,7 @@ let movementInput = {
 };
 
 let activeInteractionPrompt: string | null = null;
+let activeAutoInteractionZoneKey: string | null = null;
 type FieldControllerActionSnapshot = {
   interact: boolean;
   attack: boolean;
@@ -221,6 +242,18 @@ function normalizeFieldCombatState(
   return nextCombat;
 }
 
+function normalizeFieldPlayerState(player: PlayerAvatar): PlayerAvatar {
+  const maxHp = Math.max(1, Number(player.maxHp ?? FIELD_PLAYER_MAX_HP));
+  return {
+    ...player,
+    hp: Math.max(0, Math.min(Number(player.hp ?? maxHp), maxHp)),
+    maxHp,
+    invulnerabilityTime: Math.max(0, Number(player.invulnerabilityTime ?? 0)),
+    vx: Number(player.vx ?? 0),
+    vy: Number(player.vy ?? 0),
+  };
+}
+
 function getFieldAttackCooldown(): number {
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   return Math.max(BOWBLADE_MIN_ATTACK_CYCLE_MS, FIELD_ATTACK_COOLDOWN + bowbladeFieldProfile.attackCooldownDelta);
@@ -228,6 +261,39 @@ function getFieldAttackCooldown(): number {
 
 function isFieldCombatActive(): boolean {
   return hasLiveFieldEnemies(fieldState?.fieldEnemies ?? []);
+}
+
+function getUncollectedFieldResourceObjects(): Array<FieldMap["objects"][number]> {
+  if (!currentMap || !fieldState) {
+    return [];
+  }
+
+  const collected = new Set(fieldState.collectedResourceObjectIds ?? []);
+  return currentMap.objects.filter((object) => object.type === "resource" && !collected.has(object.id));
+}
+
+function syncP1AvatarPosition(nextX: number, nextY: number): void {
+  updateGameState((state) => {
+    const avatar = state.players.P1.avatar;
+    if (!avatar) {
+      return state;
+    }
+
+    return {
+      ...state,
+      players: {
+        ...state.players,
+        P1: {
+          ...state.players.P1,
+          avatar: {
+            ...avatar,
+            x: nextX,
+            y: nextY,
+          },
+        },
+      },
+    };
+  });
 }
 
 // Store last interaction zone position for returning to field from nodes
@@ -243,6 +309,17 @@ let fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "uni
 let stickyNoteDragResumePending = false;
 let lastNetworkLobbyAvatarSyncKey = "";
 let lastMinimapRevealKey = "";
+let cleanupFieldFeedbackListener: (() => void) | null = null;
+let smoothedFieldCameraCenter: { x: number; y: number } | null = null;
+let currentFieldCameraTransform = {
+  offsetX: 0,
+  offsetY: 0,
+  zoom: 1,
+};
+let lastFieldPromptSignature: string | null = null;
+let lastFieldStepSample: { x: number; y: number } | null = null;
+let fieldStepDistanceAccumulator = 0;
+let fieldStepPulseUntilMs = 0;
 let havenBuildModeActive = false;
 let havenBuildResumePaused = false;
 let havenBuildCameraCenter: { x: number; y: number } | null = null;
@@ -336,6 +413,15 @@ const FIELD_PROJECTILE_LIFETIME = 2000;
 const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
+const FIELD_PLAYER_MAX_HP = 100;
+const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
+const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
+const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
+const FIELD_COMPANION_ATTACK_RANGE = 56;
+const FIELD_CAMERA_SMOOTHING = 0.2;
+const FIELD_FOOTSTEP_DISTANCE = 82;
+const FIELD_DASH_FOOTSTEP_DISTANCE = 56;
+const FIELD_STEP_PULSE_DURATION_MS = 150;
 const HAVEN_BUILD_PAN_SPEED = 720;
 const HAVEN_BUILD_PAN_FAST_MULTIPLIER = 2.25;
 
@@ -356,6 +442,205 @@ function resetHavenBuildPanState(): void {
     right: false,
     fast: false,
   };
+}
+
+function resetFieldFeedbackState(): void {
+  smoothedFieldCameraCenter = null;
+  currentFieldCameraTransform = {
+    offsetX: 0,
+    offsetY: 0,
+    zoom: fieldZoom,
+  };
+  lastFieldPromptSignature = null;
+  lastFieldStepSample = null;
+  fieldStepDistanceAccumulator = 0;
+  fieldStepPulseUntilMs = 0;
+}
+
+function getFieldOverlayRoot(): HTMLElement | null {
+  return document.getElementById("app");
+}
+
+function ensureFieldFeedbackOverlay(): HTMLElement | null {
+  const root = getFieldOverlayRoot();
+  if (!root) {
+    return null;
+  }
+
+  // Keep pickup and prompt feedback outside the rerendered map subtree so they do not pop off mid-animation.
+  let overlay = root.querySelector<HTMLElement>("#fieldFeedbackOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "fieldFeedbackOverlay";
+    overlay.className = "field-feedback-overlay";
+    root.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function ensureFieldPromptOverlay(): HTMLElement | null {
+  const root = getFieldOverlayRoot();
+  if (!root) {
+    return null;
+  }
+
+  let overlay = root.querySelector<HTMLElement>("#fieldPromptOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "fieldPromptOverlay";
+    overlay.className = "field-prompt-overlay";
+    root.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function queueFieldFeedbackElement(element: HTMLElement, durationMs: number): void {
+  const overlay = ensureFieldFeedbackOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  overlay.appendChild(element);
+  window.setTimeout(() => {
+    element.classList.add("field-feedback-element--exit");
+    window.setTimeout(() => {
+      element.remove();
+    }, 220);
+  }, durationMs);
+}
+
+function resolveFieldOverlayPoint(position: FeedbackRequest["position"]): { x: number; y: number } | null {
+  if (!position || position.space !== "field-world") {
+    return null;
+  }
+
+  const root = getFieldOverlayRoot();
+  const viewport = document.querySelector(".field-viewport") as HTMLElement | null;
+  if (!root || !viewport) {
+    return null;
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const localX = (position.x - currentFieldCameraTransform.offsetX) * currentFieldCameraTransform.zoom;
+  const localY = (position.y - currentFieldCameraTransform.offsetY) * currentFieldCameraTransform.zoom;
+
+  return {
+    x: viewportRect.left - rootRect.left + localX,
+    y: viewportRect.top - rootRect.top + localY,
+  };
+}
+
+function renderFieldFeedbackRequest(request: FeedbackRequest): void {
+  const overlay = ensureFieldFeedbackOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  const origin = resolveFieldOverlayPoint(request.position);
+  if (!origin) {
+    return;
+  }
+
+  if (request.type === "resource") {
+    const textEl = document.createElement("div");
+    textEl.className = "field-feedback-element field-feedback-text";
+    textEl.textContent = request.text ?? "RESOURCE";
+    textEl.style.left = `${origin.x}px`;
+    textEl.style.top = `${origin.y - 18}px`;
+    queueFieldFeedbackElement(textEl, 760);
+
+    const target = resolveFieldOverlayPoint(request.targetPosition);
+    if (target) {
+      const pickupEl = document.createElement("div");
+      pickupEl.className = "field-feedback-element field-feedback-snap";
+      pickupEl.style.left = `${origin.x}px`;
+      pickupEl.style.top = `${origin.y}px`;
+      pickupEl.style.setProperty("--field-feedback-target-x", `${target.x}px`);
+      pickupEl.style.setProperty("--field-feedback-target-y", `${target.y}px`);
+      overlay.appendChild(pickupEl);
+      requestAnimationFrame(() => {
+        pickupEl.classList.add("field-feedback-snap--active");
+      });
+      window.setTimeout(() => {
+        pickupEl.remove();
+      }, 520);
+    }
+  }
+}
+
+function ensureFieldFeedbackListener(): void {
+  if (cleanupFieldFeedbackListener) {
+    return;
+  }
+
+  cleanupFieldFeedbackListener = subscribeToFeedback((request) => {
+    if (!document.querySelector(".field-root")) {
+      return;
+    }
+
+    const fieldRelated = request.position?.space === "field-world" || request.source === "field";
+    if (!fieldRelated) {
+      return;
+    }
+
+    renderFieldFeedbackRequest(request);
+  });
+}
+
+function syncFieldPromptOverlay(promptText: string | null): void {
+  const overlay = ensureFieldPromptOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  if (!promptText) {
+    overlay.classList.remove("field-prompt-overlay--active");
+    lastFieldPromptSignature = null;
+    return;
+  }
+
+  let promptEl = overlay.querySelector<HTMLElement>(".field-interaction-prompt");
+  if (!promptEl) {
+    promptEl = document.createElement("div");
+    promptEl.className = "field-interaction-prompt";
+    overlay.appendChild(promptEl);
+  }
+
+  promptEl.textContent = promptText;
+  overlay.classList.add("field-prompt-overlay--active");
+
+  if (lastFieldPromptSignature !== promptText) {
+    promptEl.classList.remove("field-interaction-prompt--pulse");
+    void promptEl.offsetWidth;
+    promptEl.classList.add("field-interaction-prompt--pulse");
+  }
+
+  lastFieldPromptSignature = promptText;
+}
+
+function updateFieldMovementFeedback(currentTime: number, dashActive: boolean): void {
+  const center = getTrackedFieldCenter();
+  if (!lastFieldStepSample) {
+    lastFieldStepSample = { ...center };
+    return;
+  }
+
+  const distance = Math.hypot(center.x - lastFieldStepSample.x, center.y - lastFieldStepSample.y);
+  lastFieldStepSample = { ...center };
+  if (distance <= 0.05) {
+    return;
+  }
+
+  fieldStepDistanceAccumulator += distance;
+  const triggerDistance = dashActive ? FIELD_DASH_FOOTSTEP_DISTANCE : FIELD_FOOTSTEP_DISTANCE;
+  if (fieldStepDistanceAccumulator < triggerDistance) {
+    return;
+  }
+
+  fieldStepDistanceAccumulator = fieldStepDistanceAccumulator % triggerDistance;
+  fieldStepPulseUntilMs = currentTime + FIELD_STEP_PULSE_DURATION_MS;
+  playPlaceholderSfx("ui-move");
 }
 
 function syncCurrentMapFromState(): void {
@@ -1342,7 +1627,7 @@ const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
   { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
   { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
-  { action: "materials-refinery", icon: "RFN", label: "MATERIALS REFINERY", desc: "Refine advanced expedition materials" },
+  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine advanced field materials" },
   { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
@@ -1558,6 +1843,18 @@ export function setNextFieldSpawnOverride(
   };
 }
 
+export function setNextFieldSpawnOverrideTile(
+  mapId: FieldMap["id"],
+  position: { x: number; y: number; facing?: "north" | "south" | "east" | "west" },
+): void {
+  const tileSize = 64;
+  setNextFieldSpawnOverride(mapId, {
+    x: position.x * tileSize + tileSize / 2,
+    y: position.y * tileSize + tileSize / 2,
+    facing: position.facing,
+  });
+}
+
 /**
  * Store the interaction zone position for returning to field from nodes
  */
@@ -1753,16 +2050,27 @@ function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
   return candidates[0]?.playerId ?? null;
 }
 
+function isAutoTriggerZone(zone: InteractionZone | null | undefined): boolean {
+  return Boolean(zone?.metadata?.autoTrigger);
+}
+
 function getCombinedInteractionPrompt(): string | null {
   const state = getGameState();
   if (!isLocalCoopActive(state)) {
     const soloContext = getPlayerInteractionContext("P1");
-    return soloContext ? `${getPlayerInteractLabel("P1")} :: ${soloContext.zone.label}` : null;
+    return soloContext && !isAutoTriggerZone(soloContext.zone)
+      ? `${getPlayerInteractLabel("P1")} :: ${soloContext.zone.label}`
+      : null;
   }
 
   const contexts = (["P1", "P2"] as PlayerId[])
     .map((playerId) => getPlayerInteractionContext(playerId))
-    .filter(Boolean) as InteractionActorContext[];
+    .filter((context): context is InteractionActorContext => {
+      if (!context) {
+        return false;
+      }
+      return !isAutoTriggerZone(context.zone);
+    });
 
   if (contexts.length === 0) {
     return null;
@@ -1783,6 +2091,62 @@ function getCombinedInteractionPrompt(): string | null {
   });
 
   return promptParts.join(" | ");
+}
+
+function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avatar: PlayerAvatar): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  if (!canPlayerUseFieldAction(getGameState(), playerId, zone.action)) {
+    showFieldAuthorityPing(playerId, zone);
+    return;
+  }
+
+  const savedPlayerPos = { x: avatar.x, y: avatar.y };
+  fieldState.isPaused = true;
+
+  void handleInteraction(zone, currentMap, () => {
+    resumeFieldAfterInteraction(playerId, savedPlayerPos);
+  }).catch((error) => {
+    console.error("[FIELD] Error handling interaction:", error);
+    if (fieldState) {
+      fieldState.isPaused = false;
+      renderFieldScreen(fieldState.currentMap);
+    }
+  });
+}
+
+function maybeTriggerAutoInteraction(): void {
+  if (!fieldState || !currentMap || fieldState.isPaused || isFieldCombatActive() || isHavenBuildModeEnabled()) {
+    if (!fieldState || !fieldState.isPaused) {
+      activeAutoInteractionZoneKey = null;
+    }
+    return;
+  }
+
+  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const autoContext = orderedPlayers
+    .map((playerId) => getPlayerInteractionContext(playerId))
+    .find((context): context is InteractionActorContext => {
+      if (!context) {
+        return false;
+      }
+      return isAutoTriggerZone(context.zone);
+    });
+
+  if (!autoContext) {
+    activeAutoInteractionZoneKey = null;
+    return;
+  }
+
+  const interactionKey = `${currentMap.id}:${autoContext.playerId}:${autoContext.zone.id}`;
+  if (activeAutoInteractionZoneKey === interactionKey) {
+    return;
+  }
+
+  activeAutoInteractionZoneKey = interactionKey;
+  triggerZoneInteraction(autoContext.playerId, autoContext.zone, autoContext.avatar);
 }
 
 function showFieldAuthorityPing(playerId: PlayerId, zone: InteractionZone): void {
@@ -1856,7 +2220,7 @@ function normalizePinnedQuacCommand(value: string): string {
 
 function getFieldEscAvailabilityContext() {
   return {
-    expeditionActive: isOuterDeckExpeditionActive(getGameState()),
+    expeditionActive: Boolean(currentMap && isOuterDeckBranchMap(String(currentMap.id))),
   };
 }
 
@@ -2049,8 +2413,10 @@ export function renderFieldScreen(
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
   resetHavenBuildPanState();
+  resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
+  activeAutoInteractionZoneKey = null;
 
   setBaseCampFieldReturnMap(mapId);
 
@@ -2237,12 +2603,12 @@ export function renderFieldScreen(
     fieldState = {
       ...fieldState,
       currentMap: mapId,
-      player: {
+      player: normalizeFieldPlayerState({
         ...fieldState.player,
         x: playerX,
         y: playerY,
         facing: fieldSpawnOverride?.facing ?? fieldState.player.facing,
-      },
+      }),
       isPaused: false,
       activeInteraction: null,
       companion,
@@ -2250,6 +2616,7 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(fieldState.combat ?? createDefaultFieldCombatState()),
       projectiles: fieldState.projectiles ?? [],
+      collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
     };
   } else {
     // Initialize Sable near player
@@ -2258,10 +2625,10 @@ export function renderFieldScreen(
 
     fieldState = {
       currentMap: mapId,
-      player: {
+      player: normalizeFieldPlayerState({
         ...createPlayerAvatar(playerX, playerY),
         facing: fieldSpawnOverride?.facing ?? "south",
-      },
+      }),
       isPaused: false,
       activeInteraction: null,
       companion,
@@ -2269,6 +2636,7 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(createDefaultFieldCombatState()),
       projectiles: [],
+      collectedResourceObjectIds: [],
     };
   }
 
@@ -2389,15 +2757,16 @@ function updateHavenBuildPan(deltaTime: number): boolean {
     return false;
   }
 
-  const horizontal = (havenBuildPanInput.right ? 1 : 0) - (havenBuildPanInput.left ? 1 : 0);
-  const vertical = (havenBuildPanInput.down ? 1 : 0) - (havenBuildPanInput.up ? 1 : 0);
+  const controllerInput = getPlayerInput("P1");
+  const horizontal = ((havenBuildPanInput.right || controllerInput.right) ? 1 : 0) - ((havenBuildPanInput.left || controllerInput.left) ? 1 : 0);
+  const vertical = ((havenBuildPanInput.down || controllerInput.down) ? 1 : 0) - ((havenBuildPanInput.up || controllerInput.up) ? 1 : 0);
 
   if (horizontal === 0 && vertical === 0) {
     return false;
   }
 
   const magnitude = Math.hypot(horizontal, vertical) || 1;
-  const speed = HAVEN_BUILD_PAN_SPEED * (havenBuildPanInput.fast ? HAVEN_BUILD_PAN_FAST_MULTIPLIER : 1);
+  const speed = HAVEN_BUILD_PAN_SPEED * ((havenBuildPanInput.fast || controllerInput.special1) ? HAVEN_BUILD_PAN_FAST_MULTIPLIER : 1);
   const step = speed * (deltaTime / 1000);
   const cameraCenter = havenBuildCameraCenter ?? clampBuildCameraCenter(
     getTrackedFieldCenter().x,
@@ -2413,12 +2782,23 @@ function updateHavenBuildPan(deltaTime: number): boolean {
   return changed;
 }
 
+function placeCurrentBuildSelectionAtViewCenter(): void {
+  const center = havenBuildCameraCenter ?? getTrackedFieldCenter();
+  const tileX = Math.round(center.x / FIELD_TILE_SIZE);
+  const tileY = Math.round(center.y / FIELD_TILE_SIZE);
+  placeCurrentBuildSelection(tileX, tileY);
+}
+
 function renderHavenBuildPanel(): string {
   if (!isHavenBuildModeEnabled()) {
     return "";
   }
 
   const state = getGameState();
+  const buildPanLabel = getPlayerActionLabel("P1", "up") === "W"
+    ? "WASD / ARROWS"
+    : `${getPlayerActionLabel("P1", "up")} / ${getPlayerActionLabel("P1", "left")}`;
+  const buildFastLabel = getPlayerActionLabel("P1", "special1");
   const storedNodes = getBaseCampNodeDefinitions()
     .filter((definition) => getBaseCampNodeLayout(state.uiLayout, definition.id).hidden);
   const availableDecor = getAvailableFieldDecor(state);
@@ -2441,8 +2821,9 @@ function renderHavenBuildPanel(): string {
       <div class="field-build-panel__copy">
         Drag visible nodes and decor on the map. Stored items can be selected here, then placed with a click on open floor.
       </div>
-      <div class="field-build-panel__copy">PAN :: WASD / ARROWS // HOLD SHIFT TO SPEED PAN</div>
+      <div class="field-build-panel__copy">PAN :: ${buildPanLabel} // HOLD ${buildFastLabel} TO SPEED PAN</div>
       <div class="field-build-panel__selection">SELECTED :: ${selectedLabel}</div>
+      ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-place-center="true">PLACE AT VIEW CENTER</button>` : ""}
       ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-clear="true">CLEAR SELECTION</button>` : ""}
 
       <section class="field-build-panel__section">
@@ -2511,7 +2892,8 @@ function render(): void {
   const mapPixelHeight = currentMap.height * tileSize;
   const combatActive = isFieldCombatActive();
   const liveEnemyCount = (fieldState.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0).length;
-  const displayObjects = currentMap.objects.filter((obj) => !isEnemyFieldObject(obj));
+  const collectedResourceIds = new Set(fieldState.collectedResourceObjectIds ?? []);
+  const displayObjects = currentMap.objects.filter((obj) => !isEnemyFieldObject(obj) && !(obj.type === "resource" && collectedResourceIds.has(obj.id)));
 
   // Build tiles HTML
   let tilesHtml = "";
@@ -2573,11 +2955,15 @@ function render(): void {
   const state = getGameState();
   const fieldLobby = getRenderableLobbyForCurrentField();
   const networkLobby = isNetworkLobbyMapActive() ? fieldLobby : null;
+  const currentTime = performance.now();
   // Ensure players object exists (backward compatibility)
   const players = state.players || {
     P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
     P2: { id: "P2", slot: "P2", active: false, color: "#6849c2", inputSource: "none" as const, presence: "inactive" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
   };
+  const p1DashActive = Boolean(players.P1.active && getPlayerInput("P1").special1);
+  const p2DashActive = Boolean(players.P2.active && getPlayerInput("P2").special1);
+  const stepPulseClass = currentTime < fieldStepPulseUntilMs ? " field-player--step" : "";
   const p1Avatar = players.P1.avatar;
   const p2Avatar = players.P2.active ? players.P2.avatar : null;
 
@@ -2587,8 +2973,10 @@ function render(): void {
   if (p1Avatar) {
     const combatClass = combatActive ? " field-node-player-combat" : "";
     const attackClass = combatActive && fieldState.combat?.isAttacking ? " player-attacking" : "";
+    const invulnerableClass = Number(fieldState.player.invulnerabilityTime ?? 0) > 0 ? " player-invulnerable" : "";
+    const dashClass = p1DashActive ? " field-player--dash" : "";
     playerHtml += `
-      <div class="field-player field-player-p1${combatClass}${attackClass}"
+      <div class="field-player field-player-p1${combatClass}${attackClass}${invulnerableClass}${dashClass}${stepPulseClass}"
            style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p1Avatar.facing}">
         <div class="field-player-sprite">${combatActive ? "⚔" : "A"}</div>
@@ -2598,8 +2986,9 @@ function render(): void {
 
   // P2 Avatar (if active)
   if (p2Avatar) {
+    const dashClass = p2DashActive ? " field-player--dash" : "";
     playerHtml += `
-      <div class="field-player field-player-p2" 
+      <div class="field-player field-player-p2${dashClass}${stepPulseClass}" 
            style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p2Avatar.facing}">
         <div class="field-player-sprite">A</div>
@@ -2670,9 +3059,7 @@ function render(): void {
   const attackLabel = getPlayerActionLabel("P1", "attack");
   const interactLabel = getPlayerActionLabel("P1", "interact");
   const cancelLabel = getPlayerActionLabel("P1", "cancel");
-  const controllerPromptHtml = !combatActive && activeInteractionPrompt
-    ? `<div class="field-interaction-prompt">${activeInteractionPrompt}</div>`
-    : "";
+  const buildModeHudInstructions = `BUILD MODE // ${moveLabel} TO PAN // HOLD ${dashLabel} TO SPEED PAN // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.`;
   const buildModeHeaderHtml = isHavenBuildModeEnabled()
     ? `<div class="field-build-mode-header">BUILD MODE ACTIVE</div>`
     : "";
@@ -2688,7 +3075,7 @@ function render(): void {
   void promptHtml;
   void hudInstructions;
   const combatStatusHtml = combatActive
-    ? `<div class="field-hud-combat-status">HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
+    ? `<div class="field-hud-combat-status">HP ${Math.max(0, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP))}/${Math.max(1, Number(fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP))} • HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
     : "";
 
   // Get field-root container or create it
@@ -2724,17 +3111,17 @@ function render(): void {
       </div>
     </div>
 
-    ${controllerPromptHtml}
     ${weaponWindowHtml}
 
     <div class="field-hud">
       ${combatStatusHtml}
       <div class="field-hud-instructions">
-        ${isHavenBuildModeEnabled() ? "BUILD MODE // WASD OR ARROWS TO PAN // HOLD SHIFT TO SPEED PAN // DRAG OR PLACE ITEMS ON OPEN FLOOR." : controllerHudInstructions}
+        ${isHavenBuildModeEnabled() ? buildModeHudInstructions : controllerHudInstructions}
       </div>
     </div>
     ${renderHavenBuildPanel()}
   `;
+  enhanceTerminalUiButtons(fieldRoot);
 
   const existingLobbyOverlay = root.querySelector(".network-lobby-overlay") as HTMLElement | null;
   if (networkLobby) {
@@ -2761,6 +3148,9 @@ function render(): void {
     existingLobbyOverlay.remove();
   }
 
+  ensureFieldFeedbackListener();
+  ensureFieldFeedbackOverlay();
+  syncFieldPromptOverlay(!combatActive ? activeInteractionPrompt : null);
   centerViewportOnPlayer();
 
   // Re-attach wheel listener if needed (viewport is recreated on each render)
@@ -2810,6 +3200,13 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
     event.stopPropagation();
     havenBuildPaletteSelection = null;
     render();
+  });
+
+  const placeCenterButton = fieldRoot.querySelector<HTMLElement>("[data-build-place-center='true']");
+  placeCenterButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    placeCurrentBuildSelectionAtViewCenter();
   });
 
   fieldRoot.querySelectorAll<HTMLElement>("[data-build-select-node]").forEach((button) => {
@@ -3138,15 +3535,31 @@ function centerViewportOnPlayer(): void {
     centerX = buildCenter.x;
     centerY = buildCenter.y;
   } else {
-    const trackedCenter = getTrackedFieldCenter();
-    centerX = trackedCenter.x;
-    centerY = trackedCenter.y;
+    const trackedCenter = clampBuildCameraCenter(
+      getTrackedFieldCenter().x,
+      getTrackedFieldCenter().y,
+    );
+    if (!smoothedFieldCameraCenter) {
+      smoothedFieldCameraCenter = trackedCenter;
+    } else {
+      smoothedFieldCameraCenter = {
+        x: smoothedFieldCameraCenter.x + ((trackedCenter.x - smoothedFieldCameraCenter.x) * FIELD_CAMERA_SMOOTHING),
+        y: smoothedFieldCameraCenter.y + ((trackedCenter.y - smoothedFieldCameraCenter.y) * FIELD_CAMERA_SMOOTHING),
+      };
+    }
+    centerX = smoothedFieldCameraCenter.x;
+    centerY = smoothedFieldCameraCenter.y;
   }
 
   // Account for zoom when calculating offset
   const offsetX = centerX - (viewportRect.width / (2 * fieldZoom));
   const offsetY = centerY - (viewportRect.height / (2 * fieldZoom));
 
+  currentFieldCameraTransform = {
+    offsetX,
+    offsetY,
+    zoom: fieldZoom,
+  };
   applyMapTransform(mapElement, offsetX, offsetY, fieldZoom);
 }
 
@@ -3531,6 +3944,33 @@ function renderPinnedQuacCard(): string {
   `;
 }
 
+function renderPinnedQuacStatus(statusEl: HTMLElement, message: string, isError = false): void {
+  statusEl.classList.toggle("all-nodes-cli-status--error", isError);
+  statusEl.innerHTML = "";
+
+  const output = document.createElement("div");
+  output.className = "all-nodes-cli-status__output";
+  statusEl.appendChild(output);
+
+  startTerminalTyping(statusEl, output, [message], {
+    showCursor: false,
+    loop: false,
+    baseCharDelayMs: 16,
+    minCharDelayMs: 6,
+    accelerationPerCharMs: 0.7,
+    pauseAfterLineMs: 90,
+    maxLines: 1,
+    scrollBehavior: "auto",
+    lineClassName: "all-nodes-cli-status__line",
+    promptClassName: "all-nodes-cli-status__prompt",
+    textClassName: "all-nodes-cli-status__text",
+    promptParser: (line) => ({
+      prompt: "S/COM://QUAC>",
+      text: ` ${line}`,
+    }),
+  });
+}
+
 function renderPinnedNotesCard(): string {
   const state = getGameState();
   const anchorX = Math.round((state.players?.P1?.avatar?.x ?? 640) + 56);
@@ -3684,6 +4124,10 @@ function updatePinnedNodesOverlay(): void {
   overlay.innerHTML = pinnedItems
     .map((itemId) => renderPinnedOverlayItem(itemId, frames[itemId], colors))
     .join("");
+  enhanceTerminalUiButtons(overlay);
+  overlay.querySelectorAll<HTMLElement>("[data-field-quac-status]").forEach((statusEl) => {
+    renderPinnedQuacStatus(statusEl, fieldPinnedQuacFeedback, statusEl.classList.contains("all-nodes-cli-status--error"));
+  });
   attachNotesWidgetHandlers(overlay, {
     onStateChange: () => renderFieldScreen(fieldState?.currentMap ?? "base_camp"),
   });
@@ -3753,23 +4197,20 @@ function handlePinnedOverlaySubmit(e: SubmitEvent): void {
 
   if (!resolvedAction) {
     fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
-    status.textContent = fieldPinnedQuacFeedback;
-    status.classList.add("all-nodes-cli-status--error");
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
     input.select();
     return;
   }
 
   if (isFieldEscNodeAction(resolvedAction) && !isEscActionEnabled(resolvedAction, getFieldEscAvailabilityContext())) {
     fieldPinnedQuacFeedback = getEscExpeditionRestrictionMessage(resolvedAction);
-    status.textContent = fieldPinnedQuacFeedback;
-    status.classList.add("all-nodes-cli-status--error");
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
     input.select();
     return;
   }
 
   fieldPinnedQuacFeedback = `Executing ${resolvedAction.toUpperCase()}...`;
-  status.textContent = fieldPinnedQuacFeedback;
-  status.classList.remove("all-nodes-cli-status--error");
+  renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
   input.value = "";
   handleNodeAction(resolvedAction);
 }
@@ -3781,9 +4222,8 @@ function handlePinnedOverlayInput(e: Event): void {
   const status = input.closest(".all-nodes-item-shell")?.querySelector<HTMLElement>("[data-field-quac-status]");
   if (!status || !status.classList.contains("all-nodes-cli-status--error")) return;
 
-  status.classList.remove("all-nodes-cli-status--error");
   fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
-  status.textContent = fieldPinnedQuacFeedback;
+  renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
 }
 
 function createPinnedNodesOverlay(): void {
@@ -3886,6 +4326,78 @@ function formatFieldEnemyResourceName(resourceKey: "metalScrap" | "wood" | "chao
     default:
       return resourceKey;
   }
+}
+
+function isBasicFieldResourceKey(resourceKey: ResourceKey): resourceKey is (typeof BASIC_RESOURCE_KEYS)[number] {
+  return (BASIC_RESOURCE_KEYS as readonly ResourceKey[]).includes(resourceKey);
+}
+
+function collectFieldResourceObject(resourceObjectId: string, source: "player" | "sable"): void {
+  if (!fieldState) {
+    return;
+  }
+
+  const targetObject = getUncollectedFieldResourceObjects().find((object) => object.id === resourceObjectId);
+  if (!targetObject) {
+    return;
+  }
+
+  const resourceType = String(targetObject.metadata?.resourceType ?? "") as ResourceKey;
+  if (!isBasicFieldResourceKey(resourceType)) {
+    return;
+  }
+
+  const amount = Math.max(1, Math.floor(Number(targetObject.metadata?.amount ?? 1)));
+  const resourceLabel = formatFieldEnemyResourceName(resourceType as "metalScrap" | "wood" | "chaosShards" | "steamComponents");
+  const collectorPosition = source === "sable" && fieldState.companion
+    ? { x: fieldState.companion.x, y: fieldState.companion.y }
+    : { x: fieldState.player.x, y: fieldState.player.y };
+  const resourceCenter = {
+    x: (targetObject.x + (targetObject.width / 2)) * FIELD_TILE_SIZE,
+    y: (targetObject.y + (targetObject.height / 2)) * FIELD_TILE_SIZE,
+  };
+  fieldState.collectedResourceObjectIds = Array.from(new Set([...(fieldState.collectedResourceObjectIds ?? []), resourceObjectId]));
+
+  updateGameState((state) => ({
+    ...state,
+    resources: {
+      ...state.resources,
+      [resourceType]: Math.max(0, Number(state.resources?.[resourceType] ?? 0)) + amount,
+    },
+  }));
+
+  triggerFeedback({
+    type: "resource",
+    source: "field",
+    intensity: source === "sable" ? 2 : 1,
+    position: {
+      x: resourceCenter.x,
+      y: resourceCenter.y,
+      space: "field-world",
+    },
+    targetPosition: {
+      x: collectorPosition.x,
+      y: collectorPosition.y,
+      space: "field-world",
+    },
+    text: `+${amount} ${resourceLabel}`,
+    channel: "field-resource-pickup",
+    meta: {
+      resourceType,
+      source,
+      objectId: resourceObjectId,
+    },
+  });
+
+  showSystemPing({
+    type: "success",
+    title: source === "sable" ? "SABLE RECOVERED SALVAGE" : "SALVAGE RECOVERED",
+    message: `${targetObject.metadata?.name ?? resourceLabel} secured.`,
+    detail: `+${amount} ${resourceLabel}`,
+    durationMs: 2600,
+    channel: "field-resource-pickup",
+    replaceChannel: true,
+  });
 }
 
 function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
@@ -4018,7 +4530,7 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
     });
   }
 
-  if (currentMap && isOuterDeckExpeditionActive(getGameState())) {
+  if (currentMap && isOuterDeckBranchMap(String(currentMap.id))) {
     const subarea = getOuterDeckSubareaByMapId(getGameState(), String(currentMap.id));
     const roomCleared = Boolean(subarea) && Boolean(fieldState?.fieldEnemies?.every((fieldEnemy) => fieldEnemy.hp <= 0));
     if (subarea && roomCleared && !isOuterDeckSubareaCleared(getGameState(), subarea.id)) {
@@ -4159,6 +4671,8 @@ function updateFieldCombat(deltaTime: number, currentTime: number): void {
 
   updateFieldProjectiles(deltaTime);
   updateFieldEnemies(deltaTime, currentTime);
+  updateFieldPlayerPressure(deltaTime);
+  updateFieldCompanionBehavior(deltaTime, currentTime);
 }
 
 function updateFieldProjectiles(deltaTime: number): void {
@@ -4298,6 +4812,210 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
       enemy.facing = dy > 0 ? "south" : "north";
     }
   }
+}
+
+function updateFieldPlayerPressure(deltaTime: number): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  fieldState.player = normalizeFieldPlayerState(fieldState.player);
+
+  if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    fieldState.player.invulnerabilityTime = Math.max(0, Number(fieldState.player.invulnerabilityTime ?? 0) - deltaTime);
+  }
+
+  if ((fieldState.player.vx ?? 0) !== 0 || (fieldState.player.vy ?? 0) !== 0) {
+    const knockbackX = Number(fieldState.player.vx ?? 0) * (deltaTime / 1000);
+    const knockbackY = Number(fieldState.player.vy ?? 0) * (deltaTime / 1000);
+    let nextX = fieldState.player.x;
+    let nextY = fieldState.player.y;
+
+    if (canMoveEntityTo(fieldState.player.x + knockbackX, fieldState.player.y, fieldState.player.width, fieldState.player.height)) {
+      nextX = fieldState.player.x + knockbackX;
+    } else {
+      fieldState.player.vx = 0;
+    }
+
+    if (canMoveEntityTo(nextX, fieldState.player.y + knockbackY, fieldState.player.width, fieldState.player.height)) {
+      nextY = fieldState.player.y + knockbackY;
+    } else {
+      fieldState.player.vy = 0;
+    }
+
+    fieldState.player.x = nextX;
+    fieldState.player.y = nextY;
+    fieldState.player.vx = Number(fieldState.player.vx ?? 0) * Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+    fieldState.player.vy = Number(fieldState.player.vy ?? 0) * Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+
+    if (Math.abs(Number(fieldState.player.vx ?? 0)) < 1) fieldState.player.vx = 0;
+    if (Math.abs(Number(fieldState.player.vy ?? 0)) < 1) fieldState.player.vy = 0;
+
+    syncP1AvatarPosition(fieldState.player.x, fieldState.player.y);
+  }
+
+  for (const resourceObject of getUncollectedFieldResourceObjects()) {
+    const resourceCenterX = (resourceObject.x + (resourceObject.width / 2)) * FIELD_TILE_SIZE;
+    const resourceCenterY = (resourceObject.y + (resourceObject.height / 2)) * FIELD_TILE_SIZE;
+    if (Math.hypot(resourceCenterX - fieldState.player.x, resourceCenterY - fieldState.player.y) <= 36) {
+      collectFieldResourceObject(resourceObject.id, "player");
+    }
+  }
+
+  if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  for (const enemy of fieldState.fieldEnemies ?? []) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const playerLeft = fieldState.player.x - fieldState.player.width / 2;
+    const playerRight = fieldState.player.x + fieldState.player.width / 2;
+    const playerTop = fieldState.player.y - fieldState.player.height / 2;
+    const playerBottom = fieldState.player.y + fieldState.player.height / 2;
+    const enemyLeft = enemy.x - enemy.width / 2;
+    const enemyRight = enemy.x + enemy.width / 2;
+    const enemyTop = enemy.y - enemy.height / 2;
+    const enemyBottom = enemy.y + enemy.height / 2;
+
+    const isColliding =
+      playerRight > enemyLeft
+      && playerLeft < enemyRight
+      && playerBottom > enemyTop
+      && playerTop < enemyBottom;
+
+    if (!isColliding) {
+      continue;
+    }
+
+    fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - FIELD_PLAYER_DAMAGE_ON_CONTACT);
+    fieldState.player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
+
+    const dx = fieldState.player.x - enemy.x;
+    const dy = fieldState.player.y - enemy.y;
+    const distance = Math.max(Math.hypot(dx, dy), 1);
+    fieldState.player.vx = (dx / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
+    fieldState.player.vy = (dy / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
+
+    showSystemPing({
+      type: "error",
+      title: "HOSTILE CONTACT",
+      message: `${enemy.name} struck the lane.`,
+      detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
+      durationMs: 1800,
+      channel: "field-player-damage",
+      replaceChannel: true,
+    });
+    break;
+  }
+}
+
+function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): void {
+  if (!fieldState?.companion || !currentMap) {
+    return;
+  }
+
+  const player = fieldState.player;
+  const companion = fieldState.companion;
+  const availableResources = getUncollectedFieldResourceObjects().map((object) => ({
+    id: object.id,
+    x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
+    y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
+    collected: false,
+  }));
+  const liveEnemies = (fieldState.fieldEnemies ?? [])
+    .filter((enemy) => enemy.hp > 0)
+    .map((enemy) => ({
+      id: enemy.id,
+      x: enemy.x,
+      y: enemy.y,
+      hp: enemy.hp,
+    }));
+
+  if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
+    companion.lastBehaviorTime = currentTime;
+
+    const nearestEnemy = findNearestEnemy(companion, player, liveEnemies);
+    if (nearestEnemy) {
+      companion.state = "attack";
+      companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
+    } else {
+      const nearestResource = findNearestResource(companion, player, availableResources);
+      if (nearestResource) {
+        companion.state = "fetch";
+        companion.target = { x: nearestResource.x, y: nearestResource.y, id: nearestResource.id };
+      } else {
+        companion.state = "follow";
+        companion.target = undefined;
+      }
+    }
+  }
+
+  if (companion.state === "attack" && companion.target) {
+    const targetEnemy = (fieldState.fieldEnemies ?? []).find((enemy) => enemy.id === companion.target?.id && enemy.hp > 0) ?? null;
+    if (!targetEnemy) {
+      companion.state = "follow";
+      companion.target = undefined;
+    } else {
+      companion.attackCooldown = Math.max(0, Number(companion.attackCooldown ?? 0) - deltaTime);
+      fieldState.companion = updateCompanionAttack(
+        companion,
+        player,
+        { x: targetEnemy.x, y: targetEnemy.y, id: targetEnemy.id },
+        deltaTime,
+        currentMap,
+      );
+
+      const activeCompanion = fieldState.companion;
+      const distance = Math.hypot(targetEnemy.x - activeCompanion.x, targetEnemy.y - activeCompanion.y);
+      if (distance <= FIELD_COMPANION_ATTACK_RANGE && activeCompanion.attackCooldown <= 0) {
+        targetEnemy.hp -= Math.max(1, FIELD_ATTACK_DAMAGE);
+        if (distance > 0) {
+          targetEnemy.vx = ((targetEnemy.x - activeCompanion.x) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.vy = ((targetEnemy.y - activeCompanion.y) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+        }
+        activeCompanion.attackCooldown = getFieldAttackCooldown();
+        if (targetEnemy.hp <= 0) {
+          handleFieldEnemyDefeat(targetEnemy);
+          activeCompanion.state = "follow";
+          activeCompanion.target = undefined;
+        }
+      }
+      return;
+    }
+  }
+
+  if (companion.state === "fetch" && companion.target) {
+    const targetResource = availableResources.find((resource) => resource.id === companion.target?.id) ?? null;
+    if (!targetResource) {
+      companion.state = "follow";
+      companion.target = undefined;
+    } else {
+      fieldState.companion = updateCompanionFetch(
+        companion,
+        player,
+        { x: targetResource.x, y: targetResource.y, id: targetResource.id },
+        deltaTime,
+        currentMap,
+      );
+      if (checkCompanionReachedTarget(fieldState.companion, targetResource.id, 24)) {
+        collectFieldResourceObject(targetResource.id, "sable");
+        fieldState.companion.state = "follow";
+        fieldState.companion.target = undefined;
+      }
+      return;
+    }
+  }
+
+  fieldState.companion = updateCompanionFollow(
+    companion,
+    player,
+    deltaTime,
+    currentMap,
+  );
 }
 
 function canMoveEntityTo(x: number, y: number, width: number, height: number): boolean {
@@ -4662,24 +5380,14 @@ function handleFieldObjectClick(e: MouseEvent): void {
 
   const zone = getInteractionZone(currentMap, zoneId);
   if (!zone) return;
+  if (isAutoTriggerZone(zone)) return;
 
   const actingPlayerId = getNearestPlayerToZone(zone) ?? "P1";
   const actingAvatar = createRuntimeAvatar(actingPlayerId);
   if (!actingAvatar) {
     return;
   }
-
-  if (!canPlayerUseFieldAction(getGameState(), actingPlayerId, zone.action)) {
-    showFieldAuthorityPing(actingPlayerId, zone);
-    return;
-  }
-
-  const savedPlayerPos = { x: actingAvatar.x, y: actingAvatar.y };
-  fieldState.isPaused = true;
-
-  handleInteraction(zone, currentMap, () => {
-    resumeFieldAfterInteraction(actingPlayerId, savedPlayerPos);
-  });
+  triggerZoneInteraction(actingPlayerId, zone, actingAvatar);
 }
 
 function handleInteractKey(playerId: PlayerId): void {
@@ -4740,33 +5448,15 @@ function handleInteractKey(playerId: PlayerId): void {
   const interactionContext = getPlayerInteractionContext(playerId);
   if (!interactionContext) return;
   const zone = interactionContext.zone;
-
-  if (!canPlayerUseFieldAction(getGameState(), playerId, zone.action)) {
-    showFieldAuthorityPing(playerId, zone);
-    return;
-  }
-
-  const savedPlayerPos = { x: actorAvatar.x, y: actorAvatar.y };
-  fieldState.isPaused = true;
-
-  try {
-    handleInteraction(zone, currentMap, () => {
-      resumeFieldAfterInteraction(playerId, savedPlayerPos);
-    });
-  } catch (error) {
-    console.error("[FIELD] Error handling interaction:", error);
-    if (fieldState) {
-      fieldState.isPaused = false;
-      renderFieldScreen(fieldState.currentMap);
-    }
-  }
+  if (isAutoTriggerZone(zone)) return;
+  triggerZoneInteraction(playerId, zone, actorAvatar);
 }
 
 // ============================================================================
 // NODE ACTIONS
 // ============================================================================
 
-function handleNodeAction(action: string): void {
+async function handleNodeAction(action: string): Promise<void> {
   if (isFieldEscNodeAction(action) && !isEscActionEnabled(action, getFieldEscAvailabilityContext())) {
     showSystemPing({
       type: "info",
@@ -4784,7 +5474,11 @@ function handleNodeAction(action: string): void {
     || isLockedBlackMarketAction(action)
     || isLockedFoundryAnnexAction(action)
   ) {
-    alert(getLockedActionMessage(action) ?? "This node is not unlocked yet.");
+    await showAlertDialog({
+      title: "NODE LOCKED",
+      message: getLockedActionMessage(action) ?? "This node is not unlocked yet.",
+      mount: () => document.querySelector(".field-root"),
+    });
     return;
   }
 
@@ -5080,24 +5774,20 @@ function gameLoop(currentTime: number): void {
         lastNetworkLobbyAvatarSyncKey = "";
       }
 
-    // Update Sable companion (Headline 15a) - follows P1
-    if (fieldState.companion && currentMap && updatedState.players.P1.avatar) {
-      const p1Avatar = updatedState.players.P1.avatar;
-      const p1PlayerAvatar = {
-        x: p1Avatar.x,
-        y: p1Avatar.y,
-        width: 32,
-        height: 32,
-        speed: 240,
-        facing: p1Avatar.facing as any,
-      };
-      fieldState.companion = updateCompanion(fieldState.companion, {
-        player: p1PlayerAvatar,
-        map: currentMap,
-        deltaTime,
-        currentTime,
+    // Keep field player state synchronized with the live avatar; combat logic layers on top later.
+    if (fieldState && currentMap && updatedState.players.P1.avatar) {
+      fieldState.player = normalizeFieldPlayerState({
+        ...fieldState.player,
+        x: updatedState.players.P1.avatar.x,
+        y: updatedState.players.P1.avatar.y,
+        facing: updatedState.players.P1.avatar.facing as any,
       });
     }
+
+    updateFieldMovementFeedback(
+      currentTime,
+      Boolean(getPlayerInput("P1").special1 || (p2.active && getPlayerInput("P2").special1)),
+    );
 
     // Update NPCs (Headline 15b)
     if (fieldState.npcs && currentMap) {
@@ -5109,6 +5799,7 @@ function gameLoop(currentTime: number): void {
 
     updateFieldCombat(deltaTime, currentTime);
     processFieldControllerActions();
+    maybeTriggerAutoInteraction();
 
     activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
 
@@ -5133,14 +5824,20 @@ export function teardownFieldMode(): void {
   cleanupGlobalListeners();
   document.getElementById("allNodesPanel")?.remove();
   document.getElementById("fieldPinnedOverlay")?.remove();
+  document.getElementById("fieldFeedbackOverlay")?.remove();
+  document.getElementById("fieldPromptOverlay")?.remove();
   document.querySelector(".network-lobby-overlay")?.remove();
   isPanelOpen = false;
   lastMinimapRevealKey = "";
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
   resetHavenBuildPanState();
+  resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
+  activeAutoInteractionZoneKey = null;
+  cleanupFieldFeedbackListener?.();
+  cleanupFieldFeedbackListener = null;
 }
 
 // ============================================================================

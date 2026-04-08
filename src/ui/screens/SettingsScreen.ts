@@ -48,6 +48,7 @@ import {
   SaveSlot,
 } from "../../core/saveSystem";
 import { SCROLLINK_BUILD_LABEL } from "../../core/appVersion";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -329,23 +330,23 @@ function renderControlsTab(settings: GameSettings): string {
         <div class="keyboard-bindings">
           <div class="binding-item">
             <span class="binding-action">Confirm</span>
-            <span class="binding-keys">${(bindings.confirm ?? []).map(getBindingLabel).join(" / ")}</span>
+            <span class="binding-keys">${(bindings.confirm ?? []).map((binding) => getBindingLabel(binding)).join(" / ")}</span>
           </div>
           <div class="binding-item">
             <span class="binding-action">Cancel</span>
-            <span class="binding-keys">${(bindings.cancel ?? []).map(getBindingLabel).join(" / ")}</span>
+            <span class="binding-keys">${(bindings.cancel ?? []).map((binding) => getBindingLabel(binding)).join(" / ")}</span>
           </div>
           <div class="binding-item">
             <span class="binding-action">Attack</span>
-            <span class="binding-keys">${(bindings.attack ?? []).map(getBindingLabel).join(" / ")}</span>
+            <span class="binding-keys">${(bindings.attack ?? []).map((binding) => getBindingLabel(binding)).join(" / ")}</span>
           </div>
           <div class="binding-item">
             <span class="binding-action">Interact</span>
-            <span class="binding-keys">${(bindings.interact ?? []).map(getBindingLabel).join(" / ")}</span>
+            <span class="binding-keys">${(bindings.interact ?? []).map((binding) => getBindingLabel(binding)).join(" / ")}</span>
           </div>
           <div class="binding-item">
             <span class="binding-action">Toggle Surface Mode</span>
-            <span class="binding-keys">${(bindings.toggleSurfaceMode ?? []).map(getBindingLabel).join(" / ")}</span>
+            <span class="binding-keys">${(bindings.toggleSurfaceMode ?? []).map((binding) => getBindingLabel(binding)).join(" / ")}</span>
           </div>
         </div>
       </div>
@@ -401,7 +402,13 @@ async function loadAndRenderSaves(): Promise<void> {
   savesList.querySelectorAll(".save-delete-btn").forEach(btn => {
     btn.addEventListener("click", async (e) => {
       const slot = (e.target as HTMLElement).dataset.slot as SaveSlot;
-      if (slot && confirm(`Delete ${getSaveSlotName(slot)}?`)) {
+      if (slot && await showConfirmDialog({
+        title: "DELETE SAVE",
+        message: `Delete ${getSaveSlotName(slot)}?`,
+        confirmLabel: "DELETE",
+        variant: "danger",
+        restoreFocusSelector: `.save-delete-btn[data-slot="${slot}"]`,
+      })) {
         await deleteSave(slot);
         await loadAndRenderSaves();
       }
@@ -477,7 +484,13 @@ function attachSettingsListeners(): void {
         cancelControllerBindingCapture();
         pendingRebindAction = null;
       }
-      if (confirm("Reset all settings to defaults?")) {
+      if (await showConfirmDialog({
+        title: "RESET SETTINGS",
+        message: "Reset all settings to defaults?",
+        confirmLabel: "RESET",
+        variant: "danger",
+        restoreFocusSelector: "#resetBtn",
+      })) {
         await resetSettings();
         renderSettingsScreen(returnDestination);
       }
@@ -488,7 +501,13 @@ function attachSettingsListeners(): void {
   const clearAllSavesBtn = document.getElementById("clearAllSavesBtn");
   if (clearAllSavesBtn) {
     clearAllSavesBtn.onclick = async () => {
-      if (confirm("Delete ALL save files? This cannot be undone!")) {
+      if (await showConfirmDialog({
+        title: "DELETE ALL SAVES",
+        message: "Delete ALL save files? This cannot be undone!",
+        confirmLabel: "DELETE ALL",
+        variant: "danger",
+        restoreFocusSelector: "#clearAllSavesBtn",
+      })) {
         for (const slot of Object.values(SAVE_SLOTS)) {
           await deleteSave(slot);
         }

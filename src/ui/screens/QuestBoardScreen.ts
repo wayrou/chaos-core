@@ -21,6 +21,7 @@ import {
 } from "../../quests/questManager";
 import { Quest } from "../../quests/types";
 import { getResourceEntries } from "../../core/resources";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -351,12 +352,18 @@ function attachEventListeners(returnTo: BaseCampReturnTo): void {
 
   // Abandon quest buttons (for generated quests only)
   document.querySelectorAll(".quest-abandon-btn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const target = e.currentTarget as HTMLElement;
       const questId = target.getAttribute("data-quest-id");
       if (questId) {
-        if (confirm("Abandon this quest? A new quest will be generated to replace it.")) {
+        if (await showConfirmDialog({
+          title: "ABANDON QUEST",
+          message: "Abandon this quest? A new quest will be generated to replace it.",
+          confirmLabel: "ABANDON",
+          variant: "danger",
+          restoreFocusSelector: `.quest-abandon-btn[data-quest-id="${questId}"]`,
+        })) {
           const success = abandonQuest(questId);
           if (success) {
             // Small delay to let replenishment happen

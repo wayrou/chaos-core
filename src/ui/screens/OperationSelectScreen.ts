@@ -37,8 +37,18 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { showSystemPing } from "../components/systemPing";
 import { setMusicCue } from "../../core/audioSystem";
 import { attachNotesWidgetHandlers, attachStuckNoteHandlers, renderNotesWidget, renderStuckNotesLayer } from "../components/notesWidget";
+import {
+  enhanceTerminalUiButtons,
+  startTerminalTypingByIds,
+} from "../components/terminalFeedback";
 import { renderLoadoutScreen } from "./LoadoutScreen";
-import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import {
+  clearControllerContext,
+  type ControllerMode,
+  registerControllerContext,
+  setControllerMode,
+  updateFocusableElements,
+} from "../../core/controllerSupport";
 import {
   BaseCampReturnTo,
   getBaseCampReturnLabel,
@@ -100,6 +110,14 @@ type AtlasSectorView = {
 
 type FloorTravelDirection = "next" | "prev";
 type AtlasFloatingWindowKey = "operations" | "economy" | "cores" | "notes";
+type AtlasConfirmState =
+  | {
+    kind: "regen-floor";
+    floorOrdinal: number;
+  }
+  | {
+    kind: "reset-atlas";
+  };
 
 const ATLAS_HOTKEY_ID = "ops-terminal-atlas-screen";
 const MAP_MIN_ZOOM = 0.36;
@@ -319,6 +337,7 @@ let atlasNotesWindowColor: AtlasNotesWindowColorKey = "steel";
 let selectedTheaterId: string | null = null;
 let currentReturnTo: BaseCampReturnTo = "basecamp";
 let cleanupOperationSelectScreen: ((options?: { preserveHoldWait?: boolean }) => void) | null = null;
+let cleanupOperationSelectControllerContext: (() => void) | null = null;
 let activeDragSession: AtlasDragSession = null;
 let dragMoveHandler: ((event: MouseEvent) => void) | null = null;
 let dragUpHandler: (() => void) | null = null;
@@ -338,6 +357,9 @@ let atlasHoldTimerId: number | null = null;
 let atlasHoldActive = false;
 let currentAtlasContentBounds: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
 let currentAtlasNotesStickyTarget: { surfaceType: "atlas"; surfaceId: string; x: number; y: number } | undefined;
+let atlasControllerPreferredMode: ControllerMode = "cursor";
+let atlasControllerActiveWindowKey: AtlasFloatingWindowKey = "operations";
+let atlasConfirmState: AtlasConfirmState | null = null;
 
 type AtlasRenderPayload = {
   floor: OpsTerminalAtlasFloorState;
@@ -727,6 +749,365 @@ function getDefaultNotesWindowFrame(): AtlasWindowFrame {
     width,
     height,
   };
+}
+
+function getAtlasWindowElement(key: AtlasFloatingWindowKey): HTMLElement | null {
+  if (key === "economy") {
+    return document.getElementById("opsAtlasEconomyWindow") as HTMLElement | null;
+  }
+  if (key === "cores") {
+    return document.getElementById("opsAtlasCoreWindow") as HTMLElement | null;
+  }
+  if (key === "notes") {
+    return document.getElementById("opsAtlasNotesWindow") as HTMLElement | null;
+  }
+  return document.getElementById("opsAtlasWindow") as HTMLElement | null;
+}
+
+function applyAtlasViewportToDom(): void {
+  const surface = document.getElementById("opsAtlasSurface") as HTMLElement | null;
+  const world = document.getElementById("opsAtlasWorld") as HTMLElement | null;
+  if (!surface || !world) {
+    return;
+  }
+  applyMapTransform(surface, world);
+  const root = document.getElementById("app");
+  if (root) {
+    updateZoomDisplay(root);
+  }
+}
+
+function setAtlasZoom(nextZoom: number): void {
+  atlasViewport.zoom = clampNumber(nextZoom, MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+  applyAtlasViewportToDom();
+  persistUiLayout();
+}
+
+function cycleAtlasMapMode(step: 1 | -1): void {
+  const modes: TheaterMapMode[] = ["command", "supply", "power", "comms"];
+  const currentIndex = Math.max(0, modes.indexOf(atlasMapMode));
+  atlasMapMode = modes[(currentIndex + step + modes.length) % modes.length] ?? "comms";
+  persistUiLayout();
+  renderOperationSelectScreen(currentReturnTo);
+}
+
+function getAtlasSectorAnchor(view: AtlasSectorView): { x: number; y: number } {
+  const anchorRoom = view.rooms.find((room) => room.room.id === view.sector.theater.currentRoomId)
+    ?? view.rooms.find((room) => room.room.isUplinkRoom)
+    ?? view.rooms[0];
+
+  return {
+    x: anchorRoom?.x ?? OPS_ATLAS_HAVEN_ANCHOR.x,
+    y: anchorRoom?.y ?? OPS_ATLAS_HAVEN_ANCHOR.y,
+  };
+}
+
+function moveAtlasSectorSelectionByDirection(
+  direction: "up" | "down" | "left" | "right",
+  sectorViews: AtlasSectorView[],
+): void {
+  if (sectorViews.length <= 0) {
+    return;
+  }
+
+  const currentView = sectorViews.find((view) => view.sector.theaterId === selectedTheaterId) ?? sectorViews[0];
+  if (!currentView) {
+    return;
+  }
+
+  const anchor = getAtlasSectorAnchor(currentView);
+  let bestView: AtlasSectorView | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  sectorViews.forEach((candidate) => {
+    if (candidate.sector.theaterId === currentView.sector.theaterId) {
+      return;
+    }
+
+    const candidateAnchor = getAtlasSectorAnchor(candidate);
+    const dx = candidateAnchor.x - anchor.x;
+    const dy = candidateAnchor.y - anchor.y;
+
+    if (direction === "up" && dy >= -4) return;
+    if (direction === "down" && dy <= 4) return;
+    if (direction === "left" && dx >= -4) return;
+    if (direction === "right" && dx <= 4) return;
+
+    const primary = direction === "left" || direction === "right" ? Math.abs(dx) : Math.abs(dy);
+    const secondary = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx);
+    const score = primary + (secondary * 0.35);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestView = candidate;
+    }
+  });
+
+  const nextView = bestView
+    ?? sectorViews
+      .filter((candidate) => candidate.sector.theaterId !== currentView.sector.theaterId)
+      .sort((left, right) => {
+        const leftAnchor = getAtlasSectorAnchor(left);
+        const rightAnchor = getAtlasSectorAnchor(right);
+        const leftDistance = Math.abs(leftAnchor.x - anchor.x) + Math.abs(leftAnchor.y - anchor.y);
+        const rightDistance = Math.abs(rightAnchor.x - anchor.x) + Math.abs(rightAnchor.y - anchor.y);
+        return leftDistance - rightDistance;
+      })[0];
+
+  if (!nextView || nextView.sector.theaterId === selectedTheaterId) {
+    return;
+  }
+
+  selectedTheaterId = nextView.sector.theaterId;
+  persistUiLayout();
+  renderOperationSelectScreen(currentReturnTo);
+}
+
+function focusAtlasControllerWindow(key: AtlasFloatingWindowKey): void {
+  atlasControllerActiveWindowKey = key;
+  requestAnimationFrame(() => {
+    if (key === "notes" && atlasNotesWindowMinimized) {
+      document.querySelector<HTMLElement>("[data-atlas-notes-restore]")?.focus();
+      updateFocusableElements();
+      return;
+    }
+
+    const windowEl = getAtlasWindowElement(key);
+    const focusTarget = windowEl?.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
+    focusTarget?.focus();
+    updateFocusableElements();
+  });
+}
+
+function cycleAtlasControllerWindow(step: 1 | -1): void {
+  const order: AtlasFloatingWindowKey[] = ["operations", "economy", "cores", "notes"];
+  const currentIndex = Math.max(0, order.indexOf(atlasControllerActiveWindowKey));
+  atlasControllerActiveWindowKey = order[(currentIndex + step + order.length) % order.length] ?? "operations";
+  focusAtlasControllerWindow(atlasControllerActiveWindowKey);
+}
+
+function moveAtlasWindowFrameByController(
+  key: AtlasFloatingWindowKey,
+  delta: { x?: number; y?: number; width?: number; height?: number },
+): void {
+  if (key === "notes" && atlasNotesWindowMinimized) {
+    return;
+  }
+
+  const current = getWindowFrame(key);
+  const next = clampWindowFrame({
+    x: current.x + (delta.x ?? 0),
+    y: current.y + (delta.y ?? 0),
+    width: current.width + (delta.width ?? 0),
+    height: current.height + (delta.height ?? 0),
+  }, key);
+
+  setWindowFrame(key, next);
+  const windowEl = getAtlasWindowElement(key);
+  if (windowEl) {
+    applyWindowFrame(windowEl, key);
+  }
+  persistUiLayout();
+}
+
+function openAtlasConfirm(state: AtlasConfirmState): void {
+  atlasConfirmState = state;
+  renderOperationSelectScreen(currentReturnTo);
+}
+
+function dismissAtlasConfirm(): void {
+  atlasConfirmState = null;
+  renderOperationSelectScreen(currentReturnTo);
+}
+
+function resolveAtlasConfirm(): void {
+  const confirmation = atlasConfirmState;
+  atlasConfirmState = null;
+  if (!confirmation) {
+    return;
+  }
+
+  if (confirmation.kind === "regen-floor") {
+    stopAtlasHoldWait();
+    persistUiLayout();
+    regenerateOpsTerminalAtlasFloor(confirmation.floorOrdinal);
+    showSystemPing({
+      type: "success",
+      title: "A.T.L.A.S. FLOOR REGENERATED",
+      message: `Floor ${String(confirmation.floorOrdinal).padStart(2, "0")} has been rerolled from a new survey seed.`,
+      channel: "ops-terminal-atlas",
+    });
+    renderOperationSelectScreen(currentReturnTo);
+    return;
+  }
+
+  stopAtlasHoldWait();
+  persistUiLayout();
+  restartOpsTerminalAtlas();
+  showSystemPing({
+    type: "success",
+    title: "A.T.L.A.S. RESTARTED",
+    message: "The active dungeon survey has been fully regenerated from Floor 01. Master unlock progression remains intact.",
+    channel: "ops-terminal-atlas",
+  });
+  renderOperationSelectScreen(currentReturnTo);
+}
+
+function renderAtlasConfirmModal(): string {
+  if (!atlasConfirmState) {
+    return "";
+  }
+
+  const title = atlasConfirmState.kind === "regen-floor" ? "REGENERATE FLOOR" : "RESET A.T.L.A.S.";
+  const message = atlasConfirmState.kind === "regen-floor"
+    ? `Regenerate Floor ${String(atlasConfirmState.floorOrdinal).padStart(2, "0")} with a new survey seed?`
+    : "Completely regenerate the atlas and restart from Floor 01? Permanent floor unlocks will be preserved.";
+  const confirmLabel = atlasConfirmState.kind === "regen-floor" ? "REGENERATE" : "RESET";
+
+  return `
+    <div class="opsatlas-modal-backdrop" id="opsAtlasConfirmModal">
+      <div class="opsatlas-modal" role="dialog" aria-modal="true" aria-labelledby="opsAtlasConfirmTitle">
+        <div class="opsatlas-modal__header">
+          <div class="opsatlas-modal__kicker">A.T.L.A.S. // CONFIRM ACTION</div>
+          <h2 id="opsAtlasConfirmTitle">${escapeHtml(title)}</h2>
+        </div>
+        <p class="opsatlas-modal__copy">${escapeHtml(message)}</p>
+        <div class="opsatlas-modal__actions">
+          <button
+            class="opsatlas-modal__btn opsatlas-modal__btn--primary"
+            type="button"
+            id="opsAtlasConfirmAcceptBtn"
+            data-atlas-confirm-action="accept"
+            data-controller-default-focus="true"
+          >
+            ${escapeHtml(confirmLabel)}
+          </button>
+          <button
+            class="opsatlas-modal__btn"
+            type="button"
+            id="opsAtlasConfirmCancelBtn"
+            data-atlas-confirm-action="cancel"
+          >
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function handleAtlasControllerAction(
+  action: string,
+  sectorViews: AtlasSectorView[],
+  mode: ControllerMode,
+): boolean {
+  if (mode === "layout") {
+    switch (action) {
+      case "tabPrev":
+      case "prevUnit":
+        cycleAtlasControllerWindow(-1);
+        return true;
+      case "tabNext":
+      case "nextUnit":
+        cycleAtlasControllerWindow(1);
+        return true;
+      case "moveUp":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { y: -28 });
+        return true;
+      case "moveDown":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { y: 28 });
+        return true;
+      case "moveLeft":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { x: -28 });
+        return true;
+      case "moveRight":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { x: 28 });
+        return true;
+      case "zoomIn":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { width: 28, height: 22 });
+        return true;
+      case "zoomOut":
+        moveAtlasWindowFrameByController(atlasControllerActiveWindowKey, { width: -28, height: -22 });
+        return true;
+      case "confirm":
+        setControllerMode("focus");
+        focusAtlasControllerWindow(atlasControllerActiveWindowKey);
+        return true;
+      case "windowPrimary":
+        if (atlasControllerActiveWindowKey === "notes") {
+          atlasNotesWindowMinimized = !atlasNotesWindowMinimized;
+          persistUiLayout();
+          renderOperationSelectScreen(currentReturnTo);
+          return true;
+        }
+        setControllerMode("focus");
+        focusAtlasControllerWindow(atlasControllerActiveWindowKey);
+        return true;
+      case "windowSecondary":
+        if (atlasControllerActiveWindowKey === "notes") {
+          cycleAtlasNotesWindowColor();
+          persistUiLayout();
+          renderOperationSelectScreen(currentReturnTo);
+          return true;
+        }
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  if (mode === "cursor") {
+    switch (action) {
+      case "moveUp":
+        moveAtlasSectorSelectionByDirection("up", sectorViews);
+        return true;
+      case "moveDown":
+        moveAtlasSectorSelectionByDirection("down", sectorViews);
+        return true;
+      case "moveLeft":
+        moveAtlasSectorSelectionByDirection("left", sectorViews);
+        return true;
+      case "moveRight":
+        moveAtlasSectorSelectionByDirection("right", sectorViews);
+        return true;
+      case "confirm": {
+        const deployButton = selectedTheaterId
+          ? document.querySelector<HTMLElement>(`[data-atlas-deploy="${selectedTheaterId}"]:not([disabled])`)
+          : null;
+        if (deployButton) {
+          deployButton.click();
+          return true;
+        }
+        const selectionTarget = selectedTheaterId
+          ? document.querySelector<HTMLElement>(`[data-atlas-select-sector="${selectedTheaterId}"]`)
+          : null;
+        selectionTarget?.click();
+        return true;
+      }
+      case "tabPrev":
+      case "prevUnit":
+        cycleAtlasMapMode(-1);
+        return true;
+      case "tabNext":
+      case "nextUnit":
+        cycleAtlasMapMode(1);
+        return true;
+      case "zoomIn":
+        setAtlasZoom(atlasViewport.zoom + MAP_ZOOM_STEP);
+        return true;
+      case "zoomOut":
+        setAtlasZoom(atlasViewport.zoom - MAP_ZOOM_STEP);
+        return true;
+      case "cancel":
+        setControllerMode("focus");
+        updateFocusableElements();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  return false;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -1521,6 +1902,10 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
         </div>
       </div>
     `;
+    const errorRoot = root.querySelector<HTMLElement>(".opsatlas-root");
+    if (errorRoot) {
+      enhanceTerminalUiButtons(errorRoot);
+    }
     document.getElementById("opsAtlasBackBtn")?.addEventListener("click", () => {
       returnFromBaseCampScreen(returnTo);
     });
@@ -1586,8 +1971,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
                   NEXT
                 </button>
               </div>
-              <div class="opsatlas-floor-switcher__status">
-                ${escapeHtml(floorTransitStatus)}
+              <div class="opsatlas-floor-switcher__status" id="opsAtlasTransitStatusBody">
+                <div id="opsAtlasTransitStatusOutput"></div>
               </div>
               <div class="opsatlas-floor-switcher__reset-controls">
                 <button
@@ -1607,8 +1992,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
                   RESET ATLAS
                 </button>
               </div>
-              <div class="opsatlas-floor-switcher__status opsatlas-floor-switcher__status--secondary">
-                ${escapeHtml(floorResetStatus)}
+              <div class="opsatlas-floor-switcher__status opsatlas-floor-switcher__status--secondary" id="opsAtlasResetStatusBody">
+                <div id="opsAtlasResetStatusOutput"></div>
               </div>
             </div>
           </div>
@@ -1765,8 +2150,47 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
 
         ${renderAtlasNotesDockButton()}
       </div>
+      ${renderAtlasConfirmModal()}
     </div>
   `;
+  const opsRoot = root.querySelector<HTMLElement>(".opsatlas-root");
+  if (opsRoot) {
+    enhanceTerminalUiButtons(opsRoot);
+  }
+  startTerminalTypingByIds("opsAtlasTransitStatusBody", "opsAtlasTransitStatusOutput", [floorTransitStatus], {
+    showCursor: false,
+    loop: false,
+    baseCharDelayMs: 16,
+    minCharDelayMs: 6,
+    accelerationPerCharMs: 0.7,
+    pauseAfterLineMs: 90,
+    maxLines: 1,
+    scrollBehavior: "auto",
+    lineClassName: "opsatlas-status-line",
+    promptClassName: "opsatlas-status-prompt",
+    textClassName: "opsatlas-status-text",
+    promptParser: (line) => ({
+      prompt: "ATLAS>",
+      text: ` ${line}`,
+    }),
+  });
+  startTerminalTypingByIds("opsAtlasResetStatusBody", "opsAtlasResetStatusOutput", [floorResetStatus], {
+    showCursor: false,
+    loop: false,
+    baseCharDelayMs: 16,
+    minCharDelayMs: 6,
+    accelerationPerCharMs: 0.7,
+    pauseAfterLineMs: 90,
+    maxLines: 1,
+    scrollBehavior: "auto",
+    lineClassName: "opsatlas-status-line",
+    promptClassName: "opsatlas-status-prompt",
+    textClassName: "opsatlas-status-text",
+    promptParser: (line) => ({
+      prompt: "RESET>",
+      text: ` ${line}`,
+    }),
+  });
 
   const surface = document.getElementById("opsAtlasSurface") as HTMLElement | null;
   const world = document.getElementById("opsAtlasWorld") as HTMLElement | null;
@@ -1937,19 +2361,10 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
       if (!isFinalResetUnlocked()) {
         return;
       }
-      if (!window.confirm(`Regenerate Floor ${String(floor.floorOrdinal).padStart(2, "0")} with a new survey seed?`)) {
-        return;
-      }
-      stopAtlasHoldWait();
-      persistUiLayout();
-      regenerateOpsTerminalAtlasFloor(floor.floorOrdinal);
-      showSystemPing({
-        type: "success",
-        title: "A.T.L.A.S. FLOOR REGENERATED",
-        message: `Floor ${String(floor.floorOrdinal).padStart(2, "0")} has been rerolled from a new survey seed.`,
-        channel: "ops-terminal-atlas",
+      openAtlasConfirm({
+        kind: "regen-floor",
+        floorOrdinal: floor.floorOrdinal,
       });
-      renderOperationSelectScreen(currentReturnTo);
       return;
     }
 
@@ -1960,19 +2375,22 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
       if (!isFinalResetUnlocked()) {
         return;
       }
-      if (!window.confirm("Completely regenerate the atlas and restart from Floor 01? Permanent floor unlocks will be preserved.")) {
-        return;
-      }
-      stopAtlasHoldWait();
-      persistUiLayout();
-      restartOpsTerminalAtlas();
-      showSystemPing({
-        type: "success",
-        title: "A.T.L.A.S. RESTARTED",
-        message: "The active dungeon survey has been fully regenerated from Floor 01. Master unlock progression remains intact.",
-        channel: "ops-terminal-atlas",
+      openAtlasConfirm({
+        kind: "reset-atlas",
       });
-      renderOperationSelectScreen(currentReturnTo);
+      return;
+    }
+
+    const atlasConfirmButton = target.closest<HTMLElement>("[data-atlas-confirm-action]");
+    if (atlasConfirmButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = atlasConfirmButton.getAttribute("data-atlas-confirm-action");
+      if (action === "accept") {
+        resolveAtlasConfirm();
+      } else {
+        dismissAtlasConfirm();
+      }
       return;
     }
 
@@ -2288,6 +2706,45 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
     getStickyZoom: () => atlasViewport.zoom,
   });
   updateFocusableElements();
+  cleanupOperationSelectControllerContext = registerControllerContext({
+    id: "ops-atlas",
+    defaultMode: atlasConfirmState ? "focus" : atlasControllerPreferredMode,
+    focusRoot: () => document.querySelector(".opsatlas-root"),
+    focusSelector: atlasConfirmState
+      ? "#opsAtlasConfirmModal button:not([disabled])"
+      : undefined,
+    defaultFocusSelector: atlasConfirmState
+      ? "#opsAtlasConfirmAcceptBtn"
+      : "#opsAtlasBackBtn",
+    onCursorAction: atlasConfirmState
+      ? undefined
+      : (action) => handleAtlasControllerAction(action, sectorViews, "cursor"),
+    onLayoutAction: atlasConfirmState
+      ? undefined
+      : (action) => handleAtlasControllerAction(action, sectorViews, "layout"),
+    onFocusAction: (action) => {
+      if (action === "cancel") {
+        if (atlasConfirmState) {
+          dismissAtlasConfirm();
+          return true;
+        }
+        setControllerMode("cursor");
+        updateFocusableElements();
+        return true;
+      }
+      return false;
+    },
+    onModeChange: (mode) => {
+      if (!atlasConfirmState) {
+        atlasControllerPreferredMode = mode;
+      }
+    },
+    getDebugState: () => ({
+      hovered: selectedTheaterId ?? "none",
+      window: atlasControllerActiveWindowKey,
+      focus: selectedTheaterId ?? "none",
+    }),
+  });
 
   registerBaseCampReturnHotkey(ATLAS_HOTKEY_ID, returnTo, {
     allowFieldEKey: true,
@@ -2302,6 +2759,10 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
       stopAtlasHoldWait();
     }
     persistUiLayout();
+    if (cleanupOperationSelectControllerContext) {
+      cleanupOperationSelectControllerContext();
+      cleanupOperationSelectControllerContext = null;
+    }
     unregisterBaseCampReturnHotkey(ATLAS_HOTKEY_ID);
 
     if (rootClickHandler) {

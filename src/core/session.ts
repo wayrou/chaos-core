@@ -157,12 +157,13 @@ function getCoopParticipantNetworkSlot(
   lobby: LobbyState,
   sessionSlot: SessionPlayerSlot,
 ): NetworkPlayerSlot | null {
-  if (lobby.activity.kind !== "coop_operations") {
+  const coopOperations = lobby.activity.kind === "coop_operations" ? lobby.activity.coopOperations : null;
+  if (!coopOperations) {
     return null;
   }
   const match = NETWORK_PLAYER_SLOTS.find((slot) =>
-    lobby.activity.coopOperations.participants[slot]?.selected
-    && lobby.activity.coopOperations.participants[slot]?.sessionSlot === sessionSlot,
+    coopOperations.participants[slot]?.selected
+    && coopOperations.participants[slot]?.sessionSlot === sessionSlot,
   );
   return match ?? null;
 }

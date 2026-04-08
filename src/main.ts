@@ -5,6 +5,7 @@ import { initControllerSupport } from "./core/controllerSupport";
 import { initializeSettings } from "./core/settings";
 import { notifyIfNewTechnicaContentLoaded, watchForGeneratedTechnicaContentChanges } from "./content/technica/notifier";
 import { initEZDrag } from "./ui/ezDrag";
+import { installNativeDialogOverrides } from "./ui/components/confirmDialog";
 import { renderSplashScreen } from "./ui/screens/SplashScreen";
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -13,6 +14,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   initializeAudioSystem();
   await initializeSettings();
   initControllerSupport();
+  installNativeDialogOverrides();
   initEZDrag();
   renderSplashScreen();
   notifyIfNewTechnicaContentLoaded();

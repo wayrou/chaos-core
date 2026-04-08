@@ -2,10 +2,17 @@
 
 import { createNewGameState } from "../initialState";
 import {
+  OUTER_DECK_OVERWORLD_MAP_ID,
   abortOuterDeckExpedition,
+  beginOuterDeckExpedition,
   claimOuterDeckCompletion,
   createDefaultOuterDecksState,
+  getOuterDeckBranchEntrySubarea,
+  getOuterDeckFieldContext,
+  getOuterDeckSubareaByMapId,
   getUnlockedOuterDeckZoneIds,
+  isOuterDeckBranchMap,
+  isOuterDeckOverworldMap,
   isOuterDeckZoneUnlocked,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
@@ -28,87 +35,77 @@ describe("outerDecks", () => {
     expect(isOuterDeckZoneUnlocked("supply_intake_port", { highestReachedFloorOrdinal: 12 })).toBe(true);
   });
 
-  it("marks clear/cache/npc flags on an active expedition state", () => {
-    const state = createNewGameState();
-    state.outerDecks = {
-      ...createDefaultOuterDecksState(),
-      isExpeditionActive: true,
-      activeExpedition: {
-        expeditionId: "test_run",
-        zoneId: "counterweight_shaft",
-        seed: "seed",
-        startedAt: 1,
-        currentSubareaId: "entry",
-        rolledSideChamber: true,
-        sideAttachmentSubareaId: "side",
-        subareas: [],
-        clearedSubareaIds: [],
-        rewardCacheClaimedIds: [],
-        npcEncounterIds: [],
-        completionRewardClaimed: false,
-      },
-    };
+  it("starts an authored branch expedition at the entry subarea", () => {
+    const state = beginOuterDeckExpedition(createNewGameState(), "counterweight_shaft", 10);
+    const active = state.outerDecks?.activeExpedition;
+    const entrySubarea = getOuterDeckBranchEntrySubarea("counterweight_shaft");
 
-    const clearedState = markOuterDeckSubareaCleared(state, "entry");
-    expect(clearedState.outerDecks?.activeExpedition?.clearedSubareaIds).toContain("entry");
-
-    const cachedState = markOuterDeckCacheClaimed(clearedState, "cache_1");
-    expect(cachedState.outerDecks?.activeExpedition?.rewardCacheClaimedIds).toContain("cache_1");
-
-    const npcState = markOuterDeckNpcEncounterSeen(cachedState, "shaft_mechanist");
-    expect(npcState.outerDecks?.seenNpcEncounterIds).toContain("shaft_mechanist");
-    expect(npcState.outerDecks?.activeExpedition?.npcEncounterIds).toContain("shaft_mechanist");
+    expect(state.outerDecks?.isExpeditionActive).toBe(true);
+    expect(active?.zoneId).toBe("counterweight_shaft");
+    expect(active?.currentSubareaId).toBe(entrySubarea.id);
+    expect(active?.subareas.map((subarea) => subarea.mapId)).toEqual([
+      "outerdeck_counterweight_shaft_lower_access",
+      "outerdeck_counterweight_shaft_lift_spine",
+      "outerdeck_counterweight_shaft_counterweight_cap",
+    ]);
+    expect(getOuterDeckSubareaByMapId(state, entrySubarea.mapId)?.title).toContain("Lower Access");
   });
 
-  it("completes and aborts expeditions cleanly", () => {
-    const completedState = createNewGameState();
-    completedState.outerDecks = {
-      ...createDefaultOuterDecksState(),
-      isExpeditionActive: true,
-      activeExpedition: {
-        expeditionId: "complete_run",
-        zoneId: "counterweight_shaft",
-        seed: "seed",
-        startedAt: 5,
-        currentSubareaId: "reward",
-        rolledSideChamber: false,
-        sideAttachmentSubareaId: null,
-        subareas: [],
-        clearedSubareaIds: ["entry", "mid"],
-        rewardCacheClaimedIds: [],
-        npcEncounterIds: [],
-        completionRewardClaimed: false,
-      },
-    };
+  it("marks clear/cache/npc flags on an active branch expedition", () => {
+    const started = beginOuterDeckExpedition(createNewGameState(), "counterweight_shaft", 20);
+    const midSubarea = started.outerDecks?.activeExpedition?.subareas[1];
 
-    const completionResult = claimOuterDeckCompletion(completedState, 20);
+    const clearedState = markOuterDeckSubareaCleared(started, midSubarea.id);
+    expect(clearedState.outerDecks?.activeExpedition?.clearedSubareaIds).toContain(midSubarea.id);
+
+    const cachedState = markOuterDeckCacheClaimed(clearedState, midSubarea.cacheId);
+    expect(cachedState.outerDecks?.activeExpedition?.rewardCacheClaimedIds).toContain(midSubarea.cacheId);
+
+    const npcState = markOuterDeckNpcEncounterSeen(cachedState, midSubarea.npcEncounterId);
+    expect(npcState.outerDecks?.seenNpcEncounterIds).toContain(midSubarea.npcEncounterId);
+    expect(npcState.outerDecks?.activeExpedition?.npcEncounterIds).toContain(midSubarea.npcEncounterId);
+  });
+
+  it("completes and aborts authored branch expeditions cleanly", () => {
+    const completingState = beginOuterDeckExpedition(createNewGameState(), "counterweight_shaft", 5);
+    const completionResult = claimOuterDeckCompletion(completingState, 20);
+
     expect(completionResult.awardedRecipeId).toBe("recipe_steam_valve_wristguard");
     expect(completionResult.state.outerDecks?.isExpeditionActive).toBe(false);
+    expect(completionResult.state.outerDecks?.activeExpedition).toBeNull();
     expect(completionResult.state.outerDecks?.zoneCompletionCounts.counterweight_shaft).toBe(1);
+    expect(completionResult.state.outerDecks?.runHistory.at(-1)?.outcome).toBe("completed");
 
-    const abortedState = createNewGameState();
-    abortedState.outerDecks = {
-      ...createDefaultOuterDecksState(),
-      isExpeditionActive: true,
-      activeExpedition: {
-        expeditionId: "abort_run",
-        zoneId: "outer_scaffold",
-        seed: "seed",
-        startedAt: 10,
-        currentSubareaId: "mid",
-        rolledSideChamber: true,
-        sideAttachmentSubareaId: "side",
-        subareas: [],
-        clearedSubareaIds: ["entry"],
-        rewardCacheClaimedIds: [],
-        npcEncounterIds: [],
-        completionRewardClaimed: false,
-      },
-    };
-
+    const abortedState = beginOuterDeckExpedition(createNewGameState(), "outer_scaffold", 10);
     const aborted = abortOuterDeckExpedition(abortedState, 30);
+
     expect(aborted.outerDecks?.isExpeditionActive).toBe(false);
     expect(aborted.outerDecks?.activeExpedition).toBeNull();
     expect(aborted.outerDecks?.runHistory.at(-1)?.outcome).toBe("aborted");
+  });
+
+  it("distinguishes HAVEN, overworld, and branch map contexts", () => {
+    expect(isOuterDeckOverworldMap(OUTER_DECK_OVERWORLD_MAP_ID)).toBe(true);
+    expect(isOuterDeckBranchMap("outerdeck_drop_bay_cargo_field")).toBe(true);
+    expect(isOuterDeckBranchMap("base_camp")).toBe(false);
+    expect(getOuterDeckFieldContext("base_camp")).toBe("haven");
+    expect(getOuterDeckFieldContext(OUTER_DECK_OVERWORLD_MAP_ID)).toBe("outerDeckOverworld");
+    expect(getOuterDeckFieldContext("outerdeck_drop_bay_cargo_field")).toBe("outerDeckBranch");
+  });
+
+  it("keeps default state empty before any branch is entered", () => {
+    expect(createDefaultOuterDecksState()).toEqual({
+      isExpeditionActive: false,
+      activeExpedition: null,
+      zoneCompletionCounts: {
+        counterweight_shaft: 0,
+        outer_scaffold: 0,
+        drop_bay: 0,
+        supply_intake_port: 0,
+      },
+      zoneFirstClearRecipeClaimed: {},
+      seenNpcEncounterIds: [],
+      runHistory: [],
+    });
   });
 });

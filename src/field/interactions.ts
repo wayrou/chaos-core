@@ -33,19 +33,29 @@ import {
   isPortNodeUnlocked,
   isSchemaNodeUnlocked,
   isStableNodeUnlocked,
+  loadCampaignProgress,
 } from "../core/campaign";
 import {
-  OUTER_DECK_TRANSIT_SPAWN_TILE,
+  abortOuterDeckExpedition,
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE,
+  OUTER_DECK_OVERWORLD_MAP_ID,
+  beginOuterDeckExpedition,
   claimOuterDeckCompletion,
+  getOuterDeckBranchEntrySubarea,
   getOuterDeckNpcEncounterDefinition,
+  getOuterDeckOverworldReturnSpawn,
   getOuterDeckSubareaByMapId,
+  getOuterDeckZoneLockedMessage,
   hasOuterDeckCacheBeenClaimed,
+  isOuterDeckZoneUnlocked,
   isOuterDeckSubareaCleared,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
   setOuterDeckCurrentSubarea,
 } from "../core/outerDecks";
 import { addResourceWallet, createEmptyResourceWallet } from "../core/resources";
+import { showAlertDialog } from "../ui/components/confirmDialog";
 import { showSystemPing } from "../ui/components/systemPing";
 
 function applyOuterDeckRewardBundle(
@@ -104,11 +114,19 @@ function summarizeOuterDeckRewardBundle(
 /**
  * Handle interaction with a zone
  */
-export function handleInteraction(
+async function showFieldInteractionAlert(message: string): Promise<void> {
+  await showAlertDialog({
+    title: "FIELD NOTICE",
+    message,
+    mount: () => document.querySelector(".field-root"),
+  });
+}
+
+export async function handleInteraction(
   zone: InteractionZone,
   map: FieldMap,
   onResume: () => void
-): void {
+): Promise<void> {
   switch (zone.action) {
     case "shop":
       renderShopScreen("field");
@@ -134,7 +152,7 @@ export function handleInteraction(
           renderOperationSelectScreen("field");
         } catch (error) {
           console.error("[FIELD] Ops Terminal failed to open:", error);
-          alert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
+          await showFieldInteractionAlert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
           onResume();
         }
       });
@@ -161,7 +179,7 @@ export function handleInteraction(
 
     case "port":
       if (!isPortNodeUnlocked()) {
-        alert(`PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -170,7 +188,7 @@ export function handleInteraction(
 
     case "dispatch":
       if (!isDispatchNodeUnlocked()) {
-        alert(`DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -186,7 +204,7 @@ export function handleInteraction(
 
     case "black_market":
       if (!isBlackMarketNodeUnlocked()) {
-        alert(`BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -195,7 +213,7 @@ export function handleInteraction(
 
     case "stable":
       if (!isStableNodeUnlocked()) {
-        alert(`STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -204,7 +222,7 @@ export function handleInteraction(
 
     case "schema":
       if (!isSchemaNodeUnlocked()) {
-        alert(`S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -213,7 +231,7 @@ export function handleInteraction(
 
     case "foundry-annex":
       if (!isFoundryAnnexUnlocked()) {
-        alert(`FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
+        await showFieldInteractionAlert(`FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`);
         onResume();
         break;
       }
@@ -323,11 +341,44 @@ export function handleInteraction(
         break;
       }
 
-      if (zone.metadata?.handlerId === "outer_deck_transit") {
-        import("../ui/screens/OuterDeckTransitScreen").then(({ renderOuterDeckTransitScreen }) => {
-          renderOuterDeckTransitScreen({
-            onClose: onResume,
-          });
+      if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+          setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE);
+          renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_return_to_haven") {
+        const nextState = abortOuterDeckExpedition(getGameState());
+        updateGameState(() => nextState);
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+          setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
+          renderFieldScreen("base_camp");
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_branch_gate") {
+        const zoneId = zone.metadata?.zoneId as any;
+        if (!zoneId) {
+          onResume();
+          break;
+        }
+
+        if (!isOuterDeckZoneUnlocked(zoneId, loadCampaignProgress())) {
+          await showFieldInteractionAlert(typeof zone.metadata?.lockedMessage === "string" ? zone.metadata.lockedMessage : getOuterDeckZoneLockedMessage(zoneId));
+          onResume();
+          break;
+        }
+
+        const nextState = beginOuterDeckExpedition(getGameState(), zoneId);
+        updateGameState(() => nextState);
+
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+          const entrySubarea = getOuterDeckBranchEntrySubarea(zoneId);
+          setNextFieldSpawnOverrideTile(entrySubarea.mapId, { x: 3, y: 6, facing: "east" });
+          renderFieldScreen(entrySubarea.mapId as any);
         });
         break;
       }
@@ -344,7 +395,7 @@ export function handleInteraction(
         }
 
         if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
-          alert("Clear the current subarea before advancing deeper into the Outer Decks.");
+          await showFieldInteractionAlert("Clear the current subarea before advancing deeper into the Outer Decks.");
           onResume();
           break;
         }
@@ -352,10 +403,13 @@ export function handleInteraction(
         const nextState = setOuterDeckCurrentSubarea(state, targetSubareaId);
         updateGameState(() => nextState);
 
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverride }) => {
-          const targetSubarea = getOuterDeckSubareaByMapId(getGameState(), `outerdeck_${targetSubareaId.replace(/[:]/g, "_")}`);
-          const targetMapId = targetSubarea?.mapId ?? `outerdeck_${targetSubareaId.replace(/[:]/g, "_")}`;
-          setNextFieldSpawnOverride(targetMapId, { x: 3, y: 6, facing: "east" });
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+          const targetSubarea = getGameState().outerDecks?.activeExpedition?.subareas.find((subarea) => subarea.id === targetSubareaId) ?? null;
+          const targetMapId = targetSubarea?.mapId ?? targetSubareaId;
+          const returning = currentSubarea.returnToSubareaId === targetSubareaId;
+          setNextFieldSpawnOverrideTile(targetMapId, returning
+            ? { x: 18, y: 6, facing: "west" }
+            : { x: 3, y: 6, facing: "east" });
           renderFieldScreen(targetMapId as any);
         });
         break;
@@ -371,7 +425,7 @@ export function handleInteraction(
         }
 
         if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
-          alert("Hostiles remain in the chamber. Secure the area before opening the cache.");
+          await showFieldInteractionAlert("Hostiles remain in the chamber. Secure the area before opening the cache.");
           onResume();
           break;
         }
@@ -413,9 +467,11 @@ export function handleInteraction(
         const completionResult = claimOuterDeckCompletion(getGameState());
         updateGameState(() => completionResult.state);
 
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverride }) => {
-          setNextFieldSpawnOverride("base_camp", OUTER_DECK_TRANSIT_SPAWN_TILE);
-          renderFieldScreen("base_camp");
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+          const zoneId = zone.metadata?.zoneId as any;
+          const returnSpawn = zoneId ? getOuterDeckOverworldReturnSpawn(zoneId) : OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE;
+          setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, returnSpawn);
+          renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
           showSystemPing({
             type: "success",
             title: "OUTER DECK SECURED",
@@ -438,7 +494,7 @@ export function handleInteraction(
       }
 
       if (typeof zone.metadata?.lockedMessage === "string") {
-        alert(zone.metadata.lockedMessage);
+        await showFieldInteractionAlert(zone.metadata.lockedMessage);
         onResume();
         break;
       }

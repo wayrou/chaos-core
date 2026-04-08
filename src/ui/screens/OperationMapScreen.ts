@@ -94,6 +94,8 @@ let opmapContextPanelFrame = {
   height: 0,
 };
 let cleanupOperationMapControllerContext: (() => void) | null = null;
+type OperationMapConfirmState = "return-base" | "abandon-field" | "abandon-select";
+let operationMapConfirmState: OperationMapConfirmState | null = null;
 
 const PAN_SPEED = 12;
 const PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
@@ -927,6 +929,7 @@ export function renderOperationMapScreen(): void {
           </button>
         ` : ''}
       </div>
+      ${renderOperationMapConfirmModal()}
     </div>
   `;
 
@@ -944,12 +947,17 @@ export function renderOperationMapScreen(): void {
       setSelectedOperationNode(selectedNodeId, nodes, operation, floor, { center: false });
       cleanupOperationMapControllerContext = registerControllerContext({
         id: "operation-map",
-        defaultMode: "cursor",
+        defaultMode: operationMapConfirmState ? "focus" : "cursor",
         focusRoot: () => document.querySelector(".opmap-root"),
-        defaultFocusSelector: "#opmapBackBtn",
-        onCursorAction: (action) => handleOperationMapControllerAction(action, "cursor", nodes, operation, floor, canAdvance),
-        onLayoutAction: (action) => handleOperationMapControllerAction(action, "layout", nodes, operation, floor, canAdvance),
+        focusSelector: operationMapConfirmState ? "#opmapConfirmModal button:not([disabled])" : undefined,
+        defaultFocusSelector: operationMapConfirmState ? "#opmapConfirmAcceptBtn" : "#opmapBackBtn",
+        onCursorAction: operationMapConfirmState ? undefined : (action) => handleOperationMapControllerAction(action, "cursor", nodes, operation, floor, canAdvance),
+        onLayoutAction: operationMapConfirmState ? undefined : (action) => handleOperationMapControllerAction(action, "layout", nodes, operation, floor, canAdvance),
         onFocusAction: (action) => {
+          if (operationMapConfirmState && action === "cancel") {
+            closeOperationMapConfirm();
+            return true;
+          }
           if (action === "cancel") {
             document.getElementById("opmapBackBtn")?.click();
             return true;
@@ -983,6 +991,70 @@ function updateZoomDisplay(): void {
   }
 }
 
+function renderOperationMapConfirmModal(): string {
+  if (!operationMapConfirmState) {
+    return "";
+  }
+
+  const title = operationMapConfirmState === "return-base"
+    ? "RETURN TO BASE CAMP"
+    : "ABANDON OPERATION";
+  const message = operationMapConfirmState === "return-base"
+    ? "Return to Base Camp? Your current operation will remain active so you can resume it later."
+    : "Abandon this operation? Progress will be lost.";
+  const confirmLabel = operationMapConfirmState === "return-base" ? "RETURN" : "ABANDON";
+  const variantClass = operationMapConfirmState === "return-base" ? "default" : "danger";
+
+  return `
+    <div class="game-confirm-modal-backdrop" id="opmapConfirmModal">
+      <div class="game-confirm-modal game-confirm-modal--${variantClass}" role="dialog" aria-modal="true" aria-labelledby="opmapConfirmTitle">
+        <div class="game-confirm-modal__header">
+          <div class="game-confirm-modal__kicker">OPERATION COMMAND // CONFIRM ACTION</div>
+          <h2 class="game-confirm-modal__title" id="opmapConfirmTitle">${title}</h2>
+        </div>
+        <div class="game-confirm-modal__copy">${message}</div>
+        <div class="game-confirm-modal__actions">
+          <button class="game-confirm-modal__btn game-confirm-modal__btn--primary" type="button" id="opmapConfirmAcceptBtn" data-opmap-confirm-action="accept" data-controller-default-focus="true">${confirmLabel}</button>
+          <button class="game-confirm-modal__btn" type="button" data-opmap-confirm-action="cancel">CANCEL</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openOperationMapConfirm(state: OperationMapConfirmState): void {
+  operationMapConfirmState = state;
+  renderOperationMapScreen();
+}
+
+function closeOperationMapConfirm(): void {
+  operationMapConfirmState = null;
+  renderOperationMapScreen();
+}
+
+function resolveOperationMapConfirm(): void {
+  const state = operationMapConfirmState;
+  operationMapConfirmState = null;
+  if (!state) {
+    return;
+  }
+
+  if (state === "return-base") {
+    cleanupPanHandlers();
+    renderFieldScreen("base_camp");
+    return;
+  }
+
+  cleanupPanHandlers();
+  abandonRun();
+  syncCampaignToGameState();
+  if (state === "abandon-field") {
+    renderFieldScreen("base_camp");
+  } else {
+    renderOperationSelectScreen();
+  }
+}
+
 // Global abandon button handler using event delegation
 let abandonHandlerAttached = false;
 function setupAbandonButtonHandler(): void {
@@ -997,13 +1069,7 @@ function setupAbandonButtonHandler(): void {
       e.stopPropagation();
       e.preventDefault();
       console.log("[OPMAP] Abandon button clicked (document delegation)!");
-
-      if (confirm("Abandon this operation? Progress will be lost.")) {
-        cleanupPanHandlers();
-        abandonRun();
-        syncCampaignToGameState();
-        renderFieldScreen("base_camp");
-      }
+      openOperationMapConfirm("abandon-field");
     }
   }, true); // Use capture phase
 }
@@ -1752,12 +1818,25 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   });
 
   root.querySelector("#opmapBackBtn")?.addEventListener("click", () => {
-    if (!confirm("Return to Base Camp? Your current operation will remain active so you can resume it later.")) {
-      return;
-    }
+    openOperationMapConfirm("return-base");
+  });
 
-    cleanupPanHandlers();
-    renderFieldScreen("base_camp");
+  root.querySelectorAll<HTMLElement>("[data-opmap-confirm-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const action = button.getAttribute("data-opmap-confirm-action");
+      if (action === "accept") {
+        resolveOperationMapConfirm();
+      } else {
+        closeOperationMapConfirm();
+      }
+    });
+  });
+
+  root.querySelector("#opmapConfirmModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeOperationMapConfirm();
+    }
   });
 
   // Abandon button
@@ -1792,12 +1871,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   }
 
   function handleAbandon() {
-    if (confirm("Abandon this operation? Progress will be lost.")) {
-      cleanupPanHandlers();
-      abandonRun();
-      syncCampaignToGameState();
-      renderOperationSelectScreen();
-    }
+    openOperationMapConfirm("abandon-select");
   }
 
   function handleAdvanceFloor() {

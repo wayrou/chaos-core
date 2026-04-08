@@ -24,10 +24,11 @@ import {
 } from "./baseCampBuild";
 import { getPlacedFieldDecor } from "../core/decorSystem";
 import {
-  OUTER_DECK_TRANSIT_OBJECT_ID,
-  OUTER_DECK_TRANSIT_OBJECT_TILE,
-  OUTER_DECK_TRANSIT_SPAWN_TILE,
-  OUTER_DECK_TRANSIT_ZONE_ID,
+  OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
+  OUTER_DECK_HAVEN_EXIT_OBJECT_TILE,
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  OUTER_DECK_HAVEN_EXIT_ZONE_ID,
+  OUTER_DECK_OVERWORLD_MAP_ID,
 } from "../core/outerDecks";
 import { COUNTERWEIGHT_WORKSHOP_MAP_ID, isWeaponsmithUnlocked } from "../core/weaponsmith";
 import { createOuterDeckFieldMap } from "./outerDeckMaps";
@@ -8160,25 +8161,33 @@ function createConfiguredBaseCampMap(): FieldMap {
 
   applyBaseCampBuildLayout(map);
 
+  // Open a south-exit lane from HAVEN into the Outer Deck overworld.
+  fillRect(map, 22, 19, 27, 23, true, "floor");
+  setTile(map, 24, 24, false, "wall");
+  setTile(map, 25, 24, false, "wall");
+
   map.objects.push({
-    id: OUTER_DECK_TRANSIT_OBJECT_ID,
-    x: OUTER_DECK_TRANSIT_OBJECT_TILE.x,
-    y: OUTER_DECK_TRANSIT_OBJECT_TILE.y,
-    width: 2,
+    id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
+    x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
+    y: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.y,
+    width: 4,
     height: 2,
     type: "station",
     sprite: "bulkhead",
-    metadata: { name: "Outer Deck Transit" },
+    metadata: { name: "Outer Deck Access" },
   });
   map.interactionZones.unshift({
-    id: OUTER_DECK_TRANSIT_ZONE_ID,
-    x: OUTER_DECK_TRANSIT_OBJECT_TILE.x,
-    y: OUTER_DECK_TRANSIT_OBJECT_TILE.y,
-    width: 2,
-    height: Math.max(1, OUTER_DECK_TRANSIT_SPAWN_TILE.y - OUTER_DECK_TRANSIT_OBJECT_TILE.y + 1),
+    id: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
+    x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
+    y: OUTER_DECK_HAVEN_EXIT_SPAWN_TILE.y + 1,
+    width: 4,
+    height: 2,
     action: "custom",
-    label: "OUTER DECK TRANSIT",
-    metadata: { handlerId: "outer_deck_transit" },
+    label: "OUTER DECKS",
+    metadata: {
+      handlerId: "outer_deck_enter_overworld",
+      autoTrigger: true,
+    },
   });
 
   if (isWeaponsmithUnlocked(state)) {
@@ -8630,6 +8639,9 @@ export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   // Handle dynamic key room maps
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
     return ensureNodeFootprintsWalkable(createKeyRoomMap(mapId));
+  }
+  if (mapId === OUTER_DECK_OVERWORLD_MAP_ID) {
+    return ensureNodeFootprintsWalkable(createOuterDeckFieldMap(mapId) as FieldMap);
   }
   if (typeof mapId === "string" && mapId.startsWith("outerdeck_")) {
     const map = createOuterDeckFieldMap(mapId);

@@ -31,6 +31,11 @@ import { renderImportContentScreen } from "./ImportContentScreen";
 import chaosCoreLogo from "../../assets/cc logo.png";
 import { createDefaultCampaignProgress, saveCampaignProgress } from "../../core/campaign";
 import { clearActiveEchoRun, startEchoRunSession } from "../../core/echoRuns";
+import {
+  enhanceTerminalUiButtons,
+  startTerminalTypingByIds,
+} from "../components/terminalFeedback";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
 const FLOATING_TERMINAL_TITLES = [
@@ -43,11 +48,7 @@ const FLOATING_TERMINAL_TITLES = [
 let floatingTerminalCount = 0;
 let floatingTerminalZIndex = 220;
 let cleanupMainMenuWorkspace: (() => void) | null = null;
-
-type TerminalElements = {
-  body: HTMLElement;
-  output: HTMLElement;
-};
+let cleanupMainMenuTerminalFx: (() => void) | null = null;
 
 type MainMenuActionId =
   | "continue"
@@ -452,6 +453,26 @@ export async function renderMainMenu(): Promise<void> {
           </div>
         </div>
       </div>
+
+      <div class="mainmenu-modal" id="saveOverwriteConfirmModal" style="display: none;">
+        <div class="mainmenu-modal-content mainmenu-modal-content--confirm">
+          <div class="mainmenu-modal-header">
+            <span class="modal-title">OVERWRITE SAVE</span>
+            <button class="modal-close" id="closeSaveOverwriteConfirmModal" type="button" aria-label="Close overwrite save confirmation">✕</button>
+          </div>
+          <div class="mainmenu-modal-body">
+            <p class="mainmenu-confirm-copy">Overwrite this save?</p>
+            <div class="mainmenu-confirm-actions">
+              <button class="mainmenu-btn mainmenu-btn-primary" id="confirmSaveOverwriteBtn" type="button" data-controller-default-focus="true">
+                <span class="btn-text">OVERWRITE</span>
+              </button>
+              <button class="mainmenu-btn mainmenu-btn-secondary" id="cancelSaveOverwriteBtn" type="button">
+                <span class="btn-text">CANCEL</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -462,10 +483,14 @@ export async function renderMainMenu(): Promise<void> {
 
   upgradeMainMenuToWorkspace(hasContinue, saves.length > 0, mostRecentSave);
   attachMenuListeners(saves);
+  if (mainMenuRoot) {
+    enhanceTerminalUiButtons(mainMenuRoot);
+  }
   updateFocusableElements();
   
   // Start terminal animation
-  startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
+  cleanupMainMenuTerminalFx?.();
+  cleanupMainMenuTerminalFx = startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
 }
 
 function getVisibleMainMenuModal(): HTMLElement | null {
@@ -561,7 +586,14 @@ function confirmNewOperationStart(): Promise<boolean> {
   const closeBtn = document.getElementById("closeNewOpConfirmModal") as HTMLButtonElement | null;
 
   if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
-    return Promise.resolve(window.confirm("Starting a new operation will not delete your existing saves. Continue?"));
+    return showConfirmDialog({
+      title: "START NEW OPERATION",
+      message: "Starting a new operation will not delete your existing saves. Continue?",
+      confirmLabel: "CONTINUE",
+      cancelLabel: "CANCEL",
+      mount: () => document.querySelector(".mainmenu-root"),
+      restoreFocusSelector: 'button[data-action="new-op"]',
+    });
   }
 
   return new Promise((resolve) => {
@@ -600,6 +632,63 @@ function confirmNewOperationStart(): Promise<boolean> {
     window.addEventListener("keydown", handleKeyDown, true);
 
     showMainMenuModal("newOpConfirmModal", "#confirmNewOpContinueBtn");
+  });
+}
+
+function confirmSaveOverwrite(): Promise<boolean> {
+  const modal = document.getElementById("saveOverwriteConfirmModal") as HTMLElement | null;
+  const confirmBtn = document.getElementById("confirmSaveOverwriteBtn") as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("cancelSaveOverwriteBtn") as HTMLButtonElement | null;
+  const closeBtn = document.getElementById("closeSaveOverwriteConfirmModal") as HTMLButtonElement | null;
+
+  if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
+    return showConfirmDialog({
+      title: "OVERWRITE SAVE",
+      message: "Overwrite this save?",
+      confirmLabel: "OVERWRITE",
+      cancelLabel: "CANCEL",
+      variant: "danger",
+      mount: () => document.querySelector(".mainmenu-root"),
+      restoreFocusSelector: "#saveModal .save-slot-btn, #closeSaveModal",
+    });
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", handleConfirm);
+      cancelBtn.removeEventListener("click", handleCancel);
+      closeBtn.removeEventListener("click", handleCancel);
+      modal.removeEventListener("click", handleBackdropClick);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+
+    const finish = (accepted: boolean) => {
+      cleanup();
+      hideMainMenuModal("saveOverwriteConfirmModal", "#saveModal .save-slot-btn, #closeSaveModal");
+      resolve(accepted);
+    };
+
+    const handleConfirm = () => finish(true);
+    const handleCancel = () => finish(false);
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (event.target === modal) {
+        finish(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    confirmBtn.addEventListener("click", handleConfirm);
+    cancelBtn.addEventListener("click", handleCancel);
+    closeBtn.addEventListener("click", handleCancel);
+    modal.addEventListener("click", handleBackdropClick);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    showMainMenuModal("saveOverwriteConfirmModal", "#confirmSaveOverwriteBtn");
   });
 }
 
@@ -1240,204 +1329,31 @@ function upgradeMainMenuToWorkspace(
 // TERMINAL ANIMATION
 // ----------------------------------------------------------------------------
 
-function getTerminalElements(bodyId: string, outputId: string): TerminalElements | null {
-  const body = document.getElementById(bodyId);
-  const output = document.getElementById(outputId);
-
-  if (!body || !output) {
-    return null;
-  }
-
-  return { body, output };
-}
-
 function isTerminalPromptLine(line: string): boolean {
   return line.startsWith(TERMINAL_PROMPT_PREFIX);
 }
 
-function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): void {
-  const elements = getTerminalElements(bodyId, outputId);
-  if (!elements) return;
-
-  const { body: terminalBody, output: terminalOutput } = elements;
-  
-  let currentLineIndex = 0;
-  
-  // Add initial lines with typing animation
-  const initialLines = flavorLines.slice(0, 8);
-  let initialDelay = 0;
-  initialLines.forEach((line) => {
-    if (line === "") {
-      setTimeout(() => {
-        addEmptyTerminalLine(terminalOutput);
-        autoScrollTerminal(terminalBody);
-      }, initialDelay);
-      initialDelay += 200;
-    } else {
-      setTimeout(() => {
-        typeTerminalLine(terminalOutput, terminalBody, line, () => {
-          autoScrollTerminal(terminalBody);
-        });
-      }, initialDelay);
-      // Estimate delay: prompt + text characters * typing speed
-      const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
-      const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
-      initialDelay += (promptLength + textLength) * 30 + 500; // 30ms per char + 500ms pause
-    }
-  });
-  currentLineIndex = initialLines.length;
-  
-  // Then continuously add new lines with typing
-  const addNextLine = () => {
-    if (currentLineIndex >= flavorLines.length) {
-      currentLineIndex = 0; // Loop back to start
-    }
-    
-    const line = flavorLines[currentLineIndex];
-    if (line === "") {
-      addEmptyTerminalLine(terminalOutput);
-      autoScrollTerminal(terminalBody);
-      setTimeout(addNextLine, 300);
-    } else {
-      typeTerminalLine(terminalOutput, terminalBody, line, () => {
-        autoScrollTerminal(terminalBody);
-        // Schedule next line after typing completes
-        const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
-        const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
-        const typingTime = (promptLength + textLength) * 30;
-        setTimeout(addNextLine, typingTime + 800); // Add pause after line completes
-      });
-    }
-    
-    currentLineIndex++;
-  };
-  
-  // Start continuous output after initial load
-  setTimeout(addNextLine, initialDelay + 1000);
-}
-
-function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, line: string, onComplete: () => void): void {
-  if (!container.isConnected || !terminalBody.isConnected) {
-    return;
-  }
-
-  const lineDiv = document.createElement("div");
-  lineDiv.className = "terminal-line";
-  container.appendChild(lineDiv);
-  
-  // Remove existing cursor line
-  const existingCursor = container.querySelector('.terminal-cursor-line');
-  if (existingCursor) {
-    existingCursor.remove();
-  }
-  
-  if (line === "") {
-    lineDiv.innerHTML = "<br>";
-    onComplete();
-    return;
-  }
-  
-  let promptSpan: HTMLSpanElement | null = null;
-  let textSpan: HTMLSpanElement | null = null;
-  
-  if (isTerminalPromptLine(line)) {
-    const parts = line.split('::');
-    const prompt = parts[0];
-    const text = parts.slice(1).join('::');
-    
-    promptSpan = document.createElement("span");
-    promptSpan.className = "terminal-prompt";
-    lineDiv.appendChild(promptSpan);
-    
-    textSpan = document.createElement("span");
-    textSpan.className = "terminal-text";
-    lineDiv.appendChild(textSpan);
-    
-    // Type prompt first
-    typeText(promptSpan, prompt, 30, () => {
-      // Then type text
-      if (textSpan) {
-        typeText(textSpan, text, 30, () => {
-          addCursorLine(container);
-          onComplete();
-        });
-      } else {
-        addCursorLine(container);
-        onComplete();
+function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): () => void {
+  return startTerminalTypingByIds(bodyId, outputId, flavorLines, {
+    cursorPrompt: TERMINAL_PROMPT_PREFIX,
+    baseCharDelayMs: 20,
+    minCharDelayMs: 7,
+    accelerationPerCharMs: 0.65,
+    pauseAfterLineMs: 220,
+    pauseAfterEmptyLineMs: 120,
+    maxLines: 18,
+    loop: true,
+    scrollBehavior: "auto",
+    promptParser: (line) => {
+      if (!isTerminalPromptLine(line)) {
+        return null;
       }
-    });
-  } else {
-    textSpan = document.createElement("span");
-    textSpan.className = "terminal-text";
-    lineDiv.appendChild(textSpan);
-    
-    typeText(textSpan, line, 30, () => {
-      addCursorLine(container);
-      onComplete();
-    });
-  }
-  
-  // Auto-scroll during typing
-  const scrollInterval = setInterval(() => {
-    autoScrollTerminal(terminalBody);
-  }, 100);
-  
-  // Clear interval when done
-  setTimeout(() => clearInterval(scrollInterval), (line.length * 30) + 1000);
-}
-
-function typeText(element: HTMLElement, text: string, delay: number, onComplete: () => void): void {
-  let index = 0;
-  
-  const typeChar = () => {
-    if (!element.isConnected) {
-      return;
-    }
-
-    if (index < text.length) {
-      element.textContent = text.substring(0, index + 1);
-      index++;
-      setTimeout(typeChar, delay);
-    } else {
-      onComplete();
-    }
-  };
-  
-  typeChar();
-}
-
-function addEmptyTerminalLine(container: HTMLElement): void {
-  const lineDiv = document.createElement("div");
-  lineDiv.className = "terminal-line";
-  lineDiv.innerHTML = "<br>";
-  container.appendChild(lineDiv);
-}
-
-function addCursorLine(container: HTMLElement): void {
-  if (!container.isConnected) {
-    return;
-  }
-
-  // Remove existing cursor line
-  const existingCursor = container.querySelector('.terminal-cursor-line');
-  if (existingCursor) {
-    existingCursor.remove();
-  }
-  
-  const cursorLine = document.createElement("div");
-  cursorLine.className = "terminal-line terminal-cursor-line";
-  cursorLine.innerHTML = `
-    <span class="terminal-prompt">S/COM&gt;</span>
-    <span class="terminal-text"><span class="terminal-cursor">_</span></span>
-  `;
-  container.appendChild(cursorLine);
-}
-
-function autoScrollTerminal(terminalBody: HTMLElement): void {
-  // Smooth scroll to bottom
-  terminalBody.scrollTo({
-    top: terminalBody.scrollHeight,
-    behavior: 'smooth'
+      const parts = line.split("::");
+      return {
+        prompt: parts[0],
+        text: parts.slice(1).join("::"),
+      };
+    },
   });
 }
 
@@ -1609,6 +1525,12 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       hideMainMenuModal("saveModal", 'button[data-action="settings"]');
     }
   });
+
+  document.getElementById("saveOverwriteConfirmModal")?.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
+      hideMainMenuModal("saveOverwriteConfirmModal", "#saveModal .save-slot-btn, #closeSaveModal");
+    }
+  });
 }
 
 function createFloatingTerminalWindow(): void {
@@ -1651,17 +1573,13 @@ function createFloatingTerminalWindow(): void {
   `;
 
   floatingLayer.appendChild(windowEl);
+  enhanceTerminalUiButtons(windowEl);
 
   windowEl.addEventListener("pointerdown", () => {
     windowEl.style.zIndex = String(++floatingTerminalZIndex);
   });
 
   const closeBtn = windowEl.querySelector<HTMLButtonElement>(`button[data-close-terminal="${terminalId}"]`);
-  if (closeBtn) {
-    closeBtn.addEventListener("click", () => {
-      windowEl.remove();
-    });
-  }
 
   const floatingFlavorLines = [
     `${TERMINAL_PROMPT_PREFIX} WINDOW_STATUS   :: Auxiliary console online.`,
@@ -1674,7 +1592,13 @@ function createFloatingTerminalWindow(): void {
     `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Use ✕ to dismiss the pane.`,
   ];
 
-  startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
+  const cleanupFloatingTerminal = startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      cleanupFloatingTerminal();
+      windowEl.remove();
+    });
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1789,11 +1713,11 @@ export async function openSaveModal(): Promise<void> {
       saveBtn.addEventListener("click", async () => {
         const slot = (item as HTMLElement).dataset.slot as SaveSlot;
         const isOverwrite = saveBtn.classList.contains("save-slot-btn--overwrite");
-        
-        if (isOverwrite && !confirm("Overwrite this save?")) {
+
+        if (isOverwrite && !(await confirmSaveOverwrite())) {
           return;
         }
-        
+
         const state = getGameState();
         const result = await saveGame(slot, state);
         

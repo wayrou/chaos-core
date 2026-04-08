@@ -284,61 +284,65 @@ export function normalizeEffectFlowDocument(value: unknown): EffectFlowDocument 
   }
 
   const nodes = Array.isArray(record.nodes)
-    ? record.nodes
-        .map((entry) => {
-          const node = toRecord(entry);
-          if (!node) {
-            return null;
-          }
-          const family = readString(node.family).trim();
-          if (family === "selector") {
-            return {
-              id: readString(node.id),
-              family: "selector" as const,
-              label: readString(node.label, "Selector"),
-              note: readOptionalString(node.note),
-              selector: readSelector(node.selector),
-            };
-          }
-          if (family === "condition") {
-            return {
-              id: readString(node.id),
-              family: "condition" as const,
-              label: readString(node.label, "Condition"),
-              note: readOptionalString(node.note),
-              condition: readCondition(node.condition),
-              selector: readOptionalSelector(node.selector),
-              hpThresholdPercent: readNumber(node.hpThresholdPercent),
-              status: readStatus(node.status),
-              handCountThreshold: readNumber(node.handCountThreshold),
-              turnCountThreshold: readNumber(node.turnCountThreshold),
-            };
-          }
-          if (family === "action") {
-            return {
-              id: readString(node.id),
-              family: "action" as const,
-              label: readString(node.label, "Action"),
-              note: readOptionalString(node.note),
-              action: readAction(node.action),
-              selector: readOptionalSelector(node.selector),
-              amount: readNumber(node.amount),
-              duration: readNumber(node.duration),
-              tiles: readNumber(node.tiles),
-              stat: readStat(node.stat),
-              modifierMode: node.modifierMode === "debuff" ? "debuff" : node.modifierMode === "buff" ? "buff" : undefined,
-              status: readStatus(node.status),
-              flagKey: readOptionalString(node.flagKey),
-              flagValue: readOptionalString(node.flagValue),
-              resource: readResource(node.resource),
-              droneTypeId: readOptionalString(node.droneTypeId),
-              count: readNumber(node.count),
-              handCountThreshold: readNumber(node.handCountThreshold),
-            };
-          }
-          return null;
-        })
-        .filter((node): node is EffectFlowNode => node !== null && Boolean(node.id))
+    ? record.nodes.reduce<EffectFlowNode[]>((acc, entry) => {
+        const node = toRecord(entry);
+        if (!node) {
+          return acc;
+        }
+        const id = readString(node.id).trim();
+        if (!id) {
+          return acc;
+        }
+        const family = readString(node.family).trim();
+        if (family === "selector") {
+          acc.push({
+            id,
+            family: "selector",
+            label: readString(node.label, "Selector"),
+            note: readOptionalString(node.note),
+            selector: readSelector(node.selector),
+          });
+          return acc;
+        }
+        if (family === "condition") {
+          acc.push({
+            id,
+            family: "condition",
+            label: readString(node.label, "Condition"),
+            note: readOptionalString(node.note),
+            condition: readCondition(node.condition),
+            selector: readOptionalSelector(node.selector),
+            hpThresholdPercent: readNumber(node.hpThresholdPercent),
+            status: readStatus(node.status),
+            handCountThreshold: readNumber(node.handCountThreshold),
+            turnCountThreshold: readNumber(node.turnCountThreshold),
+          });
+          return acc;
+        }
+        if (family === "action") {
+          acc.push({
+            id,
+            family: "action",
+            label: readString(node.label, "Action"),
+            note: readOptionalString(node.note),
+            action: readAction(node.action),
+            selector: readOptionalSelector(node.selector),
+            amount: readNumber(node.amount),
+            duration: readNumber(node.duration),
+            tiles: readNumber(node.tiles),
+            stat: readStat(node.stat),
+            modifierMode: node.modifierMode === "debuff" ? "debuff" : node.modifierMode === "buff" ? "buff" : undefined,
+            status: readStatus(node.status),
+            flagKey: readOptionalString(node.flagKey),
+            flagValue: readOptionalString(node.flagValue),
+            resource: readResource(node.resource),
+            droneTypeId: readOptionalString(node.droneTypeId),
+            count: readNumber(node.count),
+            handCountThreshold: readNumber(node.handCountThreshold),
+          });
+        }
+        return acc;
+      }, [])
     : [];
 
   const nodeIdSet = new Set(nodes.map((node) => node.id));
@@ -489,23 +493,23 @@ export function createEffectFlowFromLegacyCardEffects(
 }
 
 export function createEffectFlowFromLegacyFieldModEffect(effect: FieldModEffect): EffectFlowDocument {
-  const node = (() => {
+  const node: EffectActionNode = (() => {
     switch (effect.kind) {
       case "deal_damage":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Deal Damage",
-          action: "deal_damage" as const,
+          action: "deal_damage",
           amount: effect.amount,
           selector: effect.target === "random_enemy" ? "random_enemy" : effect.target === "adjacent_enemies" ? "adjacent_enemies" : "all_enemies",
         };
       case "apply_status":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Apply Status",
-          action: "apply_status" as const,
+          action: "apply_status",
           selector: effect.target === "hit_target" ? "hit_target" : "random_enemy",
           status:
             effect.status === "burn"
@@ -521,56 +525,56 @@ export function createEffectFlowFromLegacyFieldModEffect(effect: FieldModEffect)
       case "gain_shield":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Grant Shield",
-          action: "grant_shield" as const,
+          action: "grant_shield",
           amount: effect.amount,
           selector: effect.target === "all_allies" ? "all_allies" : "self",
         };
       case "draw":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Draw Cards",
-          action: "draw_cards" as const,
+          action: "draw_cards",
           amount: effect.amount,
           selector: effect.target === "team" ? "all_allies" : "self",
         };
       case "reduce_cost_next_card":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Reduce Next Card Cost",
-          action: "reduce_cost_next_card" as const,
+          action: "reduce_cost_next_card",
           amount: effect.amount,
-          selector: "self" as const,
+          selector: "self",
         };
       case "gain_resource":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Gain Resource",
-          action: "gain_resource" as const,
+          action: "gain_resource",
           amount: effect.amount,
           resource: effect.resource,
         };
       case "summon_drone":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Summon Drone",
-          action: "summon_drone" as const,
+          action: "summon_drone",
           count: effect.count,
           droneTypeId: effect.droneTypeId,
         };
       case "knockback":
         return {
           id: "legacy_fieldmod_1",
-          family: "action" as const,
+          family: "action",
           label: "Knockback",
-          action: "knockback" as const,
+          action: "knockback",
           tiles: effect.tiles,
-          selector: "hit_target" as const,
+          selector: "hit_target",
         };
     }
   })();

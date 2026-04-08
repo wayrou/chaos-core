@@ -589,6 +589,10 @@ function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
   markControllerInputActive();
   console.log(`[CONTROLLER] Action: ${action}${playerId ? ` (${playerId})` : ""}`);
 
+  if (handleGlobalModalAction(action)) {
+    return;
+  }
+
   if (handleContextAction(action, playerId)) {
     return;
   }
@@ -602,7 +606,57 @@ function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
   }
 }
 
+function handleGlobalModalAction(action: GameAction): boolean {
+  const modal = document.querySelector<HTMLElement>(".game-confirm-modal-backdrop");
+  if (!modal) {
+    return false;
+  }
+
+  switch (action) {
+    case "moveUp":
+      navigateFocus("up");
+      return true;
+    case "moveDown":
+      navigateFocus("down");
+      return true;
+    case "moveLeft":
+    case "tabPrev":
+    case "prevUnit":
+      navigateFocus("left");
+      return true;
+    case "moveRight":
+    case "tabNext":
+    case "nextUnit":
+      navigateFocus("right");
+      return true;
+    case "confirm":
+      activateFocusedElement();
+      return true;
+    case "cancel": {
+      const dismissTarget = modal.querySelector<HTMLElement>(
+        [
+          "[data-confirm-dialog-action='cancel']",
+          "[data-alert-dialog-action='dismiss']",
+          "[data-opmap-confirm-action='cancel']",
+          "[data-theater-exit-confirm-action='cancel']",
+          "[data-battle-exit-confirm-action='cancel']",
+          ".game-confirm-modal__actions .game-confirm-modal__btn:not(.game-confirm-modal__btn--primary)",
+          ".game-confirm-modal__actions .game-confirm-modal__btn",
+        ].join(", "),
+      );
+      dismissTarget?.click();
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 function handleContextAction(action: GameAction, playerId?: PlayerSlot): boolean {
+  if (!ensureCurrentContextIsMounted()) {
+    return false;
+  }
+
   if (!currentContext) {
     return false;
   }
@@ -732,6 +786,7 @@ export function markControllerInputActive(): void {
 }
 
 export function shouldSuppressGameplayInput(playerId?: PlayerSlot): boolean {
+  ensureCurrentContextIsMounted();
   if (!currentContext) {
     return false;
   }
@@ -895,10 +950,35 @@ export function updateFocusableElements(): void {
 }
 
 function resolveFocusRoot(): ParentNode {
+  ensureCurrentContextIsMounted();
   const configuredRoot = typeof currentContext?.focusRoot === "function"
     ? currentContext.focusRoot()
     : currentContext?.focusRoot;
   return configuredRoot ?? document;
+}
+
+function ensureCurrentContextIsMounted(): boolean {
+  if (!currentContext) {
+    return false;
+  }
+
+  const configuredRoot = typeof currentContext.focusRoot === "function"
+    ? currentContext.focusRoot()
+    : currentContext.focusRoot;
+
+  if (!configuredRoot) {
+    return true;
+  }
+
+  if (configuredRoot.isConnected) {
+    return true;
+  }
+
+  currentContext = null;
+  currentMode = "focus";
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+  return false;
 }
 
 function resolveDefaultFocusable(root: ParentNode): HTMLElement | null {

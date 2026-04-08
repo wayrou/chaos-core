@@ -12,6 +12,14 @@ export type PlaceholderSfxId =
   | "battle-victory"
   | "battle-defeat";
 
+export type NamedAudioHookId =
+  | "attack_hit"
+  | "attack_crit"
+  | "resource_pickup"
+  | "ui_click"
+  | "weapon_overheat"
+  | "node_damage";
+
 export type MusicCueId =
   | "splash"
   | "boot"
@@ -100,6 +108,35 @@ const SFX_PATTERNS: Record<PlaceholderSfxId, ToneStep[]> = {
     { at: 0, duration: 0.09, from: 360, to: 300, gain: 0.08, type: "sawtooth" },
     { at: 0.1, duration: 0.1, from: 260, to: 190, gain: 0.08, type: "sawtooth" },
     { at: 0.21, duration: 0.14, from: 180, to: 120, gain: 0.06, type: "sine" },
+  ],
+};
+
+const NAMED_AUDIO_HOOK_PATTERNS: Record<NamedAudioHookId, ToneStep[]> = {
+  attack_hit: [
+    { at: 0, duration: 0.024, from: 160, to: 122, gain: 0.14, type: "square" },
+    { at: 0.008, duration: 0.06, from: 760, to: 420, gain: 0.075, type: "triangle" },
+  ],
+  attack_crit: [
+    { at: 0, duration: 0.028, from: 150, to: 110, gain: 0.17, type: "square" },
+    { at: 0.018, duration: 0.08, from: 680, to: 980, gain: 0.1, type: "triangle" },
+    { at: 0.105, duration: 0.07, from: 1040, to: 1360, gain: 0.085, type: "triangle" },
+  ],
+  resource_pickup: [
+    { at: 0, duration: 0.03, from: 600, to: 760, gain: 0.075, type: "triangle" },
+    { at: 0.028, duration: 0.05, from: 840, to: 1180, gain: 0.09, type: "triangle" },
+  ],
+  ui_click: [
+    { at: 0, duration: 0.03, from: 820, to: 720, gain: 0.1, type: "triangle" },
+    { at: 0.035, duration: 0.024, from: 610, to: 560, gain: 0.05, type: "triangle" },
+  ],
+  weapon_overheat: [
+    { at: 0, duration: 0.06, from: 220, to: 180, gain: 0.12, type: "sawtooth" },
+    { at: 0.055, duration: 0.08, from: 340, to: 120, gain: 0.1, type: "square" },
+    { at: 0.14, duration: 0.12, from: 720, to: 180, gain: 0.08, type: "triangle" },
+  ],
+  node_damage: [
+    { at: 0, duration: 0.024, from: 210, to: 170, gain: 0.11, type: "square" },
+    { at: 0.02, duration: 0.05, from: 460, to: 300, gain: 0.06, type: "sawtooth" },
   ],
 };
 
@@ -363,6 +400,25 @@ function attachGlobalUiAudioHooks(): void {
   globalUiHooksAttached = true;
 }
 
+function playTonePattern(steps: ToneStep[]): void {
+  initializeAudioSystem();
+
+  if (getEffectiveChannelVolume(getSettings().sfxVolume) <= 0) {
+    return;
+  }
+
+  const ctx = ensureAudioGraph();
+  const destination = sfxGainNode;
+  if (!ctx || !destination) {
+    return;
+  }
+
+  const now = ctx.currentTime + 0.002;
+  steps.forEach((step) => {
+    scheduleTone(ctx, destination, now + step.at, step, 1);
+  });
+}
+
 export function initializeAudioSystem(): void {
   if (audioInitialized) {
     return;
@@ -424,29 +480,19 @@ export function getCurrentMusicCue(): MusicCueId | null {
 }
 
 export function playPlaceholderSfx(id: PlaceholderSfxId): void {
-  initializeAudioSystem();
-
-  if (getEffectiveChannelVolume(getSettings().sfxVolume) <= 0) {
-    return;
-  }
-
-  const ctx = ensureAudioGraph();
-  const destination = sfxGainNode;
-  if (!ctx || !destination) {
-    return;
-  }
-
   const steps = SFX_PATTERNS[id];
   if (!steps) {
     return;
   }
+  playTonePattern(steps);
+}
 
-  const now = ctx.currentTime + 0.002;
-  const volumeScalar = 1;
-
-  steps.forEach((step) => {
-    scheduleTone(ctx, destination, now + step.at, step, volumeScalar);
-  });
+export function playNamedAudioHook(id: NamedAudioHookId): void {
+  const steps = NAMED_AUDIO_HOOK_PATTERNS[id];
+  if (!steps) {
+    return;
+  }
+  playTonePattern(steps);
 }
 
 export function playSystemPingSfx(type: "info" | "success" | "error"): void {

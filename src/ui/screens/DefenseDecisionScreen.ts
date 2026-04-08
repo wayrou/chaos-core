@@ -14,6 +14,7 @@ import { createDefenseBattle } from "../../core/defenseBattleGenerator";
 import { syncCampaignToGameState } from "../../core/campaignSync";
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBattleScreen } from "./BattleScreen";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 /**
  * Render defense decision screen
@@ -138,7 +139,7 @@ export function renderDefenseDecisionScreen(keyRoomId: string, nodeId: string): 
 /**
  * Handle defense decision
  */
-function handleDefenseDecision(keyRoomId: string, action: string): void {
+async function handleDefenseDecision(keyRoomId: string, action: string): Promise<void> {
   switch (action) {
     case "defend":
       startDefenseBattle(keyRoomId);
@@ -150,7 +151,12 @@ function handleDefenseDecision(keyRoomId: string, action: string): void {
       break;
 
     case "abandon":
-      if (confirm("Are you sure you want to abandon this facility? You will lose the facility and all stored resources.")) {
+      if (await showConfirmDialog({
+        title: "ABANDON FACILITY",
+        message: "Are you sure you want to abandon this facility? You will lose the facility and all stored resources.",
+        confirmLabel: "ABANDON",
+        variant: "danger",
+      })) {
         abandonKeyRoom(keyRoomId);
         renderOperationMapScreen();
       }

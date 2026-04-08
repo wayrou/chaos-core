@@ -20,6 +20,11 @@ export function createPlayerAvatar(startX: number, startY: number): PlayerAvatar
     height: PLAYER_HEIGHT,
     speed: PLAYER_SPEED,
     facing: "south",
+    hp: 100,
+    maxHp: 100,
+    invulnerabilityTime: 0,
+    vx: 0,
+    vy: 0,
   };
 }
 
@@ -165,4 +170,3 @@ export function getOverlappingInteractionZone(
   
   return null;
 }
-

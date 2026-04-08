@@ -26,6 +26,7 @@ import {
   FortificationType,
   GameState,
   OperationRun,
+  PendingTheaterBattleConfirmationState,
   RoomId,
   TheaterObjectiveDefinition,
   TheaterObjectiveProgress,
@@ -1162,17 +1163,18 @@ function getLocalCoopOperationsSessionSlot(state: GameState): SessionPlayerSlot 
 function getPreferredTheaterFromSessionContext(
   state: GameState,
   operation: OperationRun,
+  preferredSlot?: SessionPlayerSlot | null,
 ): TheaterNetworkState | null {
   if (state.session.mode !== "coop_operations") {
     return null;
   }
-  const localSlot = getLocalCoopOperationsSessionSlot(state);
-  if (!localSlot) {
+  const resolvedSlot = preferredSlot ?? getLocalCoopOperationsSessionSlot(state);
+  if (!resolvedSlot) {
     return null;
   }
   const preferredTheaterId =
-    state.session.players[localSlot]?.currentTheaterId
-    ?? state.session.theaterAssignments[localSlot]?.theaterId
+    state.session.players[resolvedSlot]?.currentTheaterId
+    ?? state.session.theaterAssignments[resolvedSlot]?.theaterId
     ?? null;
   if (!preferredTheaterId) {
     return null;
@@ -1198,6 +1200,326 @@ export function getPreparedTheaterOperation(state: GameState): OperationRun | nu
   const initializedTheater = initializeTheaterRuntime(selectedTheater, state);
   const preparedTheater = prepareTheaterForOperation(initializedTheater);
   return resolveOperationFields(operation, preparedTheater);
+}
+
+export function getPreparedTheaterOperationForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+): OperationRun | null {
+  const operation = ensureOperationHasTheater(state.operation);
+  if (!operation?.theater) {
+    return operation;
+  }
+
+  const selectedTheater = getPreferredTheaterFromSessionContext(state, operation, slot) ?? operation.theater;
+  const initializedTheater = initializeTheaterRuntime(selectedTheater, state);
+  const preparedTheater = prepareTheaterForOperation(initializedTheater);
+  return resolveOperationFields(operation, preparedTheater);
+}
+
+function getPreferredTheaterIdForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+): string | null {
+  if (!slot) {
+    return null;
+  }
+  return state.session.players[slot]?.currentTheaterId
+    ?? state.session.theaterAssignments[slot]?.theaterId
+    ?? null;
+}
+
+export function getPendingTheaterBattleConfirmationForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+): PendingTheaterBattleConfirmationState | null {
+  const preferredTheaterId = getPreferredTheaterIdForSessionSlot(state, slot);
+  if (!preferredTheaterId) {
+    return state.session.pendingTheaterBattleConfirmation ?? null;
+  }
+  return state.session.activeTheaterContexts[preferredTheaterId]?.pendingTheaterBattleConfirmation
+    ?? state.session.pendingTheaterBattleConfirmation
+    ?? null;
+}
+
+export function createScopedTheaterStateForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+): GameState | null {
+  if (!slot) {
+    return null;
+  }
+  const operation = getPreparedTheaterOperationForSessionSlot(state, slot);
+  if (!operation?.theater) {
+    return null;
+  }
+
+  const pendingTheaterBattleConfirmation = getPendingTheaterBattleConfirmationForSessionSlot(state, slot);
+  const nextPlayers = { ...state.session.players };
+  (Object.keys(nextPlayers) as SessionPlayerSlot[]).forEach((playerSlot) => {
+    const player = nextPlayers[playerSlot];
+    if (!player) {
+      return;
+    }
+    nextPlayers[playerSlot] = {
+      ...player,
+      presence:
+        playerSlot === slot
+          ? (player.connected ? "local" : player.presence)
+          : (player.presence === "local" ? "remote" : player.presence),
+    };
+  });
+
+  return {
+    ...state,
+    phase: pendingTheaterBattleConfirmation ? "operation" : state.phase,
+    operation,
+    session: {
+      ...state.session,
+      players: nextPlayers,
+      pendingTheaterBattleConfirmation,
+    },
+  };
+}
+
+function mergeScopedOperationState(
+  baseState: GameState,
+  scopedOperation: OperationRun | null,
+): OperationRun | null {
+  const normalizedScopedOperation = ensureOperationHasTheater(scopedOperation);
+  if (!normalizedScopedOperation?.theater) {
+    return baseState.operation;
+  }
+
+  const normalizedBaseOperation = ensureOperationHasTheater(baseState.operation);
+  if (!normalizedBaseOperation?.theater) {
+    return normalizedScopedOperation;
+  }
+
+  const mergedTheaterFloors = {
+    ...(normalizedBaseOperation.theaterFloors ?? {}),
+    ...(normalizedScopedOperation.theaterFloors ?? {}),
+    [normalizedScopedOperation.currentFloorIndex]: cloneTheater(normalizedScopedOperation.theater),
+  };
+
+  if (normalizedBaseOperation.theater.definition.id === normalizedScopedOperation.theater.definition.id) {
+    return {
+      ...normalizedScopedOperation,
+      theaterFloors: mergedTheaterFloors,
+    };
+  }
+
+  return {
+    ...normalizedBaseOperation,
+    theaterFloors: mergedTheaterFloors,
+  };
+}
+
+export function mergeScopedTheaterStateForSessionSlot(
+  baseState: GameState,
+  scopedState: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+): GameState {
+  if (!slot) {
+    return baseState;
+  }
+
+  const scopedOperation = ensureOperationHasTheater(scopedState.operation);
+  const scopedTheater = scopedOperation?.theater;
+  if (!scopedOperation || !scopedTheater) {
+    return baseState;
+  }
+
+  const scopedTheaterId = scopedTheater.definition.id;
+  const baseOperation = ensureOperationHasTheater(baseState.operation);
+  const baseActiveTheaterId = baseOperation?.theater?.definition.id ?? null;
+  const shouldPromoteOperationContext = baseActiveTheaterId === scopedTheaterId;
+  const scopedBattle = scopedState.currentBattle;
+  const hasScopedBattle = scopedBattle?.theaterMeta?.theaterId === scopedTheaterId;
+  const currentContext = baseState.session.activeTheaterContexts[scopedTheaterId];
+  const nextPendingBattleConfirmation = scopedState.session.pendingTheaterBattleConfirmation ?? null;
+  const nextPlayers = {
+    ...baseState.session.players,
+    [slot]: {
+      ...baseState.session.players[slot],
+      currentTheaterId: scopedTheaterId,
+      assignedSquadId: scopedTheater.selectedSquadId ?? baseState.session.players[slot]?.assignedSquadId ?? null,
+      lastSafeRoomId: scopedTheater.currentRoomId ?? baseState.session.players[slot]?.lastSafeRoomId ?? null,
+      stagingState: hasScopedBattle ? "battle" : "theater",
+    },
+  };
+  const nextTheaterAssignments = {
+    ...baseState.session.theaterAssignments,
+    [slot]: {
+      ...baseState.session.theaterAssignments[slot],
+      theaterId: scopedTheaterId,
+      squadId: scopedTheater.selectedSquadId ?? baseState.session.theaterAssignments[slot]?.squadId ?? null,
+      roomId: scopedTheater.currentRoomId ?? baseState.session.theaterAssignments[slot]?.roomId ?? null,
+      stagingState: hasScopedBattle ? "battle" : "theater",
+    },
+  };
+  const nextActiveTheaterContexts = {
+    ...baseState.session.activeTheaterContexts,
+    [scopedTheaterId]: {
+      theaterId: scopedTheaterId,
+      operationId: scopedOperation.id ?? currentContext?.operationId ?? null,
+      snapshot: JSON.stringify(scopedTheater),
+      phase: hasScopedBattle ? "battle" : scopedState.phase,
+      battleSnapshot: hasScopedBattle
+        ? JSON.stringify(scopedBattle)
+        : (currentContext?.battleSnapshot ?? null),
+      pendingTheaterBattleConfirmation: nextPendingBattleConfirmation,
+      updatedAt: Date.now(),
+    },
+  };
+
+  return {
+    ...scopedState,
+    phase: shouldPromoteOperationContext ? scopedState.phase : baseState.phase,
+    currentBattle: shouldPromoteOperationContext && hasScopedBattle ? scopedBattle : baseState.currentBattle,
+    operation: mergeScopedOperationState(baseState, scopedOperation),
+    session: {
+      ...baseState.session,
+      players: nextPlayers,
+      theaterAssignments: nextTheaterAssignments,
+      activeTheaterContexts: nextActiveTheaterContexts,
+      pendingTheaterBattleConfirmation: shouldPromoteOperationContext ? nextPendingBattleConfirmation : baseState.session.pendingTheaterBattleConfirmation,
+      activeBattleId:
+        shouldPromoteOperationContext && hasScopedBattle
+          ? (scopedBattle?.id ?? baseState.session.activeBattleId)
+          : baseState.session.activeBattleId,
+    },
+  };
+}
+
+export function selectTheaterSquadForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  squadId: string,
+): TheaterActionOutcome {
+  const scopedState = createScopedTheaterStateForSessionSlot(state, slot);
+  if (!scopedState) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+  const outcome = selectTheaterSquad(scopedState, squadId);
+  return {
+    ...outcome,
+    state: mergeScopedTheaterStateForSessionSlot(state, outcome.state, slot),
+  };
+}
+
+export function setTheaterCurrentRoomForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  roomId: RoomId,
+): GameState {
+  const scopedState = createScopedTheaterStateForSessionSlot(state, slot);
+  if (!scopedState) {
+    return state;
+  }
+  return mergeScopedTheaterStateForSessionSlot(state, setTheaterCurrentRoom(scopedState, roomId), slot);
+}
+
+export function moveToTheaterRoomForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  roomId: RoomId,
+): TheaterMoveOutcome {
+  const scopedState = createScopedTheaterStateForSessionSlot(state, slot);
+  if (!scopedState) {
+    return {
+      state,
+      roomId,
+      squadId: null,
+      path: [],
+      tickCost: 0,
+      requiresBattle: false,
+      requiresField: false,
+      error: "No active theater operation.",
+    };
+  }
+  const outcome = moveToTheaterRoom(scopedState, roomId);
+  return {
+    ...outcome,
+    state: mergeScopedTheaterStateForSessionSlot(state, outcome.state, slot),
+  };
+}
+
+export function holdPositionInTheaterForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  ticks = 1,
+): TheaterMoveOutcome {
+  const scopedState = createScopedTheaterStateForSessionSlot(state, slot);
+  if (!scopedState) {
+    return {
+      state,
+      roomId: "",
+      squadId: null,
+      path: [],
+      tickCost: 0,
+      requiresBattle: false,
+      requiresField: false,
+      error: "No active theater operation.",
+    };
+  }
+  const outcome = holdPositionInTheater(scopedState, ticks);
+  return {
+    ...outcome,
+    state: mergeScopedTheaterStateForSessionSlot(state, outcome.state, slot),
+  };
+}
+
+export function issueTheaterRoomCommandForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  roomId: RoomId,
+): TheaterMoveOutcome {
+  const operation = getPreparedTheaterOperationForSessionSlot(state, slot);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return {
+      state,
+      roomId,
+      squadId: null,
+      path: [],
+      tickCost: 0,
+      requiresBattle: false,
+      requiresField: false,
+      error: "No active theater operation.",
+    };
+  }
+
+  const selectedRoom = theater.rooms[roomId];
+  const currentRoom = theater.rooms[theater.currentRoomId];
+  const currentNodeId = theater.currentNodeId ?? theater.currentRoomId;
+  const canHoldPosition = Boolean(
+    currentRoom
+    && selectedRoom
+    && roomId === currentNodeId
+    && selectedRoom.secured
+    && !selectedRoom.underThreat
+    && !selectedRoom.damaged,
+  );
+  return canHoldPosition
+    ? holdPositionInTheaterForSessionSlot(state, slot, 1)
+    : moveToTheaterRoomForSessionSlot(state, slot, roomId);
+}
+
+export function refuseTheaterDefenseForSessionSlot(
+  state: GameState,
+  slot: SessionPlayerSlot | null | undefined,
+  roomId: RoomId,
+): TheaterActionOutcome {
+  const scopedState = createScopedTheaterStateForSessionSlot(state, slot);
+  if (!scopedState) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+  const outcome = refuseTheaterDefense(scopedState, roomId);
+  return {
+    ...outcome,
+    state: mergeScopedTheaterStateForSessionSlot(state, outcome.state, slot),
+  };
 }
 
 function getSelectedSquad(theater: TheaterNetworkState): TheaterSquadState | null {

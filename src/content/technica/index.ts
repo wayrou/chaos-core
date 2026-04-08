@@ -1,6 +1,7 @@
 import type { FieldMap } from "../../field/types";
 import { upsertLibraryCard } from "../../core/gearWorkbench";
 import type { Quest } from "../../quests/types";
+import { DEFAULT_FACTIONS } from "./defaultFactions";
 import type {
   DisabledTechnicaContent,
   ImportedCard,
@@ -141,6 +142,10 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
       }
     }
   );
+
+  DEFAULT_FACTIONS.forEach((entry) => {
+    registerImportedFaction(entry);
+  });
 
   loadGeneratedRegistry(
     import.meta.glob<JsonModule<FieldMap>>("./generated/map/*.fieldmap.json", { eager: true }) as Record<

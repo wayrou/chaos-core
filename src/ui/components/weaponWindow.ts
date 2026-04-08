@@ -46,9 +46,10 @@ export function renderWeaponWindow(
   const maxHeat = getEffectiveMaxHeat(weaponState, weapon);
   const wearPenalties = getWearPenalties(weaponState.wear);
   const clutches = getWeaponClutches(weapon);
+  const hasActiveClutch = weaponState.activeClutchIds.length > 0;
 
   return `
-    <div class="weapon-window weapon-window--battle ${isDestroyed ? "weapon-window--destroyed" : ""}">
+    <div class="weapon-window weapon-window--battle weapon-window--heat-${heatZone} ${isDestroyed ? "weapon-window--destroyed" : ""} ${hasActiveClutch ? "weapon-window--clutch-on" : ""}">
       <div class="weapon-window-header">
         <div>
           <div class="weapon-window-title">${weapon.name}</div>
@@ -63,7 +64,7 @@ export function renderWeaponWindow(
               <div class="weapon-stat-label">HEAT</div>
               <div class="weapon-stat-bar">
                 <div class="weapon-stat-bar-track">
-                  <div class="weapon-stat-bar-fill weapon-stat-bar-fill--heat" style="width:${maxHeat > 0 ? (weaponState.currentHeat / maxHeat) * 100 : 0}%;background:${heatColor};"></div>
+                  <div class="weapon-stat-bar-fill weapon-stat-bar-fill--heat weapon-stat-bar-fill--heat-zone-${heatZone}" style="width:${maxHeat > 0 ? (weaponState.currentHeat / maxHeat) * 100 : 0}%;background:${heatColor};"></div>
                 </div>
                 <div class="weapon-stat-value">${weaponState.currentHeat}/${maxHeat}</div>
               </div>

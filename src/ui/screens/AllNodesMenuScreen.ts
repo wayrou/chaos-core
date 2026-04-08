@@ -9,7 +9,7 @@ import { getDispatchState } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { getGameState, resetToNewGame, updateGameState } from "../../state/gameStore";
 import { getActiveQuests, initializeQuestState } from "../../quests/questManager";
-import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen, setNextFieldSpawnOverride } from "../../field/FieldScreen";
+import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen, setNextFieldSpawnOverrideTile } from "../../field/FieldScreen";
 import { buildFieldMinimapModel, drawFieldMinimapCanvas, MINIMAP_LAYOUT_ID } from "../../field/fieldMinimap";
 import { getBaseCampFieldReturnMap, setBaseCampFieldReturnMap } from "./baseCampReturn";
 import {
@@ -34,6 +34,7 @@ import {
 import type { OperationId } from "../../core/campaign";
 import { setCurrentOpsTerminalAtlasFloorOrdinal } from "../../core/opsTerminalAtlas";
 import { BASIC_RESOURCE_KEYS, createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
+import { showAlertDialog } from "../components/confirmDialog";
 import {
   canCraftMaterialRefineryRecipe,
   countAdvancedMaterialOwned,
@@ -46,12 +47,18 @@ import {
 import { attachNotesWidgetHandlers, NOTES_LAYOUT_ID, renderNotesWidget } from "../components/notesWidget";
 import { renderQuestTrackerWidget } from "../components/questTrackerWidget";
 import { setMusicCue } from "../../core/audioSystem";
-import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import {
+  clearControllerContext,
+  type ControllerMode,
+  registerControllerContext,
+  setControllerMode,
+  updateFocusableElements,
+} from "../../core/controllerSupport";
 import { showSystemPing } from "../components/systemPing";
 import {
-  OUTER_DECK_TRANSIT_SPAWN_TILE,
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
   abortOuterDeckExpedition,
-  isOuterDeckExpeditionActive,
+  getOuterDeckFieldContext,
 } from "../../core/outerDecks";
 import {
   getEscActionAvailability,
@@ -66,6 +73,9 @@ let suppressNodeClickUntil = 0;
 let allNodesEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let allNodesResizeHandler: (() => void) | null = null;
 let pinnedFrameSyncHandle: number | null = null;
+let cleanupAllNodesControllerContext: (() => void) | null = null;
+let escControllerPreferredMode: ControllerMode = "focus";
+let escControllerActiveItemId = "resource-tracker";
 
 type NodeDefinition = {
   action: string;
@@ -137,7 +147,7 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
   { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
   { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
-  { action: "materials-refinery", icon: "RFN", label: "MATERIALS REFINERY", desc: "Refine advanced expedition materials" },
+  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine advanced field materials" },
   { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
@@ -475,7 +485,7 @@ function isEscNodeAction(action: string): action is EscNodeAction {
 
 function getEscAvailabilityContext() {
   return {
-    expeditionActive: isOuterDeckExpeditionActive(getGameState()),
+    expeditionActive: getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch",
   };
 }
 
@@ -1304,6 +1314,11 @@ function autoScrollGrid(grid: HTMLElement, clientY: number): void {
 }
 
 function cleanupAllNodesWindowListeners(): void {
+  if (cleanupAllNodesControllerContext) {
+    cleanupAllNodesControllerContext();
+    cleanupAllNodesControllerContext = null;
+  }
+
   if (allNodesEscHandler) {
     window.removeEventListener("keydown", allNodesEscHandler);
     allNodesEscHandler = null;
@@ -1488,7 +1503,7 @@ function renderSchemaNodePip(): string {
 }
 
 function getMaterialRefineryContext(): MaterialRefineryContext {
-  return isOuterDeckExpeditionActive(getGameState()) ? "expedition" : "haven";
+  return getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch" ? "expedition" : "haven";
 }
 
 function formatMaterialRefineryCost(recipeId: AdvancedMaterialId): string {
@@ -1513,6 +1528,12 @@ function formatMaterialRefineryShortage(recipeId: AdvancedMaterialId): string {
     .join(" · ");
 }
 
+function shouldShowExpandedResourceTracker(): boolean {
+  const layout = readItemSizes()[RESOURCE_LAYOUT_ID] ?? DEFAULT_ITEM_LAYOUTS[RESOURCE_LAYOUT_ID];
+  return (layout?.colSpan ?? DEFAULT_RESOURCE_COL_SPAN) > DEFAULT_RESOURCE_COL_SPAN
+    || (layout?.rowSpan ?? DEFAULT_RESOURCE_ROW_SPAN) > DEFAULT_RESOURCE_ROW_SPAN;
+}
+
 function renderMaterialRefineryNodeContent(isPinned: boolean): string {
   const state = getGameState();
   const context = getMaterialRefineryContext();
@@ -1520,9 +1541,10 @@ function renderMaterialRefineryNodeContent(isPinned: boolean): string {
 
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--materials-refinery">
-      ${renderItemToolbar(MATERIALS_REFINERY_LAYOUT_ID, "materials refinery", { isPinned })}
-      <section class="all-nodes-refinery-panel" aria-label="Materials refinery">
-        <div class="all-nodes-refinery-topline">
+      ${renderItemToolbar(MATERIALS_REFINERY_LAYOUT_ID, "light crafting", { isPinned })}
+      <section class="all-nodes-refinery-panel" aria-label="Light crafting">
+        <div class="all-nodes-refinery-heading">
+          <div class="all-nodes-refinery-title">LIGHT CRAFTING</div>
           <span class="all-nodes-refinery-destination">${destinationLabel}</span>
         </div>
         <div class="all-nodes-refinery-resource-strip">
@@ -1560,7 +1582,7 @@ function renderMaterialRefineryNodeContent(isPinned: boolean): string {
           }).join("")}
         </div>
       </section>
-      <button class="all-nodes-item-resize" type="button" data-resize-id="${MATERIALS_REFINERY_LAYOUT_ID}" aria-label="Resize materials refinery"></button>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${MATERIALS_REFINERY_LAYOUT_ID}" aria-label="Resize light crafting"></button>
     </div>
   `;
 }
@@ -1601,6 +1623,8 @@ function renderResourceTrackerContent(
   resources: ResourceWallet,
   isPinned: boolean,
 ): string {
+  const state = getGameState();
+  const showAdvanced = shouldShowExpandedResourceTracker();
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--resource">
       ${renderItemToolbar(RESOURCE_LAYOUT_ID, "resource tracker", { isPinned })}
@@ -1622,6 +1646,20 @@ function renderResourceTrackerContent(
             </div>
           `).join("")}
         </div>
+        ${showAdvanced ? `
+          <div class="all-nodes-balance-advanced">
+            <div class="all-nodes-balance-section-title">Advanced Materials</div>
+            <div class="all-nodes-balance-grid all-nodes-balance-grid--advanced">
+              ${getMaterialRefineryRecipes().map((recipe) => `
+                <div class="all-nodes-balance-item">
+                  <span class="all-nodes-balance-icon">${recipe.name.slice(0, 2)}</span>
+                  <span class="all-nodes-balance-label">${recipe.name}</span>
+                  <span class="all-nodes-balance-value">${countAdvancedMaterialOwned(state, recipe.id)}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        ` : ""}
       </section>
       <button class="all-nodes-item-resize" type="button" data-resize-id="${RESOURCE_LAYOUT_ID}" aria-label="Resize resource tracker"></button>
     </div>
@@ -1739,6 +1777,166 @@ function revealWorkspaceItem(itemId: string): void {
   }
 
   focusWorkspaceItem(itemId);
+}
+
+function getEscControllerItemOrder(): string[] {
+  return readLayoutOrder();
+}
+
+function getEscControllerActiveItem(): string {
+  const order = getEscControllerItemOrder();
+  if (order.length <= 0) {
+    escControllerActiveItemId = RESOURCE_LAYOUT_ID;
+    return escControllerActiveItemId;
+  }
+
+  if (!order.includes(escControllerActiveItemId)) {
+    const minimized = new Set(readMinimizedItems());
+    escControllerActiveItemId = order.find((itemId) => !minimized.has(itemId)) ?? order[0] ?? RESOURCE_LAYOUT_ID;
+  }
+
+  return escControllerActiveItemId;
+}
+
+function focusEscControllerItem(itemId: string): void {
+  escControllerActiveItemId = itemId;
+  const minimized = new Set(readMinimizedItems());
+  requestAnimationFrame(() => {
+    if (minimized.has(itemId)) {
+      document.querySelector<HTMLElement>(`[data-restore-id="${itemId}"]`)?.focus();
+      updateFocusableElements();
+      return;
+    }
+    focusWorkspaceItem(itemId);
+    updateFocusableElements();
+  });
+}
+
+function cycleEscControllerItem(step: 1 | -1): void {
+  const order = getEscControllerItemOrder();
+  if (order.length <= 0) {
+    return;
+  }
+
+  const currentIndex = Math.max(0, order.indexOf(getEscControllerActiveItem()));
+  escControllerActiveItemId = order[(currentIndex + step + order.length) % order.length] ?? order[0] ?? RESOURCE_LAYOUT_ID;
+  focusEscControllerItem(escControllerActiveItemId);
+}
+
+function toggleEscControllerItemMinimized(itemId: string): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    minimized.delete(itemId);
+  } else {
+    minimized.add(itemId);
+  }
+  persistMinimizedItems(Array.from(minimized));
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function cycleEscControllerItemColor(itemId: string): void {
+  const colors = { ...readItemColorKeys() };
+  const currentKey = getResolvedItemColorKey(itemId, colors);
+  const currentIndex = BASE_CAMP_COLOR_THEME_KEYS.indexOf(currentKey);
+  const nextKey = BASE_CAMP_COLOR_THEME_KEYS[(currentIndex + 1 + BASE_CAMP_COLOR_THEME_KEYS.length) % BASE_CAMP_COLOR_THEME_KEYS.length];
+  colors[itemId] = nextKey;
+  persistItemColorKeys(colors);
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function moveEscControllerItemLayout(
+  itemId: string,
+  delta: { gridX?: number; gridY?: number; colSpan?: number; rowSpan?: number },
+): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    return;
+  }
+
+  const root = document.getElementById("app");
+  const grid = root?.querySelector<HTMLElement>("#allNodesMenuGrid");
+  if (!grid) {
+    return;
+  }
+
+  const order = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+    .map((item) => item.dataset.layoutId ?? "")
+    .filter(Boolean);
+  const metrics = getGridMetrics(grid);
+  const sizes = readItemSizes();
+  const resolved = buildResolvedWorkspaceLayouts(order, sizes, metrics.columnCount);
+  const currentLayout = resolved.get(itemId) ?? normalizeItemLayout(itemId, sizes[itemId], metrics.columnCount);
+
+  const requestedLayout = normalizeItemLayout(itemId, {
+    ...(sizes[itemId] ?? serializeItemLayout(currentLayout)),
+    gridX: currentLayout.gridX + (delta.gridX ?? 0),
+    gridY: currentLayout.gridY + (delta.gridY ?? 0),
+    colSpan: currentLayout.colSpan + (delta.colSpan ?? 0),
+    rowSpan: currentLayout.rowSpan + (delta.rowSpan ?? 0),
+  }, metrics.columnCount);
+
+  sizes[itemId] = serializeItemLayout(requestedLayout);
+  persistItemSizes(sizes);
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function activateEscControllerItem(itemId: string): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    minimized.delete(itemId);
+    persistMinimizedItems(Array.from(minimized));
+    renderAllNodesMenuScreen(lastFieldMap);
+  }
+
+  escControllerPreferredMode = "focus";
+  setControllerMode("focus");
+  focusEscControllerItem(itemId);
+}
+
+function handleEscControllerLayoutAction(action: string): boolean {
+  const itemId = getEscControllerActiveItem();
+  switch (action) {
+    case "tabPrev":
+    case "prevUnit":
+      cycleEscControllerItem(-1);
+      return true;
+    case "tabNext":
+    case "nextUnit":
+      cycleEscControllerItem(1);
+      return true;
+    case "moveUp":
+      moveEscControllerItemLayout(itemId, { gridY: -1 });
+      return true;
+    case "moveDown":
+      moveEscControllerItemLayout(itemId, { gridY: 1 });
+      return true;
+    case "moveLeft":
+      moveEscControllerItemLayout(itemId, { gridX: -1 });
+      return true;
+    case "moveRight":
+      moveEscControllerItemLayout(itemId, { gridX: 1 });
+      return true;
+    case "zoomIn":
+      moveEscControllerItemLayout(itemId, { colSpan: 1, rowSpan: 1 });
+      return true;
+    case "zoomOut":
+      moveEscControllerItemLayout(itemId, { colSpan: -1, rowSpan: -1 });
+      return true;
+    case "confirm":
+      activateEscControllerItem(itemId);
+      return true;
+    case "windowPrimary":
+      toggleEscControllerItemMinimized(itemId);
+      return true;
+    case "windowSecondary":
+      cycleEscControllerItemColor(itemId);
+      return true;
+    default:
+      return false;
+  }
 }
 
 function renderMinimapContent(isPinned: boolean): string {
@@ -1872,8 +2070,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const activeLoadoutIndex = readActiveLoadoutIndex();
   const atlasFloorBypassEnabled = Boolean(state.uiLayout?.opsTerminalAtlasDebugFloorBypass);
   const campaignProgress = loadCampaignProgress();
-  const expeditionActive = isOuterDeckExpeditionActive(state);
-  const buildModeUnlocked = !expeditionActive && isHavenBuildModeUnlocked(campaignProgress);
+  const outerDeckFieldContext = getOuterDeckFieldContext(lastFieldMap);
+  const expeditionActive = outerDeckFieldContext === "outerDeckBranch";
+  const returnToHavenAvailable = outerDeckFieldContext !== "haven";
+  const buildModeUnlocked = lastFieldMap === "base_camp" && isHavenBuildModeUnlocked(campaignProgress);
   const activeOrder = fullOrder.filter((id) => !minimized.has(id));
   const dockOrder = fullOrder.filter((id) => minimized.has(id));
 
@@ -1976,7 +2176,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
             <span class="hint-key">[ESC]</span>
             <span class="hint-text">${expeditionActive ? "Return to Expedition" : "Return to Field"}</span>
           </div>
-          ${expeditionActive ? `
+          ${returnToHavenAvailable ? `
             <button class="all-nodes-build-mode-btn" id="allNodesReturnHavenBtn" type="button">
               RETURN TO HAVEN
             </button>
@@ -2008,6 +2208,42 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
     onStateChange: () => renderAllNodesMenuScreen(lastFieldMap),
   });
   updateFocusableElements();
+  cleanupAllNodesControllerContext = registerControllerContext({
+    id: "esc-all-nodes",
+    defaultMode: escControllerPreferredMode,
+    focusRoot: () => document.querySelector(".all-nodes-menu-screen"),
+    defaultFocusSelector: 'button[data-action="ops-terminal"], .all-nodes-dock-item, #allNodesReturnHavenBtn, #allNodesQuitTitleBtn',
+    onLayoutAction: handleEscControllerLayoutAction,
+    onFocusAction: (action) => {
+      if (action === "cancel") {
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (
+          activeElement instanceof HTMLInputElement
+          || activeElement instanceof HTMLTextAreaElement
+          || activeElement instanceof HTMLSelectElement
+          || activeElement?.isContentEditable
+        ) {
+          activeElement.blur();
+          return true;
+        }
+
+        handleModeSwitch("field");
+        return true;
+      }
+      return false;
+    },
+    onModeChange: (mode) => {
+      escControllerPreferredMode = mode;
+      if (mode === "focus") {
+        focusEscControllerItem(getEscControllerActiveItem());
+      }
+    },
+    getDebugState: () => ({
+      hovered: getEscControllerActiveItem(),
+      window: getEscControllerActiveItem(),
+      focus: getEscControllerActiveItem(),
+    }),
+  });
 }
 
 function attachAllNodesMenuListeners(): void {
@@ -2172,9 +2408,11 @@ function attachAllNodesMenuListeners(): void {
 
   root.querySelector<HTMLElement>("#allNodesReturnHavenBtn")?.addEventListener("click", (event) => {
     event.preventDefault();
-    const nextState = abortOuterDeckExpedition(getGameState());
-    updateGameState(() => nextState);
-    setNextFieldSpawnOverride("base_camp", OUTER_DECK_TRANSIT_SPAWN_TILE);
+    if (getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch") {
+      const nextState = abortOuterDeckExpedition(getGameState());
+      updateGameState(() => nextState);
+    }
+    setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
     cleanupAllNodesWindowListeners();
     renderFieldScreen("base_camp");
   });
@@ -2534,7 +2772,7 @@ function handleModeSwitch(mode: string | undefined): void {
   }
 }
 
-function handleNodeAction(action: string): void {
+async function handleNodeAction(action: string): Promise<void> {
   if (isEscNodeAction(action) && !isEscActionEnabled(action, getEscAvailabilityContext())) {
     showSystemPing({
       type: "info",
@@ -2552,7 +2790,11 @@ function handleNodeAction(action: string): void {
     || isLockedBlackMarketAction(action)
     || isLockedFoundryAnnexAction(action)
   ) {
-    alert(getLockedActionMessage(action) ?? "This node is not unlocked yet.");
+    await showAlertDialog({
+      title: "NODE LOCKED",
+      message: getLockedActionMessage(action) ?? "This node is not unlocked yet.",
+      mount: () => document.querySelector(".all-nodes-root"),
+    });
     return;
   }
 
@@ -2560,8 +2802,8 @@ function handleNodeAction(action: string): void {
     revealWorkspaceItem(MATERIALS_REFINERY_LAYOUT_ID);
     showSystemPing({
       type: "info",
-      title: "MATERIALS REFINERY",
-      message: "Use the refinery card controls directly from E.S.C.",
+      title: "LIGHT CRAFTING",
+      message: "Use the light crafting controls directly from E.S.C.",
       channel: "materials-refinery-inline",
       replaceChannel: true,
     });

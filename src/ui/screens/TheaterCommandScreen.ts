@@ -27,6 +27,7 @@ import {
   buildCoreInTheaterRoom,
   canManuallyControlTheaterSquad,
   configureTheaterModule,
+  createScopedTheaterStateForSessionSlot,
   createTheaterBattleState,
   destroyTheaterAnnex,
   destroyTheaterCore,
@@ -47,6 +48,8 @@ import {
   getSelectedTheaterSquad,
   getTheaterPassagePowerRequirement,
   getTheaterObjectiveDefinition,
+  getPendingTheaterBattleConfirmationForSessionSlot,
+  getPreparedTheaterOperationForSessionSlot,
   getTheaterRoomModuleSlotUpgradeCost,
   getMoveTickCost,
   getTheaterCoreOfflineReason,
@@ -57,6 +60,7 @@ import {
   hasCompletedTheaterObjective,
   holdPositionInTheater,
   hasTheaterKey,
+  issueTheaterRoomCommandForSessionSlot,
   isTheaterCoreOperational,
   isTheaterPassagePowered,
   isTheaterRoomLocked,
@@ -64,12 +68,14 @@ import {
   installTheaterPartition,
   mergeTheaterSquads,
   moveToTheaterNode,
+  mergeScopedTheaterStateForSessionSlot,
   renameTheaterSquad,
   removeFieldAssetFromTheaterRoom,
   removeTheaterModule,
   refuseTheaterDefense,
   repairTheaterCore,
   resetTheaterModuleState,
+  selectTheaterSquadForSessionSlot,
   selectTheaterSquad,
   setTheaterSquadColor,
   setTheaterSquadAutomationMode,
@@ -233,6 +239,8 @@ type PendingBattleConfirmationState = {
   roomLabel: string;
   squadId: string | null;
 };
+
+type TheaterExitConfirmState = "return-atlas" | null;
 
 type TheaterWindowDefinition = {
   title: string;
@@ -456,6 +464,7 @@ let sandboxEventSnapshot: string[] = [];
 let cleanupTheaterControllerContext: (() => void) | null = null;
 let theaterControllerActiveWindowKey: TheaterWindowKey = "ops";
 let pendingBattleConfirmation: PendingBattleConfirmationState | null = null;
+let theaterExitConfirmState: TheaterExitConfirmState = null;
 let holdPositionTimerId: number | null = null;
 let holdPositionActiveRoomId: string | null = null;
 let theaterTacticalPreviewZoom = 1;
@@ -1892,7 +1901,7 @@ function renderWindowShell(
   subtitle: string,
   body: string,
   theater: TheaterNetworkState,
-  options: { closable?: boolean } = {},
+  options: { closable?: boolean; className?: string; bodyClassName?: string } = {},
 ): string {
   if (!shouldRenderTheaterWindow(key, theater)) {
     return "";
@@ -1900,8 +1909,10 @@ function renderWindowShell(
 
   const colorKey = ensureTheaterWindowColors()[key];
   const nextSquad = key === "squads" ? getNextSquadInOrder(theater) : null;
+  const windowClassName = ["theater-window", options.className ?? ""].filter(Boolean).join(" ");
+  const bodyClassName = ["theater-window-body", options.bodyClassName ?? ""].filter(Boolean).join(" ");
   return `
-    <section class="theater-window" data-theater-window="${key}" data-color-key="${colorKey}" style="${frameStyle(key)}">
+    <section class="${windowClassName}" data-theater-window="${key}" data-color-key="${colorKey}" style="${frameStyle(key)}">
       ${nextSquad ? `
         <button
           class="theater-window-side-switch"
@@ -1927,7 +1938,7 @@ function renderWindowShell(
           <button class="theater-window-minimize" type="button" data-theater-window-minimize="${key}" aria-label="Minimize ${title}">_</button>
         </div>
       </div>
-      <div class="theater-window-body">${body}</div>
+      <div class="${bodyClassName}">${body}</div>
       <div class="theater-window-resize" data-theater-window-resize="${key}"></div>
     </section>
   `;
@@ -3631,6 +3642,7 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
   const canAffordActiveFieldAsset = activeFieldAssetDefinition
     ? canAffordTheaterCost(state.resources, activeFieldAssetCost)
     : false;
+  const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
   const fabricateBlockedReason = selectedNode?.kind === "annex"
     ? `Select ${room.label} itself to fabricate field assets.`
     : !room.secured
@@ -3646,6 +3658,7 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
               : activeFieldAssetPlacementError;
   const canFabricateFieldAssets = !fabricateBlockedReason;
   const tacticalBody = `
+    <div class="theater-tactical-panel ${isTacticalFullscreenMode ? "theater-tactical-panel--fullscreen" : ""}">
     ${tabControls}
     <div class="theater-copy">
       Inspect the persistent battle layout assigned to this room and fabricate field assets directly onto legal tiles before combat begins.
@@ -3672,7 +3685,9 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
       <button class="theater-secondary-btn" type="button" data-theater-tactical-zoom="1">Zoom In</button>
       <button class="theater-secondary-btn" type="button" data-theater-tactical-fullscreen="${theaterTacticalFullscreenActive ? "off" : "on"}">${theaterTacticalFullscreenActive ? "Exit Full Screen" : "Full Screen"}</button>
     </div>
-    ${tacticalMap ? renderTheaterTacticalMapGrid(tacticalMap, installedFieldAssets) : `<div class="theater-feed-line">No tactical map catalog entry is assigned to this room yet.</div>`}
+    <div class="theater-tactical-map-region">
+      ${tacticalMap ? renderTheaterTacticalMapGrid(tacticalMap, installedFieldAssets) : `<div class="theater-feed-line">No tactical map catalog entry is assigned to this room yet.</div>`}
+    </div>
     <div class="theater-copy theater-copy--muted">
       ${selectedTacticalObject
         ? `Tile Occupant: ${selectedTacticalObject.id} // ${getTacticalObjectLabel(selectedTacticalObject.type)}`
@@ -3732,6 +3747,7 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
           </button>
         `;
       }).join("") : `<div class="theater-feed-line">No field assets are currently fabricated in this room.</div>`}
+    </div>
     </div>
   `;
 
@@ -3993,6 +4009,12 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
     `${THEATER_WINDOW_DEFS.room.kicker} // ${status.toUpperCase()}`,
     body,
     theater,
+    isTacticalFullscreenMode
+      ? {
+          className: "theater-window--tactical-fullscreen",
+          bodyClassName: "theater-window-body--tactical-fullscreen",
+        }
+      : {},
   );
 }
 
@@ -4396,6 +4418,68 @@ function renderPendingBattleConfirmation(theater: TheaterNetworkState, destinati
       </div>
     </div>
   `;
+}
+
+function renderTheaterExitConfirmModal(): string {
+  if (!theaterExitConfirmState) {
+    return "";
+  }
+
+  const operation = getGameState().operation;
+  const message = isOpsTerminalAtlasOperation(operation)
+    ? "Return to A.T.L.A.S.? Sector layout and room status will be preserved in the ops terminal view."
+    : "Return to A.T.L.A.S.? Your current operation will remain active so you can resume it later from the atlas terminal.";
+
+  return `
+    <div class="game-confirm-modal-backdrop" id="theaterExitConfirmModal">
+      <div class="game-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="theaterExitConfirmTitle">
+        <div class="game-confirm-modal__header">
+          <div class="game-confirm-modal__kicker">THEATER COMMAND // CONFIRM EXIT</div>
+          <h2 class="game-confirm-modal__title" id="theaterExitConfirmTitle">RETURN TO A.T.L.A.S.</h2>
+        </div>
+        <div class="game-confirm-modal__copy">${message}</div>
+        <div class="game-confirm-modal__actions">
+          <button
+            class="game-confirm-modal__btn game-confirm-modal__btn--primary"
+            type="button"
+            id="theaterExitConfirmAcceptBtn"
+            data-theater-exit-confirm-action="accept"
+            data-controller-default-focus="true"
+          >
+            RETURN
+          </button>
+          <button
+            class="game-confirm-modal__btn"
+            type="button"
+            data-theater-exit-confirm-action="cancel"
+          >
+            STAY IN THEATER
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openTheaterExitConfirm(): void {
+  theaterExitConfirmState = "return-atlas";
+  renderTheaterCommandScreen();
+}
+
+function closeTheaterExitConfirm(): void {
+  if (!theaterExitConfirmState) {
+    return;
+  }
+  theaterExitConfirmState = null;
+  renderTheaterCommandScreen();
+}
+
+function resolveTheaterExitConfirm(): void {
+  if (!theaterExitConfirmState) {
+    return;
+  }
+  theaterExitConfirmState = null;
+  returnToAtlasScreen();
 }
 
 function renderCompletionCallout(
@@ -5613,8 +5697,71 @@ function renderTheaterStyles(): string {
         color: rgba(188, 198, 206, 0.86);
       }
 
+      .theater-root--tactical-fullscreen [data-theater-window]:not([data-theater-window="room"]),
+      .theater-root--tactical-fullscreen .theater-window-dock {
+        display: none !important;
+      }
+
+      .theater-window--tactical-fullscreen {
+        position: fixed !important;
+        left: 16px !important;
+        right: 16px !important;
+        top: 16px !important;
+        bottom: 16px !important;
+        width: auto !important;
+        height: auto !important;
+        z-index: 999 !important;
+      }
+
+      .theater-window--tactical-fullscreen .theater-window-side-switch,
+      .theater-window--tactical-fullscreen .theater-window-resize,
+      .theater-window--tactical-fullscreen .theater-window-grip {
+        display: none;
+      }
+
+      .theater-window--tactical-fullscreen .theater-window-header {
+        cursor: default;
+      }
+
+      .theater-window-body--tactical-fullscreen {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .theater-tactical-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .theater-tactical-panel--fullscreen {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      .theater-tactical-map-region {
+        min-height: 0;
+      }
+
+      .theater-tactical-panel--fullscreen .theater-tactical-map-region {
+        flex: 1 1 auto;
+        display: flex;
+        min-height: 0;
+        overflow: hidden;
+      }
+
       .map-builder-canvas--theater-fullscreen {
-        min-height: calc(100vh - 280px);
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding-right: 6px;
+      }
+
+      .theater-tactical-panel--fullscreen .theater-annex-build-grid,
+      .theater-tactical-panel--fullscreen .theater-core-list {
+        max-height: 172px;
+        overflow: auto;
       }
 
       .theater-action-btn:disabled,
@@ -7184,6 +7331,7 @@ function returnToBaseCamp(clearOperation: boolean): void {
   cleanupTheaterMapControls();
   travelAnimation = null;
   pendingBattleConfirmation = null;
+  theaterExitConfirmState = null;
   lastMountedTheaterSignature = null;
   hydratedTheaterLayoutSignature = null;
   seenThreatIds = new Set();
@@ -7216,6 +7364,7 @@ function returnToAtlasScreen(): void {
   cleanupTheaterMapControls();
   travelAnimation = null;
   pendingBattleConfirmation = null;
+  theaterExitConfirmState = null;
   lastMountedTheaterSignature = null;
   hydratedTheaterLayoutSignature = null;
   seenThreatIds = new Set();
@@ -7260,21 +7409,27 @@ function getPreparedActiveTheater(state: GameState): TheaterNetworkState | null 
   return getPreparedTheaterOperation(state)?.theater ?? state.operation?.theater ?? null;
 }
 
-function prepareActingCoopTheaterSquad(sourceSlot: SessionPlayerSlot | null | undefined): void {
-  const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
-  if (!assignedSquadId || getPreparedActiveTheater(getGameState())?.selectedSquadId === assignedSquadId) {
-    return;
+function getPendingBattleConfirmationForSourceSlot(
+  sourceSlot: SessionPlayerSlot | null | undefined,
+): PendingBattleConfirmationState | null {
+  if (!sourceSlot) {
+    return pendingBattleConfirmation
+      ?? clonePendingBattleConfirmation(getGameState().session.pendingTheaterBattleConfirmation);
   }
-  updateGameState((state) => selectTheaterSquad(state, assignedSquadId).state);
+  return clonePendingBattleConfirmation(
+    getPendingTheaterBattleConfirmationForSessionSlot(getGameState(), sourceSlot),
+  );
 }
 
-function canSourceSlotResolvePendingBattle(sourceSlot: SessionPlayerSlot | null | undefined): boolean {
+function canSourceSlotResolvePendingBattle(
+  sourceSlot: SessionPlayerSlot | null | undefined,
+  pendingOverride?: PendingBattleConfirmationState | null,
+): boolean {
   if (!sourceSlot) {
     return true;
   }
   const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
-  const activePending = pendingBattleConfirmation
-    ?? clonePendingBattleConfirmation(getGameState().session.pendingTheaterBattleConfirmation);
+  const activePending = pendingOverride ?? getPendingBattleConfirmationForSourceSlot(sourceSlot);
   return !activePending?.squadId || !assignedSquadId || activePending.squadId === assignedSquadId;
 }
 
@@ -7715,35 +7870,154 @@ export function applyRemoteCoopTheaterCommand(
 
   switch (command.type) {
     case "move_to_room": {
-      prepareActingCoopTheaterSquad(sourceSlot);
-      handleMoveToRoom(command.roomId);
+      if (!sourceSlot) {
+        return;
+      }
+      const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
+      const stateWithAssignedSquad = assignedSquadId
+        ? selectTheaterSquadForSessionSlot(state, sourceSlot, assignedSquadId).state
+        : state;
+      const sourceTheater = getPreparedTheaterOperationForSessionSlot(stateWithAssignedSquad, sourceSlot)?.theater ?? null;
+      const fromRoomId = sourceTheater?.currentRoomId ?? command.roomId;
+      const moveOutcome = issueTheaterRoomCommandForSessionSlot(stateWithAssignedSquad, sourceSlot, command.roomId);
+      const scopedTheaterId =
+        getPreparedTheaterOperationForSessionSlot(moveOutcome.state, sourceSlot)?.theater?.definition.id
+        ?? sourceTheater?.definition.id
+        ?? null;
+      let nextState =
+        scopedTheaterId && moveOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(moveOutcome.state.operation)
+          ? {
+              ...moveOutcome.state,
+              ...applyWarmTheaterEconomyToState(
+                {
+                  wad: moveOutcome.state.wad,
+                  resources: moveOutcome.state.resources,
+                },
+                scopedTheaterId,
+                moveOutcome.tickCost,
+              ),
+            }
+          : moveOutcome.state;
+
+      if (moveOutcome.requiresBattle) {
+        const pending: PendingBattleConfirmationState = {
+          roomId: moveOutcome.roomId,
+          previousRoomId: fromRoomId,
+          roomLabel:
+            getPreparedTheaterOperationForSessionSlot(nextState, sourceSlot)?.theater?.rooms[moveOutcome.roomId]?.label
+            ?? moveOutcome.roomId,
+          squadId: moveOutcome.squadId,
+        };
+        const scopedState = createScopedTheaterStateForSessionSlot(nextState, sourceSlot);
+        if (scopedState) {
+          nextState = mergeScopedTheaterStateForSessionSlot(
+            nextState,
+            withPendingBattleConfirmationInState(scopedState, pending),
+            sourceSlot,
+          );
+        }
+      }
+
+      updateGameState(() => nextState);
+      syncPendingBattleConfirmationFromSession(getGameState());
+      if (document.body.getAttribute("data-screen") === "theater-command") {
+        renderTheaterCommandScreen();
+      }
       return;
     }
     case "confirm_pending_battle": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (!pending || !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
-      launchTheaterBattle(pending.roomId);
+      if (!sourceSlot) {
+        launchTheaterBattle(pending.roomId);
+        return;
+      }
+      const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+      if (!scopedState) {
+        return;
+      }
+      const clearedScopedState = withPendingBattleConfirmationInState(scopedState, null);
+      const battle = createTheaterBattleState(clearedScopedState, pending.roomId, pending.squadId ?? null);
+      if (!battle) {
+        const restoredState = mergeScopedTheaterStateForSessionSlot(getGameState(), clearedScopedState, sourceSlot);
+        updateGameState(() => restoredState);
+        syncPendingBattleConfirmationFromSession(getGameState());
+        if (document.body.getAttribute("data-screen") === "theater-command") {
+          renderTheaterCommandScreen();
+        }
+        return;
+      }
+
+      const activeTheater = getPreparedTheaterOperationForSessionSlot(clearedScopedState, sourceSlot)?.theater ?? null;
+      const squadId = battle.theaterBonuses?.squadId ?? activeTheater?.selectedSquadId ?? null;
+      const squad = squadId
+        ? activeTheater?.squads.find((entry) => entry.squadId === squadId) ?? null
+        : null;
+      const nextUnitsById = { ...clearedScopedState.unitsById };
+      squad?.unitIds.forEach((unitId) => {
+        const unit = nextUnitsById[unitId];
+        if (!unit?.buffs?.length) {
+          return;
+        }
+        nextUnitsById[unitId] = {
+          ...unit,
+          buffs: [],
+        };
+      });
+
+      const launchedScopedState: GameState = {
+        ...clearedScopedState,
+        phase: "battle",
+        unitsById: nextUnitsById,
+        currentBattle: battle,
+        session: {
+          ...clearedScopedState.session,
+          pendingTheaterBattleConfirmation: null,
+        },
+      };
+      const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), launchedScopedState, sourceSlot);
+      updateGameState(() => mergedState);
+      syncPendingBattleConfirmationFromSession(getGameState());
+      if (mergedState.currentBattle?.id === battle.id) {
+        import("./BattleScreen").then(({ renderBattleScreen }) => renderBattleScreen());
+      } else if (document.body.getAttribute("data-screen") === "theater-command") {
+        renderTheaterCommandScreen();
+      }
       return;
     }
     case "fallback_pending_battle": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (!pending || !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
-      pendingBattleConfirmation = null;
-      updateGameState((current) => withPendingBattleConfirmationInState(
-        setTheaterCurrentRoom(current, pending.previousRoomId),
-        null,
-      ));
+      if (!sourceSlot) {
+        pendingBattleConfirmation = null;
+        updateGameState((current) => withPendingBattleConfirmationInState(
+          setTheaterCurrentRoom(current, pending.previousRoomId),
+          null,
+        ));
+      } else {
+        const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+        if (!scopedState) {
+          return;
+        }
+        const nextScopedState = withPendingBattleConfirmationInState(
+          setTheaterCurrentRoom(scopedState, pending.previousRoomId),
+          null,
+        );
+        const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), nextScopedState, sourceSlot);
+        updateGameState(() => mergedState);
+      }
+      syncPendingBattleConfirmationFromSession(getGameState());
       if (document.body.getAttribute("data-screen") === "theater-command") {
         renderTheaterCommandScreen();
       }
       return;
     }
     case "refuse_defense": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (pending && !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
@@ -7751,12 +8025,26 @@ export function applyRemoteCoopTheaterCommand(
       if (!targetRoomId) {
         return;
       }
-      const outcome = refuseTheaterDefense(getGameState(), targetRoomId);
-      pendingBattleConfirmation = pending?.roomId === targetRoomId ? null : pendingBattleConfirmation;
-      updateGameState(() => withPendingBattleConfirmationInState(
-        outcome.state,
-        pendingBattleConfirmation,
-      ));
+      if (!sourceSlot) {
+        const outcome = refuseTheaterDefense(getGameState(), targetRoomId);
+        pendingBattleConfirmation = pending?.roomId === targetRoomId ? null : pendingBattleConfirmation;
+        updateGameState(() => withPendingBattleConfirmationInState(
+          outcome.state,
+          pendingBattleConfirmation,
+        ));
+      } else {
+        const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+        if (!scopedState) {
+          return;
+        }
+        const outcome = refuseTheaterDefense(scopedState, targetRoomId);
+        const nextScopedState = pending?.roomId === targetRoomId
+          ? withPendingBattleConfirmationInState(outcome.state, null)
+          : outcome.state;
+        const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), nextScopedState, sourceSlot);
+        updateGameState(() => mergedState);
+      }
+      syncPendingBattleConfirmationFromSession(getGameState());
       if (document.body.getAttribute("data-screen") === "theater-command") {
         renderTheaterCommandScreen();
       }
@@ -7985,14 +8273,25 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
   });
 
   document.getElementById("theaterReturnToBaseBtn")?.addEventListener("click", () => {
-    const operation = getGameState().operation;
-    const message = isOpsTerminalAtlasOperation(operation)
-      ? "Return to A.T.L.A.S.? Sector layout and room status will be preserved in the ops terminal view."
-      : "Return to A.T.L.A.S.? Your current operation will remain active so you can resume it later from the atlas terminal.";
-    if (!confirm(message)) {
-      return;
+    openTheaterExitConfirm();
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-exit-confirm-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const action = button.getAttribute("data-theater-exit-confirm-action");
+      if (action === "accept") {
+        resolveTheaterExitConfirm();
+      } else {
+        closeTheaterExitConfirm();
+      }
+    });
+  });
+
+  document.getElementById("theaterExitConfirmModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeTheaterExitConfirm();
     }
-    returnToAtlasScreen();
   });
 
   document.querySelectorAll<HTMLElement>("[data-theater-consumable-use]").forEach((button) => {
@@ -8858,10 +9157,11 @@ export function renderTheaterCommandScreen(): void {
   const completion = theater.completion;
   const canDescend = ensuredOperation.currentFloorIndex < ensuredOperation.floors.length - 1;
   const hasCompletionPopup = Boolean(hasCompletedTheaterObjective(theater) && completion);
+  const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
 
   root.innerHTML = `
     ${renderTheaterStyles()}
-    <div class="theater-root">
+    <div class="theater-root ${isTacticalFullscreenMode ? "theater-root--tactical-fullscreen" : ""}">
       ${renderTheaterMap(theater)}
       ${renderOpsWindow(theater, ensuredOperation.floors.length)}
       ${renderSquadsWindow(theater)}
@@ -8875,6 +9175,7 @@ export function renderTheaterCommandScreen(): void {
       ${renderUpkeepWindow(theater)}
       ${renderNotesWindow(theater)}
       ${renderTheaterWindowDock(theater)}
+      ${renderTheaterExitConfirmModal()}
     </div>
   `;
 
@@ -8895,12 +9196,19 @@ export function renderTheaterCommandScreen(): void {
   restoreQueuedTheaterRoomBodyScroll();
   cleanupTheaterControllerContext = registerControllerContext({
     id: "theater-command",
-    defaultMode: "cursor",
+    defaultMode: theaterExitConfirmState ? "focus" : "cursor",
     focusRoot: () => document.querySelector(".theater-root"),
-    defaultFocusSelector: "[data-theater-window='ops'] button, [data-theater-window-restore]",
-    onCursorAction: (action) => handleTheaterControllerAction(action, theater, "cursor"),
-    onLayoutAction: (action) => handleTheaterControllerAction(action, theater, "layout"),
+    focusSelector: theaterExitConfirmState ? "#theaterExitConfirmModal button:not([disabled])" : undefined,
+    defaultFocusSelector: theaterExitConfirmState
+      ? "#theaterExitConfirmAcceptBtn"
+      : "[data-theater-window='ops'] button, [data-theater-window-restore]",
+    onCursorAction: theaterExitConfirmState ? undefined : (action) => handleTheaterControllerAction(action, theater, "cursor"),
+    onLayoutAction: theaterExitConfirmState ? undefined : (action) => handleTheaterControllerAction(action, theater, "layout"),
     onFocusAction: (action) => {
+      if (theaterExitConfirmState && action === "cancel") {
+        closeTheaterExitConfirm();
+        return true;
+      }
       if (action === "cancel") {
         setControllerMode("cursor");
         updateFocusableElements();

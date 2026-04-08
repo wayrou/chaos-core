@@ -3,7 +3,7 @@
 // Behavior/intent layer for gear builder system
 // ============================================================================
 
-export type IntentTag = "assault" | "skirmish" | "suppression" | "sustain" | "control";
+export type IntentTag = "assault" | "skirmish" | "suppression" | "sustain" | "control" | "mobility";
 
 export interface GearDoctrine {
   id: string;

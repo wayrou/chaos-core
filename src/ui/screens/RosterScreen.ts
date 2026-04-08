@@ -24,6 +24,7 @@ import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { createEmptyResourceWallet } from "../../core/resources";
+import { showConfirmDialog } from "../components/confirmDialog";
 import type { TheaterDeploymentPreset, TheaterSquadPreset } from "../../core/types";
 import {
   clampSquadName,
@@ -250,7 +251,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   if (returnTo === "operation") registerRosterOperationReturnHotkey(); else unregisterRosterOperationReturnHotkey();
   if (returnTo !== "loadout" && returnTo !== "operation") registerBaseCampReturnHotkey("roster-screen", returnTo, { allowFieldEKey: true, activeSelector: ".roster-root" }); else unregisterBaseCampReturnHotkey("roster-screen");
 
-  root.onclick = (event) => {
+  root.onclick = async (event) => {
     const target = event.target as HTMLElement;
     const unitId = target.closest<HTMLElement>("[data-unit-id]")?.getAttribute("data-unit-id");
     const actionBtn = target.closest<HTMLElement>(".roster-toggle-party-btn");
@@ -296,7 +297,15 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
       return renderRosterScreen(returnTo);
     }
     if (target.closest("#debugEquipBtn")) {
-      if (!confirm("Give all starter equipment to all units for testing?")) return;
+      const confirmed = await showConfirmDialog({
+        title: "DEBUG EQUIPMENT GRANT",
+        message: "Give all starter equipment to all units for testing?",
+        confirmLabel: "GRANT",
+        cancelLabel: "CANCEL",
+        mount: () => document.querySelector(".roster-root"),
+        restoreFocusSelector: "#debugEquipBtn",
+      });
+      if (!confirmed) return;
       updateGameState((prev) => {
         const allEquipment = getAllStarterEquipment(); const nextUnitsById = { ...prev.unitsById };
         Object.keys(nextUnitsById).forEach((id) => {

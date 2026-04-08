@@ -513,7 +513,7 @@ export function generateOperation(
     description,
     floors,
     currentFloorIndex: 0,
-    currentRoomId: floors[0].nodes[0].id,
+    currentRoomId: (floors[0]?.nodes ?? floors[0]?.rooms ?? [])[0]?.id ?? null,
   };
 }
 
@@ -537,8 +537,9 @@ export function canAdvanceToNextFloor(operation: {
   const currentFloor = operation.floors[operation.currentFloorIndex];
   if (!currentFloor) return false;
 
-  const lastNode = currentFloor.nodes[currentFloor.nodes.length - 1];
-  return operation.currentRoomId === lastNode.id;
+  const currentFloorNodes = currentFloor.nodes ?? currentFloor.rooms ?? [];
+  const lastNode = currentFloorNodes[currentFloorNodes.length - 1];
+  return lastNode ? operation.currentRoomId === lastNode.id : false;
 }
 
 export function advanceToNextFloor(operation: {
@@ -560,8 +561,9 @@ export function advanceToNextFloor(operation: {
   }
 
   const nextFloor = operation.floors[nextFloorIndex];
+  const nextFloorNodes = nextFloor?.nodes ?? nextFloor?.rooms ?? [];
   return {
     currentFloorIndex: nextFloorIndex,
-    currentRoomId: nextFloor.nodes[0].id,
+    currentRoomId: nextFloorNodes[0]?.id ?? null,
   };
 }

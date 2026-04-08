@@ -546,13 +546,14 @@ export function updateLobbyAvatar(
   slot: NetworkPlayerSlot,
   avatar: LobbyAvatarState | null,
 ): LobbyState {
-  const nextActivity = lobby.activity.kind === "coop_operations"
+  const coopOperations = lobby.activity.kind === "coop_operations" ? lobby.activity.coopOperations : null;
+  const nextActivity = coopOperations
     ? {
         kind: "coop_operations" as const,
         coopOperations: {
-          ...lobby.activity.coopOperations,
+          ...coopOperations,
           participants: createNetworkSlotRecord((playerSlot) => {
-            const participant = cloneCoopParticipant(lobby.activity.coopOperations.participants?.[playerSlot], playerSlot);
+            const participant = cloneCoopParticipant(coopOperations.participants?.[playerSlot], playerSlot);
             if (playerSlot !== slot || !avatar || !participant.selected) {
               return participant;
             }

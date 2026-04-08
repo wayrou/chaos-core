@@ -13,6 +13,7 @@ import {
 import { getAllStarterEquipment } from "../../core/equipment";
 import { enableAutosave } from "../../core/saveSystem";
 import type { EchoRewardChoice, EchoUnitDraftOption } from "../../core/types";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 const echoDraftPreviewByStage = new Map<string, string>();
 
@@ -425,8 +426,14 @@ export function renderEchoRunScreen(): void {
 
   const abandonBtn = document.getElementById("echoRunAbandonBtn");
   if (abandonBtn) {
-    abandonBtn.onclick = () => {
-      if (!confirm("Abandon this Echo Run and move straight to the results summary?")) {
+    abandonBtn.onclick = async () => {
+      if (!(await showConfirmDialog({
+        title: "ABANDON ECHO RUN",
+        message: "Abandon this Echo Run and move straight to the results summary?",
+        confirmLabel: "ABANDON",
+        variant: "danger",
+        restoreFocusSelector: "#echoRunAbandonBtn",
+      }))) {
         return;
       }
       abandonActiveEchoRun();

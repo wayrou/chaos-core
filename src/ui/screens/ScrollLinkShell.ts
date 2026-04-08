@@ -16,9 +16,9 @@ export function renderScrollLinkShell(): void {
 
   const callsign = profile.callsign;
   const squad = profile.squadName;
-  const opName = operation.codename;
-  const opDesc = operation.description;
-  const floor = `FLOOR ${operation.currentFloorIndex + 1} / ${operation.floors.length}`;
+  const opName = operation?.codename ?? "NO ACTIVE OP";
+  const opDesc = operation?.description ?? "Awaiting operation assignment.";
+  const floor = operation ? `FLOOR ${operation.currentFloorIndex + 1} / ${operation.floors.length}` : "FLOOR -- / --";
 
   root.innerHTML = `
     <div class="scrolllink-shell">
@@ -95,7 +95,11 @@ export function renderScrollLinkShell(): void {
 
   root
     .querySelector(".terminal-command-btn")
-    ?.addEventListener("click", () => renderOperationMap());
+    ?.addEventListener("click", () => {
+      if (operation) {
+        renderOperationMap();
+      }
+    });
 
   root
     .querySelector(".shell-loadout-btn")

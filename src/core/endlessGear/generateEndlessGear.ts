@@ -6,6 +6,7 @@
 import { 
   EndlessRecipe, 
   GeneratedGear, 
+  GeneratedGearBase,
   GenerationContext, 
   BiasReport,
   EndlessLootParams 
@@ -189,6 +190,9 @@ function computeBiasReport(
     
     // Apply mod tag weights
     for (const [tag, weight] of Object.entries(bias.modTagWeights || {})) {
+      if (weight === undefined) {
+        continue;
+      }
       modTagWeights[tag] = (modTagWeights[tag] || 1.0) * weight;
     }
     
@@ -418,7 +422,7 @@ function createEquipmentFromGeneration(
   fieldMods: FieldModDef[],
   lockedCards: string[],
   slotsLocked: number
-): Equipment {
+): GeneratedGearBase {
   const equipmentId = `endless_${chassis.slotType}_${chassis.id}_${doctrine.id}_${Date.now()}`;
   const equipmentName = `[Endless] ${doctrine.name} ${chassis.name}`;
   
@@ -448,7 +452,7 @@ function createEquipmentFromGeneration(
       doctrineId: doctrine.id,
       stability,
       builderVersion: 2, // Version 2 = endless gear
-    } as WeaponEquipment;
+    } as GeneratedGearBase;
   } else if (chassis.slotType === "helmet" || chassis.slotType === "chestpiece") {
     return {
       id: equipmentId,
@@ -460,7 +464,7 @@ function createEquipmentFromGeneration(
       doctrineId: doctrine.id,
       stability,
       builderVersion: 2,
-    } as ArmorEquipment;
+    } as GeneratedGearBase;
   } else {
     return {
       id: equipmentId,
@@ -472,7 +476,7 @@ function createEquipmentFromGeneration(
       doctrineId: doctrine.id,
       stability,
       builderVersion: 2,
-    } as AccessoryEquipment;
+    } as GeneratedGearBase;
   }
 }
 
@@ -527,4 +531,3 @@ export function explainEndlessGear(gear: GeneratedGear): string {
   
   return lines.join('\n');
 }
-

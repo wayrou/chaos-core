@@ -61,6 +61,13 @@ import { showSystemPing } from "../components/systemPing";
 import { playPlaceholderSfx, setMusicCue } from "../../core/audioSystem";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { addResourceWallet, createEmptyResourceWallet } from "../../core/resources";
+import {
+  deriveBattleFeedback,
+  subscribeToFeedback,
+  triggerFeedback,
+  type FeedbackPosition,
+  type FeedbackRequest,
+} from "../../core/feedback";
 // Isometric imports removed - using simple grid now
 import { BattleGridRenderer } from "./BattleGridRenderer";
 // Mount system imports
@@ -119,6 +126,9 @@ let battleResultInputUnlockAtMs = 0;
 let lastBattleAudioStateKey: string | null = null;
 let pendingAutoBattleStepTimerId: number | null = null;
 let pendingAutoBattleStepDueAtMs = 0;
+let cleanupBattleFeedbackListener: (() => void) | null = null;
+let battleHitStopUntilMs = 0;
+let battleHitStopTimerId: number | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
 
@@ -135,6 +145,8 @@ type AutoBattleMoveOption = {
   path: Vec2[];
   score: number;
 };
+
+type BattleExitConfirmState = "abandon-echo" | null;
 
 function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" | "menu" | "map_builder" {
   const returnTo = (battle as any)?.returnTo;
@@ -1058,6 +1070,7 @@ let battleControllerCursor: { x: number; y: number } | null = null;
 let cleanupBattleControllerContext: (() => void) | null = null;
 let battleControllerActiveNodeId: BattleHudNodeId = "hand";
 let selectedManageUnitId: string | null = null;
+let battleExitConfirmState: BattleExitConfirmState = null;
 
 function isBattleRootMounted(): boolean {
   return Boolean(document.querySelector(".battle-root"));
@@ -1192,6 +1205,7 @@ interface AttackBumpAnim {
   dirY: number;
   durationMs: number;
   startTime: number;
+  lastUpdateTime: number;
   active: boolean;
   impactTriggered: boolean;
 }
@@ -1270,6 +1284,247 @@ function setOriginalBattleUnitHidden(unitId: string, hidden: boolean): void {
   originalUnit.style.opacity = hidden ? "0" : "1";
   originalUnit.style.visibility = hidden ? "hidden" : "visible";
   originalUnit.style.pointerEvents = hidden ? "none" : "auto";
+}
+
+function getBattleFeedbackLayer(): HTMLElement | null {
+  const overlays = document.querySelector(".battle-grid-overlays") as HTMLElement | null;
+  if (!overlays) {
+    return null;
+  }
+
+  let layer = overlays.querySelector(".battle-feedback-layer") as HTMLElement | null;
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.className = "battle-feedback-layer";
+    overlays.appendChild(layer);
+  }
+
+  return layer;
+}
+
+function getBattleFeedbackTileElement(position: FeedbackPosition | undefined): HTMLElement | null {
+  if (!position || position.space !== "battle-tile") {
+    return null;
+  }
+
+  return document.querySelector(
+    `.battle-tile[data-x="${position.x}"][data-y="${position.y}"]`,
+  ) as HTMLElement | null;
+}
+
+function queueBattleFeedbackElement(
+  element: HTMLElement,
+  durationMs: number,
+  layer: HTMLElement,
+): void {
+  layer.appendChild(element);
+  window.setTimeout(() => {
+    element.classList.add("battle-feedback-element--exit");
+    window.setTimeout(() => {
+      element.remove();
+    }, 220);
+  }, durationMs);
+}
+
+function applyBattleHitStop(durationMs: number): void {
+  battleHitStopUntilMs = Math.max(battleHitStopUntilMs, performance.now() + durationMs);
+  const root = document.querySelector(".battle-root") as HTMLElement | null;
+  if (!root) {
+    return;
+  }
+
+  root.classList.add("battle-root--hitstop");
+  if (battleHitStopTimerId !== null) {
+    window.clearTimeout(battleHitStopTimerId);
+  }
+  battleHitStopTimerId = window.setTimeout(() => {
+    const remainingMs = Math.max(0, battleHitStopUntilMs - performance.now());
+    if (remainingMs > 6) {
+      battleHitStopTimerId = window.setTimeout(() => {
+        root.classList.remove("battle-root--hitstop");
+        battleHitStopTimerId = null;
+      }, remainingMs);
+      return;
+    }
+    root.classList.remove("battle-root--hitstop");
+    battleHitStopTimerId = null;
+  }, durationMs);
+}
+
+function getBattleHitStopRemainingMs(): number {
+  return Math.max(0, battleHitStopUntilMs - performance.now());
+}
+
+function pulseBattleElement(selector: string, className: string, durationMs: number): void {
+  const element = document.querySelector(selector) as HTMLElement | null;
+  if (!element) {
+    return;
+  }
+
+  element.classList.remove(className);
+  void element.offsetWidth;
+  element.classList.add(className);
+  window.setTimeout(() => {
+    element.classList.remove(className);
+  }, durationMs);
+}
+
+function applyBattleWeaponFeedback(request: FeedbackRequest): void {
+  const unitId = String(request.meta?.["unitId"] ?? request.meta?.["actorId"] ?? "");
+  const activeUnit = localBattleState?.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
+  if (!activeUnit || !unitId || activeUnit.id !== unitId) {
+    return;
+  }
+
+  const effectKind = String(request.meta?.["kind"] ?? "");
+  if (request.type === "weapon_heat") {
+    const zone = String(request.meta?.["zone"] ?? "warning");
+    pulseBattleElement(
+      ".battle-weapon-panel .weapon-stat-bar-fill--heat",
+      zone === "critical" ? "weapon-stat-bar-fill--pulse-critical" : "weapon-stat-bar-fill--pulse-warning",
+      zone === "critical" ? 860 : 680,
+    );
+    return;
+  }
+
+  if (request.type === "weapon_overheat") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--overheat-spike", 880);
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
+    return;
+  }
+
+  if (request.type === "weapon_node_damage") {
+    const nodeId = String(request.meta?.["nodeId"] ?? "");
+    if (nodeId) {
+      pulseBattleElement(
+        `.battle-weapon-panel .weapon-node[data-node="${nodeId}"]`,
+        "weapon-node--feedback-hit",
+        780,
+      );
+    }
+    return;
+  }
+
+  if (effectKind === "ammo-tick") {
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
+    return;
+  }
+
+  if (effectKind === "clutch-toggle") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--clutch-pulse", 580);
+    pulseBattleElement(".battle-weapon-panel .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
+    return;
+  }
+
+  if (effectKind === "reload") {
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    return;
+  }
+
+  if (effectKind === "patch") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    return;
+  }
+
+  if (effectKind === "vent") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-warning", 680);
+  }
+}
+
+function renderBattleFeedbackRequest(request: FeedbackRequest): void {
+  const layer = getBattleFeedbackLayer();
+  if (!layer) {
+    return;
+  }
+
+  // Compose small feedback layers per event instead of baking effects into battle state.
+  const tile = getBattleFeedbackTileElement(request.position);
+  if (!tile) {
+    applyBattleWeaponFeedback(request);
+    return;
+  }
+
+  const centerX = tile.offsetLeft + tile.offsetWidth / 2;
+  const centerY = tile.offsetTop + tile.offsetHeight / 2;
+
+  if (
+    request.type === "hit"
+    || request.type === "heal"
+    || request.type === "crit"
+    || request.type === "miss"
+    || request.type === "warning"
+    || request.type === "strain"
+  ) {
+    const textFlavor = request.type === "warning" && String(request.meta?.["kind"] ?? "") === "ammo-tick"
+      ? "ammo"
+      : request.type;
+    const textEl = document.createElement("div");
+    textEl.className = `battle-feedback-element floating-combat-text floating-combat-text--${textFlavor}`;
+    textEl.textContent = request.text ?? request.type.toUpperCase();
+    textEl.style.left = `${centerX}px`;
+    textEl.style.top = `${centerY}px`;
+    queueBattleFeedbackElement(textEl, request.type === "strain" ? 980 : 860, layer);
+  }
+
+  if (
+    request.type === "hit"
+    || request.type === "crit"
+    || request.type === "weapon_node_damage"
+    || request.type === "weapon_overheat"
+  ) {
+    const flashFlavor = request.type === "crit"
+      ? "crit"
+      : request.type === "weapon_overheat"
+        ? "overheat"
+        : request.type === "weapon_node_damage"
+          ? "node"
+          : "hit";
+    const flashEl = document.createElement("div");
+    flashEl.className = `battle-feedback-element battle-impact-flash battle-impact-flash--${flashFlavor}`;
+    flashEl.style.left = `${centerX}px`;
+    flashEl.style.top = `${centerY}px`;
+    queueBattleFeedbackElement(flashEl, 220, layer);
+  }
+
+  if (request.type === "hit" || request.type === "crit") {
+    applyBattleHitStop(request.type === "crit" ? 68 : 52);
+    triggerScreenShake(request.type === "crit" ? 2 : request.intensity >= 2 ? 1.5 : 1);
+  } else if (request.type === "weapon_overheat") {
+    triggerScreenShake(2.4);
+  }
+
+  if (request.type === "strain") {
+    const battleUnitId = String(request.meta?.["unitId"] ?? "");
+    if (battleUnitId) {
+      pulseBattleElement(
+        `.battle-unit[data-unit-id="${battleUnitId}"] .battle-unit-portrait-wrapper`,
+        "battle-unit-portrait-wrapper--strain-pulse",
+        720,
+      );
+    }
+  }
+
+  applyBattleWeaponFeedback(request);
+}
+
+function ensureBattleFeedbackListener(): void {
+  if (cleanupBattleFeedbackListener) {
+    return;
+  }
+
+  cleanupBattleFeedbackListener = subscribeToFeedback((request) => {
+    if (!document.querySelector(".battle-root")) {
+      return;
+    }
+
+    const battleRelated = request.position?.space === "battle-tile" || request.source === "battle" || request.source === "weapon";
+    if (!battleRelated) {
+      return;
+    }
+
+    renderBattleFeedbackRequest(request);
+  });
 }
 
 function createAnimatedBattleUnitElement(unit: BattleUnitState, extraClass: string): HTMLElement {
@@ -1815,6 +2070,7 @@ function resetBattlePan(): void {
 
 function resetBattleUiSessionState(): void {
   clearPendingAutoBattleStep();
+  battleExitConfirmState = null;
   localBattleState = null;
   lastBattleStatPingKey = null;
   selectedCardIndex = null;
@@ -1948,18 +2204,21 @@ function toggleUiPanels(): void {
   }
 }
 
-function triggerScreenShake() {
-  const container = document.querySelector(".battle-root");
-  if (!container) return;
+function triggerScreenShake(intensity = 1): void {
+  const container = document.querySelector(".battle-root") as HTMLElement | null;
+  if (!container) {
+    return;
+  }
 
+  const normalized = Math.max(0.8, Math.min(2.8, intensity));
+  container.style.setProperty("--battle-shake-scale", normalized.toFixed(2));
   container.classList.remove("screen-shake");
-  // Force browser reflow to restart animation
-  void (container as HTMLElement).offsetWidth;
+  void container.offsetWidth;
   container.classList.add("screen-shake");
 
-  setTimeout(() => {
-    if (container) container.classList.remove("screen-shake");
-  }, 400);
+  window.setTimeout(() => {
+    container.classList.remove("screen-shake");
+  }, 380);
 }
 
 function showFloatingText(text: string, type: "damage" | "heal" | "crit", x: number, y: number) {
@@ -1989,28 +2248,10 @@ function showFloatingText(text: string, type: "damage" | "heal" | "crit", x: num
 }
 
 function setBattleState(newState: BattleState) {
+  const previousBattle = localBattleState;
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
-
-  // Visual feedback: compare old state directly with new state to spawn floating numbers
-  if (localBattleState) {
-    for (const [unitId, newUnit] of Object.entries(newState.units)) {
-      const oldUnit = localBattleState.units[unitId];
-      if (oldUnit && newUnit && oldUnit.hp !== newUnit.hp && newUnit.pos) {
-        const hpDiff = newUnit.hp - oldUnit.hp;
-        if (hpDiff < 0) {
-          const dmg = Math.abs(hpDiff);
-          showFloatingText(`-${dmg}`, "damage", newUnit.pos.x, newUnit.pos.y);
-          // Trigger shake on heavy damage (e.g., >= 15)
-          if (dmg >= 15) {
-            triggerScreenShake();
-          }
-        } else if (hpDiff > 0) {
-          showFloatingText(`+${hpDiff}`, "heal", newUnit.pos.x, newUnit.pos.y);
-        }
-      }
-    }
-  }
+  const newLogTail = previousBattle ? newState.log.slice(previousBattle.log.length) : newState.log;
 
   // Validate all unit positions before setting state
   const validatedUnits: Record<string, BattleUnitState> = {};
@@ -2099,6 +2340,10 @@ function setBattleState(newState: BattleState) {
   if (isSquadBattle(localBattleState)) {
     localBattleState = withSquadTurnStateSnapshot(localBattleState);
   }
+
+  deriveBattleFeedback(previousBattle, localBattleState, newLogTail).forEach((request) => {
+    triggerFeedback(request);
+  });
 
   updateGameState((state) => ({
     ...state,
@@ -3324,6 +3569,11 @@ function animateMovement(battle: BattleState, onComplete: () => void): void {
   const deltaMs = Math.min(now - anim.lastUpdateTime, 100); // Clamp to prevent large jumps
   anim.lastUpdateTime = now;
 
+  if (getBattleHitStopRemainingMs() > 0) {
+    animationFrameId = requestAnimationFrame(() => animateMovement(battle, onComplete));
+    return;
+  }
+
   // Validate path
   if (!anim.path || anim.path.length < 2 || anim.currentStep < 0 || anim.currentStep >= anim.path.length - 1) {
     console.error(`[MOVEMENT] Invalid animation state`, anim);
@@ -3488,17 +3738,33 @@ function animateAttackBump(onComplete: () => void): void {
   }
 
   const anim = activeAttackBumpAnim;
-  const elapsedMs = performance.now() - anim.startTime;
+  const now = performance.now();
+  const deltaMs = Math.min(now - anim.lastUpdateTime, 100);
+  anim.lastUpdateTime = now;
+  if (getBattleHitStopRemainingMs() > 0) {
+    anim.startTime += deltaMs;
+    attackAnimationFrameId = requestAnimationFrame(() => animateAttackBump(onComplete));
+    return;
+  }
+
+  const elapsedMs = now - anim.startTime;
   const progress = Math.max(0, Math.min(1, elapsedMs / anim.durationMs));
-  const bumpWave = Math.sin(progress * Math.PI);
+  const impactProgress = Math.min(progress / 0.56, 1);
+  const recoveryProgress = progress <= 0.56 ? 0 : Math.min((progress - 0.56) / 0.44, 1);
+  const forwardWave = Math.sin(impactProgress * Math.PI * 0.5);
+  const recoilWave = recoveryProgress > 0
+    ? Math.sin(recoveryProgress * Math.PI) * 0.28
+    : 0;
 
   if (!anim.impactTriggered && progress >= 0.5) {
     anim.impactTriggered = true;
-    triggerScreenShake();
+    triggerScreenShake(1.3);
+    anim.attackerElement?.classList.add("battle-unit--attack-bump-impact");
+    anim.targetElement?.classList.add("battle-unit--attack-bump-impact");
   }
 
-  const attackerOffset = ATTACK_BUMP_DISTANCE_PX * bumpWave;
-  const targetOffset = ATTACK_TARGET_REACT_DISTANCE_PX * bumpWave;
+  const attackerOffset = ATTACK_BUMP_DISTANCE_PX * forwardWave - ATTACK_BUMP_DISTANCE_PX * 0.55 * recoilWave;
+  const targetOffset = ATTACK_TARGET_REACT_DISTANCE_PX * forwardWave + ATTACK_TARGET_REACT_DISTANCE_PX * 0.4 * recoilWave;
 
   if (anim.attackerElement) {
     anim.attackerElement.style.left = `${anim.attackerBaseX + anim.dirX * attackerOffset}px`;
@@ -3601,6 +3867,7 @@ function startAttackBumpAnimation(
     dirY: deltaY / length,
     durationMs: ATTACK_BUMP_DURATION_MS,
     startTime: performance.now(),
+    lastUpdateTime: performance.now(),
     active: true,
     impactTriggered: false,
   };
@@ -4849,6 +5116,9 @@ export function renderBattleScreen() {
   const battleControllerPanHint = `${getControllerActionLabel("moveUp")} / ${getControllerActionLabel("moveLeft")}`;
   const battleControllerZoomHint = `${getControllerActionLabel("zoomOut")} / ${getControllerActionLabel("zoomIn")}`;
   const echoContext = getEchoContext(battle);
+  if (battleExitConfirmState && !echoContext) {
+    battleExitConfirmState = null;
+  }
   const squadObjective = getSquadObjective(battle);
   const roomLabelBase = isEndlessBattleMode
     ? `ENDLESS MODE — BATTLE ${endlessBattleCount}`
@@ -4909,6 +5179,7 @@ export function renderBattleScreen() {
       </div>
       
       ${renderBattleResultOverlay(battle)}
+      ${renderBattleExitConfirmModal(battle)}
     </div>
   `;
 
@@ -4960,6 +5231,7 @@ export function renderBattleScreen() {
     }
   }
 
+  ensureBattleFeedbackListener();
   syncBattleHudOverlay(battle, activeUnit, isPlayerTurn, isPlacementPhase);
 
   // Setup pan handlers and attach event listeners
@@ -4970,12 +5242,17 @@ export function renderBattleScreen() {
       attachBattleListeners();
       cleanupBattleControllerContext = registerControllerContext({
         id: "battle",
-        defaultMode: "cursor",
+        defaultMode: battleExitConfirmState ? "focus" : "cursor",
         focusRoot: () => document.querySelector(".battle-root"),
-        defaultFocusSelector: "#exitBattleBtn",
-        onCursorAction: (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
-        onLayoutAction: (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
+        focusSelector: battleExitConfirmState ? "#battleExitConfirmModal button:not([disabled])" : undefined,
+        defaultFocusSelector: battleExitConfirmState ? "#battleExitConfirmAcceptBtn" : "#exitBattleBtn",
+        onCursorAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
+        onLayoutAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
         onFocusAction: (action) => {
+          if (battleExitConfirmState && action === "cancel") {
+            closeBattleExitConfirm();
+            return true;
+          }
           if (action === "cancel") {
             setControllerMode("cursor");
             updateFocusableElements();
@@ -5792,6 +6069,74 @@ function renderEchoChallengeHeader(echoContext: EchoBattleContext | null): strin
   `;
 }
 
+function renderBattleExitConfirmModal(battle: BattleState): string {
+  if (battleExitConfirmState !== "abandon-echo" || !isEchoBattle(battle)) {
+    return "";
+  }
+
+  return `
+    <div class="game-confirm-modal-backdrop" id="battleExitConfirmModal">
+      <div class="game-confirm-modal game-confirm-modal--danger" role="dialog" aria-modal="true" aria-labelledby="battleExitConfirmTitle">
+        <div class="game-confirm-modal__header">
+          <div class="game-confirm-modal__kicker">ECHO RUN // CONFIRM ABANDONMENT</div>
+          <h2 class="game-confirm-modal__title" id="battleExitConfirmTitle">ABANDON ECHO RUN</h2>
+        </div>
+        <div class="game-confirm-modal__copy">Abandon this Echo Run battle and move to the Echo results screen?</div>
+        <div class="game-confirm-modal__actions">
+          <button
+            class="game-confirm-modal__btn game-confirm-modal__btn--primary"
+            type="button"
+            id="battleExitConfirmAcceptBtn"
+            data-battle-exit-confirm-action="accept"
+            data-controller-default-focus="true"
+          >
+            ABANDON
+          </button>
+          <button
+            class="game-confirm-modal__btn"
+            type="button"
+            data-battle-exit-confirm-action="cancel"
+          >
+            KEEP FIGHTING
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openBattleExitConfirm(): void {
+  battleExitConfirmState = "abandon-echo";
+  renderBattleScreen();
+}
+
+function closeBattleExitConfirm(): void {
+  if (!battleExitConfirmState) {
+    return;
+  }
+  battleExitConfirmState = null;
+  renderBattleScreen();
+}
+
+function resolveBattleExitConfirm(battle: BattleState): void {
+  if (battleExitConfirmState !== "abandon-echo") {
+    return;
+  }
+  battleExitConfirmState = null;
+  abandonActiveEchoRun();
+  cleanupBattlePanHandlers();
+  teardownBattleHud();
+  resetBattleUiSessionState();
+  updateGameState((prev) => ({
+    ...prev,
+    phase: "echo",
+    currentBattle: null,
+  }));
+  import("./EchoRunScreen").then(({ renderEchoRunScreen }) => {
+    renderEchoRunScreen();
+  });
+}
+
 function renderBattleResultOverlay(battle: BattleState): string {
   const echoSummary = isEchoBattle(battle) ? summarizeEchoEncounter(battle) : null;
 
@@ -6453,21 +6798,7 @@ function attachBattleListeners() {
   if (exitBtn) {
     exitBtn.onclick = () => {
       if (isEchoBattle(battle)) {
-        if (!confirm("Abandon this Echo Run battle and move to the Echo results screen?")) {
-          return;
-        }
-        abandonActiveEchoRun();
-        cleanupBattlePanHandlers();
-        teardownBattleHud();
-        resetBattleUiSessionState();
-        updateGameState((prev) => ({
-          ...prev,
-          phase: "echo",
-          currentBattle: null,
-        }));
-        import("./EchoRunScreen").then(({ renderEchoRunScreen }) => {
-          renderEchoRunScreen();
-        });
+        openBattleExitConfirm();
         return;
       }
 
@@ -6492,6 +6823,24 @@ function attachBattleListeners() {
       }
     };
   }
+
+  document.querySelectorAll<HTMLElement>("[data-battle-exit-confirm-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const action = button.getAttribute("data-battle-exit-confirm-action");
+      if (action === "accept") {
+        resolveBattleExitConfirm(battle);
+      } else {
+        closeBattleExitConfirm();
+      }
+    });
+  });
+
+  document.getElementById("battleExitConfirmModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeBattleExitConfirm();
+    }
+  });
 
   // Toggle UI panels button
   const toggleUiBtn = document.getElementById("toggleUiBtn");
