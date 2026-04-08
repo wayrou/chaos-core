@@ -7,6 +7,7 @@ import {
   getAllImportedFieldMaps,
   getAllImportedGear,
   getAllImportedItems,
+  getAllImportedKeyItems,
   getAllImportedOperations,
   getAllImportedQuests,
   getAllImportedUnitTemplates
@@ -83,6 +84,22 @@ function isQuestShape(value: unknown): value is { id: string; title: string } {
       "objectives" in value &&
       "rewards" in value
   );
+}
+
+function isKeyItemShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "kind" in value &&
+      "quantity" in value &&
+      (value as { kind?: unknown }).kind === "key_item"
+  );
+}
+
+function isFactionShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(value && typeof value === "object" && "id" in value && "name" in value);
 }
 
 function isDialogueShape(value: unknown): value is { id: string; title: string } {
@@ -229,6 +246,44 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
       contentId: entryData.id,
       title: entryData.title,
       description: "Standalone Technica quest runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isKeyItemShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "key_item",
+      contentType: "key_item",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "key-item.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica key item runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isFactionShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "faction",
+      contentType: "faction",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "faction.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica faction runtime file.",
       entryFile: fileName,
       dependencies: [],
       files: [fileName]
@@ -439,6 +494,7 @@ function persistInstalledContent(): void {
 function getExistingDependencyBuckets() {
   const mapIds = new Set(getAllImportedFieldMaps().map((entry) => entry.id));
   const questIds = new Set(getAllImportedQuests().map((entry) => entry.id));
+  const keyItemIds = new Set(getAllImportedKeyItems().map((entry) => entry.id));
   const dialogueIds = new Set(getAllImportedDialogues().map((entry) => entry.id));
   const gearIds = new Set(getAllImportedGear().map((entry) => entry.id));
   const itemIds = new Set(getAllImportedItems().map((entry) => entry.id));
@@ -448,7 +504,7 @@ function getExistingDependencyBuckets() {
   const classIds = new Set(getAllImportedClassDefinitions().map((entry) => entry.id));
   const sceneIds = new Set(mapIds);
 
-  return { mapIds, questIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
+  return { mapIds, questIds, keyItemIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
 }
 
 function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
@@ -462,6 +518,10 @@ function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
 
     if (manifest.contentType === "quest") {
       buckets.questIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "key_item") {
+      buckets.keyItemIds.add(manifest.contentId);
     }
 
     if (manifest.contentType === "dialogue") {
@@ -508,6 +568,8 @@ function getDependencyWarnings(
       exists = buckets.mapIds.has(dependency.id);
     } else if (dependency.contentType === "quest") {
       exists = buckets.questIds.has(dependency.id);
+    } else if (dependency.contentType === "key_item") {
+      exists = buckets.keyItemIds.has(dependency.id);
     } else if (dependency.contentType === "dialogue") {
       exists = buckets.dialogueIds.has(dependency.id);
     } else if (dependency.contentType === "item") {
@@ -654,6 +716,8 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
       map: 0,
       mail: 0,
       quest: 0,
+      key_item: 0,
+      faction: 0,
       dialogue: 0,
       field_enemy: 0,
       npc: 0,

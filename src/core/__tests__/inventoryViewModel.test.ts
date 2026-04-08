@@ -2,7 +2,7 @@
 // CHAOS CORE - INVENTORY VIEW MODEL TESTS
 // ============================================================================
 
-import { buildInventoryVM, InventoryCategory } from "../inventoryViewModel";
+import { buildInventoryVM } from "../inventoryViewModel";
 import { GameState } from "../types";
 import { createNewGameState } from "../initialState";
 import { Equipment } from "../equipment";
@@ -120,6 +120,41 @@ describe("Inventory View Model", () => {
       const healingKit = consumableEntries.find(e => e.id === "consumable_healing_kit");
       expect(healingKit).toBeDefined();
       expect(healingKit?.owned).toBe(5);
+    });
+
+    it("should include key items from storage and locker as a separate category", () => {
+      baseState.inventory.baseStorage = [
+        {
+          id: "vault_key",
+          name: "Vault Key",
+          kind: "key_item",
+          stackable: false,
+          quantity: 1,
+          massKg: 0,
+          bulkBu: 0,
+          powerW: 0,
+          description: "Opens the sealed vault.",
+        },
+      ];
+      baseState.inventory.forwardLocker = [
+        {
+          id: "vault_key",
+          name: "Vault Key",
+          kind: "key_item",
+          stackable: false,
+          quantity: 1,
+          massKg: 0,
+          bulkBu: 0,
+          powerW: 0,
+          description: "Opens the sealed vault.",
+        },
+      ];
+
+      const vm = buildInventoryVM(baseState);
+      const keyItem = vm.entries.find((entry) => entry.category === "keyItem" && entry.id === "vault_key");
+      expect(vm.countsByCategory.keyItem).toBe(1);
+      expect(keyItem).toBeDefined();
+      expect(keyItem?.owned).toBe(2);
     });
     
     it("should exclude consumables with zero quantity", () => {
@@ -321,6 +356,7 @@ describe("Inventory View Model", () => {
       expect(vm.entries.length).toBe(0);
       expect(vm.countsByCategory.equipment).toBe(0);
       expect(vm.countsByCategory.consumable).toBe(0);
+      expect(vm.countsByCategory.keyItem).toBe(0);
       expect(vm.countsByCategory.weaponPart).toBe(0);
       expect(vm.countsByCategory.recipe).toBe(0);
       expect(vm.countsByCategory.resource).toBe(0);

@@ -6,12 +6,13 @@
 import { getGameState, subscribe, updateGameState } from "../../state/gameStore";
 import { createTrainingEncounter, TrainingConfig } from "../../core/trainingEncounter";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
-import { applyExternalBattleState, applyRemoteSquadBattleCommand, renderBattleScreen } from "./BattleScreen";
+import { applyExternalBattleState, applyRemoteCoopBattleCommand, applyRemoteSquadBattleCommand, renderBattleScreen } from "./BattleScreen";
 import type { BattleState as RuntimeBattleState } from "../../core/battle";
 import { abandonRun, startOperationRun, syncCampaignToGameState } from "../../core/campaignManager";
 import { Difficulty, EnemyDensity } from "../../core/campaign";
 import {
   type CoopTheaterCommand,
+  type LobbyCoopParticipantState,
   NETWORK_PLAYER_SLOTS,
   type OperationRun,
   SESSION_PLAYER_SLOTS,
@@ -23,6 +24,7 @@ import {
   type SessionPlayerSlot,
   type SkirmishPlaylist,
   type SkirmishRoundSpec,
+  type TheaterNetworkState,
 } from "../../core/types";
 import { ensureOperationHasTheater } from "../../core/theaterSystem";
 import { renderLoadoutScreen } from "./LoadoutScreen";
@@ -84,6 +86,7 @@ import {
   createSquadBattlePayload,
   createSquadBattleState,
   parseSquadBattlePayload,
+  type SquadBattleCommand,
 } from "../../core/squadBattle";
 import {
   getSquadTransportStatus,
@@ -259,6 +262,73 @@ function parseCoopBattleSnapshot(payload: string | null | undefined): RuntimeBat
   }
 }
 
+function parseCoopTheaterSnapshot(payload: string | null | undefined): TheaterNetworkState | null {
+  if (!payload) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(payload) as TheaterNetworkState;
+    return parsed?.definition?.id && parsed?.rooms ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalCoopParticipant(lobby: LobbyState | null | undefined): LobbyCoopParticipantState | null {
+  if (!lobby || lobby.activity.kind !== "coop_operations" || !lobby.localSlot) {
+    return null;
+  }
+  return lobby.activity.coopOperations.participants[lobby.localSlot] ?? null;
+}
+
+function getParticipantTheaterSnapshotPayload(
+  lobby: LobbyState | null | undefined,
+  participant: LobbyCoopParticipantState | null | undefined,
+): string | null {
+  if (participant?.theaterSnapshot) {
+    return participant.theaterSnapshot;
+  }
+  if (!lobby || lobby.activity.kind !== "coop_operations" || !participant?.currentTheaterId) {
+    return null;
+  }
+  return lobby.activity.coopOperations.theaterContexts[participant.currentTheaterId]?.snapshot ?? null;
+}
+
+function getParticipantBattleSnapshotPayload(
+  lobby: LobbyState | null | undefined,
+  participant: LobbyCoopParticipantState | null | undefined,
+): string | null {
+  if (participant?.battleSnapshot) {
+    return participant.battleSnapshot;
+  }
+  if (!lobby || lobby.activity.kind !== "coop_operations" || !participant?.currentTheaterId) {
+    return null;
+  }
+  return lobby.activity.coopOperations.theaterContexts[participant.currentTheaterId]?.battleSnapshot ?? null;
+}
+
+function applyParticipantTheaterSnapshot(
+  lobby: LobbyState | null | undefined,
+  operation: OperationRun | null,
+  participant: LobbyCoopParticipantState | null | undefined,
+): OperationRun | null {
+  if (!operation) {
+    return null;
+  }
+  const theater = parseCoopTheaterSnapshot(getParticipantTheaterSnapshotPayload(lobby, participant));
+  if (!theater) {
+    return operation;
+  }
+  return {
+    ...operation,
+    theater,
+    theaterFloors: {
+      ...(operation.theaterFloors ?? {}),
+      [operation.currentFloorIndex]: theater,
+    },
+  };
+}
+
 export function getActiveLobbyState(): LobbyState | null {
   const stateLobby = getGameState().lobby;
   if (stateLobby) {
@@ -302,17 +372,22 @@ function commitLobbyState(
       ...state,
       lobby,
     };
-    const localParticipant = lobby?.activity.kind === "coop_operations" && lobby.localSlot
-      ? lobby.activity.coopOperations.participants[lobby.localSlot]
-      : null;
+    const localParticipant = getLocalCoopParticipant(lobby);
     if (
       lobby?.activity.kind === "coop_operations"
       && lobby.activity.coopOperations.status === "active"
       && localParticipant?.selected
     ) {
       const hydratedState = launchCoopOperationsSessionFromLobby(nextState, lobby);
-      const parsedOperation = parseCoopOperationSnapshot(lobby.activity.coopOperations.operationSnapshot);
-      const parsedBattle = parseCoopBattleSnapshot(lobby.activity.coopOperations.battleSnapshot);
+      const parsedOperation = applyParticipantTheaterSnapshot(
+        lobby,
+        parseCoopOperationSnapshot(lobby.activity.coopOperations.operationSnapshot),
+        localParticipant,
+      );
+      const parsedBattle = parseCoopBattleSnapshot(
+        getParticipantBattleSnapshotPayload(lobby, localParticipant) ?? lobby.activity.coopOperations.battleSnapshot,
+      );
+      const operationPhase = localParticipant.operationPhase ?? lobby.activity.coopOperations.operationPhase;
       if (parsedBattle) {
         return {
           ...hydratedState,
@@ -325,7 +400,7 @@ function commitLobbyState(
         ...hydratedState,
         operation: parsedOperation ?? hydratedState.operation,
         currentBattle: null,
-        phase: lobby.activity.coopOperations.operationPhase ?? hydratedState.phase,
+        phase: operationPhase ?? hydratedState.phase,
       };
     }
     return nextState;
@@ -946,6 +1021,7 @@ type LobbyCommand =
   | { type: "update_coop_selection"; selectedSlots: NetworkPlayerSlot[] }
   | { type: "skirmish_next_round"; decision: LobbySkirmishIntermissionDecision }
   | { type: "coop_theater_command"; command: CoopTheaterCommand }
+  | { type: "coop_battle_command"; command: SquadBattleCommand }
   | { type: "request_lobby_snapshot" };
 
 function parseLobbyCommand(payload: string): LobbyCommand | null {
@@ -1175,8 +1251,16 @@ function hydrateCoopOperationFromLobby(lobby: LobbyState): OperationRun | null {
     return null;
   }
   const coopActivity = lobby.activity.coopOperations;
-  const parsedOperation = parseCoopOperationSnapshot(coopActivity.operationSnapshot);
-  const parsedBattle = parseCoopBattleSnapshot(coopActivity.battleSnapshot);
+  const localParticipant = getLocalCoopParticipant(lobby);
+  const parsedOperation = applyParticipantTheaterSnapshot(
+    lobby,
+    parseCoopOperationSnapshot(coopActivity.operationSnapshot),
+    localParticipant,
+  );
+  const parsedBattle = parseCoopBattleSnapshot(
+    getParticipantBattleSnapshotPayload(lobby, localParticipant) ?? coopActivity.battleSnapshot,
+  );
+  const operationPhase = localParticipant?.operationPhase ?? coopActivity.operationPhase;
   updateGameState((state) => {
     const nextState = launchCoopOperationsSessionFromLobby(state, lobby);
     if (parsedBattle) {
@@ -1191,7 +1275,7 @@ function hydrateCoopOperationFromLobby(lobby: LobbyState): OperationRun | null {
       ...nextState,
       operation: parsedOperation ?? nextState.operation,
       currentBattle: null,
-      phase: coopActivity.operationPhase ?? nextState.phase,
+      phase: operationPhase ?? nextState.phase,
     };
   });
   return parsedOperation;
@@ -1201,21 +1285,24 @@ function hydrateCoopBattleFromLobby(lobby: LobbyState): RuntimeBattleState | nul
   if (lobby.activity.kind !== "coop_operations") {
     return null;
   }
-  return parseCoopBattleSnapshot(lobby.activity.coopOperations.battleSnapshot);
+  const localParticipant = getLocalCoopParticipant(lobby);
+  return parseCoopBattleSnapshot(
+    getParticipantBattleSnapshotPayload(lobby, localParticipant) ?? lobby.activity.coopOperations.battleSnapshot,
+  );
 }
 
 async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
   if (lobby.activity.kind !== "coop_operations" || lobby.activity.coopOperations.status !== "active") {
     return;
   }
-  const localParticipant = lobby.localSlot ? lobby.activity.coopOperations.participants[lobby.localSlot] : null;
+  const localParticipant = getLocalCoopParticipant(lobby);
   if (!localParticipant?.selected) {
     return;
   }
   const parsedOperation = hydrateCoopOperationFromLobby(lobby);
   const parsedBattle = hydrateCoopBattleFromLobby(lobby);
   const targetMapId = localParticipant?.lastSafeMapId ?? "base_camp";
-  const operationPhase = lobby.activity.coopOperations.operationPhase ?? null;
+  const operationPhase = localParticipant.operationPhase ?? lobby.activity.coopOperations.operationPhase ?? null;
   if (parsedBattle && operationPhase === "battle") {
     applyExternalBattleState(parsedBattle, "always");
     return;
@@ -1223,6 +1310,11 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
   if (parsedOperation && (operationPhase === "loadout" || operationPhase === "operation")) {
     if (operationPhase === "loadout") {
       renderLoadoutScreen();
+      return;
+    }
+    if (localParticipant.stagingState === "theater" && parsedOperation.theater) {
+      const { renderTheaterCommandScreen } = await import("./TheaterCommandScreen");
+      renderTheaterCommandScreen();
       return;
     }
     const { renderOperationMapScreen } = await import("./OperationMapScreen");
@@ -1641,6 +1733,23 @@ async function handleRemoteLobbyCommand(sourcePeerId: string, payload: string): 
       }
       const { applyRemoteCoopTheaterCommand } = await import("./TheaterCommandScreen");
       applyRemoteCoopTheaterCommand(command.command, participant.sessionSlot);
+      return;
+    }
+    case "coop_battle_command": {
+      const sourceSlot = lobbyRemotePeerSlots.get(sourcePeerId) ?? null;
+      if (
+        !currentLobby
+        || currentLobby.activity.kind !== "coop_operations"
+        || currentLobby.activity.coopOperations.status !== "active"
+        || !sourceSlot
+      ) {
+        return;
+      }
+      const participant = currentLobby.activity.coopOperations.participants[sourceSlot];
+      if (!participant?.selected || !participant.sessionSlot) {
+        return;
+      }
+      applyRemoteCoopBattleCommand(participant.sessionSlot, command.command);
       return;
     }
     case "request_lobby_snapshot": {

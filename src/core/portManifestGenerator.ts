@@ -9,6 +9,7 @@ import {
   ResourceType,
   ResourceAmount,
   BASIC_RESOURCES,
+  RARE_RESOURCES,
   getNormalTradeTemplates,
   getBulkShipmentBasicPayouts,
   getBulkShipmentInterestingPayouts,
@@ -145,12 +146,20 @@ function generateBulkShipmentOffer(
     isOperationCompleted("op_ember_siege", campaignProgress) ||
     isOperationCompleted("op_final_dawn", campaignProgress);
   
-  // For now, only basic resources are available
   // Filter to resources the player actually has
   for (const resource of BASIC_RESOURCES) {
     const amount = playerInventory[resource] || 0;
     if (amount > 0) {
       eligibleResources.push(resource);
+    }
+  }
+
+  if (canTargetRare) {
+    for (const resource of RARE_RESOURCES) {
+      const amount = playerInventory[resource] || 0;
+      if (amount > 0) {
+        eligibleResources.push(resource);
+      }
     }
   }
   

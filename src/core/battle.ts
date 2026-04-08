@@ -31,14 +31,19 @@ import {
   WeaponEquipment,
 } from "./equipment";
 import {
+  advanceWeaponTurn,
+  addHeat,
   WeaponRuntimeState,
   createWeaponRuntimeState,
-  passiveCooling,
+  getEffectiveMaxHeat,
   rollWeaponHit,
   rollWeaponNodeHit,
   damageNode,
+  triggerWeaponOverheat,
   WEAPON_NODE_NAMES,
 } from "./weaponSystem";
+import type { WeaponOverheatEffect } from "./weaponData";
+import { getResolvedBattleCard } from "./cardCatalog";
 
 // STEP 6 & 7: Import gear workbench functions
 import {
@@ -155,7 +160,7 @@ export interface BattleUnitState {
   weaponHeat?: number;
   weaponWear?: number;
   // Local Co-op: Which player controls this unit
-  controller?: "P1" | "P2";
+  controller?: UnitOwnership;
   // Legacy auto-battle toggle kept for battle-state restore compatibility
   autoBattle?: boolean;
   // Tactical per-unit auto-battle mode
@@ -226,6 +231,9 @@ export interface BattleState {
     powerTurretCount: number;
     enemyPreview: string[];
     detailedEnemyIntel: boolean;
+    overheating?: boolean;
+    overheatSeverity?: 0 | 1 | 2;
+    combatInstability?: boolean;
   };
   theaterMeta?: {
     operationId: string;
@@ -551,7 +559,7 @@ export function createBattleUnitState(
     weaponState,
     clutchActive: false,
     weaponHeat: 0,
-    weaponWear: 0,
+    weaponWear: weaponState?.wear ?? 0,
     controller: base.controller ?? (opts.isEnemy ? undefined : "P1"),
     autoBattleMode: "manual",
     // Mount fields
@@ -610,7 +618,8 @@ export function applyStrain(
   amount: number
 ): BattleState {
   const oldStrain = unit.strain;
-  const newStrain = Math.max(0, oldStrain + amount);
+  const effectiveAmount = state.theaterBonuses?.overheating && amount > 0 ? amount * 2 : amount;
+  const newStrain = Math.max(0, oldStrain + effectiveAmount);
 
   const updated: BattleUnitState = {
     ...unit,
@@ -794,19 +803,18 @@ export function advanceTurn(state: BattleState): BattleState {
   if (nextActiveId && newState.units[nextActiveId]) {
     const u = newState.units[nextActiveId];
     if (u.weaponState && !u.isEnemy) {
-      const cooledWeaponState = passiveCooling(u.weaponState);
-      // Also clear jammed status at start of turn
-      const unjammedState = {
-        ...cooledWeaponState,
-        isJammed: false,
-      };
+      const equippedWeapon = getEquippedWeapon(u);
+      const nextWeaponState = equippedWeapon
+        ? advanceWeaponTurn(u.weaponState, equippedWeapon)
+        : u.weaponState;
       newState = {
         ...newState,
         units: {
           ...newState.units,
           [nextActiveId]: {
             ...newState.units[nextActiveId],
-            weaponState: unjammedState,
+            weaponState: nextWeaponState,
+            weaponHeat: nextWeaponState.currentHeat,
           },
         },
       };
@@ -1178,9 +1186,247 @@ export function updateUnitWeaponState(
       [unitId]: {
         ...unit,
         weaponState: newWeaponState,
+        weaponHeat: newWeaponState.currentHeat,
+        weaponWear: newWeaponState.wear,
+        clutchActive: newWeaponState.clutchActive,
       },
     },
   };
+}
+
+function removeBattleUnit(state: BattleState, unitId: UnitId): BattleState {
+  const nextUnits = { ...state.units };
+  delete nextUnits[unitId];
+  return {
+    ...state,
+    units: nextUnits,
+    turnOrder: state.turnOrder.filter((id) => id !== unitId),
+    activeUnitId: state.activeUnitId === unitId ? null : state.activeUnitId,
+  };
+}
+
+function setBattleUnitHp(state: BattleState, unitId: UnitId, hp: number): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+  if (hp <= 0) {
+    return removeBattleUnit(state, unitId);
+  }
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: {
+        ...unit,
+        hp,
+      },
+    },
+  };
+}
+
+function moveUnitByDeltaIfClear(
+  state: BattleState,
+  unitId: UnitId,
+  dx: number,
+  dy: number,
+  tiles: number,
+): BattleState {
+  const unit = state.units[unitId];
+  if (!unit?.pos || tiles <= 0) {
+    return state;
+  }
+
+  let next = state;
+  let currentPos = unit.pos;
+  for (let step = 0; step < tiles; step += 1) {
+    const candidate = { x: currentPos.x + dx, y: currentPos.y + dy };
+    if (
+      candidate.x < 0 ||
+      candidate.y < 0 ||
+      candidate.x >= state.gridWidth ||
+      candidate.y >= state.gridHeight
+    ) {
+      break;
+    }
+    const tile = getTileAt(state, candidate.x, candidate.y);
+    const occupied = Object.values(next.units).some(
+      (other) => other.id !== unitId && other.pos?.x === candidate.x && other.pos?.y === candidate.y,
+    );
+    if (!tile || tile.terrain === "wall" || occupied) {
+      break;
+    }
+
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...next.units[unitId],
+          pos: candidate,
+        },
+      },
+    };
+    currentPos = candidate;
+  }
+
+  return next;
+}
+
+function removeRandomWeaponCardFromBattleUnit(unit: BattleUnitState): BattleUnitState {
+  const weaponCards = [
+    ...unit.hand,
+    ...unit.drawPile,
+    ...unit.discardPile,
+    ...unit.exhaustedPile,
+  ].filter((cardId) => getResolvedBattleCard(cardId)?.sourceEquipmentId === unit.equippedWeaponId);
+
+  if (weaponCards.length === 0) {
+    return unit;
+  }
+
+  const removedCardId = weaponCards[Math.floor(Math.random() * weaponCards.length)];
+  const removeFromPile = (pile: string[]) => {
+    const index = pile.indexOf(removedCardId);
+    if (index < 0) return pile;
+    return [...pile.slice(0, index), ...pile.slice(index + 1)];
+  };
+
+  return {
+    ...unit,
+    hand: removeFromPile(unit.hand),
+    drawPile: removeFromPile(unit.drawPile),
+    discardPile: removeFromPile(unit.discardPile),
+    exhaustedPile: removeFromPile(unit.exhaustedPile),
+  };
+}
+
+export function applyWeaponOverheatEffects(
+  state: BattleState,
+  unitId: UnitId,
+  effects: WeaponOverheatEffect[],
+  sourceLabel: string,
+): BattleState {
+  let next = state;
+  let unit = next.units[unitId];
+  if (!unit) {
+    return state;
+  }
+
+  effects.forEach((effect) => {
+    unit = next.units[unitId];
+    if (!unit) {
+      return;
+    }
+
+    switch (effect.kind) {
+      case "self_damage_percent": {
+        const amount = Math.max(1, Math.ceil(unit.maxHp * effect.percent));
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} suffers ${amount} self-damage from ${sourceLabel}.`);
+        next = setBattleUnitHp(next, unitId, unit.hp - amount);
+        break;
+      }
+      case "self_damage_flat":
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} suffers ${effect.amount} self-damage from ${sourceLabel}.`);
+        next = setBattleUnitHp(next, unitId, unit.hp - effect.amount);
+        break;
+      case "self_strain":
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} takes ${effect.amount} Strain from ${sourceLabel}.`);
+        next = applyStrain(next, unit, effect.amount);
+        break;
+      case "apply_status_self":
+        next = addStatus(next, unitId, effect.status, effect.duration);
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} is ${effect.status.toUpperCase()} from ${sourceLabel}.`);
+        break;
+      case "push_self": {
+        const facing = unit.facing ?? "east";
+        const [dx, dy] =
+          facing === "east" ? [-1, 0] :
+          facing === "west" ? [1, 0] :
+          facing === "south" ? [0, -1] :
+          [0, 1];
+        next = moveUnitByDeltaIfClear(next, unitId, dx, dy, effect.tiles);
+        break;
+      }
+      case "remove_random_weapon_card": {
+        const updatedUnit = removeRandomWeaponCardFromBattleUnit(unit);
+        next = {
+          ...next,
+          units: {
+            ...next.units,
+            [unitId]: updatedUnit,
+          },
+        };
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} loses a random weapon card from ${sourceLabel}.`);
+        break;
+      }
+      default:
+        break;
+    }
+  });
+
+  return next;
+}
+
+export function applyWeaponHitToUnit(
+  state: BattleState,
+  defenderId: UnitId,
+  isCrit = false,
+): BattleState {
+  const defender = state.units[defenderId];
+  if (!defender?.weaponState || rollWeaponHit(isCrit) === false) {
+    return state;
+  }
+
+  const hitNode = rollWeaponNodeHit();
+  const damagedState = damageNode(defender.weaponState, hitNode);
+  let next = updateUnitWeaponState(state, defenderId, damagedState);
+  const nodeName = WEAPON_NODE_NAMES[hitNode].primary;
+  const severity = damagedState.nodes[hitNode].toUpperCase();
+  next = appendBattleLog(next, `SLK//DMG   :: [${defender.name}] ${nodeName} struck. [${severity}]`);
+  return next;
+}
+
+function getTheaterCombatInstabilityHeatGain(state: BattleState): number {
+  const severity = state.theaterBonuses?.overheatSeverity ?? 0;
+  if (!state.theaterBonuses?.combatInstability || severity <= 0) {
+    return 0;
+  }
+  return severity >= 2 ? 2 : 1;
+}
+
+export function applyTheaterCombatInstability(
+  state: BattleState,
+  unitId: UnitId,
+): BattleState {
+  const heatGain = getTheaterCombatInstabilityHeatGain(state);
+  if (heatGain <= 0) {
+    return state;
+  }
+
+  const unit = state.units[unitId];
+  if (!unit || !unit.weaponState) {
+    return state;
+  }
+
+  const weapon = getEquippedWeapon(unit);
+  if (!weapon?.isMechanical) {
+    return state;
+  }
+
+  const nextWeaponState = addHeat(unit.weaponState, weapon, heatGain);
+  if (nextWeaponState === unit.weaponState) {
+    return state;
+  }
+
+  let next = updateUnitWeaponState(state, unitId, nextWeaponState);
+  if (nextWeaponState.currentHeat >= getEffectiveMaxHeat(nextWeaponState, weapon)) {
+    const overheatOutcome = triggerWeaponOverheat(nextWeaponState, weapon);
+    next = updateUnitWeaponState(next, unitId, overheatOutcome.state);
+    next = appendBattleLog(next, `SLK//ALERT :: ${unit.name}'s weapon destabilizes under room overheat. ${overheatOutcome.summary}`);
+    next = applyWeaponOverheatEffects(next, unitId, overheatOutcome.effects, "room overheat");
+  }
+  return next;
 }
 
 // ----------------------------------------------------------------------------
@@ -1877,8 +2123,9 @@ export function attackUnit(
     const missReason = intimidatePenalty !== 0
       ? "(mount intimidation)"
       : "(strain interference)";
+    const unstableMissState = applyTheaterCombatInstability(state, attackerId);
     return appendBattleLog(
-      state,
+      unstableMissState,
       `SLK//MISS  :: ${attacker.name} swings at ${defender.name} but the strike goes wide ${missReason}.`
     );
   }
@@ -1994,19 +2241,7 @@ export function attackUnit(
   // --- WEAPON DEGRADATION (Node Damage on Hit) ---
   const currentDefender = next.units[defenderId];
   if (currentDefender && currentDefender.weaponState && !isKill) {
-    if (rollWeaponHit(isCrit)) {
-      const hitNode = rollWeaponNodeHit();
-      const damagedState = damageNode(currentDefender.weaponState, hitNode);
-      next = updateUnitWeaponState(next, defenderId, damagedState);
-
-      const nodeName = WEAPON_NODE_NAMES[hitNode].primary;
-      const severity = damagedState.nodes[hitNode].toUpperCase();
-
-      next = appendBattleLog(
-        next,
-        `SLK//DMG   :: [${currentDefender.name}] ${nodeName} struck. [${severity}]`
-      );
-    }
+    next = applyWeaponHitToUnit(next, defenderId, isCrit);
   }
 
   // Trigger Field Mod: kill (if target died)
@@ -2019,6 +2254,7 @@ export function attackUnit(
     trackMeleeAttackInBattle(attackerId, next);
   }
 
+  next = applyTheaterCombatInstability(next, attackerId);
   next = evaluateBattleOutcome(next);
   return next;
 }
@@ -2916,6 +3152,29 @@ export function getPlacementTilesForUnit(state: BattleState, unit: BattleUnitSta
     .map((tile) => ({ x: tile.pos.x, y: tile.pos.y }));
 }
 
+export function getEffectivePlacedUnitIds(state: BattleState): UnitId[] {
+  const placementState = state.placementState;
+  if (!placementState) {
+    return [];
+  }
+
+  const placedUnitIds = new Set(placementState.placedUnitIds);
+  Object.values(state.units).forEach((unit) => {
+    if (!unit.pos || unit.hp <= 0 || placedUnitIds.has(unit.id)) {
+      return;
+    }
+
+    const isOnLegalPlacementTile = getPlacementTilesForUnit(state, unit).some(
+      (tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y,
+    );
+    if (isOnLegalPlacementTile) {
+      placedUnitIds.add(unit.id);
+    }
+  });
+
+  return Array.from(placedUnitIds);
+}
+
 // ----------------------------------------------------------------------------
 // PLACEMENT PHASE FUNCTIONS
 // ----------------------------------------------------------------------------
@@ -2988,6 +3247,7 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
 
   const placementState = state.placementState;
   if (!placementState) return state;
+  const effectivePlacedUnitIds = new Set(getEffectivePlacedUnitIds(state));
 
   const placementUnits = Object.values(state.units).filter((unit) => {
     if (state.modeContext?.kind === "squad" && controller) {
@@ -2996,9 +3256,7 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
     return !unit.isEnemy && (!controller || (unit.controller ?? "P1") === controller);
   });
   const unplacedUnits = placementUnits.filter(
-    u =>
-      !placementState.placedUnitIds.includes(u.id) &&
-      !u.pos
+    (unit) => !effectivePlacedUnitIds.has(unit.id)
   );
 
   let newState = state;
@@ -3087,29 +3345,28 @@ export function confirmPlacement(state: BattleState): BattleState {
   const placementState = state.placementState;
   if (!placementState) return state;
 
-  const placedCount = placementState.placedUnitIds.length;
+  const effectivePlacedUnitIds = getEffectivePlacedUnitIds(state);
+  const placedCount = effectivePlacedUnitIds.length;
 
-  // Check if all units are placed or max reached
-  if (placedCount === 0) {
+  let friendlyPlaced = 0;
+  let enemyPlaced = 0;
+  effectivePlacedUnitIds.forEach((unitId) => {
+    const placedUnit = state.units[unitId];
+    if (!placedUnit) {
+      return;
+    }
+    if (placedUnit.isEnemy) {
+      enemyPlaced += 1;
+    } else {
+      friendlyPlaced += 1;
+    }
+  });
+
+  if (placedCount === 0 || friendlyPlaced === 0) {
     return appendBattleLog(state, `SLK//PLACE  :: Please place at least one unit before confirming.`);
   }
 
   if (state.modeContext?.kind === "squad") {
-    let friendlyPlaced = 0;
-    let enemyPlaced = 0;
-
-    placementState.placedUnitIds.forEach((unitId) => {
-      const placedUnit = state.units[unitId];
-      if (!placedUnit) {
-        return;
-      }
-      if (placedUnit.isEnemy) {
-        enemyPlaced += 1;
-      } else {
-        friendlyPlaced += 1;
-      }
-    });
-
     const hasEnemyRoster = Object.values(state.units).some((unit) => unit.isEnemy);
     if (friendlyPlaced === 0 || (hasEnemyRoster && enemyPlaced === 0)) {
       return appendBattleLog(state, "SLK//PLACE  :: Both skirmish lines must deploy before the host can confirm placement.");
@@ -3127,7 +3384,7 @@ export function confirmPlacement(state: BattleState): BattleState {
   });
 
   // Keep ONLY placed player units
-  placementState.placedUnitIds.forEach(id => {
+  effectivePlacedUnitIds.forEach(id => {
     if (state.units[id]) {
       filteredUnits[id] = state.units[id];
     }

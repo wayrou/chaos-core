@@ -4,7 +4,7 @@
 
 import {
   getAssignedGamepad,
-  getControllerActionLabel,
+  getControllerActionLabelForPlayer,
   isGamepadActionActive,
   markKeyboardInputActive,
   shouldSuppressGameplayInput,
@@ -324,7 +324,7 @@ function getKeyboardActionLabelForSource(inputSource: PlayerInputSource, action:
   }
 }
 
-function mapInputActionToControllerAction(action: InputAction): Parameters<typeof getControllerActionLabel>[0] {
+function mapInputActionToControllerAction(action: InputAction): Parameters<typeof getControllerActionLabelForPlayer>[0] {
   switch (action) {
     case "up":
       return "moveUp";
@@ -349,7 +349,7 @@ function mapInputActionToControllerAction(action: InputAction): Parameters<typeo
 
 export function getPlayerActionLabel(playerId: PlayerId, action: InputAction): string {
   if (getAssignedGamepad(playerId)) {
-    return getControllerActionLabel(mapInputActionToControllerAction(action));
+    return getControllerActionLabelForPlayer(mapInputActionToControllerAction(action), playerId);
   }
 
   const player = getGameState().players[playerId];

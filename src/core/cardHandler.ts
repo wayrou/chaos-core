@@ -4,7 +4,24 @@
 // card handling in handleTileClick
 // ============================================================================
 
-import { BattleState, BattleUnitState, Tile, appendBattleLog, applyStrain, advanceTurn, evaluateBattleOutcome, Vec2, getEquippedWeapon, getTileAt } from "./battle";
+import {
+  BattleState,
+  BattleUnitState,
+  Tile,
+  addStatus,
+  appendBattleLog,
+  applyStrain,
+  applyTheaterCombatInstability,
+  applyWeaponHitToUnit,
+  applyWeaponOverheatEffects,
+  advanceTurn,
+  computeHitChance,
+  evaluateBattleOutcome,
+  Vec2,
+  getEquippedWeapon,
+  getTileAt,
+  updateUnitWeaponState,
+} from "./battle";
 import { Card } from "./types";
 import { getCoverDamageReduction, damageCover } from "./coverGenerator";
 import {
@@ -15,6 +32,22 @@ import {
 
 import { getAllStarterEquipment } from "./equipment";
 import { applyEffectFlowToBattle } from "./effectFlow";
+import {
+  addHeat,
+  checkWeaponJam,
+  consumeQueuedModifier,
+  getEffectiveMaxHeat,
+  getExtraStrainCost,
+  getWeaponCardAmmoCost,
+  getWeaponCardBlockReason,
+  getWeaponCardHeatDelta,
+  getWeaponCardModifierSnapshot,
+  markWeaponCardPlayed,
+  removeHeat,
+  repairNode,
+  triggerWeaponOverheat,
+  useAmmo,
+} from "./weaponSystem";
 
 function isHostileTarget(user: BattleUnitState, targetUnit: BattleUnitState | null | undefined): boolean {
   return Boolean(targetUnit && targetUnit.isEnemy !== user.isEnemy);
@@ -66,6 +99,354 @@ function discardCardFromHand(battle: BattleState, unitId: string, cardId: string
   };
 }
 
+const EQUIPPED_WEAPON_SOURCE_ID = "__equipped_weapon__";
+
+type WeaponPlayContext = {
+  weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>;
+  cardRules: NonNullable<Card["weaponRules"]>;
+  modifiers: ReturnType<typeof getWeaponCardModifierSnapshot>;
+  ammoCost: number;
+  heatDelta: number;
+  extraStrain: number;
+};
+
+function getWeaponPlayContext(
+  user: BattleUnitState,
+  card: Card,
+): WeaponPlayContext | null {
+  if (!card.weaponRules || !user.weaponState) {
+    return null;
+  }
+
+  const weapon = getEquippedWeapon(user, getAllStarterEquipment());
+  if (!weapon) {
+    return null;
+  }
+
+  if (
+    card.weaponRules.sourceWeaponId !== EQUIPPED_WEAPON_SOURCE_ID &&
+    card.weaponRules.sourceWeaponId !== weapon.id
+  ) {
+    return null;
+  }
+
+  const modifiers = getWeaponCardModifierSnapshot(user.weaponState, weapon, card.weaponRules);
+  const heatlessPowerCouplingStrain =
+    !weapon.isMechanical &&
+    card.weaponRules.tags.includes("attack") &&
+    user.weaponState.nodes[4] === "broken"
+      ? 1
+      : 0;
+  return {
+    weapon,
+    cardRules: card.weaponRules,
+    modifiers,
+    ammoCost: getWeaponCardAmmoCost(user.weaponState, weapon, card.weaponRules),
+    heatDelta: getWeaponCardHeatDelta(user.weaponState, weapon, card.weaponRules),
+    extraStrain:
+      getExtraStrainCost(user.weaponState, !user.weaponState.firstWeaponCardPlayedThisTurn) +
+      modifiers.strainDelta +
+      heatlessPowerCouplingStrain,
+  };
+}
+
+function getWeaponBlockReasonForCard(user: BattleUnitState, card: Card): string | null {
+  const weapon = getEquippedWeapon(user, getAllStarterEquipment());
+  if (!user.weaponState || !weapon || !card.weaponRules) {
+    return null;
+  }
+  if (
+    card.weaponRules.sourceWeaponId !== EQUIPPED_WEAPON_SOURCE_ID &&
+    card.weaponRules.sourceWeaponId !== weapon.id
+  ) {
+    return null;
+  }
+  return getWeaponCardBlockReason(user.weaponState, weapon, card.weaponRules);
+}
+
+function addStatModifierBuff(
+  battle: BattleState,
+  unitId: string,
+  stat: "atk" | "def" | "agi" | "acc",
+  amount: number,
+  duration: number,
+): BattleState {
+  const buffType = `${stat}_${amount >= 0 ? "up" : "down"}`;
+  return addTimedBuff(battle, unitId, buffType, amount, duration);
+}
+
+function applyWeaponSelfModifiers(
+  battle: BattleState,
+  userId: string,
+  modifiers: ReturnType<typeof getWeaponCardModifierSnapshot>,
+): BattleState {
+  let next = battle;
+  modifiers.selfBuffs.forEach((buff) => {
+    next = addStatModifierBuff(next, userId, buff.stat, buff.amount, buff.duration);
+  });
+  modifiers.selfDebuffs.forEach((buff) => {
+    next = addStatModifierBuff(next, userId, buff.stat, -Math.abs(buff.amount), buff.duration);
+  });
+  return next;
+}
+
+function repairGuardNodes(weaponState: BattleUnitState["weaponState"]) {
+  if (!weaponState) {
+    return weaponState;
+  }
+  if (weaponState.nodes[1] === "damaged" || weaponState.nodes[1] === "broken") {
+    return repairNode(weaponState, 1);
+  }
+  if (weaponState.nodes[3] === "damaged" || weaponState.nodes[3] === "broken") {
+    return repairNode(weaponState, 3);
+  }
+  return weaponState;
+}
+
+function finalizeWeaponCardRuntime(
+  battle: BattleState,
+  userId: string,
+  context: WeaponPlayContext | null,
+): BattleState {
+  if (!context) {
+    return battle;
+  }
+
+  const user = battle.units[userId];
+  if (!user?.weaponState) {
+    return battle;
+  }
+
+  let weaponState = user.weaponState;
+
+  if (context.cardRules.tags.includes("attack") && context.ammoCost > 0) {
+    weaponState = useAmmo(weaponState, context.weapon, context.ammoCost);
+  }
+
+  if (context.heatDelta > 0) {
+    weaponState = addHeat(weaponState, context.weapon, context.heatDelta);
+  } else if (context.heatDelta < 0) {
+    weaponState = removeHeat(weaponState, Math.abs(context.heatDelta), { repairHeatSink: true });
+  }
+
+  if (context.cardRules.tags.includes("guard_brace")) {
+    weaponState = repairGuardNodes(weaponState) ?? weaponState;
+  }
+
+  weaponState = markWeaponCardPlayed(weaponState, context.weapon, context.cardRules);
+  weaponState.allowMoveAfterAttack = context.modifiers.freeAttackMove;
+  weaponState = consumeQueuedModifier(weaponState);
+
+  let next = updateUnitWeaponState(battle, userId, weaponState);
+  next = applyWeaponSelfModifiers(next, userId, context.modifiers);
+
+  const latestUser = next.units[userId];
+  if (!latestUser?.weaponState) {
+    return next;
+  }
+
+  if (
+    latestUser.weaponState.currentHeat >= getEffectiveMaxHeat(latestUser.weaponState, context.weapon) ||
+    (context.modifiers.forceOverheat && context.heatDelta > 0)
+  ) {
+    const overheatOutcome = triggerWeaponOverheat(latestUser.weaponState, context.weapon);
+    next = updateUnitWeaponState(next, userId, overheatOutcome.state);
+    next = appendBattleLog(next, `SLK//HEAT  :: ${latestUser.name}'s ${context.weapon.name} overheats. ${overheatOutcome.summary}`);
+    next = applyWeaponOverheatEffects(next, userId, overheatOutcome.effects, context.weapon.name);
+  }
+
+  return next;
+}
+
+function finalizeCardUsage(
+  battle: BattleState,
+  userId: string,
+  card: Card,
+  context: WeaponPlayContext | null,
+): BattleState {
+  let next = battle;
+  const currentUser = next.units[userId];
+  if (!currentUser) {
+    return next;
+  }
+
+  next = applyStrain(next, currentUser, Math.max(0, card.strainCost + (context?.extraStrain ?? 0)));
+  next = finalizeWeaponCardRuntime(next, userId, context);
+  next = applyTheaterCombatInstability(next, userId);
+  if (next.units[userId]) {
+    next = discardCardFromHand(next, userId, card.id);
+  }
+  return next;
+}
+
+function tryMoveUnitToward(
+  battle: BattleState,
+  unitId: string,
+  targetId: string,
+  tiles: number,
+): BattleState {
+  if (tiles <= 0) {
+    return battle;
+  }
+
+  const unit = battle.units[unitId];
+  const target = battle.units[targetId];
+  if (!unit?.pos || !target?.pos) {
+    return battle;
+  }
+
+  let next = battle;
+  let currentPos = unit.pos;
+  for (let step = 0; step < tiles; step += 1) {
+    const dx = Math.sign(target.pos.x - currentPos.x);
+    const dy = Math.sign(target.pos.y - currentPos.y);
+    const candidate =
+      Math.abs(target.pos.x - currentPos.x) >= Math.abs(target.pos.y - currentPos.y)
+        ? { x: currentPos.x + dx, y: currentPos.y }
+        : { x: currentPos.x, y: currentPos.y + dy };
+
+    if (
+      candidate.x < 0 ||
+      candidate.y < 0 ||
+      candidate.x >= battle.gridWidth ||
+      candidate.y >= battle.gridHeight
+    ) {
+      break;
+    }
+    const tile = getTileAt(next, candidate.x, candidate.y);
+    const occupied = Object.values(next.units).some(
+      (other) => other.id !== unitId && other.pos?.x === candidate.x && other.pos?.y === candidate.y,
+    );
+    if (!tile || tile.terrain === "wall" || occupied) {
+      break;
+    }
+
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...next.units[unitId],
+          pos: candidate,
+        },
+      },
+    };
+    currentPos = candidate;
+  }
+
+  return next;
+}
+
+function tryMoveUnitAway(
+  battle: BattleState,
+  unitId: string,
+  sourceId: string,
+  tiles: number,
+): BattleState {
+  if (tiles <= 0) {
+    return battle;
+  }
+
+  const unit = battle.units[unitId];
+  const source = battle.units[sourceId];
+  if (!unit?.pos || !source?.pos) {
+    return battle;
+  }
+
+  let next = battle;
+  let currentPos = unit.pos;
+  for (let step = 0; step < tiles; step += 1) {
+    const dx = Math.sign(currentPos.x - source.pos.x);
+    const dy = Math.sign(currentPos.y - source.pos.y);
+    const candidate =
+      Math.abs(currentPos.x - source.pos.x) >= Math.abs(currentPos.y - source.pos.y)
+        ? { x: currentPos.x + dx, y: currentPos.y }
+        : { x: currentPos.x, y: currentPos.y + dy };
+
+    if (
+      candidate.x < 0 ||
+      candidate.y < 0 ||
+      candidate.x >= battle.gridWidth ||
+      candidate.y >= battle.gridHeight
+    ) {
+      break;
+    }
+    const tile = getTileAt(next, candidate.x, candidate.y);
+    const occupied = Object.values(next.units).some(
+      (other) => other.id !== unitId && other.pos?.x === candidate.x && other.pos?.y === candidate.y,
+    );
+    if (!tile || tile.terrain === "wall" || occupied) {
+      break;
+    }
+
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...next.units[unitId],
+          pos: candidate,
+        },
+      },
+    };
+    currentPos = candidate;
+  }
+
+  return next;
+}
+
+function applySplashDamageInRange(
+  battle: BattleState,
+  userId: string,
+  range: number,
+  amount: number,
+): BattleState {
+  if (amount <= 0) {
+    return battle;
+  }
+
+  const user = battle.units[userId];
+  if (!user?.pos) {
+    return battle;
+  }
+
+  let next = battle;
+  Object.values(next.units)
+    .filter((unit) => unit.id !== userId && unit.isEnemy !== user.isEnemy && unit.pos)
+    .forEach((unit) => {
+      const distance = Math.abs(user.pos!.x - unit.pos!.x) + Math.abs(user.pos!.y - unit.pos!.y);
+      if (distance > range) {
+        return;
+      }
+      const updated = next.units[unit.id];
+      if (!updated) {
+        return;
+      }
+      if (updated.hp - amount <= 0) {
+        const nextUnits = { ...next.units };
+        delete nextUnits[unit.id];
+        next = {
+          ...next,
+          units: nextUnits,
+          turnOrder: next.turnOrder.filter((id) => id !== unit.id),
+        };
+        return;
+      }
+      next = {
+        ...next,
+        units: {
+          ...next.units,
+          [unit.id]: {
+            ...updated,
+            hp: updated.hp - amount,
+          },
+        },
+      };
+    });
+
+  return next;
+}
+
 /**
  * Process playing a card on a target
  * Returns the updated battle state, or null if the play was invalid
@@ -79,6 +460,13 @@ export function handleCardPlay(
 ): BattleState | null {
 
   if (!user.pos) return null;
+
+  const weaponBlockReason = getWeaponBlockReasonForCard(user, card);
+  if (weaponBlockReason) {
+    return appendBattleLog(battle, `SLK//LOCK  :: ${user.name} cannot use ${card.name}. ${weaponBlockReason}.`);
+  }
+
+  const weaponContext = getWeaponPlayContext(user, card);
 
   // Calculate distance to target
   const distance = Math.abs(user.pos.x - targetPos.x) + Math.abs(user.pos.y - targetPos.y);
@@ -101,6 +489,15 @@ export function handleCardPlay(
     if (weapon && weapon.weaponType === "bow") {
       cardRange += 1;
     }
+  }
+
+  if (weaponContext) {
+    if (weaponContext.modifiers.rangeOverride !== null) {
+      cardRange = weaponContext.modifiers.rangeOverride;
+    } else {
+      cardRange += weaponContext.modifiers.rangeDelta;
+    }
+    cardRange += weaponContext.modifiers.moveBeforeAttackTiles;
   }
 
   // Check range
@@ -157,10 +554,7 @@ export function handleCardPlay(
       return b;
     }
 
-    b = applyStrain(b, currentUser, card.strainCost);
-    if (b.units[user.id]) {
-      b = discardCardFromHand(b, user.id, card.id);
-    }
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
 
     return b;
   }
@@ -236,9 +630,7 @@ export function handleCardPlay(
       logMessages.push(`grants ${targetUnit.name} +2 DEF`);
     }
 
-    const currentUser = b.units[user.id];
-    b = applyStrain(b, currentUser, card.strainCost);
-    b = discardCardFromHand(b, user.id, card.id);
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
     b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} ${logMessages.join(", ")} • STRAIN +${card.strainCost}.`);
 
     return b;
@@ -479,12 +871,7 @@ export function handleCardPlay(
       }
     }
 
-    // Apply strain
-    const currentUser = b.units[user.id];
-    b = applyStrain(b, currentUser, card.strainCost);
-
-    // Discard the card
-    b = discardCardFromHand(b, user.id, card.id);
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
 
     // Log
     const logText = logMessages.join(", ");
@@ -497,304 +884,200 @@ export function handleCardPlay(
   // ENEMY-TARGET CARDS (attacks, debuffs)
   // ========================================
   if (card.targetType === "enemy") {
-    // Must have a valid enemy target
     if (!isHostileTarget(user, targetUnit) || !targetUnit?.pos) {
       return null;
     }
 
-    // Check range to target
-    const targetDist = Math.abs(user.pos.x - targetUnit.pos.x) + Math.abs(user.pos.y - targetUnit.pos.y);
+    let b = battle;
+    if (weaponContext?.modifiers.moveBeforeAttackTiles) {
+      b = tryMoveUnitToward(b, user.id, targetUnit.id, weaponContext.modifiers.moveBeforeAttackTiles);
+    }
+
+    const actingUser = b.units[user.id];
+    const actingTarget = b.units[targetUnit.id];
+    if (!actingUser?.pos || !actingTarget?.pos) {
+      return null;
+    }
+
+    const targetDist = Math.abs(actingUser.pos.x - actingTarget.pos.x) + Math.abs(actingUser.pos.y - actingTarget.pos.y);
     if (targetDist > cardRange) {
       return null;
     }
 
-    let b = battle;
-    let logMessages: string[] = [];
+    const logMessages: string[] = [];
 
-    // Calculate damage
+    if (weaponContext?.cardRules.tags.includes("attack") && actingUser.weaponState && checkWeaponJam(actingUser.weaponState)) {
+      const jammedState = {
+        ...actingUser.weaponState,
+        isJammed: true,
+        jammedTurnsRemaining: 1,
+      };
+      b = updateUnitWeaponState(b, actingUser.id, jammedState);
+      const jammedUser = b.units[actingUser.id];
+      if (jammedUser) {
+        b = applyStrain(b, jammedUser, card.strainCost + 1);
+        b = discardCardFromHand(b, actingUser.id, card.id);
+      }
+      b = appendBattleLog(b, `SLK//JAM   :: ${actingUser.name}'s ${weaponContext.weapon.name} jams while using ${card.name}.`);
+      return b;
+    }
+
     let totalDamage = (card as any).damage || 0;
-
-    // Get damage from effects if not set directly
     if (totalDamage === 0) {
-      const damageEffect = (card.effects || []).find((e: any) => e.type === "damage") as any;
-      if (damageEffect) {
-        totalDamage = damageEffect.amount ?? 0;
-      }
+      const damageEffect = (card.effects || []).find((effect: any) => effect.type === "damage") as any;
+      totalDamage = damageEffect?.amount ?? 0;
     }
-
-    // If no damage effect or property, try to parse from description
     if (totalDamage === 0) {
-      const dmgMatch = card.description.match(/deal\s+(\d+)\s+damage/i);
-      if (dmgMatch) {
-        totalDamage = parseInt(dmgMatch[1], 10);
-      }
+      const damageMatch = card.description.match(/deal\s+(\d+)\s+damage/i);
+      totalDamage = damageMatch ? parseInt(damageMatch[1], 10) : 0;
     }
 
-    // Apply ATK buffs from user
-    const atkBuffs = (user.buffs || [])
-      .filter(buff => buff.type === "atk_up")
+    const atkBuffs = (actingUser.buffs || [])
+      .filter((buff) => buff.type === "atk_up" || buff.type === "atk_down")
       .reduce((sum, buff) => sum + buff.amount, 0);
-    totalDamage += atkBuffs;
-    const echoAttackBonus = getEchoAttackBonus(b, user);
-    totalDamage += echoAttackBonus.amount;
+    const echoAttackBonus = getEchoAttackBonus(b, actingUser);
+    const echoDefenseBonus = getEchoDefenseBonus(b, actingTarget);
+    const clutchDamageDelta = weaponContext?.modifiers.damageDelta ?? 0;
+    const damageMultiplier = weaponContext?.modifiers.damageMultiplier ?? 1;
+    totalDamage += atkBuffs + echoAttackBonus.amount + clutchDamageDelta;
+    totalDamage = Math.max(0, Math.round(totalDamage * damageMultiplier));
 
-    // Reduce by target's DEF + DEF buffs
-    const defBuffs = (targetUnit.buffs || [])
-      .filter(buff => buff.type === "def_up")
+    const defBuffs = (actingTarget.buffs || [])
+      .filter((buff) => buff.type === "def_up" || buff.type === "def_down")
       .reduce((sum, buff) => sum + buff.amount, 0);
-    const echoDefenseBonus = getEchoDefenseBonus(b, targetUnit);
-    const totalDef = targetUnit.def + defBuffs + echoDefenseBonus.amount;
+    const ignoreDef = weaponContext?.modifiers.ignoreDef ?? 0;
+    const totalDef = Math.max(0, actingTarget.def + defBuffs + echoDefenseBonus.amount - ignoreDef);
 
-    let finalDamage = Math.max(1, totalDamage - totalDef);
+    const equippedWeapon = getEquippedWeapon(actingUser);
+    const isRangedAttack = Boolean(equippedWeapon && ["gun", "bow", "greatbow", "staff"].includes(equippedWeapon.weaponType));
+    let hitChance = computeHitChance(actingUser, actingTarget, isRangedAttack, b);
+    hitChance += weaponContext?.modifiers.accuracyDelta ?? 0;
+    hitChance = Math.max(10, Math.min(100, hitChance));
 
-    const equippedWeapon = getEquippedWeapon(user);
-    const isRangedAttack = Boolean(equippedWeapon && ["gun", "bow", "greatbow"].includes(equippedWeapon.weaponType));
+    const hitRoll = Math.random() * 100;
+    const didHit = hitRoll <= hitChance;
 
-    // Apply cover damage reduction if target is on cover
-    if (targetUnit.pos) {
-      const targetTile = getTileAt(battle, targetUnit.pos.x, targetUnit.pos.y);
-      if (targetTile) {
-        let coverReduction = getCoverDamageReduction(targetTile);
-        const attackerTile = getTileAt(battle, user.pos.x, user.pos.y);
-        const attackerElevation = attackerTile?.elevation ?? 0;
-        const defenderElevation = targetTile.elevation ?? 0;
-        if (isRangedAttack && attackerElevation >= defenderElevation + 1 && targetTile.terrain === "light_cover") {
-          coverReduction = 0;
-        }
-        finalDamage = Math.max(1, finalDamage - coverReduction);
-      }
-    }
-
-    // Apply damage
-    const newHp = targetUnit.hp - finalDamage;
-
-    if (newHp <= 0) {
-      // Target dies
-      const newUnits = { ...b.units };
-      delete newUnits[targetUnit.id];
-
-      b = {
-        ...b,
-        units: newUnits,
-        turnOrder: b.turnOrder.filter(id => id !== targetUnit.id),
-      };
-
-      logMessages.push(`hits ${targetUnit.name} for ${finalDamage} - TARGET OFFLINE`);
-    } else {
-      // Target survives
-      b = {
-        ...b,
-        units: {
-          ...b.units,
-          [targetUnit.id]: { ...targetUnit, hp: newHp },
-        },
-      };
-
-      logMessages.push(`hits ${targetUnit.name} for ${finalDamage} (HP ${newHp}/${targetUnit.maxHp})`);
-    }
-
-    // Process additional effects (debuffs, push, status)
-    for (const effect of (card.effects || [])) {
-      const eff = effect as any;
-
-      // Debuffs
-      if (
-        eff.type === "debuff" ||
-        eff.type === "def_down" ||
-        eff.type === "atk_down" ||
-        eff.type === "agi_down" ||
-        eff.type === "acc_down"
-      ) {
-        const stat = eff.stat || eff.type.replace("_down", "");
-        const amount = eff.amount ?? 2;
-        const duration = eff.duration ?? 1;
-
-        const currentTarget = b.units[targetUnit.id];
-        if (currentTarget) {
-          const newDebuff = {
-            id: `${stat}_down_${Date.now()}`,
-            type: `${stat}_down` as any,
-            amount: -amount,
-            duration,
-          };
-
-          b = {
-            ...b,
-            units: {
-              ...b.units,
-              [targetUnit.id]: {
-                ...currentTarget,
-                buffs: [...(currentTarget.buffs || []), newDebuff],
-              },
-            },
-          };
-          logMessages.push(`${targetUnit.name} suffers -${amount} ${stat.toUpperCase()}`);
-        }
-      }
-
-      // Push
-      if (eff.type === "push") {
-        const pushAmount = eff.amount ?? 1;
-        const currentTarget = b.units[targetUnit.id];
-        if (currentTarget && currentTarget.pos && user.pos) {
-          const dx = Math.sign(currentTarget.pos.x - user.pos.x);
-          const dy = Math.sign(currentTarget.pos.y - user.pos.y);
-
-          let newX = currentTarget.pos.x + dx * pushAmount;
-          let newY = currentTarget.pos.y + dy * pushAmount;
-
-          // Clamp to bounds
-          newX = Math.max(0, Math.min(b.gridWidth - 1, newX));
-          newY = Math.max(0, Math.min(b.gridHeight - 1, newY));
-
-          // Check if blocked
-          const blocked = Object.values(b.units).some(
-            u => u.pos && u.pos.x === newX && u.pos.y === newY && u.id !== targetUnit.id
-          );
-
-          if (!blocked) {
-            b = {
-              ...b,
-              units: {
-                ...b.units,
-                [targetUnit.id]: {
-                  ...currentTarget,
-                  pos: { x: newX, y: newY },
-                },
-              },
-            };
-            logMessages.push(`${targetUnit.name} is pushed back`);
+    if (didHit) {
+      let finalDamage = Math.max(1, totalDamage - totalDef);
+      if (actingTarget.pos) {
+        const targetTile = getTileAt(b, actingTarget.pos.x, actingTarget.pos.y);
+        if (targetTile) {
+          let coverReduction = getCoverDamageReduction(targetTile);
+          const attackerTile = getTileAt(b, actingUser.pos.x, actingUser.pos.y);
+          const attackerElevation = attackerTile?.elevation ?? 0;
+          const defenderElevation = targetTile.elevation ?? 0;
+          if (
+            (weaponContext?.modifiers.ignoreCover ?? false) ||
+            (isRangedAttack && attackerElevation >= defenderElevation + 1 && targetTile.terrain === "light_cover")
+          ) {
+            coverReduction = 0;
           }
+          finalDamage = Math.max(1, finalDamage - coverReduction);
         }
       }
 
-      // Stun
-      if (eff.type === "stun") {
-        const currentTarget = b.units[targetUnit.id];
-        if (currentTarget) {
-          const stunBuff = {
-            id: `stun_${Date.now()}`,
-            type: "stun" as any,
-            amount: 0,
-            duration: eff.duration ?? 1,
-          };
-
-          b = {
-            ...b,
-            units: {
-              ...b.units,
-              [targetUnit.id]: {
-                ...currentTarget,
-                buffs: [...(currentTarget.buffs || []), stunBuff],
-              },
-            },
-          };
-          logMessages.push(`${targetUnit.name} is STUNNED`);
-        }
-      }
-
-      // Burn
-      if (eff.type === "burn") {
-        const currentTarget = b.units[targetUnit.id];
-        if (currentTarget) {
-          const burnBuff = {
-            id: `burn_${Date.now()}`,
-            type: "burn" as any,
-            amount: 1,
-            duration: eff.duration ?? 2,
-          };
-
-          b = {
-            ...b,
-            units: {
-              ...b.units,
-              [targetUnit.id]: {
-                ...currentTarget,
-                buffs: [...(currentTarget.buffs || []), burnBuff],
-              },
-            },
-          };
-          logMessages.push(`${targetUnit.name} is BURNING`);
-        }
-      }
-    }
-
-    // Check for additional effects from description parsing
-    const desc = card.description.toLowerCase();
-
-    // Push from description
-    if (!card.effects?.some((e: any) => e.type === "push")) {
-      const pushMatch = desc.match(/push\s+(?:target\s+)?(?:back\s+)?(\d+)\s+tile/i);
-      if (pushMatch) {
-        const pushAmount = parseInt(pushMatch[1], 10);
-        const currentTarget = b.units[targetUnit.id];
-        if (currentTarget && currentTarget.pos && user.pos) {
-          const dx = Math.sign(currentTarget.pos.x - user.pos.x);
-          const dy = Math.sign(currentTarget.pos.y - user.pos.y);
-
-          let newX = currentTarget.pos.x + dx * pushAmount;
-          let newY = currentTarget.pos.y + dy * pushAmount;
-
-          newX = Math.max(0, Math.min(b.gridWidth - 1, newX));
-          newY = Math.max(0, Math.min(b.gridHeight - 1, newY));
-
-          const blocked = Object.values(b.units).some(
-            u => u.pos && u.pos.x === newX && u.pos.y === newY && u.id !== targetUnit.id
-          );
-
-          if (!blocked) {
-            b = {
-              ...b,
-              units: {
-                ...b.units,
-                [targetUnit.id]: {
-                  ...currentTarget,
-                  pos: { x: newX, y: newY },
-                },
-              },
-            };
-            logMessages.push(`${targetUnit.name} is pushed back`);
-          }
-        }
-      }
-    }
-
-    // Stun from description
-    if (!card.effects?.some((e: any) => e.type === "stun") && desc.includes("stun")) {
-      const currentTarget = b.units[targetUnit.id];
-      if (currentTarget) {
-        const stunBuff = {
-          id: `stun_${Date.now()}`,
-          type: "stun" as any,
-          amount: 0,
-          duration: 1,
+      const newHp = actingTarget.hp - finalDamage;
+      if (newHp <= 0) {
+        const newUnits = { ...b.units };
+        delete newUnits[actingTarget.id];
+        b = {
+          ...b,
+          units: newUnits,
+          turnOrder: b.turnOrder.filter((id) => id !== actingTarget.id),
         };
-
+        logMessages.push(`hits ${actingTarget.name} for ${finalDamage} - TARGET OFFLINE`);
+      } else {
         b = {
           ...b,
           units: {
             ...b.units,
-            [targetUnit.id]: {
-              ...currentTarget,
-              buffs: [...(currentTarget.buffs || []), stunBuff],
-            },
+            [actingTarget.id]: { ...actingTarget, hp: newHp },
           },
         };
-        logMessages.push(`${targetUnit.name} is STUNNED`);
+        logMessages.push(`hits ${actingTarget.name} for ${finalDamage} (HP ${newHp}/${actingTarget.maxHp})`);
       }
+
+      for (const effect of card.effects || []) {
+        const eff = effect as any;
+        if (["debuff", "def_down", "atk_down", "agi_down", "acc_down"].includes(eff.type)) {
+          const stat = eff.stat || eff.type.replace("_down", "");
+          const amount = eff.amount ?? 2;
+          b = addTimedBuff(b, actingTarget.id, `${stat}_down`, -amount, eff.duration ?? 1);
+          logMessages.push(`${actingTarget.name} suffers -${amount} ${stat.toUpperCase()}`);
+        }
+        if (eff.type === "push") {
+          b = tryMoveUnitAway(b, actingTarget.id, actingUser.id, eff.amount ?? 1);
+          if (b.units[actingTarget.id]) {
+            logMessages.push(`${actingTarget.name} is pushed back`);
+          }
+        }
+        if (eff.type === "stun") {
+          b = addStatus(b, actingTarget.id, "stunned", eff.duration ?? 1);
+          logMessages.push(`${actingTarget.name} is STUNNED`);
+        }
+        if (eff.type === "burn") {
+          b = addStatus(b, actingTarget.id, "burning", eff.duration ?? 2);
+          logMessages.push(`${actingTarget.name} is BURNING`);
+        }
+      }
+
+      weaponContext?.modifiers.statusesOnHit.forEach((status) => {
+        b = addStatus(b, actingTarget.id, status.status, status.duration);
+      });
+
+      if (weaponContext?.modifiers.pullTargetTiles) {
+        b = tryMoveUnitToward(b, actingTarget.id, actingUser.id, weaponContext.modifiers.pullTargetTiles);
+      }
+      if (weaponContext?.modifiers.pullSelfTiles) {
+        b = tryMoveUnitToward(b, actingUser.id, actingTarget.id, weaponContext.modifiers.pullSelfTiles);
+      }
+      if (weaponContext?.modifiers.splashDamageInRange) {
+        b = applySplashDamageInRange(b, actingUser.id, cardRange, weaponContext.modifiers.splashDamageInRange);
+      }
+
+      const latestTarget = b.units[actingTarget.id];
+      if (latestTarget && weaponContext?.cardRules.tags.includes("direct")) {
+        b = applyWeaponHitToUnit(b, actingTarget.id, false);
+      }
+    } else {
+      logMessages.push(`misses ${actingTarget.name}`);
     }
 
-    // Apply strain to user
-    const currentUser = b.units[user.id];
-    if (currentUser) {
-      b = applyStrain(b, currentUser, card.strainCost);
+    if (didHit) {
+      weaponContext?.modifiers.extraAttacks.forEach((extraAttack) => {
+        const repeatedTarget = b.units[actingTarget.id];
+        if (!repeatedTarget) {
+          return;
+        }
+        const extraDamage = Math.max(1, totalDamage + extraAttack.damageDelta - totalDef);
+        const newHp = repeatedTarget.hp - extraDamage;
+        if (newHp <= 0) {
+          const newUnits = { ...b.units };
+          delete newUnits[repeatedTarget.id];
+          b = {
+            ...b,
+            units: newUnits,
+            turnOrder: b.turnOrder.filter((id) => id !== repeatedTarget.id),
+          };
+          logMessages.push(`follows with an extra hit for ${extraDamage} - TARGET OFFLINE`);
+        } else {
+          b = {
+            ...b,
+            units: {
+              ...b.units,
+              [repeatedTarget.id]: {
+                ...repeatedTarget,
+                hp: newHp,
+              },
+            },
+          };
+          logMessages.push(`follows with an extra hit for ${extraDamage}`);
+        }
+      });
     }
 
-    // Discard the card
-    b = discardCardFromHand(b, user.id, card.id);
-
-    // Log
-    b = appendBattleLog(b, `SLK//HIT    :: ${user.name} ${logMessages.join("; ")}.`);
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
+    b = appendBattleLog(b, `SLK//HIT    :: ${actingUser.name} ${logMessages.join("; ")}.`);
 
     if (echoAttackBonus.triggeredPlacements.length > 0 || echoDefenseBonus.triggeredPlacements.length > 0) {
       b = incrementEchoFieldTriggerCount(
@@ -803,9 +1086,7 @@ export function handleCardPlay(
       );
     }
 
-    // Check victory/defeat
     b = evaluateBattleOutcome(b);
-
     return b;
   }
 
@@ -827,12 +1108,7 @@ export function handleCardPlay(
       logMessages.push(`can move ${tiles} extra tiles`);
     }
 
-    // Apply strain
-    const currentUser = b.units[user.id];
-    b = applyStrain(b, currentUser, card.strainCost);
-
-    // Discard
-    b = discardCardFromHand(b, user.id, card.id);
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
 
     const logText = logMessages.length > 0 ? logMessages.join(", ") : `uses ${card.name}`;
     b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} ${logText} • STRAIN +${card.strainCost}.`);

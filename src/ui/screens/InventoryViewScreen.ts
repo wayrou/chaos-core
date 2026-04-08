@@ -81,6 +81,8 @@ function getNodeShape(node: WorkspaceNode): Pick<WorkspaceLayout, "colSpan" | "r
   switch (node.entry.category) {
     case "equipment":
       return { colSpan: 3, rowSpan: 4 };
+    case "keyItem":
+      return { colSpan: 2, rowSpan: 2 };
     case "recipe":
       return { colSpan: 1, rowSpan: 2 };
     case "resource":
@@ -276,6 +278,7 @@ function getCategoryLabel(category: InventoryCategory): string {
   const labels: Record<InventoryCategory, string> = {
     equipment: "GEAR",
     consumable: "CONS",
+    keyItem: "KEY",
     weaponPart: "PART",
     recipe: "RECIPE",
     resource: "RESOURCE",
@@ -847,6 +850,9 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
               </button>
               <button class="inventory-workspace-filter-btn ${selectedCategory === "consumable" ? "inventory-workspace-filter-btn--active" : ""}" data-category="consumable">
                 <span>CONSUMABLES</span><span>${vm.countsByCategory.consumable}</span>
+              </button>
+              <button class="inventory-workspace-filter-btn ${selectedCategory === "keyItem" ? "inventory-workspace-filter-btn--active" : ""}" data-category="keyItem">
+                <span>KEY ITEMS</span><span>${vm.countsByCategory.keyItem}</span>
               </button>
               <button class="inventory-workspace-filter-btn ${selectedCategory === "weaponPart" ? "inventory-workspace-filter-btn--active" : ""}" data-category="weaponPart">
                 <span>WEAPON PARTS</span><span>${vm.countsByCategory.weaponPart}</span>

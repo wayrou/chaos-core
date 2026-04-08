@@ -3,6 +3,7 @@ import {
   getImportedFieldMap,
 } from "../content/technica";
 import { loadCampaignProgress } from "../core/campaign";
+import { createEmptyResourceWallet, RESOURCE_KEYS } from "../core/resources";
 import type { ImportedFieldEnemyDefinition } from "../content/technica/types";
 import type { FieldEnemy, FieldMap, FieldObject } from "./types";
 
@@ -213,12 +214,10 @@ function createImportedSpawnKey(mapId: string, definitionId: string, instanceInd
 
 function buildImportedEnemyDrops(definition: ImportedFieldEnemyDefinition): FieldEnemy["drops"] | undefined {
   const wad = coerceNonNegativeInteger(definition.drops?.wad, 0);
-  const resources = {
-    metalScrap: coerceNonNegativeInteger(definition.drops?.resources?.metalScrap, 0),
-    wood: coerceNonNegativeInteger(definition.drops?.resources?.wood, 0),
-    chaosShards: coerceNonNegativeInteger(definition.drops?.resources?.chaosShards, 0),
-    steamComponents: coerceNonNegativeInteger(definition.drops?.resources?.steamComponents, 0),
-  };
+  const resources = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    resources[key] = coerceNonNegativeInteger(definition.drops?.resources?.[key], 0);
+  });
   const items = Array.isArray(definition.drops?.items)
     ? definition.drops.items.flatMap((item) => {
         if (!item || typeof item !== "object" || typeof item.id !== "string" || !item.id.trim()) {
@@ -238,10 +237,7 @@ function buildImportedEnemyDrops(definition: ImportedFieldEnemyDefinition): Fiel
 
   if (
     wad <= 0 &&
-    resources.metalScrap <= 0 &&
-    resources.wood <= 0 &&
-    resources.chaosShards <= 0 &&
-    resources.steamComponents <= 0 &&
+    RESOURCE_KEYS.every((key) => resources[key] <= 0) &&
     items.length === 0
   ) {
     return undefined;
@@ -251,6 +247,31 @@ function buildImportedEnemyDrops(definition: ImportedFieldEnemyDefinition): Fiel
     wad,
     resources,
     items,
+  };
+}
+
+function buildObjectEnemyDrops(object: FieldObject): FieldEnemy["drops"] | undefined {
+  const rawDrops = object.metadata?.drops as Record<string, unknown> | undefined;
+  if (!rawDrops) {
+    return undefined;
+  }
+
+  const wad = coerceNonNegativeInteger(rawDrops.wad, 0);
+  const resources = {
+    metalScrap: coerceNonNegativeInteger((rawDrops.resources as Record<string, unknown> | undefined)?.metalScrap, 0),
+    wood: coerceNonNegativeInteger((rawDrops.resources as Record<string, unknown> | undefined)?.wood, 0),
+    chaosShards: coerceNonNegativeInteger((rawDrops.resources as Record<string, unknown> | undefined)?.chaosShards, 0),
+    steamComponents: coerceNonNegativeInteger((rawDrops.resources as Record<string, unknown> | undefined)?.steamComponents, 0),
+  };
+
+  if (wad <= 0 && Object.values(resources).every((amount) => amount <= 0)) {
+    return undefined;
+  }
+
+  return {
+    wad,
+    resources,
+    items: [],
   };
 }
 
@@ -314,7 +335,7 @@ export function syncFieldEnemiesForMap(
           typeof object.metadata?.spritePath === "string"
             ? object.metadata.spritePath
             : existing?.spritePath,
-        drops: existing?.drops,
+        drops: existing?.drops ?? buildObjectEnemyDrops(object),
       };
 
       if (!existing) {

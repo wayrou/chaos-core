@@ -23,6 +23,7 @@ import { getUnitManagementStandIconPath } from "../../core/portraits";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { createEmptyResourceWallet } from "../../core/resources";
 import type { TheaterDeploymentPreset, TheaterSquadPreset } from "../../core/types";
 import {
   clampSquadName,
@@ -306,7 +307,23 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
           const accessories = Object.values(allEquipment).filter((eq) => eq.slot === "accessory"); if (accessories[0]) nextLoadout.accessory1 = accessories[0].id; if (accessories[1]) nextLoadout.accessory2 = accessories[1].id;
           nextUnitsById[id] = { ...unit, loadout: nextLoadout };
         });
-        return { ...prev, wad: 9999, resources: { metalScrap: 99, wood: 99, chaosShards: 99, steamComponents: 99 }, equipmentById: { ...(prev.equipmentById || {}), ...allEquipment }, unitsById: nextUnitsById };
+        return {
+          ...prev,
+          wad: 9999,
+          resources: createEmptyResourceWallet({
+            metalScrap: 99,
+            wood: 99,
+            chaosShards: 99,
+            steamComponents: 99,
+            alloy: 99,
+            drawcord: 99,
+            fittings: 99,
+            resin: 99,
+            chargeCells: 99,
+          }),
+          equipmentById: { ...(prev.equipmentById || {}), ...allEquipment },
+          unitsById: nextUnitsById,
+        };
       });
       return renderRosterScreen(returnTo);
     }

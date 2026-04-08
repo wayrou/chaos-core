@@ -24,6 +24,7 @@ import {
   type SkirmishObjectiveType,
   type SkirmishPlaylist,
   type SkirmishRoundSpec,
+  type TheaterRuntimeContext,
 } from "./types";
 import {
   createSquadOnlineMatch,
@@ -134,6 +135,15 @@ function cloneCoopParticipant(
     sessionSlot: participant?.sessionSlot ?? null,
     stagingState: participant?.stagingState ?? "disconnected",
     lastSafeMapId: participant?.lastSafeMapId ?? null,
+    currentTheaterId: participant?.currentTheaterId ?? null,
+    assignedSquadId: participant?.assignedSquadId ?? null,
+    currentRoomId: participant?.currentRoomId ?? null,
+    operationPhase: participant?.operationPhase ?? null,
+    theaterSnapshot: participant?.theaterSnapshot ?? null,
+    battleSnapshot: participant?.battleSnapshot ?? null,
+    pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+      participant?.pendingTheaterBattleConfirmation,
+    ),
   };
 }
 
@@ -148,6 +158,39 @@ function clonePendingTheaterBattleConfirmation(
         squadId: pending.squadId ?? null,
       }
     : null;
+}
+
+function cloneTheaterRuntimeContext(
+  context: TheaterRuntimeContext | null | undefined,
+): TheaterRuntimeContext | null {
+  return context
+    ? {
+        theaterId: context.theaterId,
+        operationId: context.operationId ?? null,
+        snapshot: context.snapshot,
+        phase: context.phase ?? null,
+        battleSnapshot: context.battleSnapshot ?? null,
+        pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+          context.pendingTheaterBattleConfirmation,
+        ),
+        updatedAt: context.updatedAt ?? Date.now(),
+      }
+    : null;
+}
+
+function cloneTheaterRuntimeContexts(
+  contexts?: Record<string, TheaterRuntimeContext> | null,
+): Record<string, TheaterRuntimeContext> {
+  if (!contexts) {
+    return {};
+  }
+  return Object.entries(contexts).reduce((acc, [theaterId, context]) => {
+    const cloned = cloneTheaterRuntimeContext(context);
+    if (cloned) {
+      acc[theaterId] = cloned;
+    }
+    return acc;
+  }, {} as Record<string, TheaterRuntimeContext>);
 }
 
 function buildCoopParticipants(
@@ -192,6 +235,15 @@ function buildCoopParticipants(
       sessionSlot,
       stagingState,
       lastSafeMapId,
+      currentTheaterId: previous?.currentTheaterId ?? null,
+      assignedSquadId: previous?.assignedSquadId ?? null,
+      currentRoomId: previous?.currentRoomId ?? null,
+      operationPhase: previous?.operationPhase ?? null,
+      theaterSnapshot: previous?.theaterSnapshot ?? null,
+      battleSnapshot: previous?.battleSnapshot ?? null,
+      pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+        previous?.pendingTheaterBattleConfirmation,
+      ),
     };
   });
 }
@@ -212,6 +264,7 @@ function normalizeCoopOperationsActivity(
     selectedSlots: normalizedSelectedSlots,
     economyPreset: activity.economyPreset ?? "shared",
     sessionId: activity.sessionId ?? null,
+    theaterContexts: cloneTheaterRuntimeContexts(activity.theaterContexts),
     operationSnapshot: activity.operationSnapshot ?? null,
     battleSnapshot: activity.battleSnapshot ?? null,
     operationPhase: activity.operationPhase ?? null,
@@ -260,6 +313,7 @@ function cloneActivity(activity: LobbyActivity | null | undefined): LobbyActivit
       participants: createNetworkSlotRecord((slot) =>
         cloneCoopParticipant(activity.coopOperations.participants?.[slot], slot),
       ),
+      theaterContexts: cloneTheaterRuntimeContexts(activity.coopOperations.theaterContexts),
       operationSnapshot: activity.coopOperations.operationSnapshot ?? null,
       battleSnapshot: activity.coopOperations.battleSnapshot ?? null,
       operationPhase: activity.coopOperations.operationPhase ?? null,
@@ -755,6 +809,7 @@ export function startCoopOperationsActivity(
         selectedSlots: normalizedSlots,
         economyPreset: "shared",
         participants: buildCoopParticipants(lobby.members, lobby.hostSlot, normalizedSlots, "staging"),
+        theaterContexts: {},
         operationSnapshot: null,
         battleSnapshot: null,
         operationPhase: null,
@@ -795,6 +850,7 @@ export function updateCoopOperationsSelection(
           lobby.activity.coopOperations.status,
           lobby.activity.coopOperations.participants,
         ),
+        theaterContexts: cloneTheaterRuntimeContexts(lobby.activity.coopOperations.theaterContexts),
         operationSnapshot: lobby.activity.coopOperations.operationSnapshot ?? null,
         battleSnapshot: lobby.activity.coopOperations.battleSnapshot ?? null,
         operationPhase: lobby.activity.coopOperations.operationPhase ?? null,
@@ -829,6 +885,7 @@ export function launchCoopOperationsActivity(
           sessionId: options.sessionId ?? lobby.activity.coopOperations.sessionId ?? createLobbyId("coop_session"),
           economyPreset: options.economyPreset ?? lobby.activity.coopOperations.economyPreset ?? "shared",
           status: "active",
+          theaterContexts: cloneTheaterRuntimeContexts(lobby.activity.coopOperations.theaterContexts),
           operationSnapshot: lobby.activity.coopOperations.operationSnapshot ?? null,
           battleSnapshot: lobby.activity.coopOperations.battleSnapshot ?? null,
           operationPhase: lobby.activity.coopOperations.operationPhase ?? null,
@@ -870,6 +927,18 @@ export function syncCoopOperationsRuntime(
     state.session.mode === "coop_operations"
       ? clonePendingTheaterBattleConfirmation(state.session.pendingTheaterBattleConfirmation)
       : null;
+  const nextTheaterContexts = cloneTheaterRuntimeContexts(
+    state.session.mode === "coop_operations"
+      ? state.session.activeTheaterContexts
+      : activity.theaterContexts,
+  );
+  const activeTheater = state.session.mode === "coop_operations" ? state.operation?.theater ?? null : null;
+  const activeBattle = state.session.mode === "coop_operations" ? state.currentBattle ?? null : null;
+  const activeBattleSquadId =
+    activeBattle?.theaterBonuses?.squadId
+    ?? activeBattle?.theaterMeta?.squadId
+    ?? nextPendingTheaterBattleConfirmation?.squadId
+    ?? null;
   const nextParticipants = createNetworkSlotRecord((slot) => {
     const participant = cloneCoopParticipant(activity.participants?.[slot], slot);
     if (!participant.selected || !participant.sessionSlot) {
@@ -879,6 +948,45 @@ export function syncCoopOperationsRuntime(
     if (!sessionPlayer) {
       return participant;
     }
+    const assignment = state.session.theaterAssignments?.[participant.sessionSlot] ?? null;
+    const theaterContext = assignment?.theaterId ? nextTheaterContexts[assignment.theaterId] ?? null : null;
+    const assignmentRoomId =
+      assignment?.roomId
+      ?? sessionPlayer.lastSafeRoomId
+      ?? activeTheater?.currentRoomId
+      ?? null;
+    const assignmentSquadId = assignment?.squadId ?? sessionPlayer.assignedSquadId ?? null;
+    const participantTheaterSnapshot = theaterContext?.snapshot ?? (
+      activeTheater
+        ? JSON.stringify({
+            ...activeTheater,
+            currentRoomId: assignmentRoomId ?? activeTheater.currentRoomId,
+            selectedRoomId: assignmentRoomId ?? activeTheater.selectedRoomId,
+            currentNodeId: assignmentRoomId ?? activeTheater.currentNodeId ?? activeTheater.currentRoomId,
+            selectedNodeId: assignmentRoomId ?? activeTheater.selectedNodeId ?? activeTheater.selectedRoomId,
+            selectedSquadId: assignmentSquadId ?? activeTheater.selectedSquadId,
+          })
+        : null
+    );
+    const participantBattleSnapshot =
+      theaterContext?.battleSnapshot
+      ?? (activeBattle && assignmentSquadId && activeBattleSquadId === assignmentSquadId
+        ? JSON.stringify(activeBattle)
+        : null);
+    const participantPendingTheaterBattleConfirmation =
+      clonePendingTheaterBattleConfirmation(theaterContext?.pendingTheaterBattleConfirmation)
+      ?? (
+        nextPendingTheaterBattleConfirmation
+        && (!nextPendingTheaterBattleConfirmation.squadId || nextPendingTheaterBattleConfirmation.squadId === assignmentSquadId)
+          ? clonePendingTheaterBattleConfirmation(nextPendingTheaterBattleConfirmation)
+          : null
+      );
+    const participantOperationPhase =
+      participantBattleSnapshot
+        ? "battle"
+        : sessionPlayer.stagingState === "theater"
+          ? "operation"
+          : theaterContext?.phase ?? nextOperationPhase;
     return {
       ...participant,
       connected: sessionPlayer.connected,
@@ -886,6 +994,13 @@ export function syncCoopOperationsRuntime(
       authorityRole: sessionPlayer.authorityRole,
       stagingState: sessionPlayer.stagingState,
       lastSafeMapId: sessionPlayer.lastSafeMapId ?? participant.lastSafeMapId,
+      currentTheaterId: assignment?.theaterId ?? sessionPlayer.currentTheaterId ?? participant.currentTheaterId,
+      assignedSquadId: assignmentSquadId,
+      currentRoomId: assignmentRoomId,
+      operationPhase: participantOperationPhase,
+      theaterSnapshot: participantTheaterSnapshot,
+      battleSnapshot: participantBattleSnapshot,
+      pendingTheaterBattleConfirmation: participantPendingTheaterBattleConfirmation,
     };
   });
   const nextLobby: LobbyState = {
@@ -894,6 +1009,7 @@ export function syncCoopOperationsRuntime(
       kind: "coop_operations",
       coopOperations: {
         ...activity,
+        theaterContexts: nextTheaterContexts,
         operationSnapshot: nextOperationSnapshot,
         battleSnapshot: nextBattleSnapshot,
         operationPhase: nextOperationPhase,

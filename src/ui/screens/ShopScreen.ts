@@ -24,6 +24,7 @@ import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { getResourceEntries, RESOURCE_KEYS, type ResourceKey } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -217,6 +218,30 @@ const RECIPE_ITEMS: ShopItem[] = [
 
 let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell" = "paks";
 
+const SHOP_RESOURCE_PRICE_WEIGHTS: Record<ResourceKey, number> = {
+  metalScrap: 5,
+  wood: 3,
+  chaosShards: 10,
+  steamComponents: 15,
+  alloy: 18,
+  drawcord: 12,
+  fittings: 14,
+  resin: 12,
+  chargeCells: 20,
+};
+
+function estimateUnlockablePrice(cost?: Partial<Record<ResourceKey, number>> & { wad?: number }): number {
+  if (!cost) {
+    return 0;
+  }
+
+  if ((cost.wad ?? 0) > 0) {
+    return cost.wad ?? 0;
+  }
+
+  return RESOURCE_KEYS.reduce((total, key) => total + ((cost[key] ?? 0) * SHOP_RESOURCE_PRICE_WEIGHTS[key]), 0);
+}
+
 export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -302,6 +327,18 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
             <span class="resource-value">${state.resources?.steamComponents ?? 0}</span>
             <span class="resource-label">Steam</span>
           </div>
+          ${getResourceEntries(state.resources, { includeZero: true }).filter((entry) => (
+            entry.key === "alloy"
+            || entry.key === "drawcord"
+            || entry.key === "fittings"
+            || entry.key === "resin"
+            || entry.key === "chargeCells"
+          )).map((entry) => `
+            <div class="resource-item">
+              <span class="resource-value">${entry.amount}</span>
+              <span class="resource-label">${entry.label}</span>
+            </div>
+          `).join("")}
         </div>
       </div>
     </div>
@@ -349,7 +386,7 @@ function renderShopContent(state: any): string {
           id: unlock.id,
           name: unlock.displayName,
           description: unlock.description,
-          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
+          price: estimateUnlockablePrice(unlock.cost),
           category: "unlockable" as any,
           rarity: unlock.rarity,
         }));
@@ -493,7 +530,7 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
           id: unlock.id,
           name: unlock.displayName,
           description: unlock.description,
-          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
+          price: estimateUnlockablePrice(unlock.cost),
           category: "unlockable" as any,
           rarity: unlock.rarity,
         };

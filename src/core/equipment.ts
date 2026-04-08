@@ -5,6 +5,12 @@
 
 import { GameState } from "./types";
 import { getSettings } from "./settings";
+import type {
+  WeaponAmmoProfile,
+  WeaponCardRules,
+  WeaponClutchDefinition,
+  WeaponHeatProfile,
+} from "./weaponData";
 import {
   getAllImportedCards,
   getAllImportedGear,
@@ -124,6 +130,7 @@ export interface EquipmentCard {
   sourceEquipmentId?: string;
   sourceClassId?: string;
   artPath?: string;
+  weaponRules?: Partial<WeaponCardRules>;
 }
 
 // ----------------------------------------------------------------------------
@@ -177,6 +184,9 @@ export interface WeaponEquipment {
   ammoMax?: number;
   quickReloadStrain?: number;
   fullReloadStrain?: number;
+  clutches?: WeaponClutchDefinition[];
+  heatProfile?: WeaponHeatProfile;
+  ammoProfile?: WeaponAmmoProfile;
   cardsGranted: string[];
   moduleSlots: number;
   attachedModules: string[];

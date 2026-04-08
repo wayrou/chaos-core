@@ -38,6 +38,7 @@ import {
   GearChassis,
   ALL_CHASSIS,
 } from "../../data/gearChassis";
+import { createEmptyResourceWallet, subtractResourceWallet } from "../../core/resources";
 import {
   ALL_DOCTRINES,
   getDoctrineById,
@@ -1227,12 +1228,7 @@ export function attachEndlessCraftListeners(state: any): void {
         const cost = getEndlessRecipeCost(recipe.materials);
         updateGameState(prev => ({
           ...prev,
-          resources: {
-            metalScrap: prev.resources.metalScrap - cost.metalScrap,
-            wood: prev.resources.wood - cost.wood,
-            chaosShards: prev.resources.chaosShards - cost.chaosShards,
-            steamComponents: prev.resources.steamComponents - cost.steamComponents,
-          },
+          resources: subtractResourceWallet(prev.resources ?? createEmptyResourceWallet(), cost),
         }));
 
         // Add to inventory

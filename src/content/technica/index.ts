@@ -1,7 +1,6 @@
 import type { FieldMap } from "../../field/types";
 import { upsertLibraryCard } from "../../core/gearWorkbench";
 import type { Quest } from "../../quests/types";
-import generatedContentVersion from "./generated/version.json";
 import type {
   DisabledTechnicaContent,
   ImportedCard,
@@ -10,16 +9,16 @@ import type {
   ImportedDialogue,
   ImportedFieldEnemyDefinition,
   ImportedFieldMod,
+  ImportedFaction,
   ImportedGear,
   ImportedItem,
+  ImportedKeyItem,
   ImportedMailEntry,
   ImportedNpcTemplate,
   ImportedOperationDefinition,
   ImportedUnitTemplate,
   TechnicaContentType,
 } from "./types";
-
-void generatedContentVersion;
 
 type JsonModule<TValue> = {
   default: TValue;
@@ -33,6 +32,8 @@ const importedMaps = new Map<string, FieldMap>();
 const importedQuests = new Map<string, Quest>();
 const importedDialogues = new Map<string, ImportedDialogue>();
 const importedMailEntries = new Map<string, ImportedMailEntry>();
+const importedKeyItems = new Map<string, ImportedKeyItem>();
+const importedFactions = new Map<string, ImportedFaction>();
 const importedItems = new Map<string, ImportedItem>();
 const importedFieldEnemies = new Map<string, ImportedFieldEnemyDefinition>();
 const importedNpcs = new Map<string, ImportedNpcTemplate>();
@@ -43,10 +44,14 @@ const importedClasses = new Map<string, ImportedClassDefinition>();
 const importedUnits = new Map<string, ImportedUnitTemplate>();
 const importedOperations = new Map<string, ImportedOperationDefinition>();
 const importedCodexEntries = new Map<string, ImportedCodexEntry>();
+const technicaRegistrySnapshots = new Map<string, string>();
+let technicaRegistryFingerprintCache = "";
 const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
   ["dialogue", new Set()],
   ["mail", new Set()],
   ["quest", new Set()],
+  ["key_item", new Set()],
+  ["faction", new Set()],
   ["map", new Set()],
   ["field_enemy", new Set()],
   ["npc", new Set()],
@@ -64,6 +69,8 @@ const GENERATED_RUNTIME_FILE_EXTENSIONS: Record<TechnicaContentType, string> = {
   dialogue: ".dialogue.json",
   mail: ".mail.json",
   quest: ".quest.json",
+  key_item: ".key_item.json",
+  faction: ".faction.json",
   map: ".fieldmap.json",
   field_enemy: ".field_enemy.json",
   npc: ".npc.json",
@@ -92,6 +99,11 @@ function loadGeneratedRegistry<TValue extends { id: string }>(
 
 function buildGeneratedRuntimePath(contentType: TechnicaContentType, contentId: string): string {
   return `/src/content/technica/generated/${contentType}/${encodeURIComponent(contentId)}${GENERATED_RUNTIME_FILE_EXTENSIONS[contentType]}`;
+}
+
+function recordTechnicaRegistrySnapshot(contentType: TechnicaContentType, contentId: string, value: unknown): void {
+  technicaRegistrySnapshots.set(`${contentType}:${contentId}`, JSON.stringify(value));
+  technicaRegistryFingerprintCache = "";
 }
 
 async function fetchGeneratedRuntimeEntry<TValue>(contentType: TechnicaContentType, contentId: string): Promise<TValue | null> {
@@ -170,6 +182,22 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   );
 
   loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedFaction>>("./generated/faction/*.faction.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedFaction>
+    >,
+    registerImportedFaction
+  );
+
+  loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedKeyItem>>("./generated/key_item/*.key_item.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedKeyItem>
+    >,
+    registerImportedKeyItem
+  );
+
+  loadGeneratedRegistry(
     import.meta.glob<JsonModule<ImportedItem>>("./generated/item/*.item.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedItem>
@@ -241,14 +269,9 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   );
 }
 
-if (import.meta.hot) {
-  import.meta.hot.accept(() => {
-    window.location.reload();
-  });
-}
-
 export function registerImportedFieldMap(map: FieldMap): void {
   importedMaps.set(map.id, map);
+  recordTechnicaRegistrySnapshot("map", map.id, map);
 }
 
 export function getImportedFieldMap(mapId: string): FieldMap | null {
@@ -265,6 +288,7 @@ export function getAllImportedFieldMaps(): FieldMap[] {
 
 export function registerImportedQuest(quest: Quest): void {
   importedQuests.set(quest.id, quest);
+  recordTechnicaRegistrySnapshot("quest", quest.id, quest);
 }
 
 export function getImportedQuest(questId: string): Quest | null {
@@ -277,6 +301,7 @@ export function getAllImportedQuests(): Quest[] {
 
 export function registerImportedFieldEnemyDefinition(definition: ImportedFieldEnemyDefinition): void {
   importedFieldEnemies.set(definition.id, definition);
+  recordTechnicaRegistrySnapshot("field_enemy", definition.id, definition);
 }
 
 export function getImportedFieldEnemyDefinition(definitionId: string): ImportedFieldEnemyDefinition | null {
@@ -289,6 +314,7 @@ export function getAllImportedFieldEnemyDefinitions(): ImportedFieldEnemyDefinit
 
 export function registerImportedDialogue(dialogue: ImportedDialogue): void {
   importedDialogues.set(dialogue.id, dialogue);
+  recordTechnicaRegistrySnapshot("dialogue", dialogue.id, dialogue);
 }
 
 export function getImportedDialogue(dialogueId: string): ImportedDialogue | null {
@@ -305,6 +331,7 @@ export function hasImportedDialogue(dialogueId: string): boolean {
 
 export function registerImportedMailEntry(entry: ImportedMailEntry): void {
   importedMailEntries.set(entry.id, entry);
+  recordTechnicaRegistrySnapshot("mail", entry.id, entry);
 }
 
 export function getImportedMailEntry(entryId: string): ImportedMailEntry | null {
@@ -315,8 +342,35 @@ export function getAllImportedMailEntries(): ImportedMailEntry[] {
   return Array.from(importedMailEntries.values());
 }
 
+export function registerImportedKeyItem(item: ImportedKeyItem): void {
+  importedKeyItems.set(item.id, item);
+  recordTechnicaRegistrySnapshot("key_item", item.id, item);
+}
+
+export function getImportedKeyItem(itemId: string): ImportedKeyItem | null {
+  return importedKeyItems.get(itemId) || null;
+}
+
+export function getAllImportedKeyItems(): ImportedKeyItem[] {
+  return Array.from(importedKeyItems.values());
+}
+
+export function registerImportedFaction(faction: ImportedFaction): void {
+  importedFactions.set(faction.id, faction);
+  recordTechnicaRegistrySnapshot("faction", faction.id, faction);
+}
+
+export function getImportedFaction(factionId: string): ImportedFaction | null {
+  return importedFactions.get(factionId) || null;
+}
+
+export function getAllImportedFactions(): ImportedFaction[] {
+  return Array.from(importedFactions.values());
+}
+
 export function registerImportedItem(item: ImportedItem): void {
   importedItems.set(item.id, item);
+  recordTechnicaRegistrySnapshot("item", item.id, item);
 }
 
 export function getImportedItem(itemId: string): ImportedItem | null {
@@ -333,6 +387,7 @@ export function getImportedStarterItems(): ImportedItem[] {
 
 export function registerImportedNpc(npc: ImportedNpcTemplate): void {
   importedNpcs.set(npc.id, npc);
+  recordTechnicaRegistrySnapshot("npc", npc.id, npc);
 }
 
 export function getImportedNpc(npcId: string): ImportedNpcTemplate | null {
@@ -345,6 +400,7 @@ export function getAllImportedNpcs(): ImportedNpcTemplate[] {
 
 export function registerImportedGear(gear: ImportedGear): void {
   importedGear.set(gear.id, gear);
+  recordTechnicaRegistrySnapshot("gear", gear.id, gear);
 }
 
 export function getImportedGear(gearId: string): ImportedGear | null {
@@ -361,6 +417,7 @@ export function getImportedStarterGear(): ImportedGear[] {
 
 export function registerImportedCard(card: ImportedCard): void {
   importedCards.set(card.id, card);
+  recordTechnicaRegistrySnapshot("card", card.id, card);
   upsertLibraryCard({
     id: card.id,
     name: card.name,
@@ -374,6 +431,7 @@ export function registerImportedCard(card: ImportedCard): void {
 
 export function registerImportedFieldMod(fieldMod: ImportedFieldMod): void {
   importedFieldMods.set(fieldMod.id, fieldMod);
+  recordTechnicaRegistrySnapshot("fieldmod", fieldMod.id, fieldMod);
 }
 
 export function getImportedFieldMod(fieldModId: string): ImportedFieldMod | null {
@@ -410,6 +468,7 @@ export function getImportedStarterBattleCards(): ImportedCard[] {
 
 export function registerImportedClass(classDefinition: ImportedClassDefinition): void {
   importedClasses.set(classDefinition.id, classDefinition);
+  recordTechnicaRegistrySnapshot("class", classDefinition.id, classDefinition);
 }
 
 export function registerImportedClassDefinition(classDefinition: ImportedClassDefinition): void {
@@ -434,6 +493,7 @@ export function getAllImportedClassDefinitions(): ImportedClassDefinition[] {
 
 export function registerImportedUnit(unit: ImportedUnitTemplate): void {
   importedUnits.set(unit.id, unit);
+  recordTechnicaRegistrySnapshot("unit", unit.id, unit);
 }
 
 export function registerImportedUnitTemplate(unit: ImportedUnitTemplate): void {
@@ -474,6 +534,7 @@ export function getImportedEncounterUnitsForFloorOrdinal(floorOrdinal: number): 
 
 export function registerImportedOperation(operation: ImportedOperationDefinition): void {
   importedOperations.set(operation.id, operation);
+  recordTechnicaRegistrySnapshot("operation", operation.id, operation);
 }
 
 export function getImportedOperation(operationId: string): ImportedOperationDefinition | null {
@@ -486,6 +547,7 @@ export function getAllImportedOperations(): ImportedOperationDefinition[] {
 
 export function registerImportedCodexEntry(entry: ImportedCodexEntry): void {
   importedCodexEntries.set(entry.id, entry);
+  recordTechnicaRegistrySnapshot("codex", entry.id, entry);
 }
 
 export function getImportedCodexEntry(entryId: string): ImportedCodexEntry | null {
@@ -500,124 +562,27 @@ export function isTechnicaContentDisabled(contentType: TechnicaContentType, cont
   return disabledContentIds.get(contentType)?.has(contentId) ?? false;
 }
 
+export function getTechnicaRegistryFingerprint(): string {
+  if (!technicaRegistryFingerprintCache) {
+    technicaRegistryFingerprintCache = Array.from(technicaRegistrySnapshots.entries())
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, snapshot]) => `${key}:${snapshot}`)
+      .join("|");
+  }
+
+  return technicaRegistryFingerprintCache;
+}
+
 export async function reloadGeneratedTechnicaEntry(
   contentType: TechnicaContentType,
   contentId: string
 ): Promise<boolean> {
-  switch (contentType) {
-    case "map": {
-      const entry = await fetchGeneratedRuntimeEntry<FieldMap>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedFieldMap(entry);
-      return true;
-    }
-    case "quest": {
-      const entry = await fetchGeneratedRuntimeEntry<Quest>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedQuest(entry);
-      return true;
-    }
-    case "field_enemy": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedFieldEnemyDefinition>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedFieldEnemyDefinition(entry);
-      return true;
-    }
-    case "dialogue": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedDialogue>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedDialogue(entry);
-      return true;
-    }
-    case "mail": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedMailEntry>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedMailEntry(entry);
-      return true;
-    }
-    case "item": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedItem>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedItem(entry);
-      return true;
-    }
-    case "npc": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedNpcTemplate>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedNpc(entry);
-      return true;
-    }
-    case "gear": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedGear>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedGear(entry);
-      return true;
-    }
-    case "card": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedCard>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedCard(entry);
-      return true;
-    }
-    case "fieldmod": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedFieldMod>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedFieldMod(entry);
-      return true;
-    }
-    case "class": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedClassDefinition>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedClass(entry);
-      return true;
-    }
-    case "unit": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedUnitTemplate>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedUnit(entry);
-      return true;
-    }
-    case "operation": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedOperationDefinition>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedOperation(entry);
-      return true;
-    }
-    case "codex": {
-      const entry = await fetchGeneratedRuntimeEntry<ImportedCodexEntry>(contentType, contentId);
-      if (!entry) {
-        return false;
-      }
-      registerImportedCodexEntry(entry);
-      return true;
-    }
-    default:
-      return false;
+  const entry = await fetchGeneratedRuntimeEntry<unknown>(contentType, contentId);
+  if (!entry) {
+    return false;
   }
+
+  const { importTechnicaRuntimeEntry } = await import("./importer");
+  importTechnicaRuntimeEntry(contentType, entry, { syncToGameState: true });
+  return true;
 }

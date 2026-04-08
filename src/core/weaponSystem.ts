@@ -4,32 +4,110 @@
 // ============================================================================
 
 import { WeaponEquipment } from "./equipment";
-import { GameState } from "./types";
-import { getSettings } from "./settings";
+import type {
+  WeaponAmmoProfile,
+  WeaponCardRules,
+  WeaponClutchDefinition,
+  WeaponClutchEffect,
+  WeaponHeatProfile,
+  WeaponOverheatEffect,
+  WeaponQueuedModifierState,
+} from "./weaponData";
 
 // ----------------------------------------------------------------------------
 // WEAPON NODE SYSTEM
-// Each mechanical weapon has 6 nodes that can be damaged
 // ----------------------------------------------------------------------------
 
 export type WeaponNodeId = 1 | 2 | 3 | 4 | 5 | 6;
-
 export type NodeDamageLevel = "ok" | "damaged" | "broken" | "destroyed";
+export type HeatZone = "stable" | "warning" | "critical";
+export type WeaponActionKind = "quick_reload" | "full_reload" | "vent" | "field_patch";
 
 export interface WeaponNode {
   id: WeaponNodeId;
   name: string;
-  altName: string; // Different name for different weapon types
+  altName: string;
   status: NodeDamageLevel;
 }
 
+export interface WeaponRuntimeState {
+  equipmentId: string;
+  currentHeat: number;
+  currentAmmo: number;
+  wear: number;
+  nodes: Record<WeaponNodeId, NodeDamageLevel>;
+  activeClutchIds: string[];
+  queuedModifier: WeaponQueuedModifierState;
+  jammedTurnsRemaining: number;
+  disabledTurnsRemaining: number;
+  weaponCardLockTurnsRemaining: number;
+  skipAttackTurnsRemaining: number;
+  maxHeatPenalty: number;
+  totalHeatRemovedThisTurn: number;
+  firstWeaponCardPlayedThisTurn: boolean;
+  allowMoveAfterAttack: boolean;
+  isJammed: boolean;
+  clutchActive: boolean;
+  doubleClutchActive: boolean;
+}
+
+export interface WeaponCardModifierSnapshot {
+  accuracyDelta: number;
+  damageDelta: number;
+  damageMultiplier: number;
+  strainDelta: number;
+  ignoreDef: number;
+  ignoreCover: boolean;
+  rangeDelta: number;
+  rangeOverride: number | null;
+  extraAttacks: Array<{ count: number; accuracyDelta: number; damageDelta: number }>;
+  statusesOnHit: Array<{ status: "burning" | "rooted" | "immobilized" | "stunned"; duration: number }>;
+  pullTargetTiles: number;
+  pullSelfTiles: number;
+  moveBeforeAttackTiles: number;
+  freeAttackMove: boolean;
+  splashDamageInRange: number;
+  selfBuffs: Array<{ stat: "atk" | "def" | "agi" | "acc"; amount: number; duration: number }>;
+  selfDebuffs: Array<{ stat: "atk" | "def" | "agi" | "acc"; amount: number; duration: number }>;
+  unsupportedNotes: string[];
+  forceOverheat: boolean;
+}
+
+const EMPTY_QUEUED_MODIFIER_STATE: WeaponQueuedModifierState = {
+  strainDelta: 0,
+  accuracyDelta: 0,
+  damageDelta: 0,
+};
+
+const EMPTY_MODIFIER_SNAPSHOT: WeaponCardModifierSnapshot = {
+  accuracyDelta: 0,
+  damageDelta: 0,
+  damageMultiplier: 1,
+  strainDelta: 0,
+  ignoreDef: 0,
+  ignoreCover: false,
+  rangeDelta: 0,
+  rangeOverride: null,
+  extraAttacks: [],
+  statusesOnHit: [],
+  pullTargetTiles: 0,
+  pullSelfTiles: 0,
+  moveBeforeAttackTiles: 0,
+  freeAttackMove: false,
+  splashDamageInRange: 0,
+  selfBuffs: [],
+  selfDebuffs: [],
+  unsupportedNotes: [],
+  forceOverheat: false,
+};
+
 export const WEAPON_NODE_NAMES: Record<WeaponNodeId, { primary: string; alt: string }> = {
   1: { primary: "SIGHTS", alt: "STABILIZER" },
-  2: { primary: "BARREL", alt: "EDGE" },
-  3: { primary: "ACTION", alt: "SERVO" },
+  2: { primary: "BARREL", alt: "EMITTER / EDGE" },
+  3: { primary: "ACTION", alt: "DRAW / SERVO" },
   4: { primary: "POWER COUPLING", alt: "TENSIONER" },
   5: { primary: "HEAT SINK", alt: "ARRAY" },
-  6: { primary: "FEED PATH", alt: "MAG LATCH" },
+  6: { primary: "FEED PATH", alt: "MAG LATCH / QUIVER" },
 };
 
 export const NODE_DAMAGE_EFFECTS: Record<WeaponNodeId, { damaged: string; broken: string }> = {
@@ -38,294 +116,686 @@ export const NODE_DAMAGE_EFFECTS: Record<WeaponNodeId, { damaged: string; broken
     broken: "-2 ACC and cannot Overwatch",
   },
   2: {
-    damaged: "Range -1; AoE radius -1; Melee: -1 damage",
-    broken: "Cannot use Arc/AoE cards; Melee: -1 damage",
+    damaged: "Range -1; AoE radius -1; melee attacks deal -1 damage",
+    broken: "AoE / arc cards are unusable; melee attacks deal -1 damage",
   },
   3: {
     damaged: "Multi-attack cards are unplayable",
-    broken: "Weapon cards have 33% chance to jam (no effect, +1 Strain)",
+    broken: "Weapon cards can jam on use",
   },
   4: {
     damaged: "First weapon card each turn costs +1 Strain",
-    broken: "+1 Heat per attack (or +1 Strain if heatless)",
+    broken: "Attacks gain +1 Heat or +1 Strain if heatless",
   },
   5: {
-    damaged: "Max Heat -2; Heat removal effects reduced by 1",
-    broken: "Cannot remove more than 1 Heat/turn",
+    damaged: "Max Heat -2; heat removal effects are reduced by 1",
+    broken: "Cannot remove more than 1 Heat per turn",
   },
   6: {
     damaged: "Ammo cost +1; Quick Reload restores 1 fewer",
-    broken: "Quick Reload fails; Full Reload only half",
+    broken: "Quick Reload fails; Full Reload restores half",
   },
 };
 
-// ----------------------------------------------------------------------------
-// WEAPON RUNTIME STATE
-// Tracks current heat, ammo, wear, and node damage for a weapon in battle
-// ----------------------------------------------------------------------------
+function cloneState(state: WeaponRuntimeState): WeaponRuntimeState {
+  return {
+    ...state,
+    nodes: { ...state.nodes },
+    activeClutchIds: [...state.activeClutchIds],
+    queuedModifier: { ...state.queuedModifier },
+  };
+}
 
-export interface WeaponRuntimeState {
-  equipmentId: string;
-  currentHeat: number;
-  currentAmmo: number;
-  wear: number;
-  nodes: Record<WeaponNodeId, NodeDamageLevel>;
-  isJammed: boolean;
-  clutchActive: boolean;
-  doubleClutchActive: boolean;
+export function getWeaponClutches(weapon: WeaponEquipment): WeaponClutchDefinition[] {
+  if (weapon.clutches && weapon.clutches.length > 0) {
+    return weapon.clutches;
+  }
+
+  const clutches: WeaponClutchDefinition[] = [];
+  if (weapon.clutchToggle) {
+    clutches.push({
+      id: "primary_clutch",
+      label: "Clutch",
+      description: weapon.clutchToggle,
+      effects: [],
+    });
+  }
+  if (weapon.doubleClutch) {
+    clutches.push({
+      id: "secondary_clutch",
+      label: "Double Clutch",
+      description: weapon.doubleClutch,
+      effects: [],
+    });
+  }
+  return clutches;
+}
+
+export function getWeaponHeatProfile(weapon: WeaponEquipment): WeaponHeatProfile | null {
+  if (weapon.heatProfile) {
+    return weapon.heatProfile;
+  }
+  if (!weapon.isMechanical || !weapon.heatCapacity) {
+    return null;
+  }
+  return {
+    capacity: weapon.heatCapacity,
+    passiveDecay: weapon.passiveHeatDecay ?? 1,
+    zones: (weapon.heatZones ?? []).map((zone) => ({
+      min: zone.min,
+      max: zone.max,
+      name: zone.name,
+      effectText: zone.effect,
+    })),
+    overheatSummary: "Weapon overheats and must recover before it can be used again.",
+    overheatEffects: [{ kind: "jam_turns", turns: 1 }],
+  };
+}
+
+export function getWeaponAmmoProfile(weapon: WeaponEquipment): WeaponAmmoProfile | null {
+  if (weapon.ammoProfile) {
+    return weapon.ammoProfile;
+  }
+  if (!weapon.ammoMax) {
+    return null;
+  }
+  return {
+    max: weapon.ammoMax,
+    quickReloadStrain: weapon.quickReloadStrain ?? 1,
+    fullReloadStrain: weapon.fullReloadStrain ?? 0,
+    defaultAttackAmmoCost: 1,
+  };
+}
+
+function syncLegacyClutchFlags(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  const clutchIds = weapon ? getWeaponClutches(weapon).map((clutch) => clutch.id) : [];
+  const primaryId = clutchIds[0];
+  const secondaryId = clutchIds[1];
+  return {
+    ...state,
+    clutchActive: primaryId ? state.activeClutchIds.includes(primaryId) : state.activeClutchIds.length > 0,
+    doubleClutchActive: secondaryId ? state.activeClutchIds.includes(secondaryId) : state.activeClutchIds.length > 1,
+  };
 }
 
 export function createWeaponRuntimeState(weapon: WeaponEquipment): WeaponRuntimeState {
-  return {
-    equipmentId: weapon.id,
-    currentHeat: 0,
-    currentAmmo: weapon.ammoMax ?? 0,
-    wear: weapon.wear ?? 0,
-    nodes: {
-      1: "ok",
-      2: "ok",
-      3: "ok",
-      4: "ok",
-      5: "ok",
-      6: "ok",
-    },
-    isJammed: false,
-    clutchActive: false,
-    doubleClutchActive: false,
-  };
-}
-
-// ----------------------------------------------------------------------------
-// HEAT MECHANICS
-// ----------------------------------------------------------------------------
-
-export function addHeat(state: WeaponRuntimeState, weapon: WeaponEquipment, amount: number): WeaponRuntimeState {
-  if (!weapon.isMechanical || !weapon.heatCapacity) {
-    return state;
-  }
-
-  // Check for damaged heat sink (reduces max capacity by 2)
-  let maxHeat = weapon.heatCapacity;
-  if (state.nodes[5] === "damaged" || state.nodes[5] === "broken") {
-    maxHeat = Math.max(1, maxHeat - 2);
-  }
-
-  // Check for broken power coupling (+1 heat per attack)
-  if (state.nodes[4] === "broken") {
-    amount += 1;
-  }
-
-  const newHeat = Math.min(maxHeat, state.currentHeat + amount);
-
-  // Check for overheat
-  if (newHeat >= maxHeat) {
-    return {
-      ...state,
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  return syncLegacyClutchFlags(
+    {
+      equipmentId: weapon.id,
       currentHeat: 0,
-      isJammed: true,
-    };
-  }
+      currentAmmo: ammoProfile?.max ?? 0,
+      wear: weapon.wear ?? 0,
+      nodes: {
+        1: "ok",
+        2: "ok",
+        3: "ok",
+        4: "ok",
+        5: "ok",
+        6: "ok",
+      },
+      activeClutchIds: [],
+      queuedModifier: { ...EMPTY_QUEUED_MODIFIER_STATE },
+      jammedTurnsRemaining: 0,
+      disabledTurnsRemaining: 0,
+      weaponCardLockTurnsRemaining: 0,
+      skipAttackTurnsRemaining: 0,
+      maxHeatPenalty: 0,
+      totalHeatRemovedThisTurn: 0,
+      firstWeaponCardPlayedThisTurn: false,
+      allowMoveAfterAttack: false,
+      isJammed: false,
+      clutchActive: false,
+      doubleClutchActive: false,
+    },
+    weapon,
+  );
+}
 
-  return {
-    ...state,
-    currentHeat: newHeat,
+export function hasActiveClutch(state: WeaponRuntimeState): boolean {
+  return state.activeClutchIds.length > 0;
+}
+
+export function activateClutch(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  const clutchId = weapon ? getWeaponClutches(weapon)[0]?.id : "primary_clutch";
+  if (!clutchId || state.activeClutchIds.includes(clutchId)) {
+    return syncLegacyClutchFlags(state, weapon);
+  }
+  return syncLegacyClutchFlags(
+    {
+      ...state,
+      activeClutchIds: [...state.activeClutchIds, clutchId],
+    },
+    weapon,
+  );
+}
+
+export function deactivateClutch(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  const clutchId = weapon ? getWeaponClutches(weapon)[0]?.id : "primary_clutch";
+  if (!clutchId) {
+    return syncLegacyClutchFlags(state, weapon);
+  }
+  return syncLegacyClutchFlags(
+    {
+      ...state,
+      activeClutchIds: state.activeClutchIds.filter((id) => id !== clutchId),
+    },
+    weapon,
+  );
+}
+
+export function activateDoubleClutch(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  const clutchId = weapon ? getWeaponClutches(weapon)[1]?.id : "secondary_clutch";
+  if (!clutchId || state.activeClutchIds.includes(clutchId)) {
+    return syncLegacyClutchFlags(state, weapon);
+  }
+  return syncLegacyClutchFlags(
+    {
+      ...state,
+      activeClutchIds: [...state.activeClutchIds, clutchId],
+    },
+    weapon,
+  );
+}
+
+export function deactivateDoubleClutch(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  const clutchId = weapon ? getWeaponClutches(weapon)[1]?.id : "secondary_clutch";
+  if (!clutchId) {
+    return syncLegacyClutchFlags(state, weapon);
+  }
+  return syncLegacyClutchFlags(
+    {
+      ...state,
+      activeClutchIds: state.activeClutchIds.filter((id) => id !== clutchId),
+    },
+    weapon,
+  );
+}
+
+export function toggleWeaponClutch(state: WeaponRuntimeState, weapon: WeaponEquipment, clutchId: string): WeaponRuntimeState {
+  const next = state.activeClutchIds.includes(clutchId)
+    ? { ...state, activeClutchIds: state.activeClutchIds.filter((id) => id !== clutchId) }
+    : { ...state, activeClutchIds: [...state.activeClutchIds, clutchId] };
+  return syncLegacyClutchFlags(next, weapon);
+}
+
+export function resetClutches(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  return syncLegacyClutchFlags(
+    {
+      ...state,
+      activeClutchIds: [],
+    },
+    weapon,
+  );
+}
+
+export function commitClutchWear(state: WeaponRuntimeState): WeaponRuntimeState {
+  return state;
+}
+
+export function getWearPenalties(wear: number): { accPenalty: number; dmgPenalty: number } {
+  if (wear <= 0) {
+    return { accPenalty: 0, dmgPenalty: 0 };
+  }
+  if (wear === 1) {
+    return { accPenalty: 1, dmgPenalty: 0 };
+  }
+  return { accPenalty: wear, dmgPenalty: wear };
+}
+
+export function getEffectiveMaxHeat(state: WeaponRuntimeState, weapon: WeaponEquipment): number {
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!heatProfile) {
+    return 0;
+  }
+  const nodePenalty = state.nodes[5] === "damaged" || state.nodes[5] === "broken" ? 2 : 0;
+  return Math.max(1, heatProfile.capacity - nodePenalty - state.maxHeatPenalty);
+}
+
+export function getHeatZoneProfile(state: WeaponRuntimeState, weapon: WeaponEquipment) {
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!heatProfile) {
+    return null;
+  }
+  return (
+    heatProfile.zones.find((zone) => state.currentHeat >= zone.min && state.currentHeat <= zone.max) ??
+    heatProfile.zones[heatProfile.zones.length - 1] ??
+    null
+  );
+}
+
+export function getHeatZone(state: WeaponRuntimeState, weapon: WeaponEquipment): HeatZone {
+  const profile = getHeatZoneProfile(state, weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!profile || !heatProfile || heatProfile.zones.length <= 1) {
+    return "stable";
+  }
+  if (profile === heatProfile.zones[0]) {
+    return "stable";
+  }
+  if (profile === heatProfile.zones[heatProfile.zones.length - 1]) {
+    return "critical";
+  }
+  return "warning";
+}
+
+export function getHeatZoneColor(zone: HeatZone): string {
+  switch (zone) {
+    case "stable":
+      return "#4ade80";
+    case "warning":
+      return "#fbbf24";
+    case "critical":
+    default:
+      return "#ef4444";
+  }
+}
+
+export function getAccuracyPenalty(state: WeaponRuntimeState): number {
+  let penalty = getWearPenalties(state.wear).accPenalty;
+  if (state.nodes[1] === "damaged") {
+    penalty += 1;
+  } else if (state.nodes[1] === "broken" || state.nodes[1] === "destroyed") {
+    penalty += 2;
+  }
+  return penalty;
+}
+
+export function getDamagePenalty(state: WeaponRuntimeState): number {
+  let penalty = getWearPenalties(state.wear).dmgPenalty;
+  if (state.nodes[2] === "damaged" || state.nodes[2] === "broken") {
+    penalty += 1;
+  }
+  return penalty;
+}
+
+function applyClutchEffect(snapshot: WeaponCardModifierSnapshot, effect: WeaponClutchEffect): WeaponCardModifierSnapshot {
+  const next = { ...snapshot };
+  switch (effect.kind) {
+    case "accuracy":
+      next.accuracyDelta += effect.amount;
+      return next;
+    case "damage":
+      next.damageDelta += effect.amount;
+      return next;
+    case "damage_multiplier":
+      next.damageMultiplier *= effect.multiplier;
+      return next;
+    case "ignore_def":
+      next.ignoreDef += effect.amount;
+      return next;
+    case "ignore_cover":
+      next.ignoreCover = true;
+      return next;
+    case "range_delta":
+      next.rangeDelta += effect.amount;
+      return next;
+    case "range_override":
+      next.rangeOverride = effect.amount;
+      return next;
+    case "extra_attack":
+      next.extraAttacks = [
+        ...next.extraAttacks,
+        { count: effect.count, accuracyDelta: effect.accuracyDelta ?? 0, damageDelta: effect.damageDelta ?? 0 },
+      ];
+      return next;
+    case "apply_status_on_hit":
+      next.statusesOnHit = [...next.statusesOnHit, { status: effect.status, duration: effect.duration }];
+      return next;
+    case "pull_target":
+      next.pullTargetTiles = Math.max(next.pullTargetTiles, effect.tiles);
+      return next;
+    case "pull_self":
+      next.pullSelfTiles = Math.max(next.pullSelfTiles, effect.tiles);
+      return next;
+    case "move_before_attack":
+      next.moveBeforeAttackTiles = Math.max(next.moveBeforeAttackTiles, effect.tiles);
+      return next;
+    case "free_attack_move":
+      next.freeAttackMove = true;
+      return next;
+    case "line_attack":
+      return next;
+    case "splash_in_range":
+      next.splashDamageInRange = Math.max(next.splashDamageInRange, effect.amount);
+      return next;
+    case "self_buff":
+      next.selfBuffs = [...next.selfBuffs, { stat: effect.stat, amount: effect.amount, duration: effect.duration }];
+      return next;
+    case "self_debuff":
+      next.selfDebuffs = [...next.selfDebuffs, { stat: effect.stat, amount: effect.amount, duration: effect.duration }];
+      return next;
+    case "next_card_modifier":
+      next.strainDelta += effect.strainDelta ?? 0;
+      next.accuracyDelta += effect.accuracyDelta ?? 0;
+      next.damageDelta += effect.damageDelta ?? 0;
+      return next;
+    case "unsupported":
+      next.unsupportedNotes = [...next.unsupportedNotes, effect.note];
+      return next;
+    default:
+      return next;
+  }
+}
+
+export function getWeaponCardModifierSnapshot(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+  cardRules?: WeaponCardRules | null,
+): WeaponCardModifierSnapshot {
+  const snapshot = cloneState(state);
+  const result: WeaponCardModifierSnapshot = {
+    ...EMPTY_MODIFIER_SNAPSHOT,
+    accuracyDelta: -getAccuracyPenalty(snapshot),
+    damageDelta: -getDamagePenalty(snapshot),
   };
-}
 
-export function removeHeat(state: WeaponRuntimeState, amount: number): WeaponRuntimeState {
-  // Check for damaged heat sink (reduces cooling by 1)
-  if (state.nodes[5] === "damaged") {
-    amount = Math.max(0, amount - 1);
+  if (snapshot.nodes[2] === "damaged" && (cardRules?.tags.includes("attack") ?? false)) {
+    result.rangeDelta -= 1;
   }
 
-  // Check for broken heat sink (max 1 per turn)
-  if (state.nodes[5] === "broken") {
-    amount = Math.min(1, amount);
+  const heatZone = getHeatZoneProfile(snapshot, weapon);
+  if (heatZone?.modifiers) {
+    result.accuracyDelta += heatZone.modifiers.accuracyDelta ?? 0;
+    result.damageDelta += heatZone.modifiers.damageDelta ?? 0;
+    result.forceOverheat = Boolean(heatZone.modifiers.nextShotOverheats);
   }
 
-  return {
-    ...state,
-    currentHeat: Math.max(0, state.currentHeat - amount),
-  };
+  const clutchMap = new Map(getWeaponClutches(weapon).map((clutch) => [clutch.id, clutch]));
+  snapshot.activeClutchIds.forEach((clutchId) => {
+    const clutch = clutchMap.get(clutchId);
+    if (!clutch) {
+      return;
+    }
+    clutch.effects.forEach((effect) => {
+      const updated = applyClutchEffect(result, effect);
+      Object.assign(result, updated);
+    });
+  });
+
+  result.accuracyDelta += snapshot.queuedModifier.accuracyDelta;
+  result.damageDelta += snapshot.queuedModifier.damageDelta;
+  result.strainDelta += snapshot.queuedModifier.strainDelta;
+
+  return result;
 }
 
-export function passiveCooling(state: WeaponRuntimeState): WeaponRuntimeState {
-  // At start of turn, reduce heat by 1
-  return removeHeat(state, 1);
+export function canUseOverwatch(state: WeaponRuntimeState): boolean {
+  return state.nodes[1] !== "broken" && state.nodes[1] !== "destroyed";
 }
 
-// ----------------------------------------------------------------------------
-// AMMO MECHANICS
-// ----------------------------------------------------------------------------
+export function canUseMultiAttack(state: WeaponRuntimeState): boolean {
+  return state.nodes[3] === "ok";
+}
 
-export function useAmmo(state: WeaponRuntimeState, weapon: WeaponEquipment, amount: number = 1): WeaponRuntimeState {
-  if (!weapon.ammoMax) {
-    return state;
+export function checkWeaponJam(state: WeaponRuntimeState): boolean {
+  return state.nodes[3] === "broken" && Math.random() < 0.33;
+}
+
+export function getExtraStrainCost(state: WeaponRuntimeState, isFirstWeaponCardThisTurn: boolean): number {
+  if (
+    isFirstWeaponCardThisTurn &&
+    (state.nodes[4] === "damaged" || state.nodes[4] === "broken")
+  ) {
+    return 1;
+  }
+  return 0;
+}
+
+export function isWeaponDestroyed(state: WeaponRuntimeState): boolean {
+  return Object.values(state.nodes).some((status) => status === "destroyed");
+}
+
+export function getWeaponCardAmmoCost(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+  cardRules?: WeaponCardRules | null,
+): number {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  if (!ammoProfile) {
+    return 0;
   }
 
-  // Check for damaged feed path (+1 ammo cost)
+  let amount = cardRules?.ammoCost ?? ammoProfile.defaultAttackAmmoCost;
   if (state.nodes[6] === "damaged" || state.nodes[6] === "broken") {
     amount += 1;
   }
-
-  return {
-    ...state,
-    currentAmmo: Math.max(0, state.currentAmmo - amount),
-  };
+  return Math.max(0, amount);
 }
 
-export function quickReload(state: WeaponRuntimeState, weapon: WeaponEquipment): { state: WeaponRuntimeState; strainCost: number } {
-  if (!weapon.ammoMax) {
+export function getWeaponCardHeatDelta(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+  cardRules?: WeaponCardRules | null,
+): number {
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!heatProfile) {
+    return 0;
+  }
+  let amount = cardRules?.heatDelta ?? 0;
+  if (state.nodes[4] === "broken" && amount > 0) {
+    amount += 1;
+  }
+  return amount;
+}
+
+export function getWeaponCardBlockReason(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+  cardRules?: WeaponCardRules | null,
+): string | null {
+  if (!cardRules) {
+    return null;
+  }
+  if (isWeaponDestroyed(state)) {
+    return "Weapon offline";
+  }
+  if (state.disabledTurnsRemaining > 0) {
+    return `Weapon disabled (${state.disabledTurnsRemaining}T)`;
+  }
+  if (state.weaponCardLockTurnsRemaining > 0 && cardRules.tags.includes("weapon_card")) {
+    return `Weapon cards locked (${state.weaponCardLockTurnsRemaining}T)`;
+  }
+  if (state.isJammed || state.jammedTurnsRemaining > 0) {
+    return "Weapon jammed";
+  }
+  if (state.skipAttackTurnsRemaining > 0 && cardRules.tags.includes("attack")) {
+    return `Attack skipped (${state.skipAttackTurnsRemaining}T)`;
+  }
+  if (state.nodes[3] === "damaged" && cardRules.tags.includes("multi_attack")) {
+    return "Action node damaged";
+  }
+  if ((state.nodes[2] === "broken" || state.nodes[2] === "destroyed") && cardRules.tags.includes("aoe")) {
+    return "Barrel node broken";
+  }
+  const ammoCost = getWeaponCardAmmoCost(state, weapon, cardRules);
+  if (ammoCost > 0 && state.currentAmmo < ammoCost) {
+    return `Ammo ${state.currentAmmo}/${ammoCost}`;
+  }
+  return null;
+}
+
+export function getWeaponActionDisabledReason(
+  action: WeaponActionKind,
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+): string | null {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+
+  if (action !== "field_patch" && isWeaponDestroyed(state)) {
+    return "Weapon offline";
+  }
+
+  if (action === "quick_reload") {
+    if (!ammoProfile) return "No ammo system";
+    if (state.currentAmmo >= ammoProfile.max) return "Ammo full";
+    if (state.nodes[6] === "broken") return "Feed path broken";
+    return null;
+  }
+
+  if (action === "full_reload") {
+    if (!ammoProfile) return "No ammo system";
+    if (state.currentAmmo >= ammoProfile.max) return "Ammo full";
+    return null;
+  }
+
+  if (action === "vent") {
+    if (!heatProfile) return "No heat system";
+    if (state.currentHeat <= 0) return "Weapon cool";
+    return null;
+  }
+
+  if (action === "field_patch") {
+    const patchable = ([1, 2, 3, 4, 5, 6] as WeaponNodeId[]).some(
+      (nodeId) => state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken",
+    );
+    return patchable ? null : "No patchable damage";
+  }
+
+  return null;
+}
+
+export function addHeat(state: WeaponRuntimeState, weapon: WeaponEquipment, amount: number): WeaponRuntimeState {
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!heatProfile || amount === 0) {
+    return state;
+  }
+
+  const next = cloneState(state);
+  next.currentHeat = Math.max(0, Math.min(getEffectiveMaxHeat(next, weapon), next.currentHeat + amount));
+  return next;
+}
+
+export function removeHeat(
+  state: WeaponRuntimeState,
+  amount: number,
+  options: { repairHeatSink?: boolean } = {},
+): WeaponRuntimeState {
+  if (amount <= 0) {
+    return state;
+  }
+
+  const next = cloneState(state);
+  let effective = amount;
+
+  if (next.nodes[5] === "damaged") {
+    effective = Math.max(0, effective - 1);
+  }
+
+  if (next.nodes[5] === "broken") {
+    const remainingRemoval = Math.max(0, 1 - next.totalHeatRemovedThisTurn);
+    effective = Math.min(effective, remainingRemoval);
+  }
+
+  if (effective <= 0) {
+    return next;
+  }
+
+  next.currentHeat = Math.max(0, next.currentHeat - effective);
+  next.totalHeatRemovedThisTurn += effective;
+
+  if (options.repairHeatSink) {
+    return repairNode(next, 5);
+  }
+  return next;
+}
+
+export function passiveCooling(state: WeaponRuntimeState, weapon?: WeaponEquipment): WeaponRuntimeState {
+  if (!weapon) {
+    return removeHeat(state, 1);
+  }
+  const heatProfile = getWeaponHeatProfile(weapon);
+  return removeHeat(state, heatProfile?.passiveDecay ?? 1);
+}
+
+export function useAmmo(state: WeaponRuntimeState, weapon: WeaponEquipment, amount = 1): WeaponRuntimeState {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  if (!ammoProfile || amount <= 0) {
+    return state;
+  }
+
+  const next = cloneState(state);
+  next.currentAmmo = Math.max(0, next.currentAmmo - amount);
+  return next;
+}
+
+export function quickReload(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+): { state: WeaponRuntimeState; strainCost: number } {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  if (!ammoProfile) {
     return { state, strainCost: 0 };
   }
 
-  // Check for broken feed path (quick reload fails)
   if (state.nodes[6] === "broken") {
-    return { state, strainCost: weapon.quickReloadStrain ?? 1 };
+    return { state, strainCost: ammoProfile.quickReloadStrain };
   }
 
-  // Quick reload restores half (rounded up)
-  let reloadAmount = Math.ceil(weapon.ammoMax / 2);
-
-  // Check for damaged feed path (restores 1 fewer)
+  let reloadAmount = Math.ceil(ammoProfile.max / 2);
   if (state.nodes[6] === "damaged") {
     reloadAmount = Math.max(1, reloadAmount - 1);
   }
 
-  const result = {
-    state: {
-      ...state,
-      currentAmmo: Math.min(weapon.ammoMax, state.currentAmmo + reloadAmount),
-    },
-    strainCost: weapon.quickReloadStrain ?? 1,
-  };
-
-  // Synergy Repair: Reloading repairs Node 6 (Feed Path)
-  result.state = repairNode(result.state, 6);
-
-  return result;
+  let next = cloneState(state);
+  next.currentAmmo = Math.min(ammoProfile.max, next.currentAmmo + reloadAmount);
+  next = repairNode(next, 6);
+  return { state: next, strainCost: ammoProfile.quickReloadStrain };
 }
 
-export function fullReload(state: WeaponRuntimeState, weapon: WeaponEquipment): { state: WeaponRuntimeState; strainCost: number } {
-  if (!weapon.ammoMax) {
+export function fullReload(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+): { state: WeaponRuntimeState; strainCost: number } {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  if (!ammoProfile) {
     return { state, strainCost: 0 };
   }
 
-  let reloadAmount = weapon.ammoMax;
+  let next = cloneState(state);
+  const reloadAmount = state.nodes[6] === "broken" ? Math.ceil(ammoProfile.max / 2) : ammoProfile.max;
+  next.currentAmmo = Math.min(ammoProfile.max, reloadAmount);
+  next = repairNode(next, 6);
+  return { state: next, strainCost: ammoProfile.fullReloadStrain };
+}
 
-  // Check for broken feed path (only restores half)
-  if (state.nodes[6] === "broken") {
-    reloadAmount = Math.ceil(weapon.ammoMax / 2);
+export function fieldPatch(
+  state: WeaponRuntimeState,
+): { state: WeaponRuntimeState; strainCost: number; repairedNodeId: WeaponNodeId | null } {
+  const targetNode = ([1, 2, 3, 4, 5, 6] as WeaponNodeId[]).find(
+    (nodeId) => state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken",
+  );
+
+  if (!targetNode) {
+    return { state, strainCost: 0, repairedNodeId: null };
   }
 
-  const result = {
-    state: {
-      ...state,
-      currentAmmo: Math.min(weapon.ammoMax, reloadAmount),
-    },
-    strainCost: weapon.fullReloadStrain ?? 0,
-  };
-
-  // Synergy Repair: Reloading repairs Node 6 (Feed Path)
-  result.state = repairNode(result.state, 6);
-
-  return result;
-}
-
-// ----------------------------------------------------------------------------
-// CLUTCH & WEAR MECHANICS
-// Clutch toggles can be activated before an attack. When activated, they add +1 wear.
-// If toggled OFF before the attack is made, the wear is refunded.
-// Once an attack is made with clutch active, the wear is permanent.
-// ----------------------------------------------------------------------------
-
-export function activateClutch(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Only add wear if not already active
-  if (state.clutchActive) return state;
-
   return {
-    ...state,
-    clutchActive: true,
-    wear: state.wear + 1,
+    state: repairNode(state, targetNode),
+    strainCost: 1,
+    repairedNodeId: targetNode,
   };
 }
 
-export function deactivateClutch(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Only refund wear if currently active
-  if (!state.clutchActive) return state;
-
+export function ventWeapon(
+  state: WeaponRuntimeState,
+  _weapon: WeaponEquipment,
+): { state: WeaponRuntimeState; hpCostPercent: number } {
+  let next = cloneState(state);
+  next.currentHeat = 0;
+  next.totalHeatRemovedThisTurn = Math.max(next.totalHeatRemovedThisTurn, state.currentHeat);
+  next = repairNode(next, 5);
   return {
-    ...state,
-    clutchActive: false,
-    wear: Math.max(0, state.wear - 1), // Refund the wear
+    state: next,
+    hpCostPercent: 0.1,
   };
 }
-
-export function activateDoubleClutch(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Only add wear if not already active
-  if (state.doubleClutchActive) return state;
-
-  return {
-    ...state,
-    doubleClutchActive: true,
-    wear: state.wear + 1,
-  };
-}
-
-export function deactivateDoubleClutch(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Only refund wear if currently active
-  if (!state.doubleClutchActive) return state;
-
-  return {
-    ...state,
-    doubleClutchActive: false,
-    wear: Math.max(0, state.wear - 1), // Refund the wear
-  };
-}
-
-export function resetClutches(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Refund wear for any active clutches
-  let wearRefund = 0;
-  if (state.clutchActive) wearRefund++;
-  if (state.doubleClutchActive) wearRefund++;
-
-  return {
-    ...state,
-    clutchActive: false,
-    doubleClutchActive: false,
-    wear: Math.max(0, state.wear - wearRefund),
-  };
-}
-
-// Call this after an attack is made with clutch active - locks in the wear (no longer refundable)
-export function commitClutchWear(state: WeaponRuntimeState): WeaponRuntimeState {
-  // Just reset the active flags, wear stays
-  return {
-    ...state,
-    clutchActive: false,
-    doubleClutchActive: false,
-  };
-}
-
-export function getWearPenalties(wear: number): { accPenalty: number; dmgPenalty: number } {
-  if (wear === 0) {
-    return { accPenalty: 0, dmgPenalty: 0 };
-  } else if (wear === 1) {
-    return { accPenalty: 1, dmgPenalty: 0 };
-  } else {
-    return { accPenalty: wear, dmgPenalty: wear };
-  }
-}
-
-// ----------------------------------------------------------------------------
-// WEAPON HIT MECHANICS
-// ----------------------------------------------------------------------------
 
 export function rollWeaponHit(wasCrit: boolean): boolean {
   if (wasCrit) {
-    return true; // Auto weapon hit on crit
+    return true;
   }
-  // Roll d6, weapon hit on 6
   return Math.floor(Math.random() * 6) + 1 === 6;
 }
 
@@ -334,200 +804,111 @@ export function rollWeaponNodeHit(): WeaponNodeId {
 }
 
 export function damageNode(state: WeaponRuntimeState, nodeId: WeaponNodeId): WeaponRuntimeState {
-  const currentStatus = state.nodes[nodeId];
-  let newStatus: NodeDamageLevel;
-
-  switch (currentStatus) {
-    case "ok":
-      newStatus = "damaged";
-      break;
-    case "damaged":
-      newStatus = "broken";
-      break;
-    case "broken":
-      newStatus = "destroyed";
-      break;
-    case "destroyed":
-      newStatus = "destroyed";
-      break;
-  }
-
-  return {
-    ...state,
-    nodes: {
-      ...state.nodes,
-      [nodeId]: newStatus,
-    },
-  };
+  const next = cloneState(state);
+  const currentStatus = next.nodes[nodeId];
+  const newStatus: NodeDamageLevel =
+    currentStatus === "ok"
+      ? "damaged"
+      : currentStatus === "damaged"
+        ? "broken"
+        : currentStatus === "broken"
+          ? "destroyed"
+          : "destroyed";
+  next.nodes[nodeId] = newStatus;
+  return next;
 }
 
 export function repairNode(state: WeaponRuntimeState, nodeId: WeaponNodeId): WeaponRuntimeState {
-  const currentStatus = state.nodes[nodeId];
-  let newStatus: NodeDamageLevel;
+  const next = cloneState(state);
+  const currentStatus = next.nodes[nodeId];
+  const newStatus: NodeDamageLevel =
+    currentStatus === "destroyed"
+      ? "broken"
+      : currentStatus === "broken"
+        ? "damaged"
+        : currentStatus === "damaged"
+          ? "ok"
+          : "ok";
+  next.nodes[nodeId] = newStatus;
+  return next;
+}
 
-  switch (currentStatus) {
-    case "destroyed":
-      newStatus = "broken";
-      break;
-    case "broken":
-      newStatus = "damaged";
-      break;
-    case "damaged":
-      newStatus = "ok";
-      break;
-    case "ok":
-      newStatus = "ok";
-      break;
+export function markWeaponCardPlayed(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+  cardRules?: WeaponCardRules | null,
+): WeaponRuntimeState {
+  const next = cloneState(state);
+  next.firstWeaponCardPlayedThisTurn = true;
+  if (cardRules?.clutchCompatible && hasActiveClutch(next)) {
+    next.wear += 1;
   }
+  return syncLegacyClutchFlags(next, weapon);
+}
 
+export function consumeQueuedModifier(state: WeaponRuntimeState): WeaponRuntimeState {
   return {
     ...state,
-    nodes: {
-      ...state.nodes,
-      [nodeId]: newStatus,
-    },
+    queuedModifier: { ...EMPTY_QUEUED_MODIFIER_STATE },
   };
 }
 
-// ----------------------------------------------------------------------------
-// FIELD PATCH & REPAIRS
-// ----------------------------------------------------------------------------
+export function advanceWeaponTurn(state: WeaponRuntimeState, weapon: WeaponEquipment): WeaponRuntimeState {
+  let next = cloneState(state);
+  next.jammedTurnsRemaining = Math.max(0, next.jammedTurnsRemaining - 1);
+  next.disabledTurnsRemaining = Math.max(0, next.disabledTurnsRemaining - 1);
+  next.weaponCardLockTurnsRemaining = Math.max(0, next.weaponCardLockTurnsRemaining - 1);
+  next.skipAttackTurnsRemaining = Math.max(0, next.skipAttackTurnsRemaining - 1);
+  next.isJammed = next.jammedTurnsRemaining > 0;
+  next.totalHeatRemovedThisTurn = 0;
+  next.firstWeaponCardPlayedThisTurn = false;
+  next.allowMoveAfterAttack = false;
+  next.queuedModifier = { ...EMPTY_QUEUED_MODIFIER_STATE };
+  next = passiveCooling(next, weapon);
+  return syncLegacyClutchFlags(next, weapon);
+}
 
-export function fieldPatch(state: WeaponRuntimeState): { state: WeaponRuntimeState; strainCost: number; repairedNodeId: WeaponNodeId | null } {
-  // Find the first node that is damaged or broken (cannot field patch destroyed)
-  const nodes = [1, 2, 3, 4, 5, 6] as WeaponNodeId[];
-  let targetNode: WeaponNodeId | null = null;
+export function triggerWeaponOverheat(
+  state: WeaponRuntimeState,
+  weapon: WeaponEquipment,
+): { state: WeaponRuntimeState; effects: WeaponOverheatEffect[]; summary: string } {
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!heatProfile) {
+    return { state, effects: [], summary: "" };
+  }
 
-  for (const nodeId of nodes) {
-    if (state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken") {
-      targetNode = nodeId;
-      break;
+  let next = cloneState(state);
+  next.currentHeat = 0;
+
+  heatProfile.overheatEffects.forEach((effect) => {
+    switch (effect.kind) {
+      case "jam_turns":
+        next.jammedTurnsRemaining = Math.max(next.jammedTurnsRemaining, effect.turns);
+        next.isJammed = next.jammedTurnsRemaining > 0;
+        break;
+      case "weapon_card_lock_turns":
+        next.weaponCardLockTurnsRemaining = Math.max(next.weaponCardLockTurnsRemaining, effect.turns);
+        break;
+      case "weapon_disable_turns":
+        next.disabledTurnsRemaining = Math.max(next.disabledTurnsRemaining, effect.turns);
+        break;
+      case "skip_attack_turns":
+        next.skipAttackTurnsRemaining = Math.max(next.skipAttackTurnsRemaining, effect.turns);
+        break;
+      case "waste_ammo":
+        next.currentAmmo = Math.max(0, next.currentAmmo - effect.amount);
+        break;
+      case "reduce_max_heat":
+        next.maxHeatPenalty += effect.amount;
+        break;
+      default:
+        break;
     }
-  }
+  });
 
-  if (targetNode !== null) {
-    return {
-      state: repairNode(state, targetNode),
-      strainCost: 1, // Field Patch costs 1 strain
-      repairedNodeId: targetNode
-    };
-  }
-
-  return { state, strainCost: 0, repairedNodeId: null };
-}
-
-export function ventWeapon(state: WeaponRuntimeState, weapon: WeaponEquipment): { state: WeaponRuntimeState; hpCostPercent: number } {
-  // Full vent: reset heat to 0, costs 10% HP
-  let newState: WeaponRuntimeState = {
-    ...state,
-    currentHeat: 0,
-    isJammed: false,
+  return {
+    state: syncLegacyClutchFlags(next, weapon),
+    effects: heatProfile.overheatEffects,
+    summary: heatProfile.overheatSummary,
   };
-
-  // Synergy Repair: Venting repairs Node 5 (Heat Sink)
-  newState = repairNode(newState, 5);
-
-  return { state: newState, hpCostPercent: 0.1 };
-}
-
-export function isWeaponDestroyed(state: WeaponRuntimeState): boolean {
-  // Weapon is offline if any node is destroyed
-  return Object.values(state.nodes).some(status => status === "destroyed");
-}
-
-// ----------------------------------------------------------------------------
-// NODE EFFECT CHECKS
-// ----------------------------------------------------------------------------
-
-export function getAccuracyPenalty(state: WeaponRuntimeState, wear: number): number {
-  let penalty = 0;
-
-  // Wear penalties
-  const wearPenalties = getWearPenalties(wear);
-  penalty += wearPenalties.accPenalty;
-
-  // Node 1 (Sights) damage
-  if (state.nodes[1] === "damaged") {
-    penalty += 1;
-  } else if (state.nodes[1] === "broken" || state.nodes[1] === "destroyed") {
-    penalty += 2;
-  }
-
-  return penalty;
-}
-
-export function getDamagePenalty(state: WeaponRuntimeState, wear: number): number {
-  let penalty = 0;
-
-  // Wear penalties
-  const wearPenalties = getWearPenalties(wear);
-  penalty += wearPenalties.dmgPenalty;
-
-  // Node 2 (Barrel/Edge) damage
-  if (state.nodes[2] === "damaged" || state.nodes[2] === "broken") {
-    penalty += 1;
-  }
-
-  return penalty;
-}
-
-export function canUseOverwatch(state: WeaponRuntimeState): boolean {
-  return state.nodes[1] !== "broken" && state.nodes[1] !== "destroyed";
-}
-
-export function canUseMultiAttack(state: WeaponRuntimeState): boolean {
-  return state.nodes[3] !== "damaged" && state.nodes[3] !== "broken" && state.nodes[3] !== "destroyed";
-}
-
-export function checkWeaponJam(state: WeaponRuntimeState): boolean {
-  // Check for broken action node (33% jam chance)
-  if (state.nodes[3] === "broken") {
-    return Math.random() < 0.33;
-  }
-  return false;
-}
-
-export function getExtraStrainCost(state: WeaponRuntimeState, isFirstCardThisTurn: boolean): number {
-  let extra = 0;
-
-  // Damaged power coupling: first card costs +1 strain
-  if (isFirstCardThisTurn && (state.nodes[4] === "damaged" || state.nodes[4] === "broken")) {
-    extra += 1;
-  }
-
-  return extra;
-}
-
-// ----------------------------------------------------------------------------
-// HEAT ZONE HELPERS
-// ----------------------------------------------------------------------------
-
-export type HeatZone = "stable" | "warning" | "critical";
-
-export function getHeatZone(state: WeaponRuntimeState, weapon: WeaponEquipment): HeatZone {
-  if (!weapon.isMechanical || !weapon.heatCapacity) {
-    return "stable";
-  }
-
-  const maxHeat = weapon.heatCapacity;
-  const pct = state.currentHeat / maxHeat;
-
-  if (pct < 0.5) {
-    return "stable";
-  } else if (pct < 0.8) {
-    return "warning";
-  } else {
-    return "critical";
-  }
-}
-
-export function getHeatZoneColor(zone: HeatZone): string {
-  switch (zone) {
-    case "stable":
-      return "#4ade80"; // green
-    case "warning":
-      return "#fbbf24"; // yellow
-    case "critical":
-      return "#ef4444"; // red
-  }
 }

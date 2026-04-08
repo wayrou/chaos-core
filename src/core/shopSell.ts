@@ -8,6 +8,7 @@ import { Equipment } from "./equipment";
 import { CONSUMABLE_DATABASE } from "./crafting";
 import { getAllOwnedUnlockableIds } from "./unlockableOwnership";
 import { getUnlockableById } from "./unlockables";
+import { RESOURCE_KEYS, type ResourceKey } from "./resources";
 
 // ----------------------------------------------------------------------------
 // CONSTANTS
@@ -106,6 +107,11 @@ export function getResourceSellPrice(resourceId: string): number {
     wood: 1,
     chaosShards: 5,
     steamComponents: 3,
+    alloy: 6,
+    drawcord: 4,
+    fittings: 5,
+    resin: 4,
+    chargeCells: 7,
   };
   return prices[resourceId] || 1;
 }
@@ -194,18 +200,11 @@ function validateSellLine(
     }
 
     case "resource": {
-      const resourceMap: Record<string, keyof GameState["resources"]> = {
-        metalScrap: "metalScrap",
-        wood: "wood",
-        chaosShards: "chaosShards",
-        steamComponents: "steamComponents",
-      };
-
-      const resourceKey = resourceMap[line.id];
-      if (!resourceKey) {
+      if (!RESOURCE_KEYS.includes(line.id as ResourceKey)) {
         return { valid: false, error: `Unknown resource: ${line.id}` };
       }
 
+      const resourceKey = line.id as ResourceKey;
       const owned = state.resources?.[resourceKey] || 0;
       if (line.quantity > owned) {
         return { valid: false, error: `Only ${owned} available, cannot sell ${line.quantity}` };
@@ -300,15 +299,8 @@ export function sellToShop(
       }
 
       case "resource": {
-        const resourceMap: Record<string, keyof GameState["resources"]> = {
-          metalScrap: "metalScrap",
-          wood: "wood",
-          chaosShards: "chaosShards",
-          steamComponents: "steamComponents",
-        };
-
-        const resourceKey = resourceMap[line.id];
-        if (resourceKey && nextState.resources) {
+        if (RESOURCE_KEYS.includes(line.id as ResourceKey) && nextState.resources) {
+          const resourceKey = line.id as ResourceKey;
           const current = nextState.resources[resourceKey] || 0;
           nextState.resources[resourceKey] = Math.max(0, current - line.quantity);
         }
@@ -419,4 +411,3 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
 
   return entries;
 }
-

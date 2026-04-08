@@ -28,6 +28,10 @@ import { clearControllerContext, updateFocusableElements } from "../../core/cont
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
+function formatInventoryKind(kind: InventoryItem["kind"]): string {
+  return kind.replace(/_/g, " ").toUpperCase();
+}
+
 function formatWadAmount(amount: number): string {
   return new Intl.NumberFormat("en-US").format(Math.max(0, Math.floor(amount)));
 }
@@ -74,7 +78,7 @@ function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
         <div class="inv-item-name">${item.name}</div>
         <div class="inv-item-qty">x${item.quantity}</div>
       </div>
-      <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
+      <div class="inv-item-kind">${formatInventoryKind(item.kind)}</div>
       <div class="inv-item-stats">
         <span>${item.massKg}kg</span>
         <span>${item.bulkBu}bu</span>

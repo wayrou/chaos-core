@@ -22,6 +22,11 @@ import {
   getTheaterUpkeepPerTick,
   isTheaterCoreOperational,
 } from "./theaterSystem";
+import {
+  addResourceWallet as addResourceWalletValues,
+  createEmptyResourceWallet,
+  RESOURCE_KEYS,
+} from "./resources";
 
 export interface OpsTerminalAtlasSectorState {
   theaterId: string;
@@ -217,21 +222,15 @@ function cloneAtlasState(state: OpsTerminalAtlasState): OpsTerminalAtlasState {
 }
 
 function addResourceWallet(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: base.metalScrap + (delta.metalScrap ?? 0),
-    wood: base.wood + (delta.wood ?? 0),
-    chaosShards: base.chaosShards + (delta.chaosShards ?? 0),
-    steamComponents: base.steamComponents + (delta.steamComponents ?? 0),
-  };
+  return addResourceWalletValues(base, delta);
 }
 
 function scaleResourceWallet(wallet: Partial<ResourceWallet>, ticks: number): ResourceWallet {
-  return {
-    metalScrap: (wallet.metalScrap ?? 0) * ticks,
-    wood: (wallet.wood ?? 0) * ticks,
-    chaosShards: (wallet.chaosShards ?? 0) * ticks,
-    steamComponents: (wallet.steamComponents ?? 0) * ticks,
-  };
+  const scaled = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    scaled[key] = (wallet[key] ?? 0) * ticks;
+  });
+  return scaled;
 }
 
 function createEmptyKeyInventory(): TheaterKeyInventory {
@@ -365,12 +364,7 @@ function createEconomySummary(
     currentState: resolveSectorState(atlas, sector),
     tickCount: sector.theater.tickCount ?? 0,
     wadUpkeepPerTick: economy.wadUpkeep,
-    incomePerTick: {
-      metalScrap: economy.incomePerTick.metalScrap ?? 0,
-      wood: economy.incomePerTick.wood ?? 0,
-      chaosShards: economy.incomePerTick.chaosShards ?? 0,
-      steamComponents: economy.incomePerTick.steamComponents ?? 0,
-    },
+    incomePerTick: createEmptyResourceWallet(economy.incomePerTick),
   };
 }
 
@@ -393,12 +387,7 @@ function createCoreSummary(
     operational: isTheaterCoreOperational(room),
     offlineReason: getTheaterCoreOfflineReason(room),
     wadUpkeepPerTick: coreAssignment.wadUpkeepPerTick ?? 0,
-    incomePerTick: {
-      metalScrap: coreAssignment.incomePerTick?.metalScrap ?? 0,
-      wood: coreAssignment.incomePerTick?.wood ?? 0,
-      chaosShards: coreAssignment.incomePerTick?.chaosShards ?? 0,
-      steamComponents: coreAssignment.incomePerTick?.steamComponents ?? 0,
-    },
+    incomePerTick: createEmptyResourceWallet(coreAssignment.incomePerTick),
     supplyFlow: room.supplyFlow ?? 0,
     powerFlow: room.powerFlow ?? 0,
     commsFlow: room.commsFlow ?? 0,
@@ -408,10 +397,7 @@ function createCoreSummary(
 function hasEconomyActivity(summary: OpsTerminalAtlasEconomySummary): boolean {
   return (
     summary.wadUpkeepPerTick > 0
-    || summary.incomePerTick.metalScrap > 0
-    || summary.incomePerTick.wood > 0
-    || summary.incomePerTick.chaosShards > 0
-    || summary.incomePerTick.steamComponents > 0
+    || RESOURCE_KEYS.some((key) => summary.incomePerTick[key] > 0)
   );
 }
 

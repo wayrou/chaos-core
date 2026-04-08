@@ -4,16 +4,16 @@
 // ============================================================================
 
 import { GameState } from "./types";
-import { Equipment, WeaponEquipment, ArmorEquipment, AccessoryEquipment } from "./equipment";
-import { Module } from "./equipment";
-import { getRecipe, getAllRecipes } from "./craftingRecipes";
+import { Equipment, WeaponEquipment, ArmorEquipment } from "./equipment";
+import { getRecipe } from "./craftingRecipes";
 import { CONSUMABLE_DATABASE } from "./crafting";
+import { BASIC_RESOURCE_KEYS, RESOURCE_LABELS, getResourceEntries } from "./resources";
 
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type InventoryCategory = "equipment" | "consumable" | "weaponPart" | "recipe" | "resource";
+export type InventoryCategory = "equipment" | "consumable" | "keyItem" | "weaponPart" | "recipe" | "resource";
 
 export interface InventoryEntryVM {
   key: string;              // `${category}:${id}` unique
@@ -46,6 +46,7 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
   const countsByCategory: Record<InventoryCategory, number> = {
     equipment: 0,
     consumable: 0,
+    keyItem: 0,
     weaponPart: 0,
     recipe: 0,
     resource: 0,
@@ -113,7 +114,45 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     }
   }
 
-  // 3. WEAPON PARTS (Modules) - Only show modules attached to owned weapons
+  // 3. KEY ITEMS
+  const keyItemsById = new Map<string, { id: string; name: string; description?: string; quantity: number }>();
+  [...(state.inventory?.baseStorage ?? []), ...(state.inventory?.forwardLocker ?? [])].forEach((item) => {
+    if (item.kind !== "key_item") {
+      return;
+    }
+
+    const quantity = Math.max(1, Number(item.quantity ?? 1));
+    const existing = keyItemsById.get(item.id);
+    if (existing) {
+      existing.quantity += quantity;
+      if (!existing.description && item.description) {
+        existing.description = item.description;
+      }
+      return;
+    }
+
+    keyItemsById.set(item.id, {
+      id: item.id,
+      name: item.name || item.id,
+      description: item.description,
+      quantity,
+    });
+  });
+
+  keyItemsById.forEach((item) => {
+    entries.push({
+      key: `keyItem:${item.id}`,
+      category: "keyItem",
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      owned: item.quantity,
+      sortGroup: "quest",
+    });
+    countsByCategory.keyItem++;
+  });
+
+  // 4. WEAPON PARTS (Modules) - Only show modules attached to owned weapons
   if (state.modulesById && state.equipmentById) {
     const attachedModuleIds = new Set<string>();
     // Find all modules attached to owned weapons
@@ -142,7 +181,7 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     }
   }
 
-  // 4. RECIPES
+  // 5. RECIPES
   if (state.knownRecipeIds) {
     for (const recipeId of state.knownRecipeIds) {
       const recipe = getRecipe(recipeId);
@@ -161,39 +200,72 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     }
   }
 
-  // 5. RESOURCES
+  // 6. RESOURCES
   if (state.resources) {
-    const resourceEntries = [
-      { id: "metalScrap", name: "Metal Scrap", value: state.resources.metalScrap },
-      { id: "wood", name: "Wood", value: state.resources.wood },
-      { id: "chaosShards", name: "Chaos Shards", value: state.resources.chaosShards },
-      { id: "steamComponents", name: "Steam Components", value: state.resources.steamComponents },
-    ];
-
-    for (const resource of resourceEntries) {
-      if (resource.value > 0) {
-        entries.push({
-          key: `resource:${resource.id}`,
-          category: "resource",
-          id: resource.id,
-          name: resource.name,
-          description: `Crafting material`,
-          owned: resource.value,
-          sortGroup: "resource",
-        });
-        countsByCategory.resource++;
-      }
-    }
+    getResourceEntries(state.resources, { keys: BASIC_RESOURCE_KEYS }).forEach((resource) => {
+      entries.push({
+        key: `resource:${resource.key}`,
+        category: "resource",
+        id: resource.key,
+        name: resource.label,
+        description: "Crafting material",
+        owned: resource.amount,
+        sortGroup: "resource",
+      });
+      countsByCategory.resource++;
+    });
   }
+
+  const storedResourceItems = new Map<string, { id: string; name: string; description?: string; quantity: number }>();
+  [...(state.inventory?.baseStorage ?? []), ...(state.inventory?.forwardLocker ?? [])].forEach((item) => {
+    if (item.kind !== "resource") {
+      return;
+    }
+
+    const quantity = Math.max(0, Number(item.quantity ?? 0));
+    if (quantity <= 0) {
+      return;
+    }
+
+    const existing = storedResourceItems.get(item.id);
+    if (existing) {
+      existing.quantity += quantity;
+      if (!existing.description && item.description) {
+        existing.description = item.description;
+      }
+      return;
+    }
+
+    storedResourceItems.set(item.id, {
+      id: item.id,
+      name: item.name || RESOURCE_LABELS[item.id as keyof typeof RESOURCE_LABELS] || item.id,
+      description: item.description,
+      quantity,
+    });
+  });
+
+  storedResourceItems.forEach((item) => {
+    entries.push({
+      key: `resource:${item.id}`,
+      category: "resource",
+      id: item.id,
+      name: item.name,
+      description: item.description ?? "Crafting material",
+      owned: item.quantity,
+      sortGroup: "resource",
+    });
+    countsByCategory.resource++;
+  });
 
   // Sort entries: category -> sortGroup -> name
   entries.sort((a, b) => {
     const categoryOrder: Record<InventoryCategory, number> = {
       equipment: 0,
       consumable: 1,
-      weaponPart: 2,
-      recipe: 3,
-      resource: 4,
+      keyItem: 2,
+      weaponPart: 3,
+      recipe: 4,
+      resource: 5,
     };
 
     const catDiff = categoryOrder[a.category] - categoryOrder[b.category];
@@ -229,7 +301,6 @@ function getEquipmentDescription(equipment: Equipment): string {
     const armor = equipment as ArmorEquipment;
     return `${armor.slot} armor`;
   } else {
-    const accessory = equipment as AccessoryEquipment;
     return "accessory";
   }
 }

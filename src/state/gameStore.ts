@@ -5,15 +5,17 @@
 // ============================================================================
 
 import { GameState } from "../core/types";
-import { getAllStarterEquipment } from "../core/equipment";
-import { getAllImportedGear } from "../content/technica";
 import { createNewGameState } from "../core/initialState";
+import { getTechnicaRegistryFingerprint } from "../content/technica";
+import { syncPublishedTechnicaContentState } from "../content/technica/stateSync";
 import { withNormalizedLobbyState } from "../core/multiplayerLobby";
 import { withNormalizedNotesState } from "../core/notesSystem";
+import { addResourceWallet } from "../core/resources";
 import { withNormalizedSessionState } from "../core/session";
 import { withNormalizedFoundryState } from "../core/foundrySystem";
 import { withNormalizedSchemaState } from "../core/schemaSystem";
 import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
+import { withNormalizedWeaponsmithState } from "../core/weaponsmith";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -24,42 +26,8 @@ let _gameState: GameState | null = null;
 type Listener = (state: GameState) => void;
 const listeners = new Set<Listener>();
 
-function syncPublishedTechnicaGear(state: GameState): GameState {
-  const importedGear = getAllImportedGear();
-  if (importedGear.length === 0) {
-    return state;
-  }
-
-  const syncedGearIds = new Set(state.technicaSync?.starterGearIds ?? []);
-  const runtimeEquipment = getAllStarterEquipment();
-  const nextEquipmentById = { ...(state.equipmentById ?? {}) };
-  const nextEquipmentPool = [...(state.equipmentPool ?? [])];
-  let changed = false;
-
-  importedGear.forEach((gear) => {
-    if (syncedGearIds.has(gear.id)) {
-      return;
-    }
-
-    nextEquipmentById[gear.id] = runtimeEquipment[gear.id] ?? gear;
-
-    syncedGearIds.add(gear.id);
-    changed = true;
-  });
-
-  if (!changed) {
-    return state;
-  }
-
-  return {
-    ...state,
-    equipmentById: nextEquipmentById,
-    equipmentPool: nextEquipmentPool,
-    technicaSync: {
-      ...state.technicaSync,
-      starterGearIds: Array.from(syncedGearIds),
-    },
-  };
+function syncPublishedTechnicaContent(state: GameState): GameState {
+  return syncPublishedTechnicaContentState(state, getTechnicaRegistryFingerprint());
 }
 
 function syncSchemaState(state: GameState): GameState {
@@ -67,7 +35,9 @@ function syncSchemaState(state: GameState): GameState {
     withNormalizedSessionState(
       withNormalizedNotesState(
         withNormalizedFoundryState(
-          withNormalizedSchemaState(withNormalizedTheaterDeploymentPresetState(state)),
+          withNormalizedSchemaState(
+            withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(state)),
+          ),
         ),
       ),
     ),
@@ -83,9 +53,9 @@ function syncSchemaState(state: GameState): GameState {
  */
 export function getGameState(): GameState {
   if (!_gameState) {
-    _gameState = syncSchemaState(syncPublishedTechnicaGear(createNewGameState()));
+    _gameState = syncSchemaState(syncPublishedTechnicaContent(createNewGameState()));
   } else {
-    _gameState = syncSchemaState(syncPublishedTechnicaGear(_gameState));
+    _gameState = syncSchemaState(syncPublishedTechnicaContent(_gameState));
   }
   return _gameState;
 }
@@ -94,7 +64,7 @@ export function getGameState(): GameState {
  * Replace the entire game state and notify listeners
  */
 export function setGameState(newState: GameState): void {
-  _gameState = syncSchemaState(syncPublishedTechnicaGear(newState));
+  _gameState = syncSchemaState(syncPublishedTechnicaContent(newState));
   notifyListeners();
 }
 
@@ -201,12 +171,7 @@ export function getPhase(): GameState["phase"] {
 export function addResources(resources: Partial<GameState["resources"]>): void {
   updateGameState(state => ({
     ...state,
-    resources: {
-      metalScrap: state.resources.metalScrap + (resources.metalScrap ?? 0),
-      wood: state.resources.wood + (resources.wood ?? 0),
-      chaosShards: state.resources.chaosShards + (resources.chaosShards ?? 0),
-      steamComponents: state.resources.steamComponents + (resources.steamComponents ?? 0),
-    },
+    resources: addResourceWallet(state.resources, resources),
   }));
 }
 

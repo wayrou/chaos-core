@@ -512,16 +512,21 @@ export function getControllerAssignments(): ControllerAssignmentSettings {
 }
 
 export function getControllerActionLabel(action: GameAction): string {
+  return getControllerActionLabelForPlayer(action);
+}
+
+export function getControllerActionLabelForPlayer(action: GameAction, playerId?: PlayerSlot): string {
   const bindings = currentBindings[action] ?? DEFAULT_CONTROLLER_BINDINGS[action];
   if (bindings.length <= 0) {
     return "UNBOUND";
   }
-  return bindings.map(getBindingLabel).join(" / ");
+  const gamepadId = playerId ? getAssignedGamepad(playerId)?.id ?? null : null;
+  return bindings.map((binding) => getBindingLabel(binding, gamepadId)).join(" / ");
 }
 
-export function getBindingLabel(binding: ControllerBindingDescriptor): string {
+export function getBindingLabel(binding: ControllerBindingDescriptor, gamepadId?: string | null): string {
   if (binding.kind === "button") {
-    return getButtonName(binding.code);
+    return getButtonName(binding.code, gamepadId);
   }
 
   const axisName = binding.code === AXIS.LEFT_X
@@ -1160,25 +1165,61 @@ export const VIBRATION_PATTERNS = {
   },
 };
 
-export function getButtonName(buttonIndex: number): string {
-  const names: Record<number, string> = {
-    [BUTTON.A]: "A",
-    [BUTTON.B]: "B",
-    [BUTTON.X]: "X",
-    [BUTTON.Y]: "Y",
-    [BUTTON.LB]: "LB",
-    [BUTTON.RB]: "RB",
-    [BUTTON.LT]: "LT",
-    [BUTTON.RT]: "RT",
-    [BUTTON.SELECT]: "VIEW",
-    [BUTTON.START]: "MENU",
-    [BUTTON.L3]: "L3",
-    [BUTTON.R3]: "R3",
-    [BUTTON.DPAD_UP]: "DPAD UP",
-    [BUTTON.DPAD_DOWN]: "DPAD DOWN",
-    [BUTTON.DPAD_LEFT]: "DPAD LEFT",
-    [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
-  };
+type ControllerGlyphProfile = "generic" | "playstation";
+
+function getControllerGlyphProfile(gamepadId?: string | null): ControllerGlyphProfile {
+  const normalizedId = String(gamepadId ?? "").toLowerCase();
+  if (
+    normalizedId.includes("dualsense")
+    || normalizedId.includes("dualsense edge")
+    || normalizedId.includes("wireless controller")
+    || normalizedId.includes("playstation")
+    || normalizedId.includes("sony")
+  ) {
+    return "playstation";
+  }
+  return "generic";
+}
+
+export function getButtonName(buttonIndex: number, gamepadId?: string | null): string {
+  const profile = getControllerGlyphProfile(gamepadId);
+  const names: Record<number, string> = profile === "playstation"
+    ? {
+        [BUTTON.A]: "CROSS",
+        [BUTTON.B]: "CIRCLE",
+        [BUTTON.X]: "SQUARE",
+        [BUTTON.Y]: "TRIANGLE",
+        [BUTTON.LB]: "L1",
+        [BUTTON.RB]: "R1",
+        [BUTTON.LT]: "L2",
+        [BUTTON.RT]: "R2",
+        [BUTTON.SELECT]: "CREATE",
+        [BUTTON.START]: "OPTIONS",
+        [BUTTON.L3]: "L3",
+        [BUTTON.R3]: "R3",
+        [BUTTON.DPAD_UP]: "DPAD UP",
+        [BUTTON.DPAD_DOWN]: "DPAD DOWN",
+        [BUTTON.DPAD_LEFT]: "DPAD LEFT",
+        [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
+      }
+    : {
+        [BUTTON.A]: "A",
+        [BUTTON.B]: "B",
+        [BUTTON.X]: "X",
+        [BUTTON.Y]: "Y",
+        [BUTTON.LB]: "LB",
+        [BUTTON.RB]: "RB",
+        [BUTTON.LT]: "LT",
+        [BUTTON.RT]: "RT",
+        [BUTTON.SELECT]: "VIEW",
+        [BUTTON.START]: "MENU",
+        [BUTTON.L3]: "L3",
+        [BUTTON.R3]: "R3",
+        [BUTTON.DPAD_UP]: "DPAD UP",
+        [BUTTON.DPAD_DOWN]: "DPAD DOWN",
+        [BUTTON.DPAD_LEFT]: "DPAD LEFT",
+        [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
+      };
   return names[buttonIndex] ?? `BTN ${buttonIndex}`;
 }
 

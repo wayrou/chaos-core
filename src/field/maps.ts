@@ -23,6 +23,15 @@ import {
   isBaseCampNodeUnlocked,
 } from "./baseCampBuild";
 import { getPlacedFieldDecor } from "../core/decorSystem";
+import {
+  OUTER_DECK_TRANSIT_OBJECT_ID,
+  OUTER_DECK_TRANSIT_OBJECT_TILE,
+  OUTER_DECK_TRANSIT_SPAWN_TILE,
+  OUTER_DECK_TRANSIT_ZONE_ID,
+} from "../core/outerDecks";
+import { COUNTERWEIGHT_WORKSHOP_MAP_ID, isWeaponsmithUnlocked } from "../core/weaponsmith";
+import { createOuterDeckFieldMap } from "./outerDeckMaps";
+import { createWeaponsmithWorkshopFieldMap } from "./weaponsmithWorkshopMap";
 
 function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
   for (let y = top; y < top + height; y += 1) {
@@ -8071,6 +8080,7 @@ function applyBaseCampBuildLayout(map: FieldMap): void {
 
 function createConfiguredBaseCampMap(): FieldMap {
   const map = cloneFieldMap(createBaseCampMap());
+  const state = getGameState();
 
   map.objects = map.objects.filter((object) => object.id !== "mini_core_station");
   map.interactionZones = map.interactionZones.filter(
@@ -8149,6 +8159,50 @@ function createConfiguredBaseCampMap(): FieldMap {
   }
 
   applyBaseCampBuildLayout(map);
+
+  map.objects.push({
+    id: OUTER_DECK_TRANSIT_OBJECT_ID,
+    x: OUTER_DECK_TRANSIT_OBJECT_TILE.x,
+    y: OUTER_DECK_TRANSIT_OBJECT_TILE.y,
+    width: 2,
+    height: 2,
+    type: "station",
+    sprite: "bulkhead",
+    metadata: { name: "Outer Deck Transit" },
+  });
+  map.interactionZones.unshift({
+    id: OUTER_DECK_TRANSIT_ZONE_ID,
+    x: OUTER_DECK_TRANSIT_OBJECT_TILE.x,
+    y: OUTER_DECK_TRANSIT_OBJECT_TILE.y,
+    width: 2,
+    height: Math.max(1, OUTER_DECK_TRANSIT_SPAWN_TILE.y - OUTER_DECK_TRANSIT_OBJECT_TILE.y + 1),
+    action: "custom",
+    label: "OUTER DECK TRANSIT",
+    metadata: { handlerId: "outer_deck_transit" },
+  });
+
+  if (isWeaponsmithUnlocked(state)) {
+    map.objects.push({
+      id: "haven_weaponsmith_station",
+      x: 40,
+      y: 13,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "repair_bench",
+      metadata: { name: "Weaponsmith Bench" },
+    });
+    map.interactionZones.unshift({
+      id: "interact_haven_weaponsmith",
+      x: 40,
+      y: 13,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: "WEAPONSMITH",
+      metadata: { handlerId: "weaponsmith_workshop" },
+    });
+  }
 
   return map;
 }
@@ -8576,6 +8630,15 @@ export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   // Handle dynamic key room maps
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
     return ensureNodeFootprintsWalkable(createKeyRoomMap(mapId));
+  }
+  if (typeof mapId === "string" && mapId.startsWith("outerdeck_")) {
+    const map = createOuterDeckFieldMap(mapId);
+    if (map) {
+      return ensureNodeFootprintsWalkable(map);
+    }
+  }
+  if (mapId === COUNTERWEIGHT_WORKSHOP_MAP_ID) {
+    return ensureNodeFootprintsWalkable(createWeaponsmithWorkshopFieldMap());
   }
   if (mapId === "base_camp" && !isTechnicaContentDisabled("map", "base_camp")) {
     return ensureNodeFootprintsWalkable(createConfiguredBaseCampMap());

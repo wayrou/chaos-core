@@ -10,6 +10,7 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "../../core/campaign";
 import { getSchemaUnlockState } from "../../core/schemaSystem";
 import type { GameState } from "../../core/types";
+import { completeNpcTurnInQuests } from "../../quests/questManager";
 
 type LegacyDialogueContent = {
   kind: "legacy";
@@ -55,6 +56,7 @@ let currentContent: DialogueContent | null = null;
 let currentLineIndex = 0;
 let currentNodeId: string | null = null;
 let currentDialogueId: string | null = null;
+let currentNpcId: string | null = null;
 let onCloseCallback: (() => void) | null = null;
 const dialogueFlags = new Map<string, string | number | boolean>();
 
@@ -358,7 +360,7 @@ function getVisibleChoices(node: Extract<DialogueNode, { type: "choice_set" }>):
   return node.choices.filter((choice) => evaluateCondition(choice.condition));
 }
 
-export function showDialogue(npcName: string, dialogueLines: string[], onClose?: () => void): void {
+export function showDialogue(npcName: string, dialogueLines: string[], onClose?: () => void, npcId?: string): void {
   dialogueFlags.clear();
   currentContent = {
     kind: "legacy",
@@ -368,6 +370,7 @@ export function showDialogue(npcName: string, dialogueLines: string[], onClose?:
   currentLineIndex = 0;
   currentNodeId = null;
   currentDialogueId = null;
+  currentNpcId = npcId || null;
   onCloseCallback = onClose || null;
 
   renderDialogue();
@@ -389,6 +392,7 @@ export function showNpcDialogue(
   currentLineIndex = 0;
   currentNodeId = null;
   currentDialogueId = null;
+  currentNpcId = npcId || null;
   onCloseCallback = onClose || null;
 
   if (selection.kind === "legacy") {
@@ -450,6 +454,7 @@ export function showImportedDialogue(
   currentLineIndex = 0;
   currentDialogueId = dialogue.id;
   currentNodeId = dialogue.entryNodeId;
+  currentNpcId = fallbackNpcId || null;
   onCloseCallback = onClose || null;
 
   // Resolve leading effect/jump nodes before the first render.
@@ -465,19 +470,26 @@ function getDialogueSpeakerFallback(dialogue: ImportedDialogue): string {
 }
 
 export function closeDialogue(): void {
+  const closingNpcId = currentNpcId;
+  const closeHandler = onCloseCallback;
   currentContent = null;
   currentLineIndex = 0;
   currentNodeId = null;
   currentDialogueId = null;
+  currentNpcId = null;
+  onCloseCallback = null;
 
   const panel = document.getElementById("dialoguePanel");
   if (panel) {
     panel.remove();
   }
 
-  if (onCloseCallback) {
-    onCloseCallback();
-    onCloseCallback = null;
+  if (closingNpcId) {
+    completeNpcTurnInQuests(closingNpcId);
+  }
+
+  if (closeHandler) {
+    closeHandler();
   }
 }
 

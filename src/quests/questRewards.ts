@@ -7,6 +7,8 @@ import { updateGameState, getGameState } from "../state/gameStore";
 import { addWad, addResources } from "../state/gameStore";
 import { addCardsToLibrary } from "../core/gearWorkbench";
 import { learnRecipe } from "../core/crafting";
+import { grantKeyItemToState, isRegisteredKeyItem } from "../core/keyItems";
+import { addResourceWallet } from "../core/resources";
 import type { GameState } from "../core/types";
 
 export function applyQuestRewardsToState(state: GameState, quest: Quest): GameState {
@@ -23,18 +25,18 @@ export function applyQuestRewardsToState(state: GameState, quest: Quest): GameSt
   if (rewards.resources) {
     nextState = {
       ...nextState,
-      resources: {
-        metalScrap: nextState.resources.metalScrap + (rewards.resources.metalScrap ?? 0),
-        wood: nextState.resources.wood + (rewards.resources.wood ?? 0),
-        chaosShards: nextState.resources.chaosShards + (rewards.resources.chaosShards ?? 0),
-        steamComponents: nextState.resources.steamComponents + (rewards.resources.steamComponents ?? 0),
-      },
+      resources: addResourceWallet(nextState.resources, rewards.resources),
     };
   }
 
   if (rewards.items) {
     const updatedConsumables = { ...nextState.consumables };
     for (const item of rewards.items) {
+      if (isRegisteredKeyItem(item.id)) {
+        nextState = grantKeyItemToState(nextState, item.id, item.quantity);
+        continue;
+      }
+
       updatedConsumables[item.id] = (updatedConsumables[item.id] || 0) + item.quantity;
     }
     nextState = {
@@ -120,15 +122,12 @@ export function grantQuestRewards(quest: Quest): void {
 
   // Grant items (equipment, consumables, etc.)
   if (rewards.items) {
-    updateGameState(s => {
-      const updatedConsumables = { ...s.consumables };
-      for (const item of rewards.items!) {
-        // For now, treat as consumables
-        // TODO: Integrate with inventory system for equipment
-        updatedConsumables[item.id] = (updatedConsumables[item.id] || 0) + item.quantity;
-      }
-      return { ...s, consumables: updatedConsumables };
-    });
+    updateGameState((s) => applyQuestRewardsToState(s, {
+      ...quest,
+      rewards: {
+        items: rewards.items,
+      },
+    }));
   }
 
   // Grant cards

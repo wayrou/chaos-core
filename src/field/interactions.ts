@@ -18,8 +18,8 @@ import { renderStableScreen } from "../ui/screens/StableScreen";
 import { renderDispatchScreen } from "../ui/screens/DispatchScreen";
 import { renderSchemaScreen } from "../ui/screens/SchemaScreen";
 import { renderFoundryAnnexScreen } from "../ui/screens/FoundryAnnexScreen";
-import { showImportedDialogue } from "../ui/screens/DialogueScreen";
-import { getGameState } from "../state/gameStore";
+import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
+import { getGameState, updateGameState } from "../state/gameStore";
 import {
   BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
   DISPATCH_UNLOCK_FLOOR_ORDINAL,
@@ -34,6 +34,72 @@ import {
   isSchemaNodeUnlocked,
   isStableNodeUnlocked,
 } from "../core/campaign";
+import {
+  OUTER_DECK_TRANSIT_SPAWN_TILE,
+  claimOuterDeckCompletion,
+  getOuterDeckNpcEncounterDefinition,
+  getOuterDeckSubareaByMapId,
+  hasOuterDeckCacheBeenClaimed,
+  isOuterDeckSubareaCleared,
+  markOuterDeckCacheClaimed,
+  markOuterDeckNpcEncounterSeen,
+  setOuterDeckCurrentSubarea,
+} from "../core/outerDecks";
+import { addResourceWallet, createEmptyResourceWallet } from "../core/resources";
+import { showSystemPing } from "../ui/components/systemPing";
+
+function applyOuterDeckRewardBundle(
+  rewardBundle: Record<string, unknown> | undefined,
+): void {
+  const wad = Math.max(0, Math.floor(Number(rewardBundle?.wad ?? 0)));
+  const nextResources = createEmptyResourceWallet();
+  ["metalScrap", "wood", "chaosShards", "steamComponents"].forEach((resourceKey) => {
+    nextResources[resourceKey as keyof typeof nextResources] = Math.max(
+      0,
+      Math.floor(Number((rewardBundle?.resources as Record<string, unknown> | undefined)?.[resourceKey] ?? 0)),
+    );
+  });
+
+  if (
+    wad <= 0
+    && Object.values(nextResources).every((amount) => Number(amount ?? 0) <= 0)
+  ) {
+    return;
+  }
+
+  updateGameState((state) => ({
+    ...state,
+    wad: Math.max(0, Number(state.wad ?? 0)) + wad,
+    resources: addResourceWallet(state.resources, nextResources),
+  }));
+}
+
+function summarizeOuterDeckRewardBundle(
+  rewardBundle: Record<string, unknown> | undefined,
+): string {
+  const parts: string[] = [];
+  const wad = Math.max(0, Math.floor(Number(rewardBundle?.wad ?? 0)));
+  if (wad > 0) {
+    parts.push(`+${wad} WAD`);
+  }
+
+  const resources = rewardBundle?.resources as Record<string, unknown> | undefined;
+  const labels: Record<string, string> = {
+    metalScrap: "Metal Scrap",
+    wood: "Wood",
+    chaosShards: "Chaos Shards",
+    steamComponents: "Steam Components",
+  };
+
+  Object.entries(labels).forEach(([resourceKey, label]) => {
+    const amount = Math.max(0, Math.floor(Number(resources?.[resourceKey] ?? 0)));
+    if (amount > 0) {
+      parts.push(`+${amount} ${label}`);
+    }
+  });
+
+  return parts.join(" | ");
+}
 
 /**
  * Handle interaction with a zone
@@ -253,6 +319,120 @@ export function handleInteraction(
       if (zone.metadata?.handlerId === "lobby_ops_table") {
         import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
           renderCommsArrayScreen("field");
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_transit") {
+        import("../ui/screens/OuterDeckTransitScreen").then(({ renderOuterDeckTransitScreen }) => {
+          renderOuterDeckTransitScreen({
+            onClose: onResume,
+          });
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_transition") {
+        const state = getGameState();
+        const currentSubarea = getOuterDeckSubareaByMapId(state, String(map.id));
+        const targetSubareaId = typeof zone.metadata?.targetSubareaId === "string"
+          ? zone.metadata.targetSubareaId
+          : "";
+        if (!currentSubarea || !targetSubareaId) {
+          onResume();
+          break;
+        }
+
+        if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
+          alert("Clear the current subarea before advancing deeper into the Outer Decks.");
+          onResume();
+          break;
+        }
+
+        const nextState = setOuterDeckCurrentSubarea(state, targetSubareaId);
+        updateGameState(() => nextState);
+
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverride }) => {
+          const targetSubarea = getOuterDeckSubareaByMapId(getGameState(), `outerdeck_${targetSubareaId.replace(/[:]/g, "_")}`);
+          const targetMapId = targetSubarea?.mapId ?? `outerdeck_${targetSubareaId.replace(/[:]/g, "_")}`;
+          setNextFieldSpawnOverride(targetMapId, { x: 3, y: 6, facing: "east" });
+          renderFieldScreen(targetMapId as any);
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_cache") {
+        const state = getGameState();
+        const currentSubarea = getOuterDeckSubareaByMapId(state, String(map.id));
+        const cacheId = typeof zone.metadata?.cacheId === "string" ? zone.metadata.cacheId : "";
+        if (!currentSubarea || !cacheId) {
+          onResume();
+          break;
+        }
+
+        if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
+          alert("Hostiles remain in the chamber. Secure the area before opening the cache.");
+          onResume();
+          break;
+        }
+
+        if (hasOuterDeckCacheBeenClaimed(state, cacheId)) {
+          onResume();
+          break;
+        }
+
+        applyOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined);
+        updateGameState((prev) => markOuterDeckCacheClaimed(prev, cacheId));
+        showSystemPing({
+          type: "success",
+          title: "OUTER DECK CACHE",
+          message: currentSubarea.title,
+          detail: summarizeOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined),
+          channel: "outer-deck-cache",
+          replaceChannel: true,
+        });
+        onResume();
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_npc") {
+        const encounterId = typeof zone.metadata?.npcEncounterId === "string" ? zone.metadata.npcEncounterId : "";
+        if (!encounterId) {
+          onResume();
+          break;
+        }
+
+        const encounter = getOuterDeckNpcEncounterDefinition(encounterId as any);
+        updateGameState((prev) => markOuterDeckNpcEncounterSeen(prev, encounter.id));
+        showDialogue(encounter.name, encounter.lines, onResume, encounter.id);
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_completion") {
+        applyOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined);
+        const completionResult = claimOuterDeckCompletion(getGameState());
+        updateGameState(() => completionResult.state);
+
+        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverride }) => {
+          setNextFieldSpawnOverride("base_camp", OUTER_DECK_TRANSIT_SPAWN_TILE);
+          renderFieldScreen("base_camp");
+          showSystemPing({
+            type: "success",
+            title: "OUTER DECK SECURED",
+            message: completionResult.awardedRecipeId
+              ? `Recovered ${completionResult.awardedRecipeId.replace(/^recipe_/, "").replace(/_/g, " ").toUpperCase()}.`
+              : "Recovery node secured and rewards transferred to HAVEN.",
+            detail: summarizeOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined),
+            channel: "outer-deck-complete",
+            replaceChannel: true,
+          });
+        });
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "weaponsmith_workshop") {
+        import("../ui/screens/WeaponsmithScreen").then(({ renderWeaponsmithScreen }) => {
+          renderWeaponsmithScreen("field");
         });
         break;
       }

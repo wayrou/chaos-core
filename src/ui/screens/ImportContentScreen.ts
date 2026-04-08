@@ -20,6 +20,12 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "quest") {
     return "QUEST";
   }
+  if (entry.manifest.contentType === "key_item") {
+    return "KEY ITEM";
+  }
+  if (entry.manifest.contentType === "faction") {
+    return "FACTION";
+  }
   if (entry.manifest.contentType === "dialogue") {
     return "DIALOGUE";
   }
@@ -283,6 +289,7 @@ export function renderImportContentScreen(): void {
   const enemyCount = counts.field_enemy;
   const systemsCount =
     counts.mail +
+    counts.key_item +
     counts.npc +
     counts.gear +
     counts.item +
@@ -348,7 +355,7 @@ export function renderImportContentScreen(): void {
             <input id="importContentFileInput" type="file" accept=".zip,.json" multiple hidden />
           </div>
           <div class="import-content-notes">
-            <span>Maps open from here. Field enemies, quests, dialogue, mail, NPCs, gear, items, cards, units, operations, classes, and codex entries sync into the live runtime.</span>
+            <span>Maps open from here. Field enemies, quests, key items, dialogue, mail, NPCs, gear, items, cards, units, operations, classes, and codex entries sync into the live runtime.</span>
           </div>
         </section>
 

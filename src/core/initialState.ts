@@ -43,8 +43,11 @@ import {
 import type { ImportedOperationDefinition, ImportedUnitTemplate } from "../content/technica/types";
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
+import { createEmptyResourceWallet } from "./resources";
 import { createDefaultSessionState } from "./session";
 import { createDefaultTheaterDeploymentPreset } from "./theaterDeploymentPreset";
+import { createDefaultOuterDecksState } from "./outerDecks";
+import { createDefaultWeaponsmithState } from "./weaponsmith";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -571,12 +574,7 @@ export function createNewGameState(): GameStateWithEquipment {
     operation,
     session: createDefaultSessionState({
       wad: 0,
-      resources: {
-        metalScrap: 0,
-        wood: 0,
-        chaosShards: 0,
-        steamComponents: 0,
-      },
+      resources: createEmptyResourceWallet(),
       operation,
       players: {
         P1: {
@@ -610,12 +608,7 @@ export function createNewGameState(): GameStateWithEquipment {
     theaterDeploymentPreset: createDefaultTheaterDeploymentPreset(partyUnitIds),
 
     wad: 0,
-    resources: {
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    },
+    resources: createEmptyResourceWallet(),
     schema: createDefaultSchemaUnlockState(),
     foundry: createDefaultFoundryState(),
 
@@ -645,6 +638,8 @@ export function createNewGameState(): GameStateWithEquipment {
       forwardLocker: [],
       baseStorage: importedStarterItems as any,
     },
+    outerDecks: createDefaultOuterDecksState(),
+    weaponsmith: createDefaultWeaponsmithState(),
 
     // 11b/11c Equipment system additions
     equipmentById,

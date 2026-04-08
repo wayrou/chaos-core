@@ -22,6 +22,7 @@ import { calculatePWR } from "./pwr";
 import { generateCandidates } from "./recruitment";
 import { CODEX_DATABASE } from "./codexSystem";
 import { getAllStarterEquipment, getAllModules } from "./equipment";
+import { addResourceWallet, createEmptyResourceWallet, type ResourceWallet } from "./resources";
 
 export type DispatchMissionType =
   | "scouting_run"
@@ -47,12 +48,7 @@ export interface DispatchMissionTemplate {
 
 export interface DispatchRewardBundle {
   wad: number;
-  resources: {
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  resources: ResourceWallet;
   squadXp: number;
   classXpPerUnit: number;
   intelDossiers: number;
@@ -248,12 +244,12 @@ function buildRewardBundle(
     case "scouting_run": {
       const rewards: DispatchRewardBundle = {
         wad: success ? randomInt(18, 36) : randomInt(6, 14),
-        resources: {
+        resources: createEmptyResourceWallet({
           metalScrap: success ? randomInt(2, 5) : randomInt(0, 2),
           wood: success ? randomInt(3, 7) : randomInt(1, 3),
           chaosShards: 0,
           steamComponents: success ? randomInt(0, 2) : 0,
-        },
+        }),
         squadXp: success ? 40 : 18,
         classXpPerUnit: success ? 60 : 25,
         intelDossiers: success ? 1 : 0,
@@ -270,12 +266,12 @@ function buildRewardBundle(
     case "salvage_expedition": {
       const rewards: DispatchRewardBundle = {
         wad: success ? randomInt(24, 48) : randomInt(10, 20),
-        resources: {
+        resources: createEmptyResourceWallet({
           metalScrap: success ? randomInt(10, 18) : randomInt(4, 8),
           wood: success ? randomInt(6, 12) : randomInt(2, 5),
           chaosShards: success ? randomInt(0, 2) : 0,
           steamComponents: success ? randomInt(3, 6) : randomInt(0, 2),
-        },
+        }),
         squadXp: success ? 52 : 24,
         classXpPerUnit: success ? 72 : 30,
         intelDossiers: 0,
@@ -295,12 +291,12 @@ function buildRewardBundle(
     case "arcane_survey": {
       const rewards: DispatchRewardBundle = {
         wad: success ? randomInt(20, 38) : randomInt(8, 16),
-        resources: {
+        resources: createEmptyResourceWallet({
           metalScrap: success ? randomInt(0, 3) : 0,
           wood: 0,
           chaosShards: success ? randomInt(10, 18) : randomInt(3, 7),
           steamComponents: success ? randomInt(2, 5) : randomInt(0, 2),
-        },
+        }),
         squadXp: success ? 64 : 28,
         classXpPerUnit: success ? 84 : 36,
         intelDossiers: 0,
@@ -321,12 +317,12 @@ function buildRewardBundle(
     default: {
       const rewards: DispatchRewardBundle = {
         wad: success ? randomInt(42, 78) : randomInt(16, 28),
-        resources: {
+        resources: createEmptyResourceWallet({
           metalScrap: success ? randomInt(1, 4) : 0,
           wood: success ? randomInt(1, 3) : 0,
           chaosShards: 0,
           steamComponents: success ? randomInt(0, 2) : 0,
-        },
+        }),
         squadXp: success ? 70 : 30,
         classXpPerUnit: success ? 92 : 42,
         intelDossiers: 0,
@@ -591,12 +587,7 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
   const nextRecruitmentCandidates = [...(state.recruitmentCandidates || [])];
   const nextUnlockedCodexEntries = [...(state.unlockedCodexEntries || [])];
   const nextEquipmentPool = [...(state.equipmentPool || [])];
-  const nextResources = {
-    metalScrap: state.resources.metalScrap + rewards.resources.metalScrap,
-    wood: state.resources.wood + rewards.resources.wood,
-    chaosShards: state.resources.chaosShards + rewards.resources.chaosShards,
-    steamComponents: state.resources.steamComponents + rewards.resources.steamComponents,
-  };
+  const nextResources = addResourceWallet(state.resources, rewards.resources);
   const nextUnitClassProgress = { ...(state.unitClassProgress || {}) };
   const nextUnitsById = { ...state.unitsById };
   const equipmentById = state.equipmentById || getAllStarterEquipment();

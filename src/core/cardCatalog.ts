@@ -1,10 +1,12 @@
-import { getAllEquipmentCards, EquipmentCard } from "./equipment";
+import { getAllEquipmentCards, getAllStarterEquipment, EquipmentCard } from "./equipment";
 import { Card, CardEffect } from "./types";
 import { getImportedCard, isTechnicaContentDisabled } from "../content/technica";
 import type { ImportedCard } from "../content/technica/types";
 import { createEffectFlowFromLegacyCardEffects } from "./effectFlow";
+import type { WeaponCardRules, WeaponCardTag } from "./weaponData";
 
 type BattleCardTarget = "enemy" | "ally" | "self" | "tile";
+const EQUIPPED_WEAPON_SOURCE_ID = "__equipped_weapon__";
 
 export interface ResolvedBattleCard {
   id: string;
@@ -21,6 +23,8 @@ export interface ResolvedBattleCard {
   effects: CardEffect[];
   effectFlow?: ReturnType<typeof createEffectFlowFromLegacyCardEffects>;
   artPath?: string;
+  sourceEquipmentId?: string;
+  weaponRules?: WeaponCardRules;
 }
 
 const SELF_NAME_HINTS = [
@@ -62,6 +66,110 @@ const ALLY_TEXT_HINTS = [
   "adjacent allies",
   "allied",
 ];
+
+function pushWeaponTag(tags: WeaponCardTag[], tag: WeaponCardTag): void {
+  if (!tags.includes(tag)) {
+    tags.push(tag);
+  }
+}
+
+function parseHeatDelta(description: string): number | null {
+  const removeMatch = description.match(/remove\s+(\d+)\s+heat/i);
+  if (removeMatch) {
+    return -parseInt(removeMatch[1], 10);
+  }
+
+  const gainMatch =
+    description.match(/\+(\d+)\s+heat/i) ||
+    description.match(/gain\s+\+?(\d+)\s+heat/i) ||
+    description.match(/adds?\s+(\d+)\s+heat/i);
+  if (gainMatch) {
+    return parseInt(gainMatch[1], 10);
+  }
+
+  return null;
+}
+
+function inferWeaponRules(card: EquipmentCard, target: BattleCardTarget, description: string): WeaponCardRules | undefined {
+  const lowerName = card.name.toLowerCase();
+  const lowerDesc = description.toLowerCase();
+  const equipmentById = getAllStarterEquipment();
+  const sourceEquipment = card.sourceEquipmentId ? equipmentById[card.sourceEquipmentId] : null;
+  const sourceWeapon =
+    sourceEquipment && sourceEquipment.slot === "weapon"
+      ? sourceEquipment
+      : null;
+
+  const isCoreWeaponCard = card.id === "core_basic_attack" || card.id === "core_overwatch";
+  if (!sourceWeapon && !isCoreWeaponCard) {
+    return undefined;
+  }
+
+  const tags: WeaponCardTag[] = ["weapon_card"];
+  const attackKeywords = ["attack", "shot", "strike", "slash", "jab", "blast", "bolt", "volley", "fire", "thrust", "swing"];
+  const indirectKeywords = ["lob", "mortar", "radius", "aoe", "all enemies", "adjacent enemies", "chain lightning", "cone", "arc"];
+  const multiKeywords = ["fire twice", "attack twice", "three attacks", "two shots", "double", "twice"];
+
+  if (
+    target === "enemy" ||
+    typeof card.damage === "number" ||
+    attackKeywords.some((keyword) => lowerName.includes(keyword) || lowerDesc.includes(keyword))
+  ) {
+    pushWeaponTag(tags, "attack");
+  }
+
+  if (multiKeywords.some((keyword) => lowerDesc.includes(keyword) || lowerName.includes(keyword))) {
+    pushWeaponTag(tags, "multi_attack");
+  }
+
+  if (indirectKeywords.some((keyword) => lowerDesc.includes(keyword) || lowerName.includes(keyword))) {
+    pushWeaponTag(tags, "aoe");
+  }
+
+  if (tags.includes("attack") && !tags.includes("aoe")) {
+    pushWeaponTag(tags, "direct");
+  }
+
+  if (lowerName.includes("reload") || lowerDesc.includes("reload")) {
+    pushWeaponTag(tags, "reload");
+  }
+
+  if (lowerDesc.includes("remove") && lowerDesc.includes("heat")) {
+    pushWeaponTag(tags, "heat_removal");
+  }
+
+  if (
+    target === "self" &&
+    ["guard", "brace", "parry", "ward", "barrier", "plating", "stance", "shield"].some(
+      (keyword) => lowerName.includes(keyword) || lowerDesc.includes(keyword),
+    )
+  ) {
+    pushWeaponTag(tags, "guard_brace");
+  }
+
+  const explicitHeatDelta = parseHeatDelta(description);
+  const isMechanical = Boolean(sourceWeapon?.isMechanical);
+  const heatDelta =
+    explicitHeatDelta ??
+    ((isMechanical || isCoreWeaponCard) && tags.includes("attack") ? 1 : 0);
+
+  const ammoProfile = sourceWeapon?.ammoProfile;
+  const defaultAmmoCost = ammoProfile?.defaultAttackAmmoCost ?? (sourceWeapon?.ammoMax ? 1 : 0);
+  const ammoCost =
+    tags.includes("reload") || tags.includes("heat_removal")
+      ? 0
+      : tags.includes("attack") && (sourceWeapon?.ammoMax || isCoreWeaponCard)
+        ? defaultAmmoCost || 1
+        : 0;
+
+  return {
+    sourceWeaponId: sourceWeapon?.id ?? EQUIPPED_WEAPON_SOURCE_ID,
+    heatDelta,
+    ammoCost,
+    tags,
+    clutchCompatible: Boolean(sourceWeapon),
+  };
+}
 
 function getCatalogCards(): EquipmentCard[] {
   return Object.values(getAllEquipmentCards());
@@ -226,6 +334,15 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
   const description = normalizeDescription(card);
   const target = inferTarget(card, description);
   const effects = parseEffectsFromDescription(description, target, card.damage);
+  const weaponRules = card.weaponRules
+    ? {
+        sourceWeaponId: card.weaponRules.sourceWeaponId ?? card.sourceEquipmentId ?? EQUIPPED_WEAPON_SOURCE_ID,
+        heatDelta: card.weaponRules.heatDelta ?? 0,
+        ammoCost: card.weaponRules.ammoCost ?? 0,
+        tags: card.weaponRules.tags ?? ["weapon_card"],
+        clutchCompatible: card.weaponRules.clutchCompatible ?? Boolean(card.sourceEquipmentId),
+      }
+    : inferWeaponRules(card, target, description);
 
   const resolved: ResolvedBattleCard = {
     id: card.id,
@@ -237,6 +354,8 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
     description,
     effects,
     effectFlow: createEffectFlowFromLegacyCardEffects(effects, target === "ally" ? "ally" : target),
+    sourceEquipmentId: card.sourceEquipmentId,
+    weaponRules,
   };
 
   if (card.damage !== undefined) resolved.damage = card.damage;
@@ -255,6 +374,21 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
 }
 
 function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
+  const sourceEquipmentId = (card as ImportedCard & { sourceEquipmentId?: string }).sourceEquipmentId;
+  const equipmentCardLike: EquipmentCard = {
+    id: card.id,
+    name: card.name,
+    type: card.type,
+    strainCost: card.strainCost,
+    description: card.description,
+    range: `R(${card.range})`,
+    damage: card.damage,
+    effects: card.effects.map((effect) => effect.type),
+    sourceEquipmentId,
+    sourceClassId: (card as ImportedCard & { sourceClassId?: string }).sourceClassId,
+    artPath: card.artPath,
+  };
+
   const resolved: ResolvedBattleCard = {
     id: card.id,
     name: card.name,
@@ -265,6 +399,8 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
     description: card.description,
     effects: [...card.effects],
     effectFlow: card.effectFlow ?? createEffectFlowFromLegacyCardEffects(card.effects, card.targetType),
+    sourceEquipmentId,
+    weaponRules: inferWeaponRules(equipmentCardLike, card.targetType, card.description),
   };
 
   if (card.damage !== undefined) resolved.damage = card.damage;
@@ -323,5 +459,7 @@ export function toCoreCard(card: ResolvedBattleCard): Card {
     effects: [...card.effects],
     effectFlow: card.effectFlow,
     artPath: card.artPath,
+    sourceEquipmentId: card.sourceEquipmentId,
+    weaponRules: card.weaponRules,
   };
 }

@@ -117,6 +117,9 @@ const THEATER_ROOM_BASE: Omit<
   supplied: false,
   commsVisible: false,
   commsLinked: false,
+  battleMapId: null,
+  placedFieldAssets: [],
+  fieldAssetRuntimeState: {},
   supplyFlow: 0,
   powerFlow: 0,
   commsFlow: 0,
@@ -933,7 +936,7 @@ function createExpandedLayoutTemplate(style: TheaterLayoutStyle, rng: SeededRng)
 }
 
 function buildRoomSeeds(
-  operation: OperationRun,
+  _operation: OperationRun,
   floorIndex: number,
   profile: TheaterProfile,
   definition: TheaterDefinition,

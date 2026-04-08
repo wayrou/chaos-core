@@ -8,6 +8,7 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import { getGameState } from "../state/gameStore";
+import type { ResourceKey } from "./resources";
 import { CoreType, RoomNode, TheaterSprawlDirection } from "./types";
 import type { OpsTerminalAtlasState } from "./opsTerminalAtlas";
 
@@ -113,7 +114,7 @@ export interface EncounterDefinition {
 // Key Room System Types
 export type FacilityType = "supply_depot" | "medical_ward" | "armory" | "command_center" | "mine";
 
-export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents" | "wad";
+export type ResourceType = ResourceKey | "wad";
 
 export interface KeyRoomState {
   roomNodeId: string;

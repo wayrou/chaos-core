@@ -14,11 +14,13 @@ import {
   getAvailableQuests, 
   getActiveQuests, 
   acceptQuest,
+  getQuestAcceptanceFailureMessage,
   initializeQuestState,
   abandonQuest,
   getTotalQuestsCompleted,
 } from "../../quests/questManager";
 import { Quest } from "../../quests/types";
+import { getResourceEntries } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -274,11 +276,9 @@ function renderQuestRewards(rewards: Quest["rewards"]): string {
   }
 
   if (rewards.resources) {
-    const res = rewards.resources;
-    if (res.metalScrap) parts.push(`<span class="reward-item"><span class="reward-icon">🔩</span> ${res.metalScrap} Metal</span>`);
-    if (res.wood) parts.push(`<span class="reward-item"><span class="reward-icon">🪵</span> ${res.wood} Wood</span>`);
-    if (res.chaosShards) parts.push(`<span class="reward-item"><span class="reward-icon">💎</span> ${res.chaosShards} Shards</span>`);
-    if (res.steamComponents) parts.push(`<span class="reward-item"><span class="reward-icon">⚙️</span> ${res.steamComponents} Steam</span>`);
+    getResourceEntries(rewards.resources).forEach((entry) => {
+      parts.push(`<span class="reward-item">${entry.amount} ${entry.label}</span>`);
+    });
   }
 
   if (rewards.cards && rewards.cards.length > 0) {
@@ -343,7 +343,7 @@ function attachEventListeners(returnTo: BaseCampReturnTo): void {
           // Refresh the screen
           renderQuestBoardScreen(returnTo);
         } else {
-          alert("Failed to accept quest. You may have reached the maximum number of active quests.");
+          alert(getQuestAcceptanceFailureMessage(questId) || "Failed to accept quest.");
         }
       }
     });

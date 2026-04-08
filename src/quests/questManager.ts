@@ -4,8 +4,11 @@
 // ============================================================================
 
 import type { GameState } from "../core/types";
+import { consumeKeyItemFromState, getOwnedKeyItemQuantity } from "../core/keyItems";
 import { getGameState, updateGameState } from "../state/gameStore";
+import { showSystemPing } from "../ui/components/systemPing";
 import { getQuestById, cloneQuest, getAvailableQuests as getAvailableQuestsFromData } from "./questData";
+import { applyQuestRewardsToState } from "./questRewards";
 import { generateRandomQuest, generateRandomQuests } from "./questGenerator";
 import { syncQuestProgressFromSnapshotState } from "./questRuntime";
 import { ObjectiveType, Quest, QuestId, QuestState } from "./types";
@@ -26,6 +29,18 @@ const SNAPSHOT_OBJECTIVE_TYPES = new Set<ObjectiveType>([
   "reach_floor",
 ]);
 
+type QuestAcceptanceFailure =
+  | { code: "not_found" }
+  | { code: "missing_requirements"; missingRequiredQuestIds: string[]; missingKeyItemIds: string[] }
+  | { code: "already_active" }
+  | { code: "max_active_quests"; maxActiveQuests: number };
+
+type QuestCompletionTurnIn = {
+  npcId: string;
+  keyItemId: string;
+  quantity: number;
+};
+
 export function getQuestState(): QuestState {
   const state = getGameState();
   return state.quests || createEmptyQuestState();
@@ -43,22 +58,136 @@ function createEmptyQuestState(): QuestState {
   };
 }
 
-function parseRequiredQuestIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+function parseStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean)));
   }
 
-  return Array.from(new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean)));
+  if (typeof value === "string") {
+    return Array.from(new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean)));
+  }
+
+  return [];
 }
 
-function areQuestRequirementsMet(quest: Quest): boolean {
-  const requiredQuestIds = parseRequiredQuestIds(quest.metadata?.requiredQuestIds);
-  if (requiredQuestIds.length === 0) {
-    return true;
+function parseRequiredQuestIds(value: unknown): string[] {
+  return parseStringList(value);
+}
+
+function parseRequiredKeyItemIds(value: unknown): string[] {
+  return parseStringList(value);
+}
+
+function parseCompletionTurnIn(value: unknown): QuestCompletionTurnIn | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
   }
 
-  const completedQuestIds = new Set(getQuestState().completedQuests);
-  return requiredQuestIds.every((questId) => completedQuestIds.has(questId));
+  const candidate = value as Partial<QuestCompletionTurnIn>;
+  const npcId = String(candidate.npcId ?? "").trim();
+  const keyItemId = String(candidate.keyItemId ?? "").trim();
+  const quantity = Math.max(1, Number(candidate.quantity ?? 1) || 1);
+  if (!npcId || !keyItemId) {
+    return null;
+  }
+
+  return {
+    npcId,
+    keyItemId,
+    quantity,
+  };
+}
+
+function getQuestRequirementFailure(
+  quest: Quest,
+  state: GameState = getGameState(),
+): Extract<QuestAcceptanceFailure, { code: "missing_requirements" }> | null {
+  const requiredQuestIds = parseRequiredQuestIds(quest.metadata?.requiredQuestIds);
+  const completedQuestIds = new Set((state.quests ?? createEmptyQuestState()).completedQuests);
+  const missingRequiredQuestIds = requiredQuestIds.filter((questId) => !completedQuestIds.has(questId));
+
+  const requiredKeyItemIds = parseRequiredKeyItemIds(quest.metadata?.requiredKeyItemIds);
+  const missingKeyItemIds = requiredKeyItemIds.filter((keyItemId) => getOwnedKeyItemQuantity(state, keyItemId) <= 0);
+
+  if (missingRequiredQuestIds.length === 0 && missingKeyItemIds.length === 0) {
+    return null;
+  }
+
+  return {
+    code: "missing_requirements",
+    missingRequiredQuestIds,
+    missingKeyItemIds,
+  };
+}
+
+function areQuestRequirementsMet(quest: Quest, state: GameState = getGameState()): boolean {
+  return !getQuestRequirementFailure(quest, state);
+}
+
+function getQuestAcceptanceFailure(
+  questId: QuestId,
+  state: GameState = getGameState(),
+): QuestAcceptanceFailure | null {
+  const quest = getQuestById(questId);
+  if (!quest) {
+    return { code: "not_found" };
+  }
+
+  const requirementFailure = getQuestRequirementFailure(quest, state);
+  if (requirementFailure) {
+    return requirementFailure;
+  }
+
+  const questState = state.quests ?? createEmptyQuestState();
+  if (questState.activeQuests.some((activeQuest) => activeQuest.id === questId)) {
+    return { code: "already_active" };
+  }
+  if (questState.activeQuests.length >= questState.maxActiveQuests) {
+    return { code: "max_active_quests", maxActiveQuests: questState.maxActiveQuests };
+  }
+
+  return null;
+}
+
+function describeQuestAcceptanceFailure(failure: QuestAcceptanceFailure): string {
+  switch (failure.code) {
+    case "missing_requirements": {
+      const details: string[] = [];
+      if (failure.missingRequiredQuestIds.length > 0) {
+        details.push(`complete quest(s): ${failure.missingRequiredQuestIds.join(", ")}`);
+      }
+      if (failure.missingKeyItemIds.length > 0) {
+        details.push(`obtain key item(s): ${failure.missingKeyItemIds.join(", ")}`);
+      }
+      return `Quest locked. ${details.join(" // ")}`;
+    }
+    case "already_active":
+      return "Quest is already active.";
+    case "max_active_quests":
+      return `Failed to accept quest. Maximum active quests reached (${failure.maxActiveQuests}).`;
+    case "not_found":
+    default:
+      return "Failed to accept quest. Quest not found.";
+  }
+}
+
+function showQuestCompletionNotification(quest: Quest): void {
+  const rewardParts: string[] = [];
+  if (quest.rewards.wad) rewardParts.push(`${quest.rewards.wad} WAD`);
+  if (quest.rewards.xp) rewardParts.push(`${quest.rewards.xp} XP`);
+
+  showSystemPing({
+    title: "QUEST COMPLETE",
+    message: quest.title,
+    detail: rewardParts.length > 0 ? rewardParts.join(" • ") : undefined,
+    type: "success",
+    channel: "quest-complete",
+  });
+}
+
+export function getQuestAcceptanceFailureMessage(questId: QuestId): string {
+  const failure = getQuestAcceptanceFailure(questId);
+  return failure ? describeQuestAcceptanceFailure(failure) : "";
 }
 
 function addGeneratedQuestsToState(state: GameState, count: number): GameState {
@@ -121,14 +250,15 @@ export function syncQuestProgressInStore(): void {
 }
 
 export function acceptQuest(questId: QuestId): boolean {
-  const quest = getQuestById(questId);
-  if (!quest) {
-    console.warn(`[QUEST] Quest not found: ${questId}`);
+  const failure = getQuestAcceptanceFailure(questId);
+  if (failure) {
+    console.warn(`[QUEST] ${describeQuestAcceptanceFailure(failure)} (${questId})`);
     return false;
   }
 
-  if (!areQuestRequirementsMet(quest)) {
-    console.warn(`[QUEST] Quest requirements not met: ${questId}`);
+  const quest = getQuestById(questId);
+  if (!quest) {
+    console.warn(`[QUEST] Quest not found after validation: ${questId}`);
     return false;
   }
 
@@ -237,11 +367,12 @@ export function getActiveQuests(): Quest[] {
 }
 
 export function getAvailableQuests(): Quest[] {
+  const state = getGameState();
   const questState = getQuestState();
   return getAvailableQuestsFromData().filter(
     (quest) => !questState.completedQuests.includes(quest.id)
       && !questState.activeQuests.some((activeQuest) => activeQuest.id === quest.id),
-  ).filter(areQuestRequirementsMet);
+  ).filter((quest) => areQuestRequirementsMet(quest, state));
 }
 
 export function getActiveQuest(questId: QuestId): Quest | null {
@@ -288,4 +419,71 @@ export function abandonQuest(questId: QuestId): boolean {
 
   console.log(`[QUEST] Abandoned quest: ${quest.title}`);
   return true;
+}
+
+export function completeNpcTurnInQuests(npcId: string): Quest[] {
+  const normalizedNpcId = npcId.trim();
+  if (!normalizedNpcId) {
+    return [];
+  }
+
+  const completedQuests: Quest[] = [];
+
+  updateGameState((state) => {
+    const questState = state.quests ?? createEmptyQuestState();
+    if (questState.activeQuests.length === 0) {
+      return state;
+    }
+
+    let nextState = state;
+    const completedIds = new Set(questState.completedQuests);
+    const remainingActiveQuests: Quest[] = [];
+    let completedCount = 0;
+
+    questState.activeQuests.forEach((quest) => {
+      const turnIn = parseCompletionTurnIn(quest.metadata?.completionTurnIn);
+      if (!turnIn || turnIn.npcId !== normalizedNpcId || completedIds.has(quest.id)) {
+        remainingActiveQuests.push(quest);
+        return;
+      }
+
+      if (getOwnedKeyItemQuantity(nextState, turnIn.keyItemId) < turnIn.quantity) {
+        remainingActiveQuests.push(quest);
+        return;
+      }
+
+      const consumedResult = consumeKeyItemFromState(nextState, turnIn.keyItemId, turnIn.quantity);
+      if (consumedResult.consumed < turnIn.quantity) {
+        remainingActiveQuests.push(quest);
+        return;
+      }
+
+      console.log(`[QUEST] Completed quest via NPC turn-in: ${quest.title}`);
+      completedQuests.push(quest);
+      completedIds.add(quest.id);
+      completedCount += 1;
+      nextState = applyQuestRewardsToState(consumedResult.state, quest);
+    });
+
+    if (completedCount === 0) {
+      return state;
+    }
+
+    const nextQuestState = nextState.quests ?? createEmptyQuestState();
+    return settleQuestState({
+      ...nextState,
+      quests: {
+        ...nextQuestState,
+        activeQuests: remainingActiveQuests,
+        completedQuests: [...completedIds],
+        totalQuestsCompleted: (nextQuestState.totalQuestsCompleted ?? 0) + completedCount,
+      },
+    }, true);
+  });
+
+  completedQuests.forEach((quest) => {
+    showQuestCompletionNotification(quest);
+  });
+
+  return completedQuests;
 }

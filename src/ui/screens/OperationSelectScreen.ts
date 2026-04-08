@@ -46,6 +46,12 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+import {
+  createEmptyResourceWallet,
+  getResourceEntries,
+  RESOURCE_KEYS,
+  type ResourceWallet,
+} from "../../core/resources";
 type AtlasViewportState = {
   panX: number;
   panY: number;
@@ -354,15 +360,14 @@ function escapeHtml(value: string): string {
 }
 
 function mergeTheaterStarterReserve(
-  currentResources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number },
-): { metalScrap: number; wood: number; chaosShards: number; steamComponents: number } {
+  currentResources: ResourceWallet,
+): ResourceWallet {
   const reserve = getTheaterStarterResources();
-  return {
-    metalScrap: Math.max(currentResources.metalScrap, reserve.metalScrap),
-    wood: Math.max(currentResources.wood, reserve.wood),
-    chaosShards: Math.max(currentResources.chaosShards, reserve.chaosShards),
-    steamComponents: Math.max(currentResources.steamComponents, reserve.steamComponents),
-  };
+  const merged = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    merged[key] = Math.max(currentResources[key], reserve[key]);
+  });
+  return merged;
 }
 
 function formatSectorState(state: AtlasSectorView["currentState"]): string {
@@ -1115,12 +1120,7 @@ function renderSectorCard(view: AtlasSectorView): string {
 }
 
 function formatEconomyIncome(summary: OpsTerminalAtlasEconomySummary): string {
-  const parts = [
-    summary.incomePerTick.metalScrap ? `MS +${summary.incomePerTick.metalScrap}` : null,
-    summary.incomePerTick.wood ? `W +${summary.incomePerTick.wood}` : null,
-    summary.incomePerTick.chaosShards ? `CS +${summary.incomePerTick.chaosShards}` : null,
-    summary.incomePerTick.steamComponents ? `SC +${summary.incomePerTick.steamComponents}` : null,
-  ].filter(Boolean);
+  const parts = getResourceEntries(summary.incomePerTick).map((entry) => `${entry.abbreviation} +${entry.amount}`);
 
   return parts.length > 0 ? parts.join(" / ") : "No passive income";
 }

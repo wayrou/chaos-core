@@ -7,6 +7,12 @@ import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { getActiveRun, completeOperationRun } from "../../core/campaignManager";
 import { OPERATION_DEFINITIONS } from "../../core/campaign";
 import { updateGameState } from "../../state/gameStore";
+import {
+  addResourceWallet,
+  createEmptyResourceWallet,
+  getResourceEntries,
+  type ResourceWallet,
+} from "../../core/resources";
 
 export function renderOperationClearScreen(): void {
   const root = document.getElementById("app");
@@ -87,22 +93,12 @@ export function renderOperationClearScreen(): void {
                   <span class="opclear-resource-label">WAD:</span>
                   <span class="opclear-resource-value">+${rewards.wad}</span>
                 </div>
-                <div class="opclear-resource-item">
-                  <span class="opclear-resource-label">Metal Scrap:</span>
-                  <span class="opclear-resource-value">+${rewards.metalScrap}</span>
-                </div>
-                <div class="opclear-resource-item">
-                  <span class="opclear-resource-label">Wood:</span>
-                  <span class="opclear-resource-value">+${rewards.wood}</span>
-                </div>
-                <div class="opclear-resource-item">
-                  <span class="opclear-resource-label">Chaos Shards:</span>
-                  <span class="opclear-resource-value">+${rewards.chaosShards}</span>
-                </div>
-                <div class="opclear-resource-item">
-                  <span class="opclear-resource-label">Steam Components:</span>
-                  <span class="opclear-resource-value">+${rewards.steamComponents}</span>
-                </div>
+                ${getResourceEntries(rewards.resources).map((entry) => `
+                  <div class="opclear-resource-item">
+                    <span class="opclear-resource-label">${entry.label}:</span>
+                    <span class="opclear-resource-value">+${entry.amount}</span>
+                  </div>
+                `).join("")}
               </div>
             </div>
 
@@ -154,14 +150,14 @@ export function renderOperationClearScreen(): void {
   });
 
   function checkContinueEnabled(): void {
-    const continueBtn = document.getElementById("continueBtn");
+    const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
     if (continueBtn) {
       continueBtn.disabled = !(selectedCardId && selectedGearId);
     }
   }
 
   // Continue button
-  const continueBtn = document.getElementById("continueBtn");
+  const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
   if (continueBtn) {
     continueBtn.addEventListener("click", () => {
       if (!selectedCardId || !selectedGearId) return;
@@ -176,12 +172,7 @@ export function renderOperationClearScreen(): void {
         return {
           ...prev,
           wad: (prev.wad || 0) + rewards.wad,
-          resources: {
-            metalScrap: (prev.resources?.metalScrap || 0) + rewards.metalScrap,
-            wood: (prev.resources?.wood || 0) + rewards.wood,
-            chaosShards: (prev.resources?.chaosShards || 0) + rewards.chaosShards,
-            steamComponents: (prev.resources?.steamComponents || 0) + rewards.steamComponents,
-          },
+          resources: addResourceWallet(prev.resources, rewards.resources),
           cardLibrary: newCardLibrary,
           // TODO: Add gear to inventory
         };
@@ -207,10 +198,7 @@ export function renderOperationClearScreen(): void {
 function generateOperationRewards(activeRun: import("../../core/campaign").ActiveRunState): {
   cards: Array<{ id: string; name: string; description: string }>;
   wad: number;
-  metalScrap: number;
-  wood: number;
-  chaosShards: number;
-  steamComponents: number;
+  resources: ResourceWallet;
   gear: Array<{ id: string; name: string; description: string }>;
 } {
   // Base rewards scale with operation difficulty and floors
@@ -224,10 +212,12 @@ function generateOperationRewards(activeRun: import("../../core/campaign").Activ
       { id: "card_heal", name: "Heal", description: "Restore HP" },
     ],
     wad: Math.floor(100 * baseMultiplier * floorMultiplier),
-    metalScrap: Math.floor(50 * baseMultiplier * floorMultiplier),
-    wood: Math.floor(30 * baseMultiplier * floorMultiplier),
-    chaosShards: Math.floor(20 * baseMultiplier * floorMultiplier),
-    steamComponents: Math.floor(15 * baseMultiplier * floorMultiplier),
+    resources: createEmptyResourceWallet({
+      metalScrap: Math.floor(50 * baseMultiplier * floorMultiplier),
+      wood: Math.floor(30 * baseMultiplier * floorMultiplier),
+      chaosShards: Math.floor(20 * baseMultiplier * floorMultiplier),
+      steamComponents: Math.floor(15 * baseMultiplier * floorMultiplier),
+    }),
     gear: [
       { id: "gear_combat_vest", name: "Combat Vest", description: "Increases defense" },
       { id: "gear_tactical_boots", name: "Tactical Boots", description: "Increases movement" },

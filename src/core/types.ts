@@ -1,7 +1,10 @@
 // src/core/types.ts
 import type { EffectFlowDocument } from "./effectFlow";
+import type { WeaponCardRules } from "./weaponData";
+import type { ResourceWallet } from "./resources";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
+export type { ResourceKey, ResourceWallet } from "./resources";
 
 // ---------------------------------------------------------
 //  CORE BATTLE TYPES
@@ -75,6 +78,8 @@ export interface Card {
   effects: CardEffect[];
   effectFlow?: EffectFlowDocument;
   artPath?: string;
+  sourceEquipmentId?: string;
+  weaponRules?: WeaponCardRules;
 }
 
 export interface Unit {
@@ -137,13 +142,7 @@ export interface BattleState {
   tiles: BattleTile[];
   log: string[];
   phase: "active" | "victory" | "defeat";
-  rewards?: {
-    wad: number;
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  rewards?: { wad: number } & ResourceWallet;
   modeContext?: BattleModeContext;
 
   // 10za addition:
@@ -231,13 +230,6 @@ export interface Player {
   controlledUnitIds: UnitId[];
 }
 
-export interface ResourceWallet {
-  metalScrap: number;
-  wood: number;
-  chaosShards: number;
-  steamComponents: number;
-}
-
 export interface ResourcePool {
   wad: number;
   resources: ResourceWallet;
@@ -308,6 +300,16 @@ export interface CampaignState {
   };
 }
 
+export interface TheaterRuntimeContext {
+  theaterId: string;
+  operationId: string | null;
+  snapshot: string;
+  phase: GameState["phase"] | null;
+  battleSnapshot: string | null;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
+  updatedAt: number;
+}
+
 export interface SessionState {
   mode: SessionMode;
   authorityRole: AuthorityRole;
@@ -317,6 +319,7 @@ export interface SessionState {
   pendingTransfers: TradeTransfer[];
   players: Record<SessionPlayerSlot, SessionPlayerState>;
   theaterAssignments: Record<SessionPlayerSlot, TheaterAssignment>;
+  activeTheaterContexts: Record<string, TheaterRuntimeContext>;
   pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
   activeBattleId: string | null;
   campaign: CampaignState;
@@ -390,6 +393,13 @@ export interface LobbyCoopParticipantState {
   sessionSlot: SessionPlayerSlot | null;
   stagingState: ReconnectStagingState;
   lastSafeMapId: string | null;
+  currentTheaterId: string | null;
+  assignedSquadId: string | null;
+  currentRoomId: RoomId | null;
+  operationPhase: GameState["phase"] | null;
+  theaterSnapshot: string | null;
+  battleSnapshot: string | null;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
 }
 
 export interface LobbyCoopOperationsActivity {
@@ -399,6 +409,7 @@ export interface LobbyCoopOperationsActivity {
   selectedSlots: NetworkPlayerSlot[];
   economyPreset: EconomyPreset;
   participants: Record<NetworkPlayerSlot, LobbyCoopParticipantState>;
+  theaterContexts: Record<string, TheaterRuntimeContext>;
   operationSnapshot: string | null;
   battleSnapshot: string | null;
   operationPhase: GameState["phase"] | null;
@@ -532,8 +543,8 @@ export interface UILayoutState {
     panY: number;
     zoom: number;
   };
-  theaterCommandCoreTab?: "room" | "core" | "fortifications";
-  theaterCommandNodeTab?: "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications";
+  theaterCommandCoreTab?: "room" | "core" | "fortifications" | "tactical";
+  theaterCommandNodeTab?: "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications" | "tactical";
   theaterCommandMapMode?: TheaterMapMode;
   theaterCommandAutomationWindowOpen?: boolean;
   theaterCommandSelectedAnnexId?: string | null;
@@ -1100,6 +1111,14 @@ export interface TheaterRoom {
   supplyFlow: number;
   powerFlow: number;
   commsFlow: number;
+  sandboxOverheating?: boolean;
+  sandboxOverheatSeverity?: 0 | 1 | 2;
+  sandboxRouteNoise?: boolean;
+  sandboxPhantomRouteRoomIds?: string[];
+  sandboxCommsAttraction?: number;
+  sandboxScavengerPressure?: number;
+  sandboxEnemyPresence?: number;
+  sandboxMigrationAnchorRoomId?: string | null;
   intelLevel: TheaterIntelLevel;
   fortificationPips: FortificationPips;
   tacticalEncounter: string | null;
@@ -1142,13 +1161,7 @@ export interface ThreatState {
 export interface TheaterObjectiveCompletion {
   roomId: RoomId;
   completedAtTick: number;
-  reward: {
-    wad: number;
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  reward: { wad: number } & ResourceWallet;
   recapLines: string[];
 }
 
@@ -1364,6 +1377,7 @@ export interface SquadBattleTurnState {
   hasMoved: boolean;
   hasCommittedMove: boolean;
   hasActed: boolean;
+  movementOnlyAfterAttack?: boolean;
   movementRemaining: number;
   originalPosition: { x: number; y: number } | null;
   isFacingSelection: boolean;
@@ -1540,7 +1554,7 @@ export type MuleWeightClass = "E" | "D" | "C" | "B" | "A" | "S";
 export interface InventoryItem {
   id: string;
   name: string;
-  kind: "resource" | "equipment" | "consumable" | "unit";
+  kind: "resource" | "equipment" | "consumable" | "unit" | "key_item";
   stackable: boolean;
   quantity: number;
   massKg: number;
@@ -1608,6 +1622,8 @@ export interface GameState {
   foundry?: FoundryUnlockState;
 
   inventory: InventoryState;
+  outerDecks?: import("./outerDecks").OuterDecksState;
+  weaponsmith?: import("./weaponsmith").WeaponsmithState;
 
   currentBattle: RuntimeBattleState | null;
 
@@ -1667,6 +1683,7 @@ export interface GameState {
   // Tracks one-time Technica content merges into existing saves.
   technicaSync?: {
     starterGearIds?: string[];
+    registryFingerprint?: string;
   };
 }
 

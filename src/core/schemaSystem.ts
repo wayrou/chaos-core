@@ -1,6 +1,7 @@
 import {
   CoreBuildDefinition,
   CoreType,
+  FieldAssetType,
   FortificationDefinition,
   FortificationPips,
   FortificationType,
@@ -9,6 +10,13 @@ import {
   TheaterRoom,
   TheaterRoomTag,
 } from "./types";
+import {
+  addResourceWallet as addResourceWalletValues,
+  createEmptyResourceWallet,
+  getResourceEntries,
+  hasEnoughResources as hasEnoughResourceValues,
+  subtractResourceWallet,
+} from "./resources";
 
 type ResourceWallet = GameState["resources"];
 
@@ -70,6 +78,27 @@ export const SCHEMA_FORTIFICATION_ORDER: FortificationType[] = [
   "securityTerminal",
 ];
 
+export type FieldAssetDefinition = {
+  id: FieldAssetType;
+  displayName: string;
+  description: string;
+  buildCost: Partial<ResourceWallet>;
+  unlockSource: "schema";
+  unlockCost: Partial<ResourceWallet>;
+  unlockWadCost: number;
+  tacticalRole: string;
+};
+
+export const SCHEMA_FIELD_ASSET_ORDER: FieldAssetType[] = [
+  "barricade_wall",
+  "med_station",
+  "ammo_crate",
+  "proximity_mine",
+  "smoke_emitter",
+  "portable_ladder",
+  "light_tower",
+];
+
 export const ROOM_TAG_LABELS: Record<string, string> = {
   ingress: "Ingress",
   uplink: "Base Camp Uplink",
@@ -94,21 +123,11 @@ export const ROOM_TAG_LABELS: Record<string, string> = {
 };
 
 function withZeroIncome(incomePerTick?: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: incomePerTick?.metalScrap ?? 0,
-    wood: incomePerTick?.wood ?? 0,
-    chaosShards: incomePerTick?.chaosShards ?? 0,
-    steamComponents: incomePerTick?.steamComponents ?? 0,
-  };
+  return createEmptyResourceWallet(incomePerTick);
 }
 
 function addResourceWallet(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: base.metalScrap + (delta.metalScrap ?? 0),
-    wood: base.wood + (delta.wood ?? 0),
-    chaosShards: base.chaosShards + (delta.chaosShards ?? 0),
-    steamComponents: base.steamComponents + (delta.steamComponents ?? 0),
-  };
+  return addResourceWalletValues(base, delta);
 }
 
 export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
@@ -642,6 +661,79 @@ export const SCHEMA_FORTIFICATION_DEFINITIONS: Record<FortificationType, Fortifi
   },
 };
 
+export const SCHEMA_FIELD_ASSET_DEFINITIONS: Partial<Record<FieldAssetType, FieldAssetDefinition>> = {
+  barricade_wall: {
+    id: "barricade_wall",
+    displayName: "Barricade Wall",
+    description: "Deployable wall segment that blocks movement and sightlines to reshape a room before contact.",
+    buildCost: { wood: 1 },
+    unlockSource: "schema",
+    unlockCost: { wood: 1 },
+    unlockWadCost: 8,
+    tacticalRole: "Hard route control / artificial chokepoint",
+  },
+  med_station: {
+    id: "med_station",
+    displayName: "Med Station",
+    description: "One-use recovery station that restores a unit holding the prepared defensive line.",
+    buildCost: { wood: 1 },
+    unlockSource: "schema",
+    unlockCost: { wood: 1, chaosShards: 1 },
+    unlockWadCost: 12,
+    tacticalRole: "One-use sustain anchor",
+  },
+  ammo_crate: {
+    id: "ammo_crate",
+    displayName: "Ammo Crate",
+    description: "One-use reload point for rooms expected to support prolonged ranged pressure.",
+    buildCost: { wood: 1 },
+    unlockSource: "schema",
+    unlockCost: { wood: 1, metalScrap: 1 },
+    unlockWadCost: 12,
+    tacticalRole: "One-use reload anchor",
+  },
+  proximity_mine: {
+    id: "proximity_mine",
+    displayName: "Proximity Mine",
+    description: "Hidden explosive trap for punishing predictable pushes through narrow lanes.",
+    buildCost: { metalScrap: 1 },
+    unlockSource: "schema",
+    unlockCost: { metalScrap: 2, chaosShards: 1 },
+    unlockWadCost: 16,
+    tacticalRole: "Triggered route denial",
+  },
+  smoke_emitter: {
+    id: "smoke_emitter",
+    displayName: "Smoke Emitter",
+    description: "Deployable obscurant that breaks sightlines and softens long-range pressure.",
+    buildCost: { metalScrap: 1 },
+    unlockSource: "schema",
+    unlockCost: { metalScrap: 2, steamComponents: 1 },
+    unlockWadCost: 16,
+    tacticalRole: "Sightline denial",
+  },
+  portable_ladder: {
+    id: "portable_ladder",
+    displayName: "Portable Ladder",
+    description: "Adds a flexible climb route to elevated positions without rebuilding the room itself.",
+    buildCost: { wood: 2 },
+    unlockSource: "schema",
+    unlockCost: { wood: 2, metalScrap: 1 },
+    unlockWadCost: 18,
+    tacticalRole: "Vertical access tool",
+  },
+  light_tower: {
+    id: "light_tower",
+    displayName: "Deployable Light Tower",
+    description: "Prepared illumination rig for rooms where visibility and control matter.",
+    buildCost: { metalScrap: 1, steamComponents: 1 },
+    unlockSource: "schema",
+    unlockCost: { metalScrap: 2, steamComponents: 1 },
+    unlockWadCost: 20,
+    tacticalRole: "Vision support / area denial cue",
+  },
+};
+
 export function formatRoomTagLabel(tag: TheaterRoomTag): string {
   return ROOM_TAG_LABELS[tag] ?? String(tag).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -652,6 +744,10 @@ export function getOrderedSchemaCoreTypes(): CoreType[] {
 
 export function getOrderedSchemaFortificationTypes(): FortificationType[] {
   return [...SCHEMA_FORTIFICATION_ORDER];
+}
+
+export function getOrderedSchemaFieldAssetTypes(): FieldAssetType[] {
+  return [...SCHEMA_FIELD_ASSET_ORDER];
 }
 
 export function createDefaultSchemaUnlockState(): SchemaUnlockState {
@@ -677,10 +773,17 @@ export function normalizeSchemaUnlockState(schema?: Partial<SchemaUnlockState> |
     }
   });
 
+  const fieldAssetSet = new Set<FieldAssetType>();
+  (schema?.unlockedFieldAssetTypes ?? []).forEach((fieldAssetType) => {
+    if (SCHEMA_FIELD_ASSET_ORDER.includes(fieldAssetType)) {
+      fieldAssetSet.add(fieldAssetType);
+    }
+  });
+
   return {
     unlockedCoreTypes: SCHEMA_CORE_BUILD_ORDER.filter((coreType) => coreSet.has(coreType)),
     unlockedFortificationPips: SCHEMA_FORTIFICATION_ORDER.filter((fortificationType) => fortificationSet.has(fortificationType)),
-    unlockedFieldAssetTypes: [...new Set(schema?.unlockedFieldAssetTypes ?? [])],
+    unlockedFieldAssetTypes: SCHEMA_FIELD_ASSET_ORDER.filter((fieldAssetType) => fieldAssetSet.has(fieldAssetType)),
   };
 }
 
@@ -715,6 +818,14 @@ export function isCoreTypeUnlocked(state: GameState, coreType: CoreType): boolea
 
 export function isFortificationUnlocked(state: GameState, fortificationType: FortificationType): boolean {
   return getSchemaUnlockState(state).unlockedFortificationPips.includes(fortificationType);
+}
+
+export function isFieldAssetUnlocked(state: GameState, fieldAssetType: FieldAssetType): boolean {
+  return getSchemaUnlockState(state).unlockedFieldAssetTypes.includes(fieldAssetType);
+}
+
+export function getFieldAssetBuildCost(fieldAssetType: FieldAssetType): Partial<ResourceWallet> {
+  return { ...(SCHEMA_FIELD_ASSET_DEFINITIONS[fieldAssetType]?.buildCost ?? {}) };
 }
 
 export function createEmptyFortificationPips(): FortificationPips {
@@ -786,30 +897,17 @@ export function getCoreSynergyLinesForRoom(coreType: CoreType, roomOrTags: Theat
 }
 
 export function formatResourceWalletInline(delta: Partial<ResourceWallet>): string {
-  const parts = [
-    delta.metalScrap ? `+${delta.metalScrap} Metal Scrap/tick` : null,
-    delta.wood ? `+${delta.wood} Wood/tick` : null,
-    delta.chaosShards ? `+${delta.chaosShards} Chaos Shards/tick` : null,
-    delta.steamComponents ? `+${delta.steamComponents} Steam Components/tick` : null,
-  ].filter(Boolean);
+  const parts = getResourceEntries(delta).map((entry) => `+${entry.amount} ${entry.label}/tick`);
 
   return parts.length > 0 ? parts.join(" / ") : "No resource output";
 }
 
 function hasEnoughResources(resources: ResourceWallet, cost?: Partial<ResourceWallet>): boolean {
-  return (resources.metalScrap ?? 0) >= (cost?.metalScrap ?? 0)
-    && (resources.wood ?? 0) >= (cost?.wood ?? 0)
-    && (resources.chaosShards ?? 0) >= (cost?.chaosShards ?? 0)
-    && (resources.steamComponents ?? 0) >= (cost?.steamComponents ?? 0);
+  return hasEnoughResourceValues(resources, cost);
 }
 
 function subtractResources(resources: ResourceWallet, cost?: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: Math.max(0, resources.metalScrap - (cost?.metalScrap ?? 0)),
-    wood: Math.max(0, resources.wood - (cost?.wood ?? 0)),
-    chaosShards: Math.max(0, resources.chaosShards - (cost?.chaosShards ?? 0)),
-    steamComponents: Math.max(0, resources.steamComponents - (cost?.steamComponents ?? 0)),
-  };
+  return subtractResourceWallet(resources, cost, true);
 }
 
 type SchemaUnlockResult = {
@@ -877,6 +975,38 @@ export function unlockSchemaFortificationInState(state: GameState, fortification
       schema: {
         ...schema,
         unlockedFortificationPips: [...schema.unlockedFortificationPips, fortificationType],
+      },
+    },
+  };
+}
+
+export function unlockSchemaFieldAssetInState(state: GameState, fieldAssetType: FieldAssetType): SchemaUnlockResult {
+  const normalizedState = withNormalizedSchemaState(state);
+  const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[fieldAssetType];
+  if (!definition) {
+    return { state: normalizedState, success: false, message: "Unknown field asset authorization." };
+  }
+  if (isFieldAssetUnlocked(normalizedState, fieldAssetType)) {
+    return { state: normalizedState, success: false, message: `${definition.displayName} is already unlocked.` };
+  }
+  if (
+    (normalizedState.wad ?? 0) < (definition.unlockWadCost ?? 0)
+    || !hasEnoughResources(normalizedState.resources, definition.unlockCost)
+  ) {
+    return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
+  }
+
+  const schema = getSchemaUnlockState(normalizedState);
+  return {
+    success: true,
+    message: `${definition.displayName} authorized in S.C.H.E.M.A.`,
+    state: {
+      ...normalizedState,
+      wad: Math.max(0, (normalizedState.wad ?? 0) - (definition.unlockWadCost ?? 0)),
+      resources: subtractResources(normalizedState.resources, definition.unlockCost),
+      schema: {
+        ...schema,
+        unlockedFieldAssetTypes: [...schema.unlockedFieldAssetTypes, fieldAssetType],
       },
     },
   };

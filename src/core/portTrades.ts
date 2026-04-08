@@ -2,7 +2,9 @@
 // PORT TRADE SYSTEM - DATA DEFINITIONS
 // ============================================================================
 
-export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents";
+import { ADVANCED_RESOURCE_KEYS, BASIC_RESOURCE_KEYS, type ResourceKey } from "./resources";
+
+export type ResourceType = ResourceKey;
 
 export interface ResourceAmount {
   resource: ResourceType;
@@ -40,16 +42,10 @@ export interface PortManifest {
 // BASIC RESOURCES
 // ----------------------------------------------------------------------------
 
-export const BASIC_RESOURCES: ResourceType[] = [
-  "metalScrap",
-  "wood",
-  "chaosShards",
-  "steamComponents",
-];
+export const BASIC_RESOURCES: ResourceType[] = [...BASIC_RESOURCE_KEYS];
 
 // Rare resources (only available for Bulk Shipment after Operation 4/5)
-// For now, we'll use the same basic resources but could extend later
-export const RARE_RESOURCES: ResourceType[] = []; // Placeholder for future expansion
+export const RARE_RESOURCES: ResourceType[] = [...ADVANCED_RESOURCE_KEYS];
 
 // ----------------------------------------------------------------------------
 // NORMAL TRADE TEMPLATES
@@ -167,6 +163,9 @@ const BULK_SHIPMENT_INTERESTING_PAYOUTS: ResourceAmount[][] = [
   [{ resource: "chaosShards", amount: 15 }, { resource: "steamComponents", amount: 15 }],
   [{ resource: "metalScrap", amount: 50 }, { resource: "wood", amount: 40 }],
   [{ resource: "steamComponents", amount: 25 }, { resource: "chaosShards", amount: 12 }],
+  [{ resource: "alloy", amount: 8 }, { resource: "fittings", amount: 10 }],
+  [{ resource: "drawcord", amount: 12 }, { resource: "resin", amount: 9 }],
+  [{ resource: "chargeCells", amount: 6 }, { resource: "alloy", amount: 5 }],
 ];
 
 // ----------------------------------------------------------------------------

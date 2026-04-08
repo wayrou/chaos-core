@@ -1,4 +1,9 @@
 import { getGameState, updateGameState } from "../state/gameStore";
+import {
+  hasEnoughResources as hasEnoughResourceValues,
+  subtractResourceWallet,
+  type ResourceWallet,
+} from "./resources";
 
 export type DecorAnchorId =
   | "wall_left"
@@ -9,12 +14,7 @@ export type DecorAnchorId =
   | "window_sill"
   | "bedside_table";
 
-export interface DecorResourceCost {
-  metalScrap?: number;
-  wood?: number;
-  chaosShards?: number;
-  steamComponents?: number;
-}
+export type DecorResourceCost = Partial<ResourceWallet>;
 
 export interface DecorItem {
   id: string;
@@ -155,21 +155,11 @@ const DECOR_ITEMS: DecorItem[] = [
 ];
 
 function hasEnoughResources(resources: DecorResourceCost, cost?: DecorResourceCost): boolean {
-  return (
-    (resources.metalScrap ?? 0) >= (cost?.metalScrap ?? 0)
-    && (resources.wood ?? 0) >= (cost?.wood ?? 0)
-    && (resources.chaosShards ?? 0) >= (cost?.chaosShards ?? 0)
-    && (resources.steamComponents ?? 0) >= (cost?.steamComponents ?? 0)
-  );
+  return hasEnoughResourceValues(resources, cost);
 }
 
 function subtractResources(resources: DecorResourceCost, cost?: DecorResourceCost): DecorResourceCost {
-  return {
-    metalScrap: (resources.metalScrap ?? 0) - (cost?.metalScrap ?? 0),
-    wood: (resources.wood ?? 0) - (cost?.wood ?? 0),
-    chaosShards: (resources.chaosShards ?? 0) - (cost?.chaosShards ?? 0),
-    steamComponents: (resources.steamComponents ?? 0) - (cost?.steamComponents ?? 0),
-  };
+  return subtractResourceWallet(resources, cost);
 }
 
 export function getDecorState(state: { quarters?: { decor?: DecorState } }): DecorState {

@@ -1,6 +1,7 @@
 import type { EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
 import type { EffectFlowDocument } from "../../core/effectFlow";
 import type { FieldModScope, FieldModRarity, FieldModTrigger, FieldModStackMode } from "../../core/fieldMods";
+import type { ResourceWallet } from "../../core/resources";
 import type { CardEffect, InventoryItem } from "../../core/types";
 import type { FieldMap } from "../../field/types";
 import type { Quest } from "../../quests/types";
@@ -97,6 +98,19 @@ export interface ImportedItem extends InventoryItem {
     cardSlots?: number;
   };
   metadata?: Record<string, unknown>;
+}
+
+export interface ImportedKeyItem extends InventoryItem {
+  description?: string;
+  iconPath?: string;
+  questOnly?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ImportedFaction {
+  id: string;
+  name: string;
+  description?: string;
 }
 
 export interface ImportedGear {
@@ -227,6 +241,7 @@ export interface ImportedUnitTemplate {
   id: string;
   name: string;
   description?: string;
+  faction?: string;
   currentClassId: string;
   spawnRole?: "player" | "enemy";
   enemySpawnFloorOrdinals?: number[];
@@ -283,6 +298,7 @@ export interface ImportedOperationDefinition {
 export interface ImportedNpcTemplate {
   id: string;
   name: string;
+  faction?: string;
   mapId: string;
   x: number;
   y: number;
@@ -304,6 +320,7 @@ export interface ImportedFieldEnemyDefinition {
   id: string;
   name: string;
   description?: string;
+  faction?: string;
   kind?: string;
   spriteKey?: string;
   spritePath?: string;
@@ -321,12 +338,7 @@ export interface ImportedFieldEnemyDefinition {
   };
   drops?: {
     wad?: number;
-    resources?: {
-      metalScrap?: number;
-      wood?: number;
-      chaosShards?: number;
-      steamComponents?: number;
-    };
+    resources?: Partial<ResourceWallet>;
     items?: Array<{
       id: string;
       quantity?: number;
@@ -343,6 +355,8 @@ export type TechnicaContentType =
   | "dialogue"
   | "mail"
   | "quest"
+  | "key_item"
+  | "faction"
   | "map"
   | "field_enemy"
   | "npc"

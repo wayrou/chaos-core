@@ -20,6 +20,7 @@ import {
   generatePortManifest,
 } from "../../core/portManifestGenerator";
 import { loadCampaignProgress } from "../../core/campaign";
+import { formatResourceLabel, getResourceEntries } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -173,22 +174,12 @@ export function renderPortScreen(returnTo: BaseCampReturnTo = "basecamp"): void 
           <!-- Resources Footer -->
           <div class="port-footer">
             <div class="resource-display">
-              <div class="resource-item">
-                <span class="resource-label">METAL</span>
-                <span class="resource-value">${res.metalScrap}</span>
-              </div>
-              <div class="resource-item">
-                <span class="resource-label">WOOD</span>
-                <span class="resource-value">${res.wood}</span>
-              </div>
-              <div class="resource-item">
-                <span class="resource-label">SHARDS</span>
-                <span class="resource-value">${res.chaosShards}</span>
-              </div>
-              <div class="resource-item">
-                <span class="resource-label">STEAM</span>
-                <span class="resource-value">${res.steamComponents}</span>
-              </div>
+              ${getResourceEntries(res, { includeZero: true }).map((entry) => `
+                <div class="resource-item">
+                  <span class="resource-label">${entry.shortLabel}</span>
+                  <span class="resource-value">${entry.amount}</span>
+                </div>
+              `).join("")}
             </div>
           </div>
         </div>
@@ -310,13 +301,7 @@ function renderBulkShipment(
 }
 
 function formatResourceName(resource: ResourceType): string {
-  const names: Record<ResourceType, string> = {
-    metalScrap: "METAL SCRAP",
-    wood: "WOOD",
-    chaosShards: "CHAOS SHARDS",
-    steamComponents: "STEAM COMPONENTS",
-  };
-  return names[resource] || resource.toUpperCase();
+  return formatResourceLabel(resource).toUpperCase();
 }
 
 // ----------------------------------------------------------------------------

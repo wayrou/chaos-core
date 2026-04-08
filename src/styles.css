@@ -2355,6 +2355,185 @@ body {
   }
 }
 
+.outer-deck-transit-screen,
+.materials-refinery-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.outer-deck-transit-eyebrow,
+.materials-refinery-kicker {
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tech-amber);
+}
+
+.outer-deck-transit-close,
+.outer-deck-transit-btn,
+.materials-refinery-back-btn,
+.materials-refinery-craft-btn {
+  min-height: 42px;
+  padding: 0.8rem 1rem;
+  border: 1px solid rgba(255, 204, 110, 0.22);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(255, 204, 110, 0.09), rgba(255, 204, 110, 0.02)),
+    rgba(18, 17, 15, 0.94);
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.outer-deck-transit-btn--primary,
+.materials-refinery-craft-btn {
+  border-color: rgba(255, 204, 110, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255, 204, 110, 0.07);
+}
+
+.outer-deck-transit-close:hover,
+.outer-deck-transit-btn:hover,
+.materials-refinery-back-btn:hover,
+.materials-refinery-craft-btn:hover {
+  border-color: var(--tech-amber);
+  box-shadow: var(--shadow-glow-amber);
+}
+
+.outer-deck-transit-btn:disabled,
+.materials-refinery-craft-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.outer-deck-transit-status,
+.materials-refinery-resource-strip,
+.materials-refinery-footer {
+  border: 1px solid var(--stroke-subtle);
+  border-radius: var(--radius-panel);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%),
+    rgba(24, 22, 20, 0.88);
+  box-shadow: var(--shadow-elev-1);
+}
+
+.outer-deck-transit-status,
+.materials-refinery-footer {
+  padding: var(--space-3);
+}
+
+.outer-deck-transit-status-chip,
+.materials-refinery-destination {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(255, 204, 110, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 204, 110, 0.08);
+  color: var(--ink-soft);
+}
+
+.outer-deck-transit-grid,
+.materials-refinery-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.outer-deck-transit-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.materials-refinery-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.outer-deck-transit-card,
+.materials-refinery-card {
+  border: 1px solid var(--stroke-subtle);
+  border-radius: var(--radius-panel);
+  padding: clamp(14px, 1.8vw, 20px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 24%),
+    rgba(24, 22, 20, 0.82);
+  box-shadow: var(--shadow-elev-1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.outer-deck-transit-card--active {
+  border-color: rgba(255, 204, 110, 0.34);
+  box-shadow: var(--shadow-glow-amber);
+}
+
+.outer-deck-transit-card-header,
+.materials-refinery-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.outer-deck-transit-card-kicker,
+.materials-refinery-card-owned {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.outer-deck-transit-card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.outer-deck-transit-card-copy,
+.materials-refinery-card-copy {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.outer-deck-transit-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.outer-deck-transit-card-meta span,
+.materials-refinery-resource-item,
+.materials-refinery-card-cost,
+.materials-refinery-card-status {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ink-soft);
+}
+
+.materials-refinery-resource-strip {
+  display: grid;
+  gap: 0.75rem;
+  padding: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.materials-refinery-card-name {
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.materials-refinery-card-status--short {
+  color: #f0ae88;
+  border-color: rgba(240, 174, 136, 0.18);
+}
+
+.materials-refinery-card--locked {
+  border-color: rgba(240, 174, 136, 0.14);
+}
+
 /* ==========================================================================
    EZ DRAG
    Window dragging affordance for movable UI surfaces
@@ -17228,6 +17407,28 @@ button {
 .settings-content::-webkit-scrollbar-thumb:hover,
 .mainmenu-modal-body::-webkit-scrollbar-thumb:hover {
   background: #a87c45;
+}
+
+.mainmenu-modal-content--confirm {
+  max-width: 560px;
+}
+
+.mainmenu-confirm-copy {
+  margin: 0 0 1rem;
+  color: #efe2cf;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.mainmenu-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.mainmenu-confirm-actions .mainmenu-btn {
+  min-width: 150px;
 }
 
 /* ==========================================================================
@@ -36543,6 +36744,262 @@ body {
   }
 
   .map-builder-sidebar {
+    width: 100%;
+  }
+}
+.weaponsmith-root {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top left, rgba(210, 148, 73, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(92, 132, 144, 0.16), transparent 28%),
+    linear-gradient(180deg, rgba(18, 21, 24, 0.98), rgba(12, 14, 17, 0.98));
+  color: #e9e1d4;
+}
+
+.weaponsmith-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.weaponsmith-header__kicker,
+.weaponsmith-panel__kicker,
+.weaponsmith-card__kicker {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: rgba(220, 188, 137, 0.78);
+}
+
+.weaponsmith-header__title,
+.weaponsmith-panel__title,
+.weaponsmith-card__title {
+  margin: 6px 0 10px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 600;
+}
+
+.weaponsmith-header__title {
+  font-size: 34px;
+}
+
+.weaponsmith-header__subtitle,
+.weaponsmith-card__summary,
+.weaponsmith-card__detail,
+.weaponsmith-card__unlock,
+.weaponsmith-empty,
+.weaponsmith-locked p {
+  margin: 0;
+  color: rgba(233, 225, 212, 0.78);
+  line-height: 1.5;
+}
+
+.weaponsmith-back-btn {
+  min-width: 180px;
+}
+
+.weaponsmith-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.weaponsmith-sidebar,
+.weaponsmith-catalog {
+  display: grid;
+  gap: 18px;
+}
+
+.weaponsmith-panel,
+.weaponsmith-card,
+.weaponsmith-locked {
+  border: 1px solid rgba(208, 170, 116, 0.24);
+  background: linear-gradient(180deg, rgba(39, 33, 28, 0.9), rgba(24, 24, 26, 0.94));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+  border-radius: 18px;
+}
+
+.weaponsmith-panel,
+.weaponsmith-locked {
+  padding: 18px 20px;
+}
+
+.weaponsmith-panel--catalog {
+  min-height: 100%;
+}
+
+.weaponsmith-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.weaponsmith-stat {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.weaponsmith-stat span,
+.weaponsmith-installed-item span:last-child,
+.weaponsmith-material-row span,
+.weaponsmith-card__status {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(225, 214, 197, 0.62);
+}
+
+.weaponsmith-stat strong,
+.weaponsmith-material-row strong {
+  font-size: 20px;
+  color: #f6ebda;
+}
+
+.weaponsmith-wallet {
+  margin-bottom: 14px;
+  font-size: 18px;
+  color: #f1d39c;
+}
+
+.weaponsmith-material-list,
+.weaponsmith-installed-list {
+  display: grid;
+  gap: 8px;
+}
+
+.weaponsmith-installed-item,
+.weaponsmith-material-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.weaponsmith-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.weaponsmith-card {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.weaponsmith-card--installed {
+  border-color: rgba(120, 188, 142, 0.42);
+}
+
+.weaponsmith-card--locked {
+  opacity: 0.72;
+}
+
+.weaponsmith-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.weaponsmith-card__title {
+  font-size: 22px;
+  margin-bottom: 0;
+}
+
+.weaponsmith-cost-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.weaponsmith-cost-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.weaponsmith-cost-chip--wad {
+  color: #f1d39c;
+}
+
+.weaponsmith-install-btn {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #efe5d6;
+  padding: 12px 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.weaponsmith-install-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.weaponsmith-install-btn--ready {
+  background: linear-gradient(180deg, rgba(172, 110, 57, 0.9), rgba(116, 73, 35, 0.92));
+  border-color: rgba(240, 190, 129, 0.48);
+}
+
+.weaponsmith-install-btn--installed {
+  background: linear-gradient(180deg, rgba(69, 115, 87, 0.9), rgba(42, 72, 52, 0.94));
+  border-color: rgba(140, 210, 164, 0.48);
+}
+
+.atlas-service-btn {
+  margin-top: 12px;
+  width: 100%;
+  border: 1px solid rgba(233, 192, 125, 0.24);
+  background: linear-gradient(180deg, rgba(91, 70, 42, 0.92), rgba(55, 41, 23, 0.94));
+  color: #f0e3d0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.atlas-service-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+@media (max-width: 980px) {
+  .weaponsmith-root {
+    padding: 20px;
+  }
+
+  .weaponsmith-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .weaponsmith-header {
+    flex-direction: column;
+  }
+
+  .weaponsmith-back-btn {
+    min-width: 0;
     width: 100%;
   }
 }

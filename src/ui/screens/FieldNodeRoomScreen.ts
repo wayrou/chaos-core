@@ -2294,6 +2294,7 @@ function interactWithNpc(): boolean {
         roomState.isPaused = false;
       }
     },
+    nearestNpc.id,
   );
   return true;
 }

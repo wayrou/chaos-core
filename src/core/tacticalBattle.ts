@@ -134,7 +134,7 @@ export function createSquadObjectiveStateFromTacticalMap(
   return null;
 }
 
-function assignUnitsToSpawnPoints(
+export function assignBattleUnitsToSpawnPoints(
   battle: BattleState,
   side: SquadBattleSide,
   points: TacticalMapPoint[],
@@ -180,7 +180,7 @@ export function createBuilderQuickTestBattle(
 
   let battle = createBattleFromEncounter(state, encounter, `builder_${map.id}`);
   battle = applyTacticalMapToBattleState(battle, map);
-  battle = assignUnitsToSpawnPoints(battle, "enemy", map.zones.enemySpawn);
+  battle = assignBattleUnitsToSpawnPoints(battle, "enemy", map.zones.enemySpawn);
   battle.returnTo = "map_builder";
   (battle as any).isTraining = true;
   (battle as any).trainingConfig = trainingConfig;

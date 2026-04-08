@@ -2,6 +2,8 @@
 // QUEST SYSTEM - TYPES
 // ============================================================================
 
+import type { ResourceWallet } from "../core/resources";
+
 export type QuestId = string;
 export type QuestStatus = "available" | "active" | "completed" | "failed";
 export type QuestType = "hunt" | "escort" | "exploration" | "delivery" | "collection" | "clear";
@@ -52,12 +54,7 @@ export interface QuestObjective {
 export interface QuestReward {
   wad?: number;
   xp?: number; // Unit XP (distributed to party)
-  resources?: {
-    metalScrap?: number;
-    wood?: number;
-    chaosShards?: number;
-    steamComponents?: number;
-  };
+  resources?: Partial<ResourceWallet>;
   items?: Array<{
     id: string;
     quantity: number;
@@ -96,5 +93,4 @@ export interface QuestState {
   totalQuestsCompleted?: number;  // Lifetime counter for completed quests
   generatedQuestCount?: number;   // How many generated quests have been created
 }
-
 

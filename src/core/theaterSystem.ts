@@ -19,6 +19,7 @@ import {
   CoreBuildDefinition,
   CoreAssignment,
   CoreType,
+  FieldAssetType,
   ModuleInstance,
   PartitionInstance,
   PartitionType,
@@ -39,6 +40,8 @@ import {
   TheaterSquadAutomationMode,
   TheaterSquadStatus,
   ThreatState,
+  SessionPlayerSlot,
+  UnitOwnership,
   UnitId,
 } from "./types";
 import {
@@ -47,13 +50,16 @@ import {
 } from "./theaterDeploymentPreset";
 import {
   createEmptyFortificationPips,
+  getFieldAssetBuildCost,
   getCoreIncomeForRoom,
   getInstalledFortificationCount as getSchemaInstalledFortificationCount,
   isCoreTypeUnlocked,
+  isFieldAssetUnlocked,
   isFortificationUnlocked,
   normalizeFortificationPips,
   roomHasTag,
   SCHEMA_CORE_DEFINITIONS,
+  SCHEMA_FIELD_ASSET_DEFINITIONS,
   SCHEMA_FORTIFICATION_DEFINITIONS,
 } from "./schemaSystem";
 import { CONSUMABLE_DATABASE } from "./crafting";
@@ -83,6 +89,27 @@ import {
   normalizeTheaterPartitions,
   resolveTheaterNode,
 } from "./theaterAutomation";
+import {
+  applyTacticalMapToBattleState,
+  assignBattleUnitsToSpawnPoints,
+} from "./tacticalBattle";
+import {
+  cloneTacticalMapDefinition,
+  createPointKey,
+  getTacticalMapById,
+  type TacticalMapDefinition,
+  type TacticalMapObjectDefinition,
+  type TacticalMapObjectType,
+} from "./tacticalMaps";
+import {
+  addResourceWallet as addResourceWalletValues,
+  createEmptyResourceWallet,
+  formatResourceLabel,
+  getResourceEntries,
+  hasEnoughResources as hasEnoughResourceValues,
+  RESOURCE_KEYS,
+  subtractResourceWallet,
+} from "./resources";
 
 type ResourceWallet = GameState["resources"];
 
@@ -152,6 +179,9 @@ const THEATER_ROOM_BASE: Omit<
   supplied: false,
   commsVisible: false,
   commsLinked: false,
+  battleMapId: null,
+  placedFieldAssets: [],
+  fieldAssetRuntimeState: {},
   supplyFlow: 0,
   powerFlow: 0,
   commsFlow: 0,
@@ -220,12 +250,12 @@ const FORTIFICATION_COSTS: Record<FortificationType, Partial<ResourceWallet>> = 
   ]),
 ) as Record<FortificationType, Partial<ResourceWallet>>;
 
-const THEATER_STARTER_RESERVE: ResourceWallet = {
+const THEATER_STARTER_RESERVE: ResourceWallet = createEmptyResourceWallet({
   metalScrap: 10,
   wood: 8,
   chaosShards: 3,
   steamComponents: 3,
-};
+});
 
 const THEATER_MAP_ORIGIN = { x: 230, y: 390 };
 const THEATER_DEPTH_STEP = 300;
@@ -245,6 +275,104 @@ function createEmptyKeyInventory(): TheaterKeyInventory {
     spade: false,
     star: false,
   };
+}
+
+function getDefaultBattleMapIdForRoom(room: TheaterRoom): string {
+  if (roomHasTag(room, "survey_highground")) {
+    return "builtin_quarry_steps";
+  }
+  if (roomHasTag(room, "relay") || roomHasTag(room, "junction") || roomHasTag(room, "transit_junction")) {
+    return "builtin_relay_spine";
+  }
+  return "builtin_bunker_breach";
+}
+
+function clonePlacedFieldAssets(room: TheaterRoom): NonNullable<TheaterRoom["placedFieldAssets"]> {
+  return (room.placedFieldAssets ?? []).map((asset) => ({
+    ...asset,
+  }));
+}
+
+function cloneFieldAssetRuntimeState(room: TheaterRoom): TheaterRoom["fieldAssetRuntimeState"] {
+  return Object.fromEntries(
+    Object.entries(room.fieldAssetRuntimeState ?? {}).map(([assetId, runtimeState]) => [
+      assetId,
+      { ...runtimeState },
+    ]),
+  );
+}
+
+function toTacticalObjectType(fieldAssetType: FieldAssetType): TacticalMapObjectType | null {
+  switch (fieldAssetType) {
+    case "barricade_wall":
+    case "med_station":
+    case "ammo_crate":
+    case "proximity_mine":
+    case "smoke_emitter":
+    case "portable_ladder":
+    case "light_tower":
+      return fieldAssetType;
+    default:
+      return null;
+  }
+}
+
+function createFieldAssetMapObject(
+  room: TheaterRoom,
+  asset: NonNullable<TheaterRoom["placedFieldAssets"]>[number],
+): TacticalMapObjectDefinition | null {
+  const objectType = toTacticalObjectType(asset.type);
+  if (!objectType) {
+    return null;
+  }
+
+  const runtimeState = room.fieldAssetRuntimeState?.[asset.id];
+  if (runtimeState?.destroyed || runtimeState?.consumed) {
+    return null;
+  }
+
+  return {
+    id: asset.id,
+    type: objectType,
+    x: asset.x,
+    y: asset.y,
+    active: asset.active ?? true,
+    hidden: objectType === "proximity_mine",
+    blocksMovement: objectType === "barricade_wall",
+    blocksLineOfSight: objectType === "barricade_wall" || objectType === "smoke_emitter",
+    charges: runtimeState?.charges ?? asset.charges,
+    radius: objectType === "smoke_emitter" || objectType === "light_tower" ? 1 : undefined,
+  };
+}
+
+export function getTheaterRoomBattleMapId(room: TheaterRoom): string {
+  return room.battleMapId ?? getDefaultBattleMapIdForRoom(room);
+}
+
+export function getTheaterRoomTacticalMap(room: TheaterRoom): TacticalMapDefinition | null {
+  const sourceMap = getTacticalMapById(getTheaterRoomBattleMapId(room));
+  if (!sourceMap) {
+    return null;
+  }
+
+  const map = cloneTacticalMapDefinition(sourceMap);
+  const occupiedKeys = new Set(map.objects.map((objectDef) => createPointKey(objectDef)));
+  const playableKeys = new Set(map.tiles.map((tile) => createPointKey(tile)));
+
+  clonePlacedFieldAssets(room).forEach((asset) => {
+    const key = `${asset.x},${asset.y}`;
+    if (!playableKeys.has(key) || occupiedKeys.has(key)) {
+      return;
+    }
+    const objectDef = createFieldAssetMapObject(room, asset);
+    if (!objectDef) {
+      return;
+    }
+    occupiedKeys.add(key);
+    map.objects.push(objectDef);
+  });
+
+  return map;
 }
 
 function cloneKeyInventory(inventory?: Partial<TheaterKeyInventory> | null): TheaterKeyInventory {
@@ -652,6 +780,9 @@ function cloneTheater(theater: TheaterNetworkState): TheaterNetworkState {
             incomePerTick: { ...room.coreAssignment.incomePerTick },
           } : null,
           enemySite: room.enemySite ? { ...room.enemySite } : null,
+          battleMapId: room.battleMapId ?? getDefaultBattleMapIdForRoom(room),
+          placedFieldAssets: clonePlacedFieldAssets(room),
+          fieldAssetRuntimeState: cloneFieldAssetRuntimeState(room),
           battleSizeOverride: room.battleSizeOverride ? { ...room.battleSizeOverride } : undefined,
           tags: [...room.tags],
         },
@@ -1007,13 +1138,64 @@ function initializeTheaterRuntime(theater: TheaterNetworkState, state: GameState
   return next;
 }
 
+function parseTheaterContextSnapshot(snapshot: string | null | undefined): TheaterNetworkState | null {
+  if (!snapshot) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(snapshot) as TheaterNetworkState;
+    return parsed?.definition?.id && parsed?.rooms ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLocalCoopOperationsSessionSlot(state: GameState): SessionPlayerSlot | null {
+  if (state.session.mode !== "coop_operations") {
+    return null;
+  }
+  return Object.values(state.session.players).find((player) =>
+    player.presence === "local" && player.connected,
+  )?.slot ?? null;
+}
+
+function getPreferredTheaterFromSessionContext(
+  state: GameState,
+  operation: OperationRun,
+): TheaterNetworkState | null {
+  if (state.session.mode !== "coop_operations") {
+    return null;
+  }
+  const localSlot = getLocalCoopOperationsSessionSlot(state);
+  if (!localSlot) {
+    return null;
+  }
+  const preferredTheaterId =
+    state.session.players[localSlot]?.currentTheaterId
+    ?? state.session.theaterAssignments[localSlot]?.theaterId
+    ?? null;
+  if (!preferredTheaterId) {
+    return null;
+  }
+  const context = state.session.activeTheaterContexts?.[preferredTheaterId];
+  const parsed = parseTheaterContextSnapshot(context?.snapshot);
+  if (parsed) {
+    return parsed;
+  }
+  if (operation.theater?.definition.id === preferredTheaterId) {
+    return operation.theater;
+  }
+  return null;
+}
+
 export function getPreparedTheaterOperation(state: GameState): OperationRun | null {
   const operation = ensureOperationHasTheater(state.operation);
   if (!operation?.theater) {
     return operation;
   }
 
-  const initializedTheater = initializeTheaterRuntime(operation.theater, state);
+  const selectedTheater = getPreferredTheaterFromSessionContext(state, operation) ?? operation.theater;
+  const initializedTheater = initializeTheaterRuntime(selectedTheater, state);
   const preparedTheater = prepareTheaterForOperation(initializedTheater);
   return resolveOperationFields(operation, preparedTheater);
 }
@@ -1090,22 +1272,256 @@ function addTheaterEvent(theater: TheaterNetworkState, message: string): Theater
   };
 }
 
+const SANDBOX_ROUTE_NOISE_POWER_THRESHOLD = 500;
+const SANDBOX_OVERHEAT_POWER_THRESHOLD = 300;
+const SANDBOX_HIGH_COMMS_THRESHOLD = 500;
+const SANDBOX_HIGH_SUPPLY_THRESHOLD = 500;
+const SANDBOX_COLLAPSE_SUPPLY_THRESHOLD = 0;
+
+function getSandboxOverheatSeverity(room: TheaterRoom): 0 | 1 | 2 {
+  if (room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD && room.supplyFlow > SANDBOX_HIGH_SUPPLY_THRESHOLD) {
+    return 2;
+  }
+  if (room.powerFlow > SANDBOX_OVERHEAT_POWER_THRESHOLD) {
+    return 1;
+  }
+  return 0;
+}
+
+function getSandboxCommsAttraction(room: TheaterRoom): number {
+  if (room.commsFlow <= SANDBOX_HIGH_COMMS_THRESHOLD) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil((room.commsFlow - SANDBOX_HIGH_COMMS_THRESHOLD) / 100));
+}
+
+function getSandboxScavengerPressure(room: TheaterRoom): number {
+  if (room.supplyFlow <= SANDBOX_HIGH_SUPPLY_THRESHOLD) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil((room.supplyFlow - SANDBOX_HIGH_SUPPLY_THRESHOLD) / 100));
+}
+
+function getSandboxEnemyPresenceByRoom(theater: TheaterNetworkState): Map<RoomId, number> {
+  const presence = new Map<RoomId, number>();
+  theater.activeThreats
+    .filter((threat) => threat.active)
+    .forEach((threat) => {
+      const touchedRooms = new Set<RoomId>([
+        threat.currentRoomId,
+        threat.targetRoomId,
+        ...threat.route,
+      ]);
+      touchedRooms.forEach((roomId) => {
+        presence.set(roomId, (presence.get(roomId) ?? 0) + 1);
+      });
+    });
+  return presence;
+}
+
+function getSandboxPhantomRouteTargets(theater: TheaterNetworkState, room: TheaterRoom): RoomId[] {
+  if (room.powerFlow <= SANDBOX_ROUTE_NOISE_POWER_THRESHOLD) {
+    return [];
+  }
+
+  const realThreatEndpointIds = new Set<RoomId>();
+  theater.activeThreats
+    .filter((threat) => threat.active)
+    .forEach((threat) => {
+      realThreatEndpointIds.add(threat.currentRoomId);
+      realThreatEndpointIds.add(threat.targetRoomId);
+    });
+
+  const desiredCount = getSandboxOverheatSeverity(room) >= 2 ? 2 : 1;
+  const candidates = Object.values(theater.rooms)
+    .filter((candidate) => candidate.id !== room.id)
+    .map((candidate) => ({
+      room: candidate,
+      distance: getRoomDistance(theater, room.id, candidate.id),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.distance) && candidate.distance > 0)
+    .sort((left, right) => (
+      left.distance - right.distance
+      || left.room.depthFromUplink - right.room.depthFromUplink
+      || left.room.id.localeCompare(right.room.id)
+    ));
+
+  const preferred = candidates
+    .filter((candidate) => !realThreatEndpointIds.has(candidate.room.id))
+    .slice(0, desiredCount);
+  const fallback = preferred.length >= desiredCount
+    ? preferred
+    : [
+      ...preferred,
+      ...candidates.filter((candidate) => !preferred.some((picked) => picked.room.id === candidate.room.id)),
+    ].slice(0, desiredCount);
+
+  return fallback.map((candidate) => candidate.room.id);
+}
+
+function applySandboxRoomDerivedState(theater: TheaterNetworkState): TheaterNetworkState {
+  const threatPresenceByRoom = getSandboxEnemyPresenceByRoom(theater);
+
+  Object.values(theater.rooms).forEach((room) => {
+    const overheatSeverity = getSandboxOverheatSeverity(room);
+    room.sandboxOverheatSeverity = overheatSeverity;
+    room.sandboxOverheating = overheatSeverity > 0;
+    room.sandboxRouteNoise = room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD;
+    room.sandboxCommsAttraction = getSandboxCommsAttraction(room);
+    room.sandboxScavengerPressure = getSandboxScavengerPressure(room);
+    room.sandboxEnemyPresence = threatPresenceByRoom.get(room.id) ?? 0;
+    room.sandboxMigrationAnchorRoomId = null;
+    room.sandboxPhantomRouteRoomIds = [];
+  });
+
+  Object.values(theater.rooms).forEach((room) => {
+    room.sandboxPhantomRouteRoomIds = room.sandboxRouteNoise
+      ? getSandboxPhantomRouteTargets(theater, room)
+      : [];
+  });
+
+  return theater;
+}
+
+function appendSandboxThresholdEvents(
+  theater: TheaterNetworkState,
+  previousTheater: TheaterNetworkState | null | undefined,
+): TheaterNetworkState {
+  let next = theater;
+  Object.values(next.rooms).forEach((room) => {
+    const previousRoom = previousTheater?.rooms[room.id];
+    const previousOverheatSeverity = previousRoom?.sandboxOverheatSeverity ?? 0;
+    const currentOverheatSeverity = room.sandboxOverheatSeverity ?? 0;
+    const previousRouteNoise = previousRoom?.sandboxRouteNoise ?? false;
+    const currentRouteNoise = room.sandboxRouteNoise ?? false;
+    const previousCommsAttraction = previousRoom?.sandboxCommsAttraction ?? 0;
+    const currentCommsAttraction = room.sandboxCommsAttraction ?? 0;
+
+    if (currentOverheatSeverity > 0 && previousOverheatSeverity <= 0) {
+      next = addTheaterEvent(next, `Overheat detected in room(${room.id})`);
+    }
+    if (currentOverheatSeverity > previousOverheatSeverity && currentOverheatSeverity > 1) {
+      next = addTheaterEvent(next, `Room(${room.id}) overheating severity increased`);
+    }
+    if (currentRouteNoise && !previousRouteNoise) {
+      next = addTheaterEvent(next, `Route telemetry in room(${room.id}) compromised by excess power`);
+    }
+    if (currentCommsAttraction > 0 && previousCommsAttraction <= 0) {
+      next = addTheaterEvent(next, `High comms signature in room(${room.id}) is attracting enemy attention`);
+    }
+  });
+  return next;
+}
+
+function getSandboxMigrationAnchorRoom(theater: TheaterNetworkState, starvingRoomId: RoomId): TheaterRoom | null {
+  const candidates = Object.values(theater.rooms)
+    .filter((room) => room.id !== starvingRoomId && room.secured && room.supplyFlow > SANDBOX_COLLAPSE_SUPPLY_THRESHOLD)
+    .map((room) => ({
+      room,
+      distance: getRoomDistance(theater, starvingRoomId, room.id),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.distance));
+
+  if (candidates.length <= 0) {
+    return null;
+  }
+
+  candidates.sort((left, right) => (
+    right.room.supplyFlow - left.room.supplyFlow
+    || left.distance - right.distance
+    || left.room.id.localeCompare(right.room.id)
+  ));
+
+  return candidates[0]?.room ?? null;
+}
+
+function applySandboxMigrationAnchors(theater: TheaterNetworkState): TheaterNetworkState {
+  Object.values(theater.rooms).forEach((room) => {
+    room.sandboxMigrationAnchorRoomId = null;
+  });
+
+  Object.values(theater.rooms).forEach((room) => {
+    if ((room.sandboxEnemyPresence ?? 0) <= 0 || room.supplyFlow > SANDBOX_COLLAPSE_SUPPLY_THRESHOLD) {
+      return;
+    }
+    room.sandboxMigrationAnchorRoomId = getSandboxMigrationAnchorRoom(theater, room.id)?.id ?? null;
+  });
+
+  return theater;
+}
+
+function applySandboxCollapseInward(theater: TheaterNetworkState): TheaterNetworkState {
+  let next = theater;
+  const starvingRooms = Object.values(next.rooms)
+    .filter((room) => (room.sandboxEnemyPresence ?? 0) > 0 && room.supplyFlow <= SANDBOX_COLLAPSE_SUPPLY_THRESHOLD)
+    .sort((left, right) => (
+      (right.sandboxEnemyPresence ?? 0) - (left.sandboxEnemyPresence ?? 0)
+      || left.id.localeCompare(right.id)
+    ));
+
+  starvingRooms.forEach((room) => {
+    const anchorRoom = getSandboxMigrationAnchorRoom(next, room.id);
+    if (!anchorRoom) {
+      return;
+    }
+
+    const threat = next.activeThreats.find((candidate) => (
+      candidate.active
+      && (
+        candidate.currentRoomId === room.id
+        || candidate.targetRoomId === room.id
+        || candidate.route.includes(room.id)
+      )
+    ));
+    if (!threat) {
+      return;
+    }
+
+    if (threat.targetRoomId === anchorRoom.id) {
+      room.sandboxMigrationAnchorRoomId = anchorRoom.id;
+      return;
+    }
+
+    const route = findAnyTheaterRoute(next, threat.currentRoomId, anchorRoom.id);
+    if (!route || route.length <= 0) {
+      room.sandboxMigrationAnchorRoomId = anchorRoom.id;
+      return;
+    }
+
+    threat.targetRoomId = anchorRoom.id;
+    threat.route = route;
+    threat.routeIndex = 0;
+    threat.roomId = threat.currentRoomId;
+    threat.etaTick = next.tickCount + Math.max(1, route.length - 1);
+    room.sandboxMigrationAnchorRoomId = anchorRoom.id;
+    console.log("[THEATER] sandbox enemy migration", room.id, anchorRoom.id, threat.id);
+    next = addTheaterEvent(next, "Supply starvation triggered enemy migration");
+    next = addTheaterEvent(next, `Enemy presence collapsed inward from room(${room.id}) to room(${anchorRoom.id})`);
+  });
+
+  return next;
+}
+
+function applySandboxSlice(
+  theater: TheaterNetworkState,
+  previousTheater?: TheaterNetworkState | null,
+  emitEvents = false,
+): TheaterNetworkState {
+  let next = applySandboxRoomDerivedState(theater);
+  if (emitEvents) {
+    next = appendSandboxThresholdEvents(next, previousTheater);
+    next = applySandboxCollapseInward(next);
+    next = applySandboxRoomDerivedState(next);
+  }
+  return applySandboxMigrationAnchors(next);
+}
+
 function hasEnoughResources(resources: ResourceWallet, cost: Partial<ResourceWallet>): boolean {
-  return (
-    resources.metalScrap >= (cost.metalScrap ?? 0) &&
-    resources.wood >= (cost.wood ?? 0) &&
-    resources.chaosShards >= (cost.chaosShards ?? 0) &&
-    resources.steamComponents >= (cost.steamComponents ?? 0)
-  );
+  return hasEnoughResourceValues(resources, cost);
 }
 
 function subtractResources(resources: ResourceWallet, cost: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: resources.metalScrap - (cost.metalScrap ?? 0),
-    wood: resources.wood - (cost.wood ?? 0),
-    chaosShards: resources.chaosShards - (cost.chaosShards ?? 0),
-    steamComponents: resources.steamComponents - (cost.steamComponents ?? 0),
-  };
+  return subtractResourceWallet(resources, cost);
 }
 
 function cloneCoreAssignment(assignment: CoreAssignment | null | undefined): CoreAssignment | null {
@@ -1366,12 +1782,10 @@ function roomHasLinkedOperationalCore(
 
 function deriveTheaterCoreRepairCost(room: TheaterRoom): Partial<ResourceWallet> {
   const buildCost = getRoomPrimaryCoreAssignment(room)?.buildCost ?? {};
-  const repairCost: Partial<ResourceWallet> = {
-    metalScrap: buildCost.metalScrap ? Math.max(1, Math.ceil(buildCost.metalScrap * 0.5)) : 0,
-    wood: buildCost.wood ? Math.max(1, Math.ceil(buildCost.wood * 0.5)) : 0,
-    chaosShards: buildCost.chaosShards ? Math.max(1, Math.ceil(buildCost.chaosShards * 0.5)) : 0,
-    steamComponents: buildCost.steamComponents ? Math.max(1, Math.ceil(buildCost.steamComponents * 0.5)) : 0,
-  };
+  const repairCost = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    repairCost[key] = buildCost[key] ? Math.max(1, Math.ceil(buildCost[key]! * 0.5)) : 0;
+  });
   if (formatResourceCost(repairCost) !== "0") {
     return repairCost;
   }
@@ -1392,19 +1806,13 @@ function sumWadUpkeep(theater: TheaterNetworkState, ticks: number): number {
 }
 
 function sumResourceIncome(theater: TheaterNetworkState, ticks: number): ResourceWallet {
-  const upkeep: ResourceWallet = {
-    metalScrap: 0,
-    wood: 0,
-    chaosShards: 0,
-    steamComponents: 0,
-  };
+  const upkeep = createEmptyResourceWallet();
 
   Object.values(theater.rooms).forEach((room) => {
     getRoomOperationalCoreAssignments(room).forEach((coreAssignment) => {
-      upkeep.metalScrap += (coreAssignment.incomePerTick?.metalScrap ?? 0) * ticks;
-      upkeep.wood += (coreAssignment.incomePerTick?.wood ?? 0) * ticks;
-      upkeep.chaosShards += (coreAssignment.incomePerTick?.chaosShards ?? 0) * ticks;
-      upkeep.steamComponents += (coreAssignment.incomePerTick?.steamComponents ?? 0) * ticks;
+      RESOURCE_KEYS.forEach((key) => {
+        upkeep[key] += (coreAssignment.incomePerTick?.[key] ?? 0) * ticks;
+      });
     });
   });
 
@@ -1412,12 +1820,7 @@ function sumResourceIncome(theater: TheaterNetworkState, ticks: number): Resourc
 }
 
 function addResources(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: base.metalScrap + (delta.metalScrap ?? 0),
-    wood: base.wood + (delta.wood ?? 0),
-    chaosShards: base.chaosShards + (delta.chaosShards ?? 0),
-    steamComponents: base.steamComponents + (delta.steamComponents ?? 0),
-  };
+  return addResourceWalletValues(base, delta);
 }
 
 function getObjectiveRoom(theater: TheaterNetworkState): TheaterRoom | null {
@@ -1438,10 +1841,12 @@ function createCompletionSummary(theater: TheaterNetworkState, room: TheaterRoom
     completedAtTick: theater.tickCount,
     reward: {
       wad: 120,
-      metalScrap: 8,
-      wood: 6,
-      chaosShards: 3,
-      steamComponents: 3,
+      ...createEmptyResourceWallet({
+        metalScrap: 8,
+        wood: 6,
+        chaosShards: 3,
+        steamComponents: 3,
+      }),
     },
     recapLines: [
       `${room.label} secured at tick ${theater.tickCount}.`,
@@ -1998,7 +2403,7 @@ function doesTheaterMatchOperationFloor(
 }
 
 function prepareTheaterForOperation(theater: TheaterNetworkState): TheaterNetworkState {
-  return reconcileTheaterCompletion(evaluateTheaterAutomation(recomputeTheaterNetwork(theater)));
+  return reconcileTheaterCompletion(applySandboxSlice(evaluateTheaterAutomation(recomputeTheaterNetwork(theater))));
 }
 
 function generateTheaterForFloor(operation: OperationRun, floorIndex: number): TheaterNetworkState {
@@ -2149,12 +2554,7 @@ function findTheaterRoute(theater: TheaterNetworkState, roomId: RoomId): RoomId[
 
 function getCoreBattleRewardBonus(theater: TheaterNetworkState, room: TheaterRoom): ResourceWallet {
   if (room.commsFlow < 50) {
-    return {
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    };
+    return createEmptyResourceWallet();
   }
 
   const activeMineCount = Object.values(theater.rooms).filter((candidate) => (
@@ -2165,20 +2565,15 @@ function getCoreBattleRewardBonus(theater: TheaterNetworkState, room: TheaterRoo
   )).length;
 
   if (activeMineCount <= 0 && activeRefineryCount <= 0) {
-    return {
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    };
+    return createEmptyResourceWallet();
   }
 
-  return {
+  return createEmptyResourceWallet({
     metalScrap: activeMineCount * (roomHasTag(room, "metal_rich") ? 3 : 1),
     wood: activeMineCount * (roomHasTag(room, "timber_rich") ? 3 : 1),
     chaosShards: 0,
     steamComponents: activeRefineryCount * (roomHasTag(room, "steam_vent") ? 3 : 1),
-  };
+  });
 }
 
 function autoResolveNonCombatRoom(theater: TheaterNetworkState, roomId: RoomId): TheaterNetworkState {
@@ -2493,7 +2888,7 @@ function buildConfiguredTheaterState(
   theater: TheaterNetworkState,
   message: string,
 ): GameState {
-  const recomputed = evaluateTheaterAutomation(recomputeTheaterNetwork(theater));
+  const recomputed = applySandboxSlice(evaluateTheaterAutomation(recomputeTheaterNetwork(theater)));
   return syncQuestRuntime({
     ...state,
     phase: "operation",
@@ -3181,7 +3576,11 @@ function advanceTheaterRuntimeTicks(
 
     const nextTheater = cloneTheater(activeTheater);
     nextTheater.tickCount += 1;
-    const afterThreats = evaluateTheaterAutomation(resolveEnemyRoomThreats(nextState, nextTheater));
+    const afterThreats = applySandboxSlice(
+      evaluateTheaterAutomation(resolveEnemyRoomThreats(nextState, nextTheater)),
+      activeTheater,
+      true,
+    );
     nextState = {
       ...nextState,
       operation: resolveOperationFields(operation, afterThreats),
@@ -3530,6 +3929,7 @@ function selectPatrolTargetRoom(theater: TheaterNetworkState, sourceRoomId: Room
       + (isFrontier ? 70 : 0)
       + (isMajorRoute ? 40 : 0)
       + room.depthFromUplink
+      + (getSandboxCommsAttraction(room) * 2)
       + (room.underThreat ? -20 : 0);
 
     if (score > bestScore) {
@@ -4653,12 +5053,7 @@ export function secureTheaterRoomInState(state: GameState, roomId: RoomId, squad
     return syncQuestRuntime({
       ...nextState,
       wad: (nextState.wad ?? 0) + completion.reward.wad,
-      resources: {
-        metalScrap: nextState.resources.metalScrap + completion.reward.metalScrap,
-        wood: nextState.resources.wood + completion.reward.wood,
-        chaosShards: nextState.resources.chaosShards + completion.reward.chaosShards,
-        steamComponents: nextState.resources.steamComponents + completion.reward.steamComponents,
-      },
+      resources: addResources(nextState.resources, completion.reward),
       phase: "operation",
       currentBattle: null,
       operation: resolveOperationFields(
@@ -4861,6 +5256,228 @@ export function fortifyTheaterRoom(state: GameState, roomId: RoomId, fortificati
   };
 }
 
+export function getFieldAssetPlacementError(
+  room: TheaterRoom,
+  fieldAssetType: FieldAssetType,
+  x: number,
+  y: number,
+): string | null {
+  const map = getTheaterRoomTacticalMap(room);
+  if (!map) {
+    return "This room does not have a tactical map assignment yet.";
+  }
+
+  const tile = map.tiles.find((entry) => entry.x === x && entry.y === y);
+  if (!tile) {
+    return "Field assets can only be placed on playable tiles.";
+  }
+
+  const zoneOccupied = [
+    ...map.zones.friendlySpawn,
+    ...map.zones.enemySpawn,
+    ...map.zones.relay,
+    ...map.zones.friendlyBreach,
+    ...map.zones.enemyBreach,
+    ...map.zones.extraction,
+  ].some((point) => point.x === x && point.y === y);
+  if (zoneOccupied) {
+    return "That tile is reserved for deployment or objective routing.";
+  }
+
+  if (map.objects.some((objectDef) => objectDef.x === x && objectDef.y === y)) {
+    return "That tile is already occupied by a tactical object.";
+  }
+
+  if ((room.placedFieldAssets ?? []).some((asset) => asset.x === x && asset.y === y)) {
+    return "That tile already contains a fabricated field asset.";
+  }
+
+  if (fieldAssetType === "portable_ladder") {
+    const neighbors = [
+      { x: x + 1, y },
+      { x: x - 1, y },
+      { x, y: y + 1 },
+      { x, y: y - 1 },
+    ];
+    const hasVerticalNeed = neighbors.some((point) => {
+      const adjacentTile = map.tiles.find((entry) => entry.x === point.x && entry.y === point.y);
+      return adjacentTile && Math.abs((adjacentTile.elevation ?? 0) - (tile.elevation ?? 0)) >= 1;
+    });
+    if (!hasVerticalNeed) {
+      return "Portable ladders need nearby elevation to create a useful route.";
+    }
+  }
+
+  return null;
+}
+
+export function fabricateFieldAssetInTheaterRoom(
+  state: GameState,
+  roomId: RoomId,
+  fieldAssetType: FieldAssetType,
+  x: number,
+  y: number,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  if (!operation?.theater) {
+    return {
+      state,
+      success: false,
+      message: "No active theater room selected.",
+    };
+  }
+
+  const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[fieldAssetType];
+  if (!definition) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Unknown field asset authorization.",
+    };
+  }
+  if (!isFieldAssetUnlocked(state, fieldAssetType)) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: `${definition.displayName} is still locked in S.C.H.E.M.A.`,
+    };
+  }
+
+  const theater = cloneTheater(operation.theater);
+  const room = theater.rooms[roomId];
+  if (!room) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Unknown room selection.",
+    };
+  }
+  if (!room.secured) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Secure the room before fabricating field assets.",
+    };
+  }
+
+  const placementError = getFieldAssetPlacementError(room, fieldAssetType, x, y);
+  if (placementError) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: placementError,
+    };
+  }
+
+  const buildCost = getFieldAssetBuildCost(fieldAssetType);
+  if (!hasEnoughResources(state.resources, buildCost)) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Insufficient resources for field asset fabrication.",
+    };
+  }
+
+  const assetId = `asset_${fieldAssetType}_${roomId}_${Date.now().toString(36)}`;
+  room.battleMapId = getTheaterRoomBattleMapId(room);
+  room.placedFieldAssets = [
+    ...(room.placedFieldAssets ?? []),
+    {
+      id: assetId,
+      type: fieldAssetType,
+      x,
+      y,
+      active: true,
+      charges: fieldAssetType === "med_station" || fieldAssetType === "ammo_crate" ? 1 : undefined,
+    },
+  ];
+  room.fieldAssetRuntimeState = {
+    ...(room.fieldAssetRuntimeState ?? {}),
+    [assetId]: {
+      charges: fieldAssetType === "med_station" || fieldAssetType === "ammo_crate" ? 1 : undefined,
+    },
+  };
+
+  return {
+    state: {
+      ...syncQuestRuntime({
+        ...state,
+        resources: subtractResources(state.resources, buildCost),
+        phase: "operation",
+        operation: resolveOperationFields(
+          operation,
+          addTheaterEvent(
+            recomputeTheaterNetwork(theater),
+            `FIELD ASSET :: ${definition.displayName} fabricated for ${room.label} at (${x}, ${y}).`,
+          ),
+        ),
+      }),
+    },
+    success: true,
+    message: `${definition.displayName} deployed to ${room.label}.`,
+  };
+}
+
+export function removeFieldAssetFromTheaterRoom(
+  state: GameState,
+  roomId: RoomId,
+  assetId: string,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  if (!operation?.theater) {
+    return {
+      state,
+      success: false,
+      message: "No active theater room selected.",
+    };
+  }
+
+  const theater = cloneTheater(operation.theater);
+  const room = theater.rooms[roomId];
+  if (!room) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Unknown room selection.",
+    };
+  }
+
+  const asset = (room.placedFieldAssets ?? []).find((entry) => entry.id === assetId);
+  if (!asset) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "That field asset is no longer installed in this room.",
+    };
+  }
+
+  room.placedFieldAssets = (room.placedFieldAssets ?? []).filter((entry) => entry.id !== assetId);
+  if (room.fieldAssetRuntimeState?.[assetId]) {
+    const nextRuntimeState = { ...(room.fieldAssetRuntimeState ?? {}) };
+    delete nextRuntimeState[assetId];
+    room.fieldAssetRuntimeState = nextRuntimeState;
+  }
+
+  const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[asset.type];
+  return {
+    state: {
+      ...syncQuestRuntime({
+        ...state,
+        phase: "operation",
+        operation: resolveOperationFields(
+          operation,
+          addTheaterEvent(
+            recomputeTheaterNetwork(theater),
+            `FIELD ASSET :: ${(definition?.displayName ?? asset.type)} removed from ${room.label}.`,
+          ),
+        ),
+      }),
+    },
+    success: true,
+    message: `${definition?.displayName ?? asset.type} removed from ${room.label}.`,
+  };
+}
+
 function buildTheaterBattleStateForSquad(
   state: GameState,
   operation: OperationRun,
@@ -4875,17 +5492,46 @@ function buildTheaterBattleStateForSquad(
     return null;
   }
 
+  const deployedSquads = theater.squads.filter((candidate) => candidate.currentRoomId === room.id);
+  const getSquadController = (squadId: string): UnitOwnership => {
+    if (state.session.mode !== "coop_operations") {
+      return "P1";
+    }
+    const assignment = Object.values(state.session.theaterAssignments ?? {}).find(
+      (candidate) => candidate.squadId === squadId && (candidate.playerId === "P1" || candidate.playerId === "P2"),
+    );
+    return assignment?.playerId === "P2" ? "P2" : "P1";
+  };
+  const controllerByUnitId = new Map<UnitId, UnitOwnership>();
   const deployedUnitIds = Array.from(new Set(
-    theater.squads
-      .filter((candidate) => candidate.currentRoomId === room.id)
-      .flatMap((candidate) => getSquadCombatReadyUnitIds(state, operationId, theaterId, candidate))
+    deployedSquads.flatMap((candidate) => {
+      const controller = getSquadController(candidate.squadId);
+      const readyUnitIds = getSquadCombatReadyUnitIds(state, operationId, theaterId, candidate);
+      readyUnitIds.forEach((unitId) => {
+        controllerByUnitId.set(unitId, controller);
+      });
+      return readyUnitIds;
+    })
   ));
   if (deployedUnitIds.length <= 0) {
     return null;
   }
 
+  const patchedUnitsById = { ...state.unitsById };
+  controllerByUnitId.forEach((controller, unitId) => {
+    const unit = patchedUnitsById[unitId];
+    if (!unit) {
+      return;
+    }
+    patchedUnitsById[unitId] = {
+      ...unit,
+      controller,
+    };
+  });
+
   const patchedState: GameState = {
     ...state,
+    unitsById: patchedUnitsById,
     partyUnitIds: [...deployedUnitIds],
     operation: resolveOperationFields(operation, {
       ...theater,
@@ -4894,9 +5540,15 @@ function buildTheaterBattleStateForSquad(
     }),
   };
 
-  const battle = createTestBattleForCurrentParty(patchedState, room.battleSizeOverride);
+  let battle = createTestBattleForCurrentParty(patchedState, room.battleSizeOverride);
   if (!battle) {
     return null;
+  }
+
+  const tacticalMap = getTheaterRoomTacticalMap(room);
+  if (tacticalMap) {
+    battle = applyTacticalMapToBattleState(battle, tacticalMap);
+    battle = assignBattleUnitsToSpawnPoints(battle, "enemy", tacticalMap.zones.enemySpawn);
   }
 
   const neighborPressure = room.adjacency.some((adjacentId) => {
@@ -4959,6 +5611,12 @@ function buildTheaterBattleStateForSquad(
     `THEATER//LOGISTICS :: SUP=${room.supplied ? "ONLINE" : "CUT"} PWR=${room.powered ? "RAILED" : "OFF"} COMMS=${room.commsVisible ? "VISIBLE" : "BLIND"}`,
     `THEATER//SQUAD :: ${(squad.displayName || squad.squadId.toUpperCase()).toUpperCase()} deploying with ${deployedUnitIds.length} combat-ready unit(s).`,
   ];
+  if (tacticalMap) {
+    theaterBattleLog.push(`THEATER//TACTICAL :: ${tacticalMap.name} loaded for ${room.label}.`);
+    if ((room.placedFieldAssets ?? []).length > 0) {
+      theaterBattleLog.push(`THEATER//PREP :: ${(room.placedFieldAssets ?? []).length} fabricated field asset(s) are active in this room.`);
+    }
+  }
   const supportingSquads = theater.squads.filter((candidate) => candidate.currentRoomId === room.id);
   if (supportingSquads.length > 1) {
     theaterBattleLog.push(`THEATER//REINFORCEMENTS :: ${supportingSquads.map((candidate) => candidate.displayName).join(", ")} are deploying from the same room.`);
@@ -4996,6 +5654,10 @@ function buildTheaterBattleStateForSquad(
   if (detailedEnemyIntel) {
     theaterBattleLog.push("THEATER//INTEL :: Full enemy telemetry resolved. Detailed combat dossiers available.");
   }
+  if (room.sandboxOverheating) {
+    console.log("[THEATER] tactical battle inherits overheating", room.id, room.sandboxOverheatSeverity ?? 1);
+    theaterBattleLog.push(`THEATER//ALERT :: Combat instability active in room(${room.id}). Strain accumulation doubled and weapon heat accelerated.`);
+  }
   if (powerTurretCount > 0) {
     console.log("[THEATER] tactical battle receives power bonus", room.id, squad.squadId, powerTurretCount);
     theaterBattleLog.push(`THEATER//POWER BONUS :: ${powerTurretCount} auto-turret emplacement(s) opened fire before contact.`);
@@ -5005,6 +5667,7 @@ function buildTheaterBattleStateForSquad(
     ...battle,
     id: `${operation.id}_${room.id}_${theater.tickCount}_${squad.squadId}_${automationMode}`,
     roomId: room.id,
+    mapId: tacticalMap?.id ?? battle.mapId ?? null,
     units,
     log: [...theaterBattleLog, ...battle.log],
     theaterBonuses: {
@@ -5016,6 +5679,9 @@ function buildTheaterBattleStateForSquad(
       powerTurretCount,
       enemyPreview: enemyUnits.map((unit) => unit.name),
       detailedEnemyIntel,
+      overheating: room.sandboxOverheating ?? false,
+      overheatSeverity: room.sandboxOverheatSeverity ?? 0,
+      combatInstability: room.sandboxOverheating ?? false,
     },
     theaterMeta: {
       operationId,
@@ -5092,6 +5758,46 @@ function markOperationBattleCasualties(state: GameState, battle: RuntimeBattleSt
     ...state,
     unitsById: updatedUnits,
   };
+}
+
+function syncTheaterRoomFieldAssetsFromBattle(
+  theater: TheaterNetworkState,
+  battle: RuntimeBattleState,
+): TheaterNetworkState {
+  const roomId = battle.theaterMeta?.roomId ?? battle.roomId;
+  if (!roomId) {
+    return theater;
+  }
+
+  const room = theater.rooms[roomId];
+  if (!room || (room.placedFieldAssets ?? []).length <= 0) {
+    return theater;
+  }
+
+  const nextTheater = cloneTheater(theater);
+  const nextRoom = nextTheater.rooms[roomId];
+  if (!nextRoom || (nextRoom.placedFieldAssets ?? []).length <= 0) {
+    return nextTheater;
+  }
+
+  const nextRuntimeState = { ...(nextRoom.fieldAssetRuntimeState ?? {}) };
+  nextRoom.placedFieldAssets = (nextRoom.placedFieldAssets ?? []).filter((asset) => {
+    const mapObject = battle.mapObjects?.find((objectDef) => objectDef.id === asset.id) ?? null;
+    if (!mapObject) {
+      return true;
+    }
+    if (mapObject.active === false || mapObject.charges === 0) {
+      delete nextRuntimeState[asset.id];
+      return false;
+    }
+    nextRuntimeState[asset.id] = {
+      ...(nextRuntimeState[asset.id] ?? {}),
+      charges: mapObject.charges,
+    };
+    return true;
+  });
+  nextRoom.fieldAssetRuntimeState = nextRuntimeState;
+  return nextTheater;
 }
 
 function clearOperationInjuriesForOperation(
@@ -5302,11 +6008,20 @@ export function applyTheaterBattleOutcome(state: GameState, battle: RuntimeBattl
     return nextState;
   }
 
+  const theaterWithFieldAssets = syncTheaterRoomFieldAssetsFromBattle(theater, battle);
+
   if (battle.phase === "victory") {
-    return secureTheaterRoomInState(nextState, battle.theaterMeta.roomId, battle.theaterMeta.squadId);
+    return secureTheaterRoomInState(
+      {
+        ...nextState,
+        operation: resolveOperationFields(operation, theaterWithFieldAssets),
+      },
+      battle.theaterMeta.roomId,
+      battle.theaterMeta.squadId,
+    );
   }
 
-  const nextTheater = cloneTheater(theater);
+  const nextTheater = cloneTheater(theaterWithFieldAssets);
   const room = nextTheater.rooms[battle.theaterMeta.roomId];
   if (room?.secured) {
     room.underThreat = true;
@@ -5405,12 +6120,7 @@ export function getFortificationCost(type: FortificationType): Partial<ResourceW
 }
 
 export function formatResourceCost(cost: Partial<ResourceWallet>): string {
-  return [
-    cost.metalScrap ? `${cost.metalScrap} Metal Scrap` : null,
-    cost.wood ? `${cost.wood} Wood` : null,
-    cost.chaosShards ? `${cost.chaosShards} Chaos Shards` : null,
-    cost.steamComponents ? `${cost.steamComponents} Steam Components` : null,
-  ].filter(Boolean).join(" / ") || "0";
+  return getResourceEntries(cost).map((entry) => `${entry.amount} ${formatResourceLabel(entry.key)}`).join(" / ") || "0";
 }
 
 export function getTheaterUpkeepPerTick(theater: TheaterNetworkState): TheaterEconomyPerTick {
@@ -5446,5 +6156,5 @@ export function hasCompletedTheaterObjective(theater: TheaterNetworkState): bool
 }
 
 export function recomputeTheaterNetwork(theater: TheaterNetworkState): TheaterNetworkState {
-  return recomputeSupplyAndPower(theater);
+  return applySandboxSlice(recomputeSupplyAndPower(theater));
 }

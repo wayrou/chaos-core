@@ -432,6 +432,26 @@ export async function renderMainMenu(): Promise<void> {
           <div class="mainmenu-modal-body" id="saveModalBody"></div>
         </div>
       </div>
+
+      <div class="mainmenu-modal" id="newOpConfirmModal" style="display: none;">
+        <div class="mainmenu-modal-content mainmenu-modal-content--confirm">
+          <div class="mainmenu-modal-header">
+            <span class="modal-title">NEW OPERATION</span>
+            <button class="modal-close" id="closeNewOpConfirmModal" type="button" aria-label="Close new operation confirmation">âœ•</button>
+          </div>
+          <div class="mainmenu-modal-body">
+            <p class="mainmenu-confirm-copy">Starting a new operation will not delete your existing saves. Continue?</p>
+            <div class="mainmenu-confirm-actions">
+              <button class="mainmenu-btn mainmenu-btn-primary" id="confirmNewOpContinueBtn" type="button" data-controller-default-focus="true">
+                <span class="btn-text">OK</span>
+              </button>
+              <button class="mainmenu-btn mainmenu-btn-secondary" id="confirmNewOpCancelBtn" type="button">
+                <span class="btn-text">CANCEL</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -446,6 +466,141 @@ export async function renderMainMenu(): Promise<void> {
   
   // Start terminal animation
   startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
+}
+
+function getVisibleMainMenuModal(): HTMLElement | null {
+  return Array.from(document.querySelectorAll<HTMLElement>(".mainmenu-modal"))
+    .find((modal) => modal.style.display !== "none")
+    ?? null;
+}
+
+function syncMainMenuModalFocusState(activeModal: HTMLElement | null): void {
+  const mainMenuRoot = document.querySelector<HTMLElement>(".mainmenu-root");
+  if (!mainMenuRoot) {
+    return;
+  }
+
+  Array.from(mainMenuRoot.children).forEach((child) => {
+    if (!(child instanceof HTMLElement)) {
+      return;
+    }
+
+    const isModal = child.classList.contains("mainmenu-modal");
+    const isActiveModal = Boolean(activeModal && child === activeModal);
+
+    if (activeModal) {
+      if (isModal) {
+        if (isActiveModal) {
+          child.removeAttribute("data-controller-exclude");
+          child.removeAttribute("aria-hidden");
+        } else {
+          child.setAttribute("data-controller-exclude", "true");
+          child.setAttribute("aria-hidden", "true");
+        }
+      } else {
+        child.setAttribute("data-controller-exclude", "true");
+        child.setAttribute("aria-hidden", "true");
+        child.setAttribute("inert", "");
+      }
+      return;
+    }
+
+    child.removeAttribute("data-controller-exclude");
+    child.removeAttribute("aria-hidden");
+    child.removeAttribute("inert");
+  });
+}
+
+function showMainMenuModal(modalId: string, focusSelector?: string): void {
+  const modal = document.getElementById(modalId) as HTMLElement | null;
+  if (!modal) {
+    return;
+  }
+
+  modal.style.display = "flex";
+  syncMainMenuModalFocusState(modal);
+  updateFocusableElements();
+
+  requestAnimationFrame(() => {
+    const focusTarget = (focusSelector
+      ? modal.querySelector<HTMLElement>(focusSelector)
+      : null)
+      ?? modal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
+    focusTarget?.focus();
+  });
+}
+
+function hideMainMenuModal(modalId: string, restoreFocusSelector: string = 'button[data-action="new-op"]'): void {
+  const modal = document.getElementById(modalId) as HTMLElement | null;
+  if (!modal) {
+    return;
+  }
+
+  modal.style.display = "none";
+  const stillOpenModal = getVisibleMainMenuModal();
+  syncMainMenuModalFocusState(stillOpenModal);
+  updateFocusableElements();
+
+  requestAnimationFrame(() => {
+    if (stillOpenModal) {
+      const modalFocus = stillOpenModal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
+      modalFocus?.focus();
+      return;
+    }
+
+    const focusTarget = document.querySelector<HTMLElement>(restoreFocusSelector)
+      ?? document.querySelector<HTMLElement>(".mainmenu-btn");
+    focusTarget?.focus();
+  });
+}
+
+function confirmNewOperationStart(): Promise<boolean> {
+  const modal = document.getElementById("newOpConfirmModal") as HTMLElement | null;
+  const confirmBtn = document.getElementById("confirmNewOpContinueBtn") as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("confirmNewOpCancelBtn") as HTMLButtonElement | null;
+  const closeBtn = document.getElementById("closeNewOpConfirmModal") as HTMLButtonElement | null;
+
+  if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
+    return Promise.resolve(window.confirm("Starting a new operation will not delete your existing saves. Continue?"));
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", handleConfirm);
+      cancelBtn.removeEventListener("click", handleCancel);
+      closeBtn.removeEventListener("click", handleCancel);
+      modal.removeEventListener("click", handleBackdropClick);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+
+    const finish = (accepted: boolean) => {
+      cleanup();
+      hideMainMenuModal("newOpConfirmModal", 'button[data-action="new-op"]');
+      resolve(accepted);
+    };
+
+    const handleConfirm = () => finish(true);
+    const handleCancel = () => finish(false);
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (event.target === modal) {
+        finish(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    confirmBtn.addEventListener("click", handleConfirm);
+    cancelBtn.addEventListener("click", handleCancel);
+    closeBtn.addEventListener("click", handleCancel);
+    modal.addEventListener("click", handleBackdropClick);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    showMainMenuModal("newOpConfirmModal", "#confirmNewOpContinueBtn");
+  });
 }
 
 function buildMainMenuButtonTiles(
@@ -1323,7 +1478,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (newOpBtn) {
     newOpBtn.addEventListener("click", async () => {
       if (saves.length > 0) {
-        if (!confirm("Starting a new operation will not delete your existing saves. Continue?")) {
+        if (!(await confirmNewOperationStart())) {
           return;
         }
       }
@@ -1431,29 +1586,27 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const closeLoadModal = document.getElementById("closeLoadModal");
   if (closeLoadModal) {
     closeLoadModal.addEventListener("click", () => {
-      const modal = document.getElementById("loadModal");
-      if (modal) modal.style.display = "none";
+      hideMainMenuModal("loadModal", 'button[data-action="load"]');
     });
   }
   
   const closeSaveModal = document.getElementById("closeSaveModal");
   if (closeSaveModal) {
     closeSaveModal.addEventListener("click", () => {
-      const modal = document.getElementById("saveModal");
-      if (modal) modal.style.display = "none";
+      hideMainMenuModal("saveModal", 'button[data-action="settings"]');
     });
   }
   
   // Modal backdrop clicks
   document.getElementById("loadModal")?.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
-      (e.target as HTMLElement).style.display = "none";
+      hideMainMenuModal("loadModal", 'button[data-action="load"]');
     }
   });
   
   document.getElementById("saveModal")?.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
-      (e.target as HTMLElement).style.display = "none";
+      hideMainMenuModal("saveModal", 'button[data-action="settings"]');
     }
   });
 }
@@ -1569,7 +1722,7 @@ function openLoadModal(saves: SaveInfo[]): void {
             saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
             setGameState(result.state);
             enableAutosave(() => getGameState());
-            modal.style.display = "none";
+            hideMainMenuModal("loadModal", 'button[data-action="load"]');
             renderAllNodesMenuScreen();
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));
@@ -1579,8 +1732,7 @@ function openLoadModal(saves: SaveInfo[]): void {
     }
   });
   
-  modal.style.display = "flex";
-  updateFocusableElements();
+  showMainMenuModal("loadModal", "#loadModal .load-save-btn, #closeLoadModal");
 }
 
 // ----------------------------------------------------------------------------
@@ -1646,7 +1798,7 @@ export async function openSaveModal(): Promise<void> {
         const result = await saveGame(slot, state);
         
         if (result.success) {
-          modal.style.display = "none";
+          hideMainMenuModal("saveModal", 'button[data-action="settings"]');
           alert("Game saved successfully!");
         } else {
           alert("Failed to save: " + (result.error ?? "Unknown error"));
@@ -1655,8 +1807,7 @@ export async function openSaveModal(): Promise<void> {
     }
   });
   
-  modal.style.display = "flex";
-  updateFocusableElements();
+  showMainMenuModal("saveModal", "#saveModal .save-slot-btn, #closeSaveModal");
 }
 
 export { renderMainMenu as default };
