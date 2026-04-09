@@ -3,6 +3,7 @@
 // Headline 15a: Dog companion that follows, fetches resources, attacks enemies
 // ============================================================================
 
+import { isOuterDeckAccessibleMap } from "../core/outerDecks";
 import { PlayerAvatar, FieldMap } from "./types";
 
 // Export Companion type
@@ -27,19 +28,61 @@ export interface Companion {
 // CONSTANTS
 // ============================================================================
 
-const COMPANION_SPEED = 240; // pixels per second (matches base player pace before dynamic syncing)
-const COMPANION_ATTACK_SPEED = 500; // pixels per second when attacking
 const COMPANION_WIDTH = 28;
 const COMPANION_HEIGHT = 28;
-const FOLLOW_RADIUS = 16; // Distance to maintain from the trailing slot behind the player
-const COMFORT_RADIUS = 10; // Distance where Sable idles in the trailing slot
-const FOLLOW_TRAIL_DISTANCE = 42;
-const FOLLOW_CATCHUP_RADIUS = 72;
-const FOLLOW_TELEPORT_RADIUS = 260;
-const FOLLOW_CATCHUP_BONUS = 60;
-const FETCH_RADIUS = 150; // Radius to search for resources
-const ATTACK_RADIUS = 200; // Radius to search for enemies
-const BEHAVIOR_COOLDOWN = 500; // ms between behavior checks
+const DEFAULT_COMPANION_SPEED = 240;
+
+type CompanionTuning = {
+  baseSpeed: number;
+  attackSpeed: number;
+  fetchSpeedMultiplier: number;
+  fetchMinSpeed: number;
+  followRadius: number;
+  comfortRadius: number;
+  followTrailDistance: number;
+  followCatchupRadius: number;
+  followTeleportRadius: number;
+  followCatchupBonus: number;
+  fetchRadius: number;
+  attackRadius: number;
+  behaviorCooldownMs: number;
+};
+
+const DEFAULT_COMPANION_TUNING: CompanionTuning = {
+  baseSpeed: DEFAULT_COMPANION_SPEED,
+  attackSpeed: 500,
+  fetchSpeedMultiplier: 1.5,
+  fetchMinSpeed: 320,
+  followRadius: 16,
+  comfortRadius: 10,
+  followTrailDistance: 42,
+  followCatchupRadius: 72,
+  followTeleportRadius: 260,
+  followCatchupBonus: 60,
+  fetchRadius: 150,
+  attackRadius: 200,
+  behaviorCooldownMs: 500,
+};
+
+const OUTER_DECK_COMPANION_TUNING: CompanionTuning = {
+  baseSpeed: 300,
+  attackSpeed: 700,
+  fetchSpeedMultiplier: 2,
+  fetchMinSpeed: 460,
+  followRadius: 38,
+  comfortRadius: 20,
+  followTrailDistance: 82,
+  followCatchupRadius: 170,
+  followTeleportRadius: 640,
+  followCatchupBonus: 180,
+  fetchRadius: 420,
+  attackRadius: 460,
+  behaviorCooldownMs: 260,
+};
+
+function getCompanionTuning(map: FieldMap): CompanionTuning {
+  return isOuterDeckAccessibleMap(map.id) ? OUTER_DECK_COMPANION_TUNING : DEFAULT_COMPANION_TUNING;
+}
 
 // ============================================================================
 // COMPANION CREATION
@@ -52,9 +95,9 @@ export function createCompanion(startX: number, startY: number): Companion {
     y: startY,
     width: COMPANION_WIDTH,
     height: COMPANION_HEIGHT,
-    speed: COMPANION_SPEED,
+    speed: DEFAULT_COMPANION_SPEED,
     state: "follow",
-    behaviorCooldownMs: BEHAVIOR_COOLDOWN,
+    behaviorCooldownMs: DEFAULT_COMPANION_TUNING.behaviorCooldownMs,
     lastBehaviorTime: 0,
     attackCooldown: 0,
     facing: "south",
@@ -98,29 +141,31 @@ export function updateCompanion(
 // FOLLOW BEHAVIOR
 // ============================================================================
 
-function getCompanionFollowTarget(player: PlayerAvatar): { x: number; y: number } {
+function getCompanionFollowTarget(player: PlayerAvatar, map: FieldMap): { x: number; y: number } {
+  const tuning = getCompanionTuning(map);
   switch (player.facing) {
     case "north":
-      return { x: player.x, y: player.y + FOLLOW_TRAIL_DISTANCE };
+      return { x: player.x, y: player.y + tuning.followTrailDistance };
     case "south":
-      return { x: player.x, y: player.y - FOLLOW_TRAIL_DISTANCE };
+      return { x: player.x, y: player.y - tuning.followTrailDistance };
     case "east":
-      return { x: player.x - FOLLOW_TRAIL_DISTANCE, y: player.y };
+      return { x: player.x - tuning.followTrailDistance, y: player.y };
     case "west":
-      return { x: player.x + FOLLOW_TRAIL_DISTANCE, y: player.y };
+      return { x: player.x + tuning.followTrailDistance, y: player.y };
     default:
-      return { x: player.x, y: player.y + FOLLOW_TRAIL_DISTANCE };
+      return { x: player.x, y: player.y + tuning.followTrailDistance };
   }
 }
 
-function getCompanionFollowSpeed(companion: Companion, player: PlayerAvatar, deltaTime: number, distance: number): number {
+function getCompanionFollowSpeed(companion: Companion, player: PlayerAvatar, deltaTime: number, distance: number, map: FieldMap): number {
+  const tuning = getCompanionTuning(map);
   const playerTravelDistance =
     companion.lastPlayerX !== undefined && companion.lastPlayerY !== undefined
       ? Math.hypot(player.x - companion.lastPlayerX, player.y - companion.lastPlayerY)
       : 0;
   const livePlayerSpeed = deltaTime > 0 ? playerTravelDistance / (deltaTime / 1000) : player.speed;
-  const baseFollowSpeed = Math.max(player.speed, livePlayerSpeed);
-  return distance > FOLLOW_CATCHUP_RADIUS ? baseFollowSpeed + FOLLOW_CATCHUP_BONUS : baseFollowSpeed;
+  const baseFollowSpeed = Math.max(player.speed, livePlayerSpeed, tuning.baseSpeed);
+  return distance > tuning.followCatchupRadius ? baseFollowSpeed + tuning.followCatchupBonus : baseFollowSpeed;
 }
 
 function tryMoveCompanion(
@@ -145,7 +190,8 @@ export function updateCompanionFollow(
   deltaTime: number,
   map: FieldMap
 ): Companion {
-  const followTarget = getCompanionFollowTarget(player);
+  const tuning = getCompanionTuning(map);
+  const followTarget = getCompanionFollowTarget(player, map);
   const dx = followTarget.x - companion.x;
   const dy = followTarget.y - companion.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
@@ -161,19 +207,19 @@ export function updateCompanionFollow(
   
   // Determine state based on distance
   let newState: "idle" | "follow" = companion.state === "idle" ? "idle" : "follow";
-  if (distance > FOLLOW_RADIUS) {
+  if (distance > tuning.followRadius) {
     newState = "follow";
-  } else if (distance < COMFORT_RADIUS) {
+  } else if (distance < tuning.comfortRadius) {
     newState = "idle";
   } else {
     newState = "follow";
   }
   
   // Move toward player if too far
-  if (distance > FOLLOW_TELEPORT_RADIUS) {
+  if (distance > tuning.followTeleportRadius) {
     tryMoveCompanion(companion, followTarget.x, followTarget.y, map);
-  } else if (distance > FOLLOW_RADIUS) {
-    const followSpeed = getCompanionFollowSpeed(companion, player, deltaTime, distance);
+  } else if (distance > tuning.followRadius) {
+    const followSpeed = getCompanionFollowSpeed(companion, player, deltaTime, distance, map);
     const moveDistance = Math.min(distance, followSpeed * (deltaTime / 1000));
     const moveX = (dx / distance) * moveDistance;
     const moveY = (dy / distance) * moveDistance;
@@ -198,7 +244,8 @@ export function updateCompanionFollow(
   
   return {
     ...companion,
-    speed: player.speed,
+    speed: Math.max(player.speed, tuning.baseSpeed),
+    behaviorCooldownMs: tuning.behaviorCooldownMs,
     state: newState,
     lastPlayerX: player.x,
     lastPlayerY: player.y,
@@ -222,10 +269,12 @@ export function updateCompanionFetch(
   deltaTime: number,
   map: FieldMap
 ): Companion {
+  const tuning = getCompanionTuning(map);
   if (!target) {
     // No target, return to follow
     return {
       ...companion,
+      behaviorCooldownMs: tuning.behaviorCooldownMs,
       state: "follow",
       target: undefined,
     };
@@ -245,7 +294,7 @@ export function updateCompanionFetch(
   }
   
   // Move toward target
-  const moveDistance = companion.speed * 1.5 * (deltaTime / 1000); // Faster when fetching
+  const moveDistance = Math.max(companion.speed * tuning.fetchSpeedMultiplier, tuning.fetchMinSpeed) * (deltaTime / 1000);
   const moveX = (dx / distance) * moveDistance;
   const moveY = (dy / distance) * moveDistance;
   
@@ -273,6 +322,8 @@ export function updateCompanionFetch(
   
   return {
     ...companion,
+    speed: Math.max(companion.speed, tuning.baseSpeed),
+    behaviorCooldownMs: tuning.behaviorCooldownMs,
     state: "fetch",
     target: { x: target.x, y: target.y, id: target.id },
   };
@@ -295,10 +346,12 @@ export function updateCompanionAttack(
   deltaTime: number,
   map: FieldMap
 ): Companion {
+  const tuning = getCompanionTuning(map);
   if (!target) {
     // No target, return to follow
     return {
       ...companion,
+      behaviorCooldownMs: tuning.behaviorCooldownMs,
       state: "follow",
       target: undefined,
     };
@@ -318,7 +371,7 @@ export function updateCompanionAttack(
   }
   
   // Dash toward target (faster than normal)
-  const moveDistance = COMPANION_ATTACK_SPEED * (deltaTime / 1000);
+  const moveDistance = tuning.attackSpeed * (deltaTime / 1000);
   const moveX = (dx / distance) * moveDistance;
   const moveY = (dy / distance) * moveDistance;
   
@@ -346,6 +399,8 @@ export function updateCompanionAttack(
   
   return {
     ...companion,
+    speed: Math.max(companion.speed, tuning.baseSpeed),
+    behaviorCooldownMs: tuning.behaviorCooldownMs,
     state: "attack",
     target: { x: target.x, y: target.y, id: target.id },
   };
@@ -365,9 +420,10 @@ export interface ResourceSparkle {
 export function findNearestResource(
   companion: Companion,
   _player: PlayerAvatar,
-  sparkles: ResourceSparkle[]
+  sparkles: ResourceSparkle[],
+  map: FieldMap,
 ): FetchTarget | null {
-  const searchRadius = FETCH_RADIUS;
+  const searchRadius = getCompanionTuning(map).fetchRadius;
   let nearest: ResourceSparkle | null = null;
   let nearestDist = searchRadius;
   
@@ -410,9 +466,10 @@ export interface LightEnemy {
 export function findNearestEnemy(
   companion: Companion,
   _player: PlayerAvatar,
-  enemies: LightEnemy[]
+  enemies: LightEnemy[],
+  map: FieldMap,
 ): AttackTarget | null {
-  const searchRadius = ATTACK_RADIUS;
+  const searchRadius = getCompanionTuning(map).attackRadius;
   let nearest: LightEnemy | null = null;
   let nearestDist = searchRadius;
   

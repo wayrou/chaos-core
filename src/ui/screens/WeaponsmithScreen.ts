@@ -10,6 +10,7 @@ import {
 } from "../../core/weaponsmith";
 import { getResourceEntries } from "../../core/resources";
 import { getGameState, updateGameState } from "../../state/gameStore";
+import { canSessionAffordCost, getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import {
   BaseCampReturnTo,
   getBaseCampReturnLabel,
@@ -59,13 +60,17 @@ function renderCostList(entry: WeaponsmithCatalogEntry): string {
   `;
 }
 
-function renderStatusButton(entry: WeaponsmithCatalogEntry): string {
+function renderStatusButton(entry: WeaponsmithCatalogEntry, canAfford: boolean): string {
   if (entry.installed) {
     return `<button class="weaponsmith-install-btn weaponsmith-install-btn--installed" type="button" disabled>INSTALLED</button>`;
   }
 
   if (!entry.unlocked) {
     return `<button class="weaponsmith-install-btn" type="button" disabled>LOCKED</button>`;
+  }
+
+  if (!canAfford) {
+    return `<button class="weaponsmith-install-btn" type="button" disabled>INSUFFICIENT STOCK</button>`;
   }
 
   return `
@@ -79,9 +84,9 @@ function renderStatusButton(entry: WeaponsmithCatalogEntry): string {
   `;
 }
 
-function renderUpgradeCard(entry: WeaponsmithCatalogEntry): string {
+function renderUpgradeCard(entry: WeaponsmithCatalogEntry, canAfford: boolean): string {
   return `
-    <article class="weaponsmith-card${entry.installed ? " weaponsmith-card--installed" : ""}${!entry.unlocked ? " weaponsmith-card--locked" : ""}">
+    <article class="weaponsmith-card${entry.installed ? " weaponsmith-card--installed" : ""}${!entry.unlocked || !canAfford ? " weaponsmith-card--locked" : ""}">
       <div class="weaponsmith-card__header">
         <div>
           <div class="weaponsmith-card__kicker">${formatCategory(entry.definition.category)}</div>
@@ -93,7 +98,7 @@ function renderUpgradeCard(entry: WeaponsmithCatalogEntry): string {
       <p class="weaponsmith-card__detail">${escapeHtml(entry.definition.detail)}</p>
       <div class="weaponsmith-card__unlock">${escapeHtml(entry.unlockLabel)}</div>
       ${renderCostList(entry)}
-      ${renderStatusButton(entry)}
+      ${renderStatusButton(entry, canAfford)}
     </article>
   `;
 }
@@ -135,6 +140,7 @@ export function renderWeaponsmithScreen(returnTo: BaseCampReturnTo = "field"): v
   const catalog = getWeaponsmithCatalog(state);
   const bowblade = getBowbladeWorkshopReadout(state);
   const installedUpgradeIds = getWeaponsmithInstalledUpgradeIds(state);
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
 
   root.innerHTML = `
     <div class="weaponsmith-root town-screen town-screen--hub">
@@ -183,9 +189,9 @@ export function renderWeaponsmithScreen(returnTo: BaseCampReturnTo = "field"): v
             <section class="weaponsmith-panel">
               <div class="weaponsmith-panel__kicker">MATERIALS ON HAND</div>
               <h2 class="weaponsmith-panel__title">Workshop Stock</h2>
-              <div class="weaponsmith-wallet">WAD // ${Number(state.wad ?? 0).toLocaleString()}</div>
+              <div class="weaponsmith-wallet">WAD // ${Number(wallet.wad ?? 0).toLocaleString()}</div>
               <div class="weaponsmith-material-list">
-                ${getResourceEntries(state.resources, {
+                ${getResourceEntries(wallet.resources, {
                   includeZero: true,
                   keys: WEAPONSMITH_RESOURCE_KEYS,
                 })
@@ -205,7 +211,13 @@ export function renderWeaponsmithScreen(returnTo: BaseCampReturnTo = "field"): v
               <div class="weaponsmith-panel__kicker">CURATED UPGRADE CATALOG</div>
               <h2 class="weaponsmith-panel__title">Counterweight Install Set</h2>
               <div class="weaponsmith-card-grid">
-                ${catalog.map((entry) => renderUpgradeCard(entry)).join("")}
+                ${catalog.map((entry) => renderUpgradeCard(
+                  entry,
+                  canSessionAffordCost(state, {
+                    wad: entry.definition.cost.wad,
+                    resources: entry.definition.cost.resources,
+                  }),
+                )).join("")}
               </div>
             </div>
           </section>

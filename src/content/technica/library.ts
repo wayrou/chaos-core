@@ -10,7 +10,8 @@ import {
   getAllImportedKeyItems,
   getAllImportedOperations,
   getAllImportedQuests,
-  getAllImportedUnitTemplates
+  getAllImportedUnitTemplates,
+  hasTechnicaRegistryEntry,
 } from "./index";
 
 type TechnicaContentType = TechnicaManifest["contentType"];
@@ -663,6 +664,10 @@ function restoreInstalledEntry(entry: InstalledTechnicaContent): boolean {
   }
 }
 
+function isShadowedByPublishedContent(entry: InstalledTechnicaContent): boolean {
+  return hasTechnicaRegistryEntry(entry.manifest.contentType, entry.manifest.contentId);
+}
+
 export function initializeTechnicaContentLibrary(): void {
   if (isInitialized) {
     return;
@@ -685,6 +690,15 @@ export function initializeTechnicaContentLibrary(): void {
     parsed.forEach((entry) => {
       if (!entry || typeof entry !== "object" || !entry.manifest || !entry.key) {
         removedInvalidEntries = true;
+        return;
+      }
+
+      if (isShadowedByPublishedContent(entry)) {
+        removedInvalidEntries = true;
+        console.info(
+          "[TECHNICA] Skipping stored import because published content already provides this id:",
+          entry.key,
+        );
         return;
       }
 

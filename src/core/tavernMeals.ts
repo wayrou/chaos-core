@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { GameState } from "./types";
+import { canSessionAffordCost, spendSessionCost } from "./session";
 
 export type TavernMealEffect = "hp" | "atk" | "def" | "agi";
 
@@ -84,16 +85,20 @@ export function queueTavernMeal(
     return { error: "A tavern meal is already queued for your next run." };
   }
 
-  const currentWad = state.wad ?? 0;
-  if (currentWad < meal.cost) {
-    return { error: `Insufficient WAD. Need ${meal.cost}, have ${currentWad}.` };
+  const spendPool = canSessionAffordCost(state, { wad: meal.cost });
+  if (!spendPool) {
+    return { error: `Insufficient WAD. Need ${meal.cost}.` };
+  }
+
+  const spendResult = spendSessionCost(state, { wad: meal.cost });
+  if (!spendResult.success) {
+    return { error: `Insufficient WAD. Need ${meal.cost}.` };
   }
 
   return {
     meal,
     next: {
-      ...state,
-      wad: currentWad - meal.cost,
+      ...spendResult.state,
       tavern: {
         ...(state.tavern ?? {}),
         queuedMealBuff: meal,

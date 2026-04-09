@@ -563,6 +563,52 @@ export function getAllImportedCodexEntries(): ImportedCodexEntry[] {
   return Array.from(importedCodexEntries.values());
 }
 
+function getTechnicaRegistry(contentType: TechnicaContentType): Map<string, unknown> {
+  switch (contentType) {
+    case "map":
+      return importedMaps;
+    case "quest":
+      return importedQuests;
+    case "dialogue":
+      return importedDialogues;
+    case "mail":
+      return importedMailEntries;
+    case "key_item":
+      return importedKeyItems;
+    case "faction":
+      return importedFactions;
+    case "field_enemy":
+      return importedFieldEnemies;
+    case "npc":
+      return importedNpcs;
+    case "item":
+      return importedItems;
+    case "gear":
+      return importedGear;
+    case "card":
+      return importedCards;
+    case "fieldmod":
+      return importedFieldMods;
+    case "unit":
+      return importedUnits;
+    case "operation":
+      return importedOperations;
+    case "class":
+      return importedClasses;
+    case "codex":
+      return importedCodexEntries;
+  }
+}
+
+export function hasTechnicaRegistryEntry(contentType: TechnicaContentType, contentId: string): boolean {
+  const normalizedContentId = contentId.trim();
+  if (!normalizedContentId) {
+    return false;
+  }
+
+  return getTechnicaRegistry(contentType).has(normalizedContentId);
+}
+
 export function isTechnicaContentDisabled(contentType: TechnicaContentType, contentId: string): boolean {
   return disabledContentIds.get(contentType)?.has(contentId) ?? false;
 }

@@ -4,29 +4,21 @@
 
 import { Quest } from "./types";
 import { updateGameState, getGameState } from "../state/gameStore";
-import { addWad, addResources } from "../state/gameStore";
 import { addCardsToLibrary } from "../core/gearWorkbench";
 import { learnRecipe } from "../core/crafting";
 import { grantKeyItemToState, isRegisteredKeyItem } from "../core/keyItems";
-import { addResourceWallet } from "../core/resources";
+import { grantSessionResources } from "../core/session";
 import type { GameState } from "../core/types";
 
 export function applyQuestRewardsToState(state: GameState, quest: Quest): GameState {
   const rewards = quest.rewards;
   let nextState: GameState = { ...state };
 
-  if (rewards.wad) {
-    nextState = {
-      ...nextState,
-      wad: (nextState.wad ?? 0) + rewards.wad,
-    };
-  }
-
-  if (rewards.resources) {
-    nextState = {
-      ...nextState,
-      resources: addResourceWallet(nextState.resources, rewards.resources),
-    };
+  if (rewards.wad || rewards.resources) {
+    nextState = grantSessionResources(nextState, {
+      wad: rewards.wad,
+      resources: rewards.resources,
+    });
   }
 
   if (rewards.items) {
@@ -93,14 +85,11 @@ export function grantQuestRewards(quest: Quest): void {
 
   console.log(`[QUEST] Granting rewards for quest: ${quest.title}`, rewards);
 
-  // Grant WAD
-  if (rewards.wad) {
-    addWad(rewards.wad);
-  }
-
-  // Grant resources
-  if (rewards.resources) {
-    addResources(rewards.resources);
+  if (rewards.wad || rewards.resources) {
+    updateGameState((s) => grantSessionResources(s, {
+      wad: rewards.wad,
+      resources: rewards.resources,
+    }));
   }
 
   // Grant XP to party units

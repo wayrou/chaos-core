@@ -25,9 +25,13 @@ import { showSystemPing } from "../components/systemPing";
 import {
   formatResourceLabel,
   getResourceEntries,
-  hasEnoughResources as hasEnoughResourceValues,
   RESOURCE_KEYS,
 } from "../../core/resources";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+} from "../../core/session";
 import {
   BaseCampReturnTo,
   getBaseCampReturnLabel,
@@ -162,13 +166,14 @@ function formatUnlockCostLine(
 }
 
 function canAffordUnlock(
-  wad: number,
-  resources: ReturnType<typeof getGameState>["resources"],
+  state: ReturnType<typeof getGameState>,
   wadCost: number | undefined,
   resourceCost: Partial<ReturnType<typeof getGameState>["resources"]> | undefined,
 ): boolean {
-  return wad >= (wadCost ?? 0)
-    && hasEnoughResourceValues(resources, resourceCost);
+  return canSessionAffordCost(state, {
+    wad: wadCost ?? 0,
+    resources: resourceCost,
+  });
 }
 
 function renderCoreAuthorizationCards(): string {
@@ -195,7 +200,7 @@ function renderCoreAuthorizationCards(): string {
       formatNetworkOutputLine("Comms Output", definition.commsOutputBw, definition.commsOutputMode, " BW"),
       formatNetworkOutputLine("Supply Output", definition.supplyOutputCrates, definition.supplyOutputMode, " crates"),
     ].filter((entry): entry is string => Boolean(entry));
-    const canAfford = canAffordUnlock(state.wad ?? 0, state.resources, definition.unlockWadCost, definition.unlockCost);
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
     const preferredTags = (definition.preferredRoomTags ?? []).map((tag) => formatRoomTagLabel(tag)).join(" // ");
 
     return `
@@ -258,7 +263,7 @@ function renderFortificationAuthorizationCards(): string {
       definition.unlockWadCost,
       definition.unlockCost,
     );
-    const canAfford = canAffordUnlock(state.wad ?? 0, state.resources, definition.unlockWadCost, definition.unlockCost);
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
     const preferredTags = (definition.preferredRoomTags ?? []).map((tag) => formatRoomTagLabel(tag)).join(" // ");
 
     return `
@@ -312,7 +317,7 @@ function renderFieldAssetAuthorizationCards(): string {
       definition.unlockWadCost,
       definition.unlockCost,
     );
-    const canAfford = canAffordUnlock(state.wad ?? 0, state.resources, definition.unlockWadCost, definition.unlockCost);
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
 
     return `
       <article class="schema-screen__auth-card ${unlocked ? "schema-screen__auth-card--unlocked" : "schema-screen__auth-card--locked"}">
@@ -497,7 +502,8 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
   clearControllerContext();
 
   const state = getGameState();
-  const resources = state.resources;
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  const resources = wallet.resources;
   const schema = getSchemaUnlockState(state);
   const selectedTab = getResolvedSchemaTab(activeSchemaTab);
   activeSchemaTab = selectedTab;
@@ -530,7 +536,7 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
               <div class="schema-screen__resource-list">
                 <div class="schema-screen__resource-item">
                   <span class="schema-screen__resource-label">Wad</span>
-                  <span class="schema-screen__resource-value">${state.wad}</span>
+                  <span class="schema-screen__resource-value">${wallet.wad}</span>
                 </div>
                 ${RESOURCE_KEYS.map((key) => `
                   <div class="schema-screen__resource-item">

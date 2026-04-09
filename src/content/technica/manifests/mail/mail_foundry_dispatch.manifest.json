@@ -5,7 +5,7 @@
   "description": "Chaos Core runtime mail export.",
   "entryFile": "mail_foundry_dispatch.mail.json",
   "exportType": "mail",
-  "exportedAt": "2026-04-08T01:57:14.888Z",
+  "exportedAt": "2026-04-09T02:59:12.664Z",
   "files": [
     "manifest.json",
     "mail_foundry_dispatch.mail.json",

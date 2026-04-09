@@ -16,6 +16,8 @@ export type NamedAudioHookId =
   | "attack_hit"
   | "attack_crit"
   | "resource_pickup"
+  | "sable_attack"
+  | "sable_bark"
   | "ui_click"
   | "weapon_overheat"
   | "node_damage";
@@ -80,8 +82,9 @@ const SFX_PATTERNS: Record<PlaceholderSfxId, ToneStep[]> = {
     { at: 0.055, duration: 0.06, from: 760, to: 920, gain: 0.12, type: "triangle" },
   ],
   "ui-move": [
-    { at: 0, duration: 0.03, from: 510, to: 560, gain: 0.08, type: "square" },
-    { at: 0.032, duration: 0.03, from: 650, to: 710, gain: 0.06, type: "triangle" },
+    // Keep footsteps tucked under the mix: softer, lower, and less clicky than menu UI motion.
+    { at: 0, duration: 0.045, from: 240, to: 210, gain: 0.032, type: "sine" },
+    { at: 0.01, duration: 0.05, from: 320, to: 260, gain: 0.018, type: "triangle" },
   ],
   "system-info": [
     { at: 0, duration: 0.05, from: 720, to: 820, gain: 0.09, type: "sine" },
@@ -124,6 +127,15 @@ const NAMED_AUDIO_HOOK_PATTERNS: Record<NamedAudioHookId, ToneStep[]> = {
   resource_pickup: [
     { at: 0, duration: 0.03, from: 600, to: 760, gain: 0.075, type: "triangle" },
     { at: 0.028, duration: 0.05, from: 840, to: 1180, gain: 0.09, type: "triangle" },
+  ],
+  sable_attack: [
+    // Keep Sable's attack tucked under battle/weapon impacts so it reads like a quick snap, not a loud effect.
+    { at: 0, duration: 0.026, from: 210, to: 176, gain: 0.055, type: "square" },
+    { at: 0.014, duration: 0.05, from: 360, to: 280, gain: 0.04, type: "triangle" },
+  ],
+  sable_bark: [
+    { at: 0, duration: 0.04, from: 470, to: 390, gain: 0.05, type: "sawtooth" },
+    { at: 0.022, duration: 0.055, from: 330, to: 250, gain: 0.038, type: "square" },
   ],
   ui_click: [
     { at: 0, duration: 0.03, from: 820, to: 720, gain: 0.1, type: "triangle" },

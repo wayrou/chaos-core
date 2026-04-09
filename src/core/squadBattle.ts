@@ -97,6 +97,12 @@ type SquadBattleCommandPayload = {
   command: SquadBattleCommand;
 };
 
+export type RuntimeBattleCommandPayload = {
+  protocolVersion: number;
+  battleId: string;
+  command: SquadBattleCommand;
+};
+
 const SQUAD_ARCHETYPES: Record<string, SquadArchetype> = {
   "Vanguard Core": {
     label: "Vanguard Core",
@@ -644,6 +650,34 @@ export function parseSquadBattleCommandPayload(payload: string): SquadBattleComm
     if (
       parsed?.protocolVersion !== SQUAD_BATTLE_PROTOCOL_VERSION
       || !parsed?.matchId
+      || !parsed?.battleId
+      || !parsed?.command
+      || typeof parsed.command.type !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function createRuntimeBattleCommandPayload(
+  battle: BattleState,
+  command: SquadBattleCommand,
+): string {
+  return JSON.stringify({
+    protocolVersion: SQUAD_BATTLE_PROTOCOL_VERSION,
+    battleId: battle.id,
+    command,
+  } satisfies RuntimeBattleCommandPayload);
+}
+
+export function parseRuntimeBattleCommandPayload(payload: string): RuntimeBattleCommandPayload | null {
+  try {
+    const parsed = JSON.parse(payload) as RuntimeBattleCommandPayload;
+    if (
+      parsed?.protocolVersion !== SQUAD_BATTLE_PROTOCOL_VERSION
       || !parsed?.battleId
       || !parsed?.command
       || typeof parsed.command.type !== "string"

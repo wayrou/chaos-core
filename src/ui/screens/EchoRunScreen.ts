@@ -7,12 +7,13 @@ import {
   getEchoModifierDef,
   getEchoResultsSummary,
   launchActiveEchoEncounterBattle,
+  selectEchoMapNode,
   rerollActiveEchoChoices,
   startEchoRunSession,
 } from "../../core/echoRuns";
 import { getAllStarterEquipment } from "../../core/equipment";
-import { enableAutosave } from "../../core/saveSystem";
-import type { EchoRewardChoice, EchoUnitDraftOption } from "../../core/types";
+import { enableAutosave, triggerAutosave } from "../../core/saveSystem";
+import type { EchoRewardChoice, EchoRunNode, EchoUnitDraftOption } from "../../core/types";
 import { showConfirmDialog } from "../components/confirmDialog";
 
 const echoDraftPreviewByStage = new Map<string, string>();
@@ -131,6 +132,7 @@ function launchEchoBattleFromScreen(): boolean {
     phase: "battle",
     currentBattle: battle,
   }));
+  void triggerAutosave(getGameState());
 
   import("./BattleScreen").then(({ renderBattleScreen }) => {
     renderBattleScreen();
@@ -166,7 +168,7 @@ function renderUnitSummaryCard(unitId: string, run: NonNullable<ReturnType<typeo
   return `
     <div class="echo-run-summary-card">
       <div class="echo-run-summary-card__title">${unit.name}</div>
-      <div class="echo-run-summary-card__meta">${classLabel} | PWR ${unit.pwr ?? "?"}</div>
+      <div class="echo-run-summary-card__meta">${classLabel} | PWR ${unit.pwr ?? "?"} | HP ${unit.hp}/${unit.maxHp}</div>
       <div class="echo-run-tag-row">
         ${affinityPairs.map((tag) => `<span class="echo-run-tag">${tag}</span>`).join("")}
       </div>
@@ -212,29 +214,49 @@ function renderChoiceCard(
   const unit = choice.unitOption;
   const field = choice.fieldDefinition;
   const modifierDef = getEchoModifierDef(choice.modifierDefId);
+  const recovery = choice.recoveryOption;
+  const training = choice.trainingOption;
 
-  const detailBlock = unit
-    ? `
-        <div class="echo-run-choice-card__detail">
-          <div class="echo-run-choice-card__line">${unit.baseClass.toUpperCase()} | ${unit.pwrBand.toUpperCase()} BAND</div>
-          <div class="echo-run-choice-card__line">Lean: ${unit.affinityLean.map((entry) => entry.toUpperCase()).join(" / ")}</div>
-          <div class="echo-run-choice-card__line">${unit.traitLabel ?? "Adaptive draft frame"}</div>
-        </div>
-      `
-    : field
-      ? `
-          <div class="echo-run-choice-card__detail">
-            <div class="echo-run-choice-card__line">LEVEL ${field.level} | RADIUS ${field.radius}</div>
-            <div class="echo-run-choice-card__line">${field.effectLabel}</div>
-            <div class="echo-run-choice-card__line">${field.description}</div>
-          </div>
-        `
-      : `
-          <div class="echo-run-choice-card__detail">
-            <div class="echo-run-choice-card__line">${(modifierDef?.trigger ?? "proc").replace(/_/g, " ").toUpperCase()}</div>
-            <div class="echo-run-choice-card__line">${modifierDef?.description ?? choice.description}</div>
-          </div>
-        `;
+  let detailBlock = `
+    <div class="echo-run-choice-card__detail">
+      <div class="echo-run-choice-card__line">${(modifierDef?.trigger ?? "proc").replace(/_/g, " ").toUpperCase()}</div>
+      <div class="echo-run-choice-card__line">${modifierDef?.description ?? choice.description}</div>
+    </div>
+  `;
+
+  if (unit) {
+    detailBlock = `
+      <div class="echo-run-choice-card__detail">
+        <div class="echo-run-choice-card__line">${unit.baseClass.toUpperCase()} | ${unit.pwrBand.toUpperCase()} BAND</div>
+        <div class="echo-run-choice-card__line">Lean: ${unit.affinityLean.map((entry) => entry.toUpperCase()).join(" / ")}</div>
+        <div class="echo-run-choice-card__line">${unit.traitLabel ?? "Adaptive draft frame"}</div>
+      </div>
+    `;
+  } else if (field) {
+    detailBlock = `
+      <div class="echo-run-choice-card__detail">
+        <div class="echo-run-choice-card__line">LEVEL ${field.level} | RADIUS ${field.radius}</div>
+        <div class="echo-run-choice-card__line">${field.effectLabel}</div>
+        <div class="echo-run-choice-card__line">${field.description}</div>
+      </div>
+    `;
+  } else if (recovery) {
+    detailBlock = `
+      <div class="echo-run-choice-card__detail">
+        <div class="echo-run-choice-card__line">${recovery.name.toUpperCase()}</div>
+        <div class="echo-run-choice-card__line">${recovery.description}</div>
+        ${recovery.rerollsGranted ? `<div class="echo-run-choice-card__line">+${recovery.rerollsGranted} REROLL</div>` : ""}
+      </div>
+    `;
+  } else if (training) {
+    detailBlock = `
+      <div class="echo-run-choice-card__detail">
+        <div class="echo-run-choice-card__line">${training.name.toUpperCase()}</div>
+        <div class="echo-run-choice-card__line">${training.description}</div>
+        <div class="echo-run-choice-card__line">TEAM-WIDE +${training.amount} ${training.stat.toUpperCase()}</div>
+      </div>
+    `;
+  }
 
   return `
     <article class="echo-run-choice-card echo-run-choice-card--${choice.lane}${options.isPreviewed ? " echo-run-choice-card--previewed" : ""}">
@@ -246,6 +268,79 @@ function renderChoiceCard(
       ${unit ? `<button class="echo-run-choice-card__inspect" type="button" data-echo-preview-id="${choice.id}">UNIT INFO</button>` : ""}
       <button class="echo-run-choice-card__button" type="button" data-echo-choice-id="${choice.id}">SELECT</button>
     </article>
+  `;
+}
+
+function renderMapNodeCard(
+  node: EchoRunNode,
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+): string {
+  const isAvailable = run.availableNodeIds.includes(node.id);
+  const isCompleted = run.completedNodeIds.includes(node.id);
+  const isCurrent = run.currentNodeId === node.id || run.pendingNodeId === node.id;
+  const stateLabel = isCompleted
+    ? "CLEARED"
+    : isAvailable
+      ? "AVAILABLE"
+      : node.stratum === run.currentStratum
+        ? "LOCKED"
+        : "FUTURE";
+
+  return `
+    <article class="echo-run-map-node echo-run-map-node--${node.nodeType}${isAvailable ? " echo-run-map-node--available" : ""}${isCompleted ? " echo-run-map-node--completed" : ""}${isCurrent ? " echo-run-map-node--current" : ""}">
+      <div class="echo-run-map-node__state">${stateLabel}</div>
+      <div class="echo-run-map-node__title">${node.title}</div>
+      <div class="echo-run-map-node__subtitle">${node.subtitle}</div>
+      <div class="echo-run-map-node__meta">Tier ${node.dangerTier} // ${node.rewardBias}</div>
+      <div class="echo-run-map-node__copy">${node.description}</div>
+      <button class="echo-run-choice-card__button" type="button" data-echo-node-id="${node.id}" ${isAvailable ? "" : "disabled"}>
+        ${node.nodeType === "support" ? "ACCESS NODE" : "ENGAGE NODE"}
+      </button>
+    </article>
+  `;
+}
+
+function renderMapStage(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const currentStratumNodes = Object.values(run.nodesById)
+    .filter((node) => node.stratum === run.currentStratum)
+    .sort((left, right) => left.layer - right.layer || left.branchIndex - right.branchIndex);
+
+  const grouped = new Map<number, EchoRunNode[]>();
+  currentStratumNodes.forEach((node) => {
+    const bucket = grouped.get(node.layer) ?? [];
+    bucket.push(node);
+    grouped.set(node.layer, bucket);
+  });
+
+  const layersHtml = Array.from(grouped.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([layer, nodes]) => `
+      <section class="echo-run-map-layer">
+        <div class="echo-run-map-layer__label">LAYER ${layer.toString().padStart(2, "0")}</div>
+        <div class="echo-run-map-layer__nodes">
+          ${nodes.map((node) => renderMapNodeCard(node, run)).join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+
+  return `
+    <section class="echo-run-choice-stage echo-run-choice-stage--map">
+      <div class="echo-run-choice-stage__header">
+        <div class="echo-run-choice-stage__title">Stratum ${run.currentStratum} Route Map</div>
+        <div class="echo-run-choice-stage__actions">
+          <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+        </div>
+      </div>
+      <div class="echo-run-map-stage__summary">
+        <div class="echo-run-meta-chip"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
+        <div class="echo-run-meta-chip"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
+        <div class="echo-run-meta-chip"><span>Reachable Nodes</span><strong>${run.availableNodeIds.length}</strong></div>
+      </div>
+      <div class="echo-run-map-stage">
+        ${layersHtml}
+      </div>
+    </section>
   `;
 }
 
@@ -269,6 +364,8 @@ function renderEchoResults(run: NonNullable<ReturnType<typeof getActiveEchoRun>>
         <div class="echo-run-results__item"><span>Field Upgrades</span><strong>${summary?.fieldsUpgraded ?? 0}</strong></div>
         <div class="echo-run-results__item"><span>Modifiers Drafted</span><strong>${summary?.tacticalModifiersDrafted ?? 0}</strong></div>
         <div class="echo-run-results__item"><span>Challenges Completed</span><strong>${summary?.challengesCompleted ?? 0}</strong></div>
+        <div class="echo-run-results__item"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
+        <div class="echo-run-results__item"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
       </div>
       ${lastSummary ? `
         <div class="echo-run-results__last">
@@ -299,31 +396,59 @@ export function renderEchoRunScreen(): void {
     return;
   }
 
-  if (run.stage !== "results" && run.draftChoices.length === 0) {
-    if (launchEchoBattleFromScreen()) {
-      return;
-    }
-  }
-
   syncEchoScreenState();
 
   const stageTitle = run.stage === "initial_units"
     ? "Initial Unit Draft"
     : run.stage === "initial_field"
       ? "Initial Echo Field"
+      : run.stage === "map"
+        ? `Stratum ${run.currentStratum} Route Map`
+        : run.stage === "milestone"
+          ? `Milestone ${run.currentStratum}`
       : run.stage === "reward"
-        ? "Inter-Encounter Draft"
+        ? "Reward Draft"
         : "Results";
 
   const stageCopy = run.stage === "initial_units"
     ? "Choose three temporary operators to build your starting draft squad."
     : run.stage === "initial_field"
       ? "Choose an initial Echo Field"
+      : run.stage === "map"
+        ? "Select one reachable node. Support nodes resolve immediately, while encounter nodes launch a battle."
+        : run.stage === "milestone"
+          ? "Choose one milestone package, then continue into the next endless stratum."
       : run.stage === "reward"
         ? "Pick exactly one reward lane and keep the run moving."
       : "The simulation is over. Nothing here carries into story progression.";
 
   const selectedPreviewChoice = getSelectedEchoPreviewChoice(run);
+  const shouldShowDraftStage = run.stage === "initial_units" || run.stage === "initial_field" || run.stage === "reward" || run.stage === "milestone";
+  const mainContent = run.stage === "results"
+    ? renderEchoResults(run)
+    : run.stage === "map"
+      ? renderMapStage(run)
+      : `
+        <section class="echo-run-choice-stage">
+          <div class="echo-run-choice-stage__header">
+            <div class="echo-run-choice-stage__title">${stageTitle}</div>
+            <div class="echo-run-choice-stage__actions">
+              ${run.stage === "reward" ? `
+                <button class="echo-run-secondary-btn" type="button" id="echoRunRerollBtn" ${run.rerolls <= 0 ? "disabled" : ""}>REROLL (${run.rerolls})</button>
+              ` : ""}
+              <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+            </div>
+          </div>
+          <div class="echo-run-choice-stage__body${selectedPreviewChoice?.unitOption ? " echo-run-choice-stage__body--with-preview" : ""}">
+            <div class="echo-run-choice-grid">
+              ${run.draftChoices.map((choice) => renderChoiceCard(choice, {
+                isPreviewed: selectedPreviewChoice?.id === choice.id,
+              })).join("")}
+            </div>
+            ${selectedPreviewChoice?.unitOption ? renderEchoUnitDraftPreview(selectedPreviewChoice.unitOption) : ""}
+          </div>
+        </section>
+      `;
 
   app.innerHTML = `
     <div class="echo-run-root">
@@ -367,51 +492,48 @@ export function renderEchoRunScreen(): void {
           </aside>
 
           <main class="echo-run-main">
-            ${run.stage === "results" ? renderEchoResults(run) : `
-              <section class="echo-run-choice-stage">
-                <div class="echo-run-choice-stage__header">
-                  <div class="echo-run-choice-stage__title">${stageTitle}</div>
-                  <div class="echo-run-choice-stage__actions">
-                    ${run.stage === "reward" ? `
-                      <button class="echo-run-secondary-btn" type="button" id="echoRunRerollBtn" ${run.rerolls <= 0 ? "disabled" : ""}>REROLL (${run.rerolls})</button>
-                    ` : ""}
-                    <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
-                  </div>
-                </div>
-                <div class="echo-run-choice-stage__body${selectedPreviewChoice?.unitOption ? " echo-run-choice-stage__body--with-preview" : ""}">
-                  <div class="echo-run-choice-grid">
-                    ${run.draftChoices.map((choice) => renderChoiceCard(choice, {
-                      isPreviewed: selectedPreviewChoice?.id === choice.id,
-                    })).join("")}
-                  </div>
-                  ${selectedPreviewChoice?.unitOption ? renderEchoUnitDraftPreview(selectedPreviewChoice.unitOption) : ""}
-                </div>
-              </section>
-            `}
+            ${mainContent}
           </main>
         </div>
       </div>
     </div>
   `;
 
-  document.querySelectorAll<HTMLElement>("[data-echo-choice-id]").forEach((button) => {
-    button.onclick = () => {
-      const choiceId = button.getAttribute("data-echo-choice-id");
-      if (!choiceId) {
-        return;
-      }
-      applyEchoDraftChoice(choiceId);
-      renderEchoRunScreen();
-    };
-  });
+  if (shouldShowDraftStage) {
+    document.querySelectorAll<HTMLElement>("[data-echo-choice-id]").forEach((button) => {
+      button.onclick = () => {
+        const choiceId = button.getAttribute("data-echo-choice-id");
+        if (!choiceId) {
+          return;
+        }
+        applyEchoDraftChoice(choiceId);
+        renderEchoRunScreen();
+      };
+    });
 
-  document.querySelectorAll<HTMLElement>("[data-echo-preview-id]").forEach((button) => {
+    document.querySelectorAll<HTMLElement>("[data-echo-preview-id]").forEach((button) => {
+      button.onclick = () => {
+        const choiceId = button.getAttribute("data-echo-preview-id");
+        if (!choiceId) {
+          return;
+        }
+        setSelectedEchoPreviewChoice(run, choiceId);
+        renderEchoRunScreen();
+      };
+    });
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-echo-node-id]").forEach((button) => {
     button.onclick = () => {
-      const choiceId = button.getAttribute("data-echo-preview-id");
-      if (!choiceId) {
+      const nodeId = button.getAttribute("data-echo-node-id");
+      if (!nodeId) {
         return;
       }
-      setSelectedEchoPreviewChoice(run, choiceId);
+      const result = selectEchoMapNode(nodeId);
+      if (result === "battle") {
+        launchEchoBattleFromScreen();
+        return;
+      }
       renderEchoRunScreen();
     };
   });

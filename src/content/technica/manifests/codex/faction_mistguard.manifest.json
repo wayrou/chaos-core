@@ -5,7 +5,7 @@
   "description": "Chaos Core runtime codex entry export.",
   "entryFile": "faction_mistguard.codex.json",
   "exportType": "codex",
-  "exportedAt": "2026-04-07T01:45:06.067Z",
+  "exportedAt": "2026-04-09T02:44:25.059Z",
   "files": [
     "manifest.json",
     "faction_mistguard.codex.json",

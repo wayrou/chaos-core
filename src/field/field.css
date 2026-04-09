@@ -443,13 +443,11 @@
 }
 
 .field-prompt-overlay {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
 }
 
 .field-interaction-prompt {
-  position: relative;
+  position: absolute;
   background: rgba(0, 0, 0, 0.9);
   border: 2px solid var(--ard-gold);
   border-radius: var(--radius-md);
@@ -464,7 +462,8 @@
   pointer-events: none;
   box-shadow: 0 0 20px rgba(243, 163, 16, 0.5);
   opacity: 0;
-  transform: translateY(8px) scale(0.96);
+  transform: translate(-50%, calc(-100% + 8px)) scale(0.96);
+  transform-origin: center bottom;
   transition:
     opacity 0.16s ease,
     transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -475,7 +474,7 @@
 .field-prompt-overlay--active .field-interaction-prompt,
 .field-prompt-overlay.field-prompt-overlay--active .field-interaction-prompt {
   opacity: 1;
-  transform: translateY(0) scale(1);
+  transform: translate(-50%, -100%) scale(1);
 }
 
 .field-interaction-prompt--pulse {
@@ -486,13 +485,13 @@
 
 @keyframes fieldPromptPulse {
   0% {
-    transform: translateY(8px) scale(0.92);
+    transform: translate(-50%, calc(-100% + 12px)) scale(0.92);
   }
   50% {
-    transform: translateY(-1px) scale(1.04);
+    transform: translate(-50%, calc(-100% - 3px)) scale(1.04);
   }
   100% {
-    transform: translateY(0) scale(1);
+    transform: translate(-50%, -100%) scale(1);
   }
 }
 

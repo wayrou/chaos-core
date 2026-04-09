@@ -515,29 +515,16 @@ export function grantFloorResources(): CampaignProgress {
   // Grant resources to player
   if (Object.keys(totalResources).length > 0) {
     import("../state/gameStore").then(({ updateGameState }) => {
-      updateGameState(prev => {
-        const updated = { ...prev };
-
-        // Grant WAD
-        if (totalResources.wad) {
-          updated.wad = (updated.wad || 0) + totalResources.wad;
-        }
-
-        // Grant other resources
-        if (totalResources.metalScrap) {
-          updated.resources.metalScrap = (updated.resources.metalScrap || 0) + totalResources.metalScrap;
-        }
-        if (totalResources.wood) {
-          updated.resources.wood = (updated.resources.wood || 0) + totalResources.wood;
-        }
-        if (totalResources.chaosShards) {
-          updated.resources.chaosShards = (updated.resources.chaosShards || 0) + totalResources.chaosShards;
-        }
-        if (totalResources.steamComponents) {
-          updated.resources.steamComponents = (updated.resources.steamComponents || 0) + totalResources.steamComponents;
-        }
-
-        return updated;
+      import("./session").then(({ grantSessionResources }) => {
+        updateGameState(prev => grantSessionResources(prev, {
+          wad: totalResources.wad || 0,
+          resources: {
+            metalScrap: totalResources.metalScrap || 0,
+            wood: totalResources.wood || 0,
+            chaosShards: totalResources.chaosShards || 0,
+            steamComponents: totalResources.steamComponents || 0,
+          },
+        }));
       });
     });
   }

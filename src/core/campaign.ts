@@ -364,7 +364,7 @@ export function loadCampaignProgress(): CampaignProgress {
       // Version migration check
       if (parsed.version !== CAMPAIGN_VERSION) {
         console.warn("[CAMPAIGN] Version mismatch, resetting progress");
-        return createDefaultCampaignProgress();
+        return normalizeCampaignProgress(createDefaultCampaignProgress());
       }
       return normalizeCampaignProgress(parsed);
     }
@@ -372,7 +372,7 @@ export function loadCampaignProgress(): CampaignProgress {
     console.error("[CAMPAIGN] Failed to load progress:", error);
   }
 
-  return createDefaultCampaignProgress();
+  return normalizeCampaignProgress(createDefaultCampaignProgress());
 }
 
 /**

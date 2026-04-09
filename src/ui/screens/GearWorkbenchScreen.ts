@@ -38,7 +38,6 @@ import {
   GearChassis,
   ALL_CHASSIS,
 } from "../../data/gearChassis";
-import { createEmptyResourceWallet, subtractResourceWallet } from "../../core/resources";
 import {
   ALL_DOCTRINES,
   getDoctrineById,
@@ -75,6 +74,11 @@ import {
   CONSUMABLE_DATABASE,
 } from "../../core/crafting";
 import { showSystemPing } from "../components/systemPing";
+import {
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -349,6 +353,7 @@ export function renderGearWorkbenchScreen(
 function renderBuildGearTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
   const unlockedDoctrineIds = state.unlockedDoctrineIds || [];
+  const localResources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
 
   // Get available chassis for selected slot type
   const availableChassis = workbenchState.buildSlotType
@@ -517,17 +522,17 @@ function renderBuildGearTab(state: GameState): string {
             <div class="summary-cost">
               <div class="summary-label">BUILD COST:</div>
               <div class="cost-items">
-                <span class="cost-item ${state.resources.metalScrap >= buildCost.metalScrap ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.metalScrap} Metal (${state.resources.metalScrap})
+                <span class="cost-item ${localResources.metalScrap >= buildCost.metalScrap ? '' : 'cost-item--insufficient'}">
+                  ⚙ ${buildCost.metalScrap} Metal (${localResources.metalScrap})
                 </span>
-                <span class="cost-item ${state.resources.wood >= buildCost.wood ? '' : 'cost-item--insufficient'}">
-                  🪵 ${buildCost.wood} Wood (${state.resources.wood})
+                <span class="cost-item ${localResources.wood >= buildCost.wood ? '' : 'cost-item--insufficient'}">
+                  🪵 ${buildCost.wood} Wood (${localResources.wood})
                 </span>
-                <span class="cost-item ${state.resources.chaosShards >= buildCost.chaosShards ? '' : 'cost-item--insufficient'}">
-                  💎 ${buildCost.chaosShards} Shards (${state.resources.chaosShards})
+                <span class="cost-item ${localResources.chaosShards >= buildCost.chaosShards ? '' : 'cost-item--insufficient'}">
+                  💎 ${buildCost.chaosShards} Shards (${localResources.chaosShards})
                 </span>
-                <span class="cost-item ${state.resources.steamComponents >= buildCost.steamComponents ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.steamComponents} Steam (${state.resources.steamComponents})
+                <span class="cost-item ${localResources.steamComponents >= buildCost.steamComponents ? '' : 'cost-item--insufficient'}">
+                  ⚙ ${buildCost.steamComponents} Steam (${localResources.steamComponents})
                 </span>
               </div>
             </div>
@@ -620,7 +625,7 @@ function renderChaoticDoctrineCard(isSelected: boolean): string {
 
 export function renderEndlessCraftTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
-  const resources = state.resources;
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
 
   // Get available chassis (all slot types)
   const availableChassis = ALL_CHASSIS.filter(c => unlockedChassisIds.includes(c.id));
@@ -1224,15 +1229,14 @@ export function attachEndlessCraftListeners(state: any): void {
       const result = craftEndlessGear(recipe, state);
 
       if (result.success && result.equipment) {
-        // Deduct materials
         const cost = getEndlessRecipeCost(recipe.materials);
-        updateGameState(prev => ({
-          ...prev,
-          resources: subtractResourceWallet(prev.resources ?? createEmptyResourceWallet(), cost),
-        }));
+        updateGameState((prev) => {
+          const spendResult = spendSessionCost(prev, { resources: cost });
+          return spendResult.success ? spendResult.state : prev;
+        });
 
         // Add to inventory
-        addEndlessGearToInventory(result.equipment, state);
+        addEndlessGearToInventory(result.equipment, getGameState());
 
         // Show success message
         addWorkbenchLog(`SLK//ENDLESS_CRAFT :: ${(result.equipment as any).name} generated.`);
@@ -1380,18 +1384,18 @@ function attachBuildGearListeners(state: any): void {
       }
 
       updateGameState(prev => {
-        const equipmentById = (prev as any).equipmentById || {};
-        const equipmentPool = (prev as any).equipmentPool || [];
-        const gearSlots = (prev as any).gearSlots || {};
+        const spendResult = spendSessionCost(prev, { resources: cost });
+        if (!spendResult.success) {
+          return prev;
+        }
+
+        const nextState = spendResult.state;
+        const equipmentById = (nextState as any).equipmentById || {};
+        const equipmentPool = (nextState as any).equipmentPool || [];
+        const gearSlots = (nextState as any).gearSlots || {};
 
         return {
-          ...prev,
-          resources: {
-            metalScrap: prev.resources.metalScrap - cost.metalScrap,
-            wood: prev.resources.wood - cost.wood,
-            chaosShards: prev.resources.chaosShards - cost.chaosShards,
-            steamComponents: prev.resources.steamComponents - cost.steamComponents,
-          },
+          ...nextState,
           equipmentById: {
             ...equipmentById,
             [result.equipment!.id]: result.equipment,
@@ -1868,7 +1872,7 @@ function detachGearWorkbenchExitHotkey(): void {
 
 function renderCraftTab(state: GameState): string {
   const knownRecipeIds = state.knownRecipeIds ?? getStarterRecipeIds();
-  const resources = state.resources ?? { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
 
   const knownRecipes = getKnownRecipes(knownRecipeIds);
   const categoryRecipes = getRecipesByCategory(knownRecipes, workbenchState.craftingCategory);
@@ -2208,7 +2212,8 @@ function attachCraftTabListeners(state: any): void {
       if (!recipe) return;
 
       const inventoryItemIds = getInventoryItemIds(state);
-      const result = craftItem(recipe, state.resources, inventoryItemIds);
+      const localResources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+      const result = craftItem(recipe, localResources, inventoryItemIds);
 
       if (!result.success) {
         showSystemPing({
@@ -2224,17 +2229,17 @@ function attachCraftTabListeners(state: any): void {
       const starterEquipmentById = getAllStarterEquipment();
 
       updateGameState(prev => {
-        const newResources = { ...prev.resources };
-        const newEquipmentById = { ...(prev.equipmentById || {}) };
-        const newConsumables = { ...(prev.consumables || {}) };
-        const newEquipmentPool = [...((prev as any).equipmentPool || [])];
-        const newGearSlots = { ...((prev as any).gearSlots || {}) };
-        let newUnitsById = { ...(prev.unitsById || {}) };
+        const spendResult = spendSessionCost(prev, { resources: recipe.cost });
+        if (!spendResult.success) {
+          return prev;
+        }
 
-        if (recipe.cost.metalScrap) newResources.metalScrap -= recipe.cost.metalScrap;
-        if (recipe.cost.wood) newResources.wood -= recipe.cost.wood;
-        if (recipe.cost.chaosShards) newResources.chaosShards -= recipe.cost.chaosShards;
-        if (recipe.cost.steamComponents) newResources.steamComponents -= recipe.cost.steamComponents;
+        const nextState = spendResult.state;
+        const newEquipmentById = { ...(nextState.equipmentById || {}) };
+        const newConsumables = { ...(nextState.consumables || {}) };
+        const newEquipmentPool = [...((nextState as any).equipmentPool || [])];
+        const newGearSlots = { ...((nextState as any).gearSlots || {}) };
+        let newUnitsById = { ...(nextState.unitsById || {}) };
 
         if (result.consumedItemId) {
           delete newEquipmentById[result.consumedItemId];
@@ -2253,7 +2258,7 @@ function attachCraftTabListeners(state: any): void {
         } else {
           const craftedTemplate = starterEquipmentById[result.itemId!];
           const upgradeBase = result.consumedItemId
-            ? (prev.equipmentById || {})[result.consumedItemId] || starterEquipmentById[result.consumedItemId]
+            ? (nextState.equipmentById || {})[result.consumedItemId] || starterEquipmentById[result.consumedItemId]
             : null;
           const craftedEquipment = craftedTemplate
             ? cloneEquipmentForInventory(craftedTemplate)
@@ -2271,8 +2276,7 @@ function attachCraftTabListeners(state: any): void {
         }
 
         return {
-          ...prev,
-          resources: newResources,
+          ...nextState,
           equipmentById: newEquipmentById,
           equipmentPool: newEquipmentPool,
           gearSlots: newGearSlots,

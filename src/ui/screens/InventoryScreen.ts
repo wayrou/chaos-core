@@ -25,6 +25,12 @@ import {
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
@@ -149,16 +155,22 @@ function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
       if (!nextClass || cost === null) {
         return;
       }
-      if ((currentState.wad ?? 0) < cost) {
+      if (!canSessionAffordCost(currentState, { wad: cost })) {
         alert(`Insufficient WAD. Need ${formatWadAmount(cost)} to upgrade M.U.L.E. Class ${currentState.inventory.muleClass} to ${nextClass}.`);
         return;
       }
 
-      updateGameState((prev) => ({
-        ...prev,
-        wad: Math.max(0, (prev.wad ?? 0) - cost),
-        inventory: upgradeMuleClass(prev.inventory),
-      }));
+      updateGameState((prev) => {
+        const spendResult = spendSessionCost(prev, { wad: cost });
+        if (!spendResult.success) {
+          return prev;
+        }
+
+        return {
+          ...spendResult.state,
+          inventory: upgradeMuleClass(spendResult.state.inventory),
+        };
+      });
       renderInventoryScreen(returnTo);
     });
   }
@@ -308,8 +320,9 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
   const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
   const nextMuleClass = getNextMuleClass(inv.muleClass);
   const muleUpgradeWadCost = getMuleUpgradeWadCost(inv.muleClass);
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
   const canUpgradeMule = Boolean(nextMuleClass && muleUpgradeWadCost !== null);
-  const canAffordMuleUpgrade = canUpgradeMule && (state.wad ?? 0) >= (muleUpgradeWadCost ?? 0);
+  const canAffordMuleUpgrade = canUpgradeMule && canSessionAffordCost(state, { wad: muleUpgradeWadCost ?? 0 });
   const caps = {
     mass: muleCaps.massKg,
     bulk: muleCaps.bulkBu,
@@ -350,8 +363,8 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
                 <div class="mule-class-value">CLASS ${inv.muleClass}</div>
                 <div class="inventory-column-subtitle">
                   ${nextMuleClass && muleUpgradeWadCost !== null
-                    ? `Next Class ${nextMuleClass} // Upgrade Cost ${formatWadAmount(muleUpgradeWadCost)} WAD // Current WAD ${formatWadAmount(state.wad ?? 0)}`
-                    : `Maximum M.U.L.E. class reached // Current WAD ${formatWadAmount(state.wad ?? 0)}`}
+                    ? `Next Class ${nextMuleClass} // Upgrade Cost ${formatWadAmount(muleUpgradeWadCost)} WAD // Current WAD ${formatWadAmount(wallet.wad)}`
+                    : `Maximum M.U.L.E. class reached // Current WAD ${formatWadAmount(wallet.wad)}`}
                 </div>
               </div>
               <button class="mule-upgrade-btn" type="button" ${!canUpgradeMule || !canAffordMuleUpgrade ? "disabled" : ""}>

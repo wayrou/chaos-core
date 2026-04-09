@@ -25,6 +25,12 @@ import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../c
 import { showSystemPing } from "../components/systemPing";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { getResourceEntries, RESOURCE_KEYS, type ResourceKey } from "../../core/resources";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -242,6 +248,10 @@ function estimateUnlockablePrice(cost?: Partial<Record<ResourceKey, number>> & {
   return RESOURCE_KEYS.reduce((total, key) => total + ((cost[key] ?? 0) * SHOP_RESOURCE_PRICE_WEIGHTS[key]), 0);
 }
 
+function getQuartermasterWallet(state = getGameState()) {
+  return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+}
+
 export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -249,6 +259,8 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   clearControllerContext();
   
   const state = getGameState();
+  const wallet = getQuartermasterWallet(state);
+  const resources = wallet.resources;
   const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
@@ -262,7 +274,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
         <div class="shop-header-right town-screen__header-right">
           <div class="shop-wallet">
             <span class="wallet-label">AVAILABLE WAD</span>
-            <span class="wallet-value">${state.wad.toLocaleString()}</span>
+            <span class="wallet-value">${wallet.wad.toLocaleString()}</span>
           </div>
           <button class="shop-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
@@ -309,25 +321,25 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
         <div class="resource-display">
           <div class="resource-item">
             <span class="resource-icon">⚙</span>
-            <span class="resource-value">${state.resources?.metalScrap ?? 0}</span>
+            <span class="resource-value">${resources.metalScrap ?? 0}</span>
             <span class="resource-label">Metal</span>
           </div>
           <div class="resource-item">
             <span class="resource-icon">🪵</span>
-            <span class="resource-value">${state.resources?.wood ?? 0}</span>
+            <span class="resource-value">${resources.wood ?? 0}</span>
             <span class="resource-label">Wood</span>
           </div>
           <div class="resource-item">
             <span class="resource-icon">💎</span>
-            <span class="resource-value">${state.resources?.chaosShards ?? 0}</span>
+            <span class="resource-value">${resources.chaosShards ?? 0}</span>
             <span class="resource-label">Shards</span>
           </div>
           <div class="resource-item">
             <span class="resource-icon"></span>
-            <span class="resource-value">${state.resources?.steamComponents ?? 0}</span>
+            <span class="resource-value">${resources.steamComponents ?? 0}</span>
             <span class="resource-label">Steam</span>
           </div>
-          ${getResourceEntries(state.resources, { includeZero: true }).filter((entry) => (
+          ${getResourceEntries(resources, { includeZero: true }).filter((entry) => (
             entry.key === "alloy"
             || entry.key === "drawcord"
             || entry.key === "fittings"
@@ -418,7 +430,7 @@ function renderShopContent(state: any): string {
 }
 
 function renderShopItem(item: ShopItem, state: any): string {
-  const canAfford = state.wad >= item.price;
+  const canAfford = canSessionAffordCost(state, { wad: item.price });
   const rarityClass = `shop-item--${item.rarity ?? 'common'}`;
   const isRecipe = item.category === 'recipe';
   const isKnown = isRecipe && state.knownRecipeIds && state.knownRecipeIds.includes(item.id);
@@ -543,7 +555,7 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
   if (!item) return;
   
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -578,11 +590,17 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
       return;
     }
     
-    updateGameState(s => ({
-      ...s,
-      wad: s.wad - item.price,
-      knownRecipeIds: learnRecipe(s.knownRecipeIds || [], itemId),
-    }));
+    updateGameState((s) => {
+      const spendResult = spendSessionCost(s, { wad: item.price });
+      if (!spendResult.success) {
+        return s;
+      }
+
+      return {
+        ...spendResult.state,
+        knownRecipeIds: learnRecipe(spendResult.state.knownRecipeIds || [], itemId),
+      };
+    });
     
     showNotification(`LEARNED: ${recipe.name}`, "success");
     renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp");
@@ -601,10 +619,10 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
     }
     
     // Deduct WAD and grant unlock
-    updateGameState(s => ({
-      ...s,
-      wad: s.wad - item.price,
-    }));
+    updateGameState((s) => {
+      const spendResult = spendSessionCost(s, { wad: item.price });
+      return spendResult.success ? spendResult.state : s;
+    });
     
     grantUnlock(itemId, "shop_purchase");
     showNotification(`UNLOCKED: ${item.name}`, "success");
@@ -626,10 +644,16 @@ function purchasePAK(pakId: string, item: ShopItem): void {
   const cards = openPAK(pakId);
   
   // Update state
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, cards);
-    return draft;
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
+    }
+
+    return {
+      ...spendResult.state,
+      cardLibrary: addCardsToLibrary(spendResult.state.cardLibrary ?? {}, cards),
+    };
   });
 
   showPurchaseModal(item.name, cards, "Recovered card set:");
@@ -640,7 +664,7 @@ function purchasePAK(pakId: string, item: ShopItem): void {
 
 function purchaseEquipment(itemId: string, item: ShopItem): void {
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -652,22 +676,24 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
   // Create equipment entry (basic structure - will need proper equipment data)
   const equipmentData = createEquipmentFromShopItem(itemId, item);
   
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    
-    // Add to equipmentById
-    if (!draft.equipmentById) draft.equipmentById = {};
-    draft.equipmentById[itemId] = equipmentData;
-    
-    // Add to equipmentPool
-    if (!draft.equipmentPool) draft.equipmentPool = [];
-    if (!draft.equipmentPool.includes(itemId)) {
-      draft.equipmentPool.push(itemId);
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
     }
-    
-    // Add to inventory baseStorage as InventoryItem
-    if (!draft.inventory) {
-      draft.inventory = {
+
+    const next = { ...spendResult.state };
+
+    if (!next.equipmentById) next.equipmentById = {};
+    next.equipmentById[itemId] = equipmentData;
+
+    if (!next.equipmentPool) next.equipmentPool = [];
+    if (!next.equipmentPool.includes(itemId)) {
+      next.equipmentPool.push(itemId);
+    }
+
+    if (!next.inventory) {
+      next.inventory = {
         muleClass: "E",
         capacityMassKg: 100,
         capacityBulkBu: 70,
@@ -689,15 +715,14 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
     };
     
     // Check if already in baseStorage
-    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    const existingIndex = next.inventory.baseStorage.findIndex(i => i.id === itemId);
     if (existingIndex >= 0) {
-      // Equipment doesn't stack, but we can increment quantity for tracking
-      draft.inventory.baseStorage[existingIndex].quantity += 1;
+      next.inventory.baseStorage[existingIndex].quantity += 1;
     } else {
-      draft.inventory.baseStorage.push(inventoryItem);
+      next.inventory.baseStorage.push(inventoryItem);
     }
     
-    return draft;
+    return next;
   });
   
   showNotification(`${item.name} added to inventory!`, "success");
@@ -706,7 +731,7 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
 
 function purchaseConsumable(itemId: string, item: ShopItem): void {
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -715,17 +740,20 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
   const backBtn = document.getElementById("backBtn");
   const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
 
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    
-    // Add to consumables Record (consumable ID -> quantity)
-    if (!draft.consumables) draft.consumables = {};
-    const newQuantity = (draft.consumables[itemId] || 0) + 1;
-    draft.consumables[itemId] = newQuantity;
-    
-    // Also add to inventory baseStorage as InventoryItem for organization
-    if (!draft.inventory) {
-      draft.inventory = {
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
+    }
+
+    const next = { ...spendResult.state };
+
+    if (!next.consumables) next.consumables = {};
+    const newQuantity = (next.consumables[itemId] || 0) + 1;
+    next.consumables[itemId] = newQuantity;
+
+    if (!next.inventory) {
+      next.inventory = {
         muleClass: "E",
         capacityMassKg: 100,
         capacityBulkBu: 70,
@@ -747,14 +775,14 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
     };
     
     // Update or add to baseStorage
-    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    const existingIndex = next.inventory.baseStorage.findIndex(i => i.id === itemId);
     if (existingIndex >= 0) {
-      draft.inventory.baseStorage[existingIndex].quantity = newQuantity;
+      next.inventory.baseStorage[existingIndex].quantity = newQuantity;
     } else {
-      draft.inventory.baseStorage.push(inventoryItem);
+      next.inventory.baseStorage.push(inventoryItem);
     }
     
-    return draft;
+    return next;
   });
   
   showNotification(`${item.name} added to supplies!`, "success");

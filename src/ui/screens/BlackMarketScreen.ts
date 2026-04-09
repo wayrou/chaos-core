@@ -3,7 +3,7 @@
 // Purchase field mods for the next run
 // ============================================================================
 
-import { getGameState, updateGameState, spendWad } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../../state/gameStore";
 import { getAllFieldModDefs, getFieldModDef } from "../../core/fieldModDefinitions";
 import { FieldModInstance } from "../../core/fieldMods";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
@@ -14,6 +14,12 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 // ----------------------------------------------------------------------------
 // NPC CONVERSATION SYSTEM STATE
@@ -121,7 +127,7 @@ export function renderBlackMarketScreen(returnTo: BaseCampReturnTo = "basecamp")
     return a.name.localeCompare(b.name);
   });
 
-  const wad = state.wad;
+  const wad = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).wad;
 
   root.innerHTML = `
     <div class="blackmarket-root">
@@ -264,16 +270,18 @@ function purchaseFieldMod(modId: string): void {
   }
 
   const state = getGameState();
-  if (state.wad < modDef.cost) {
-    console.warn(`[BLACK MARKET] Insufficient funds: ${state.wad} < ${modDef.cost}`);
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  if (!canSessionAffordCost(state, { wad: modDef.cost })) {
+    console.warn(`[BLACK MARKET] Insufficient funds: ${wallet.wad} < ${modDef.cost}`);
     return;
   }
 
-  // Spend WAD
-  if (!spendWad(modDef.cost)) {
+  const spendResult = spendSessionCost(state, { wad: modDef.cost });
+  if (!spendResult.success) {
     console.error(`[BLACK MARKET] Failed to spend WAD`);
     return;
   }
+  updateGameState(() => spendResult.state);
 
   // Create field mod instance
   const instanceId = `mod_${modId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;

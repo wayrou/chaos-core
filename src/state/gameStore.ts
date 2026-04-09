@@ -10,8 +10,13 @@ import { getTechnicaRegistryFingerprint } from "../content/technica";
 import { syncPublishedTechnicaContentState } from "../content/technica/stateSync";
 import { withNormalizedLobbyState } from "../core/multiplayerLobby";
 import { withNormalizedNotesState } from "../core/notesSystem";
-import { addResourceWallet } from "../core/resources";
-import { withNormalizedSessionState } from "../core/session";
+import {
+  getMountedOrActiveBattleState,
+  grantSessionResources,
+  mountBattleContextById,
+  mountBattleState,
+  withNormalizedSessionState,
+} from "../core/session";
 import { withNormalizedFoundryState } from "../core/foundrySystem";
 import { withNormalizedSchemaState } from "../core/schemaSystem";
 import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
@@ -31,12 +36,16 @@ function syncPublishedTechnicaContent(state: GameState): GameState {
 }
 
 function syncSchemaState(state: GameState): GameState {
+  const normalizedState = {
+    ...state,
+    echoRun: state.echoRun ?? null,
+  };
   return withNormalizedLobbyState(
     withNormalizedSessionState(
       withNormalizedNotesState(
         withNormalizedFoundryState(
           withNormalizedSchemaState(
-            withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(state)),
+            withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
           ),
         ),
       ),
@@ -169,17 +178,11 @@ export function getPhase(): GameState["phase"] {
 // ----------------------------------------------------------------------------
 
 export function addResources(resources: Partial<GameState["resources"]>): void {
-  updateGameState(state => ({
-    ...state,
-    resources: addResourceWallet(state.resources, resources),
-  }));
+  updateGameState((state) => grantSessionResources(state, { resources }));
 }
 
 export function addWad(amount: number): void {
-  updateGameState(state => ({
-    ...state,
-    wad: state.wad + amount,
-  }));
+  updateGameState((state) => grantSessionResources(state, { wad: amount }));
 }
 
 export function spendWad(amount: number): boolean {
@@ -227,11 +230,12 @@ export function updateUnit(unitId: string, updates: Partial<GameState["unitsById
 // ----------------------------------------------------------------------------
 
 export function setBattleState(battle: GameState["currentBattle"]): void {
-  updateGameState(state => ({
-    ...state,
-    currentBattle: battle,
-    phase: battle ? "battle" : state.phase,
-  }));
+  updateGameState(state => mountBattleState(state, battle));
+}
+
+export function mountBattleById(battleId: string): GameState["currentBattle"] {
+  const nextState = updateGameState((state) => mountBattleContextById(state, battleId));
+  return nextState.currentBattle;
 }
 
 export function clearBattle(): void {
@@ -243,7 +247,7 @@ export function clearBattle(): void {
 }
 
 export function getBattleState(): GameState["currentBattle"] {
-  return getGameState().currentBattle;
+  return getMountedOrActiveBattleState(getGameState());
 }
 
 // ----------------------------------------------------------------------------

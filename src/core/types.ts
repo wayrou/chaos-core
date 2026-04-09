@@ -14,8 +14,8 @@ export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
 export const LOCAL_PLAYER_IDS = ["P1", "P2"] as const;
-export const SESSION_PLAYER_SLOTS = ["P1", "P2", "P3", "P4"] as const;
 export const NETWORK_PLAYER_SLOTS = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"] as const;
+export const SESSION_PLAYER_SLOTS = NETWORK_PLAYER_SLOTS;
 export type PlayerSlot = typeof LOCAL_PLAYER_IDS[number];
 export type SessionPlayerSlot = typeof SESSION_PLAYER_SLOTS[number];
 export type NetworkPlayerSlot = typeof NETWORK_PLAYER_SLOTS[number];
@@ -32,7 +32,7 @@ export type PlayerInputSource =
 export type SessionMode = "singleplayer" | "local_coop" | "squad" | "coop_operations";
 export type PlayerPresence = "inactive" | "local" | "remote" | "disconnected";
 export type AuthorityRole = "local" | "host" | "client";
-export type UnitOwnership = PlayerSlot;
+export type UnitOwnership = SessionPlayerSlot;
 export type EconomyPreset = "shared" | "partitioned";
 export type ResourceTransferKind = "wad" | "resource" | "item";
 export type ReconnectStagingState = "haven" | "staging" | "theater" | "battle" | "disconnected" | "rejoining";
@@ -273,6 +273,7 @@ export type CoopTheaterCommand =
 
 export interface SessionPlayerState {
   slot: SessionPlayerSlot;
+  callsign: string | null;
   presence: PlayerPresence;
   authorityRole: AuthorityRole;
   connected: boolean;
@@ -281,6 +282,7 @@ export interface SessionPlayerState {
   stagingState: ReconnectStagingState;
   currentTheaterId: string | null;
   assignedSquadId: string | null;
+  activeBattleId: string | null;
   lastSafeRoomId: RoomId | null;
   lastSafeMapId: string | null;
 }
@@ -310,16 +312,30 @@ export interface TheaterRuntimeContext {
   updatedAt: number;
 }
 
+export interface BattleRuntimeContext {
+  battleId: string;
+  theaterId: string | null;
+  roomId: RoomId | null;
+  squadId: string | null;
+  snapshot: string;
+  phase: RuntimeBattleState["phase"] | null;
+  updatedAt: number;
+}
+
 export interface SessionState {
   mode: SessionMode;
   authorityRole: AuthorityRole;
   ownerSlot: SessionPlayerSlot;
   maxPlayers: number;
+  sharedCampaignSlot: string | null;
+  sharedCampaignLabel: string | null;
+  sharedCampaignLastSavedAt: number | null;
   resourceLedger: ResourceLedger;
   pendingTransfers: TradeTransfer[];
   players: Record<SessionPlayerSlot, SessionPlayerState>;
   theaterAssignments: Record<SessionPlayerSlot, TheaterAssignment>;
   activeTheaterContexts: Record<string, TheaterRuntimeContext>;
+  activeBattleContexts: Record<string, BattleRuntimeContext>;
   pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
   activeBattleId: string | null;
   campaign: CampaignState;
@@ -388,6 +404,7 @@ export interface LobbyCoopParticipantState {
   callsign: string;
   authorityRole: AuthorityRole;
   selected: boolean;
+  standby: boolean;
   connected: boolean;
   presence: PlayerPresence;
   sessionSlot: SessionPlayerSlot | null;
@@ -395,6 +412,7 @@ export interface LobbyCoopParticipantState {
   lastSafeMapId: string | null;
   currentTheaterId: string | null;
   assignedSquadId: string | null;
+  activeBattleId: string | null;
   currentRoomId: RoomId | null;
   operationPhase: GameState["phase"] | null;
   theaterSnapshot: string | null;
@@ -407,9 +425,16 @@ export interface LobbyCoopOperationsActivity {
   sessionId: string | null;
   status: LobbyCoopOperationsStatus;
   selectedSlots: NetworkPlayerSlot[];
+  standbySlots: NetworkPlayerSlot[];
+  sharedCampaignSlot: string | null;
+  sharedCampaignLabel: string | null;
+  sharedCampaignLastSavedAt: number | null;
   economyPreset: EconomyPreset;
+  resourceLedger: ResourceLedger;
+  pendingTransfers: TradeTransfer[];
   participants: Record<NetworkPlayerSlot, LobbyCoopParticipantState>;
   theaterContexts: Record<string, TheaterRuntimeContext>;
+  battleContexts: Record<string, BattleRuntimeContext>;
   operationSnapshot: string | null;
   battleSnapshot: string | null;
   operationPhase: GameState["phase"] | null;
@@ -1256,12 +1281,32 @@ export interface RecruitmentCandidate {
   };
 }
 
-export type EchoFieldId = "ember_zone" | "bastion_zone" | "flux_zone";
-export type EchoEncounterType = "standard" | "elite" | "checkpoint";
-export type EchoRunStage = "initial_units" | "initial_field" | "reward" | "results";
+export type EchoFieldId =
+  | "ember_zone"
+  | "bastion_zone"
+  | "flux_zone"
+  | "static_zone"
+  | "mender_zone"
+  | "vent_zone"
+  | "ward_zone"
+  | "hex_zone"
+  | "snare_zone"
+  | "shroud_zone"
+  | "relay_zone"
+  | "null_zone"
+  | "overdrive_zone";
+export type EchoEncounterType = "standard" | "elite" | "checkpoint" | "boss" | "boss_chain_a" | "boss_chain_b";
+export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "results";
 export type EchoChallengeType = "no_losses" | "turn_limit" | "field_triggers";
-export type EchoRewardLane = "unit" | "field" | "modifier";
-export type EchoRewardOptionType = "unit_draft" | "field_draft" | "field_upgrade" | "modifier_draft";
+export type EchoRewardLane = "unit" | "field" | "modifier" | "recovery" | "training";
+export type EchoRewardOptionType =
+  | "unit_draft"
+  | "field_draft"
+  | "field_upgrade"
+  | "modifier_draft"
+  | "recovery_draft"
+  | "training_draft";
+export type EchoRunNodeType = "encounter" | "elite" | "support" | "boss" | "boss_chain_a" | "boss_chain_b" | "milestone";
 
 export interface EchoUnitDraftOption {
   id: string;
@@ -1322,6 +1367,26 @@ export interface EchoRewardChoice {
   unitOption?: EchoUnitDraftOption;
   fieldDefinition?: EchoFieldDefinition;
   modifierDefId?: string;
+  recoveryOption?: EchoRecoveryOption;
+  trainingOption?: EchoTrainingPackageOption;
+}
+
+export interface EchoRecoveryOption {
+  id: string;
+  name: string;
+  description: string;
+  healMode: "all_percent" | "lowest_full_all_percent";
+  allHealPercent?: number;
+  otherHealPercent?: number;
+  rerollsGranted?: number;
+}
+
+export interface EchoTrainingPackageOption {
+  id: string;
+  name: string;
+  description: string;
+  stat: "atk" | "def" | "agi" | "acc";
+  amount: number;
 }
 
 export interface EchoChallenge {
@@ -1361,6 +1426,8 @@ export interface EchoEncounterSummary {
 
 export interface EchoBattleContext {
   runId: string;
+  nodeId?: string | null;
+  stratum?: number;
   encounterNumber: number;
   encounterType: EchoEncounterType;
   placementMode: "units" | "fields";
@@ -1370,6 +1437,31 @@ export interface EchoBattleContext {
   activeChallenge?: EchoChallenge | null;
   fieldTriggerCount: number;
   startUnitIds: UnitId[];
+}
+
+export interface EchoRunEdge {
+  fromNodeId: string;
+  toNodeId: string;
+}
+
+export interface EchoRunNode {
+  id: string;
+  stratum: number;
+  layer: number;
+  branchIndex: number;
+  nodeType: EchoRunNodeType;
+  encounterType?: EchoEncounterType | null;
+  title: string;
+  subtitle: string;
+  description: string;
+  dangerTier: number;
+  rewardBias: string;
+  choiceCount: number;
+  laneWeights: Partial<Record<EchoRewardLane, number>>;
+  forcedLanes?: EchoRewardLane[];
+  nextNodeIds: string[];
+  resolved: boolean;
+  unlocked: boolean;
 }
 
 export interface SquadBattleTurnState {
@@ -1412,6 +1504,7 @@ export interface SquadBattleContext {
 
 export interface BattleModeContext {
   kind: "story" | "training" | "endless" | "echo" | "squad";
+  turnState?: SquadBattleTurnState | null;
   echo?: EchoBattleContext;
   squad?: SquadBattleContext;
 }
@@ -1420,6 +1513,16 @@ export interface EchoRunState {
   id: string;
   seed: string;
   stage: EchoRunStage;
+  currentStratum: number;
+  milestonesReached: number;
+  bossChainsCleared: number;
+  currentNodeId: string | null;
+  nodesById: Record<string, EchoRunNode>;
+  edges: EchoRunEdge[];
+  completedNodeIds: string[];
+  availableNodeIds: string[];
+  pendingNodeId: string | null;
+  lastResolvedNodeType: EchoRunNodeType | null;
   encounterNumber: number;
   unitsById: Record<UnitId, Unit>;
   squadUnitIds: UnitId[];
@@ -1626,6 +1729,7 @@ export interface GameState {
   weaponsmith?: import("./weaponsmith").WeaponsmithState;
 
   currentBattle: RuntimeBattleState | null;
+  echoRun: EchoRunState | null;
 
   // Quest System
   quests?: import("../quests/types").QuestState;

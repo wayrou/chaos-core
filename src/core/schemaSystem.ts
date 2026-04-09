@@ -17,6 +17,7 @@ import {
   hasEnoughResources as hasEnoughResourceValues,
   subtractResourceWallet,
 } from "./resources";
+import { canSessionAffordCost, spendSessionCost } from "./session";
 
 type ResourceWallet = GameState["resources"];
 
@@ -928,18 +929,26 @@ export function unlockSchemaCoreTypeInState(state: GameState, coreType: CoreType
   if (isCoreTypeUnlocked(normalizedState, coreType)) {
     return { state: normalizedState, success: false, message: `${definition.displayName} is already unlocked.` };
   }
-  if ((normalizedState.wad ?? 0) < (definition.unlockWadCost ?? 0) || !hasEnoughResources(normalizedState.resources, definition.unlockCost)) {
+  if (!canSessionAffordCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  })) {
     return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
   }
 
   const schema = getSchemaUnlockState(normalizedState);
+  const spendResult = spendSessionCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  });
+  if (!spendResult.success) {
+    return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
+  }
   return {
     success: true,
     message: `${definition.displayName} authorized in S.C.H.E.M.A.`,
     state: {
-      ...normalizedState,
-      wad: Math.max(0, (normalizedState.wad ?? 0) - (definition.unlockWadCost ?? 0)),
-      resources: subtractResources(normalizedState.resources, definition.unlockCost),
+      ...spendResult.state,
       schema: {
         ...schema,
         unlockedCoreTypes: [...schema.unlockedCoreTypes, coreType],
@@ -960,18 +969,26 @@ export function unlockSchemaFortificationInState(state: GameState, fortification
   if (isFortificationUnlocked(normalizedState, fortificationType)) {
     return { state: normalizedState, success: false, message: `${definition.displayName} is already unlocked.` };
   }
-  if ((normalizedState.wad ?? 0) < (definition.unlockWadCost ?? 0) || !hasEnoughResources(normalizedState.resources, definition.unlockCost)) {
+  if (!canSessionAffordCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  })) {
     return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
   }
 
   const schema = getSchemaUnlockState(normalizedState);
+  const spendResult = spendSessionCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  });
+  if (!spendResult.success) {
+    return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
+  }
   return {
     success: true,
     message: `${definition.displayName} authorized in S.C.H.E.M.A.`,
     state: {
-      ...normalizedState,
-      wad: Math.max(0, (normalizedState.wad ?? 0) - (definition.unlockWadCost ?? 0)),
-      resources: subtractResources(normalizedState.resources, definition.unlockCost),
+      ...spendResult.state,
       schema: {
         ...schema,
         unlockedFortificationPips: [...schema.unlockedFortificationPips, fortificationType],
@@ -989,21 +1006,26 @@ export function unlockSchemaFieldAssetInState(state: GameState, fieldAssetType: 
   if (isFieldAssetUnlocked(normalizedState, fieldAssetType)) {
     return { state: normalizedState, success: false, message: `${definition.displayName} is already unlocked.` };
   }
-  if (
-    (normalizedState.wad ?? 0) < (definition.unlockWadCost ?? 0)
-    || !hasEnoughResources(normalizedState.resources, definition.unlockCost)
-  ) {
+  if (!canSessionAffordCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  })) {
     return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
   }
 
   const schema = getSchemaUnlockState(normalizedState);
+  const spendResult = spendSessionCost(normalizedState, {
+    wad: definition.unlockWadCost ?? 0,
+    resources: definition.unlockCost,
+  });
+  if (!spendResult.success) {
+    return { state: normalizedState, success: false, message: `Insufficient resources to authorize ${definition.displayName}.` };
+  }
   return {
     success: true,
     message: `${definition.displayName} authorized in S.C.H.E.M.A.`,
     state: {
-      ...normalizedState,
-      wad: Math.max(0, (normalizedState.wad ?? 0) - (definition.unlockWadCost ?? 0)),
-      resources: subtractResources(normalizedState.resources, definition.unlockCost),
+      ...spendResult.state,
       schema: {
         ...schema,
         unlockedFieldAssetTypes: [...schema.unlockedFieldAssetTypes, fieldAssetType],

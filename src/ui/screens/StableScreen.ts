@@ -28,6 +28,12 @@ import {
   assignMountToUnit,
   unassignMount,
 } from "../../core/mounts";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 // ----------------------------------------------------------------------------
 // RENDER HELPERS
@@ -151,7 +157,8 @@ export function renderStableScreen(returnTo: BaseCampReturnTo = "basecamp"): voi
   }
 
   const units = state.unitsById;
-  const wad = state.wad ?? 0;
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  const wad = wallet.wad ?? 0;
 
   // Get available mounts for purchase
   const purchasableMounts = getPurchasableMounts(stable);
@@ -218,7 +225,7 @@ export function renderStableScreen(returnTo: BaseCampReturnTo = "basecamp"): voi
           ${!isOwned ? `
             <button class="stable-unlock-btn"
                     data-mount-id="${mount.id}"
-                    ${wad < (mount.unlockCost || 0) ? "disabled" : ""}>
+                    ${!canSessionAffordCost(state, { wad: mount.unlockCost || 0 }) ? "disabled" : ""}>
               UNLOCK (${mount.unlockCost || 0} WAD)
             </button>
           ` : isAssigned ? `
@@ -380,20 +387,22 @@ export function renderStableScreen(returnTo: BaseCampReturnTo = "basecamp"): voi
       if (!mount) return;
 
       const currentState = getGameState();
-      const currentWad = currentState.wad ?? 0;
+      const currentWad = getSessionResourcePool(currentState, getLocalSessionPlayerSlot(currentState)).wad;
       const cost = mount.unlockCost || 0;
 
-      if (currentWad < cost) {
+      if (!canSessionAffordCost(currentState, { wad: cost })) {
         alert(`Not enough WAD! Need ${cost}, have ${currentWad}`);
         return;
       }
 
-      // Deduct cost and unlock mount
       updateGameState((s) => {
+        const spendResult = spendSessionCost(s, { wad: cost });
+        if (!spendResult.success) {
+          return s;
+        }
         const newStable = unlockMount(s.stable || createInitialStableState(), mountId);
         return {
-          ...s,
-          wad: (s.wad ?? 0) - cost,
+          ...spendResult.state,
           stable: newStable,
         };
       });

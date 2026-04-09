@@ -67,8 +67,17 @@ import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerC
 import { getCoverDamageReduction } from "./coverGenerator";
 import {
   getEchoAttackBonus,
+  getEchoAccuracyBonus,
+  getEchoIncomingAccuracyPenalty,
+  getEchoFirstCardStrainDiscount,
+  getEchoOnHitVulnerable,
   getEchoDefenseBonus,
   getEchoMovementAdjustment,
+  getEchoTurnStartCleanse,
+  getEchoTurnStartDrawBonus,
+  getEchoTurnStartGuarded,
+  getEchoTurnStartHealing,
+  getEchoTurnStartStrainRelief,
   incrementEchoFieldTriggerCount,
   isEchoBattle,
 } from "./echoFieldEffects";
@@ -165,6 +174,7 @@ export interface BattleUnitState {
   autoBattle?: boolean;
   // Tactical per-unit auto-battle mode
   autoBattleMode?: "manual" | "undaring" | "daring";
+  turnCardsPlayed?: number;
   // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
   // Mount System
   mountId?: string;                       // ID of the mount definition (if mounted)
@@ -349,6 +359,74 @@ export function removeAllStatusesFromSource(
     }
   }
   return nextState;
+}
+
+function applyEchoTurnStartEffects(state: BattleState, unitId: UnitId): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+
+  let next = state;
+
+  const healing = getEchoTurnStartHealing(next, unit);
+  if (healing.amount > 0) {
+    const updatedUnit = next.units[unitId];
+    const healedHp = Math.min(updatedUnit.maxHp, updatedUnit.hp + healing.amount);
+    const actualHeal = healedHp - updatedUnit.hp;
+    if (actualHeal > 0) {
+      next = {
+        ...next,
+        units: {
+          ...next.units,
+          [unitId]: {
+            ...updatedUnit,
+            hp: healedHp,
+          },
+        },
+      };
+      next = incrementEchoFieldTriggerCount(next, healing.triggeredPlacements, `SLK//ECHO  :: ${unit.name} restores ${actualHeal} HP from Mender Zone.`);
+    }
+  }
+
+  const strainRelief = getEchoTurnStartStrainRelief(next, unit);
+  if (strainRelief.amount > 0) {
+    const updatedUnit = next.units[unitId];
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...updatedUnit,
+          strain: Math.max(0, updatedUnit.strain - strainRelief.amount),
+        },
+      },
+    };
+    next = incrementEchoFieldTriggerCount(next, strainRelief.triggeredPlacements, `SLK//ECHO  :: ${unit.name} vents ${strainRelief.amount} Strain.`);
+  }
+
+  const cleanse = getEchoTurnStartCleanse(next, unit);
+  if (cleanse.triggeredPlacements.length > 0) {
+    const hadBurning = hasStatus(next.units[unitId], "burning");
+    const hadPoisoned = hasStatus(next.units[unitId], "poisoned");
+    if (cleanse.clearsBurning) {
+      next = removeStatus(next, unitId, "burning");
+    }
+    if (cleanse.clearsPoisoned) {
+      next = removeStatus(next, unitId, "poisoned");
+    }
+    if (hadBurning || hadPoisoned) {
+      next = incrementEchoFieldTriggerCount(next, cleanse.triggeredPlacements, `SLK//ECHO  :: ${unit.name} is cleansed by Null Zone.`);
+    }
+  }
+
+  const guarded = getEchoTurnStartGuarded(next, unit);
+  if (guarded.active) {
+    next = addStatus(next, unitId, "guarded", 1);
+    next = incrementEchoFieldTriggerCount(next, guarded.triggeredPlacements, `SLK//ECHO  :: ${unit.name} enters Guarded stance in Ward Zone.`);
+  }
+
+  return next;
 }
 
 // ----------------------------------------------------------------------------
@@ -562,6 +640,7 @@ export function createBattleUnitState(
     weaponWear: weaponState?.wear ?? 0,
     controller: base.controller ?? (opts.isEnemy ? undefined : "P1"),
     autoBattleMode: "manual",
+    turnCardsPlayed: 0,
     // Mount fields
     mountId,
     mountPassiveTraits,
@@ -789,9 +868,14 @@ export function advanceTurn(state: BattleState): BattleState {
         [nextActiveId]: {
           ...u,
           buffs: updatedBuffs,
+          turnCardsPlayed: 0,
         },
       },
     };
+  }
+
+  if (nextActiveId) {
+    newState = applyEchoTurnStartEffects(newState, nextActiveId);
   }
 
   // Trigger Field Mod: turn_start (for new active unit)
@@ -2068,6 +2152,13 @@ export function computeHitChance(
     }
   }
 
+  if (battle) {
+    const echoAccuracyBonus = getEchoAccuracyBonus(battle, attacker);
+    const echoIncomingPenalty = defender ? getEchoIncomingAccuracyPenalty(battle, defender) : { amount: 0 };
+    baseChance += echoAccuracyBonus.amount;
+    baseChance -= echoIncomingPenalty.amount;
+  }
+
   return Math.max(10, Math.min(100, baseChance));
 }
 
@@ -2110,6 +2201,8 @@ export function attackUnit(
   // We'll pass isRanged=false as default. 
   const equipWpn = getEquippedWeapon(attacker);
   const isRanged = equipWpn ? ["gun", "bow", "greatbow"].includes(equipWpn.weaponType) : false;
+  const echoAccuracyBonus = getEchoAccuracyBonus(state, attacker);
+  const echoIncomingPenalty = getEchoIncomingAccuracyPenalty(state, defender);
 
   let hitChance = computeHitChance(attacker, defender, isRanged, state);
   const intimidatePenalty = getIntimidateAccuracyPenalty(attacker, defender);
@@ -2124,8 +2217,16 @@ export function attackUnit(
       ? "(mount intimidation)"
       : "(strain interference)";
     const unstableMissState = applyTheaterCombatInstability(state, attackerId);
+    const echoedMissState = (
+      echoAccuracyBonus.triggeredPlacements.length > 0 || echoIncomingPenalty.triggeredPlacements.length > 0
+    )
+      ? incrementEchoFieldTriggerCount(
+          unstableMissState,
+          [...echoAccuracyBonus.triggeredPlacements, ...echoIncomingPenalty.triggeredPlacements],
+        )
+      : unstableMissState;
     return appendBattleLog(
-      unstableMissState,
+      echoedMissState,
       `SLK//MISS  :: ${attacker.name} swings at ${defender.name} but the strike goes wide ${missReason}.`
     );
   }
@@ -2228,10 +2329,30 @@ export function attackUnit(
     next = removeStatus(next, defenderId, "guarded");
   }
 
-  if (echoAttackBonus.triggeredPlacements.length > 0 || echoDefenseBonus.triggeredPlacements.length > 0) {
+  if (
+    echoAttackBonus.triggeredPlacements.length > 0
+    || echoDefenseBonus.triggeredPlacements.length > 0
+    || echoAccuracyBonus.triggeredPlacements.length > 0
+    || echoIncomingPenalty.triggeredPlacements.length > 0
+  ) {
     next = incrementEchoFieldTriggerCount(
       next,
-      [...echoAttackBonus.triggeredPlacements, ...echoDefenseBonus.triggeredPlacements],
+      [
+        ...echoAttackBonus.triggeredPlacements,
+        ...echoDefenseBonus.triggeredPlacements,
+        ...echoAccuracyBonus.triggeredPlacements,
+        ...echoIncomingPenalty.triggeredPlacements,
+      ],
+    );
+  }
+
+  const echoHex = getEchoOnHitVulnerable(next, attacker);
+  if (finalDamage > 0 && echoHex.duration > 0 && !isKill) {
+    next = addStatus(next, defenderId, "vulnerable", echoHex.duration, attackerId);
+    next = incrementEchoFieldTriggerCount(
+      next,
+      echoHex.triggeredPlacements,
+      `SLK//ECHO  :: ${defender.name} is exposed by Hex Zone.`,
     );
   }
 
@@ -2774,10 +2895,12 @@ export function drawCardsForTurn(
   unit: BattleUnitState,
   handSize: number = 5
 ): BattleState {
+  const drawBonus = getEchoTurnStartDrawBonus(state, unit);
+  const targetHandSize = handSize + drawBonus.amount;
   let u = unit;
 
   // 15c: Reshuffle if deck has fewer than handSize cards remaining
-  if (u.drawPile.length < handSize && u.discardPile.length > 0) {
+  if (u.drawPile.length < targetHandSize && u.discardPile.length > 0) {
     const reshuffled = shuffleArray([...u.discardPile]);
     u = {
       ...u,
@@ -2792,7 +2915,7 @@ export function drawCardsForTurn(
   const newHand: CardId[] = [...u.hand];
   const newDraw = [...u.drawPile];
 
-  while (newHand.length < handSize && newDraw.length > 0) {
+  while (newHand.length < targetHandSize && newDraw.length > 0) {
     newHand.push(newDraw.shift()!);
   }
 
@@ -2802,13 +2925,23 @@ export function drawCardsForTurn(
     drawPile: newDraw,
   };
 
-  return {
+  let nextState = {
     ...state,
     units: {
       ...state.units,
       [updatedUnit.id]: updatedUnit,
     },
   };
+
+  if (drawBonus.amount > 0) {
+    nextState = incrementEchoFieldTriggerCount(
+      nextState,
+      drawBonus.triggeredPlacements,
+      `SLK//ECHO  :: ${unit.name} draws +${drawBonus.amount} from Relay Zone.`,
+    );
+  }
+
+  return nextState;
 }
 
 // ----------------------------------------------------------------------------
@@ -2996,7 +3129,10 @@ export function playCard(
   // Get card info (cards are always string IDs in hand)
   const cardName = cardId.replace(/^(core_|class_|card_|equip_)/, "").replace(/_/g, " ");
   const cardDesc = "";
-  const strainCost = 1;
+  const overdriveDiscount = (unit.turnCardsPlayed ?? 0) === 0
+    ? getEchoFirstCardStrainDiscount(state, unit)
+    : { amount: 0, triggeredPlacements: [] };
+  const strainCost = Math.max(0, 1 - overdriveDiscount.amount);
 
   // Create new hand without the played card
   const newHand = [...unit.hand];
@@ -3014,6 +3150,7 @@ export function playCard(
     hand: newHand,
     discardPile: newDiscard,
     strain: newStrain,
+    turnCardsPlayed: (unit.turnCardsPlayed ?? 0) + 1,
   };
 
   // Start building updated target (may be same as unit for self-target)
@@ -3114,6 +3251,14 @@ export function playCard(
     turnOrder: newTurnOrder,
     log: newLog,
   };
+
+  if (overdriveDiscount.amount > 0) {
+    newState = incrementEchoFieldTriggerCount(
+      newState,
+      overdriveDiscount.triggeredPlacements,
+      `SLK//ECHO  :: ${unit.name} overdrives the first card for -${overdriveDiscount.amount} Strain.`,
+    );
+  }
 
   // Trigger Field Mod: card_played
   newState = triggerCardPlayed(newState, unitId, cardId, 0);

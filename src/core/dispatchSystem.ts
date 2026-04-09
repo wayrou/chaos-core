@@ -22,7 +22,8 @@ import { calculatePWR } from "./pwr";
 import { generateCandidates } from "./recruitment";
 import { CODEX_DATABASE } from "./codexSystem";
 import { getAllStarterEquipment, getAllModules } from "./equipment";
-import { addResourceWallet, createEmptyResourceWallet, type ResourceWallet } from "./resources";
+import { createEmptyResourceWallet, type ResourceWallet } from "./resources";
+import { grantSessionResources } from "./session";
 
 export type DispatchMissionType =
   | "scouting_run"
@@ -587,7 +588,7 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
   const nextRecruitmentCandidates = [...(state.recruitmentCandidates || [])];
   const nextUnlockedCodexEntries = [...(state.unlockedCodexEntries || [])];
   const nextEquipmentPool = [...(state.equipmentPool || [])];
-  const nextResources = addResourceWallet(state.resources, rewards.resources);
+  const rewardResources = createEmptyResourceWallet(rewards.resources);
   const nextUnitClassProgress = { ...(state.unitClassProgress || {}) };
   const nextUnitsById = { ...state.unitsById };
   const equipmentById = state.equipmentById || getAllStarterEquipment();
@@ -604,8 +605,8 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
   if (rewards.gearDropId && !nextEquipmentPool.includes(rewards.gearDropId)) {
     nextEquipmentPool.push(rewards.gearDropId);
   } else if (rewards.gearDropId && nextEquipmentPool.includes(rewards.gearDropId)) {
-    nextResources.metalScrap += 3;
-    nextResources.steamComponents += 1;
+    rewardResources.metalScrap += 3;
+    rewardResources.steamComponents += 1;
   }
 
   for (const unitId of report.assignedUnitIds) {
@@ -634,10 +635,13 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
     };
   }
 
+  const rewardedState = grantSessionResources(state, {
+    wad: rewards.wad,
+    resources: rewardResources,
+  });
+
   return {
-    ...state,
-    wad: state.wad + rewards.wad,
-    resources: nextResources,
+    ...rewardedState,
     recruitmentCandidates: nextRecruitmentCandidates,
     unlockedCodexEntries: nextUnlockedCodexEntries,
     equipmentPool: nextEquipmentPool,

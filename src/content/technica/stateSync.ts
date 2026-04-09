@@ -328,7 +328,7 @@ function syncImportedUnits(state: GameState): GameState {
   ) as GameState["players"];
   const controlledUnitIdsByPlayer = Object.fromEntries(
     Object.entries(players).map(([playerId, player]) => [playerId, new Set(player.controlledUnitIds)]),
-  ) as Record<keyof GameState["players"], Set<string>>;
+  ) as Record<string, Set<string>>;
 
   importedUnits.forEach((unit) => {
     const existing = unitsById[unit.id] as RuntimeFriendlyUnit | undefined;

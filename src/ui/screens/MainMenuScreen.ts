@@ -80,11 +80,20 @@ type MainMenuLayoutRecord = Partial<Record<MainMenuActionId, MainMenuButtonLayou
 
 type SavedMainMenuButtonLayoutPayload = {
   version: number;
+  viewport?: {
+    width: number;
+    height: number;
+  };
   layout: MainMenuLayoutRecord;
 };
 
+type LoadedMainMenuButtonLayout = {
+  layout: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+  viewport: { width: number; height: number } | null;
+};
+
 const MAIN_MENU_LAYOUT_STORAGE_KEY = "chaoscore_mainmenu_button_layout";
-const MAIN_MENU_LAYOUT_VERSION = 4;
+const MAIN_MENU_LAYOUT_VERSION = 5;
 const MAIN_MENU_BACKGROUND_STORAGE_KEY = "chaoscore_mainmenu_background_theme";
 const MAIN_MENU_DRAG_THRESHOLD = 6;
 const MAIN_MENU_GRID_SIZE = 4;
@@ -251,6 +260,28 @@ async function initializeGame(): Promise<void> {
   
   isInitialized = true;
   console.log("[INIT] Initialization complete");
+}
+
+async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
+  const state = getGameState();
+  if (state.currentBattle?.modeContext?.kind === "echo") {
+    const { renderBattleScreen } = await import("./BattleScreen");
+    renderBattleScreen();
+    return;
+  }
+
+  if (state.echoRun && state.phase === "echo") {
+    const { renderEchoRunScreen } = await import("./EchoRunScreen");
+    renderEchoRunScreen();
+    return;
+  }
+
+  if (defaultView === "esc") {
+    renderAllNodesMenuScreen();
+    return;
+  }
+
+  renderFieldScreen("base_camp");
 }
 
 // ----------------------------------------------------------------------------
@@ -840,6 +871,13 @@ function buildMainMenuButtonTiles(
   return tiles.join("");
 }
 
+function getMainMenuViewport(): { width: number; height: number } {
+  return {
+    width: Math.max(window.innerWidth, 1),
+    height: Math.max(window.innerHeight, 1),
+  };
+}
+
 function getDefaultMainMenuTileSize(actionId: MainMenuActionId): { width: number; height: number } {
   switch (actionId) {
     case "continue":
@@ -879,11 +917,11 @@ function normalizeMainMenuButtonLayout(
   };
 }
 
-function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> {
+function loadSavedMainMenuButtonLayout(): LoadedMainMenuButtonLayout {
   try {
     const raw = localStorage.getItem(MAIN_MENU_LAYOUT_STORAGE_KEY);
     if (!raw) {
-      return {};
+      return { layout: {}, viewport: null };
     }
     const parsed = JSON.parse(raw) as SavedMainMenuButtonLayoutPayload | Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
     if (
@@ -895,12 +933,26 @@ function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Parti
       && parsed.layout
       && typeof parsed.layout === "object"
     ) {
-      return parsed.layout as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+      const viewport = "viewport" in parsed
+        && parsed.viewport
+        && typeof parsed.viewport === "object"
+        && typeof parsed.viewport.width === "number"
+        && Number.isFinite(parsed.viewport.width)
+        && parsed.viewport.width > 0
+        && typeof parsed.viewport.height === "number"
+        && Number.isFinite(parsed.viewport.height)
+        && parsed.viewport.height > 0
+          ? { width: parsed.viewport.width, height: parsed.viewport.height }
+          : null;
+      return {
+        layout: parsed.layout as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>,
+        viewport,
+      };
     }
-    return {};
+    return { layout: {}, viewport: null };
   } catch (error) {
     console.warn("[MAINMENU] Failed to load button layout", error);
-    return {};
+    return { layout: {}, viewport: null };
   }
 }
 
@@ -908,6 +960,7 @@ function saveMainMenuButtonLayout(layout: Partial<Record<MainMenuActionId, MainM
   try {
     const payload: SavedMainMenuButtonLayoutPayload = {
       version: MAIN_MENU_LAYOUT_VERSION,
+      viewport: getMainMenuViewport(),
       layout,
     };
     localStorage.setItem(MAIN_MENU_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
@@ -916,39 +969,68 @@ function saveMainMenuButtonLayout(layout: Partial<Record<MainMenuActionId, MainM
   }
 }
 
+function scaleSavedMainMenuButtonLayout(
+  layout: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>,
+  fromViewport: { width: number; height: number },
+  toViewport: { width: number; height: number },
+): Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> {
+  const widthScale = toViewport.width / Math.max(fromViewport.width, 1);
+  const heightScale = toViewport.height / Math.max(fromViewport.height, 1);
+  const scaled: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> = {};
+
+  (Object.keys(layout) as MainMenuActionId[]).forEach((actionId) => {
+    const entry = layout[actionId];
+    if (!entry) {
+      return;
+    }
+    scaled[actionId] = {
+      ...entry,
+      x: entry.x !== undefined ? Math.round(entry.x * widthScale) : undefined,
+      y: entry.y !== undefined ? Math.round(entry.y * heightScale) : undefined,
+      width: entry.width !== undefined ? Math.round(entry.width * widthScale) : undefined,
+      height: entry.height !== undefined ? Math.round(entry.height * heightScale) : undefined,
+    };
+  });
+
+  return scaled;
+}
+
 function getDefaultMainMenuButtonLayout(
   hasContinue: boolean,
   hasLoad: boolean,
 ): Partial<Record<MainMenuActionId, MainMenuButtonLayout>> {
-  const referenceWidth = 3412;
-  const referenceHeight = 1364;
-  const scaleX = window.innerWidth / referenceWidth;
-  const scaleY = window.innerHeight / referenceHeight;
-  const scaleWidth = (value: number) => Math.round(value * scaleX);
-  const scaleHeight = (value: number) => Math.round(value * scaleY);
-  const scaledX = (value: number) => Math.round(value * scaleX);
-  const scaledY = (value: number) => Math.round(value * scaleY);
-  const continueSize = clampMainMenuTileSize(scaleWidth(387), scaleHeight(163));
-  const featuredSize = clampMainMenuTileSize(scaleWidth(359), scaleHeight(163));
-  const compactSize = clampMainMenuTileSize(scaleWidth(191), scaleHeight(61));
+  const viewport = getMainMenuViewport();
+  const layoutScale = Math.max(0.72, Math.min(1.08, Math.min(viewport.width / 1440, viewport.height / 900)));
+  const continueSize = clampMainMenuTileSize(387 * layoutScale, 163 * layoutScale);
+  const featuredSize = clampMainMenuTileSize(359 * layoutScale, 163 * layoutScale);
+  const compactSize = clampMainMenuTileSize(191 * layoutScale, 61 * layoutScale);
+  const edgeMargin = Math.max(28, Math.round(viewport.width * 0.07));
+  const topMargin = Math.max(88, Math.round(viewport.height * 0.16));
+  const bottomMargin = Math.max(72, Math.round(viewport.height * 0.1));
+  const columnGap = Math.max(32, Math.round(viewport.width * 0.032));
+  const featuredRowGap = Math.max(28, Math.round(viewport.height * 0.04));
+  const compactGap = Math.max(18, Math.round(viewport.height * 0.022));
+  const leftPrimaryX = edgeMargin;
+  const rightFeaturedX = Math.max(24, viewport.width - edgeMargin - featuredSize.width);
+  const bottomPrimaryY = Math.max(24, viewport.height - bottomMargin - continueSize.height);
   const defaults: Partial<Record<MainMenuActionId, MainMenuButtonLayout>> = {
     "echo-runs": {
-      x: scaledX(661),
-      y: scaledY(664),
+      x: rightFeaturedX,
+      y: topMargin,
       ...featuredSize,
       minimized: false,
       themeIndex: 0,
     },
     multiplayer: {
-      x: scaledX(661),
-      y: scaledY(860),
+      x: rightFeaturedX,
+      y: topMargin + featuredSize.height + featuredRowGap,
       ...featuredSize,
       minimized: false,
       themeIndex: 1,
     },
     "map-builder": {
-      x: scaledX(1044),
-      y: scaledY(860),
+      x: rightFeaturedX,
+      y: topMargin + (featuredSize.height + featuredRowGap) * 2,
       ...featuredSize,
       minimized: false,
       themeIndex: 3,
@@ -958,8 +1040,8 @@ function getDefaultMainMenuButtonLayout(
 
   if (hasContinue) {
     defaults.continue = {
-      x: scaledX(129),
-      y: scaledY(664),
+      x: leftPrimaryX,
+      y: bottomPrimaryY,
       ...continueSize,
       minimized: false,
       themeIndex: 3,
@@ -967,8 +1049,8 @@ function getDefaultMainMenuButtonLayout(
     compactActions.push("new-op");
   } else {
     defaults["new-op"] = {
-      x: scaledX(129),
-      y: scaledY(664),
+      x: leftPrimaryX,
+      y: bottomPrimaryY,
       ...continueSize,
       minimized: false,
       themeIndex: 3,
@@ -981,10 +1063,20 @@ function getDefaultMainMenuButtonLayout(
 
   compactActions.push("settings", "import-content", "exit");
 
+  const compactStackHeight = compactActions.length * compactSize.height + Math.max(0, compactActions.length - 1) * compactGap;
+  const compactColumnX = Math.min(
+    leftPrimaryX + continueSize.width + columnGap,
+    Math.max(24, rightFeaturedX - compactSize.width - columnGap),
+  );
+  const compactStartY = Math.max(
+    topMargin + Math.round(featuredSize.height * 0.35),
+    Math.round((viewport.height - compactStackHeight) * 0.5),
+  );
+
   compactActions.forEach((actionId, index) => {
     defaults[actionId] = {
-      x: scaledX(325),
-      y: scaledY(944 + index * 84),
+      x: compactColumnX,
+      y: compactStartY + index * (compactSize.height + compactGap),
       ...compactSize,
       minimized: false,
       themeIndex: 2,
@@ -1081,9 +1173,13 @@ function upgradeMainMenuToWorkspace(
   version.textContent = APP_VERSION;
   mainMenuRoot.appendChild(version);
 
+  let currentViewport = getMainMenuViewport();
   const defaultLayout = getDefaultMainMenuButtonLayout(hasContinue, hasLoad);
-  const savedLayout = loadSavedMainMenuButtonLayout();
-  const hasSavedLayout = Object.keys(savedLayout).length > 0;
+  const loadedLayoutState = loadSavedMainMenuButtonLayout();
+  const savedLayout = loadedLayoutState.viewport
+    ? scaleSavedMainMenuButtonLayout(loadedLayoutState.layout, loadedLayoutState.viewport, currentViewport)
+    : loadedLayoutState.layout;
+  let isCustomLayout = Object.keys(savedLayout).length > 0;
   const layout = Object.fromEntries(
     Object.entries(defaultLayout).map(([actionId, fallback]) => [
       actionId,
@@ -1091,6 +1187,19 @@ function upgradeMainMenuToWorkspace(
     ]),
   ) as Partial<Record<MainMenuActionId, MainMenuButtonLayout>>;
   const tiles = Array.from(workspace.querySelectorAll<HTMLElement>("[data-mainmenu-tile]"));
+  const applyDefaultLayout = () => {
+    const nextDefaults = getDefaultMainMenuButtonLayout(hasContinue, hasLoad);
+    (Object.keys(layout) as MainMenuActionId[]).forEach((actionId) => {
+      delete layout[actionId];
+    });
+    Object.entries(nextDefaults).forEach(([actionId, nextLayout]) => {
+      layout[actionId as MainMenuActionId] = nextLayout as MainMenuButtonLayout;
+    });
+  };
+  const persistLayout = () => {
+    isCustomLayout = true;
+    saveMainMenuButtonLayout(layout);
+  };
 
   const applyPositions = () => {
     const minimizedActionIds = tiles
@@ -1118,14 +1227,41 @@ function upgradeMainMenuToWorkspace(
 
   requestAnimationFrame(() => {
     applyPositions();
-    if (hasSavedLayout) {
+    if (isCustomLayout) {
       saveMainMenuButtonLayout(layout);
     }
   });
 
-  window.addEventListener("resize", applyPositions, { passive: true });
+  const handleResize = () => {
+    const nextViewport = getMainMenuViewport();
+    if (nextViewport.width === currentViewport.width && nextViewport.height === currentViewport.height) {
+      return;
+    }
+
+    if (isCustomLayout) {
+      const scaledLayout = scaleSavedMainMenuButtonLayout(layout, currentViewport, nextViewport);
+      (Object.keys(scaledLayout) as MainMenuActionId[]).forEach((actionId) => {
+        const currentLayout = layout[actionId];
+        const scaledEntry = scaledLayout[actionId];
+        if (!currentLayout || !scaledEntry) {
+          return;
+        }
+        layout[actionId] = normalizeMainMenuButtonLayout(actionId, scaledEntry, currentLayout);
+      });
+      currentViewport = nextViewport;
+      applyPositions();
+      saveMainMenuButtonLayout(layout);
+      return;
+    }
+
+    currentViewport = nextViewport;
+    applyDefaultLayout();
+    applyPositions();
+  };
+
+  window.addEventListener("resize", handleResize, { passive: true });
   const cleanupCallbacks: Array<() => void> = [
-    () => window.removeEventListener("resize", applyPositions),
+    () => window.removeEventListener("resize", handleResize),
   ];
 
   tiles.forEach((tile) => {
@@ -1204,7 +1340,7 @@ function upgradeMainMenuToWorkspace(
     const handleWindowPointerUp = (event: PointerEvent) => {
       if (activePointerId !== event.pointerId) return;
       if (dragged) {
-        saveMainMenuButtonLayout(layout);
+        persistLayout();
       }
       endDrag();
     };
@@ -1224,7 +1360,7 @@ function upgradeMainMenuToWorkspace(
           minimized: false,
         };
         applyPositions();
-        saveMainMenuButtonLayout(layout);
+        persistLayout();
         return;
       }
       if (tile.dataset.preventClick === "true") {
@@ -1263,7 +1399,7 @@ function upgradeMainMenuToWorkspace(
       resizeBtn.releasePointerCapture(event.pointerId);
       resizePointerId = null;
       tile.classList.remove("mainmenu-action-tile--resizing");
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     const handleColorClick = (event: Event) => {
@@ -1276,7 +1412,7 @@ function upgradeMainMenuToWorkspace(
         themeIndex: (currentLayout.themeIndex + 1) % MAIN_MENU_THEMES.length,
       };
       applyMainMenuTileState(tile, layout[actionId] as MainMenuButtonLayout);
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     const handleMinimizeClick = (event: Event) => {
@@ -1295,7 +1431,7 @@ function upgradeMainMenuToWorkspace(
         };
       }
       applyPositions();
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     tile.addEventListener("pointerdown", handlePointerDown);
@@ -1376,11 +1512,10 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       
       const result = await loadMostRecent();
       if (result.success && result.state) {
-        clearActiveEchoRun();
         saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
         setGameState(result.state);
         enableAutosave(() => getGameState());
-        renderFieldScreen("base_camp");
+        void resumeLoadedGame("field");
       } else {
         alert("Failed to load save: " + (result.error ?? "Unknown error"));
         continueBtn.disabled = false;
@@ -1642,12 +1777,11 @@ function openLoadModal(saves: SaveInfo[]): void {
         if (slot) {
           const result = await loadGame(slot);
           if (result.success && result.state) {
-            clearActiveEchoRun();
             saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
             setGameState(result.state);
             enableAutosave(() => getGameState());
             hideMainMenuModal("loadModal", 'button[data-action="load"]');
-            renderAllNodesMenuScreen();
+            void resumeLoadedGame("esc");
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));
           }

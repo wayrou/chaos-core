@@ -27,6 +27,12 @@ import {
   createEmptyResourceWallet,
   RESOURCE_KEYS,
 } from "./resources";
+import {
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  grantSessionResources,
+  spendSessionCost,
+} from "./session";
 
 export interface OpsTerminalAtlasSectorState {
   theaterId: string;
@@ -231,6 +237,10 @@ function scaleResourceWallet(wallet: Partial<ResourceWallet>, ticks: number): Re
     scaled[key] = (wallet[key] ?? 0) * ticks;
   });
   return scaled;
+}
+
+function hasPositiveResourceGain(wallet: Partial<ResourceWallet> | null | undefined): boolean {
+  return RESOURCE_KEYS.some((key) => Number(wallet?.[key] ?? 0) > 0);
 }
 
 function createEmptyKeyInventory(): TheaterKeyInventory {
@@ -983,10 +993,10 @@ export function restartOpsTerminalAtlas(
 }
 
 export function applyWarmTheaterEconomyToState(
-  state: Pick<GameState, "wad" | "resources">,
+  state: GameState,
   activeTheaterId: string,
   tickCost: number,
-): Pick<GameState, "wad" | "resources"> {
+): GameState {
   if (tickCost <= 0) {
     return state;
   }
@@ -1003,8 +1013,10 @@ export function applyWarmTheaterEconomyToState(
     return state;
   }
 
-  let wad = state.wad ?? 0;
-  let resources = { ...state.resources };
+  const playerSlot = getLocalSessionPlayerSlot(state);
+  let availableWad = getSessionResourcePool(state, playerSlot).wad;
+  let totalWadSpent = 0;
+  let totalIncomeGain = createEmptyResourceWallet();
   let mutated = false;
 
   located.floor.sectors = located.floor.sectors.map((sector) => {
@@ -1027,9 +1039,10 @@ export function applyWarmTheaterEconomyToState(
     const incomeGain = scaleResourceWallet(economy.incomePerTick, tickCost);
 
     nextSector.theater.tickCount += tickCost;
-    if (wadCost <= wad) {
-      wad -= wadCost;
-      resources = addResourceWallet(resources, incomeGain);
+    if (wadCost <= availableWad) {
+      availableWad -= wadCost;
+      totalWadSpent += wadCost;
+      totalIncomeGain = addResourceWallet(totalIncomeGain, incomeGain);
     }
 
     mutated = true;
@@ -1045,10 +1058,18 @@ export function applyWarmTheaterEconomyToState(
     opsTerminalAtlas: decorateAtlasState(atlas),
   });
 
-  return {
-    wad,
-    resources,
-  };
+  let nextState = state;
+  if (totalWadSpent > 0) {
+    const spendResult = spendSessionCost(nextState, { wad: totalWadSpent }, playerSlot);
+    if (spendResult.success) {
+      nextState = spendResult.state;
+    }
+  }
+  if (hasPositiveResourceGain(totalIncomeGain)) {
+    nextState = grantSessionResources(nextState, { resources: totalIncomeGain }, playerSlot);
+  }
+
+  return nextState;
 }
 
 export function holdPositionInOpsTerminalAtlas(
@@ -1069,8 +1090,10 @@ export function holdPositionInOpsTerminalAtlas(
     return state;
   }
 
-  let wad = state.wad ?? 0;
-  let resources = { ...state.resources };
+  const playerSlot = getLocalSessionPlayerSlot(state);
+  let availableWad = getSessionResourcePool(state, playerSlot).wad;
+  let totalWadSpent = 0;
+  let totalIncomeGain = createEmptyResourceWallet();
   let mutated = false;
 
   floor.sectors = floor.sectors.map((sector) => {
@@ -1084,9 +1107,10 @@ export function holdPositionInOpsTerminalAtlas(
     const incomeGain = scaleResourceWallet(economy.incomePerTick, resolvedTicks);
 
     nextSector.theater.tickCount += resolvedTicks;
-    if (wadCost <= wad) {
-      wad -= wadCost;
-      resources = addResourceWallet(resources, incomeGain);
+    if (wadCost <= availableWad) {
+      availableWad -= wadCost;
+      totalWadSpent += wadCost;
+      totalIncomeGain = addResourceWallet(totalIncomeGain, incomeGain);
     }
 
     mutated = true;
@@ -1102,11 +1126,18 @@ export function holdPositionInOpsTerminalAtlas(
     opsTerminalAtlas: decorateAtlasState(atlas),
   });
 
-  return {
-    ...state,
-    wad,
-    resources,
-  };
+  let nextState = state;
+  if (totalWadSpent > 0) {
+    const spendResult = spendSessionCost(nextState, { wad: totalWadSpent }, playerSlot);
+    if (spendResult.success) {
+      nextState = spendResult.state;
+    }
+  }
+  if (hasPositiveResourceGain(totalIncomeGain)) {
+    nextState = grantSessionResources(nextState, { resources: totalIncomeGain }, playerSlot);
+  }
+
+  return nextState;
 }
 
 export function getOpsTerminalAtlasSectorState(

@@ -629,6 +629,7 @@ export function createNewGameState(): GameStateWithEquipment {
     consumables: {},
 
     currentBattle: null,
+    echoRun: null,
 
     inventory: {
       muleClass: "E",

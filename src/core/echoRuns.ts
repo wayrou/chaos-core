@@ -1,18 +1,23 @@
-import { getGameState } from "../state/gameStore";
+import { getGameState, updateGameState } from "../state/gameStore";
 import {
   BattleModeContext,
   EchoChallenge,
   EchoEncounterSummary,
   EchoEncounterType,
   EchoFieldDefinition,
+  EchoRecoveryOption,
   EchoRewardChoice,
+  EchoRewardLane,
+  EchoRunNode,
+  EchoRunNodeType,
   EchoRunState,
   EchoScoreSummary,
+  EchoTrainingPackageOption,
   EchoUnitDraftOption,
   Unit,
   UnitAffinities,
 } from "./types";
-import { disableAutosave } from "./saveSystem";
+import { enableAutosave, triggerAutosave } from "./saveSystem";
 import { buildEchoFieldDefinition, getEchoFieldCatalog } from "./echoFieldEffects";
 import { getAllStarterEquipment, canEquipWeapon, type Equipment, type UnitLoadout } from "./equipment";
 import { getClassDefinition, type ClassId } from "./classes";
@@ -51,7 +56,61 @@ const CLASS_TRAIT_POOLS: Record<EchoDraftClass, string[]> = {
   freelancer: ["Open Manual", "Loose Doctrine", "Adaptive Frame"],
 };
 
-let activeEchoRun: EchoRunState | null = null;
+const ECHO_RECOVERY_OPTIONS: EchoRecoveryOption[] = [
+  {
+    id: "squad_patch",
+    name: "Squad Patch",
+    description: "Heal all surviving drafted units for 30% of max HP.",
+    healMode: "all_percent",
+    allHealPercent: 0.3,
+  },
+  {
+    id: "triage",
+    name: "Triage",
+    description: "Fully heal the lowest-HP unit, then heal every other survivor for 15% of max HP.",
+    healMode: "lowest_full_all_percent",
+    otherHealPercent: 0.15,
+  },
+  {
+    id: "field_dressing",
+    name: "Field Dressing",
+    description: "Heal all surviving drafted units for 20% max HP and gain +1 reroll.",
+    healMode: "all_percent",
+    allHealPercent: 0.2,
+    rerollsGranted: 1,
+  },
+];
+
+const ECHO_TRAINING_OPTIONS: EchoTrainingPackageOption[] = [
+  {
+    id: "assault_drill",
+    name: "Assault Drill",
+    description: "All surviving drafted units gain +1 ATK for the rest of the run.",
+    stat: "atk",
+    amount: 1,
+  },
+  {
+    id: "guard_drill",
+    name: "Guard Drill",
+    description: "All surviving drafted units gain +1 DEF for the rest of the run.",
+    stat: "def",
+    amount: 1,
+  },
+  {
+    id: "mobility_drill",
+    name: "Mobility Drill",
+    description: "All surviving drafted units gain +1 AGI for the rest of the run.",
+    stat: "agi",
+    amount: 1,
+  },
+  {
+    id: "precision_drill",
+    name: "Precision Drill",
+    description: "All surviving drafted units gain +5 ACC for the rest of the run.",
+    stat: "acc",
+    amount: 5,
+  },
+];
 
 function hashSeed(seed: string): number {
   let hash = 2166136261;
@@ -78,6 +137,16 @@ function pickOne<T>(rng: () => number, items: T[]): T {
   return items[Math.floor(rng() * items.length)] ?? items[0];
 }
 
+function pickUnique<T>(rng: () => number, items: T[], count: number): T[] {
+  const pool = [...items];
+  const picked: T[] = [];
+  while (pool.length > 0 && picked.length < count) {
+    const index = Math.floor(rng() * pool.length);
+    picked.push(pool.splice(index, 1)[0]);
+  }
+  return picked;
+}
+
 function pickWeighted<T extends string>(rng: () => number, weights: Record<T, number>): T {
   const entries = Object.entries(weights) as Array<[T, number]>;
   const total = entries.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
@@ -91,6 +160,10 @@ function pickWeighted<T extends string>(rng: () => number, weights: Record<T, nu
   return entries[entries.length - 1]?.[0] ?? entries[0][0];
 }
 
+function uniqueIds(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
 function cloneAffinities(affinities: UnitAffinities): UnitAffinities {
   return {
     melee: affinities.melee,
@@ -100,6 +173,21 @@ function cloneAffinities(affinities: UnitAffinities): UnitAffinities {
     mobility: affinities.mobility,
     survival: affinities.survival,
   };
+}
+
+function cloneEchoUnit(unit: Unit): Unit {
+  const unitAny = unit as Unit & { stats?: any; traits?: string[] };
+  return {
+    ...unitAny,
+    loadout: unitAny.loadout ? { ...unitAny.loadout } : undefined,
+    buffs: [...(unitAny.buffs ?? [])],
+    affinities: unitAny.affinities ? cloneAffinities(unitAny.affinities) : unitAny.affinities,
+    hand: [...unitAny.hand],
+    drawPile: [...unitAny.drawPile],
+    discardPile: [...unitAny.discardPile],
+    stats: unitAny.stats ? { ...unitAny.stats } : unitAny.stats,
+    traits: unitAny.traits ? [...unitAny.traits] : unitAny.traits,
+  } as Unit;
 }
 
 function createEchoRunId(): string {
@@ -378,7 +466,7 @@ function createRuntimeEchoUnit(run: EchoRunState, option: EchoUnitDraftOption): 
 
 function createFieldChoice(field: EchoFieldDefinition, choiceId: string, optionType: EchoRewardChoice["optionType"]): EchoRewardChoice {
   const subtitle = optionType === "field_upgrade"
-    ? `Upgrade ${field.name} to LV ${field.level + 1}`
+    ? `Upgrade ${field.name} to LV ${Math.min(MAX_FIELD_LEVEL, field.level + 1)}`
     : field.effectLabel;
 
   return {
@@ -416,12 +504,51 @@ function createUnitChoice(choice: EchoUnitDraftOption, choiceId: string): EchoRe
   };
 }
 
+function createRecoveryChoice(choice: EchoRecoveryOption, choiceId: string): EchoRewardChoice {
+  return {
+    id: choiceId,
+    lane: "recovery",
+    optionType: "recovery_draft",
+    title: choice.name,
+    subtitle: "RECOVERY PACKAGE",
+    description: choice.description,
+    recoveryOption: choice,
+  };
+}
+
+function createTrainingChoice(choice: EchoTrainingPackageOption, choiceId: string): EchoRewardChoice {
+  return {
+    id: choiceId,
+    lane: "training",
+    optionType: "training_draft",
+    title: choice.name,
+    subtitle: "TEAM-WIDE TRAINING",
+    description: choice.description,
+    trainingOption: choice,
+  };
+}
+
+function createModifierInstance(defId: string, runId: string, index: number, seedKey: string): FieldModInstance {
+  return {
+    defId,
+    stacks: 1,
+    instanceId: `echo_mod_${runId}_${index}_${hashSeed(seedKey).toString(36)}`,
+  };
+}
+
+function getCurrentDraftDepth(run: EchoRunState | null): number {
+  if (!run) {
+    return 1;
+  }
+  return Math.max(1, run.currentStratum + Math.floor(Math.max(0, run.encounterNumber - 1) / 2));
+}
+
 function getFieldLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardChoice {
   const rng = createSeededRng(`field_lane:${rewardSeed}`);
   const missingFields = getEchoFieldCatalog().filter((field) => !run.fields.some((owned) => owned.id === field.id));
   if (missingFields.length > 0) {
     const baseChoice = pickOne(rng, missingFields);
-    const choiceField = buildEchoFieldDefinition(baseChoice.id, `echo_field_${run.id}_${Date.now()}`, 1);
+    const choiceField = buildEchoFieldDefinition(baseChoice.id, `echo_field_${run.id}_${rewardSeed}`, 1);
     return createFieldChoice(choiceField, `echo_choice_field_${rewardSeed}`, "field_draft");
   }
 
@@ -429,26 +556,97 @@ function getFieldLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardCh
   return createFieldChoice(upgradeTarget, `echo_choice_field_${rewardSeed}`, "field_upgrade");
 }
 
-function createModifierInstance(defId: string, runId: string, index: number): FieldModInstance {
-  return {
-    defId,
-    stacks: 1,
-    instanceId: `echo_mod_${runId}_${index}_${Date.now()}`,
-  };
+function getRecoveryLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardChoice {
+  const rng = createSeededRng(`recovery_lane:${rewardSeed}`);
+  const choice = pickOne(rng, ECHO_RECOVERY_OPTIONS);
+  return createRecoveryChoice(choice, `echo_choice_recovery_${rewardSeed}`);
 }
 
-function generateRewardChoices(run: EchoRunState): EchoRewardChoice[] {
-  const rewardSeed = `${run.seed}:reward:${run.encounterNumber}:${run.unitsDrafted}:${run.fieldsDrafted}:${run.tacticalModifiersDrafted}`;
-  const modifierRng = createSeededRng(`modifier:${rewardSeed}`);
-  const unitChoice = createUnitChoice(
-    createEchoUnitDraftOption(run, 0, run.encounterNumber + 1, `reward-unit-${rewardSeed}`),
-    `echo_choice_unit_${rewardSeed}`,
-  );
-  const fieldChoice = getFieldLaneChoice(run, rewardSeed);
-  const modifier = pickOne(modifierRng, ECHO_SQUAD_SCOPE_MODS);
-  const modifierChoice = createModifierChoice(modifier, `echo_choice_modifier_${rewardSeed}`);
+function getTrainingLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardChoice {
+  const rng = createSeededRng(`training_lane:${rewardSeed}`);
+  const choice = pickOne(rng, ECHO_TRAINING_OPTIONS);
+  return createTrainingChoice(choice, `echo_choice_training_${rewardSeed}`);
+}
 
-  return [unitChoice, fieldChoice, modifierChoice];
+function getModifierLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardChoice {
+  const rng = createSeededRng(`modifier_lane:${rewardSeed}`);
+  const available = ECHO_SQUAD_SCOPE_MODS.filter((mod) => !run.tacticalModifiers.some((owned) => owned.defId === mod.id));
+  const pool = available.length > 0 ? available : ECHO_SQUAD_SCOPE_MODS;
+  const modifier = pickOne(rng, pool);
+  return createModifierChoice(modifier, `echo_choice_modifier_${rewardSeed}`);
+}
+
+function getUnitLaneChoice(run: EchoRunState, rewardSeed: string): EchoRewardChoice {
+  const encounterDepth = getCurrentDraftDepth(run) + 1;
+  const unitChoice = createEchoUnitDraftOption(run, 0, encounterDepth, `reward_unit:${rewardSeed}`);
+  return createUnitChoice(unitChoice, `echo_choice_unit_${rewardSeed}`);
+}
+
+function getLaneChoice(run: EchoRunState, lane: EchoRewardLane, rewardSeed: string): EchoRewardChoice {
+  switch (lane) {
+    case "field":
+      return getFieldLaneChoice(run, rewardSeed);
+    case "modifier":
+      return getModifierLaneChoice(run, rewardSeed);
+    case "recovery":
+      return getRecoveryLaneChoice(run, rewardSeed);
+    case "training":
+      return getTrainingLaneChoice(run, rewardSeed);
+    case "unit":
+    default:
+      return getUnitLaneChoice(run, rewardSeed);
+  }
+}
+
+function sampleRewardLanes(
+  weights: Partial<Record<EchoRewardLane, number>>,
+  choiceCount: number,
+  seedKey: string,
+  forcedLanes: EchoRewardLane[] = [],
+): EchoRewardLane[] {
+  const rng = createSeededRng(`reward_lanes:${seedKey}`);
+  const weighted: Record<EchoRewardLane, number> = {
+    unit: weights.unit ?? 1,
+    field: weights.field ?? 1,
+    modifier: weights.modifier ?? 1,
+    recovery: weights.recovery ?? 1,
+    training: weights.training ?? 1,
+  };
+
+  const picked = [...forcedLanes].slice(0, choiceCount);
+  const available = Object.keys(weighted) as EchoRewardLane[];
+
+  while (picked.length < choiceCount) {
+    const filteredWeights = Object.fromEntries(
+      available
+        .filter((lane) => !picked.includes(lane))
+        .map((lane) => [lane, weighted[lane]]),
+    ) as Record<EchoRewardLane, number>;
+    const fallbackWeights = Object.keys(filteredWeights).length > 0 ? filteredWeights : weighted;
+    const lane = pickWeighted(rng, fallbackWeights);
+    if (!picked.includes(lane) || Object.keys(filteredWeights).length === 0) {
+      picked.push(lane);
+    }
+  }
+
+  return picked.slice(0, choiceCount);
+}
+
+function createRewardChoicesForNode(run: EchoRunState, node: EchoRunNode): EchoRewardChoice[] {
+  const rewardSeed = `${run.seed}:${node.id}:reward:${run.encounterNumber}:${run.unitsDrafted}:${run.fieldsDrafted}:${run.tacticalModifiersDrafted}`;
+  const lanes = sampleRewardLanes(node.laneWeights, node.choiceCount, rewardSeed, node.forcedLanes ?? []);
+  return lanes.map((lane, index) => getLaneChoice(run, lane, `${rewardSeed}:${lane}:${index}`));
+}
+
+function createMilestoneChoices(run: EchoRunState, nodeId: string): EchoRewardChoice[] {
+  const rewardSeed = `${run.seed}:${nodeId}:milestone:${run.currentStratum}:${run.milestonesReached}`;
+  return [
+    getRecoveryLaneChoice(run, `${rewardSeed}:recovery`),
+    getTrainingLaneChoice(run, `${rewardSeed}:training`),
+    (run.fields.length < getEchoFieldCatalog().length || run.fields.some((field) => field.level < MAX_FIELD_LEVEL))
+      ? getFieldLaneChoice(run, `${rewardSeed}:field`)
+      : getModifierLaneChoice(run, `${rewardSeed}:modifier`),
+  ];
 }
 
 function generateInitialUnitChoices(runId: string, draftIndex: number): EchoRewardChoice[] {
@@ -462,24 +660,520 @@ function generateInitialUnitChoices(runId: string, draftIndex: number): EchoRewa
 }
 
 function generateInitialFieldChoices(runId: string): EchoRewardChoice[] {
-  return getEchoFieldCatalog()
-    .slice(0, FIELD_DRAFT_CHOICE_COUNT)
-    .map((field, index) => createFieldChoice(
-      buildEchoFieldDefinition(field.id, `echo_field_${runId}_${index}`, 1),
-      `echo_initial_field_choice_${index}`,
-      "field_draft",
-    ));
+  const rng = createSeededRng(`${runId}:initial_field`);
+  return pickUnique(rng, getEchoFieldCatalog(), FIELD_DRAFT_CHOICE_COUNT).map((field, index) => createFieldChoice(
+    buildEchoFieldDefinition(field.id, `echo_field_${runId}_${index}`, 1),
+    `echo_initial_field_choice_${index}`,
+    "field_draft",
+  ));
 }
 
-function getEncounterType(encounterNumber: number): EchoEncounterType {
-  if (encounterNumber % 8 === 0) return "checkpoint";
-  if (encounterNumber % 4 === 0) return "elite";
-  return "standard";
+function getBaseLaneWeights(nodeType: EchoRunNodeType): Partial<Record<EchoRewardLane, number>> {
+  switch (nodeType) {
+    case "elite":
+      return { unit: 0.9, field: 1.1, modifier: 1.2, recovery: 0.9, training: 1.05 };
+    case "support":
+      return { unit: 0.55, field: 1.2, modifier: 1.2, recovery: 1.05, training: 1.15 };
+    case "boss":
+      return { unit: 0.7, field: 1, modifier: 1.05, recovery: 1.3, training: 1.2 };
+    case "boss_chain_a":
+      return { unit: 0.65, field: 1, modifier: 1.05, recovery: 1.1, training: 1.3 };
+    case "boss_chain_b":
+      return { unit: 0.65, field: 1, modifier: 1.1, recovery: 1.35, training: 1.35 };
+    case "milestone":
+      return { recovery: 1.4, training: 1.25, field: 1.05, modifier: 1.05, unit: 0.45 };
+    case "encounter":
+    default:
+      return { unit: 1.05, field: 0.9, modifier: 1, recovery: 0.65, training: 0.65 };
+  }
 }
 
-function createEchoChallenge(run: EchoRunState, encounterType: EchoEncounterType): EchoChallenge {
-  const rng = createSeededRng(`${run.seed}:challenge:${run.encounterNumber}:${encounterType}`);
+function getNodeChoiceCount(nodeType: EchoRunNodeType): number {
+  switch (nodeType) {
+    case "boss":
+    case "boss_chain_a":
+    case "boss_chain_b":
+      return 4;
+    case "milestone":
+      return 3;
+    default:
+      return 3;
+  }
+}
+
+function getForcedLanes(nodeType: EchoRunNodeType): EchoRewardLane[] {
+  switch (nodeType) {
+    case "boss":
+      return ["recovery"];
+    case "boss_chain_a":
+      return ["training"];
+    case "boss_chain_b":
+      return ["recovery", "training"];
+    case "milestone":
+      return ["recovery", "training"];
+    default:
+      return [];
+  }
+}
+
+function getNodeEncounterType(nodeType: EchoRunNodeType): EchoEncounterType | null {
+  switch (nodeType) {
+    case "elite":
+      return "elite";
+    case "boss":
+      return "boss";
+    case "boss_chain_a":
+      return "boss_chain_a";
+    case "boss_chain_b":
+      return "boss_chain_b";
+    case "encounter":
+      return "standard";
+    default:
+      return null;
+  }
+}
+
+function getNodePresentation(nodeType: EchoRunNodeType, stratum: number, layer: number, index: number): Pick<EchoRunNode, "title" | "subtitle" | "description" | "dangerTier" | "rewardBias"> {
+  const dangerBase = Math.max(1, stratum + Math.floor((layer - 1) / 2));
+  switch (nodeType) {
+    case "support":
+      return {
+        title: ["Signal Cache", "Recovery Locker", "Soft Relay"][index % 3],
+        subtitle: "SUPPORT NODE",
+        description: "Resolve immediately to draft support, recovery, or training rewards without entering a battle.",
+        dangerTier: Math.max(1, dangerBase - 1),
+        rewardBias: "Support / Recovery",
+      };
+    case "elite":
+      return {
+        title: ["Pressure Knot", "Skirmish Core", "Hazard Gate"][index % 3],
+        subtitle: "ELITE ENCOUNTER",
+        description: "High-pressure contact with stronger reward weighting and heavier enemy density.",
+        dangerTier: dangerBase + 1,
+        rewardBias: "Field / Modifier",
+      };
+    case "boss":
+      return {
+        title: "Anchor Boss",
+        subtitle: "BOSS ENGAGEMENT",
+        description: "Clear the anchor threat to unlock the stratum milestone.",
+        dangerTier: dangerBase + 2,
+        rewardBias: "Recovery / Training",
+      };
+    case "boss_chain_a":
+      return {
+        title: "Chain Boss I",
+        subtitle: "BOSS CHAIN // PHASE 1",
+        description: "First link in a chained escalation. Clear it to reveal the second boss.",
+        dangerTier: dangerBase + 2,
+        rewardBias: "Training / Field",
+      };
+    case "boss_chain_b":
+      return {
+        title: "Chain Boss II",
+        subtitle: "BOSS CHAIN // PHASE 2",
+        description: "Second chained boss. Clear it to reach the milestone layer.",
+        dangerTier: dangerBase + 3,
+        rewardBias: "Recovery / Training",
+      };
+    case "milestone":
+      return {
+        title: `Milestone ${stratum}`,
+        subtitle: "ENDLESS MILESTONE",
+        description: "Choose one strong support package, then push into the next stratum.",
+        dangerTier: dangerBase,
+        rewardBias: "Milestone Support",
+      };
+    case "encounter":
+    default:
+      return {
+        title: ["Echo Breach", "Draft Contact", "Fracture Gate"][index % 3],
+        subtitle: "STANDARD ENCOUNTER",
+        description: "Fight through a standard proving-ground encounter and draft one reward lane afterward.",
+        dangerTier: dangerBase,
+        rewardBias: "Balanced",
+      };
+  }
+}
+
+function createStratumNode(run: EchoRunState, stratum: number, layer: number, branchIndex: number, nodeType: EchoRunNodeType): EchoRunNode {
+  const presentation = getNodePresentation(nodeType, stratum, layer, branchIndex);
+  return {
+    id: `echo_node_${run.id}_${stratum}_${layer}_${branchIndex}_${nodeType}`,
+    stratum,
+    layer,
+    branchIndex,
+    nodeType,
+    encounterType: getNodeEncounterType(nodeType),
+    title: presentation.title,
+    subtitle: presentation.subtitle,
+    description: presentation.description,
+    dangerTier: presentation.dangerTier,
+    rewardBias: presentation.rewardBias,
+    choiceCount: getNodeChoiceCount(nodeType),
+    laneWeights: getBaseLaneWeights(nodeType),
+    forcedLanes: getForcedLanes(nodeType),
+    nextNodeIds: [],
+    resolved: false,
+    unlocked: false,
+  };
+}
+
+function connectNodeLayers(
+  nodesById: Record<string, EchoRunNode>,
+  edges: Array<{ fromNodeId: string; toNodeId: string }>,
+  fromLayer: EchoRunNode[],
+  toLayer: EchoRunNode[],
+  rng: () => number,
+): void {
+  if (fromLayer.length === 0 || toLayer.length === 0) {
+    return;
+  }
+
+  const addEdge = (fromId: string, toId: string) => {
+    const fromNode = nodesById[fromId];
+    const toNode = nodesById[toId];
+    if (!fromNode || !toNode) {
+      return;
+    }
+    if (!fromNode.nextNodeIds.includes(toId)) {
+      fromNode.nextNodeIds.push(toId);
+      edges.push({ fromNodeId: fromId, toNodeId: toId });
+    }
+  };
+
+  fromLayer.forEach((fromNode, index) => {
+    const anchor = Math.floor((index / Math.max(1, fromLayer.length - 1)) * Math.max(0, toLayer.length - 1));
+    addEdge(fromNode.id, toLayer[anchor]?.id ?? toLayer[0].id);
+
+    const neighborIndex = Math.min(toLayer.length - 1, anchor + 1);
+    if (neighborIndex !== anchor && rng() > 0.35) {
+      addEdge(fromNode.id, toLayer[neighborIndex].id);
+    }
+    if (anchor > 0 && rng() > 0.75) {
+      addEdge(fromNode.id, toLayer[anchor - 1].id);
+    }
+  });
+
+  toLayer.forEach((toNode, index) => {
+    const hasIncoming = edges.some((edge) => edge.toNodeId === toNode.id);
+    if (hasIncoming) {
+      return;
+    }
+    const fallbackFrom = fromLayer[Math.min(fromLayer.length - 1, index)] ?? fromLayer[0];
+    addEdge(fallbackFrom.id, toNode.id);
+  });
+}
+
+function ensureStratumGenerated(run: EchoRunState, stratum: number): EchoRunState {
+  const existingIds = Object.values(run.nodesById).filter((node) => node.stratum === stratum);
+  if (existingIds.length > 0) {
+    return run;
+  }
+
+  const rng = createSeededRng(`${run.seed}:stratum:${stratum}`);
+  const layerSpecs: Array<{ count: number; types: EchoRunNodeType[] }> = [
+    { count: 3, types: ["encounter", "encounter", "support"] },
+    { count: randomInt(rng, 2, 3), types: ["encounter", "encounter", "support"] },
+    { count: randomInt(rng, 2, 3), types: ["elite", "support", "elite"] },
+    { count: randomInt(rng, 2, 3), types: ["encounter", "support", "encounter"] },
+  ];
+
+  if (stratum % 3 === 0) {
+    layerSpecs.push({ count: 1, types: ["boss_chain_a"] });
+    layerSpecs.push({ count: 1, types: ["boss_chain_b"] });
+  } else {
+    layerSpecs.push({ count: 1, types: ["boss"] });
+  }
+  layerSpecs.push({ count: 1, types: ["milestone"] });
+
+  const nextNodesById = { ...run.nodesById };
+  const nextEdges = [...run.edges];
+  const layers: EchoRunNode[][] = [];
+
+  layerSpecs.forEach((spec, layerIndex) => {
+    const layer = layerIndex + 1;
+    const nodes: EchoRunNode[] = [];
+    for (let i = 0; i < spec.count; i += 1) {
+      const nodeType = spec.types[i % spec.types.length];
+      const node = createStratumNode(run, stratum, layer, i, nodeType);
+      nextNodesById[node.id] = node;
+      nodes.push(node);
+    }
+    layers.push(nodes);
+  });
+
+  for (let index = 0; index < layers.length - 1; index += 1) {
+    connectNodeLayers(nextNodesById, nextEdges, layers[index], layers[index + 1], rng);
+  }
+
+  return {
+    ...run,
+    nodesById: nextNodesById,
+    edges: nextEdges,
+  };
+}
+
+function getStratumNodes(run: EchoRunState, stratum: number): EchoRunNode[] {
+  return Object.values(run.nodesById)
+    .filter((node) => node.stratum === stratum)
+    .sort((left, right) => left.layer - right.layer || left.branchIndex - right.branchIndex);
+}
+
+function getEntryNodeIds(run: EchoRunState, stratum: number): string[] {
+  return getStratumNodes(run, stratum)
+    .filter((node) => node.layer === 1)
+    .map((node) => node.id);
+}
+
+function getNode(run: EchoRunState, nodeId: string | null | undefined): EchoRunNode | null {
+  if (!nodeId) {
+    return null;
+  }
+  return run.nodesById[nodeId] ?? null;
+}
+
+function readEchoRun(): EchoRunState | null {
+  return getGameState().echoRun ?? null;
+}
+
+function persistEchoRun(
+  run: EchoRunState | null,
+  extras?: {
+    phase?: "shell" | "battle" | "map" | "field" | "loadout" | "operation" | "atlas" | "echo";
+    currentBattle?: ReturnType<typeof getGameState>["currentBattle"];
+    autosave?: boolean;
+  },
+): EchoRunState | null {
+  updateGameState((prev) => ({
+    ...prev,
+    echoRun: run,
+    phase: extras?.phase ?? prev.phase,
+    currentBattle: extras && "currentBattle" in extras ? extras.currentBattle ?? null : prev.currentBattle,
+  }));
+
+  if (extras?.autosave !== false) {
+    void triggerAutosave(getGameState());
+  }
+
+  return run;
+}
+
+function stripBattleRuntime(unit: Unit, nextHp = unit.hp): Unit {
+  const unitAny = cloneEchoUnit(unit);
+  return {
+    ...unitAny,
+    hp: Math.max(0, Math.min(unitAny.maxHp, nextHp)),
+    pos: null,
+    hand: [],
+    drawPile: [],
+    discardPile: [],
+    strain: 0,
+    buffs: [],
+  } as Unit;
+}
+
+function applyRecoveryToRun(run: EchoRunState, recovery: EchoRecoveryOption): EchoRunState {
+  const livingUnits = run.squadUnitIds
+    .map((unitId) => run.unitsById[unitId])
+    .filter((unit): unit is Unit => Boolean(unit));
+
+  let lowestUnitId: string | null = null;
+  if (recovery.healMode === "lowest_full_all_percent" && livingUnits.length > 0) {
+    lowestUnitId = [...livingUnits]
+      .sort((left, right) => (left.hp / Math.max(1, left.maxHp)) - (right.hp / Math.max(1, right.maxHp)))[0]?.id ?? null;
+  }
+
+  const nextUnitsById: Record<string, Unit> = {};
+  Object.entries(run.unitsById).forEach(([unitId, unit]) => {
+    if (!run.squadUnitIds.includes(unitId)) {
+      nextUnitsById[unitId] = unit;
+      return;
+    }
+
+    const unitAny = cloneEchoUnit(unit);
+    const maxHp = unitAny.maxHp;
+    let nextHp = unitAny.hp;
+    if (recovery.healMode === "all_percent") {
+      nextHp = Math.min(maxHp, nextHp + Math.ceil(maxHp * (recovery.allHealPercent ?? 0)));
+    } else if (recovery.healMode === "lowest_full_all_percent") {
+      if (unitId === lowestUnitId) {
+        nextHp = maxHp;
+      } else {
+        nextHp = Math.min(maxHp, nextHp + Math.ceil(maxHp * (recovery.otherHealPercent ?? 0)));
+      }
+    }
+
+    nextUnitsById[unitId] = stripBattleRuntime(unitAny, nextHp);
+  });
+
+  return {
+    ...run,
+    unitsById: nextUnitsById,
+    rerolls: run.rerolls + (recovery.rerollsGranted ?? 0),
+  };
+}
+
+function applyTrainingToRun(run: EchoRunState, training: EchoTrainingPackageOption): EchoRunState {
+  const nextUnitsById: Record<string, Unit> = {};
+  Object.entries(run.unitsById).forEach(([unitId, unit]) => {
+    if (!run.squadUnitIds.includes(unitId)) {
+      nextUnitsById[unitId] = unit;
+      return;
+    }
+
+    const unitAny = cloneEchoUnit(unit) as Unit & { stats?: any; atk?: number; def?: number; acc?: number };
+    const stats = {
+      ...(unitAny.stats ?? {
+        maxHp: unitAny.maxHp,
+        atk: unitAny.atk ?? 0,
+        def: unitAny.def ?? 0,
+        agi: unitAny.agi,
+        acc: unitAny.acc ?? 80,
+      }),
+    };
+
+    switch (training.stat) {
+      case "atk":
+        stats.atk += training.amount;
+        unitAny.atk = (unitAny.atk ?? stats.atk - training.amount) + training.amount;
+        break;
+      case "def":
+        stats.def += training.amount;
+        unitAny.def = (unitAny.def ?? stats.def - training.amount) + training.amount;
+        break;
+      case "agi":
+        stats.agi += training.amount;
+        unitAny.agi += training.amount;
+        break;
+      case "acc":
+        stats.acc += training.amount;
+        unitAny.acc = (unitAny.acc ?? stats.acc - training.amount) + training.amount;
+        break;
+    }
+
+    nextUnitsById[unitId] = stripBattleRuntime({
+      ...unitAny,
+      stats,
+    } as Unit, unitAny.hp);
+  });
+
+  return {
+    ...run,
+    unitsById: nextUnitsById,
+  };
+}
+
+function completeNode(run: EchoRunState, nodeId: string): EchoRunState {
+  const node = getNode(run, nodeId);
+  if (!node) {
+    return run;
+  }
+
+  const nextNodesById = { ...run.nodesById };
+  nextNodesById[node.id] = {
+    ...node,
+    resolved: true,
+    unlocked: true,
+  };
+
+  const unlockedNextIds = node.nextNodeIds.filter((nextNodeId) => Boolean(nextNodesById[nextNodeId]));
+  unlockedNextIds.forEach((nextNodeId) => {
+    nextNodesById[nextNodeId] = {
+      ...nextNodesById[nextNodeId],
+      unlocked: true,
+    };
+  });
+
+  return {
+    ...run,
+    nodesById: nextNodesById,
+    completedNodeIds: uniqueIds([...run.completedNodeIds, node.id]),
+    availableNodeIds: unlockedNextIds,
+    currentNodeId: node.id,
+    pendingNodeId: null,
+    lastResolvedNodeType: node.nodeType,
+  };
+}
+
+function enterRewardStage(run: EchoRunState, nodeId: string): EchoRunState {
+  const node = getNode(run, nodeId);
+  if (!node) {
+    return run;
+  }
+
+  return {
+    ...run,
+    stage: "reward",
+    draftChoices: createRewardChoicesForNode(run, node),
+  };
+}
+
+function enterMilestoneStage(run: EchoRunState, nodeId: string): EchoRunState {
+  const node = getNode(run, nodeId);
+  if (!node) {
+    return run;
+  }
+
+  return {
+    ...run,
+    stage: "milestone",
+    currentNodeId: node.id,
+    pendingNodeId: null,
+    draftChoices: createMilestoneChoices(run, node.id),
+  };
+}
+
+function buildFirstMapState(run: EchoRunState): EchoRunState {
+  const withStratum = ensureStratumGenerated(run, 1);
+  return {
+    ...withStratum,
+    stage: "map",
+    currentStratum: 1,
+    availableNodeIds: getEntryNodeIds(withStratum, 1),
+    draftChoices: [],
+    currentNodeId: null,
+    pendingNodeId: null,
+    lastResolvedNodeType: null,
+  };
+}
+
+function advanceToNextStratum(run: EchoRunState): EchoRunState {
+  const nextStratum = run.currentStratum + 1;
+  const withStratum = ensureStratumGenerated(run, nextStratum);
+  return {
+    ...withStratum,
+    stage: "map",
+    currentStratum: nextStratum,
+    availableNodeIds: getEntryNodeIds(withStratum, nextStratum),
+    draftChoices: [],
+    pendingNodeId: null,
+    resultsSummary: null,
+  };
+}
+
+function getEncounterTypeScale(encounterType: EchoEncounterType): number {
+  switch (encounterType) {
+    case "elite":
+      return 1;
+    case "boss":
+      return 2;
+    case "boss_chain_a":
+      return 2;
+    case "boss_chain_b":
+      return 3;
+    case "checkpoint":
+      return 1;
+    case "standard":
+    default:
+      return 0;
+  }
+}
+
+function createEchoChallenge(run: EchoRunState, encounterType: EchoEncounterType, node: EchoRunNode | null): EchoChallenge {
+  const rng = createSeededRng(`${run.seed}:challenge:${run.encounterNumber}:${encounterType}:${node?.id ?? "none"}`);
   const challengeType = pickOne(rng, ["no_losses", "turn_limit", "field_triggers"] as const);
+  const nodeBonus = node?.dangerTier ?? 0;
 
   switch (challengeType) {
     case "no_losses":
@@ -490,7 +1184,7 @@ function createEchoChallenge(run: EchoRunState, encounterType: EchoEncounterType
         description: "Win the encounter without losing a drafted unit.",
         target: 1,
         rewardRerolls: 1,
-        scoreBonus: encounterType === "checkpoint" ? 180 : encounterType === "elite" ? 120 : 80,
+        scoreBonus: 80 + nodeBonus * 20,
       };
     case "field_triggers":
       return {
@@ -498,9 +1192,9 @@ function createEchoChallenge(run: EchoRunState, encounterType: EchoEncounterType
         type: "field_triggers",
         title: "Field Sync",
         description: "Trigger Echo Field effects multiple times this battle.",
-        target: encounterType === "checkpoint" ? 4 : encounterType === "elite" ? 3 : 2,
+        target: Math.max(2, 2 + getEncounterTypeScale(encounterType)),
         rewardRerolls: 1,
-        scoreBonus: encounterType === "checkpoint" ? 170 : encounterType === "elite" ? 110 : 70,
+        scoreBonus: 70 + nodeBonus * 20,
       };
     case "turn_limit":
     default:
@@ -509,36 +1203,43 @@ function createEchoChallenge(run: EchoRunState, encounterType: EchoEncounterType
         type: "turn_limit",
         title: "Fast Break",
         description: "Finish the encounter before the turn limit expires.",
-        target: encounterType === "checkpoint" ? 8 : encounterType === "elite" ? 7 : 6,
+        target: Math.max(4, 7 - getEncounterTypeScale(encounterType)),
         rewardRerolls: 1,
-        scoreBonus: encounterType === "checkpoint" ? 190 : encounterType === "elite" ? 130 : 90,
+        scoreBonus: 90 + nodeBonus * 20,
       };
   }
 }
 
 function getEncounterEnemyPool(encounterType: EchoEncounterType): string[] {
-  if (encounterType === "checkpoint") {
-    return ["artillery_crew", "basic_infantry", "gate_sentry", "corrupted_scout"];
+  switch (encounterType) {
+    case "boss":
+    case "boss_chain_b":
+      return ["artillery_crew", "basic_infantry", "gate_sentry", "corrupted_scout"];
+    case "boss_chain_a":
+    case "elite":
+      return ["basic_infantry", "gate_sentry", "corrupted_scout", "artillery_crew"];
+    case "checkpoint":
+      return ["artillery_crew", "basic_infantry", "gate_sentry"];
+    case "standard":
+    default:
+      return ["gate_sentry", "corrupted_scout", "basic_infantry"];
   }
-  if (encounterType === "elite") {
-    return ["basic_infantry", "gate_sentry", "corrupted_scout", "artillery_crew"];
-  }
-  return ["gate_sentry", "corrupted_scout", "basic_infantry"];
 }
 
-function createEchoEncounter(run: EchoRunState): EncounterDefinition {
-  const encounterType = getEncounterType(run.encounterNumber);
-  const rng = createSeededRng(`${run.seed}:encounter:${run.encounterNumber}`);
+function createEchoEncounter(run: EchoRunState, node: EchoRunNode): EncounterDefinition {
+  const encounterType = node.encounterType ?? "standard";
+  const rng = createSeededRng(`${run.seed}:encounter:${node.id}:${run.encounterNumber}`);
   const livingUnits = run.squadUnitIds.filter((unitId) => run.unitsById[unitId]);
   const squadSize = livingUnits.length;
-  const gridHeight = Math.max(5, Math.min(9, squadSize + 1));
-  const gridWidth = Math.max(7, Math.min(11, 7 + Math.floor(run.encounterNumber / 3)));
-  const baseEnemyCount = squadSize + Math.floor(run.encounterNumber / 2);
-  const enemyCount = encounterType === "checkpoint"
-    ? Math.min(10, baseEnemyCount + 2)
-    : encounterType === "elite"
-      ? Math.min(9, baseEnemyCount + 1)
-      : Math.min(8, Math.max(3, baseEnemyCount));
+  const gridHeight = Math.max(5, Math.min(9, squadSize + 2));
+  const gridWidth = Math.max(7, Math.min(12, 7 + run.currentStratum + Math.floor(node.dangerTier / 2)));
+  const encounterPressure = run.currentStratum + node.dangerTier + getEncounterTypeScale(encounterType);
+  const baseEnemyCount = Math.max(3, squadSize + Math.floor(encounterPressure / 2));
+  const enemyCount = encounterType === "boss" || encounterType === "boss_chain_b"
+    ? Math.min(11, baseEnemyCount + 3)
+    : encounterType === "boss_chain_a" || encounterType === "elite"
+      ? Math.min(10, baseEnemyCount + 2)
+      : Math.min(8, baseEnemyCount + 1);
 
   const pool = getEncounterEnemyPool(encounterType);
   const counts = new Map<string, number>();
@@ -547,15 +1248,21 @@ function createEchoEncounter(run: EchoRunState): EncounterDefinition {
     counts.set(enemyId, (counts.get(enemyId) ?? 0) + 1);
   }
 
+  const eliteSlots = encounterType === "boss_chain_b"
+    ? 2
+    : encounterType === "boss" || encounterType === "boss_chain_a" || encounterType === "elite"
+      ? 1
+      : 0;
+
   const enemyUnits = Array.from(counts.entries()).map(([enemyId, count], index) => ({
     enemyId,
     count,
-    levelMod: Math.max(0, Math.floor((run.encounterNumber - 1) / 2)),
-    elite: encounterType !== "standard" && index === 0,
+    levelMod: Math.max(0, run.currentStratum - 1 + Math.floor(node.dangerTier / 2)),
+    elite: index < eliteSlots,
   }));
 
-  const introText = encounterType === "checkpoint"
-    ? "SLK//ECHO  :: Endurance checkpoint engaged. Signal pressure spiking."
+  const introText = encounterType === "boss" || encounterType === "boss_chain_a" || encounterType === "boss_chain_b"
+    ? "SLK//ECHO  :: Boss pressure cresting. Command feed locking to strike geometry."
     : encounterType === "elite"
       ? "SLK//ECHO  :: Elite contact detected. Tactical draft proving ground live."
       : "SLK//ECHO  :: Simulation contact established. Draft squad entering engagement.";
@@ -565,23 +1272,25 @@ function createEchoEncounter(run: EchoRunState): EncounterDefinition {
     gridWidth,
     gridHeight,
     introText,
-    floorId: `echo_floor_${Math.max(1, Math.ceil(run.encounterNumber / 4))}`,
-    roomId: `echo_room_${run.encounterNumber}`,
+    floorId: `echo_stratum_${run.currentStratum}`,
+    roomId: node.id,
   };
 }
 
-function buildEchoBattleModeContext(run: EchoRunState, encounterType: EchoEncounterType): BattleModeContext {
+function buildEchoBattleModeContext(run: EchoRunState, node: EchoRunNode): BattleModeContext {
   return {
     kind: "echo",
     echo: {
       runId: run.id,
+      nodeId: node.id,
+      stratum: run.currentStratum,
       encounterNumber: run.encounterNumber,
-      encounterType,
+      encounterType: node.encounterType ?? "standard",
       placementMode: "units",
       availableFields: run.fields.map((field) => ({ ...field })),
       fieldPlacements: [],
       selectedFieldDraftId: run.fields[0]?.draftId ?? null,
-      activeChallenge: createEchoChallenge(run, encounterType),
+      activeChallenge: createEchoChallenge(run, node.encounterType ?? "standard", node),
       fieldTriggerCount: 0,
       startUnitIds: [...run.squadUnitIds],
     },
@@ -606,10 +1315,17 @@ function buildEchoEncounterScore(
   encounterType: EchoEncounterType,
   survivingCount: number,
   challengeBonus: number,
+  nodeDangerTier: number,
 ): number {
   const baseScore = 100 + encounterNumber * 45;
-  const typeBonus = encounterType === "checkpoint" ? 160 : encounterType === "elite" ? 90 : 0;
-  return baseScore + typeBonus + survivingCount * 20 + challengeBonus;
+  const typeBonus = encounterType === "boss" || encounterType === "boss_chain_b"
+    ? 220
+    : encounterType === "boss_chain_a"
+      ? 140
+      : encounterType === "elite"
+        ? 90
+        : 0;
+  return baseScore + typeBonus + survivingCount * 20 + challengeBonus + nodeDangerTier * 15;
 }
 
 function summarizeChallengeResult(
@@ -644,10 +1360,12 @@ function summarizeChallengeResult(
 
 export function summarizeEchoEncounter(battle: BattleState): EchoEncounterSummary | null {
   const echoContext = battle.modeContext?.kind === "echo" ? battle.modeContext.echo ?? null : null;
-  if (!echoContext || !activeEchoRun) {
+  const run = readEchoRun();
+  if (!echoContext || !run) {
     return null;
   }
 
+  const node = getNode(run, echoContext.nodeId ?? run.pendingNodeId ?? null);
   const survivingUnitIds = echoContext.startUnitIds.filter((unitId) => {
     const unit = battle.units[unitId];
     return Boolean(unit && unit.hp > 0);
@@ -671,6 +1389,7 @@ export function summarizeEchoEncounter(battle: BattleState): EchoEncounterSummar
       echoContext.encounterType,
       survivingUnitIds.length,
       challengeResult.bonusScore,
+      node?.dangerTier ?? 1,
     ),
     survivingUnitIds,
     lostUnitIds,
@@ -680,15 +1399,18 @@ export function summarizeEchoEncounter(battle: BattleState): EchoEncounterSummar
 }
 
 export function getActiveEchoRun(): EchoRunState | null {
-  return activeEchoRun;
+  return readEchoRun();
 }
 
 export function hasActiveEchoRun(): boolean {
-  return activeEchoRun !== null;
+  return readEchoRun() !== null;
 }
 
 export function clearActiveEchoRun(): void {
-  activeEchoRun = null;
+  updateGameState((prev) => ({
+    ...prev,
+    echoRun: null,
+  }));
 }
 
 export function isEchoBattle(battle: BattleState | null | undefined): boolean {
@@ -696,16 +1418,26 @@ export function isEchoBattle(battle: BattleState | null | undefined): boolean {
 }
 
 export function getEchoDraftChoices(): EchoRewardChoice[] {
-  return activeEchoRun?.draftChoices ?? [];
+  return readEchoRun()?.draftChoices ?? [];
 }
 
 export function startEchoRunSession(): EchoRunState {
-  disableAutosave();
+  enableAutosave(() => getGameState());
   const runId = createEchoRunId();
-  activeEchoRun = {
+  const run: EchoRunState = {
     id: runId,
     seed: `${runId}_${Math.random().toString(36).slice(2, 8)}`,
     stage: "initial_units",
+    currentStratum: 1,
+    milestonesReached: 0,
+    bossChainsCleared: 0,
+    currentNodeId: null,
+    nodesById: {},
+    edges: [],
+    completedNodeIds: [],
+    availableNodeIds: [],
+    pendingNodeId: null,
+    lastResolvedNodeType: null,
     encounterNumber: 1,
     unitsById: {},
     squadUnitIds: [],
@@ -724,47 +1456,50 @@ export function startEchoRunSession(): EchoRunState {
     challengesCompleted: 0,
     totalScore: 0,
   };
-  return activeEchoRun;
+
+  persistEchoRun(run, {
+    phase: "echo",
+    currentBattle: null,
+  });
+  return run;
 }
 
 export function rerollActiveEchoChoices(): EchoRunState | null {
-  if (!activeEchoRun || activeEchoRun.rerolls <= 0 || activeEchoRun.stage !== "reward") {
-    return activeEchoRun;
+  const run = readEchoRun();
+  if (!run || run.rerolls <= 0 || (run.stage !== "reward" && run.stage !== "milestone")) {
+    return run;
   }
 
-  activeEchoRun = {
-    ...activeEchoRun,
-    rerolls: activeEchoRun.rerolls - 1,
-    draftChoices: generateRewardChoices(activeEchoRun),
+  const nextRun = {
+    ...run,
+    rerolls: run.rerolls - 1,
+    draftChoices: run.stage === "milestone"
+      ? createMilestoneChoices(run, run.currentNodeId ?? `milestone_${run.currentStratum}`)
+      : (() => {
+          const sourceNode = getNode(run, run.currentNodeId ?? run.pendingNodeId);
+          return sourceNode ? createRewardChoicesForNode(run, sourceNode) : run.draftChoices;
+        })(),
   };
-  return activeEchoRun;
+
+  return persistEchoRun(nextRun, { phase: "echo", currentBattle: null });
 }
 
-export function applyEchoDraftChoice(choiceId: string): EchoRunState | null {
-  if (!activeEchoRun) {
-    return null;
-  }
-
-  const choice = activeEchoRun.draftChoices.find((entry) => entry.id === choiceId);
-  if (!choice) {
-    return activeEchoRun;
-  }
-
+function applyDraftChoiceToRun(run: EchoRunState, choice: EchoRewardChoice): EchoRunState {
   if (choice.optionType === "unit_draft" && choice.unitOption) {
-    const newUnit = createRuntimeEchoUnit(activeEchoRun, choice.unitOption);
+    const newUnit = createRuntimeEchoUnit(run, choice.unitOption);
     const nextRun = {
-      ...activeEchoRun,
+      ...run,
       unitsById: {
-        ...activeEchoRun.unitsById,
+        ...run.unitsById,
         [newUnit.id]: newUnit,
       },
-      squadUnitIds: [...activeEchoRun.squadUnitIds, newUnit.id],
-      unitsDrafted: activeEchoRun.unitsDrafted + 1,
+      squadUnitIds: [...run.squadUnitIds, newUnit.id],
+      unitsDrafted: run.unitsDrafted + 1,
     };
 
-    if (activeEchoRun.stage === "initial_units") {
+    if (run.stage === "initial_units") {
       const picksSoFar = nextRun.squadUnitIds.length;
-      activeEchoRun = picksSoFar >= STARTING_SQUAD_SIZE
+      return picksSoFar >= STARTING_SQUAD_SIZE
         ? {
             ...nextRun,
             stage: "initial_field",
@@ -774,63 +1509,141 @@ export function applyEchoDraftChoice(choiceId: string): EchoRunState | null {
             ...nextRun,
             draftChoices: generateInitialUnitChoices(nextRun.id, picksSoFar),
           };
-    } else {
-      activeEchoRun = {
-        ...nextRun,
-        stage: "reward",
-        draftChoices: [],
-      };
     }
-    return activeEchoRun;
+
+    return {
+      ...nextRun,
+      draftChoices: [],
+      stage: run.stage,
+    };
   }
 
   if (choice.optionType === "field_draft" && choice.fieldDefinition) {
-    activeEchoRun = {
-      ...activeEchoRun,
-      fields: [...activeEchoRun.fields, { ...choice.fieldDefinition, maxLevel: MAX_FIELD_LEVEL }],
-      fieldsDrafted: activeEchoRun.fieldsDrafted + 1,
-      stage: "reward",
-      draftChoices: [],
+    const nextRun = {
+      ...run,
+      fields: [...run.fields, { ...choice.fieldDefinition, maxLevel: MAX_FIELD_LEVEL }],
+      fieldsDrafted: run.fieldsDrafted + 1,
     };
-    return activeEchoRun;
+
+    if (run.stage === "initial_field") {
+      return buildFirstMapState(nextRun);
+    }
+
+    return nextRun;
   }
 
   if (choice.optionType === "field_upgrade" && choice.fieldDefinition) {
-    activeEchoRun = {
-      ...activeEchoRun,
-      fields: activeEchoRun.fields.map((field) => (
+    return {
+      ...run,
+      fields: run.fields.map((field) => (
         field.draftId === choice.fieldDefinition?.draftId
           ? buildEchoFieldDefinition(field.id, field.draftId, Math.min(MAX_FIELD_LEVEL, field.level + 1))
           : field
       )),
-      fieldsUpgraded: activeEchoRun.fieldsUpgraded + 1,
-      stage: "reward",
-      draftChoices: [],
+      fieldsUpgraded: run.fieldsUpgraded + 1,
     };
-    return activeEchoRun;
   }
 
   if (choice.optionType === "modifier_draft" && choice.modifierDefId) {
     const modifierInstance = createModifierInstance(
       choice.modifierDefId,
-      activeEchoRun.id,
-      activeEchoRun.tacticalModifiersDrafted + 1,
+      run.id,
+      run.tacticalModifiersDrafted + 1,
+      choice.id,
     );
-    activeEchoRun = {
-      ...activeEchoRun,
-      tacticalModifiers: [...activeEchoRun.tacticalModifiers, modifierInstance],
-      tacticalModifiersDrafted: activeEchoRun.tacticalModifiersDrafted + 1,
-      stage: "reward",
-      draftChoices: [],
+    return {
+      ...run,
+      tacticalModifiers: [...run.tacticalModifiers, modifierInstance],
+      tacticalModifiersDrafted: run.tacticalModifiersDrafted + 1,
     };
-    return activeEchoRun;
   }
 
-  return activeEchoRun;
+  if (choice.optionType === "recovery_draft" && choice.recoveryOption) {
+    return applyRecoveryToRun(run, choice.recoveryOption);
+  }
+
+  if (choice.optionType === "training_draft" && choice.trainingOption) {
+    return applyTrainingToRun(run, choice.trainingOption);
+  }
+
+  return run;
+}
+
+export function applyEchoDraftChoice(choiceId: string): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run) {
+    return null;
+  }
+
+  const choice = run.draftChoices.find((entry) => entry.id === choiceId);
+  if (!choice) {
+    return run;
+  }
+
+  let nextRun = applyDraftChoiceToRun(run, choice);
+
+  if (run.stage === "reward") {
+    nextRun = {
+      ...nextRun,
+      stage: "map",
+      draftChoices: [],
+      currentChallenge: null,
+      lastEncounterSummary: nextRun.lastEncounterSummary ?? null,
+    };
+  } else if (run.stage === "milestone") {
+    const milestoneNodeId = run.currentNodeId;
+    const completedMilestone = milestoneNodeId ? completeNode(nextRun, milestoneNodeId) : nextRun;
+    nextRun = advanceToNextStratum({
+      ...completedMilestone,
+      milestonesReached: completedMilestone.milestonesReached + 1,
+      draftChoices: [],
+    });
+  }
+
+  return persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+export function selectEchoMapNode(nodeId: string): "battle" | "reward" | null {
+  const run = readEchoRun();
+  if (!run || run.stage !== "map" || !run.availableNodeIds.includes(nodeId)) {
+    return null;
+  }
+
+  const node = getNode(run, nodeId);
+  if (!node) {
+    return null;
+  }
+
+  if (node.nodeType === "support") {
+    const completed = completeNode(run, node.id);
+    const rewardRun = enterRewardStage(completed, node.id);
+    persistEchoRun(rewardRun, {
+      phase: "echo",
+      currentBattle: null,
+    });
+    return "reward";
+  }
+
+  const nextRun = {
+    ...run,
+    pendingNodeId: node.id,
+    currentNodeId: node.id,
+    currentChallenge: createEchoChallenge(run, node.encounterType ?? "standard", node),
+    lastEncounterSummary: null,
+  };
+  persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
+  return "battle";
 }
 
 export function getEchoModifierHardpoints(unitIds: string[]): Record<string, (FieldModInstance | null)[]> {
-  if (!activeEchoRun) {
+  const run = readEchoRun();
+  if (!run) {
     return {};
   }
 
@@ -840,7 +1653,7 @@ export function getEchoModifierHardpoints(unitIds: string[]): Record<string, (Fi
   });
 
   let index = 0;
-  activeEchoRun.tacticalModifiers.forEach((modifier) => {
+  run.tacticalModifiers.forEach((modifier) => {
     const unitId = unitIds[Math.floor(index / 2)];
     if (!unitId) {
       return;
@@ -854,65 +1667,66 @@ export function getEchoModifierHardpoints(unitIds: string[]): Record<string, (Fi
 }
 
 export function launchActiveEchoEncounterBattle(): BattleState | null {
-  if (!activeEchoRun) {
+  const run = readEchoRun();
+  if (!run) {
     return null;
   }
 
-  const encounterType = getEncounterType(activeEchoRun.encounterNumber);
-  const encounter = createEchoEncounter(activeEchoRun);
+  const node = getNode(run, run.pendingNodeId ?? run.currentNodeId);
+  if (!node || !node.encounterType) {
+    return null;
+  }
+
+  const encounter = createEchoEncounter(run, node);
   const state = getGameState();
-  const unitIds = activeEchoRun.squadUnitIds.filter((unitId) => activeEchoRun?.unitsById[unitId]);
+  const unitIds = run.squadUnitIds.filter((unitId) => run.unitsById[unitId] && run.unitsById[unitId].hp > 0);
   const unitsById = Object.fromEntries(
     unitIds.map((unitId) => {
-      const unit = activeEchoRun!.unitsById[unitId];
-      return [
-        unitId,
-        {
-          ...unit,
-          hp: unit.maxHp,
-          strain: 0,
-          pos: null,
-          hand: [],
-          drawPile: [],
-          discardPile: [],
-        } as Unit,
-      ];
+      const unit = stripBattleRuntime(run.unitsById[unitId], run.unitsById[unitId].hp);
+      return [unitId, unit];
     }),
   );
 
   const battle = createBattleFromEncounter(
     state,
     encounter,
-    `${activeEchoRun.seed}:battle:${activeEchoRun.encounterNumber}`,
+    `${run.seed}:battle:${node.id}:${run.encounterNumber}`,
     {
       partyUnitIds: unitIds,
       unitsById,
       maxUnitsPerSide: unitIds.length,
-      modeContext: buildEchoBattleModeContext(activeEchoRun, encounterType),
+      modeContext: buildEchoBattleModeContext(run, node),
     },
   );
 
-  activeEchoRun = {
-    ...activeEchoRun,
+  const nextRun = {
+    ...run,
     currentChallenge: battle.modeContext?.echo?.activeChallenge ?? null,
     lastEncounterSummary: null,
   };
+  persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
 
   return battle;
 }
 
 export function commitEchoEncounterVictory(battle: BattleState): EchoRunState | null {
-  if (!activeEchoRun) {
+  const run = readEchoRun();
+  if (!run) {
     return null;
   }
 
   const summary = summarizeEchoEncounter(battle);
   if (!summary) {
-    return activeEchoRun;
+    return run;
   }
 
+  const nodeId = battle.modeContext?.echo?.nodeId ?? run.pendingNodeId ?? run.currentNodeId;
+  const node = getNode(run, nodeId);
   const survivingIds = new Set(summary.survivingUnitIds);
-  const nextUnitsById = { ...activeEchoRun.unitsById };
+  const nextUnitsById = { ...run.unitsById };
 
   Object.keys(nextUnitsById).forEach((unitId) => {
     if (!survivingIds.has(unitId)) {
@@ -920,95 +1734,127 @@ export function commitEchoEncounterVictory(battle: BattleState): EchoRunState | 
       return;
     }
 
+    const battleUnit = battle.units[unitId];
     const unit = nextUnitsById[unitId];
-    nextUnitsById[unitId] = {
-      ...unit,
-      hp: unit.maxHp,
-      pos: null,
-      strain: 0,
-      hand: [],
-      drawPile: [],
-      discardPile: [],
-    } as Unit;
+    nextUnitsById[unitId] = stripBattleRuntime(unit, battleUnit?.hp ?? unit.hp);
   });
 
-  const interimRun = {
-    ...activeEchoRun,
+  let nextRun: EchoRunState = {
+    ...run,
     unitsById: nextUnitsById,
-    squadUnitIds: activeEchoRun.squadUnitIds.filter((unitId) => survivingIds.has(unitId)),
-    rerolls: activeEchoRun.rerolls + summary.rerollsEarned,
-    unitsLost: activeEchoRun.unitsLost + summary.lostUnitIds.length,
-    challengesCompleted: activeEchoRun.challengesCompleted + (summary.challengeCompleted ? 1 : 0),
-    totalScore: activeEchoRun.totalScore + summary.scoreGained,
-    encounterNumber: activeEchoRun.encounterNumber + 1,
+    squadUnitIds: run.squadUnitIds.filter((unitId) => survivingIds.has(unitId)),
+    rerolls: run.rerolls + summary.rerollsEarned,
+    unitsLost: run.unitsLost + summary.lostUnitIds.length,
+    challengesCompleted: run.challengesCompleted + (summary.challengeCompleted ? 1 : 0),
+    totalScore: run.totalScore + summary.scoreGained,
+    encounterNumber: run.encounterNumber + 1,
     lastEncounterSummary: summary,
-    stage: "reward" as const,
     currentChallenge: null,
+    pendingNodeId: null,
   };
 
-  activeEchoRun = {
-    ...interimRun,
-    draftChoices: generateRewardChoices(interimRun),
-  };
+  if (node) {
+    nextRun = completeNode(nextRun, node.id);
+    if (node.nodeType === "boss_chain_b") {
+      nextRun = {
+        ...nextRun,
+        bossChainsCleared: nextRun.bossChainsCleared + 1,
+      };
+    }
 
-  return activeEchoRun;
+    if (node.nodeType === "boss" || node.nodeType === "boss_chain_b") {
+      const milestoneNodeId = nextRun.availableNodeIds[0] ?? node.nextNodeIds[0] ?? null;
+      nextRun = milestoneNodeId
+        ? enterMilestoneStage(nextRun, milestoneNodeId)
+        : {
+            ...nextRun,
+            stage: "map",
+            draftChoices: [],
+          };
+    } else {
+      nextRun = enterRewardStage(nextRun, node.id);
+    }
+  } else {
+    nextRun = {
+      ...nextRun,
+      stage: "reward",
+      draftChoices: [],
+    };
+  }
+
+  return persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
 }
 
 export function finalizeEchoRunFromBattleDefeat(battle: BattleState): EchoRunState | null {
-  if (!activeEchoRun) {
+  const run = readEchoRun();
+  if (!run) {
     return null;
   }
 
   const summary = summarizeEchoEncounter(battle) ?? {
-    encounterNumber: activeEchoRun.encounterNumber,
-    encounterType: getEncounterType(activeEchoRun.encounterNumber),
-    challenge: activeEchoRun.currentChallenge ?? null,
+    encounterNumber: run.encounterNumber,
+    encounterType: battle.modeContext?.echo?.encounterType ?? "standard",
+    challenge: run.currentChallenge ?? null,
     challengeCompleted: false,
     challengeFailed: true,
     rerollsEarned: 0,
     scoreGained: 0,
     survivingUnitIds: [],
-    lostUnitIds: [...activeEchoRun.squadUnitIds],
+    lostUnitIds: [...run.squadUnitIds],
     fieldTriggerCount: battle.modeContext?.echo?.fieldTriggerCount ?? 0,
     turnCount: battle.turnCount,
   };
 
   const defeatedRun = {
-    ...activeEchoRun,
+    ...run,
     unitsById: {},
     squadUnitIds: [],
-    unitsLost: activeEchoRun.unitsLost + summary.lostUnitIds.length,
+    unitsLost: run.unitsLost + summary.lostUnitIds.length,
     lastEncounterSummary: summary,
     currentChallenge: null,
+    pendingNodeId: null,
     stage: "results" as const,
     draftChoices: [],
   };
 
-  activeEchoRun = {
+  const resultsRun = {
     ...defeatedRun,
     resultsSummary: buildEchoScoreSummary(defeatedRun),
   };
 
-  return activeEchoRun;
+  return persistEchoRun(resultsRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
 }
 
 export function abandonActiveEchoRun(): EchoRunState | null {
-  if (!activeEchoRun) {
+  const run = readEchoRun();
+  if (!run) {
     return null;
   }
 
-  activeEchoRun = {
-    ...activeEchoRun,
-    stage: "results",
+  const nextRun = {
+    ...run,
+    stage: "results" as const,
     draftChoices: [],
-    resultsSummary: buildEchoScoreSummary(activeEchoRun),
+    pendingNodeId: null,
+    currentChallenge: null,
+    resultsSummary: buildEchoScoreSummary(run),
   };
 
-  return activeEchoRun;
+  return persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
 }
 
 export function getEchoResultsSummary(): EchoScoreSummary | null {
-  return activeEchoRun?.resultsSummary ?? (activeEchoRun ? buildEchoScoreSummary(activeEchoRun) : null);
+  const run = readEchoRun();
+  return run?.resultsSummary ?? (run ? buildEchoScoreSummary(run) : null);
 }
 
 export function getEchoModifierDef(modifierId: string | undefined | null): FieldModDef | null {

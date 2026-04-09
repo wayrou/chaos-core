@@ -1,5 +1,6 @@
-import { subtractResourceWallet, hasEnoughResources, type ResourceKey, type ResourceWallet } from "./resources";
+import { type ResourceKey, type ResourceWallet } from "./resources";
 import type { GameState } from "./types";
+import { canSessionAffordCost, getLocalSessionPlayerSlot, getSessionResourcePool, spendSessionCost } from "./session";
 
 export const COUNTERWEIGHT_WEAPONSMITH_ENCOUNTER_ID = "shaft_mechanist";
 export const COUNTERWEIGHT_WORKSHOP_MAP_ID = "counterweight_workshop";
@@ -269,7 +270,7 @@ function hasZoneBeenCleared(
 }
 
 function hasAdvancedMaterial(state: GameState, resourceKey: ResourceKey): boolean {
-  return Number(state.resources?.[resourceKey] ?? 0) > 0;
+  return Number(getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources?.[resourceKey] ?? 0) > 0;
 }
 
 function getUpgradeUnlockLabel(state: GameState, upgradeId: WeaponsmithUpgradeId): string {
@@ -550,28 +551,33 @@ export function installWeaponsmithUpgrade(
     };
   }
 
-  if (Number(state.wad ?? 0) < definition.cost.wad) {
+  if (!canSessionAffordCost(state, {
+    wad: definition.cost.wad,
+    resources: definition.cost.resources,
+  })) {
     return {
       ok: false,
       state,
-      error: "Not enough Wad.",
+      error: "Required workshop funding or advanced materials are missing.",
     };
   }
 
-  if (!hasEnoughResources(state.resources, definition.cost.resources)) {
+  const spendResult = spendSessionCost(state, {
+    wad: definition.cost.wad,
+    resources: definition.cost.resources,
+  });
+  if (!spendResult.success) {
     return {
       ok: false,
       state,
-      error: "Required advanced materials are missing.",
+      error: "Required workshop funding or advanced materials are missing.",
     };
   }
 
   return {
     ok: true,
     state: withNormalizedWeaponsmithState({
-      ...state,
-      wad: Math.max(0, Number(state.wad ?? 0) - definition.cost.wad),
-      resources: subtractResourceWallet(state.resources, definition.cost.resources, true),
+      ...spendResult.state,
       weaponsmith: {
         ...(state.weaponsmith ?? createDefaultWeaponsmithState()),
         installedUpgradeIds: [

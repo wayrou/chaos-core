@@ -110,6 +110,7 @@ import {
   PendingTheaterBattleConfirmationState,
   PartitionType,
   PlayerSlot,
+  SESSION_PLAYER_SLOTS,
   SessionPlayerSlot,
   TheaterMapMode,
   TheaterNetworkState,
@@ -129,13 +130,15 @@ import {
   resolveTheaterNode,
 } from "../../core/theaterAutomation";
 import {
-  addResourceWallet,
   getResourceEntries,
-  hasEnoughResources as hasEnoughResourceValues,
 } from "../../core/resources";
 import {
   assignLocalPlayerToTheaterSquad,
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
   getPlayerControllerLabel,
+  getSessionResourcePool,
+  grantSessionResources,
   getTheaterAssignedPlayerSlots,
   isLocalCoopActive,
 } from "../../core/session";
@@ -2707,13 +2710,13 @@ function getActiveLocalTheaterSlots(state: GameState): PlayerSlot[] {
 function getTheaterSquadOwnerSummary(state: GameState, squad: TheaterSquadState): string {
   const controllerCounts = squad.unitIds.reduce((acc, unitId) => {
     const controller = state.unitsById[unitId]?.controller ?? "P1";
-    acc[controller] += 1;
+    acc[controller] = (acc[controller] ?? 0) + 1;
     return acc;
-  }, { P1: 0, P2: 0 });
+  }, {} as Partial<Record<SessionPlayerSlot, number>>);
 
-  const ownerLabels = (["P1", "P2"] as const)
-    .filter((slot) => controllerCounts[slot] > 0)
-    .map((slot) => `${getPlayerControllerLabel(slot)} ${controllerCounts[slot]}`);
+  const ownerLabels = SESSION_PLAYER_SLOTS
+    .filter((slot) => (controllerCounts[slot] ?? 0) > 0)
+    .map((slot) => `${getPlayerControllerLabel(slot)} ${controllerCounts[slot] ?? 0}`);
 
   return ownerLabels.length > 0 ? ownerLabels.join(" // ") : "UNASSIGNED";
 }
@@ -3184,8 +3187,12 @@ function getSelectedTheaterTacticalTile(tacticalMap: TacticalMapDefinition | nul
   return fallbackTile ? { x: fallbackTile.x, y: fallbackTile.y } : null;
 }
 
-function canAffordTheaterCost(resources: GameState["resources"], cost: Partial<GameState["resources"]>): boolean {
-  return hasEnoughResourceValues(resources, cost);
+function getTheaterSessionResourceSummary(state: GameState) {
+  return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+}
+
+function canAffordTheaterCost(state: GameState, cost: Partial<GameState["resources"]>): boolean {
+  return canSessionAffordCost(state, { resources: cost });
 }
 
 function captureTheaterWindowBodyScroll(key: TheaterWindowKey): { top: number; left: number } | null {
@@ -3640,7 +3647,7 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
     ? getFieldAssetPlacementError(room, theaterSelectedFieldAssetType, selectedTacticalTile.x, selectedTacticalTile.y)
     : null;
   const canAffordActiveFieldAsset = activeFieldAssetDefinition
-    ? canAffordTheaterCost(state.resources, activeFieldAssetCost)
+    ? canAffordTheaterCost(state, activeFieldAssetCost)
     : false;
   const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
   const fabricateBlockedReason = selectedNode?.kind === "annex"
@@ -4060,12 +4067,7 @@ function renderCoreLedgerRows(theater: TheaterNetworkState): string {
     const incomeLabel = formatResourceCost(coreAssignment.incomePerTick ?? {});
     const repairCost = room.damaged ? getTheaterCoreRepairCost(room) : null;
     const repairCostLabel = repairCost ? formatResourceCost(repairCost) : "";
-    const canAffordRepair = repairCost
-      ? gameState.resources.metalScrap >= (repairCost.metalScrap ?? 0)
-        && gameState.resources.wood >= (repairCost.wood ?? 0)
-        && gameState.resources.chaosShards >= (repairCost.chaosShards ?? 0)
-        && gameState.resources.steamComponents >= (repairCost.steamComponents ?? 0)
-      : false;
+    const canAffordRepair = repairCost ? canAffordTheaterCost(gameState, repairCost) : false;
     return `
         <article class="theater-core-ledger-row">
         <div class="theater-core-ledger-row__header">
@@ -4203,10 +4205,11 @@ function formatAtlasEconomyIncome(summary: OpsTerminalAtlasEconomySummary): stri
 }
 
 function renderResourcesWindow(state: GameState, theater: TheaterNetworkState): string {
+  const resourcePool = getTheaterSessionResourceSummary(state);
   const body = `
     <div class="theater-resource-grid">
-      <div class="theater-resource-card"><span>Wad</span><strong>${state.wad ?? 0}</strong></div>
-      ${getResourceEntries(state.resources, { includeZero: true }).map((entry) => `
+      <div class="theater-resource-card"><span>Wad</span><strong>${resourcePool.wad ?? 0}</strong></div>
+      ${getResourceEntries(resourcePool.resources, { includeZero: true }).map((entry) => `
         <div class="theater-resource-card"><span>${entry.label}</span><strong>${entry.amount}</strong></div>
       `).join("")}
     </div>
@@ -7559,17 +7562,11 @@ function scheduleHoldPositionTick(): void {
     const holdOutcome = holdPositionInTheater(getGameState(), 1);
     const nextState =
       holdOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(holdOutcome.state.operation)
-        ? {
-            ...holdOutcome.state,
-            ...applyWarmTheaterEconomyToState(
-              {
-                wad: holdOutcome.state.wad,
-                resources: holdOutcome.state.resources,
-              },
-              activeTheater.definition.id,
-              holdOutcome.tickCost,
-            ),
-          }
+        ? applyWarmTheaterEconomyToState(
+            holdOutcome.state,
+            activeTheater.definition.id,
+            holdOutcome.tickCost,
+          )
         : holdOutcome.state;
     updateGameState(() => withPendingBattleConfirmationInState(nextState, null));
 
@@ -7647,17 +7644,11 @@ function handleMoveToNode(nodeId: string): void {
   const moveOutcome = moveToTheaterNode(getGameState(), nodeId);
   const nextState =
     moveOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(moveOutcome.state.operation)
-      ? {
-          ...moveOutcome.state,
-          ...applyWarmTheaterEconomyToState(
-            {
-              wad: moveOutcome.state.wad,
-              resources: moveOutcome.state.resources,
-            },
-            activeTheater.definition.id,
-            moveOutcome.tickCost,
-          ),
-        }
+      ? applyWarmTheaterEconomyToState(
+          moveOutcome.state,
+          activeTheater.definition.id,
+          moveOutcome.tickCost,
+        )
       : moveOutcome.state;
   updateGameState(() => withPendingBattleConfirmationInState(nextState, null));
 
@@ -7886,17 +7877,11 @@ export function applyRemoteCoopTheaterCommand(
         ?? null;
       let nextState =
         scopedTheaterId && moveOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(moveOutcome.state.operation)
-          ? {
-              ...moveOutcome.state,
-              ...applyWarmTheaterEconomyToState(
-                {
-                  wad: moveOutcome.state.wad,
-                  resources: moveOutcome.state.resources,
-                },
-                scopedTheaterId,
-                moveOutcome.tickCost,
-              ),
-            }
+          ? applyWarmTheaterEconomyToState(
+              moveOutcome.state,
+              scopedTheaterId,
+              moveOutcome.tickCost,
+            )
           : moveOutcome.state;
 
       if (moveOutcome.requiresBattle) {
@@ -9135,15 +9120,19 @@ export function renderTheaterCommandScreen(): void {
     hasCompletedTheaterObjective(ensuredOperation.theater) &&
     !hadCompletedBeforeSync;
 
-  updateGameState((state) => ({
-    ...state,
-    phase: "operation",
-    wad: shouldGrantCompletionReward ? state.wad + (syncedCompletion?.reward.wad ?? 0) : state.wad,
-    resources: shouldGrantCompletionReward && syncedCompletion
-      ? addResourceWallet(state.resources, syncedCompletion.reward)
-      : state.resources,
-    operation: ensuredOperation,
-  }));
+  updateGameState((state) => {
+    const nextState = shouldGrantCompletionReward && syncedCompletion
+      ? grantSessionResources(state, {
+          wad: syncedCompletion.reward.wad ?? 0,
+          resources: syncedCompletion.reward,
+        })
+      : state;
+    return {
+      ...nextState,
+      phase: "operation",
+      operation: ensuredOperation,
+    };
+  });
 
   const state = getGameState();
   const theater = ensuredOperation.theater;

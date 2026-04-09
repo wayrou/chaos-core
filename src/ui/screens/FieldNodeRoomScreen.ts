@@ -1908,6 +1908,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
   
   const companion = roomState.companion;
   const player = roomState.player;
+  const fieldMap = { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any;
   
   // Check behavior cooldown
   if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
@@ -1916,7 +1917,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
     // Priority: Attack > Fetch > Follow
     // Check for enemies first (if not already attacking)
     if (companion.state !== "attack") {
-      const nearestEnemy = findNearestEnemy(companion, player, roomState.enemies);
+      const nearestEnemy = findNearestEnemy(companion, player, roomState.enemies, fieldMap);
       if (nearestEnemy) {
         companion.state = "attack";
         companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
@@ -1925,7 +1926,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
     
     // Check for resources (if not attacking and not already fetching)
     if (companion.state !== "attack" && companion.state !== "fetch") {
-      const nearestResource = findNearestResource(companion, player, roomState.sparkles);
+      const nearestResource = findNearestResource(companion, player, roomState.sparkles, fieldMap);
       if (nearestResource) {
         companion.state = "fetch";
         companion.target = { x: nearestResource.x, y: nearestResource.y, id: nearestResource.id };
@@ -1952,7 +1953,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
         player,
         { x: targetEnemy.x, y: targetEnemy.y, id: targetEnemy.id },
         deltaTime,
-        { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any
+        fieldMap
       );
       
       // Get updated companion reference
@@ -2018,7 +2019,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
         player,
         { x: targetSparkle.x, y: targetSparkle.y, id: targetSparkle.id },
         deltaTime,
-        { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any
+        fieldMap
       );
       
       // Check if reached resource
@@ -2039,7 +2040,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
       companion,
       player,
       deltaTime,
-      { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any,
+      fieldMap,
     );
   }
 }

@@ -34,6 +34,7 @@ import {
   TheaterKeyType,
   TheaterDefinition,
   TheaterNetworkState,
+  TheaterRuntimeContext,
   TheaterObjectiveCompletion,
   TheaterRoom,
   TheaterSquadPreset,
@@ -107,10 +108,12 @@ import {
   createEmptyResourceWallet,
   formatResourceLabel,
   getResourceEntries,
-  hasEnoughResources as hasEnoughResourceValues,
   RESOURCE_KEYS,
-  subtractResourceWallet,
 } from "./resources";
+import {
+  grantSessionResources,
+  spendSessionCost,
+} from "./session";
 
 type ResourceWallet = GameState["resources"];
 
@@ -1315,6 +1318,152 @@ function mergeScopedOperationState(
   };
 }
 
+function parseTheaterRuntimeSnapshot(
+  snapshot: string | null | undefined,
+): TheaterNetworkState | null {
+  if (!snapshot) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(snapshot) as TheaterNetworkState;
+    return parsed?.definition?.id && parsed?.rooms ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeTheaterRuntimeState(
+  baseState: GameState,
+  scopedState: GameState,
+  theaterId: string,
+): GameState {
+  const scopedOperation = ensureOperationHasTheater(scopedState.operation);
+  const scopedTheater = scopedOperation?.theater;
+  if (!scopedOperation || !scopedTheater || scopedTheater.definition.id !== theaterId) {
+    return baseState;
+  }
+
+  const baseOperation = ensureOperationHasTheater(baseState.operation);
+  const baseActiveTheaterId = baseOperation?.theater?.definition.id ?? null;
+  const shouldPromoteOperationContext = baseActiveTheaterId === theaterId;
+  const scopedBattle = scopedState.currentBattle;
+  const hasScopedBattle = scopedBattle?.theaterMeta?.theaterId === theaterId;
+  const scopedBattleId = hasScopedBattle ? scopedBattle?.id ?? null : null;
+  const currentContext = baseState.session.activeTheaterContexts[theaterId];
+  const nextPendingBattleConfirmation = scopedState.session.pendingTheaterBattleConfirmation ?? null;
+  const nextPlayers = { ...baseState.session.players };
+  const nextTheaterAssignments = { ...baseState.session.theaterAssignments };
+
+  (Object.keys(nextPlayers) as SessionPlayerSlot[]).forEach((slot) => {
+    const currentPlayer = nextPlayers[slot];
+    const currentAssignment = nextTheaterAssignments[slot];
+    const targetsTheater =
+      currentPlayer?.currentTheaterId === theaterId
+      || currentAssignment?.theaterId === theaterId;
+    if (!targetsTheater) {
+      return;
+    }
+
+    const trackedSquadId = currentPlayer?.assignedSquadId ?? currentAssignment?.squadId ?? null;
+    const trackedSquad = trackedSquadId
+      ? scopedTheater.squads.find((squad) => squad.squadId === trackedSquadId) ?? null
+      : null;
+    const resolvedRoomId = trackedSquad?.currentRoomId ?? currentAssignment?.roomId ?? scopedTheater.currentRoomId ?? null;
+    const trackedBattleId =
+      hasScopedBattle && trackedSquadId && scopedBattle
+      && (
+        scopedBattle.theaterBonuses?.squadId === trackedSquadId
+        || scopedBattle.theaterMeta?.squadId === trackedSquadId
+      )
+        ? scopedBattleId
+        : (
+          !hasScopedBattle
+          && currentPlayer?.activeBattleId
+          && baseState.session.activeBattleContexts[currentPlayer.activeBattleId]?.theaterId === theaterId
+            ? null
+            : currentPlayer?.activeBattleId ?? null
+        );
+
+    if (currentPlayer) {
+      nextPlayers[slot] = {
+        ...currentPlayer,
+        currentTheaterId: theaterId,
+        activeBattleId: trackedBattleId,
+        lastSafeRoomId: resolvedRoomId ?? currentPlayer.lastSafeRoomId ?? null,
+        stagingState: trackedBattleId ? "battle" : "theater",
+      };
+    }
+    if (currentAssignment) {
+      nextTheaterAssignments[slot] = {
+        ...currentAssignment,
+        theaterId,
+        roomId: resolvedRoomId,
+        stagingState: trackedBattleId ? "battle" : "theater",
+      };
+    }
+  });
+
+  const nextActiveTheaterContexts = {
+    ...baseState.session.activeTheaterContexts,
+    ...scopedState.session.activeTheaterContexts,
+    [theaterId]: {
+      theaterId,
+      operationId: scopedOperation.id ?? currentContext?.operationId ?? null,
+      snapshot: JSON.stringify(scopedTheater),
+      phase: hasScopedBattle ? "battle" : scopedState.phase,
+      battleSnapshot: hasScopedBattle
+        ? JSON.stringify(scopedBattle)
+        : (
+          scopedState.session.activeTheaterContexts?.[theaterId]?.battleSnapshot
+          ?? currentContext?.battleSnapshot
+          ?? null
+        ),
+      pendingTheaterBattleConfirmation: nextPendingBattleConfirmation,
+      updatedAt: Date.now(),
+    } satisfies TheaterRuntimeContext,
+  };
+
+  const nextActiveBattleContexts = {
+    ...baseState.session.activeBattleContexts,
+    ...scopedState.session.activeBattleContexts,
+  };
+  if (hasScopedBattle && scopedBattleId) {
+    nextActiveBattleContexts[scopedBattleId] = {
+      battleId: scopedBattleId,
+      theaterId,
+      roomId: scopedBattle.theaterMeta?.roomId ?? scopedBattle.roomId ?? null,
+      squadId:
+        scopedBattle.theaterBonuses?.squadId
+        ?? scopedBattle.theaterMeta?.squadId
+        ?? null,
+      snapshot: JSON.stringify(scopedBattle),
+      phase: scopedBattle.phase ?? null,
+      updatedAt: Date.now(),
+    };
+  }
+
+  return {
+    ...scopedState,
+    phase: shouldPromoteOperationContext ? scopedState.phase : baseState.phase,
+    currentBattle: shouldPromoteOperationContext && hasScopedBattle ? scopedBattle : baseState.currentBattle,
+    operation: mergeScopedOperationState(baseState, scopedOperation),
+    session: {
+      ...baseState.session,
+      players: nextPlayers,
+      theaterAssignments: nextTheaterAssignments,
+      activeTheaterContexts: nextActiveTheaterContexts,
+      activeBattleContexts: nextActiveBattleContexts,
+      pendingTheaterBattleConfirmation: shouldPromoteOperationContext
+        ? nextPendingBattleConfirmation
+        : baseState.session.pendingTheaterBattleConfirmation,
+      activeBattleId:
+        shouldPromoteOperationContext && hasScopedBattle
+          ? (scopedBattle?.id ?? baseState.session.activeBattleId)
+          : baseState.session.activeBattleId,
+    },
+  };
+}
+
 export function mergeScopedTheaterStateForSessionSlot(
   baseState: GameState,
   scopedState: GameState,
@@ -1331,63 +1480,35 @@ export function mergeScopedTheaterStateForSessionSlot(
   }
 
   const scopedTheaterId = scopedTheater.definition.id;
-  const baseOperation = ensureOperationHasTheater(baseState.operation);
-  const baseActiveTheaterId = baseOperation?.theater?.definition.id ?? null;
-  const shouldPromoteOperationContext = baseActiveTheaterId === scopedTheaterId;
   const scopedBattle = scopedState.currentBattle;
   const hasScopedBattle = scopedBattle?.theaterMeta?.theaterId === scopedTheaterId;
-  const currentContext = baseState.session.activeTheaterContexts[scopedTheaterId];
-  const nextPendingBattleConfirmation = scopedState.session.pendingTheaterBattleConfirmation ?? null;
-  const nextPlayers = {
-    ...baseState.session.players,
-    [slot]: {
-      ...baseState.session.players[slot],
-      currentTheaterId: scopedTheaterId,
-      assignedSquadId: scopedTheater.selectedSquadId ?? baseState.session.players[slot]?.assignedSquadId ?? null,
-      lastSafeRoomId: scopedTheater.currentRoomId ?? baseState.session.players[slot]?.lastSafeRoomId ?? null,
-      stagingState: hasScopedBattle ? "battle" : "theater",
-    },
-  };
-  const nextTheaterAssignments = {
-    ...baseState.session.theaterAssignments,
-    [slot]: {
-      ...baseState.session.theaterAssignments[slot],
-      theaterId: scopedTheaterId,
-      squadId: scopedTheater.selectedSquadId ?? baseState.session.theaterAssignments[slot]?.squadId ?? null,
-      roomId: scopedTheater.currentRoomId ?? baseState.session.theaterAssignments[slot]?.roomId ?? null,
-      stagingState: hasScopedBattle ? "battle" : "theater",
-    },
-  };
-  const nextActiveTheaterContexts = {
-    ...baseState.session.activeTheaterContexts,
-    [scopedTheaterId]: {
-      theaterId: scopedTheaterId,
-      operationId: scopedOperation.id ?? currentContext?.operationId ?? null,
-      snapshot: JSON.stringify(scopedTheater),
-      phase: hasScopedBattle ? "battle" : scopedState.phase,
-      battleSnapshot: hasScopedBattle
-        ? JSON.stringify(scopedBattle)
-        : (currentContext?.battleSnapshot ?? null),
-      pendingTheaterBattleConfirmation: nextPendingBattleConfirmation,
-      updatedAt: Date.now(),
-    },
-  };
-
+  const scopedBattleId = hasScopedBattle ? scopedBattle?.id ?? null : null;
+  const mergedState = mergeTheaterRuntimeState(baseState, scopedState, scopedTheaterId);
   return {
-    ...scopedState,
-    phase: shouldPromoteOperationContext ? scopedState.phase : baseState.phase,
-    currentBattle: shouldPromoteOperationContext && hasScopedBattle ? scopedBattle : baseState.currentBattle,
-    operation: mergeScopedOperationState(baseState, scopedOperation),
+    ...mergedState,
     session: {
-      ...baseState.session,
-      players: nextPlayers,
-      theaterAssignments: nextTheaterAssignments,
-      activeTheaterContexts: nextActiveTheaterContexts,
-      pendingTheaterBattleConfirmation: shouldPromoteOperationContext ? nextPendingBattleConfirmation : baseState.session.pendingTheaterBattleConfirmation,
-      activeBattleId:
-        shouldPromoteOperationContext && hasScopedBattle
-          ? (scopedBattle?.id ?? baseState.session.activeBattleId)
-          : baseState.session.activeBattleId,
+      ...mergedState.session,
+      players: {
+        ...mergedState.session.players,
+        [slot]: {
+          ...mergedState.session.players[slot],
+          currentTheaterId: scopedTheaterId,
+          assignedSquadId: scopedTheater.selectedSquadId ?? mergedState.session.players[slot]?.assignedSquadId ?? null,
+          activeBattleId: scopedBattleId,
+          lastSafeRoomId: scopedTheater.currentRoomId ?? mergedState.session.players[slot]?.lastSafeRoomId ?? null,
+          stagingState: hasScopedBattle ? "battle" : "theater",
+        },
+      },
+      theaterAssignments: {
+        ...mergedState.session.theaterAssignments,
+        [slot]: {
+          ...mergedState.session.theaterAssignments[slot],
+          theaterId: scopedTheaterId,
+          squadId: scopedTheater.selectedSquadId ?? mergedState.session.theaterAssignments[slot]?.squadId ?? null,
+          roomId: scopedTheater.currentRoomId ?? mergedState.session.theaterAssignments[slot]?.roomId ?? null,
+          stagingState: hasScopedBattle ? "battle" : "theater",
+        },
+      },
     },
   };
 }
@@ -1838,14 +1959,6 @@ function applySandboxSlice(
   return applySandboxMigrationAnchors(next);
 }
 
-function hasEnoughResources(resources: ResourceWallet, cost: Partial<ResourceWallet>): boolean {
-  return hasEnoughResourceValues(resources, cost);
-}
-
-function subtractResources(resources: ResourceWallet, cost: Partial<ResourceWallet>): ResourceWallet {
-  return subtractResourceWallet(resources, cost);
-}
-
 function cloneCoreAssignment(assignment: CoreAssignment | null | undefined): CoreAssignment | null {
   if (!assignment) {
     return null;
@@ -2143,6 +2256,53 @@ function sumResourceIncome(theater: TheaterNetworkState, ticks: number): Resourc
 
 function addResources(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
   return addResourceWalletValues(base, delta);
+}
+
+function hasPositiveResourceDelta(delta: Partial<ResourceWallet> | null | undefined): boolean {
+  return RESOURCE_KEYS.some((key) => Number(delta?.[key] ?? 0) > 0);
+}
+
+function toResourceWalletDelta(
+  delta: Partial<Record<keyof ResourceWallet, number>> | null | undefined,
+): ResourceWallet {
+  return createEmptyResourceWallet({
+    metalScrap: Math.max(0, Math.floor(Number(delta?.metalScrap ?? 0))),
+    wood: Math.max(0, Math.floor(Number(delta?.wood ?? 0))),
+    chaosShards: Math.max(0, Math.floor(Number(delta?.chaosShards ?? 0))),
+    steamComponents: Math.max(0, Math.floor(Number(delta?.steamComponents ?? 0))),
+  });
+}
+
+function applyTheaterSessionEconomyForTicks(
+  state: GameState,
+  theater: TheaterNetworkState,
+  ticks: number,
+): { state: GameState; theater: TheaterNetworkState } {
+  const economyTheater = recomputeTheaterNetwork(theater);
+  const wadUpkeep = sumWadUpkeep(economyTheater, ticks);
+  const resourceIncome = toResourceWalletDelta(sumResourceIncome(economyTheater, ticks));
+  const spendResult = wadUpkeep > 0 ? spendSessionCost(state, { wad: wadUpkeep }) : null;
+  let nextState = state;
+  let nextTheater = cloneTheater(theater);
+
+  if (wadUpkeep <= 0 || spendResult?.success) {
+    if (spendResult?.success) {
+      nextState = spendResult.state;
+    }
+    if (hasPositiveResourceDelta(resourceIncome)) {
+      nextState = grantSessionResources(nextState, { resources: resourceIncome });
+    }
+    return { state: nextState, theater: nextTheater };
+  }
+
+  Object.values(nextTheater.rooms).forEach((room) => {
+    if (roomHasAnyCore(room)) {
+      room.underThreat = true;
+      room.damaged = room.damaged || room.fortificationPips.barricade <= 0;
+    }
+  });
+  nextTheater = addTheaterEvent(nextTheater, "UPKEEP :: Wad reserves too low for maintenance. Unsupported C.O.R.E.s are destabilizing.");
+  return { state, theater: nextTheater };
 }
 
 function getObjectiveRoom(theater: TheaterNetworkState): TheaterRoom | null {
@@ -2900,7 +3060,8 @@ function getCoreBattleRewardBonus(theater: TheaterNetworkState, room: TheaterRoo
 
 function autoResolveNonCombatRoom(theater: TheaterNetworkState, roomId: RoomId): TheaterNetworkState {
   const room = theater.rooms[roomId];
-  if (!room || room.secured || (room.clearMode !== "empty" && room.clearMode !== "field")) {
+  // Field-sweep rooms must stay unresolved until the generated field map is completed.
+  if (!room || room.secured || room.clearMode !== "empty") {
     return theater;
   }
 
@@ -2910,9 +3071,7 @@ function autoResolveNonCombatRoom(theater: TheaterNetworkState, roomId: RoomId):
   room.damaged = false;
   room.fortified = getInstalledFortificationCount(room) > 0;
 
-  const logLine = room.clearMode === "field"
-    ? `FIELD SWEEP :: ${room.label} cleared through patrol floors.`
-    : `CLEAR :: ${room.label} checked and secured. No hostile contact.`;
+  const logLine = `CLEAR :: ${room.label} checked and secured. No hostile contact.`;
 
   return syncTheaterKeyInventory(
     collectRoomKeyIfPresent(
@@ -3253,7 +3412,8 @@ export function buildTheaterAnnex(
       message: "Annexes can only be built from secured rooms or live annexes.",
     };
   }
-  if (!hasEnoughResources(state.resources, frame.buildCost)) {
+  const annexSpendResult = spendSessionCost(state, { resources: frame.buildCost });
+  if (!annexSpendResult.success) {
     return {
       state: setTheaterSelectedNode(state, parentNodeId),
       success: false,
@@ -3307,10 +3467,7 @@ export function buildTheaterAnnex(
   console.log("[THEATER] annex built", annexId, "onto", parentNodeId, frameType, edge);
   return {
     state: buildConfiguredTheaterState(
-      {
-        ...state,
-        resources: subtractResources(state.resources, frame.buildCost),
-      },
+      annexSpendResult.state,
       operation,
       nextTheater,
       `ANNEX :: ${frame.displayName} attached to ${nextParent.label} on the ${edge.toUpperCase()} edge.`,
@@ -3353,7 +3510,8 @@ export function upgradeTheaterRoomModuleSlots(state: GameState, roomId: RoomId):
       message: "No further module slot upgrades remain.",
     };
   }
-  if (!hasEnoughResources(state.resources, cost)) {
+  const moduleSlotSpendResult = spendSessionCost(state, { resources: cost });
+  if (!moduleSlotSpendResult.success) {
     return {
       state: setTheaterSelectedRoom(state, roomId),
       success: false,
@@ -3369,10 +3527,7 @@ export function upgradeTheaterRoomModuleSlots(state: GameState, roomId: RoomId):
 
   return {
     state: buildConfiguredTheaterState(
-      {
-        ...state,
-        resources: subtractResources(state.resources, cost),
-      },
+      moduleSlotSpendResult.state,
       operation,
       nextTheater,
       `MODULES :: ${nextRoom.label} gained an additional module slot (${nextRoom.moduleSlotCapacity}/4).`,
@@ -3407,7 +3562,8 @@ export function installTheaterModule(
       message: `${definition.displayName} is still a prototype placeholder.`,
     };
   }
-  if (!hasEnoughResources(state.resources, definition.buildCost)) {
+  const moduleSpendResult = spendSessionCost(state, { resources: definition.buildCost });
+  if (!moduleSpendResult.success) {
     return {
       state: setTheaterSelectedNode(state, nodeId),
       success: false,
@@ -3456,10 +3612,7 @@ export function installTheaterModule(
   console.log("[THEATER] module installed", moduleType, instanceId, "on", nodeId);
   return {
     state: buildConfiguredTheaterState(
-      {
-        ...state,
-        resources: subtractResources(state.resources, definition.buildCost),
-      },
+      moduleSpendResult.state,
       operation,
       nextTheater,
       `AUTOMATION :: ${definition.displayName} installed on ${node.label}.`,
@@ -3600,7 +3753,8 @@ export function installTheaterPartition(
       message: `${definition.displayName} is still locked in the Foundry.`,
     };
   }
-  if (!hasEnoughResources(state.resources, definition.buildCost)) {
+  const partitionSpendResult = spendSessionCost(state, { resources: definition.buildCost });
+  if (!partitionSpendResult.success) {
     return {
       state,
       success: false,
@@ -3632,10 +3786,7 @@ export function installTheaterPartition(
 
   return {
     state: buildConfiguredTheaterState(
-      {
-        ...state,
-        resources: subtractResources(state.resources, definition.buildCost),
-      },
+      partitionSpendResult.state,
       operation,
       nextTheater,
       `PARTITION :: ${definition.displayName} installed between ${fromNode.label} and ${toNode.label}.`,
@@ -3817,25 +3968,9 @@ export function moveToTheaterNode(state: GameState, nodeId: string): TheaterMove
     return path;
   }, []);
 
-  const economyTheater = recomputeTheaterNetwork(theater);
-  const wadUpkeep = sumWadUpkeep(economyTheater, tickCost);
-  const resourceIncome = sumResourceIncome(economyTheater, tickCost);
-  let resources = { ...state.resources };
-  let wad = state.wad ?? 0;
-  let nextTheater = cloneTheater(theater);
-
-  if (wad >= wadUpkeep) {
-    wad -= wadUpkeep;
-    resources = addResources(resources, resourceIncome);
-  } else {
-    Object.values(nextTheater.rooms).forEach((room) => {
-      if (roomHasAnyCore(room)) {
-        room.underThreat = true;
-        room.damaged = room.damaged || room.fortificationPips.barricade <= 0;
-      }
-    });
-    nextTheater = addTheaterEvent(nextTheater, "UPKEEP :: Wad reserves too low for maintenance. Unsupported C.O.R.E.s are destabilizing.");
-  }
+  const economyResolution = applyTheaterSessionEconomyForTicks(state, theater, tickCost);
+  let nextState = economyResolution.state;
+  let nextTheater = economyResolution.theater;
 
   nextTheater.currentRoomId = destinationRootRoomId;
   nextTheater.selectedRoomId = destinationRootRoomId;
@@ -3857,7 +3992,7 @@ export function moveToTheaterNode(state: GameState, nodeId: string): TheaterMove
     nextTheater = autoResolveNonCombatRoom(nextTheater, destinationRootRoomId);
   }
   nextTheater = advanceOccupationObjective(nextTheater, tickCost);
-  let nextState = advanceTheaterRuntimeTicks(state, wad, resources, nextTheater, tickCost);
+  nextState = advanceTheaterRuntimeTicks(nextState, nextTheater, tickCost);
   nextState = recoverOperationalSquadsAtMedicalWards(nextState);
   const runtimeTheater = getPreparedTheaterOperation(nextState)?.theater ?? nextTheater;
   const runtimeDestinationRoom = runtimeTheater.rooms[destinationRootRoomId] ?? destinationRootRoom;
@@ -3874,17 +4009,13 @@ export function moveToTheaterNode(state: GameState, nodeId: string): TheaterMove
   };
 }
 
-function advanceTheaterRuntimeTicks(
+function advanceMountedTheaterRuntimeTicks(
   state: GameState,
-  wad: number,
-  resources: ResourceWallet,
   theater: TheaterNetworkState,
   ticks: number,
 ): GameState {
   let nextState: GameState = {
     ...state,
-    wad,
-    resources,
     phase: "operation",
     operation: state.operation ? resolveOperationFields(state.operation, theater) : state.operation,
   };
@@ -3911,6 +4042,67 @@ function advanceTheaterRuntimeTicks(
   }
 
   return nextState;
+}
+
+function advanceParallelCoopTheaterContexts(
+  state: GameState,
+  activeTheaterId: string,
+  ticks: number,
+): GameState {
+  if (
+    ticks <= 0
+    || state.session.mode !== "coop_operations"
+    || state.session.authorityRole !== "host"
+  ) {
+    return state;
+  }
+
+  const busyTheaterIds = new Set(
+    Object.values(state.session.activeBattleContexts)
+      .map((context) => context.theaterId)
+      .filter((theaterId): theaterId is string => Boolean(theaterId)),
+  );
+
+  return Object.entries(state.session.activeTheaterContexts).reduce((nextState, [theaterId, context]) => {
+    if (
+      theaterId === activeTheaterId
+      || context.phase === "battle"
+      || busyTheaterIds.has(theaterId)
+    ) {
+      return nextState;
+    }
+
+    const runtimeTheater = parseTheaterRuntimeSnapshot(context.snapshot);
+    if (!runtimeTheater) {
+      return nextState;
+    }
+
+    const scopedState: GameState = {
+      ...nextState,
+      phase: "operation",
+      currentBattle: null,
+      operation: nextState.operation
+        ? resolveOperationFields(nextState.operation, runtimeTheater)
+        : nextState.operation,
+      session: {
+        ...nextState.session,
+        pendingTheaterBattleConfirmation: context.pendingTheaterBattleConfirmation ?? null,
+      },
+    };
+
+    let advancedScopedState = advanceMountedTheaterRuntimeTicks(scopedState, runtimeTheater, ticks);
+    advancedScopedState = recoverOperationalSquadsAtMedicalWards(advancedScopedState);
+    return mergeTheaterRuntimeState(nextState, advancedScopedState, theaterId);
+  }, state);
+}
+
+function advanceTheaterRuntimeTicks(
+  state: GameState,
+  theater: TheaterNetworkState,
+  ticks: number,
+): GameState {
+  const mountedState = advanceMountedTheaterRuntimeTicks(state, theater, ticks);
+  return advanceParallelCoopTheaterContexts(mountedState, theater.definition.id, ticks);
 }
 
 export function moveToTheaterRoom(state: GameState, roomId: RoomId): TheaterMoveOutcome {
@@ -4023,26 +4215,10 @@ export function moveToTheaterRoom(state: GameState, roomId: RoomId): TheaterMove
   }
 
   const tickCost = route.slice(1).reduce((total, stepRoomId) => total + getMoveTickCost(theater, stepRoomId), 0);
-  const economyTheater = recomputeTheaterNetwork(theater);
-  const wadUpkeep = sumWadUpkeep(economyTheater, tickCost);
-  const resourceIncome = sumResourceIncome(economyTheater, tickCost);
-  let resources = { ...state.resources };
-  let wad = state.wad ?? 0;
-  let nextTheater = cloneTheater(theater);
+  const economyResolution = applyTheaterSessionEconomyForTicks(state, theater, tickCost);
+  let nextState = economyResolution.state;
+  let nextTheater = economyResolution.theater;
   const destinationRoom = nextTheater.rooms[roomId];
-
-  if (wad >= wadUpkeep) {
-    wad -= wadUpkeep;
-    resources = addResources(resources, resourceIncome);
-  } else {
-    Object.values(nextTheater.rooms).forEach((room) => {
-      if (roomHasAnyCore(room)) {
-        room.underThreat = true;
-        room.damaged = room.damaged || room.fortificationPips.barricade <= 0;
-      }
-    });
-    nextTheater = addTheaterEvent(nextTheater, "UPKEEP :: Wad reserves too low for maintenance. Unsupported C.O.R.E.s are destabilizing.");
-  }
 
   nextTheater.currentRoomId = roomId;
   nextTheater.selectedRoomId = roomId;
@@ -4059,7 +4235,7 @@ export function moveToTheaterRoom(state: GameState, roomId: RoomId): TheaterMove
   }
   nextTheater = autoResolveNonCombatRoom(nextTheater, roomId);
   nextTheater = advanceOccupationObjective(nextTheater, tickCost);
-  let nextState = advanceTheaterRuntimeTicks(state, wad, resources, nextTheater, tickCost);
+  nextState = advanceTheaterRuntimeTicks(nextState, nextTheater, tickCost);
   nextState = recoverOperationalSquadsAtMedicalWards(nextState);
   const nextOperation = getPreparedTheaterOperation(nextState);
   const runtimeTheater = nextOperation?.theater ?? nextTheater;
@@ -4133,25 +4309,9 @@ export function holdPositionInTheater(state: GameState, ticks = 1): TheaterMoveO
     };
   }
 
-  let resources = { ...state.resources };
-  let wad = state.wad ?? 0;
-  let nextTheater = cloneTheater(theater);
-  const economyTheater = recomputeTheaterNetwork(theater);
-  const wadUpkeep = sumWadUpkeep(economyTheater, resolvedTicks);
-  const resourceIncome = sumResourceIncome(economyTheater, resolvedTicks);
-
-  if (wad >= wadUpkeep) {
-    wad -= wadUpkeep;
-    resources = addResources(resources, resourceIncome);
-  } else {
-    Object.values(nextTheater.rooms).forEach((room) => {
-      if (roomHasAnyCore(room)) {
-        room.underThreat = true;
-        room.damaged = room.damaged || room.fortificationPips.barricade <= 0;
-      }
-    });
-    nextTheater = addTheaterEvent(nextTheater, "UPKEEP :: Wad reserves too low for maintenance. Unsupported C.O.R.E.s are destabilizing.");
-  }
+  const economyResolution = applyTheaterSessionEconomyForTicks(state, theater, resolvedTicks);
+  let nextState = economyResolution.state;
+  let nextTheater = economyResolution.theater;
 
   nextTheater.currentRoomId = currentRoom.id;
   nextTheater.selectedRoomId = currentRoom.id;
@@ -4162,7 +4322,7 @@ export function holdPositionInTheater(state: GameState, ticks = 1): TheaterMoveO
     holdingSquad.autoStatus = "holding";
     holdingSquad.autoTargetRoomId = null;
   }
-  let nextState = advanceTheaterRuntimeTicks(state, wad, resources, nextTheater, resolvedTicks);
+  nextState = advanceTheaterRuntimeTicks(nextState, nextTheater, resolvedTicks);
   nextState = recoverOperationalSquadsAtMedicalWards(nextState);
   const nextOperation = getPreparedTheaterOperation(nextState);
   const runtimeTheater = nextOperation?.theater ?? nextTheater;
@@ -5112,7 +5272,8 @@ export function repairTheaterCore(state: GameState, roomId: RoomId): TheaterActi
   }
 
   const repairCost = deriveTheaterCoreRepairCost(room);
-  if (!hasEnoughResources(state.resources, repairCost)) {
+  const repairSpendResult = spendSessionCost(state, { resources: repairCost });
+  if (!repairSpendResult.success) {
     return {
       state,
       success: false,
@@ -5140,9 +5301,8 @@ export function repairTheaterCore(state: GameState, roomId: RoomId): TheaterActi
 
   return {
     state: syncQuestRuntime({
-      ...state,
+      ...repairSpendResult.state,
       phase: "operation",
-      resources: subtractResources(state.resources, repairCost),
       operation: resolveOperationFields(operation, recomputeTheaterNetwork(nextTheater)),
     }),
     success: true,
@@ -5344,13 +5504,11 @@ export function secureTheaterRoomInState(state: GameState, roomId: RoomId, squad
 
   const keyedTheater = syncTheaterKeyInventory(collectRoomKeyIfPresent(theater, roomId));
   const recomputedTheater = recomputeTheaterNetwork(keyedTheater);
-  const resourceBonus = getCoreBattleRewardBonus(recomputedTheater, recomputedTheater.rooms[roomId] ?? room);
-  const nextResources = addResources(state.resources, resourceBonus);
-  let nextState = syncQuestRuntime({
+  const resourceBonus = toResourceWalletDelta(getCoreBattleRewardBonus(recomputedTheater, recomputedTheater.rooms[roomId] ?? room));
+  let nextState = grantSessionResources(syncQuestRuntime({
     ...state,
     phase: "operation",
     currentBattle: null,
-    resources: nextResources,
     operation: resolveOperationFields(
       operation,
       addTheaterEvent(
@@ -5360,6 +5518,8 @@ export function secureTheaterRoomInState(state: GameState, roomId: RoomId, squad
           : `SECURE :: ${room.label} locked down. Logistics paths recalculated.`,
       ),
     ),
+  }), {
+    resources: resourceBonus,
   });
 
   nextState = recoverOperationalSquadsAtMedicalWards(nextState);
@@ -5372,17 +5532,18 @@ export function secureTheaterRoomInState(state: GameState, roomId: RoomId, squad
   if (!operation.theater?.objectiveComplete && completedTheater.objectiveComplete && completedTheater.completion) {
     const completion = completedTheater.completion;
 
-    return syncQuestRuntime({
+    return syncQuestRuntime(grantSessionResources({
       ...nextState,
-      wad: (nextState.wad ?? 0) + completion.reward.wad,
-      resources: addResources(nextState.resources, completion.reward),
       phase: "operation",
       currentBattle: null,
       operation: resolveOperationFields(
         completedOperation,
         completedTheater,
       ),
-    });
+    }, {
+      wad: completion.reward.wad ?? 0,
+      resources: toResourceWalletDelta(completion.reward),
+    }));
   }
 
   return nextState;
@@ -5445,7 +5606,8 @@ export function buildCoreInTheaterRoom(state: GameState, roomId: RoomId, coreTyp
     };
   }
 
-  if (!hasEnoughResources(state.resources, blueprint.buildCost)) {
+  const coreSpendResult = spendSessionCost(state, { resources: blueprint.buildCost });
+  if (!coreSpendResult.success) {
     return {
       state: setTheaterSelectedRoom(state, roomId),
       success: false,
@@ -5474,8 +5636,7 @@ export function buildCoreInTheaterRoom(state: GameState, roomId: RoomId, coreTyp
   return {
     state: {
       ...syncQuestRuntime({
-        ...state,
-        resources: subtractResources(state.resources, blueprint.buildCost),
+        ...coreSpendResult.state,
         phase: "operation",
         operation: resolveOperationFields(
           operation,
@@ -5527,7 +5688,8 @@ export function fortifyTheaterRoom(state: GameState, roomId: RoomId, fortificati
     };
   }
 
-  if (!hasEnoughResources(state.resources, cost)) {
+  const fortifySpendResult = spendSessionCost(state, { resources: cost });
+  if (!fortifySpendResult.success) {
     return {
       state: setTheaterSelectedRoom(state, roomId),
       success: false,
@@ -5561,8 +5723,7 @@ export function fortifyTheaterRoom(state: GameState, roomId: RoomId, fortificati
   return {
     state: {
       ...syncQuestRuntime({
-        ...state,
-        resources: subtractResources(state.resources, cost),
+        ...fortifySpendResult.state,
         phase: "operation",
         operation: resolveOperationFields(
           operation,
@@ -5692,7 +5853,8 @@ export function fabricateFieldAssetInTheaterRoom(
   }
 
   const buildCost = getFieldAssetBuildCost(fieldAssetType);
-  if (!hasEnoughResources(state.resources, buildCost)) {
+  const fieldAssetSpendResult = spendSessionCost(state, { resources: buildCost });
+  if (!fieldAssetSpendResult.success) {
     return {
       state: setTheaterSelectedRoom(state, roomId),
       success: false,
@@ -5723,8 +5885,7 @@ export function fabricateFieldAssetInTheaterRoom(
   return {
     state: {
       ...syncQuestRuntime({
-        ...state,
-        resources: subtractResources(state.resources, buildCost),
+        ...fieldAssetSpendResult.state,
         phase: "operation",
         operation: resolveOperationFields(
           operation,
@@ -6389,11 +6550,10 @@ export function resolveTheaterAutoBattle(
   const resolvedBattle = simulateAutomatedBattle(battle, mode);
   const rewardMultiplier = mode === "undaring" ? 0.7 : 0.9;
   const scaledRewards = scaleBattleRewards(resolvedBattle.rewards, rewardMultiplier);
-  let nextState = {
-    ...state,
-    wad: (state.wad ?? 0) + (scaledRewards?.wad ?? 0),
-    resources: addResources(state.resources, scaledRewards ?? {}),
-  };
+  let nextState = grantSessionResources(state, {
+    wad: scaledRewards?.wad ?? 0,
+    resources: toResourceWalletDelta(scaledRewards),
+  });
   nextState = applyTheaterBattleOutcome(nextState, { ...resolvedBattle, rewards: scaledRewards });
   const nextOperation = getPreparedTheaterOperation(nextState);
   const nextTheater = nextOperation?.theater;

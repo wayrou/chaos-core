@@ -35,16 +35,27 @@ export interface LoadResult {
   success: boolean;
   state?: GameState;
   campaignProgress?: CampaignProgress;
+  sharedCampaignMetadata?: SharedCampaignMetadata;
   error?: string;
+}
+
+export interface SharedCampaignMetadata {
+  version: number;
+  timestamp: number;
+  slot: string;
+  label: string;
+  economyPreset?: string | null;
+  sessionMode?: string | null;
 }
 
 type PersistedSaveState = GameState & {
   _saveMetadata?: {
     version: number;
     timestamp: number;
-    slot: SaveSlot;
+    slot: string;
   };
   _campaignProgressSnapshot?: CampaignProgress;
+  _sharedCampaignMetadata?: SharedCampaignMetadata;
 };
 
 // Save slot constants
@@ -56,6 +67,26 @@ export const SAVE_SLOTS = {
 } as const;
 
 export type SaveSlot = typeof SAVE_SLOTS[keyof typeof SAVE_SLOTS];
+
+export const SHARED_CAMPAIGN_SLOTS = {
+  CAMPAIGN_1: "coop_campaign_1",
+  CAMPAIGN_2: "coop_campaign_2",
+  CAMPAIGN_3: "coop_campaign_3",
+} as const;
+
+export type SharedCampaignSlot = typeof SHARED_CAMPAIGN_SLOTS[keyof typeof SHARED_CAMPAIGN_SLOTS];
+const KNOWN_PERSISTED_SLOTS = [
+  ...Object.values(SAVE_SLOTS),
+  ...Object.values(SHARED_CAMPAIGN_SLOTS),
+] as const;
+
+function isPrimarySaveSlot(slot: string): slot is SaveSlot {
+  return Object.values(SAVE_SLOTS).includes(slot as SaveSlot);
+}
+
+export function isSharedCampaignSlot(slot: string): slot is SharedCampaignSlot {
+  return Object.values(SHARED_CAMPAIGN_SLOTS).includes(slot as SharedCampaignSlot);
+}
 
 // ----------------------------------------------------------------------------
 // TAURI DETECTION
@@ -138,9 +169,9 @@ function localStorageDeleteSave(slot: string): void {
   localStorage.removeItem(STORAGE_META_PREFIX + slot);
 }
 
-function localStorageListSaves(): SaveInfo[] {
+function localStorageListKnownSaves(): SaveInfo[] {
   const saves: SaveInfo[] = [];
-  const slots = Object.values(SAVE_SLOTS);
+  const slots = [...KNOWN_PERSISTED_SLOTS];
   
   for (const slot of slots) {
     if (localStorageHasSave(slot)) {
@@ -176,13 +207,79 @@ function localStorageListSaves(): SaveInfo[] {
 // ----------------------------------------------------------------------------
 
 function extractSavePreview(state: GameState): SavePreview {
+  const echoBattle = state.currentBattle?.modeContext?.kind === "echo"
+    ? state.currentBattle.modeContext.echo ?? null
+    : null;
+  const echoRun = state.echoRun ?? null;
+  const echoOperationName = echoBattle
+    ? `ECHO RUN // STRATUM ${echoBattle.stratum ?? echoRun?.currentStratum ?? 1} // ENCOUNTER ${echoBattle.encounterNumber}`
+    : echoRun
+      ? `ECHO RUN // STRATUM ${echoRun.currentStratum} // ${echoRun.stage.replace(/_/g, " ").toUpperCase()}`
+      : null;
+
   return {
     callsign: state.profile?.callsign ?? "Unknown",
     squadName: state.profile?.squadName ?? "Unknown Squad",
-    operationName: state.operation?.codename ?? "Unknown Operation",
+    operationName: echoOperationName ?? state.operation?.codename ?? "Unknown Operation",
     wad: state.wad ?? 0,
-    partyCount: state.partyUnitIds?.length ?? 0,
+    partyCount: echoRun?.squadUnitIds?.length ?? state.partyUnitIds?.length ?? 0,
   };
+}
+
+function prepareSharedCampaignState(state: GameState, slot: SharedCampaignSlot, label: string, timestamp: number): GameState {
+  return {
+    ...state,
+    lobby: null,
+    session: {
+      ...state.session,
+      sharedCampaignSlot: slot,
+      sharedCampaignLabel: label,
+      sharedCampaignLastSavedAt: timestamp,
+    },
+  };
+}
+
+function buildPersistedState(
+  slot: string,
+  state: GameState,
+  timestamp: number,
+  sharedCampaignMetadata?: SharedCampaignMetadata,
+): PersistedSaveState {
+  return {
+    ...state,
+    _saveMetadata: {
+      version: 1,
+      timestamp,
+      slot,
+    },
+    _campaignProgressSnapshot: loadCampaignProgress(),
+    _sharedCampaignMetadata: sharedCampaignMetadata,
+  };
+}
+
+async function savePersistedSlot(
+  slot: string,
+  state: GameState,
+  sharedCampaignMetadata?: SharedCampaignMetadata,
+): Promise<SaveResult> {
+  try {
+    const timestamp = sharedCampaignMetadata?.timestamp ?? Date.now();
+    const saveData = buildPersistedState(slot, state, timestamp, sharedCampaignMetadata);
+    const json = JSON.stringify(saveData);
+
+    if (isTauriAvailable()) {
+      await tauriSaveGame(slot, json);
+    } else {
+      localStorageSaveGame(slot, json);
+    }
+
+    console.log(`[SAVE] Game saved to slot: ${slot}`);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[SAVE] Failed to save game:`, error);
+    return { success: false, error: errorMsg };
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -193,32 +290,27 @@ function extractSavePreview(state: GameState): SavePreview {
  * Save the game state to a slot
  */
 export async function saveGame(slot: SaveSlot, state: GameState): Promise<SaveResult> {
-  try {
-    const saveData: PersistedSaveState = {
-      ...state,
-      _saveMetadata: {
-        version: 1,
-        timestamp: Date.now(),
-        slot,
-      },
-      _campaignProgressSnapshot: loadCampaignProgress(),
-    };
-    
-    const json = JSON.stringify(saveData);
-    
-    if (isTauriAvailable()) {
-      await tauriSaveGame(slot, json);
-    } else {
-      localStorageSaveGame(slot, json);
-    }
-    
-    console.log(`[SAVE] Game saved to slot: ${slot}`);
-    return { success: true };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[SAVE] Failed to save game:`, error);
-    return { success: false, error: errorMsg };
-  }
+  return savePersistedSlot(slot, state);
+}
+
+export async function saveSharedCampaign(
+  slot: SharedCampaignSlot,
+  state: GameState,
+  options: {
+    label?: string;
+  } = {},
+): Promise<SaveResult> {
+  const timestamp = Date.now();
+  const label = options.label?.trim() || getSharedCampaignSlotName(slot);
+  const sharedCampaignState = prepareSharedCampaignState(state, slot, label, timestamp);
+  return savePersistedSlot(slot, sharedCampaignState, {
+    version: 1,
+    timestamp,
+    slot,
+    label,
+    economyPreset: sharedCampaignState.session.resourceLedger?.preset ?? "shared",
+    sessionMode: sharedCampaignState.session.mode ?? "singleplayer",
+  });
 }
 
 /**
@@ -275,6 +367,39 @@ function migrateCraftedWeapons(state: GameState): void {
 }
 
 export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
+  return loadPersistedSlot(slot);
+}
+
+export async function loadSharedCampaign(slot: SharedCampaignSlot): Promise<LoadResult> {
+  const result = await loadPersistedSlot(slot);
+  if (!result.success || !result.state) {
+    return result;
+  }
+
+  const metadata = result.sharedCampaignMetadata ?? {
+    version: 1,
+    timestamp: Date.now(),
+    slot,
+    label: getSharedCampaignSlotName(slot),
+  };
+
+  return {
+    ...result,
+    state: {
+      ...result.state,
+      lobby: null,
+      session: {
+        ...result.state.session,
+        sharedCampaignSlot: metadata.slot,
+        sharedCampaignLabel: metadata.label,
+        sharedCampaignLastSavedAt: metadata.timestamp,
+      },
+    },
+    sharedCampaignMetadata: metadata,
+  };
+}
+
+async function loadPersistedSlot(slot: string): Promise<LoadResult> {
   try {
     let json: string | null;
     
@@ -290,15 +415,20 @@ export async function loadGame(slot: SaveSlot): Promise<LoadResult> {
     
     const persistedState = JSON.parse(json) as PersistedSaveState;
     const campaignProgress = persistedState._campaignProgressSnapshot ?? createDefaultCampaignProgress();
+    const sharedCampaignMetadata = persistedState._sharedCampaignMetadata;
     delete persistedState._saveMetadata;
     delete persistedState._campaignProgressSnapshot;
-    const state = withNormalizedTheaterDeploymentPresetState(persistedState as GameState);
+    delete persistedState._sharedCampaignMetadata;
+    const state = withNormalizedTheaterDeploymentPresetState({
+      ...(persistedState as GameState),
+      echoRun: (persistedState as GameState).echoRun ?? null,
+    });
     
     // Run migration for old crafted weapons
     migrateCraftedWeapons(state);
     
     console.log(`[LOAD] Game loaded from slot: ${slot}`);
-    return { success: true, state, campaignProgress };
+    return { success: true, state, campaignProgress, sharedCampaignMetadata };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
     console.error(`[LOAD] Failed to load game:`, error);
@@ -316,6 +446,17 @@ export async function hasSave(slot: SaveSlot): Promise<boolean> {
     } else {
       return localStorageHasSave(slot);
     }
+  } catch {
+    return false;
+  }
+}
+
+export async function hasSharedCampaignSave(slot: SharedCampaignSlot): Promise<boolean> {
+  try {
+    if (isTauriAvailable()) {
+      return await tauriHasSave(slot);
+    }
+    return localStorageHasSave(slot);
   } catch {
     return false;
   }
@@ -345,22 +486,41 @@ export async function deleteSave(slot: SaveSlot): Promise<SaveResult> {
  * List all available saves with their info
  */
 export async function listSaves(): Promise<SaveInfo[]> {
+  return listFilteredSaves(
+    (slot) => isPrimarySaveSlot(slot),
+    async (slot) => loadPersistedSlot(slot),
+  );
+}
+
+export async function listSharedCampaignSaves(): Promise<SaveInfo[]> {
+  return listFilteredSaves(
+    (slot) => isSharedCampaignSlot(slot),
+    async (slot) => loadPersistedSlot(slot),
+  );
+}
+
+async function listFilteredSaves(
+  predicate: (slot: string) => boolean,
+  loader: (slot: string) => Promise<LoadResult>,
+): Promise<SaveInfo[]> {
   try {
     let saves: SaveInfo[];
     
     if (isTauriAvailable()) {
       saves = await tauriListSaves();
-      for (const save of saves) {
-        const result = await loadGame(save.slot as SaveSlot);
-        if (result.success && result.state) {
-          save.preview = extractSavePreview(result.state);
-        }
-      }
     } else {
-      saves = localStorageListSaves();
+      saves = localStorageListKnownSaves();
+    }
+
+    const filtered = saves.filter((save) => predicate(save.slot));
+    for (const save of filtered) {
+      const result = await loader(save.slot);
+      if (result.success && result.state) {
+        save.preview = extractSavePreview(result.state);
+      }
     }
     
-    return saves;
+    return filtered.sort((a, b) => b.timestamp - a.timestamp);
   } catch (error) {
     console.error(`[LIST] Failed to list saves:`, error);
     return [];
@@ -403,6 +563,10 @@ let autosaveTimer: number | null = null;
 let autosaveEnabled = true;
 let autosaveStateGetter: (() => GameState) | null = null;
 const AUTOSAVE_INTERVAL = 60000; // 1 minute
+let sharedCampaignAutosaveTimer: number | null = null;
+let sharedCampaignAutosaveStateGetter: (() => GameState) | null = null;
+let sharedCampaignAutosaveSlotGetter: (() => SharedCampaignSlot | null) | null = null;
+const SHARED_CAMPAIGN_AUTOSAVE_INTERVAL = 60000; // 1 minute
 
 /**
  * Enable autosave with the given state getter
@@ -466,6 +630,62 @@ export function isAutosaveEnabled(): boolean {
   return autosaveEnabled;
 }
 
+export function enableSharedCampaignAutosave(
+  getState: () => GameState,
+  getSlot: () => SharedCampaignSlot | null,
+  onSaved?: (info: { slot: SharedCampaignSlot; timestamp: number }) => void | Promise<void>,
+): void {
+  sharedCampaignAutosaveStateGetter = getState;
+  sharedCampaignAutosaveSlotGetter = getSlot;
+
+  if (sharedCampaignAutosaveTimer !== null) {
+    clearInterval(sharedCampaignAutosaveTimer);
+  }
+
+  sharedCampaignAutosaveTimer = window.setInterval(async () => {
+    if (!sharedCampaignAutosaveStateGetter || !sharedCampaignAutosaveSlotGetter) {
+      return;
+    }
+    const slot = sharedCampaignAutosaveSlotGetter();
+    const state = sharedCampaignAutosaveStateGetter();
+    if (
+      !slot
+      || state.session.mode !== "coop_operations"
+      || state.session.authorityRole !== "host"
+    ) {
+      return;
+    }
+    const result = await saveSharedCampaign(slot, state, {
+      label: state.session.sharedCampaignLabel ?? getSharedCampaignSlotName(slot),
+    });
+    if (result.success && onSaved) {
+      await onSaved({
+        slot,
+        timestamp: Date.now(),
+      });
+    }
+  }, SHARED_CAMPAIGN_AUTOSAVE_INTERVAL);
+}
+
+export function disableSharedCampaignAutosave(): void {
+  if (sharedCampaignAutosaveTimer !== null) {
+    clearInterval(sharedCampaignAutosaveTimer);
+    sharedCampaignAutosaveTimer = null;
+  }
+  sharedCampaignAutosaveStateGetter = null;
+  sharedCampaignAutosaveSlotGetter = null;
+}
+
+export async function triggerSharedCampaignAutosave(state: GameState): Promise<SaveResult> {
+  const slot = state.session.sharedCampaignSlot;
+  if (!slot || !isSharedCampaignSlot(slot)) {
+    return { success: false, error: "No shared campaign slot is active" };
+  }
+  return saveSharedCampaign(slot, state, {
+    label: state.session.sharedCampaignLabel ?? getSharedCampaignSlotName(slot),
+  });
+}
+
 // ----------------------------------------------------------------------------
 // HELPERS
 // ----------------------------------------------------------------------------
@@ -511,6 +731,19 @@ export function getSaveSlotName(slot: SaveSlot): string {
       return "Save Slot 2";
     case SAVE_SLOTS.MANUAL_3:
       return "Save Slot 3";
+    default:
+      return slot;
+  }
+}
+
+export function getSharedCampaignSlotName(slot: SharedCampaignSlot): string {
+  switch (slot) {
+    case SHARED_CAMPAIGN_SLOTS.CAMPAIGN_1:
+      return "Shared Campaign 1";
+    case SHARED_CAMPAIGN_SLOTS.CAMPAIGN_2:
+      return "Shared Campaign 2";
+    case SHARED_CAMPAIGN_SLOTS.CAMPAIGN_3:
+      return "Shared Campaign 3";
     default:
       return slot;
   }

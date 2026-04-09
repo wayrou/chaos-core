@@ -54,7 +54,8 @@ import {
   markOuterDeckNpcEncounterSeen,
   setOuterDeckCurrentSubarea,
 } from "../core/outerDecks";
-import { addResourceWallet, createEmptyResourceWallet } from "../core/resources";
+import { createEmptyResourceWallet } from "../core/resources";
+import { grantSessionResources } from "../core/session";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import { showSystemPing } from "../ui/components/systemPing";
 
@@ -77,10 +78,9 @@ function applyOuterDeckRewardBundle(
     return;
   }
 
-  updateGameState((state) => ({
-    ...state,
-    wad: Math.max(0, Number(state.wad ?? 0)) + wad,
-    resources: addResourceWallet(state.resources, nextResources),
+  updateGameState((state) => grantSessionResources(state, {
+    wad,
+    resources: nextResources,
   }));
 }
 
@@ -119,6 +119,18 @@ async function showFieldInteractionAlert(message: string): Promise<void> {
     title: "FIELD NOTICE",
     message,
     mount: () => document.querySelector(".field-root"),
+  });
+}
+
+function showFieldTravelPing(title: string, message: string, detail?: string): void {
+  showSystemPing({
+    type: "info",
+    title,
+    message,
+    detail,
+    durationMs: 2800,
+    channel: "field-auto-travel",
+    replaceChannel: true,
   });
 }
 
@@ -342,20 +354,30 @@ export async function handleInteraction(
       }
 
       if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
           setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE);
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
-        });
+        } catch (error) {
+          console.error("[FIELD] Failed to enter Outer Deck overworld:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "Outer Deck route failed to initialize.");
+          onResume();
+        }
         break;
       }
 
       if (zone.metadata?.handlerId === "outer_deck_return_to_haven") {
         const nextState = abortOuterDeckExpedition(getGameState());
         updateGameState(() => nextState);
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
           setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
           renderFieldScreen("base_camp");
-        });
+        } catch (error) {
+          console.error("[FIELD] Failed to return from Outer Decks:", error);
+          showFieldTravelPing("RETURN BLOCKED", "HAVEN access failed to resolve.");
+          onResume();
+        }
         break;
       }
 
@@ -367,7 +389,11 @@ export async function handleInteraction(
         }
 
         if (!isOuterDeckZoneUnlocked(zoneId, loadCampaignProgress())) {
-          await showFieldInteractionAlert(typeof zone.metadata?.lockedMessage === "string" ? zone.metadata.lockedMessage : getOuterDeckZoneLockedMessage(zoneId));
+          showFieldTravelPing(
+            "GATE SEALED",
+            typeof zone.metadata?.lockedMessage === "string" ? zone.metadata.lockedMessage : getOuterDeckZoneLockedMessage(zoneId),
+            "Advance deeper in theater operations to unlock this route.",
+          );
           onResume();
           break;
         }
@@ -375,11 +401,16 @@ export async function handleInteraction(
         const nextState = beginOuterDeckExpedition(getGameState(), zoneId);
         updateGameState(() => nextState);
 
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
           const entrySubarea = getOuterDeckBranchEntrySubarea(zoneId);
           setNextFieldSpawnOverrideTile(entrySubarea.mapId, { x: 3, y: 6, facing: "east" });
           renderFieldScreen(entrySubarea.mapId as any);
-        });
+        } catch (error) {
+          console.error("[FIELD] Failed to enter Outer Deck branch:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "The branch route failed to initialize.");
+          onResume();
+        }
         break;
       }
 
@@ -395,7 +426,10 @@ export async function handleInteraction(
         }
 
         if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
-          await showFieldInteractionAlert("Clear the current subarea before advancing deeper into the Outer Decks.");
+          showFieldTravelPing(
+            "ROUTE BLOCKED",
+            "Clear the current subarea before advancing deeper into the Outer Decks.",
+          );
           onResume();
           break;
         }
@@ -403,7 +437,8 @@ export async function handleInteraction(
         const nextState = setOuterDeckCurrentSubarea(state, targetSubareaId);
         updateGameState(() => nextState);
 
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
           const targetSubarea = getGameState().outerDecks?.activeExpedition?.subareas.find((subarea) => subarea.id === targetSubareaId) ?? null;
           const targetMapId = targetSubarea?.mapId ?? targetSubareaId;
           const returning = currentSubarea.returnToSubareaId === targetSubareaId;
@@ -411,7 +446,11 @@ export async function handleInteraction(
             ? { x: 18, y: 6, facing: "west" }
             : { x: 3, y: 6, facing: "east" });
           renderFieldScreen(targetMapId as any);
-        });
+        } catch (error) {
+          console.error("[FIELD] Failed to transition Outer Deck subarea:", error);
+          showFieldTravelPing("ROUTE BLOCKED", "The next subarea failed to initialize.");
+          onResume();
+        }
         break;
       }
 
@@ -467,7 +506,8 @@ export async function handleInteraction(
         const completionResult = claimOuterDeckCompletion(getGameState());
         updateGameState(() => completionResult.state);
 
-        import("./FieldScreen").then(({ renderFieldScreen, setNextFieldSpawnOverrideTile }) => {
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
           const zoneId = zone.metadata?.zoneId as any;
           const returnSpawn = zoneId ? getOuterDeckOverworldReturnSpawn(zoneId) : OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE;
           setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, returnSpawn);
@@ -482,7 +522,11 @@ export async function handleInteraction(
             channel: "outer-deck-complete",
             replaceChannel: true,
           });
-        });
+        } catch (error) {
+          console.error("[FIELD] Failed to return to Outer Deck overworld:", error);
+          showFieldTravelPing("RETURN BLOCKED", "Recovery route failed to initialize.");
+          onResume();
+        }
         break;
       }
 

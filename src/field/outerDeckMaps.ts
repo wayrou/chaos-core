@@ -23,12 +23,13 @@ import { getGameState } from "../state/gameStore";
 import type { GameState } from "../core/types";
 import type { FieldMap, FieldObject, InteractionZone } from "./types";
 
-const OVERWORLD_WIDTH = 70;
-const OVERWORLD_HEIGHT = 45;
-const HAVEN_FOOTPRINT_LEFT = 10;
-const HAVEN_FOOTPRINT_TOP = 10;
+const OVERWORLD_WIDTH = 140;
+const OVERWORLD_HEIGHT = 90;
 const HAVEN_FOOTPRINT_WIDTH = 50;
 const HAVEN_FOOTPRINT_HEIGHT = 25;
+const HAVEN_FOOTPRINT_LEFT = Math.floor((OVERWORLD_WIDTH - HAVEN_FOOTPRINT_WIDTH) / 2);
+const HAVEN_FOOTPRINT_TOP = Math.floor((OVERWORLD_HEIGHT - HAVEN_FOOTPRINT_HEIGHT) / 2);
+const HAVEN_RING_MARGIN = 8;
 const BRANCH_WIDTH = 22;
 const BRANCH_HEIGHT = 14;
 
@@ -217,6 +218,92 @@ function buildEnemyObjects(subarea: OuterDeckSubareaSpec): FieldObject[] {
         speed: 90,
         aggroRange: 240,
         drops: buildEnemyReward(subarea.zoneId, index),
+      },
+    };
+  });
+}
+
+type OverworldPlaceholderEnemySpec = {
+  id: string;
+  zoneId: OuterDeckZoneId;
+  x: number;
+  y: number;
+  enemyKind: string;
+  hp?: number;
+  speed?: number;
+  aggroRange?: number;
+};
+
+type OverworldSalvageSpec = {
+  id: string;
+  zoneId: OuterDeckZoneId;
+  x: number;
+  y: number;
+  name: string;
+  amount?: number;
+};
+
+const OVERWORLD_PLACEHOLDER_ENEMIES: OverworldPlaceholderEnemySpec[] = [
+  { id: "outer_deck_overworld_enemy_north_a", zoneId: "counterweight_shaft", x: 66, y: 16, enemyKind: "maintenance_drone" },
+  { id: "outer_deck_overworld_enemy_north_b", zoneId: "counterweight_shaft", x: 73, y: 23, enemyKind: "climbing_scavenger" },
+  { id: "outer_deck_overworld_enemy_east_a", zoneId: "outer_scaffold", x: 111, y: 41, enemyKind: "sentry_construct" },
+  { id: "outer_deck_overworld_enemy_east_b", zoneId: "outer_scaffold", x: 122, y: 48, enemyKind: "scavenger_sniper" },
+  { id: "outer_deck_overworld_enemy_south_a", zoneId: "drop_bay", x: 64, y: 71, enemyKind: "cargo_looter" },
+  { id: "outer_deck_overworld_enemy_south_b", zoneId: "drop_bay", x: 76, y: 76, enemyKind: "industrial_construct" },
+  { id: "outer_deck_overworld_enemy_west_a", zoneId: "supply_intake_port", x: 18, y: 41, enemyKind: "sort_bot" },
+  { id: "outer_deck_overworld_enemy_west_b", zoneId: "supply_intake_port", x: 27, y: 48, enemyKind: "smuggler_runner" },
+];
+
+const OVERWORLD_EXTRA_SALVAGE: OverworldSalvageSpec[] = [
+  { id: "outer_deck_overworld_salvage_north_inner", zoneId: "counterweight_shaft", x: 61, y: 20, name: "Shaft Couplings" },
+  { id: "outer_deck_overworld_salvage_north_outer", zoneId: "counterweight_shaft", x: 78, y: 27, name: "Lift Bearings" },
+  { id: "outer_deck_overworld_salvage_east_inner", zoneId: "outer_scaffold", x: 106, y: 47, name: "Relay Cable" },
+  { id: "outer_deck_overworld_salvage_east_outer", zoneId: "outer_scaffold", x: 127, y: 39, name: "Rigging Spool" },
+  { id: "outer_deck_overworld_salvage_south_inner", zoneId: "drop_bay", x: 60, y: 78, name: "Freight Latch" },
+  { id: "outer_deck_overworld_salvage_south_outer", zoneId: "drop_bay", x: 80, y: 69, name: "Cargo Scrap Bin" },
+  { id: "outer_deck_overworld_salvage_west_inner", zoneId: "supply_intake_port", x: 14, y: 46, name: "Sorter Parts" },
+  { id: "outer_deck_overworld_salvage_west_outer", zoneId: "supply_intake_port", x: 31, y: 40, name: "Supply Canister" },
+];
+
+function formatEnemyLabel(enemyKind: string): string {
+  return enemyKind.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
+}
+
+function buildOverworldEnemyObjects(): FieldObject[] {
+  return OVERWORLD_PLACEHOLDER_ENEMIES.map((enemy, index) => ({
+    id: enemy.id,
+    x: enemy.x,
+    y: enemy.y,
+    width: 1,
+    height: 1,
+    type: "enemy",
+    sprite: "field_enemy",
+    metadata: {
+      name: formatEnemyLabel(enemy.enemyKind),
+      enemyKind: enemy.enemyKind,
+      hp: enemy.hp ?? 4,
+      speed: enemy.speed ?? 84,
+      aggroRange: enemy.aggroRange ?? 224,
+      drops: buildEnemyReward(enemy.zoneId, index % 2),
+    },
+  }));
+}
+
+function buildOverworldSalvageObjects(): FieldObject[] {
+  return OVERWORLD_EXTRA_SALVAGE.map((salvage) => {
+    const salvageSpec = getZoneSalvageResourceSpec(salvage.zoneId, "overworld");
+    return {
+      id: salvage.id,
+      x: salvage.x,
+      y: salvage.y,
+      width: 1,
+      height: 1,
+      type: "resource",
+      sprite: "resource",
+      metadata: {
+        ...salvageSpec,
+        amount: salvage.amount ?? salvageSpec.amount,
+        name: salvage.name,
       },
     };
   });
@@ -489,13 +576,35 @@ function createOverworldTiles(): FieldMap["tiles"] {
   const tiles = createTiles(OVERWORLD_WIDTH, OVERWORLD_HEIGHT, "dirt");
 
   fillRect(tiles, 1, 1, OVERWORLD_WIDTH - 2, OVERWORLD_HEIGHT - 2, true, "stone");
-  fillRect(tiles, HAVEN_FOOTPRINT_LEFT, HAVEN_FOOTPRINT_TOP, HAVEN_FOOTPRINT_WIDTH, HAVEN_FOOTPRINT_HEIGHT, false, "wall");
-  fillRect(tiles, 30, 1, 10, 8, true, "floor");
-  fillRect(tiles, 30, 35, 10, 9, true, "floor");
-  fillRect(tiles, 1, 18, 9, 9, true, "floor");
-  fillRect(tiles, 60, 18, 9, 9, true, "floor");
-  fillRect(tiles, 8, 8, 54, 29, true, "floor");
-  fillRect(tiles, 14, 14, 42, 17, true, "stone");
+  fillRect(
+    tiles,
+    HAVEN_FOOTPRINT_LEFT - HAVEN_RING_MARGIN,
+    HAVEN_FOOTPRINT_TOP - HAVEN_RING_MARGIN,
+    HAVEN_FOOTPRINT_WIDTH + (HAVEN_RING_MARGIN * 2),
+    HAVEN_FOOTPRINT_HEIGHT + (HAVEN_RING_MARGIN * 2),
+    true,
+    "floor",
+  );
+  fillRect(tiles, 64, 1, 12, HAVEN_FOOTPRINT_TOP - 1, true, "floor");
+  fillRect(
+    tiles,
+    64,
+    HAVEN_FOOTPRINT_TOP + HAVEN_FOOTPRINT_HEIGHT,
+    12,
+    OVERWORLD_HEIGHT - (HAVEN_FOOTPRINT_TOP + HAVEN_FOOTPRINT_HEIGHT) - 1,
+    true,
+    "floor",
+  );
+  fillRect(tiles, 1, 42, HAVEN_FOOTPRINT_LEFT - 1, 6, true, "floor");
+  fillRect(
+    tiles,
+    HAVEN_FOOTPRINT_LEFT + HAVEN_FOOTPRINT_WIDTH,
+    42,
+    OVERWORLD_WIDTH - (HAVEN_FOOTPRINT_LEFT + HAVEN_FOOTPRINT_WIDTH) - 1,
+    6,
+    true,
+    "floor",
+  );
   fillRect(tiles, HAVEN_FOOTPRINT_LEFT, HAVEN_FOOTPRINT_TOP, HAVEN_FOOTPRINT_WIDTH, HAVEN_FOOTPRINT_HEIGHT, false, "wall");
   return tiles;
 }
@@ -516,7 +625,7 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_counterweight_gate",
-      x: 34,
+      x: 69,
       y: 3,
       width: 2,
       height: 2,
@@ -526,8 +635,8 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_scaffold_gate",
-      x: 63,
-      y: 21,
+      x: 133,
+      y: 44,
       width: 2,
       height: 2,
       type: "station",
@@ -536,8 +645,8 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_drop_gate",
-      x: 34,
-      y: 39,
+      x: 69,
+      y: 84,
       width: 2,
       height: 2,
       type: "station",
@@ -547,27 +656,19 @@ function createOuterDeckOverworldMap(): FieldMap {
     {
       id: "outer_deck_overworld_intake_gate",
       x: 5,
-      y: 21,
+      y: 44,
       width: 2,
       height: 2,
       type: "station",
       sprite: "bulkhead",
       metadata: { name: "Supply Intake Port Gate" },
     },
-    {
-      id: "outer_deck_overworld_haven_core",
-      x: HAVEN_FOOTPRINT_LEFT,
-      y: HAVEN_FOOTPRINT_TOP,
-      width: HAVEN_FOOTPRINT_WIDTH,
-      height: HAVEN_FOOTPRINT_HEIGHT,
-      type: "decoration",
-      sprite: "bulkhead",
-      metadata: { name: "HAVEN SUPERSTRUCTURE" },
-    },
+    ...buildOverworldEnemyObjects(),
+    ...buildOverworldSalvageObjects(),
     {
       id: "outer_deck_overworld_salvage_nw",
-      x: 18,
-      y: 7,
+      x: HAVEN_FOOTPRINT_LEFT - 18,
+      y: HAVEN_FOOTPRINT_TOP - 10,
       width: 1,
       height: 1,
       type: "resource",
@@ -579,8 +680,8 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_salvage_ne",
-      x: 51,
-      y: 7,
+      x: HAVEN_FOOTPRINT_LEFT + HAVEN_FOOTPRINT_WIDTH + 17,
+      y: HAVEN_FOOTPRINT_TOP - 10,
       width: 1,
       height: 1,
       type: "resource",
@@ -592,8 +693,8 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_salvage_sw",
-      x: 18,
-      y: 36,
+      x: HAVEN_FOOTPRINT_LEFT - 18,
+      y: HAVEN_FOOTPRINT_TOP + HAVEN_FOOTPRINT_HEIGHT + 10,
       width: 1,
       height: 1,
       type: "resource",
@@ -605,8 +706,8 @@ function createOuterDeckOverworldMap(): FieldMap {
     },
     {
       id: "outer_deck_overworld_salvage_se",
-      x: 51,
-      y: 36,
+      x: HAVEN_FOOTPRINT_LEFT + HAVEN_FOOTPRINT_WIDTH + 17,
+      y: HAVEN_FOOTPRINT_TOP + HAVEN_FOOTPRINT_HEIGHT + 10,
       width: 1,
       height: 1,
       type: "resource",

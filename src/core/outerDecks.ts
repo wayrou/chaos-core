@@ -95,9 +95,9 @@ export const OUTER_DECK_HAVEN_EXIT_OBJECT_ID = "haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_ZONE_ID = "interact_haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 23, y: 21 };
 export const OUTER_DECK_HAVEN_EXIT_SPAWN_TILE = { x: 24, y: 21, facing: "south" as const };
-export const OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE = { x: 35, y: 38, facing: "south" as const };
+export const OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE = { x: 70, y: 60, facing: "south" as const };
 export const OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID = "outer_deck_overworld_return_haven";
-export const OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE = { x: 34, y: 35 };
+export const OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE = { x: 69, y: 57 };
 
 const OUTER_DECK_ZONE_ORDER: OuterDeckZoneId[] = [
   "counterweight_shaft",
@@ -111,20 +111,20 @@ const OUTER_DECK_OVERWORLD_BRANCH_SPAWNS: Record<
   { gateTile: { x: number; y: number }; returnSpawn: { x: number; y: number; facing: "north" | "south" | "east" | "west" } }
 > = {
   counterweight_shaft: {
-    gateTile: { x: 34, y: 3 },
-    returnSpawn: { x: 35, y: 7, facing: "south" },
+    gateTile: { x: 69, y: 3 },
+    returnSpawn: { x: 70, y: 7, facing: "south" },
   },
   outer_scaffold: {
-    gateTile: { x: 63, y: 21 },
-    returnSpawn: { x: 59, y: 22, facing: "west" },
+    gateTile: { x: 133, y: 44 },
+    returnSpawn: { x: 129, y: 45, facing: "west" },
   },
   drop_bay: {
-    gateTile: { x: 34, y: 39 },
-    returnSpawn: { x: 35, y: 37, facing: "north" },
+    gateTile: { x: 69, y: 84 },
+    returnSpawn: { x: 70, y: 80, facing: "north" },
   },
   supply_intake_port: {
-    gateTile: { x: 5, y: 21 },
-    returnSpawn: { x: 9, y: 22, facing: "east" },
+    gateTile: { x: 5, y: 44 },
+    returnSpawn: { x: 10, y: 45, facing: "east" },
   },
 };
 

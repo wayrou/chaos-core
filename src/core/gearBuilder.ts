@@ -11,6 +11,7 @@ import { GameState } from "./types";
 import { createSeededRNG, generateSeed, randomInt } from "./rng";
 import { createGenerationContext, generateEndlessGearFromRecipe } from "./endlessGear/generateEndlessGear";
 import { CraftingMaterialId } from "./endlessGear/types";
+import { getLocalSessionPlayerSlot, getSessionResourcePool } from "./session";
 
 interface BuildCost {
   metalScrap: number;
@@ -200,7 +201,7 @@ export function canAffordChaoticBuild(chassisId: string, state: GameState): bool
 }
 
 function hasRequiredResources(cost: BuildCost, state: GameState): boolean {
-  const resources = state.resources;
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
   return resources.metalScrap >= cost.metalScrap &&
     resources.wood >= cost.wood &&
     resources.chaosShards >= cost.chaosShards &&

@@ -25,7 +25,7 @@ import {
   updateCompanionFetch,
   updateCompanionFollow,
 } from "./companion";
-import { hasLiveFieldEnemies, isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
+import { isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
 import { showDialogue, showNpcDialogue } from "../ui/screens/DialogueScreen";
 import {
@@ -46,6 +46,7 @@ import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
 import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import {
   NETWORK_PLAYER_SLOTS,
+  SESSION_PLAYER_SLOTS,
   type BaseCampLayoutLoadout,
   type BaseCampPinnedItemFrame,
   type LobbyState,
@@ -73,7 +74,6 @@ import {
   isStableNodeUnlocked,
 } from "../core/campaign";
 import {
-  addResourceWallet,
   BASIC_RESOURCE_KEYS,
   createEmptyResourceWallet,
   getResourceEntries,
@@ -96,6 +96,7 @@ import {
 import {
   canPlayerUseFieldAction,
   getFieldActionRestrictionMessage,
+  grantSessionResources,
   getPlayerControllerLabel,
   isLocalCoopActive,
 } from "../core/session";
@@ -109,7 +110,7 @@ import {
 import { getActiveQuests, initializeQuestState, updateQuestProgress } from "../quests/questManager";
 import { renderQuestTrackerWidget } from "../ui/components/questTrackerWidget";
 import { showSystemPing } from "../ui/components/systemPing";
-import { playPlaceholderSfx, setMusicCue } from "../core/audioSystem";
+import { playNamedAudioHook, playPlaceholderSfx, setMusicCue } from "../core/audioSystem";
 import {
   subscribeToFeedback,
   triggerFeedback,
@@ -155,6 +156,7 @@ import {
 import {
   getOuterDeckSubareaByMapId,
   isOuterDeckBranchMap,
+  isOuterDeckOverworldMap,
   isOuterDeckSubareaCleared,
   markOuterDeckSubareaCleared,
 } from "../core/outerDecks";
@@ -178,6 +180,7 @@ let movementInput = {
 
 let activeInteractionPrompt: string | null = null;
 let activeAutoInteractionZoneKey: string | null = null;
+let suppressedAutoInteractionZoneKey: string | null = null;
 type FieldControllerActionSnapshot = {
   interact: boolean;
   attack: boolean;
@@ -259,8 +262,30 @@ function getFieldAttackCooldown(): number {
   return Math.max(BOWBLADE_MIN_ATTACK_CYCLE_MS, FIELD_ATTACK_COOLDOWN + bowbladeFieldProfile.attackCooldownDelta);
 }
 
+function getLocallyRelevantFieldEnemies(): FieldEnemy[] {
+  const liveEnemies = (fieldState?.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0);
+  if (!currentMap || !isOuterDeckOverworldMap(currentMap.id)) {
+    return liveEnemies;
+  }
+
+  const activeAvatarPositions = (["P1", "P2"] as PlayerId[])
+    .map((playerId) => getGameState().players[playerId])
+    .filter((player) => Boolean(player?.active && player.avatar))
+    .map((player) => player!.avatar!)
+    .map((avatar) => ({ x: avatar.x, y: avatar.y }));
+
+  if (activeAvatarPositions.length === 0 && fieldState?.player) {
+    activeAvatarPositions.push({ x: fieldState.player.x, y: fieldState.player.y });
+  }
+
+  return liveEnemies.filter((enemy) => activeAvatarPositions.some((avatar) => (
+    Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y)
+    <= Math.max(FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS, enemy.aggroRange + 48)
+  )));
+}
+
 function isFieldCombatActive(): boolean {
-  return hasLiveFieldEnemies(fieldState?.fieldEnemies ?? []);
+  return getLocallyRelevantFieldEnemies().length > 0;
 }
 
 function getUncollectedFieldResourceObjects(): Array<FieldMap["objects"][number]> {
@@ -320,6 +345,8 @@ let lastFieldPromptSignature: string | null = null;
 let lastFieldStepSample: { x: number; y: number } | null = null;
 let fieldStepDistanceAccumulator = 0;
 let fieldStepPulseUntilMs = 0;
+let lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
+let lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
 let havenBuildModeActive = false;
 let havenBuildResumePaused = false;
 let havenBuildCameraCenter: { x: number; y: number } | null = null;
@@ -346,6 +373,7 @@ let havenBuildDragState: {
   latestY: number;
   valid: boolean;
 } | null = null;
+const fieldTileHtmlCache = new WeakMap<FieldMap, string>();
 
 type HavenBuildObjectMeta =
   | {
@@ -414,6 +442,7 @@ const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
 const FIELD_PLAYER_MAX_HP = 100;
+const FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS = 320;
 const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
 const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
@@ -422,6 +451,9 @@ const FIELD_CAMERA_SMOOTHING = 0.2;
 const FIELD_FOOTSTEP_DISTANCE = 82;
 const FIELD_DASH_FOOTSTEP_DISTANCE = 56;
 const FIELD_STEP_PULSE_DURATION_MS = 150;
+const FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS = 180;
+const FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS = 900;
+const FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS = 520;
 const HAVEN_BUILD_PAN_SPEED = 720;
 const HAVEN_BUILD_PAN_FAST_MULTIPLIER = 2.25;
 
@@ -455,6 +487,30 @@ function resetFieldFeedbackState(): void {
   lastFieldStepSample = null;
   fieldStepDistanceAccumulator = 0;
   fieldStepPulseUntilMs = 0;
+  lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
+  lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
+}
+
+function playSableBark(currentTime: number, reason: "attack" | "pickup"): void {
+  const barkCooldownMs = reason === "pickup"
+    ? FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS
+    : FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS;
+  if (currentTime - lastSableBarkAudioAtMs < barkCooldownMs) {
+    return;
+  }
+
+  lastSableBarkAudioAtMs = currentTime;
+  playNamedAudioHook("sable_bark");
+}
+
+function playSableAttackFeedback(currentTime: number): void {
+  if (currentTime - lastSableAttackAudioAtMs >= FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS) {
+    lastSableAttackAudioAtMs = currentTime;
+    playNamedAudioHook("sable_attack");
+  }
+
+  // Let Sable punctuate her work with a bark without turning rapid field loops into constant chatter.
+  playSableBark(currentTime, "attack");
 }
 
 function getFieldOverlayRoot(): HTMLElement | null {
@@ -608,6 +664,14 @@ function syncFieldPromptOverlay(promptText: string | null): void {
   }
 
   promptEl.textContent = promptText;
+  const promptAnchor = getFieldInteractionPromptOverlayPoint(promptEl);
+  if (promptAnchor) {
+    promptEl.style.left = `${promptAnchor.x}px`;
+    promptEl.style.top = `${promptAnchor.y}px`;
+  } else {
+    promptEl.style.removeProperty("left");
+    promptEl.style.removeProperty("top");
+  }
   overlay.classList.add("field-prompt-overlay--active");
 
   if (lastFieldPromptSignature !== promptText) {
@@ -1331,9 +1395,18 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
             ${connectedSlots.map((slot) => `
               <label class="network-lobby-coop-slot">
                 <input type="checkbox" data-lobby-coop-slot="${slot}" ${networkLobbyUiState.coopSelectedSlots.includes(slot) ? "checked" : ""} ${localCanStageCoop ? "" : "disabled"} />
-                <span>${slot} // ${lobby.members[slot]?.callsign ?? slot}</span>
+                <span>${slot} // ${lobby.members[slot]?.callsign ?? slot}${lobby.activity.kind === "coop_operations" && lobby.activity.coopOperations.participants[slot]?.selected
+                  ? lobby.activity.coopOperations.participants[slot]?.standby
+                    ? " // STANDBY"
+                    : ` // ${lobby.activity.coopOperations.participants[slot]?.sessionSlot ?? "ACTIVE"}`
+                  : ""}</span>
               </label>
             `).join("")}
+          </div>
+          <div class="network-lobby-panel__copy">
+            ${lobby.activity.kind === "coop_operations"
+              ? `${lobby.activity.coopOperations.selectedSlots.length - lobby.activity.coopOperations.standbySlots.length}/${SESSION_PLAYER_SLOTS.length} active operator slots filled${lobby.activity.coopOperations.standbySlots.length > 0 ? ` // ${lobby.activity.coopOperations.standbySlots.length} standby` : ""}.`
+              : `Up to ${SESSION_PLAYER_SLOTS.length} live operator slots run at once. Extra selected members will stand by in H.A.V.E.N.`}
           </div>
           <div class="network-lobby-panel__actions">
             ${localCanStageCoop ? `
@@ -2054,6 +2127,14 @@ function isAutoTriggerZone(zone: InteractionZone | null | undefined): boolean {
   return Boolean(zone?.metadata?.autoTrigger);
 }
 
+function buildAutoInteractionZoneKey(
+  mapId: string,
+  playerId: PlayerId,
+  zoneId: string,
+): string {
+  return `${mapId}:${playerId}:${zoneId}`;
+}
+
 function getCombinedInteractionPrompt(): string | null {
   const state = getGameState();
   if (!isLocalCoopActive(state)) {
@@ -2093,6 +2174,70 @@ function getCombinedInteractionPrompt(): string | null {
   return promptParts.join(" | ");
 }
 
+function getFieldInteractionPromptOverlayPoint(promptEl: HTMLElement): { x: number; y: number } | null {
+  const state = getGameState();
+  const contexts = !isLocalCoopActive(state)
+    ? [getPlayerInteractionContext("P1")].filter((context): context is InteractionActorContext => {
+        if (!context) {
+          return false;
+        }
+        return !isAutoTriggerZone(context.zone);
+      })
+    : (["P1", "P2"] as PlayerId[])
+        .map((playerId) => getPlayerInteractionContext(playerId))
+        .filter((context): context is InteractionActorContext => {
+          if (!context) {
+            return false;
+          }
+          return !isAutoTriggerZone(context.zone);
+        });
+
+  if (contexts.length === 0) {
+    return null;
+  }
+
+  const averageAnchor = contexts.reduce(
+    (totals, context) => ({
+      x: totals.x + context.avatar.x,
+      y: totals.y + context.avatar.y - (context.avatar.height / 2) - 12,
+    }),
+    { x: 0, y: 0 },
+  );
+
+  const rawPoint = resolveFieldOverlayPoint({
+    space: "field-world",
+    x: averageAnchor.x / contexts.length,
+    y: averageAnchor.y / contexts.length,
+  } as any);
+
+  if (!rawPoint) {
+    return null;
+  }
+
+  const root = getFieldOverlayRoot();
+  const viewport = document.querySelector<HTMLElement>(".field-viewport");
+  if (!root || !viewport) {
+    return rawPoint;
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const promptRect = promptEl.getBoundingClientRect();
+  const promptWidth = promptRect.width || promptEl.offsetWidth || 0;
+  const promptHeight = promptRect.height || promptEl.offsetHeight || 0;
+  const edgePadding = 18;
+
+  const minX = viewportRect.left - rootRect.left + (promptWidth / 2) + edgePadding;
+  const maxX = viewportRect.right - rootRect.left - (promptWidth / 2) - edgePadding;
+  const minY = viewportRect.top - rootRect.top + promptHeight + edgePadding;
+  const maxY = viewportRect.bottom - rootRect.top - edgePadding;
+
+  return {
+    x: Math.max(minX, Math.min(maxX, rawPoint.x)),
+    y: Math.max(minY, Math.min(maxY, rawPoint.y)),
+  };
+}
+
 function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avatar: PlayerAvatar): void {
   if (!fieldState || !currentMap) {
     return;
@@ -2104,10 +2249,11 @@ function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avata
   }
 
   const savedPlayerPos = { x: avatar.x, y: avatar.y };
+  const interactionKey = buildAutoInteractionZoneKey(String(currentMap.id), playerId, zone.id);
   fieldState.isPaused = true;
 
   void handleInteraction(zone, currentMap, () => {
-    resumeFieldAfterInteraction(playerId, savedPlayerPos);
+    resumeFieldAfterInteraction(playerId, savedPlayerPos, zone, interactionKey);
   }).catch((error) => {
     console.error("[FIELD] Error handling interaction:", error);
     if (fieldState) {
@@ -2137,10 +2283,14 @@ function maybeTriggerAutoInteraction(): void {
 
   if (!autoContext) {
     activeAutoInteractionZoneKey = null;
+    suppressedAutoInteractionZoneKey = null;
     return;
   }
 
-  const interactionKey = `${currentMap.id}:${autoContext.playerId}:${autoContext.zone.id}`;
+  const interactionKey = buildAutoInteractionZoneKey(String(currentMap.id), autoContext.playerId, autoContext.zone.id);
+  if (suppressedAutoInteractionZoneKey === interactionKey) {
+    return;
+  }
   if (activeAutoInteractionZoneKey === interactionKey) {
     return;
   }
@@ -2172,17 +2322,48 @@ function showFieldCombatLockPing(): void {
 function resumeFieldAfterInteraction(
   playerId: PlayerId,
   savedPlayerPos: { x: number; y: number },
+  zone?: InteractionZone,
+  interactionKey?: string,
 ): void {
-  if (!fieldState) {
+  if (!fieldState || !currentMap) {
     return;
   }
 
   fieldState.isPaused = false;
   const tileSize = 64;
-  const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
-  const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
-  const nextX = savedPlayerPos.x + offsetX;
-  const nextY = savedPlayerPos.y + offsetY;
+  let nextX = savedPlayerPos.x;
+  let nextY = savedPlayerPos.y;
+
+  if (zone && isAutoTriggerZone(zone)) {
+    const zoneLeft = zone.x * tileSize;
+    const zoneTop = zone.y * tileSize;
+    const zoneRight = (zone.x + zone.width) * tileSize;
+    const zoneBottom = (zone.y + zone.height) * tileSize;
+    const pushPadding = 28;
+    const nearestBoundary = [
+      { axis: "x" as const, value: zoneLeft - pushPadding, distance: Math.abs(savedPlayerPos.x - zoneLeft) },
+      { axis: "x" as const, value: zoneRight + pushPadding, distance: Math.abs(savedPlayerPos.x - zoneRight) },
+      { axis: "y" as const, value: zoneTop - pushPadding, distance: Math.abs(savedPlayerPos.y - zoneTop) },
+      { axis: "y" as const, value: zoneBottom + pushPadding, distance: Math.abs(savedPlayerPos.y - zoneBottom) },
+    ].sort((left, right) => left.distance - right.distance)[0];
+
+    if (nearestBoundary?.axis === "x") {
+      nextX = nearestBoundary.value;
+      nextY = Math.max(zoneTop - tileSize, Math.min(zoneBottom + tileSize, savedPlayerPos.y));
+    } else if (nearestBoundary?.axis === "y") {
+      nextY = nearestBoundary.value;
+      nextX = Math.max(zoneLeft - tileSize, Math.min(zoneRight + tileSize, savedPlayerPos.x));
+    }
+
+    nextX = Math.max(32, Math.min((currentMap.width * tileSize) - 32, nextX));
+    nextY = Math.max(32, Math.min((currentMap.height * tileSize) - 32, nextY));
+    suppressedAutoInteractionZoneKey = interactionKey ?? null;
+  } else {
+    const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
+    const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
+    nextX = savedPlayerPos.x + offsetX;
+    nextY = savedPlayerPos.y + offsetY;
+  }
 
   updateGameState((state) => {
     const avatar = state.players[playerId].avatar;
@@ -2209,6 +2390,11 @@ function resumeFieldAfterInteraction(
   if (playerId === "P1") {
     fieldState.player.x = nextX;
     fieldState.player.y = nextY;
+  }
+
+  if (zone && isAutoTriggerZone(zone)) {
+    render();
+    return;
   }
 
   renderFieldScreen(fieldState.currentMap);
@@ -2410,13 +2596,17 @@ export function renderFieldScreen(
   if (!root) return;
   document.body.setAttribute("data-screen", mapId === "base_camp" ? "field-base-camp" : `field-${String(mapId)}`);
   clearControllerContext();
+  const previousMapId = currentMap?.id ?? null;
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
   resetHavenBuildPanState();
   resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
-  activeAutoInteractionZoneKey = null;
+  if (previousMapId !== mapId) {
+    activeAutoInteractionZoneKey = null;
+    suppressedAutoInteractionZoneKey = null;
+  }
 
   setBaseCampFieldReturnMap(mapId);
 
@@ -2883,6 +3073,50 @@ function renderHavenBuildPanel(): string {
   `;
 }
 
+function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
+  const cachedHtml = fieldTileHtmlCache.get(map);
+  if (cachedHtml) {
+    return cachedHtml;
+  }
+
+  const segments: string[] = [];
+  for (let y = 0; y < map.height; y += 1) {
+    const row = map.tiles[y];
+    if (!row || row.length === 0) {
+      continue;
+    }
+
+    let runStartX = 0;
+    let runTile = row[0];
+    for (let x = 1; x <= map.width; x += 1) {
+      const nextTile = x < map.width ? row[x] : null;
+      const continuesRun = Boolean(
+        nextTile
+        && nextTile.walkable === runTile.walkable
+        && nextTile.type === runTile.type,
+      );
+      if (continuesRun) {
+        continue;
+      }
+
+      const runWidth = x - runStartX;
+      const tileClass = runTile.walkable ? "field-tile-walkable" : "field-tile-wall";
+      segments.push(
+        `<div class="field-tile ${tileClass} field-tile-${runTile.type}" style="left: ${runStartX * tileSize}px; top: ${y * tileSize}px; width: ${runWidth * tileSize}px; height: ${tileSize}px;"></div>`,
+      );
+
+      if (nextTile) {
+        runStartX = x;
+        runTile = nextTile;
+      }
+    }
+  }
+
+  const html = segments.join("");
+  fieldTileHtmlCache.set(map, html);
+  return html;
+}
+
 function render(): void {
   const root = document.getElementById("app");
   if (!root || !currentMap || !fieldState) return;
@@ -2891,23 +3125,13 @@ function render(): void {
   const mapPixelWidth = currentMap.width * tileSize;
   const mapPixelHeight = currentMap.height * tileSize;
   const combatActive = isFieldCombatActive();
-  const liveEnemyCount = (fieldState.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0).length;
+  const liveEnemyCount = combatActive
+    ? getLocallyRelevantFieldEnemies().length
+    : (fieldState.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0).length;
   const collectedResourceIds = new Set(fieldState.collectedResourceObjectIds ?? []);
   const displayObjects = currentMap.objects.filter((obj) => !isEnemyFieldObject(obj) && !(obj.type === "resource" && collectedResourceIds.has(obj.id)));
 
-  // Build tiles HTML
-  let tilesHtml = "";
-  for (let y = 0; y < currentMap.height; y++) {
-    for (let x = 0; x < currentMap.width; x++) {
-      const tile = currentMap.tiles[y][x];
-      const tileClass = tile.walkable ? "field-tile-walkable" : "field-tile-wall";
-      const tileType = tile.type;
-      tilesHtml += `
-        <div class="field-tile ${tileClass} field-tile-${tileType}" 
-             style="left: ${x * tileSize}px; top: ${y * tileSize}px; width: ${tileSize}px; height: ${tileSize}px;"></div>
-      `;
-    }
-  }
+  const tilesHtml = getFieldTilesHtml(currentMap, tileSize);
 
   // Build objects HTML
   let objectsHtml = "";
@@ -4358,13 +4582,15 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
   };
   fieldState.collectedResourceObjectIds = Array.from(new Set([...(fieldState.collectedResourceObjectIds ?? []), resourceObjectId]));
 
-  updateGameState((state) => ({
-    ...state,
+  updateGameState((state) => grantSessionResources(state, {
     resources: {
-      ...state.resources,
-      [resourceType]: Math.max(0, Number(state.resources?.[resourceType] ?? 0)) + amount,
-    },
+      [resourceType]: amount,
+    } as Partial<ResourceWallet>,
   }));
+
+  if (source === "sable") {
+    playSableBark(performance.now(), "pickup");
+  }
 
   triggerFeedback({
     type: "resource",
@@ -4492,13 +4718,16 @@ function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
       });
     });
 
+    const rewardedState = grantSessionResources(prev, {
+      wad,
+      resources: createEmptyResourceWallet(resources),
+    });
+
     return {
-      ...prev,
-      wad: prev.wad + wad,
-      resources: addResourceWallet(prev.resources, createEmptyResourceWallet(resources)),
+      ...rewardedState,
       consumables: nextConsumables,
       inventory: {
-        ...prev.inventory,
+        ...rewardedState.inventory,
         baseStorage: nextBaseStorage,
       },
     };
@@ -4937,12 +5166,12 @@ function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): v
   if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
     companion.lastBehaviorTime = currentTime;
 
-    const nearestEnemy = findNearestEnemy(companion, player, liveEnemies);
+    const nearestEnemy = findNearestEnemy(companion, player, liveEnemies, currentMap);
     if (nearestEnemy) {
       companion.state = "attack";
       companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
     } else {
-      const nearestResource = findNearestResource(companion, player, availableResources);
+      const nearestResource = findNearestResource(companion, player, availableResources, currentMap);
       if (nearestResource) {
         companion.state = "fetch";
         companion.target = { x: nearestResource.x, y: nearestResource.y, id: nearestResource.id };
@@ -4972,6 +5201,7 @@ function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): v
       const distance = Math.hypot(targetEnemy.x - activeCompanion.x, targetEnemy.y - activeCompanion.y);
       if (distance <= FIELD_COMPANION_ATTACK_RANGE && activeCompanion.attackCooldown <= 0) {
         targetEnemy.hp -= Math.max(1, FIELD_ATTACK_DAMAGE);
+        playSableAttackFeedback(currentTime);
         if (distance > 0) {
           targetEnemy.vx = ((targetEnemy.x - activeCompanion.x) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
           targetEnemy.vy = ((targetEnemy.y - activeCompanion.y) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
@@ -5836,6 +6066,7 @@ export function teardownFieldMode(): void {
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
   activeAutoInteractionZoneKey = null;
+  suppressedAutoInteractionZoneKey = null;
   cleanupFieldFeedbackListener?.();
   cleanupFieldFeedbackListener = null;
 }

@@ -9,6 +9,13 @@ import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { getUnlockableById } from "../../core/unlockables";
 import { handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp, getPlayerInput } from "../../core/playerInput";
 import { EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, SquadBattleTurnState, SessionPlayerSlot } from "../../core/types";
+import {
+  getBattleStateById,
+  getMountedOrActiveBattleState,
+  mountBattleContextById,
+  mountBattleState,
+  replaceBattleStateById,
+} from "../../core/session";
 
 import {
   applyStrain,
@@ -47,7 +54,7 @@ import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { renderWeaponWindow as renderSharedWeaponWindow } from "../components/weaponWindow";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
-import { getPlayerControllerLabel } from "../../core/session";
+import { getPlayerControllerLabel, grantSessionResources } from "../../core/session";
 import { applyTheaterBattleOutcome, hasTheaterOperation } from "../../core/theaterSystem";
 import {
   clearControllerContext,
@@ -60,7 +67,7 @@ import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampRetur
 import { showSystemPing } from "../components/systemPing";
 import { playPlaceholderSfx, setMusicCue } from "../../core/audioSystem";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
-import { addResourceWallet, createEmptyResourceWallet } from "../../core/resources";
+import { createEmptyResourceWallet } from "../../core/resources";
 import {
   deriveBattleFeedback,
   subscribeToFeedback,
@@ -99,8 +106,10 @@ import {
 import {
   createSquadBattlePayload,
   createSquadBattleCommandPayload,
+  createRuntimeBattleCommandPayload,
   getSquadBattleResultReason,
   getSquadBattleWinnerSlots,
+  parseRuntimeBattleCommandPayload,
   parseSquadBattleCommandPayload,
   type SquadBattleCommand,
 } from "../../core/squadBattle";
@@ -399,26 +408,30 @@ function buildSquadTurnStateSnapshot(battle: BattleState): SquadBattleTurnState 
   };
 }
 
-function withSquadTurnStateSnapshot(battle: BattleState): BattleState {
-  const squadContext = getSquadContext(battle);
-  if (!squadContext) {
+function withBattleTurnStateSnapshot(battle: BattleState): BattleState {
+  if (!battle.modeContext) {
     return battle;
   }
 
+  const turnStateSnapshot = buildSquadTurnStateSnapshot(battle);
+  const squadContext = getSquadContext(battle);
   return {
     ...battle,
     modeContext: {
-      kind: "squad",
-      squad: {
-        ...squadContext,
-        turnState: buildSquadTurnStateSnapshot(battle),
-      },
+      ...battle.modeContext,
+      turnState: turnStateSnapshot,
+      squad: squadContext
+        ? {
+            ...squadContext,
+            turnState: turnStateSnapshot,
+          }
+        : battle.modeContext.squad,
     },
   };
 }
 
 function restoreTurnStateFromBattle(battle: BattleState | null | undefined): void {
-  const serialized = getSquadContext(battle)?.turnState ?? null;
+  const serialized = battle?.modeContext?.turnState ?? getSquadContext(battle)?.turnState ?? null;
   if (battle && serialized && serialized.unitId === (battle.activeUnitId ?? null)) {
     turnState = {
       hasMoved: serialized.hasMoved,
@@ -490,7 +503,7 @@ async function sendLocalCoopBattleCommand(command: SquadBattleCommand): Promise<
     "lobby_command",
     JSON.stringify({
       type: "coop_battle_command",
-      command,
+      payload: createRuntimeBattleCommandPayload(localBattleState, command),
     }),
     null,
   );
@@ -541,7 +554,7 @@ async function sendLocalCoopPlacementCommand(command: SquadBattleCommand): Promi
     "lobby_command",
     JSON.stringify({
       type: "coop_battle_command",
-      command,
+      payload: createRuntimeBattleCommandPayload(localBattleState, command),
     }),
     null,
   );
@@ -1141,6 +1154,7 @@ export function applyExternalBattleState(
     return;
   }
 
+  updateGameState((state) => mountBattleState(state, battle));
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
   localBattleState = battle;
@@ -1619,6 +1633,18 @@ interface TurnState {
   isFacingSelection: boolean; // True when selecting final facing before ending turn
 }
 let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementOnlyAfterAttack: false, movementRemaining: 0, originalPosition: null, isFacingSelection: false };
+
+function cloneTurnState(current: TurnState = turnState): TurnState {
+  return {
+    hasMoved: current.hasMoved,
+    hasCommittedMove: current.hasCommittedMove,
+    hasActed: current.hasActed,
+    movementOnlyAfterAttack: current.movementOnlyAfterAttack,
+    movementRemaining: current.movementRemaining,
+    originalPosition: current.originalPosition ? { ...current.originalPosition } : null,
+    isFacingSelection: current.isFacingSelection,
+  };
+}
 
 type BattleHudNodeId = "console" | "intel" | "placement" | "unit" | "weapon" | "manage" | "consumables" | "hand";
 
@@ -2337,24 +2363,25 @@ function setBattleState(newState: BattleState) {
     resetTurnStateForUnit(nextActiveUnitId ? localBattleState.units[nextActiveUnitId] ?? null : null, localBattleState);
   }
 
-  if (isSquadBattle(localBattleState)) {
-    localBattleState = withSquadTurnStateSnapshot(localBattleState);
+  if (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState)) {
+    localBattleState = withBattleTurnStateSnapshot(localBattleState);
   }
 
   deriveBattleFeedback(previousBattle, localBattleState, newLogTail).forEach((request) => {
     triggerFeedback(request);
   });
 
-  updateGameState((state) => ({
-    ...state,
-    currentBattle: localBattleState,
-    phase: "battle",
-  }));
+  const committedBattleState = localBattleState;
+  if (!committedBattleState) {
+    return;
+  }
 
-  if (isSquadBattle(localBattleState)) {
-    void broadcastSquadBattleState(localBattleState);
-    if (localBattleState.phase === "victory" || localBattleState.phase === "defeat") {
-      void finalizeSquadBattleMatchResult(localBattleState);
+  updateGameState((state) => replaceBattleStateById(state, committedBattleState.id, committedBattleState));
+
+  if (isSquadBattle(committedBattleState)) {
+    void broadcastSquadBattleState(committedBattleState);
+    if (committedBattleState.phase === "victory" || committedBattleState.phase === "defeat") {
+      void finalizeSquadBattleMatchResult(committedBattleState);
     }
   }
 }
@@ -4737,9 +4764,24 @@ function runAutoBattleTurnStep(): void {
 }
 
 function getCurrentBattleForNetworkCommand(): BattleState | null {
-  const currentBattle = localBattleState ?? getGameState().currentBattle ?? null;
+  const state = getGameState();
+  const preferredBattleId =
+    state.session.activeBattleId
+    ?? state.currentBattle?.id
+    ?? localBattleState?.id
+    ?? null;
+  const currentBattle =
+    getMountedOrActiveBattleState(state)
+    ?? getBattleStateById(state, preferredBattleId)
+    ?? localBattleState
+    ?? null;
   if (!currentBattle) {
     return null;
+  }
+  if (preferredBattleId && (state.currentBattle?.id !== preferredBattleId || state.session.activeBattleId !== preferredBattleId)) {
+    updateGameState((currentState) => mountBattleContextById(currentState, preferredBattleId));
+  } else if (!state.currentBattle || state.currentBattle.id !== currentBattle.id) {
+    updateGameState((currentState) => mountBattleState(currentState, currentBattle));
   }
   localBattleState = currentBattle;
   restoreTurnStateFromBattle(currentBattle);
@@ -4752,6 +4794,71 @@ function getCurrentSquadBattleForCommand(): BattleState | null {
     return null;
   }
   return currentBattle;
+}
+
+function shouldRenderBattleAfterCommand(battleId: string): boolean {
+  return isBattleRootMounted() && localBattleState?.id === battleId;
+}
+
+function resolveBattleForCommandTarget(battleId: string | null | undefined): BattleState | null {
+  const state = getGameState();
+  return (battleId ? getBattleStateById(state, battleId) : null)
+    ?? getMountedOrActiveBattleState(state)
+    ?? localBattleState
+    ?? null;
+}
+
+function runEnemyTurnsHeadless(state: BattleState): BattleState {
+  if (state.phase === "victory" || state.phase === "defeat") {
+    return state;
+  }
+  let currentState = state;
+  let safety = 0;
+  while (safety < 20 && shouldAutoResolveBattleState(currentState)) {
+    currentState = performEnemyTurn(currentState);
+    currentState = evaluateBattleOutcome(currentState);
+    safety += 1;
+    if (currentState.phase === "victory" || currentState.phase === "defeat") {
+      break;
+    }
+  }
+  const active = currentState.activeUnitId ? currentState.units[currentState.activeUnitId] ?? null : null;
+  if (active && currentState.phase !== "victory" && currentState.phase !== "defeat") {
+    resetTurnStateForUnit(active, currentState);
+  }
+  return currentState;
+}
+
+function applyCommandToTargetBattle(
+  battleId: string | null | undefined,
+  callback: (battle: BattleState, shouldRender: boolean) => void,
+): void {
+  const targetBattle = resolveBattleForCommandTarget(battleId);
+  if (!targetBattle) {
+    return;
+  }
+  const previousLocalBattleState = localBattleState;
+  const previousTurnState = cloneTurnState();
+  const isMountedTarget = localBattleState?.id === targetBattle.id;
+  if (!isMountedTarget) {
+    localBattleState = targetBattle;
+    restoreTurnStateFromBattle(targetBattle);
+  }
+  try {
+    callback(targetBattle, shouldRenderBattleAfterCommand(targetBattle.id));
+  } finally {
+    if (!isMountedTarget) {
+      localBattleState = previousLocalBattleState;
+      turnState = previousTurnState;
+    }
+  }
+}
+
+function commitRemoteBattleState(nextState: BattleState, shouldRender: boolean): void {
+  setBattleState(nextState);
+  if (shouldRender) {
+    renderBattleScreen();
+  }
 }
 
 function resolveCommandActiveUnit(battle: BattleState, sourceSlot: SessionPlayerSlot, unitId: string): BattleUnitState | null {
@@ -4769,12 +4876,12 @@ function applyRemoteBattleCommandToCurrentBattle(
   battle: BattleState,
   sourceSlot: SessionPlayerSlot,
   command: SquadBattleCommand,
+  shouldRender = true,
 ): void {
   if (battle.phase === "placement") {
     if (command.type === "quick_place") {
       const nextState = quickPlaceUnits(battle, toLocalUnitOwnership(sourceSlot));
-      setBattleState(nextState);
-      renderBattleScreen();
+      commitRemoteBattleState(nextState, shouldRender);
       return;
     }
 
@@ -4790,21 +4897,18 @@ function applyRemoteBattleCommandToCurrentBattle(
 
       if (command.type === "select_placement_unit") {
         const nextState = selectBattlePlacementUnit(battle, command.unitId);
-        setBattleState(nextState);
-        renderBattleScreen();
+        commitRemoteBattleState(nextState, shouldRender);
         return;
       }
 
       if (command.type === "remove_placed_unit") {
         const nextState = unplaceBattleUnit(battle, command.unitId);
-        setBattleState(nextState);
-        renderBattleScreen();
+        commitRemoteBattleState(nextState, shouldRender);
         return;
       }
 
       const nextState = placeUnit(battle, command.unitId, { x: command.x, y: command.y });
-      setBattleState(nextState);
-      renderBattleScreen();
+      commitRemoteBattleState(nextState, shouldRender);
       return;
     }
 
@@ -4897,8 +5001,7 @@ function applyRemoteBattleCommandToCurrentBattle(
       };
     }
     nextState = evaluateBattleOutcome(nextState);
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -4925,8 +5028,7 @@ function applyRemoteBattleCommandToCurrentBattle(
       log: [...battle.log, `SLK//UNDO :: ${activeUnit.name} returns to original position.`],
     };
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -4977,13 +5079,16 @@ function applyRemoteBattleCommandToCurrentBattle(
     nextState = evaluateBattleOutcome(nextState);
 
     if (shouldAutoResolveBattleState(nextState)) {
-      setBattleState(nextState);
-      requestAnimationFrame(() => runEnemyTurnsAnimated(nextState));
+      if (shouldRender) {
+        setBattleState(nextState);
+        requestAnimationFrame(() => runEnemyTurnsAnimated(nextState));
+      } else {
+        commitRemoteBattleState(runEnemyTurnsHeadless(nextState), false);
+      }
       return;
     }
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -5007,35 +5112,45 @@ function applyRemoteBattleCommandToCurrentBattle(
 
     const nextState = advanceTurn(stateToAdvance);
     if (shouldAutoResolveBattleState(nextState)) {
-      runEnemyTurnsAnimated(nextState);
+      if (shouldRender) {
+        runEnemyTurnsAnimated(nextState);
+      } else {
+        commitRemoteBattleState(runEnemyTurnsHeadless(nextState), false);
+      }
       return;
     }
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
   }
 }
 
 export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, payload: string): void {
   const parsedPayload = parseSquadBattleCommandPayload(payload);
-  const battle = getCurrentSquadBattleForCommand();
-  if (!parsedPayload || !battle) {
+  if (!parsedPayload) {
     return;
   }
-
-  if (parsedPayload.matchId !== getSquadContext(battle)?.matchId || parsedPayload.battleId !== battle.id) {
-    return;
-  }
-
-  applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, parsedPayload.command);
+  applyCommandToTargetBattle(parsedPayload.battleId, (battle, shouldRender) => {
+    if (!isSquadBattle(battle)) {
+      return;
+    }
+    if (parsedPayload.matchId !== getSquadContext(battle)?.matchId || parsedPayload.battleId !== battle.id) {
+      return;
+    }
+    applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, parsedPayload.command, shouldRender);
+  });
 }
 
-export function applyRemoteCoopBattleCommand(sourceSlot: SessionPlayerSlot, command: SquadBattleCommand): void {
-  const battle = getCurrentBattleForNetworkCommand();
-  if (!battle || isSquadBattle(battle) || !isCoopOperationsBattle(battle)) {
+export function applyRemoteCoopBattleCommand(sourceSlot: SessionPlayerSlot, payload: string): void {
+  const parsedPayload = parseRuntimeBattleCommandPayload(payload);
+  if (!parsedPayload) {
     return;
   }
-  applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, command);
+  applyCommandToTargetBattle(parsedPayload.battleId, (battle, shouldRender) => {
+    if (isSquadBattle(battle) || !isCoopOperationsBattle(battle) || battle.id !== parsedPayload.battleId) {
+      return;
+    }
+    applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, parsedPayload.command, shouldRender);
+  });
 }
 
 // ============================================================================
@@ -5069,11 +5184,13 @@ export function renderBattleScreen() {
     selectedManageUnitId = null;
     resetBattlePan();
 
-    // PRIORITY: Use currentBattle from state if available (from encounter generator)
-    // This is the proper flow from OperationMapScreen -> createBattleFromEncounter
-    if (state.currentBattle) {
-      localBattleState = state.currentBattle;
-      console.log(`[BATTLE] Using encounter-based battle with ${Object.values(state.currentBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
+    const mountedBattle = getMountedOrActiveBattleState(state);
+    if (mountedBattle) {
+      if (!state.currentBattle || state.currentBattle.id !== mountedBattle.id) {
+        updateGameState((currentState) => mountBattleState(currentState, mountedBattle));
+      }
+      localBattleState = mountedBattle;
+      console.log(`[BATTLE] Using mounted battle with ${Object.values(mountedBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
     } else {
       // Fallback to test battle (legacy/debug path)
       console.warn("[BATTLE] No currentBattle in state, falling back to test battle with 2 enemies");
@@ -7660,22 +7777,21 @@ function attachBattleListeners() {
         }
 
         updateGameState(s => {
-          // MUST create a new object and RETURN it!
+          const rewardedState = grantSessionResources(s, {
+            wad: r.wad ?? 0,
+            resources: createEmptyResourceWallet({
+              metalScrap: r.metalScrap ?? 0,
+              wood: r.wood ?? 0,
+              chaosShards: r.chaosShards ?? 0,
+              steamComponents: r.steamComponents ?? 0,
+            }),
+          });
+
           const updatedState = awardStatTokens({
-            ...s,
-            wad: (s.wad ?? 0) + (r.wad ?? 0),
-            resources: addResourceWallet(
-              s.resources ?? createEmptyResourceWallet(),
-              {
-                metalScrap: r.metalScrap ?? 0,
-                wood: r.wood ?? 0,
-                chaosShards: r.chaosShards ?? 0,
-                steamComponents: r.steamComponents ?? 0,
-              },
-            ),
+            ...rewardedState,
             cardLibrary: r.cards && r.cards.length > 0
-              ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
-              : s.cardLibrary,
+              ? addCardsToLibrary(rewardedState.cardLibrary ?? {}, r.cards)
+              : rewardedState.cardLibrary,
           }, r.squadXp ?? 0);
 
           // Grant unlockable if present

@@ -25,6 +25,7 @@ import {
   TavernMealBuff,
   TAVERN_MEAL_DEFINITIONS,
 } from "../../core/tavernMeals";
+import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import { showSystemPing } from "../components/systemPing";
 
 // ----------------------------------------------------------------------------
@@ -295,7 +296,8 @@ export function renderTavernDialogueScreen(
   const state = getGameState();
   let candidates = state.recruitmentCandidates || [];
   const rosterSize = getRosterSize(state);
-  const wad = state.wad || 0;
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  const wad = wallet.wad || 0;
   const queuedMeal = isBaseCamp ? getQueuedTavernMealBuff(state) : null;
 
   // Initialize NPC windows
@@ -491,13 +493,13 @@ function handleHireCandidate(
   updateGameState((s) => {
     const result = hireCandidate(candidateId, candidates, s);
 
-    if (!result.success) {
+    if (!result.success || !result.state) {
       console.warn("[TAVERN] Failed to hire candidate:", result.error);
       return s;
     }
 
     console.log("[TAVERN] Candidate hired successfully!");
-    return s;
+    return result.state;
   });
 
   // Re-render to show updated roster and remaining candidates
