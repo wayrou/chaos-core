@@ -17538,6 +17538,67 @@ button {
   background: rgba(88, 44, 34, 0.94);
 }
 
+.game-confirm-modal--update .game-confirm-modal__header {
+  border-bottom-color: rgba(121, 180, 173, 0.22);
+  background: linear-gradient(180deg, rgba(20, 52, 51, 0.82), rgba(15, 28, 31, 0.7));
+}
+
+.game-update-progress {
+  display: grid;
+  gap: 14px;
+}
+
+.game-update-progress__status,
+.game-update-progress__stats,
+.game-update-progress__hint {
+  font-family: "Courier New", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.game-update-progress__status {
+  color: #e8f3f0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.game-update-progress__meter {
+  height: 12px;
+  border: 1px solid rgba(120, 190, 181, 0.28);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(10, 20, 22, 0.72);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.36);
+}
+
+.game-update-progress__fill {
+  width: 8%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(86, 190, 176, 0.72), rgba(180, 241, 232, 0.96));
+  box-shadow: 0 0 14px rgba(120, 227, 214, 0.34);
+  transition: width 180ms ease;
+}
+
+.game-update-progress__stats {
+  color: rgba(192, 223, 219, 0.82);
+  font-size: 11px;
+}
+
+.game-update-progress__hint {
+  color: rgba(168, 197, 193, 0.74);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.game-update-progress__focus-guard {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ==========================================================================
    CHAOS CORE - SETTINGS & MAIN MENU STYLES (Headline 12)
    Append this to your existing styles.css
