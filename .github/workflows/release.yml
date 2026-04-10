@@ -64,22 +64,40 @@ jobs:
         env:
           RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          sanitized_key="$(printf '%s' "$RAW_TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')"
-          if [ -z "$sanitized_key" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is missing" >&2
-            exit 1
-          fi
-          {
-            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
-            echo "$sanitized_key"
-            echo "EOF"
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
-          } >> "$GITHUB_ENV"
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+
+          const raw = process.env.RAW_TAURI_SIGNING_PRIVATE_KEY || '';
+          const envFile = process.env.GITHUB_ENV;
+          const runnerTemp = process.env.RUNNER_TEMP;
+
+          const candidates = raw.match(/[A-Za-z0-9+/=]{100,}/g) || [];
+          let extracted = null;
+
+          for (const candidate of candidates) {
+            const decoded = Buffer.from(candidate, 'base64').toString('utf8');
+            if (decoded.startsWith('untrusted comment:')) {
+              extracted = candidate;
+              break;
+            }
+          }
+
+          if (!extracted) {
+            console.error('Could not extract a valid Tauri signing key from TAURI_SIGNING_PRIVATE_KEY.');
+            process.exit(1);
+          }
+
+          const keyPath = path.join(runnerTemp, 'tauri-signing.key');
+          fs.writeFileSync(keyPath, extracted, 'utf8');
+          fs.appendFileSync(envFile, `TAURI_SIGNING_PRIVATE_KEY_PATH=${keyPath}\n`);
+          fs.appendFileSync(envFile, 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\n');
+          EOF
 
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
