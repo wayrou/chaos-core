@@ -93,6 +93,7 @@ import {
   getBowbladeFieldProfile,
   getWeaponsmithInstalledUpgradeIds,
 } from "../core/weaponsmith";
+import { getAerissFieldMovementSpeedBonus } from "../core/mounts";
 import {
   canPlayerUseFieldAction,
   getFieldActionRestrictionMessage,
@@ -5847,6 +5848,7 @@ function gameLoop(currentTime: number): void {
 
   if (!fieldState.isPaused) {
     const state = getGameState();
+    const aerissFieldSpeedBonus = getAerissFieldMovementSpeedBonus(state.stable);
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
       P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
@@ -5872,7 +5874,7 @@ function gameLoop(currentTime: number): void {
         y: p1.avatar.y,
         width: 32,
         height: 32,
-        speed: 240,
+        speed: 240 + aerissFieldSpeedBonus,
         facing: p1.avatar.facing,
       };
 

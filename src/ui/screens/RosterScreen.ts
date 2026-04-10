@@ -1,7 +1,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { autoEquipUnit, renderUnitDetailScreen } from "./Unitdetailscreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 import {
   BaseCampReturnTo,
@@ -17,14 +17,11 @@ import {
   getAllModules,
   buildDeckFromLoadout,
   UnitClass,
-  canEquipWeapon,
 } from "../../core/equipment";
 import { getUnitManagementStandIconPath } from "../../core/portraits";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
-import { createEmptyResourceWallet } from "../../core/resources";
-import { showConfirmDialog } from "../components/confirmDialog";
 import type { TheaterDeploymentPreset, TheaterSquadPreset } from "../../core/types";
 import {
   clampSquadName,
@@ -41,12 +38,7 @@ let rosterOperationEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let selectedDeploymentSquadId: string | null = null;
 
 function returnToActiveOperationScreen(): void {
-  const activeOperation = getGameState().operation;
-  if (activeOperation?.theater) {
-    import("./TheaterCommandScreen").then(({ renderTheaterCommandScreen }) => renderTheaterCommandScreen());
-    return;
-  }
-  renderOperationMapScreen();
+  renderActiveOperationSurface();
 }
 
 function unregisterRosterOperationReturnHotkey(): void {
@@ -192,7 +184,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
           <div class="roster-header-right town-screen__header-right">
             <div class="roster-count roster-count--stat"><span class="roster-count-label">${STAT_SHORT_LABEL}</span><span class="roster-count-value">${statBank}</span></div>
             <div class="roster-count"><span class="roster-count-label">UNITS</span><span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span></div>
-            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}" type="button"><span class="btn-icon">â†</span><span class="btn-text">${returnTo === "operation" ? "OPERATION MAP" : returnTo === "field" ? "FIELD MODE" : returnTo === "loadout" ? "LOADOUT" : getBaseCampReturnLabel(returnTo as BaseCampReturnTo)}</span></button>
+            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}" type="button"><span class="btn-icon">â†</span><span class="btn-text">${returnTo === "operation" ? "THEATER COMMAND" : returnTo === "field" ? "FIELD MODE" : returnTo === "loadout" ? "LOADOUT" : getBaseCampReturnLabel(returnTo as BaseCampReturnTo)}</span></button>
           </div>
         </div>
         <div class="roster-body">
@@ -242,7 +234,6 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
         </div>
         <div class="roster-footer">
           <div class="roster-legend"><span class="roster-legend-item"><span class="roster-legend-dot roster-legend-dot--party"></span>In Party</span><span class="roster-legend-item"><span class="roster-legend-dot roster-legend-dot--reserve"></span>Reserve</span></div>
-          <div class="roster-debug"><button class="roster-debug-btn" id="debugEquipBtn" type="button">ðŸ”§ DEBUG: Give All Equipment</button></div>
         </div>
       </div>
     </div>
@@ -294,46 +285,6 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
       if (deployBtn.getAttribute("data-roster-deploy") === "remove") mutatePreset((current) => ({ squads: current.squads.map((squad) => ({ ...squad, unitIds: squad.unitIds.filter((id) => id !== unitId) })) }));
       else if (focusedSquad.unitIds.length >= THEATER_SQUAD_UNIT_LIMIT) alert(`Deployment squads cap at ${THEATER_SQUAD_UNIT_LIMIT} units.`);
       else mutatePreset((current) => ({ squads: current.squads.map((squad) => squad.squadId === focusedSquad.squadId ? { ...squad, unitIds: [...squad.unitIds.filter((id) => id !== unitId), unitId] } : { ...squad, unitIds: squad.unitIds.filter((id) => id !== unitId) }) }));
-      return renderRosterScreen(returnTo);
-    }
-    if (target.closest("#debugEquipBtn")) {
-      const confirmed = await showConfirmDialog({
-        title: "DEBUG EQUIPMENT GRANT",
-        message: "Give all starter equipment to all units for testing?",
-        confirmLabel: "GRANT",
-        cancelLabel: "CANCEL",
-        mount: () => document.querySelector(".roster-root"),
-        restoreFocusSelector: "#debugEquipBtn",
-      });
-      if (!confirmed) return;
-      updateGameState((prev) => {
-        const allEquipment = getAllStarterEquipment(); const nextUnitsById = { ...prev.unitsById };
-        Object.keys(nextUnitsById).forEach((id) => {
-          const unit = nextUnitsById[id]; const unitClass: UnitClass = (unit as any).unitClass || "squire"; const nextLoadout: UnitLoadout = (unit as any).loadout || { primaryWeapon: null, secondaryWeapon: null, helmet: null, chestpiece: null, accessory1: null, accessory2: null };
-          const compatibleWeapon = Object.values(allEquipment).filter((eq) => eq.slot === "weapon").find((weapon) => canEquipWeapon(unitClass, (weapon as any).weaponType)); if (compatibleWeapon) nextLoadout.primaryWeapon = compatibleWeapon.id;
-          const helmet = Object.values(allEquipment).find((eq) => eq.slot === "helmet"); if (helmet) nextLoadout.helmet = helmet.id;
-          const chestpiece = Object.values(allEquipment).find((eq) => eq.slot === "chestpiece"); if (chestpiece) nextLoadout.chestpiece = chestpiece.id;
-          const accessories = Object.values(allEquipment).filter((eq) => eq.slot === "accessory"); if (accessories[0]) nextLoadout.accessory1 = accessories[0].id; if (accessories[1]) nextLoadout.accessory2 = accessories[1].id;
-          nextUnitsById[id] = { ...unit, loadout: nextLoadout };
-        });
-        return {
-          ...prev,
-          wad: 9999,
-          resources: createEmptyResourceWallet({
-            metalScrap: 99,
-            wood: 99,
-            chaosShards: 99,
-            steamComponents: 99,
-            alloy: 99,
-            drawcord: 99,
-            fittings: 99,
-            resin: 99,
-            chargeCells: 99,
-          }),
-          equipmentById: { ...(prev.equipmentById || {}), ...allEquipment },
-          unitsById: nextUnitsById,
-        };
-      });
       return renderRosterScreen(returnTo);
     }
     const card = target.closest<HTMLElement>(".roster-unit-card");

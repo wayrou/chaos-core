@@ -131,6 +131,8 @@ export interface EquipmentCard {
   sourceClassId?: string;
   artPath?: string;
   weaponRules?: Partial<WeaponCardRules>;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: string[];
 }
 
 // ----------------------------------------------------------------------------
@@ -275,6 +277,7 @@ export interface UnitLoadout {
 // ----------------------------------------------------------------------------
 
 export { CORE_CARDS } from "../data/cards/coreCards";
+export { CHAOS_CARDS } from "../data/cards/chaosCards";
 export { CLASS_CARDS } from "../data/cards/classCards";
 export { EQUIPMENT_CARDS } from "../data/cards/equipmentCards";
 export { STARTER_WEAPONS } from "../data/weapons";
@@ -283,6 +286,7 @@ export { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 
 // Import them locally as well so the helper functions below can still use them
 import { CORE_CARDS } from "../data/cards/coreCards";
+import { CHAOS_CARDS } from "../data/cards/chaosCards";
 import { CLASS_CARDS } from "../data/cards/classCards";
 import { EQUIPMENT_CARDS } from "../data/cards/equipmentCards";
 import { STARTER_WEAPONS } from "../data/weapons";
@@ -375,6 +379,9 @@ export function getAllStarterEquipment(): Record<string, Equipment> {
 export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   const all: Record<string, EquipmentCard> = {};
   for (const c of CORE_CARDS) {
+    if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
+  }
+  for (const c of CHAOS_CARDS) {
     if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
   }
   for (const c of EQUIPMENT_CARDS) {

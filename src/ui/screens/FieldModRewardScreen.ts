@@ -6,11 +6,10 @@
 import { FieldModDef, FieldModInstance, FieldModRarity } from "../../core/fieldMods";
 import { getAllFieldModDefs, getFieldModDef } from "../../core/fieldModDefinitions";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
-import { syncCampaignToGameState } from "../../core/campaignSync";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 
 // Debug flag for Field Mod rewards
-const DEBUG_FIELD_MOD_REWARDS = true;
+const DEBUG_FIELD_MOD_REWARDS = false;
 
 // Rarity weights for treasure nodes
 const TREASURE_RARITY_WEIGHTS: Record<FieldModRarity, number> = {
@@ -252,13 +251,10 @@ function selectFieldMod(nodeId: string, modId: string): void {
   addFieldModToInventory(modId);
 
   // Mark the room as visited/cleared
-  markRoomVisited(nodeId);
+  markOperationRoomVisited(nodeId);
 
-  // Sync campaign state
-  syncCampaignToGameState();
-
-  // Return to operation map
-  renderOperationMapScreen();
+  // Return to the active operation surface
+  renderActiveOperationSurface();
 }
 
 // Export rarity weights for use in shop

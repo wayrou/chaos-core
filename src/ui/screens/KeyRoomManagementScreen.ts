@@ -5,7 +5,7 @@
 
 import { getActiveRun } from "../../core/campaignManager";
 import { getKeyRoomsForFloor, getFacilityConfig } from "../../core/keyRoomSystem";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 
 function findKeyRoomAcrossFloors(keyRoomId: string): { floorIndex: number; keyRoom: ReturnType<typeof getKeyRoomsForFloor>[number] } | null {
   const activeRun = getActiveRun();
@@ -35,14 +35,14 @@ export function renderKeyRoomManagementScreen(keyRoomId: string): void {
   const activeRun = getActiveRun();
   if (!activeRun) {
     console.warn("[KEYROOM] No active run");
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
 
   const keyRoomMatch = findKeyRoomAcrossFloors(keyRoomId);
   if (!keyRoomMatch) {
     console.warn("[KEYROOM] Key room not found:", keyRoomId);
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
   const { floorIndex, keyRoom } = keyRoomMatch;
@@ -69,7 +69,7 @@ export function renderKeyRoomManagementScreen(keyRoomId: string): void {
             <h1 class="keyroom-screen__title">KEY ROOM ACCESS</h1>
             <p class="keyroom-screen__subtitle">Review forward command output, room status, and support gains before resuming the operation.</p>
           </div>
-          <button class="keyroom-screen__back-btn" id="backBtn">BACK TO MAP</button>
+          <button class="keyroom-screen__back-btn" id="backBtn">BACK TO OPERATION</button>
         </div>
 
         <div class="keyroom-screen__hero">
@@ -144,7 +144,7 @@ export function renderKeyRoomManagementScreen(keyRoomId: string): void {
 
   // Attach event listeners
   root.querySelector("#backBtn")?.addEventListener("click", () => {
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
   });
 }
 

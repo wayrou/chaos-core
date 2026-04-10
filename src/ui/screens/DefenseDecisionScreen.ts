@@ -8,7 +8,7 @@ import {
   abandonKeyRoom,
   getDefenseBattleTurns,
 } from "../../core/keyRoomSystem";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 import { getActiveRun, prepareDefenseBattle } from "../../core/campaignManager";
 import { createDefenseBattle } from "../../core/defenseBattleGenerator";
 import { syncCampaignToGameState } from "../../core/campaignSync";
@@ -26,7 +26,7 @@ export function renderDefenseDecisionScreen(keyRoomId: string, nodeId: string): 
   const activeRun = getActiveRun();
   if (!activeRun) {
     console.error("[DEFENSE] No active run");
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
   
@@ -37,7 +37,7 @@ export function renderDefenseDecisionScreen(keyRoomId: string, nodeId: string): 
   
   if (!keyRoom) {
     console.error("[DEFENSE] Key room not found:", keyRoomId);
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
   
@@ -147,7 +147,7 @@ async function handleDefenseDecision(keyRoomId: string, action: string): Promise
 
     case "delay":
       delayKeyRoomDefense(keyRoomId);
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
       break;
 
     case "abandon":
@@ -158,13 +158,13 @@ async function handleDefenseDecision(keyRoomId: string, action: string): Promise
         variant: "danger",
       })) {
         abandonKeyRoom(keyRoomId);
-        renderOperationMapScreen();
+        renderActiveOperationSurface();
       }
       break;
 
     default:
       console.warn("[DEFENSE] Unknown action:", action);
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
   }
 }
 
@@ -181,7 +181,7 @@ function startDefenseBattle(keyRoomId: string): void {
     const activeRun = getActiveRun();
     if (!activeRun?.pendingDefenseBattle) {
       console.error("[DEFENSE] Failed to prepare defense battle");
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
       return;
     }
 
@@ -198,7 +198,7 @@ function startDefenseBattle(keyRoomId: string): void {
 
     if (!battle) {
       console.error("[DEFENSE] Failed to create defense battle");
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
       return;
     }
 
@@ -218,7 +218,7 @@ function startDefenseBattle(keyRoomId: string): void {
     renderBattleScreen();
   } catch (error) {
     console.error("[DEFENSE] Error starting defense battle:", error);
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
   }
 }
 

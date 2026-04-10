@@ -2,9 +2,9 @@
 // Battle screen with unit panel + weapon window alongside hand at bottom
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen, markCurrentRoomVisited } from "./OperationMapScreen";
+import { markCurrentOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { recordBattleVictory, syncCampaignToGameState, getActiveRun } from "../../core/campaignManager";
-const renderOperationMap = renderOperationMapScreen; // Alias for compatibility
+const renderOperationMap = renderActiveOperationSurface; // Alias for compatibility
 import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { getUnlockableById } from "../../core/unlockables";
 import { handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp, getPlayerInput } from "../../core/playerInput";
@@ -55,7 +55,11 @@ import { renderWeaponWindow as renderSharedWeaponWindow } from "../components/we
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
 import { getPlayerControllerLabel, grantSessionResources } from "../../core/session";
-import { applyTheaterBattleOutcome, hasTheaterOperation } from "../../core/theaterSystem";
+import {
+  applyTheaterBattleOutcome,
+  applyTheaterOperationFailure,
+  hasTheaterOperation,
+} from "../../core/theaterSystem";
 import {
   clearControllerContext,
   getControllerActionLabel,
@@ -853,6 +857,8 @@ interface Card {
   effects?: any[];
   sourceEquipmentId?: string;
   weaponRules?: import("../../core/weaponData").WeaponCardRules;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: string[];
 }
 
 // CARD DATABASE - Based on GDD
@@ -1182,7 +1188,7 @@ const ZOOM_STEP = 0.1;
 // ============================================================================
 
 // Debug flag for movement instrumentation
-const DEBUG_MOVEMENT = true; // Enable for debugging
+const DEBUG_MOVEMENT = false;
 const BATTLE_TILE_SIZE_PX = 75;
 const BATTLE_TILE_GAP_PX = 4;
 const BATTLE_GRID_PADDING_PX = 12;
@@ -4440,7 +4446,11 @@ function didCardResolve(previousState: BattleState, nextState: BattleState, unit
     return false;
   }
 
-  return nextUnit.hand.length < previousUnit.hand.length;
+  const didHandChange =
+    nextUnit.hand.length !== previousUnit.hand.length ||
+    nextUnit.hand.some((cardId, index) => cardId !== previousUnit.hand[index]);
+
+  return didHandChange || nextUnit.strain !== previousUnit.strain || nextState.activeUnitId !== previousState.activeUnitId;
 }
 
 function updateTurnStateAfterCardPlay(previousState: BattleState, nextState: BattleState, unitId: string): boolean {
@@ -5606,7 +5616,6 @@ function renderHandPanel(
           <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
           <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
           <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>END TURN</button>
-          <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
         </div>
       </div>
       <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
@@ -5632,12 +5641,13 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
     const strainLocked = disabledReason === "Strain lock";
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
     const disabledClass = !isPlayerTurn || Boolean(disabledReason) || autoControlled ? "battle-cardui--disabled" : "";
+    const chaosClass = card.isChaosCard ? "battle-cardui--chaos" : "";
 
     // Card type icon
-    const icon = card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
+    const icon = card.isChaosCard ? "✦" : card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
 
     // Card type label for badge
-    const typeLabel = card.type === "core" ? "CORE" : card.type === "class" ? "CLASS" : card.type === "gambit" ? "GAMBIT" : "ATK";
+    const typeLabel = card.isChaosCard ? "CHAOS" : card.type === "core" ? "CORE" : card.type === "class" ? "CLASS" : card.type === "gambit" ? "GAMBIT" : "ATK";
 
     // Calculate effective range for display (includes Far Shot bonus)
     const effectiveRange = activeUnit ? getEffectiveCardRange(card, activeUnit) : card.range ?? 1;
@@ -5677,7 +5687,7 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
 
     return `
       <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
-        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
+        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
           <!-- Strain Cost Circle - Top Left -->
           <div class="hs-card-cost">${card.strainCost}</div>
           
@@ -6390,22 +6400,23 @@ function renderBattleResultOverlay(battle: BattleState): string {
   }
 
   if (battle.phase === "defeat") {
+    const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
     // Check if in campaign run (for retry option)
-    const isCampaignRun = (window as any).__isCampaignRun || false;
+    const isCampaignRun = !isTheaterOperationBattle && ((window as any).__isCampaignRun || false);
 
     return `
       <div class="battle-result-overlay battle-result-overlay--defeat">
         <div class="battle-result-card">
           <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT FAILED</div>
           <div class="battle-result-title">DEFEAT</div>
-          <div class="battle-result-message">Combat link severed. Recovery channel standing by.</div>
-          <div class="battle-defeat-text">Your squad has been wiped out.</div>
+          <div class="battle-result-message">${isTheaterOperationBattle ? "Operation force withdrawn. HAVEN recovery channel standing by." : "Combat link severed. Recovery channel standing by."}</div>
+          <div class="battle-defeat-text">${isTheaterOperationBattle ? "The theater remains saved in its current state. Deployed units return shaken." : "Your squad has been wiped out."}</div>
           <div class="battle-result-footer">
             ${isCampaignRun ? `
               <button class="battle-result-btn battle-result-btn--primary" id="retryRoomBtn">RETRY ROOM</button>
               <button class="battle-result-btn" id="abandonRunBtn">ABANDON RUN</button>
             ` : `
-              <button class="battle-result-btn" id="defeatReturnBtn">RETURN TO BASE</button>
+              <button class="battle-result-btn" id="defeatReturnBtn">${isTheaterOperationBattle ? "RETURN TO HAVEN" : "RETURN TO BASE"}</button>
             `}
           </div>
         </div>
@@ -7612,14 +7623,6 @@ function attachBattleListeners() {
     };
   }
 
-  // Debug auto-win button
-  const autoWinBtn = document.getElementById("debugAutoWinBtn");
-  if (autoWinBtn) {
-    autoWinBtn.onclick = () => {
-      handleBattleHudDebugAutoWin();
-    };
-  }
-
   document.querySelectorAll<HTMLElement>("[data-battle-consumable-use]").forEach((button) => {
     button.onclick = () => {
       const consumableId = button.getAttribute("data-battle-consumable-use");
@@ -7853,7 +7856,7 @@ function attachBattleListeners() {
             if (hasTheaterOperation(getGameState().operation)) {
               updateGameState((s) => applyTheaterBattleOutcome(s, localBattleState!));
             } else {
-              markCurrentRoomVisited();
+              markCurrentOperationRoomVisited();
             }
           }
         } else {
@@ -8017,6 +8020,25 @@ function attachBattleListeners() {
         console.log(`[ENDLESS BATTLE] Defeated after ${endlessBattleCount} battles`);
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
+      }
+      const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
+      if (isTheaterOperationBattle) {
+        updateGameState((state) => ({
+          ...applyTheaterOperationFailure(state, battle),
+          phase: "field",
+        }));
+        import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+          renderFieldScreen("base_camp");
+          showSystemPing({
+            title: "OPERATION FAILED",
+            message: "The deployed team was forced back to HAVEN.",
+            detail: "Theater progress was preserved. Deployed units returned Shaken until they recover.",
+            type: "error",
+            channel: "operation-failure",
+            durationMs: 3600,
+          });
+        });
+        return;
       }
       if (hasTheaterOperation(getGameState().operation)) {
         updateGameState((s) => applyTheaterBattleOutcome(s, battle));

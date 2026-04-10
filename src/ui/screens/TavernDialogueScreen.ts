@@ -27,15 +27,29 @@ import {
 } from "../../core/tavernMeals";
 import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import { showSystemPing } from "../components/systemPing";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 
 // ----------------------------------------------------------------------------
 // STATE
 // ----------------------------------------------------------------------------
 
+export type TavernReturnTo = "operation" | BaseCampReturnTo | "field-node";
+
+interface TavernScreenOptions {
+  fullHubServices?: boolean;
+  onClose?: () => void;
+}
+
 let npcWindowInterval: number | null = null;
 let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
+let currentTavernScreenContext: {
+  roomId: string;
+  roomLabel?: string;
+  returnTo: TavernReturnTo;
+  options: TavernScreenOptions;
+} | null = null;
 
 
 // ----------------------------------------------------------------------------
@@ -279,17 +293,25 @@ function renderMealCard(meal: TavernMealBuff, playerWad: number, queuedMeal: Tav
 export function renderTavernDialogueScreen(
   roomId: string = "base_camp_tavern",
   roomLabel?: string,
-  returnTo: "operation" | BaseCampReturnTo = "basecamp",
+  returnTo: TavernReturnTo = "basecamp",
+  options: TavernScreenOptions = {},
 ): void {
   // Stop any existing NPC window system
 
   const root = document.getElementById("app");
   if (!root) return;
 
+  currentTavernScreenContext = {
+    roomId,
+    roomLabel,
+    returnTo,
+    options,
+  };
+
   const activeRun = getActiveRun();
-  const isBaseCamp = returnTo !== "operation";
-  const floorIndex = isBaseCamp ? null : (activeRun?.floorIndex ?? 0);
-  const [flavorText] = getTavernDialogue(floorIndex, isBaseCamp);
+  const hasFullHubServices = options.fullHubServices ?? (returnTo !== "operation");
+  const floorIndex = hasFullHubServices ? null : (activeRun?.floorIndex ?? 0);
+  const [flavorText] = getTavernDialogue(floorIndex, hasFullHubServices);
   const displayTitle = (roomLabel || "Tavern").toUpperCase();
 
   // Get recruitment candidates
@@ -298,7 +320,7 @@ export function renderTavernDialogueScreen(
   const rosterSize = getRosterSize(state);
   const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
   const wad = wallet.wad || 0;
-  const queuedMeal = isBaseCamp ? getQueuedTavernMealBuff(state) : null;
+  const queuedMeal = hasFullHubServices ? getQueuedTavernMealBuff(state) : null;
 
   // Initialize NPC windows
   activeNpcWindows = [];
@@ -310,10 +332,10 @@ export function renderTavernDialogueScreen(
   }
 
   // If no candidates and this is base camp, generate a new pool
-  if (candidates.length === 0 && isBaseCamp) {
+  if (candidates.length === 0 && hasFullHubServices) {
     const hub = {
-      id: "base_camp_tavern",
-      name: "Base Camp Tavern",
+      id: roomId,
+      name: roomLabel || "Tavern",
       type: "base_camp" as const,
       candidatePoolSize: 4,
     };
@@ -329,12 +351,12 @@ export function renderTavernDialogueScreen(
     }
   }
 
-  const candidatesHtml = isBaseCamp
+  const candidatesHtml = hasFullHubServices
     ? candidates
       .map((candidate) => renderCandidateCard(candidate, wad))
       .join("")
     : "";
-  const mealCardsHtml = isBaseCamp
+  const mealCardsHtml = hasFullHubServices
     ? TAVERN_MEAL_DEFINITIONS.map((meal) => renderMealCard(meal, wad, queuedMeal)).join("")
     : "";
 
@@ -346,7 +368,7 @@ export function renderTavernDialogueScreen(
           <div class="tavern-subtitle">S/COM_OS // RECRUITMENT_HUB</div>
         </div>
         <div class="tavern-controls">
-          ${isBaseCamp
+          ${hasFullHubServices
       ? `
             <div class="tavern-stats">
               <span class="stat-badge">ROSTER: ${rosterSize}/${GUILD_ROSTER_LIMITS.MAX_TOTAL_MEMBERS}</span>
@@ -369,7 +391,7 @@ export function renderTavernDialogueScreen(
                <div class="tavern-flavor-text">
                 "${flavorText}"
               </div>
-              ${!isBaseCamp
+              ${!hasFullHubServices
       ? `
                 <div class="tavern-safe-zone">
                   <div class="safe-zone-title">SAFE ZONE ACTIVE</div>
@@ -380,15 +402,15 @@ export function renderTavernDialogueScreen(
     }
             </div>
 
-            ${isBaseCamp
+            ${hasFullHubServices
       ? `
               <div class="tavern-meal-section">
                 <div class="tavern-section-header">
                   <div class="tavern-section-title">MESS HALL</div>
                   <div class="tavern-meal-status">
                     ${queuedMeal
-          ? `NEXT RUN BUFF: ${queuedMeal.name.toUpperCase()}`
-          : "QUEUE ONE SMALL BUFF FOR YOUR NEXT RUN"}
+          ? `NEXT DEPLOYMENT BUFF: ${queuedMeal.name.toUpperCase()}`
+          : "QUEUE ONE SMALL BUFF FOR YOUR NEXT DEPLOYMENT"}
                   </div>
                 </div>
                 <div class="tavern-meal-grid">
@@ -396,8 +418,8 @@ export function renderTavernDialogueScreen(
                 </div>
                 <div class="tavern-meal-note">
                   ${queuedMeal
-          ? `${queuedMeal.name} is queued and will activate when your next operation begins.`
-          : "A good meal won't stack. Order one when you're ready to deploy."}
+          ? `${queuedMeal.name} is queued for your next deployment. Party meals also settle Shaken on active squads.`
+          : "A good meal won't stack. Order one when you're ready to deploy, and it will also clear Shaken from the current party and deployment squads."}
                 </div>
               </div>
             `
@@ -405,7 +427,7 @@ export function renderTavernDialogueScreen(
     }
 
             <div class="tavern-recruitment-section">
-              ${isBaseCamp
+              ${hasFullHubServices
       ? `
                 <div class="tavern-section-header">
                   <div class="tavern-section-title">RECRUITMENT POOL</div>
@@ -446,16 +468,16 @@ export function renderTavernDialogueScreen(
   `;
 
   // Attach event listeners
-  attachTavernListeners(roomId, returnTo);
+  attachTavernListeners(roomId, returnTo, options);
 
   // Start the NPC window system
   startNpcWindowSystem();
 
   // Attach click handlers for hiring candidates (base camp only)
-  if (isBaseCamp) {
+  if (hasFullHubServices) {
     setTimeout(() => {
-      attachCandidateHireHandlers(returnTo);
-      attachTavernMealHandlers(returnTo);
+      attachCandidateHireHandlers();
+      attachTavernMealHandlers();
     }, 100);
   }
 }
@@ -464,9 +486,17 @@ export function renderTavernDialogueScreen(
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
-function attachCandidateHireHandlers(
-  returnTo: "operation" | BaseCampReturnTo,
-): void {
+function rerenderCurrentTavernScreen(): void {
+  if (!currentTavernScreenContext) return;
+  renderTavernDialogueScreen(
+    currentTavernScreenContext.roomId,
+    currentTavernScreenContext.roomLabel,
+    currentTavernScreenContext.returnTo,
+    currentTavernScreenContext.options,
+  );
+}
+
+function attachCandidateHireHandlers(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -478,15 +508,12 @@ function attachCandidateHireHandlers(
       );
       if (!candidateId) return;
 
-      handleHireCandidate(candidateId, returnTo);
+      handleHireCandidate(candidateId);
     });
   });
 }
 
-function handleHireCandidate(
-  candidateId: string,
-  returnTo: "operation" | BaseCampReturnTo,
-): void {
+function handleHireCandidate(candidateId: string): void {
   const state = getGameState();
   const candidates = state.recruitmentCandidates || [];
 
@@ -503,13 +530,10 @@ function handleHireCandidate(
   });
 
   // Re-render to show updated roster and remaining candidates
-  setTimeout(
-    () => renderTavernDialogueScreen("base_camp_tavern", undefined, returnTo),
-    100,
-  );
+  setTimeout(rerenderCurrentTavernScreen, 100);
 }
 
-function attachTavernMealHandlers(returnTo: "operation" | BaseCampReturnTo): void {
+function attachTavernMealHandlers(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
@@ -517,15 +541,12 @@ function attachTavernMealHandlers(returnTo: "operation" | BaseCampReturnTo): voi
     btn.addEventListener("click", () => {
       const mealId = btn.dataset.mealId;
       if (!mealId) return;
-      handlePurchaseTavernMeal(mealId, returnTo);
+      handlePurchaseTavernMeal(mealId);
     });
   });
 }
 
-function handlePurchaseTavernMeal(
-  mealId: string,
-  returnTo: "operation" | BaseCampReturnTo,
-): void {
+function handlePurchaseTavernMeal(mealId: string): void {
   const state = getGameState();
   const result = queueTavernMeal(state, mealId);
 
@@ -540,19 +561,25 @@ function handlePurchaseTavernMeal(
   }
 
   updateGameState(() => result.next);
+  const recoveredUnitNames = result.recoveredShakenUnitIds
+    .map((unitId) => state.unitsById[unitId]?.name)
+    .filter((name): name is string => Boolean(name));
   showSystemPing({
     title: "MEAL QUEUED",
     message: result.meal.name,
-    detail: result.meal.description,
+    detail: recoveredUnitNames.length > 0
+      ? `${result.meal.description} Shaken cleared: ${recoveredUnitNames.join(", ")}.`
+      : result.meal.description,
     type: "success",
     channel: "tavern-meals",
   });
-  renderTavernDialogueScreen("base_camp_tavern", undefined, returnTo);
+  rerenderCurrentTavernScreen();
 }
 
 function attachTavernListeners(
   roomId: string,
-  returnTo: "operation" | BaseCampReturnTo,
+  returnTo: TavernReturnTo,
+  options: TavernScreenOptions,
 ): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -563,15 +590,13 @@ function attachTavernListeners(
   const closeDialogue = () => {
     // Cleanup NPC window system when leaving
     stopNpcWindowSystem();
+    currentTavernScreenContext = null;
 
     if (returnTo === "operation") {
-      // Mark room as visited and return to operation map
-      import("./OperationMapScreen").then(
-        ({ markRoomVisited, renderOperationMapScreen }) => {
-          markRoomVisited(roomId);
-          renderOperationMapScreen();
-        },
-      );
+      markOperationRoomVisited(roomId);
+      renderActiveOperationSurface();
+    } else if (returnTo === "field-node") {
+      options.onClose?.();
     } else {
       unregisterBaseCampReturnHotkey("tavern-screen");
       returnFromBaseCampScreen(returnTo);
@@ -581,7 +606,7 @@ function attachTavernListeners(
   backBtn?.addEventListener("click", closeDialogue);
   continueBtn?.addEventListener("click", closeDialogue);
 
-  if (returnTo === "operation") {
+  if (returnTo === "operation" || returnTo === "field-node") {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key?.toLowerCase() ?? "";
       if (key !== "escape" && e.key !== "Escape" && e.keyCode !== 27) {

@@ -18,6 +18,7 @@ import {
 } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
 import { generateElevationMap } from "./isometric";
+import { getShakenStartingStrain } from "./operationStatuses";
 
 import {
   UnitLoadout,
@@ -627,7 +628,7 @@ export function createBattleUnitState(
     def: finalDef,
     agi: finalAgi,
     acc: finalAcc,
-    strain: 0,
+    strain: getShakenStartingStrain(base),
     drawPile: deck,
     hand,
     discardPile,
@@ -747,11 +748,12 @@ export function advanceTurn(state: BattleState): BattleState {
     // Wait, GDD: "Stunned: You can take only 1 action on your turn". We'll handle action limits in the UI/Card Handler.
     // For now, normal discard.
     if (!currentUnit.isEnemy && currentUnit.hand.length > 0) {
+      const discardableHandCards = currentUnit.hand.filter((cardId) => !getResolvedBattleCard(cardId)?.isChaosCard);
       // Move all cards from hand to discard pile
       const newUnits = { ...newState.units };
       newUnits[newState.activeUnitId] = {
         ...currentUnit,
-        discardPile: [...currentUnit.discardPile, ...currentUnit.hand],
+        discardPile: [...currentUnit.discardPile, ...discardableHandCards],
         hand: [], // Clear hand
       };
       newState = {

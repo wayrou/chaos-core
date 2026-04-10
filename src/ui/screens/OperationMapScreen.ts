@@ -14,6 +14,11 @@ import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
 import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
+import {
+  markCurrentOperationRoomVisited,
+  markOperationRoomVisited,
+  renderActiveOperationSurface,
+} from "./activeOperationFlow";
 import { setMusicCue } from "../../core/audioSystem";
 import { GameState, RoomNode, RoomType, OperationRun } from "../../core/types";
 import { canAdvanceToNextFloor } from "../../core/procedural";
@@ -786,8 +791,12 @@ function advanceToNextRoom(): void {
 // ============================================================================
 
 export function renderOperationMapScreen(): void {
+  // Deprecated compatibility shim: live operations now resume through theater.
+  renderActiveOperationSurface();
+  return;
+
   setMusicCue("atlas");
-  const root = document.getElementById("app");
+  const root = document.getElementById("app") as HTMLElement;
   if (!root) {
     console.error("Missing #app element");
     return;
@@ -806,7 +815,7 @@ export function renderOperationMapScreen(): void {
   syncCampaignToGameState();
 
   const state = getGameState();
-  const operation = getCurrentOperation(state);
+  const operation = getCurrentOperation(state)!;
 
   if (!operation) {
     clearControllerContext();
@@ -831,7 +840,7 @@ export function renderOperationMapScreen(): void {
     return;
   }
 
-  const floor = getCurrentFloor(operation);
+  const floor = getCurrentFloor(operation)!;
   if (!floor) {
     root.innerHTML = `<div class="error">Error: Floor not found</div>`;
     return;
@@ -1962,7 +1971,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
   root.querySelector("#completeOpBtn")?.addEventListener("click", () => {
     completeOperationRun();
     syncCampaignToGameState();
-    import("./OperationClearScreen").then(m => m.renderOperationClearScreen());
+    renderActiveOperationSurface();
   });
 
   // Key room action buttons
@@ -2076,59 +2085,7 @@ function handleKeyRoomAction(keyRoomId: string, action: string, floorIndexHint?:
 // ============================================================================
 
 export function markRoomVisited(roomId: string): void {
-  if (hasTheaterOperation(getGameState().operation)) {
-    updateGameState((prev) => secureTheaterRoomInState(prev, roomId));
-    return;
-  }
-
-  updateGameState(prev => {
-    if (!prev.operation) return prev;
-
-    const operation = { ...prev.operation };
-    const floor = operation.floors[operation.currentFloorIndex];
-
-    if (floor && (floor.nodes || floor.rooms)) {
-      const nodes = floor.nodes || floor.rooms || [];
-      const room = nodes.find(n => n.id === roomId);
-      if (room) {
-        room.visited = true;
-      }
-    }
-
-    return {
-      ...prev,
-      operation,
-    } as GameState;
-  });
-
-  // Persist to campaign progress so cleared nodes unlock next connections
-  try {
-    clearNode(roomId);
-    syncCampaignToGameState();
-
-    // Generate Key Room resources and check for attacks (after room cleared)
-    import("../../core/keyRoomSystem").then(({ generateKeyRoomResources, applyKeyRoomPassiveEffects, rollKeyRoomAttack }) => {
-      generateKeyRoomResources();
-      applyKeyRoomPassiveEffects();
-
-      // Check for attack (async, may show UI)
-      const attackResult = rollKeyRoomAttack();
-      if (attackResult) {
-        // Show defense decision UI
-        import("./DefenseDecisionScreen").then(m => {
-          const activeRun = getActiveRun();
-          if (activeRun?.pendingDefenseDecision) {
-            m.renderDefenseDecisionScreen(
-              activeRun.pendingDefenseDecision.keyRoomId,
-              activeRun.pendingDefenseDecision.nodeId
-            );
-          }
-        });
-      }
-    });
-  } catch (error) {
-    console.warn("[OPMAP] Failed to persist cleared node to campaign:", error);
-  }
+  markOperationRoomVisited(roomId);
 }
 
 
@@ -2520,32 +2477,29 @@ function enterRestRoom(room: RoomNode): void {
         if (isLastCustomFloor) {
           completeOperationRun();
           syncCampaignToGameState();
-          import("./OperationClearScreen").then(m => m.renderOperationClearScreen());
+          renderActiveOperationSurface();
           return;
         }
 
         try {
           advanceToNextFloor();
           syncCampaignToGameState();
-          renderOperationMapScreen();
+          renderActiveOperationSurface();
         } catch (error) {
           console.error("[OPMAP] Failed to auto-descend custom run:", error);
-          renderOperationMapScreen();
+          renderActiveOperationSurface();
         }
         return;
       }
 
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
     });
   }
 }
 
 // Helper to mark the current room as visited (uses currentRoomId from state)
 export function markCurrentRoomVisited(): void {
-  const state = getGameState();
-  if (state.operation?.currentRoomId) {
-    markRoomVisited(state.operation.currentRoomId);
-  }
+  markCurrentOperationRoomVisited();
 }
 
 // Export alias for backwards compatibility

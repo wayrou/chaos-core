@@ -25,6 +25,8 @@ export interface ResolvedBattleCard {
   artPath?: string;
   sourceEquipmentId?: string;
   weaponRules?: WeaponCardRules;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: string[];
 }
 
 const SELF_NAME_HINTS = [
@@ -333,7 +335,9 @@ function parseEffectsFromDescription(description: string, target: BattleCardTarg
 function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
   const description = normalizeDescription(card);
   const target = inferTarget(card, description);
-  const effects = parseEffectsFromDescription(description, target, card.damage);
+  const effects = card.chaosCardsToCreate?.length
+    ? []
+    : parseEffectsFromDescription(description, target, card.damage);
   const weaponRules = card.weaponRules
     ? {
         sourceWeaponId: card.weaponRules.sourceWeaponId ?? card.sourceEquipmentId ?? EQUIPPED_WEAPON_SOURCE_ID,
@@ -353,9 +357,11 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
     range: parseRange(card.range),
     description,
     effects,
-    effectFlow: createEffectFlowFromLegacyCardEffects(effects, target === "ally" ? "ally" : target),
+    effectFlow: effects.length > 0 ? createEffectFlowFromLegacyCardEffects(effects, target === "ally" ? "ally" : target) : undefined,
     sourceEquipmentId: card.sourceEquipmentId,
     weaponRules,
+    isChaosCard: card.isChaosCard,
+    chaosCardsToCreate: card.chaosCardsToCreate ? [...card.chaosCardsToCreate] : undefined,
   };
 
   if (card.damage !== undefined) resolved.damage = card.damage;
@@ -375,6 +381,8 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
 
 function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
   const sourceEquipmentId = (card as ImportedCard & { sourceEquipmentId?: string }).sourceEquipmentId;
+  const isChaosCard = Boolean((card as ImportedCard & { isChaosCard?: boolean }).isChaosCard);
+  const chaosCardsToCreate = (card as ImportedCard & { chaosCardsToCreate?: string[] }).chaosCardsToCreate;
   const equipmentCardLike: EquipmentCard = {
     id: card.id,
     name: card.name,
@@ -398,8 +406,10 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
     range: card.range,
     description: card.description,
     effects: [...card.effects],
-    effectFlow: card.effectFlow ?? createEffectFlowFromLegacyCardEffects(card.effects, card.targetType),
+    effectFlow: card.effectFlow ?? (card.effects.length > 0 ? createEffectFlowFromLegacyCardEffects(card.effects, card.targetType) : undefined),
     sourceEquipmentId,
+    isChaosCard,
+    chaosCardsToCreate: chaosCardsToCreate ? [...chaosCardsToCreate] : undefined,
     weaponRules: inferWeaponRules(equipmentCardLike, card.targetType, card.description),
   };
 
@@ -448,6 +458,10 @@ export function getResolvedBattleCard(id: string): ResolvedBattleCard | null {
   return BATTLE_CARD_LOOKUP[normalized] || null;
 }
 
+export function isChaosBattleCardId(id: string): boolean {
+  return Boolean(getResolvedBattleCard(id)?.isChaosCard);
+}
+
 export function toCoreCard(card: ResolvedBattleCard): Card {
   return {
     id: card.id,
@@ -461,5 +475,7 @@ export function toCoreCard(card: ResolvedBattleCard): Card {
     artPath: card.artPath,
     sourceEquipmentId: card.sourceEquipmentId,
     weaponRules: card.weaponRules,
+    isChaosCard: card.isChaosCard,
+    chaosCardsToCreate: card.chaosCardsToCreate ? [...card.chaosCardsToCreate] : undefined,
   };
 }

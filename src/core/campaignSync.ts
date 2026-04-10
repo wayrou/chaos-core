@@ -5,6 +5,7 @@
 
 import { GameState, OperationRun } from "./types";
 import { getActiveRun, activeRunToOperationRun, getAvailableNextNodes } from "./campaignManager";
+import { ensureOperationHasTheater } from "./theaterSystem";
 import { updateGameState } from "../state/gameStore";
 
 /**
@@ -24,7 +25,7 @@ export function syncCampaignToGameState(): void {
   }
   
   // Convert to OperationRun format
-  const operation = activeRunToOperationRun(activeRun);
+  const operation = ensureOperationHasTheater(activeRunToOperationRun(activeRun));
   
   // Update game state
   updateGameState(prev => ({

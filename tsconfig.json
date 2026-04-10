@@ -22,6 +22,7 @@
   "include": ["src"],
   "exclude": [
     "src/**/__tests__/**",
+    "src/**/*.spec.ts",
     "src/core/workshop.ts",
     "src/ui/screens/BattleGridSystem.ts",
     "src/ui/screens/workshop.ts"

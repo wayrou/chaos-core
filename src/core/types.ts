@@ -80,6 +80,8 @@ export interface Card {
   artPath?: string;
   sourceEquipmentId?: string;
   weaponRules?: WeaponCardRules;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: CardId[];
 }
 
 export interface Unit {
@@ -117,6 +119,17 @@ export interface Unit {
   // Field Mods System - Hardpoints (run-scoped, stored in ActiveRunState)
   // Mount System
   mountInstanceId?: string;  // ID of the OwnedMount instance assigned to this unit
+  operationStatuses?: Array<{
+    id: string;
+    type: string;
+    label?: string;
+    placeholder?: boolean;
+    operationId?: string;
+    theaterId?: string;
+    sourceRoomId?: RoomId;
+    createdAtTick?: number;
+    expiresAtTick?: number;
+  }>;
   operationInjury?: {
     operationId: string;
     theaterId: string;
@@ -729,6 +742,7 @@ export type CoreType =
   | "tactics_school"
   | "quartermaster_cell"
   | "stable"
+  | "workshop"
   | "fabrication_bay"
   | "survey_array"
   | "recovery_yard"
@@ -1646,6 +1660,7 @@ export interface OwnedMount {
 export interface StableState {
   unlockedMountIds: MountId[];        // Which mount types are unlocked
   ownedMounts: OwnedMount[];          // Mount instances the player owns
+  aerissFieldMountInstanceId?: string | null; // Placeholder travel mount used for field-map movement speed
 }
 
 // ---------------------------------------------------------

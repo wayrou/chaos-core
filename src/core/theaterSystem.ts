@@ -114,6 +114,10 @@ import {
   grantSessionResources,
   spendSessionCost,
 } from "./session";
+import {
+  applyShakenStatusToUnitIds,
+  expireShakenStatusesForTheater,
+} from "./operationStatuses";
 
 type ResourceWallet = GameState["resources"];
 
@@ -4038,6 +4042,14 @@ function advanceMountedTheaterRuntimeTicks(
       ...nextState,
       operation: resolveOperationFields(operation, afterThreats),
     };
+    if (operation.id) {
+      nextState = expireShakenStatusesForTheater(
+        nextState,
+        operation.id,
+        nextTheater.definition.id,
+        nextTheater.tickCount,
+      );
+    }
     nextState = advanceAutomatedSquads(nextState);
   }
 
@@ -6241,6 +6253,46 @@ function markOperationBattleCasualties(state: GameState, battle: RuntimeBattleSt
     ...state,
     unitsById: updatedUnits,
   };
+}
+
+function applyPlaceholderOperationScopedFailureCleanup(
+  state: GameState,
+  _battle: RuntimeBattleState,
+): GameState {
+  // Placeholder hook for future operation-scoped temporary rewards or inventory.
+  return state;
+}
+
+function applyOperationFailureShakenStatus(
+  state: GameState,
+  battle: RuntimeBattleState,
+): GameState {
+  const operationId = battle.theaterMeta?.operationId;
+  const theaterId = battle.theaterMeta?.theaterId;
+  const roomId = battle.theaterMeta?.roomId ?? battle.roomId;
+  const deployedUnitIds = battle.theaterMeta?.deployedUnitIds ?? [];
+  if (!operationId || !theaterId || deployedUnitIds.length <= 0) {
+    return state;
+  }
+  const activeTheaterTick = getPreparedTheaterOperation(state)?.theater?.tickCount ?? 0;
+  return applyShakenStatusToUnitIds(state, deployedUnitIds, {
+    operationId,
+    theaterId,
+    sourceRoomId: roomId,
+    currentTick: activeTheaterTick,
+  });
+}
+
+export function applyTheaterOperationFailure(state: GameState, battle: RuntimeBattleState): GameState {
+  if (!hasTheaterOperation(state.operation) || !battle.theaterMeta || battle.phase !== "defeat") {
+    return state;
+  }
+
+  let nextState = syncBattleUnitsBackToCampaignState(state, battle);
+  nextState = markOperationBattleCasualties(nextState, battle);
+  nextState = applyPlaceholderOperationScopedFailureCleanup(nextState, battle);
+  nextState = applyOperationFailureShakenStatus(nextState, battle);
+  return nextState;
 }
 
 function syncTheaterRoomFieldAssetsFromBattle(

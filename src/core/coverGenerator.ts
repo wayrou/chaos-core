@@ -96,7 +96,7 @@ function createSeededRNG(seed: string): SeededRNG {
 // ----------------------------------------------------------------------------
 
 // Dev-only debug logging for cover generation
-const DEBUG_COVER = true;
+const DEBUG_COVER = false;
 
 /**
  * Generate cover for a battle grid deterministically

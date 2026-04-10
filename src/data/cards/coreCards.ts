@@ -43,6 +43,15 @@ export const CORE_CARDS: EquipmentCard[] = [
         range: "R(0-0)",
     },
     {
+        id: "core_chaos_call",
+        name: "Chaos Call",
+        type: "core",
+        strainCost: 6,
+        description: "create 2 chaos cards",
+        range: "R(Self)",
+        chaosCardsToCreate: ["chaos_placeholder_card", "chaos_placeholder_card"],
+    },
+    {
         id: "core_wait",
         name: "Wait",
         type: "core",

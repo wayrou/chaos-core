@@ -5,7 +5,8 @@
 // ============================================================================
 
 import { updateGameState, getGameState } from "../../state/gameStore";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
+import { isStableNodeUnlocked } from "../../core/campaign";
 import {
   getPreparedTheaterOperation,
   hasTheaterOperation,
@@ -29,6 +30,14 @@ import { tryJoinAsP2, dropOutP2 } from "../../core/coop";
 import { showSystemPing } from "../components/systemPing";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { showDialogue } from "./DialogueScreen";
+import {
+  FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT,
+  createInitialStableState,
+  getAerissFieldMount,
+  getAerissFieldMovementSpeedBonus,
+  getMountById,
+  setAerissFieldMount,
+} from "../../core/mounts";
 
 // ============================================================================
 // TYPES
@@ -180,6 +189,7 @@ const TILE_SIZE = 64;
 const PLAYER_SIZE = 48;
 const ENEMY_SIZE = 40;
 const FIELD_NPC_SIZE = 34;
+const FIELD_NODE_BASE_PLAYER_SPEED = 180;
 const ATTACK_COOLDOWN = 400; // ms
 const ATTACK_DURATION = 200; // ms
 const ATTACK_RANGE = 70; // pixels (melee)
@@ -417,6 +427,75 @@ function getFacilityNpcBlueprints(coreType: CoreType): Array<{ name: string; gly
           dialogue: [
             "Heat, pressure, patience. Miss one and the whole room gets loud fast.",
             "It smells like trouble in here, which means it is working.",
+          ],
+        },
+      ];
+    case "stable":
+      return [
+        {
+          name: "Stablemaster",
+          glyph: "♞",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "We can get Aeriss moving faster out there if you want a field-travel mount ready.",
+            "This is a rough posting, but the mounts still know how to carry through it.",
+          ],
+        },
+        {
+          name: "Handler",
+          glyph: "▲",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "Keep the harnesses dry and the feed sealed. Everything else we can improvise.",
+            "Even in a forward room, a calm mount changes the pace of the whole day.",
+          ],
+        },
+      ];
+    case "workshop":
+      return [
+        {
+          name: "Workshop Lead",
+          glyph: "■",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "Bench is live. If Aeriss needs gear tuned, we can do it here instead of hauling back to HAVEN.",
+            "Keep scrap and steam moving and I can keep the workshop honest.",
+          ],
+        },
+        {
+          name: "Bench Tech",
+          glyph: "⬢",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "This room used to be dead metal. Now it sounds like tools again.",
+            "The closer the bench is to the breach, the fewer excuses bad gear gets.",
+          ],
+        },
+      ];
+    case "tavern":
+      return [
+        {
+          name: "Tavernkeeper",
+          glyph: "☕",
+          tileX: 5,
+          tileY: 4,
+          dialogue: [
+            "Contracts still find us out here. Sit down long enough and somebody will ask to join up.",
+            "Mess line is hot, rumors are hotter, and that usually means the room is doing its job.",
+          ],
+        },
+        {
+          name: "Regular",
+          glyph: "◆",
+          tileX: 10,
+          tileY: 6,
+          dialogue: [
+            "Funny how a room becomes home the second somebody starts pouring drinks and swapping stories.",
+            "People breathe different when they think they might make it back here.",
           ],
         },
       ];
@@ -797,7 +876,7 @@ function generateFieldNodeRoom(roomId: string, seed: number): FieldNodeRoomState
       y: playerY,
       width: PLAYER_SIZE,
       height: PLAYER_SIZE,
-      speed: 180,
+      speed: FIELD_NODE_BASE_PLAYER_SPEED,
       facing: "east",
       isAttacking: false,
       attackCooldown: 0,
@@ -896,7 +975,7 @@ function generateCoreFacilityRoom(roomId: string, seed: number, coreType: CoreTy
       y: playerY,
       width: PLAYER_SIZE,
       height: PLAYER_SIZE,
-      speed: 180,
+      speed: FIELD_NODE_BASE_PLAYER_SPEED,
       facing: "east",
       isAttacking: false,
       attackCooldown: 0,
@@ -962,9 +1041,22 @@ function returnFromFieldNode(): void {
       return;
     case "operation_map":
     default:
-      renderOperationMapScreen();
+      renderActiveOperationSurface();
       return;
   }
+}
+
+function pauseCurrentFieldNodeRoom(): void {
+  if (!roomState) return;
+  roomState.isPaused = true;
+  stopGameLoop();
+}
+
+export function resumeCurrentFieldNodeRoom(): void {
+  if (!roomState) return;
+  roomState.isPaused = false;
+  render();
+  startGameLoop();
 }
 
 export function renderFieldNodeRoomScreen(
@@ -1377,6 +1469,222 @@ function renderCompletionOverlay(): string {
   `;
 }
 
+function getFieldMountIcon(mountType: string): string {
+  const icons: Record<string, string> = {
+    horse: "🐎",
+    warhorse: "⚔",
+    lizard: "🦎",
+    mechanical: "⚙",
+    beast: "🐺",
+    bird: "🕊",
+  };
+  return icons[mountType] || "🐴";
+}
+
+function renderAerissFieldMountScreen(): void {
+  if (!roomState) return;
+
+  if (!isStableNodeUnlocked()) {
+    showSystemPing({
+      title: "STABLE OFFLINE",
+      message: "Unlock the HAVEN stable before issuing field-travel mounts.",
+      type: "info",
+      channel: "field-node-stable-core",
+    });
+    resumeCurrentFieldNodeRoom();
+    return;
+  }
+
+  const root = document.getElementById("app");
+  if (!root) return;
+
+  const state = getGameState();
+  const stable = state.stable ?? createInitialStableState();
+  if (!state.stable) {
+    updateGameState((prev) => ({ ...prev, stable }));
+  }
+
+  const currentFieldMount = getAerissFieldMount(stable);
+  const currentSpeedBonus = getAerissFieldMovementSpeedBonus(stable);
+
+  const mountCardsHtml = stable.ownedMounts
+    .map((ownedMount) => {
+      const mount = getMountById(ownedMount.mountId);
+      if (!mount) return "";
+
+      const isEquipped = currentFieldMount?.ownedMount.instanceId === ownedMount.instanceId;
+      const speedBonus = Math.max(0, mount.statModifiers.movement ?? 0) * FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT;
+      const assignedUnit = ownedMount.assignedToUnitId ? state.unitsById[ownedMount.assignedToUnitId] : null;
+
+      return `
+        <div class="stable-mount-card ${isEquipped ? "stable-mount-card--assigned" : "stable-mount-card--owned"}">
+          <div class="stable-mount-header">
+            <div class="stable-mount-icon">${getFieldMountIcon(mount.mountType)}</div>
+            <div class="stable-mount-title">
+              <div class="stable-mount-name">${mount.name}</div>
+              <div class="stable-mount-type">${mount.mountType.toUpperCase()}</div>
+            </div>
+            ${isEquipped ? '<div class="stable-mount-assigned-badge">FIELD READY</div>' : ""}
+          </div>
+          <div class="stable-mount-body">
+            <div class="stable-mount-desc">${mount.description}</div>
+            <div class="stable-section-label">FIELD TRAVEL EFFECT</div>
+            <div class="stable-stats-list">${speedBonus > 0 ? `+${speedBonus} field speed` : "No field speed bonus"}</div>
+            <div class="stable-section-label">TACTICAL STATUS</div>
+            <div class="stable-traits-list">
+              <span class="stable-trait">${assignedUnit ? `Assigned in stable to ${assignedUnit.name}` : "Unassigned in stable"}</span>
+            </div>
+          </div>
+          <div class="stable-mount-footer">
+            ${isEquipped
+              ? `<button class="stable-unassign-btn" data-field-mount-clear="true">TRAVEL ON FOOT</button>`
+              : `<button class="stable-assign-btn" data-field-mount-id="${ownedMount.instanceId}">READY FOR AERISS</button>`}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  root.innerHTML = `
+    <div class="stable-root town-screen">
+      <div class="stable-header town-screen__header">
+        <div class="stable-header-left town-screen__titleblock">
+          <div class="stable-title">FIELD MOUNT</div>
+          <div class="stable-subtitle">Aeriss can borrow one stable mount for travel speed while this operation is live.</div>
+        </div>
+        <div class="stable-header-right town-screen__header-right">
+          <div class="stable-wad">${currentFieldMount ? `${currentFieldMount.mount.name} // +${currentSpeedBonus} SPD` : "ON FOOT"}</div>
+          <button class="stable-back-btn town-screen__back-btn" id="fieldMountBackBtn">RETURN TO C.O.R.E.</button>
+        </div>
+      </div>
+      <div class="stable-body town-screen__content-panel">
+        <div class="stable-section">
+          <div class="stable-section-header">
+            <div class="stable-section-title">AERISS // FIELD TRAVEL LOADOUT</div>
+            <div class="stable-section-info">${stable.ownedMounts.length} mounts available</div>
+          </div>
+          <div class="stable-mounts-grid">
+            ${mountCardsHtml || '<div class="stable-empty">No mounts are available in the stable yet.</div>'}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const closeScreen = () => {
+    window.removeEventListener("keydown", handleMountScreenKeyDown);
+    resumeCurrentFieldNodeRoom();
+  };
+
+  const handleMountScreenKeyDown = (event: KeyboardEvent) => {
+    const key = event.key?.toLowerCase() ?? "";
+    if (key !== "escape" && key !== "e") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeScreen();
+  };
+
+  window.addEventListener("keydown", handleMountScreenKeyDown);
+  root.querySelector("#fieldMountBackBtn")?.addEventListener("click", closeScreen);
+
+  root.querySelectorAll<HTMLElement>("[data-field-mount-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mountInstanceId = button.dataset.fieldMountId;
+      if (!mountInstanceId) return;
+
+      const selectedStable = getGameState().stable ?? stable;
+      const selectedMount = selectedStable.ownedMounts.find((mountInstance) => mountInstance.instanceId === mountInstanceId);
+      const selectedMountDefinition = selectedMount ? getMountById(selectedMount.mountId) : null;
+      const speedBonus = selectedMountDefinition
+        ? Math.max(0, selectedMountDefinition.statModifiers.movement ?? 0) * FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT
+        : 0;
+
+      updateGameState((prev) => {
+        const nextStable = prev.stable ?? createInitialStableState();
+        const result = setAerissFieldMount(nextStable, mountInstanceId);
+        return result.error ? prev : { ...prev, stable: result.stable };
+      });
+
+      showSystemPing({
+        title: "FIELD MOUNT READY",
+        message: selectedMountDefinition?.name ?? "Travel mount equipped",
+        detail: speedBonus > 0 ? `Aeriss gains +${speedBonus} movement speed in field maps.` : "Aeriss is ready to travel with a mount.",
+        type: "success",
+        channel: "field-node-stable-core",
+      });
+
+      closeScreen();
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-field-mount-clear]").forEach((button) => {
+    button.addEventListener("click", () => {
+      updateGameState((prev) => {
+        const nextStable = prev.stable ?? createInitialStableState();
+        const result = setAerissFieldMount(nextStable, null);
+        return { ...prev, stable: result.stable };
+      });
+
+      showSystemPing({
+        title: "FIELD MOUNT CLEARED",
+        message: "Aeriss is traveling on foot again.",
+        type: "info",
+        channel: "field-node-stable-core",
+      });
+
+      closeScreen();
+    });
+  });
+}
+
+function openFacilityServiceScreen(): boolean {
+  if (!roomState || roomState.mode !== "facility" || !roomState.facilityType) {
+    return false;
+  }
+
+  if (
+    roomState.facilityType !== "tavern"
+    && roomState.facilityType !== "workshop"
+    && roomState.facilityType !== "fabrication_bay"
+    && roomState.facilityType !== "stable"
+  ) {
+    return false;
+  }
+
+  pauseCurrentFieldNodeRoom();
+
+  if (roomState.facilityType === "tavern") {
+    import("./TavernDialogueScreen").then(({ renderTavernDialogueScreen }) => {
+      renderTavernDialogueScreen(
+        roomState?.roomId ?? "theater_tavern_core",
+        roomState?.facilityLabel ?? "Tavern",
+        "field-node",
+        {
+          fullHubServices: true,
+          onClose: resumeCurrentFieldNodeRoom,
+        },
+      );
+    }).catch(() => resumeCurrentFieldNodeRoom());
+    return true;
+  }
+
+  if (roomState.facilityType === "workshop" || roomState.facilityType === "fabrication_bay") {
+    import("./GearWorkbenchScreen").then(({ renderGearWorkbenchScreen }) => {
+      renderGearWorkbenchScreen(undefined, undefined, "field-node");
+    }).catch(() => resumeCurrentFieldNodeRoom());
+    return true;
+  }
+
+  if (roomState.facilityType === "stable") {
+    renderAerissFieldMountScreen();
+    return true;
+  }
+  return false;
+}
+
 // ============================================================================
 // GAME LOOP
 // ============================================================================
@@ -1428,6 +1736,8 @@ function updatePlayer(deltaTime: number, _currentTime: number): void {
   if (!roomState) return;
   
   const player = roomState.player;
+  const fieldMountSpeedBonus = getAerissFieldMovementSpeedBonus(getGameState().stable);
+  player.speed = FIELD_NODE_BASE_PLAYER_SPEED + fieldMountSpeedBonus;
   
   // Update invulnerability timer
   if (player.invulnerabilityTime > 0) {
@@ -2122,24 +2432,48 @@ function checkCollisions(): void {
 
 function handlePlayerDeath(): void {
   if (!roomState) return;
-  
-  console.log("[FIELD_NODE] Player died! Exiting room...");
-  
+
+  const roomId = roomState.roomId;
+  const losses = { ...roomState.collectedResources };
+  const lossBreakdown = [
+    losses.wad > 0 ? `${losses.wad} WAD` : null,
+    losses.metalScrap > 0 ? `${losses.metalScrap} Metal Scrap` : null,
+    losses.wood > 0 ? `${losses.wood} Wood` : null,
+    losses.chaosShards > 0 ? `${losses.chaosShards} Chaos Shards` : null,
+    losses.steamComponents > 0 ? `${losses.steamComponents} Steam Components` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  console.log("[FIELD_NODE] Player died! Exiting room...", { roomId, losses });
+
   // Stop the game loop
   stopGameLoop();
-  
-  // Exit the room and return to operation map
-  // TODO: Handle death cutscenes or penalties later
+
+  // Room pickups are only banked on clear, so dying here forfeits anything gathered inside the room.
   cleanup();
-  
-  // Return to operation map (or base camp if test room or endless mode)
-  const isTestRoom = roomState.roomId.startsWith("test_") || roomState.roomId.startsWith("endless_");
+
+  const showFailurePing = () => {
+    showSystemPing({
+      title: "FIELD SWEEP FAILED",
+      message: lossBreakdown.length > 0
+        ? "Unbanked room salvage was lost during withdrawal."
+        : "The squad was forced to withdraw before securing the room.",
+      detail: lossBreakdown.length > 0 ? `Lost: ${lossBreakdown.join(" // ")}` : undefined,
+      type: "error",
+      channel: "field-node-failure",
+      durationMs: 3400,
+    });
+  };
+
+  // Return to the active operation surface (or base camp for test/endless rooms)
+  const isTestRoom = roomId.startsWith("test_") || roomId.startsWith("endless_");
   if (isTestRoom || isEndlessMode) {
     import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
       renderFieldScreen("base_camp");
+      showFailurePing();
     });
   } else {
     returnFromFieldNode();
+    showFailurePing();
   }
 }
 
@@ -2282,6 +2616,10 @@ function interactWithNpc(): boolean {
 
   if (!nearestNpc) {
     return false;
+  }
+
+  if (roomState.mode === "facility" && nearestNpc.id.endsWith("_0") && openFacilityServiceScreen()) {
+    return true;
   }
 
   roomState.isPaused = true;

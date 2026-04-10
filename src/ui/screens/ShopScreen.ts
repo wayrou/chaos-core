@@ -11,7 +11,7 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { 
   PAK_DATABASE, 
   openPAK, 
@@ -261,7 +261,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   const state = getGameState();
   const wallet = getQuartermasterWallet(state);
   const resources = wallet.resources;
-  const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
+  const backButtonText = returnTo === "operation" ? "ACTIVE OPERATION" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
     <div class="shop-root town-screen town-screen--shop">
@@ -486,9 +486,9 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
         // Mark the current room as visited when leaving the shop (uses campaign system)
         const state = getGameState();
         if (state.operation?.currentRoomId) {
-          markRoomVisited(state.operation.currentRoomId);
+          markOperationRoomVisited(state.operation.currentRoomId);
         }
-        renderOperationMapScreen();
+        renderActiveOperationSurface();
       } else {
         returnFromBaseCampScreen(returnDestination as BaseCampReturnTo);
       }

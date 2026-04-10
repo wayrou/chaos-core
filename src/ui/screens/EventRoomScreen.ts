@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { getEventTemplate, EventRoom, EventChoice } from "../../core/procedural";
 import { GameState } from "../../core/types";
 import { addResourceWallet, createEmptyResourceWallet } from "../../core/resources";
@@ -145,12 +145,12 @@ function handleChoice(choice: EventChoice, _event: EventRoom): void {
   // Mark the room as visited in both game state and campaign system
   const state = getGameState();
   if (state.operation?.currentRoomId) {
-    markRoomVisited(state.operation.currentRoomId);
+    markOperationRoomVisited(state.operation.currentRoomId);
   }
 
-  // Show result message then return to map
+  // Show result message then return to the active operation surface
   showEventResult(choice, () => {
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
   });
 }
 

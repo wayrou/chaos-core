@@ -33,6 +33,7 @@ import {
 } from "../../core/types";
 import { ensureOperationHasTheater } from "../../core/theaterSystem";
 import { renderLoadoutScreen } from "./LoadoutScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 import {
   applySquadMatchCommand,
   clearSquadMatchState,
@@ -1734,8 +1735,7 @@ async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void
   }
 
   if (normalizedReturnContext.kind === "operation") {
-    const { renderOperationMapScreen } = await import("./OperationMapScreen");
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
 
@@ -1953,8 +1953,7 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
       renderTheaterCommandScreen();
       return;
     }
-    const { renderOperationMapScreen } = await import("./OperationMapScreen");
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
     return;
   }
   if (document.querySelector(".network-lobby-overlay") || isCommsArrayMounted() || document.querySelector(".field-root")) {
@@ -3728,7 +3727,7 @@ export function renderCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): vo
   syncSelectedSharedCampaignSlotFromState();
   activeSkirmishSurface = "comms";
   const backButtonText = returnTo === "operation"
-    ? "DUNGEON MAP"
+    ? "ACTIVE OPERATION"
     : returnTo === "menu"
       ? "MAIN MENU"
       : getBaseCampReturnLabel(returnTo);
@@ -3887,10 +3886,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
     backBtn.onclick = () => {
       unregisterBaseCampReturnHotkey("comms-array-screen");
       if (returnTo === "operation") {
-        // Return to operation map if needed
-        import("./OperationMapScreen").then(({ renderOperationMapScreen }) => {
-          renderOperationMapScreen();
-        });
+        renderActiveOperationSurface();
       } else if (returnTo === "menu") {
         import("./MainMenuScreen").then(({ renderMainMenu }) => {
           void renderMainMenu();

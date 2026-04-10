@@ -284,7 +284,7 @@ export const PROTOTYPE_SCHEMA_CORE_TYPES: CoreType[] = [
   "prototype_systems_lab",
   "forward_fire_support_post",
   "tactics_school",
-  "fabrication_bay",
+  "workshop",
 ];
 
 export const MASTER_UNLOCK_GUIDE = [

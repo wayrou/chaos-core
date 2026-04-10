@@ -31,6 +31,7 @@ import {
 } from "./echoFieldEffects";
 
 import { getAllStarterEquipment } from "./equipment";
+import { isChaosBattleCardId } from "./cardCatalog";
 import { applyEffectFlowToBattle } from "./effectFlow";
 import {
   addHeat,
@@ -85,6 +86,11 @@ function addTimedBuff(
 function discardCardFromHand(battle: BattleState, unitId: string, cardId: string): BattleState {
   const unit = battle.units[unitId];
   if (!unit) return battle;
+  const cardIndex = unit.hand.indexOf(cardId);
+  const nextHand =
+    cardIndex < 0
+      ? unit.hand
+      : [...unit.hand.slice(0, cardIndex), ...unit.hand.slice(cardIndex + 1)];
 
   return {
     ...battle,
@@ -92,8 +98,30 @@ function discardCardFromHand(battle: BattleState, unitId: string, cardId: string
       ...battle.units,
       [unitId]: {
         ...unit,
-        hand: unit.hand.filter(id => id !== cardId),
-        discardPile: [...unit.discardPile, cardId],
+        hand: nextHand,
+        discardPile: isChaosBattleCardId(cardId) ? unit.discardPile : [...unit.discardPile, cardId],
+      },
+    },
+  };
+}
+
+function addCardsToHand(battle: BattleState, unitId: string, cardIds: string[]): BattleState {
+  if (cardIds.length === 0) {
+    return battle;
+  }
+
+  const unit = battle.units[unitId];
+  if (!unit) {
+    return battle;
+  }
+
+  return {
+    ...battle,
+    units: {
+      ...battle.units,
+      [unitId]: {
+        ...unit,
+        hand: [...unit.hand, ...cardIds],
       },
     },
   };
@@ -275,6 +303,9 @@ function finalizeCardUsage(
   next = applyTheaterCombatInstability(next, userId);
   if (next.units[userId]) {
     next = discardCardFromHand(next, userId, card.id);
+  }
+  if (next.units[userId] && card.chaosCardsToCreate?.length) {
+    next = addCardsToHand(next, userId, card.chaosCardsToCreate);
   }
   return next;
 }
@@ -508,18 +539,7 @@ export function handleCardPlay(
   // ========================================
   if (card.id === "core_wait" || card.name.toLowerCase() === "wait" ||
     card.effects?.some((e: any) => e.type === "end_turn")) {
-
-    // Discard the card
-    const updatedUser: BattleUnitState = {
-      ...user,
-      hand: user.hand.filter(id => id !== card.id),
-      discardPile: [...user.discardPile, card.id],
-    };
-
-    let b: BattleState = {
-      ...battle,
-      units: { ...battle.units, [user.id]: updatedUser },
-    };
+    let b: BattleState = discardCardFromHand(battle, user.id, card.id);
 
     b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} waits, ending their turn.`);
     b = advanceTurn(b);
@@ -767,6 +787,10 @@ export function handleCardPlay(
         };
         logMessages.push(`recovers ${amount} HP`);
       }
+    }
+
+    if (card.chaosCardsToCreate?.length) {
+      logMessages.push(`creates ${card.chaosCardsToCreate.length} Chaos Cards`);
     }
 
     // If no specific effects parsed, apply a generic +3 DEF buff (fallback for "Guard" type cards)

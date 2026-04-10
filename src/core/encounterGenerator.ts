@@ -12,7 +12,7 @@ import { getEnemyPool } from "./enemies";
 // ----------------------------------------------------------------------------
 
 // Dev-only debug logging (set to true for encounter debugging)
-const DEBUG_ENCOUNTERS = true;
+const DEBUG_ENCOUNTERS = false;
 
 // Enemy count configuration table by node type
 const ENEMY_COUNT_CONFIG = {

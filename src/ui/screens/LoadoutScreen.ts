@@ -5,10 +5,9 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
-import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
 import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../core/inventory";
 import { InventoryState, InventoryItem } from "../../core/types";
@@ -536,13 +535,11 @@ function attachLoadoutListeners(): void {
     updateGameState(prev => ({
       ...prev,
       operation: null,
-      phase: launchSource === "atlas" ? "atlas" : "shell",
+      phase: "shell",
     }));
 
     if (launchSource === "atlas") {
-      import("./AtlasScreen").then(({ renderAtlasScreen }) => {
-        renderAtlasScreen("esc");
-      });
+      renderOperationSelectScreen("esc");
       return;
     }
 
@@ -598,13 +595,7 @@ function attachLoadoutListeners(): void {
         : syncPartyForwardLockerState(prev)),
       phase: "operation",
     }));
-
-    if (getGameState().operation?.theater) {
-      renderTheaterCommandScreen();
-      return;
-    }
-
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
   });
 
   // ------------------------------

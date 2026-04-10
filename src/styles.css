@@ -15876,6 +15876,69 @@ button {
   filter: grayscale(0.6) brightness(0.7);
 }
 
+.battle-cardui--chaos {
+  background: linear-gradient(180deg, #152a26 0%, #0b1917 52%, #081311 100%);
+  border-color: #47bfa3;
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.42),
+    0 0 18px rgba(71, 191, 163, 0.18),
+    inset 0 1px 0 rgba(180, 255, 237, 0.08);
+}
+
+.battle-cardui--chaos:hover {
+  border-color: #8df3dd;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.48),
+    0 0 24px rgba(89, 230, 195, 0.3),
+    inset 0 1px 0 rgba(216, 255, 246, 0.12);
+}
+
+.battle-cardui--chaos .hs-card-cost {
+  background: radial-gradient(circle at 30% 30%, #6bf0d0 0%, #27ab89 52%, #116052 100%);
+  border-color: #c4fff3;
+  color: #06241d;
+  text-shadow: none;
+}
+
+.battle-cardui--chaos .hs-card-art {
+  background: linear-gradient(180deg, #103631 0%, #0a211d 100%);
+  border-color: #2f8e79;
+}
+
+.battle-cardui--chaos .hs-card-art-glyph {
+  color: #8cf7e2;
+}
+
+.battle-cardui--chaos .hs-card-name-banner {
+  background: linear-gradient(90deg, transparent 0%, rgba(20, 80, 69, 0.92) 20%, rgba(20, 80, 69, 0.92) 80%, transparent 100%);
+  border-color: #44b89b;
+}
+
+.battle-cardui--chaos .hs-card-name {
+  color: #d8fff5;
+}
+
+.battle-cardui--chaos .hs-card-type {
+  background: rgba(6, 30, 25, 0.82);
+  border-color: #44b89b;
+  color: #91ffe7;
+}
+
+.battle-cardui--chaos .hs-card-desc {
+  color: #c8f6eb;
+}
+
+.battle-cardui--chaos .hs-card-footer {
+  border-color: rgba(68, 184, 155, 0.35);
+  background: rgba(6, 30, 25, 0.45);
+}
+
+.battle-cardui--chaos .hs-card-stat {
+  background: rgba(23, 77, 66, 0.72);
+  border-color: #44b89b;
+  color: #b7fff0;
+}
+
 /* Strain Cost Circle - Top Left Corner */
 .hs-card-cost {
   position: absolute;

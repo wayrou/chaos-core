@@ -53,7 +53,7 @@ export const SCHEMA_CORE_BUILD_ORDER: CoreType[] = [
   "tactics_school",
   "quartermaster_cell",
   "stable",
-  "fabrication_bay",
+  "workshop",
   "survey_array",
   "recovery_yard",
   "transit_hub",
@@ -400,6 +400,22 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     preferredRoomTags: ["stable_suitable", "transit_junction"],
     placeholder: true,
   },
+  workshop: {
+    id: "workshop",
+    displayName: "Workshop",
+    shortCode: "WK",
+    category: "industry",
+    description: "Forward workshop C.O.R.E. that mirrors the HAVEN workshop node for gear building, customization, and crafting inside the theater.",
+    buildCost: { metalScrap: 5, steamComponents: 2, wood: 1 },
+    upkeep: {},
+    wadUpkeepPerTick: 9,
+    incomePerTick: {},
+    supportRadius: 1,
+    unlockSource: "schema",
+    unlockCost: { metalScrap: 6, steamComponents: 2 },
+    unlockWadCost: 44,
+    placeholder: false,
+  },
   fabrication_bay: {
     id: "fabrication_bay",
     displayName: "Fabrication Bay",
@@ -472,7 +488,7 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     displayName: "Tavern",
     shortCode: "TV",
     category: "civic",
-    description: "Placeholder morale node for future recovery and contract-generation systems.",
+    description: "Forward tavern C.O.R.E. that mirrors HAVEN's recruitment hub, keeping contracts and mess-hall services online during an operation.",
     buildCost: { wood: 4, chaosShards: 1 },
     upkeep: {},
     wadUpkeepPerTick: 6,
@@ -482,7 +498,7 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     unlockCost: { wood: 4, chaosShards: 1 },
     unlockWadCost: 24,
     preferredRoomTags: ["tavern_suitable"],
-    placeholder: true,
+    placeholder: false,
   },
   refinery: {
     id: "refinery",
@@ -762,7 +778,7 @@ export function createDefaultSchemaUnlockState(): SchemaUnlockState {
 export function normalizeSchemaUnlockState(schema?: Partial<SchemaUnlockState> | null): SchemaUnlockState {
   const coreSet = new Set<CoreType>(SCHEMA_STARTER_CORE_TYPES);
   (schema?.unlockedCoreTypes ?? []).forEach((coreType) => {
-    if (SCHEMA_CORE_BUILD_ORDER.includes(coreType)) {
+    if (SCHEMA_CORE_BUILD_ORDER.includes(coreType) || coreType === "fabrication_bay") {
       coreSet.add(coreType);
     }
   });
@@ -782,7 +798,10 @@ export function normalizeSchemaUnlockState(schema?: Partial<SchemaUnlockState> |
   });
 
   return {
-    unlockedCoreTypes: SCHEMA_CORE_BUILD_ORDER.filter((coreType) => coreSet.has(coreType)),
+    unlockedCoreTypes: [
+      ...SCHEMA_CORE_BUILD_ORDER.filter((coreType) => coreSet.has(coreType)),
+      ...(coreSet.has("fabrication_bay") ? ["fabrication_bay" as CoreType] : []),
+    ],
     unlockedFortificationPips: SCHEMA_FORTIFICATION_ORDER.filter((fortificationType) => fortificationSet.has(fortificationType)),
     unlockedFieldAssetTypes: SCHEMA_FIELD_ASSET_ORDER.filter((fieldAssetType) => fieldAssetSet.has(fieldAssetType)),
   };

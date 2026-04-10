@@ -84,7 +84,7 @@ import {
 // STATE
 // ----------------------------------------------------------------------------
 
-type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation";
+type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation" | "field-node";
 
 type WorkbenchTab = "build" | "customize" | "endless" | "craft";
 type BuildDoctrineSelection = string | "__chaotic__" | null;
@@ -168,6 +168,13 @@ function returnFromWorkbenchScreen(returnTo: ReturnDestination, unitId = workben
     return;
   }
 
+  if (returnTo === "field-node") {
+    import("./FieldNodeRoomScreen").then(({ resumeCurrentFieldNodeRoom }) => {
+      resumeCurrentFieldNodeRoom();
+    });
+    return;
+  }
+
   returnFromBaseCampScreen(returnTo === "unitdetail" || returnTo === "unitdetail-operation" ? "basecamp" : returnTo);
 }
 
@@ -179,6 +186,8 @@ function attachWorkbenchBackButton(resetTab: WorkbenchTab): void {
     "title",
     workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
       ? "UNIT ROSTER"
+      : workbenchState.returnDestination === "field-node"
+        ? "RETURN TO C.O.R.E."
       : getBaseCampReturnLabel(workbenchState.returnDestination),
   );
 
@@ -260,6 +269,8 @@ export function renderGearWorkbenchScreen(
 
   const backBtnText = workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
     ? "← UNIT ROSTER"
+    : workbenchState.returnDestination === "field-node"
+      ? "← RETURN TO C.O.R.E."
     : workbenchState.returnDestination === "field"
       ? "← FIELD MODE"
       : "← BASE CAMP";
@@ -2316,7 +2327,7 @@ function attachCraftTabListeners(state: any): void {
 function attachGearWorkbenchExitHotkey(returnTo: ReturnDestination): void {
   detachGearWorkbenchExitHotkey();
 
-  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation") {
+  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation" && returnTo !== "field-node") {
     registerBaseCampReturnHotkey(GEAR_WORKBENCH_RETURN_HOTKEY_ID, returnTo, {
       allowFieldEKey: true,
       activeSelector: ".workbench-root",
