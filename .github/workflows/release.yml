@@ -59,11 +59,28 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: normalize updater signing key
+        shell: bash
+        env:
+          RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          sanitized_key="$(printf '%s' "$RAW_TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')"
+          if [ -z "$sanitized_key" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is missing" >&2
+            exit 1
+          fi
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
+            echo "$sanitized_key"
+            echo "EOF"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+          } >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: Chaos Core v__VERSION__
