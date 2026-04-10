@@ -12,13 +12,14 @@ Chaos Core now uses Tauri's built-in updater in production desktop builds.
 ## One-Time GitHub Secret Setup
 
 The local signing key currently lives at `~/.tauri/chaos-core-updater.key`.
+The previous encrypted key was backed up locally because it could not be used without its missing password.
 
 Add these repository secrets in GitHub:
 
 1. `TAURI_SIGNING_PRIVATE_KEY`
    Paste the full contents of `~/.tauri/chaos-core-updater.key`.
 2. `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-   Leave empty if you keep the current passwordless key, or set it if you rotate to a password-protected key later.
+   Omit this secret for the current key, which uses an intentionally empty password. Only add it if you rotate to a non-empty password later.
 
 ## Releasing A New Auto-Update Build
 
