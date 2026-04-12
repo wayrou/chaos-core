@@ -564,6 +564,7 @@ export interface UILayoutState {
   baseCampFieldNodeLayouts?: Record<string, BaseCampFieldNodeLayout>;
   baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
   baseCampResourceTrackerShowAdvanced?: boolean;
+  baseCampTheaterAutoTickEnabled?: boolean;
   minimapExploredByMap?: Record<string, string[]>;
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;

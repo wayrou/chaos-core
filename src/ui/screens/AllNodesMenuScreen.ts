@@ -7,14 +7,13 @@ import "../../field/field.css";
 import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame, MountId, UnitId } from "../../core/types";
 import { getDispatchState } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
-import { getGameState, resetToNewGame, updateGameState } from "../../state/gameStore";
+import { getGameState, resetToNewGame, setGameState, subscribe, updateGameState } from "../../state/gameStore";
 import { getActiveQuests, initializeQuestState } from "../../quests/questManager";
 import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen, setNextFieldSpawnOverrideTile } from "../../field/FieldScreen";
 import { buildFieldMinimapModel, drawFieldMinimapCanvas, MINIMAP_LAYOUT_ID } from "../../field/fieldMinimap";
 import { getBaseCampFieldReturnMap, setBaseCampFieldReturnMap } from "./baseCampReturn";
 import {
   BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
-  DISPATCH_UNLOCK_FLOOR_ORDINAL,
   FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL,
   HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL,
   OPERATION_DEFINITIONS,
@@ -22,7 +21,6 @@ import {
   SCHEMA_UNLOCK_FLOOR_ORDINAL,
   STABLE_UNLOCK_FLOOR_ORDINAL,
   isBlackMarketNodeUnlocked,
-  isDispatchNodeUnlocked,
   isFoundryAnnexUnlocked,
   isHavenBuildModeUnlocked,
   isPortNodeUnlocked,
@@ -32,8 +30,14 @@ import {
   saveCampaignProgress,
 } from "../../core/campaign";
 import type { OperationId } from "../../core/campaign";
-import { setCurrentOpsTerminalAtlasFloorOrdinal } from "../../core/opsTerminalAtlas";
-import { BASIC_RESOURCE_KEYS, createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
+import {
+  getCurrentOpsTerminalAtlasFloor,
+  getOpsTerminalAtlasWarmEconomySummaries,
+  holdPositionInOpsTerminalAtlas,
+  setCurrentOpsTerminalAtlasFloorOrdinal,
+} from "../../core/opsTerminalAtlas";
+import { BASIC_RESOURCE_KEYS, RESOURCE_SHORT_LABELS, createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
+import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import { showAlertDialog } from "../components/confirmDialog";
 import {
   canCraftMaterialRefineryRecipe,
@@ -75,8 +79,10 @@ let allNodesEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let allNodesResizeHandler: (() => void) | null = null;
 let pinnedFrameSyncHandle: number | null = null;
 let cleanupAllNodesControllerContext: (() => void) | null = null;
+let cleanupTheaterAutoTickStateSubscription: (() => void) | null = null;
 let escControllerPreferredMode: ControllerMode = "focus";
 let escControllerActiveItemId = "resource-tracker";
+let theaterAutoTickIntervalId: number | null = null;
 
 type NodeDefinition = {
   action: string;
@@ -122,7 +128,7 @@ const WORKSPACE_ROW_HEIGHT_PX = 24;
 const MIN_ITEM_ROW_SPAN = 4;
 const AUTO_SCROLL_MARGIN_PX = 72;
 const AUTO_SCROLL_STEP_PX = 24;
-const BASE_CAMP_LAYOUT_VERSION = 9;
+const BASE_CAMP_LAYOUT_VERSION = 12;
 const BASE_CAMP_LOADOUT_COUNT = 2;
 const DEFAULT_LOADOUT_PRESET_INDEXES = [0, 2] as const;
 const DEFAULT_NODE_ROW_SPAN = 5;
@@ -135,6 +141,9 @@ const DEFAULT_MINIMAP_ROW_SPAN = 8;
 const MATERIALS_REFINERY_MIN_COL_SPAN = 3;
 const MATERIALS_REFINERY_MIN_ROW_SPAN = 10;
 const MATERIALS_REFINERY_LAYOUT_ID = "materials-refinery";
+const THEATER_AUTO_TICK_LAYOUT_ID = "theater-auto-tick";
+const THEATER_AUTO_TICK_INTERVAL_MS = 10_000;
+const THEATER_AUTO_TICK_PING_CHANNEL = "esc-theater-auto-tick";
 const MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
   metalScrap: "M",
   wood: "T",
@@ -153,23 +162,22 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
-  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve units on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
   { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
   { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
+  { action: THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Advance active theaters in the background", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
 ];
 
 const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID, MINIMAP_LAYOUT_ID, NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID];
-const ESC_DEBUG_PORT_STABLE_ACTIONS = new Set(["port", "stable", "dispatch"]);
+const ESC_DEBUG_PORT_STABLE_ACTIONS = new Set(["port", "stable"]);
 const SCHEMA_LOCK_MESSAGE = `S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const PORT_LOCK_MESSAGE = `PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const STABLE_LOCK_MESSAGE = `STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
-const DISPATCH_LOCK_MESSAGE = `DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const BLACK_MARKET_LOCK_MESSAGE = `BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const FOUNDRY_ANNEX_LOCK_MESSAGE = `FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 
@@ -190,7 +198,7 @@ const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   "black-market": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   schema: { gridX: 1, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "foundry-annex": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
-  dispatch: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: 6 },
   codex: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   settings: { gridX: 5, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "comms-array": { gridX: 6, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
@@ -230,32 +238,33 @@ function createLayoutPreset(
 
 const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
   createLayoutPreset("COMMAND", {
-    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 7 },
-    inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 8 },
-    "ops-terminal": { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 8 },
-    roster: { gridX: 6, gridY: 8, colSpan: 2, rowSpan: 4 },
-    [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: 5, rowSpan: 8 },
-    [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 9, colSpan: 5, rowSpan: 8 },
-    quarters: { gridX: 2, gridY: 11, colSpan: 1, rowSpan: 4 },
-    tavern: { gridX: 3, gridY: 11, colSpan: 1, rowSpan: 4 },
-    shop: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: 4 },
-    "quest-board": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: 4 },
-    "gear-workbench": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: 4 },
-    loadout: { gridX: 4, gridY: 15, colSpan: 1, rowSpan: 4 },
-    "comms-array": { gridX: 8, gridY: 15, colSpan: 1, rowSpan: 4 },
-    codex: { gridX: 9, gridY: 15, colSpan: 1, rowSpan: 4 },
-    settings: { gridX: 10, gridY: 15, colSpan: 1, rowSpan: 4 },
+    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 6 },
+    inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 7 },
+    [QUEST_TRACKER_LAYOUT_ID]: { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 13 },
+    "ops-terminal": { gridX: 8, gridY: 1, colSpan: 2, rowSpan: 6 },
+    roster: { gridX: 8, gridY: 7, colSpan: 2, rowSpan: 6 },
+    [MINIMAP_LAYOUT_ID]: { gridX: 10, gridY: 1, colSpan: 3, rowSpan: 11 },
+    quarters: { gridX: 2, gridY: 8, colSpan: 1, rowSpan: 4 },
+    tavern: { gridX: 3, gridY: 8, colSpan: 1, rowSpan: 4 },
+    shop: { gridX: 4, gridY: 8, colSpan: 1, rowSpan: 4 },
+    "quest-board": { gridX: 2, gridY: 12, colSpan: 1, rowSpan: 4 },
+    "gear-workbench": { gridX: 3, gridY: 12, colSpan: 1, rowSpan: 4 },
+    loadout: { gridX: 4, gridY: 12, colSpan: 1, rowSpan: 4 },
+    "comms-array": { gridX: 8, gridY: 13, colSpan: 1, rowSpan: 3 },
+    codex: { gridX: 9, gridY: 13, colSpan: 1, rowSpan: 3 },
+    settings: { gridX: 10, gridY: 13, colSpan: 1, rowSpan: 3 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 4 },
   }, {
-    minimizedItems: [NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID, "port", "dispatch", "stable", "black-market", "schema", "foundry-annex"],
+    minimizedItems: [NOTES_LAYOUT_ID, QUAC_LAYOUT_ID, MATERIALS_REFINERY_LAYOUT_ID, "port", "stable", "black-market", "schema", "foundry-annex"],
     itemColors: {
       [RESOURCE_LAYOUT_ID]: "violet",
       inventory: "steel",
+      [QUEST_TRACKER_LAYOUT_ID]: "steel",
       "ops-terminal": "oxide",
       roster: "oxide",
       [QUAC_LAYOUT_ID]: "verdant",
       [MINIMAP_LAYOUT_ID]: "steel",
-      [NOTES_LAYOUT_ID]: "violet",
-      [QUEST_TRACKER_LAYOUT_ID]: "violet",
+      [NOTES_LAYOUT_ID]: "steel",
       "comms-array": "teal",
       "black-market": "oxide",
       "foundry-annex": "steel",
@@ -281,6 +290,7 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     codex: { gridX: 1, gridY: 18, colSpan: 2, rowSpan: 4 },
     settings: { gridX: 3, gridY: 18, colSpan: 2, rowSpan: 4 },
     "comms-array": { gridX: 5, gridY: 19, colSpan: 3, rowSpan: 4 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 1, gridY: 22, colSpan: 3, rowSpan: 4 },
     [NOTES_LAYOUT_ID]: { gridX: 9, gridY: 14, colSpan: 4, rowSpan: 9 },
     [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 23, colSpan: 4, rowSpan: 7 },
   }),
@@ -293,8 +303,10 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     loadout: { gridX: 11, gridY: 11, colSpan: 1, rowSpan: 5 },
     codex: { gridX: 12, gridY: 11, colSpan: 1, rowSpan: 4 },
     settings: { gridX: 12, gridY: 15, colSpan: 1, rowSpan: 4 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 19, colSpan: 2, rowSpan: 4 },
   }, {
     minimizedItems: [
+      MATERIALS_REFINERY_LAYOUT_ID,
       "ops-terminal",
       "roster",
       "gear-workbench",
@@ -303,7 +315,6 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
       "quest-board",
       "quarters",
       "port",
-      "dispatch",
       "stable",
       "black-market",
       "schema",
@@ -501,12 +512,12 @@ const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
-  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "mission board", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "black-market", aliases: ["black market", "black-market", "mods", "field mods", "contraband"] },
   { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
   { action: "foundry-annex", aliases: ["foundry", "annex", "foundry annex", "foundry + annex"] },
+  { action: THEATER_AUTO_TICK_LAYOUT_ID, aliases: ["theater clock", "theater tick", "theater timer", "auto tick", "advance theaters", "background theater"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
@@ -675,9 +686,6 @@ function isLockedHavenAnnexAction(action: string): boolean {
   if (action === "stable") {
     return !isStableNodeUnlocked();
   }
-  if (action === "dispatch") {
-    return !isDispatchNodeUnlocked();
-  }
   return false;
 }
 
@@ -701,8 +709,6 @@ function getLockedActionMessage(action: string): string | null {
       return PORT_LOCK_MESSAGE;
     case "stable":
       return STABLE_LOCK_MESSAGE;
-    case "dispatch":
-      return DISPATCH_LOCK_MESSAGE;
     case "black-market":
       return BLACK_MARKET_LOCK_MESSAGE;
     case "foundry-annex":
@@ -884,6 +890,161 @@ function serializeStoredLoadouts(loadouts: Record<string, ResolvedBaseCampLoadou
       },
     ]),
   ) as Record<string, BaseCampLayoutLoadout>;
+}
+
+function getLegacyDefaultLoadoutV11(index: number): ResolvedBaseCampLoadout | null {
+  if (index === 0) {
+    return {
+      minimizedItems: [NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID, MATERIALS_REFINERY_LAYOUT_ID, "port", "stable", "black-market", "schema", "foundry-annex"],
+      itemSizes: serializeLayoutRecord({
+        ...DEFAULT_ITEM_LAYOUTS,
+        [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 7 },
+        inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 8 },
+        "ops-terminal": { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 8 },
+        roster: { gridX: 6, gridY: 8, colSpan: 2, rowSpan: 4 },
+        [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: 5, rowSpan: 8 },
+        [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 9, colSpan: 5, rowSpan: 8 },
+        quarters: { gridX: 2, gridY: 11, colSpan: 1, rowSpan: 4 },
+        tavern: { gridX: 3, gridY: 11, colSpan: 1, rowSpan: 4 },
+        shop: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: 4 },
+        "quest-board": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: 4 },
+        "gear-workbench": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: 4 },
+        loadout: { gridX: 4, gridY: 15, colSpan: 1, rowSpan: 4 },
+        "comms-array": { gridX: 8, gridY: 15, colSpan: 1, rowSpan: 4 },
+        codex: { gridX: 9, gridY: 15, colSpan: 1, rowSpan: 4 },
+        settings: { gridX: 10, gridY: 15, colSpan: 1, rowSpan: 4 },
+        [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 4 },
+      }),
+      pinnedItems: [],
+      itemColors: {
+        [RESOURCE_LAYOUT_ID]: "violet",
+        inventory: "steel",
+        "ops-terminal": "oxide",
+        roster: "oxide",
+        [QUAC_LAYOUT_ID]: "verdant",
+        [MINIMAP_LAYOUT_ID]: "steel",
+        [NOTES_LAYOUT_ID]: "violet",
+        [QUEST_TRACKER_LAYOUT_ID]: "violet",
+        "comms-array": "teal",
+        "black-market": "oxide",
+        "foundry-annex": "steel",
+        codex: "steel",
+        settings: "steel",
+      },
+      pinnedItemFrames: {},
+    };
+  }
+
+  if (index === 1) {
+    return {
+      minimizedItems: [
+        MATERIALS_REFINERY_LAYOUT_ID,
+        "ops-terminal",
+        "roster",
+        "gear-workbench",
+        "shop",
+        "tavern",
+        "quest-board",
+        "quarters",
+        "port",
+        "stable",
+        "black-market",
+        "schema",
+        "foundry-annex",
+        "comms-array",
+        QUAC_LAYOUT_ID,
+      ],
+      itemSizes: serializeLayoutRecord({
+        ...DEFAULT_ITEM_LAYOUTS,
+        [NOTES_LAYOUT_ID]: { gridX: 7, gridY: 1, colSpan: 2, rowSpan: 11 },
+        [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 1, colSpan: 2, rowSpan: 11 },
+        [RESOURCE_LAYOUT_ID]: { gridX: 11, gridY: 1, colSpan: 2, rowSpan: 6 },
+        inventory: { gridX: 11, gridY: 7, colSpan: 2, rowSpan: 4 },
+        [MINIMAP_LAYOUT_ID]: { gridX: 7, gridY: 12, colSpan: 4, rowSpan: 8 },
+        loadout: { gridX: 11, gridY: 11, colSpan: 1, rowSpan: 5 },
+        codex: { gridX: 12, gridY: 11, colSpan: 1, rowSpan: 4 },
+        settings: { gridX: 12, gridY: 15, colSpan: 1, rowSpan: 4 },
+        [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 19, colSpan: 2, rowSpan: 4 },
+      }),
+      pinnedItems: [],
+      itemColors: {
+        [NOTES_LAYOUT_ID]: "steel",
+        [QUEST_TRACKER_LAYOUT_ID]: "steel",
+        [RESOURCE_LAYOUT_ID]: "violet",
+        [MINIMAP_LAYOUT_ID]: "steel",
+        inventory: "verdant",
+        loadout: "amber",
+        "black-market": "oxide",
+        "foundry-annex": "steel",
+        codex: "steel",
+        settings: "steel",
+      },
+      pinnedItemFrames: {},
+    };
+  }
+
+  return null;
+}
+
+function areStringArraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areItemSizeRecordsEqual(a: Record<string, BaseCampItemSize>, b: Record<string, BaseCampItemSize>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (!areStringArraysEqual(aKeys, bKeys)) {
+    return false;
+  }
+
+  for (const key of aKeys) {
+    const aLayout = a[key];
+    const bLayout = b[key];
+    if (
+      aLayout.colSpan !== bLayout.colSpan
+      || aLayout.rowSpan !== bLayout.rowSpan
+      || aLayout.gridX !== bLayout.gridX
+      || aLayout.gridY !== bLayout.gridY
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areStringRecordEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (!areStringArraysEqual(aKeys, bKeys)) {
+    return false;
+  }
+
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areLoadoutsEquivalent(a: ResolvedBaseCampLoadout, b: ResolvedBaseCampLoadout): boolean {
+  return areStringArraysEqual(a.minimizedItems, b.minimizedItems)
+    && areItemSizeRecordsEqual(a.itemSizes, b.itemSizes)
+    && areStringArraysEqual(a.pinnedItems, b.pinnedItems)
+    && areStringRecordEqual(a.itemColors, b.itemColors)
+    && arePinnedFramesEqual(a.pinnedItemFrames, b.pinnedItemFrames);
 }
 
 function readActiveLoadout(): ResolvedBaseCampLoadout {
@@ -1090,19 +1251,23 @@ function ensureBaseCampLayoutVersion(): void {
   }
 
   const activeLoadoutIndex = readActiveLoadoutIndex(state);
+  const existingLoadouts = readStoredLoadouts(state);
   const migratedLoadouts = Object.fromEntries(
     Array.from({ length: BASE_CAMP_LOADOUT_COUNT }, (_, index) => {
       const key = getLoadoutStorageKey(index);
-      const baseLoadout = getDefaultLoadout(index);
-
+      const existingLoadout = existingLoadouts[key] ?? getDefaultLoadout(index);
+      const legacyDefaultLoadout = currentVersion === 11 ? getLegacyDefaultLoadoutV11(index) : null;
+      const nextLoadout = legacyDefaultLoadout && areLoadoutsEquivalent(existingLoadout, legacyDefaultLoadout)
+        ? getDefaultLoadout(index)
+        : existingLoadout;
       return [
         key,
         {
-          minimizedItems: [...baseLoadout.minimizedItems],
-          itemSizes: { ...baseLoadout.itemSizes },
-          pinnedItems: [...baseLoadout.pinnedItems],
-          itemColors: { ...baseLoadout.itemColors },
-          pinnedItemFrames: { ...baseLoadout.pinnedItemFrames },
+          minimizedItems: [...nextLoadout.minimizedItems],
+          itemSizes: { ...nextLoadout.itemSizes },
+          pinnedItems: [...nextLoadout.pinnedItems],
+          itemColors: { ...nextLoadout.itemColors },
+          pinnedItemFrames: { ...nextLoadout.pinnedItemFrames },
         },
       ];
     }),
@@ -1543,6 +1708,150 @@ function setExpandedResourceTrackerVisible(showAdvanced: boolean): void {
   }));
 }
 
+function formatAtlasFloorLabel(floorOrdinal: number): string {
+  return `FLOOR ${String(Math.max(1, Math.floor(floorOrdinal || 1))).padStart(2, "0")}`;
+}
+
+function isBaseCampTheaterAutoTickEnabled(state = getGameState()): boolean {
+  return Boolean(state.uiLayout?.baseCampTheaterAutoTickEnabled);
+}
+
+function getCurrentAtlasFloorOrdinalSafe(): number {
+  try {
+    return getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+  } catch {
+    return Math.max(1, Math.floor(loadCampaignProgress().opsTerminalAtlas?.currentFloorOrdinal ?? 1));
+  }
+}
+
+function describeTheaterAutoTickCoverage(
+  summaries: ReturnType<typeof getOpsTerminalAtlasWarmEconomySummaries>,
+): string {
+  if (summaries.length <= 0) {
+    return "No operational theaters are online on this floor.";
+  }
+
+  const labels = summaries.slice(0, 2).map((summary) => `${summary.sectorLabel} ${summary.zoneName}`);
+  const extraCount = Math.max(0, summaries.length - labels.length);
+  return extraCount > 0 ? `${labels.join(" · ")} · +${extraCount} more` : labels.join(" · ");
+}
+
+function describeTheaterAutoTickEconomyDelta(
+  beforeState: ReturnType<typeof getSessionResourcePool>,
+  afterState: ReturnType<typeof getSessionResourcePool>,
+): string {
+  const parts: string[] = [];
+  const wadDelta = Math.round((afterState.wad ?? 0) - (beforeState.wad ?? 0));
+  if (wadDelta !== 0) {
+    parts.push(`WAD ${wadDelta > 0 ? "+" : ""}${wadDelta}`);
+  }
+
+  for (const { key: resourceKey } of getResourceEntries(afterState.resources)) {
+    const nextValue = Number(afterState.resources?.[resourceKey] ?? 0);
+    const previousValue = Number(beforeState.resources?.[resourceKey] ?? 0);
+    const delta = Math.round(nextValue - previousValue);
+    if (delta !== 0) {
+      parts.push(`${RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey.toUpperCase()} ${delta > 0 ? "+" : ""}${delta}`);
+    }
+  }
+
+  return parts.join(" · ");
+}
+
+function performTheaterAutoTick(): void {
+  const currentState = getGameState();
+  if (!isBaseCampTheaterAutoTickEnabled(currentState)) {
+    return;
+  }
+
+  const floorOrdinal = getCurrentAtlasFloorOrdinalSafe();
+  const beforeSummaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const localPlayerSlot = getLocalSessionPlayerSlot(currentState);
+  const beforePool = getSessionResourcePool(currentState, localPlayerSlot);
+  const nextState = holdPositionInOpsTerminalAtlas(currentState, floorOrdinal, 1);
+  if (nextState === currentState) {
+    return;
+  }
+
+  setGameState(nextState);
+
+  const afterSummaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const afterPool = getSessionResourcePool(nextState, localPlayerSlot);
+  const coverage = describeTheaterAutoTickCoverage(afterSummaries.length > 0 ? afterSummaries : beforeSummaries);
+  const economyDelta = describeTheaterAutoTickEconomyDelta(beforePool, afterPool);
+  const message = `${Math.max(afterSummaries.length, beforeSummaries.length, 1)} theater${Math.max(afterSummaries.length, beforeSummaries.length, 1) === 1 ? "" : "s"} advanced on ${formatAtlasFloorLabel(floorOrdinal)}.`;
+
+  quacLastFeedback = `THEATER CLOCK :: ${message}`;
+  showSystemPing({
+    type: economyDelta ? "success" : "info",
+    title: "THEATER TICK +1",
+    message,
+    detail: [coverage, economyDelta].filter(Boolean).join(" // "),
+    channel: THEATER_AUTO_TICK_PING_CHANNEL,
+    replaceChannel: true,
+    durationMs: 4200,
+  });
+}
+
+function syncTheaterAutoTickInterval(): void {
+  const shouldRun = isBaseCampTheaterAutoTickEnabled();
+  if (!shouldRun) {
+    if (theaterAutoTickIntervalId !== null) {
+      window.clearInterval(theaterAutoTickIntervalId);
+      theaterAutoTickIntervalId = null;
+    }
+    return;
+  }
+
+  if (theaterAutoTickIntervalId !== null) {
+    return;
+  }
+
+  theaterAutoTickIntervalId = window.setInterval(() => {
+    performTheaterAutoTick();
+    if (!isBaseCampTheaterAutoTickEnabled()) {
+      syncTheaterAutoTickInterval();
+    }
+  }, THEATER_AUTO_TICK_INTERVAL_MS);
+}
+
+export function ensureTheaterAutoTickStateSync(): void {
+  if (cleanupTheaterAutoTickStateSubscription) {
+    return;
+  }
+  cleanupTheaterAutoTickStateSubscription = subscribe(() => {
+    syncTheaterAutoTickInterval();
+  });
+  syncTheaterAutoTickInterval();
+}
+
+function setBaseCampTheaterAutoTickEnabled(enabled: boolean): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampTheaterAutoTickEnabled: enabled,
+    },
+  }));
+
+  quacLastFeedback = enabled
+    ? "THEATER CLOCK :: Background theater ticks engaged."
+    : "THEATER CLOCK :: Background theater ticks halted.";
+  showSystemPing({
+    type: enabled ? "success" : "info",
+    title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+    message: enabled
+      ? "Operational theaters will advance by 1 tick every 10 seconds."
+      : "Background theater advancement has been paused.",
+    detail: `${formatAtlasFloorLabel(getCurrentAtlasFloorOrdinalSafe())} :: ${enabled ? "Live auto-tick engaged." : "Tick loop disengaged."}`,
+    channel: THEATER_AUTO_TICK_PING_CHANNEL,
+    replaceChannel: true,
+    durationMs: 3600,
+  });
+  renderAllNodesMenuScreen(lastFieldMap);
+  requestAnimationFrame(() => focusWorkspaceItem(THEATER_AUTO_TICK_LAYOUT_ID));
+}
+
 function renderMaterialRefineryNodeContent(isPinned: boolean): string {
   const state = getGameState();
   const context = getMaterialRefineryContext();
@@ -1597,9 +1906,68 @@ function renderMaterialRefineryNodeContent(isPinned: boolean): string {
   `;
 }
 
+function renderTheaterAutoTickNodeContent(isPinned: boolean): string {
+  const enabled = isBaseCampTheaterAutoTickEnabled();
+  const floorOrdinal = getCurrentAtlasFloorOrdinalSafe();
+  const summaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const totalWadUpkeep = summaries.reduce((total, summary) => total + Math.max(0, summary.wadUpkeepPerTick ?? 0), 0);
+  const totalIncome = createEmptyResourceWallet(
+    summaries.reduce((acc, summary) => {
+      for (const { key: resourceKey, amount } of getResourceEntries(summary.incomePerTick)) {
+        acc[resourceKey] = Number(acc[resourceKey] ?? 0) + Number(amount ?? 0);
+      }
+      return acc;
+    }, createEmptyResourceWallet()),
+  );
+  const incomeSummary = getResourceEntries(totalIncome)
+    .filter(({ amount }) => Number(amount ?? 0) > 0)
+    .slice(0, 3)
+    .map(({ key: resourceKey, amount }) => `${RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey.toUpperCase()} +${Math.round(Number(amount ?? 0))}`)
+    .join(" Â· ");
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--theater-clock">
+      ${renderItemToolbar(THEATER_AUTO_TICK_LAYOUT_ID, "theater clock", { isPinned })}
+      <section class="all-nodes-theater-clock-panel" aria-label="Theater clock">
+        <div class="all-nodes-theater-clock-heading">
+          <span class="all-nodes-theater-clock-kicker">BACKGROUND THEATER TICKS</span>
+          <span class="all-nodes-theater-clock-rate">+1 TICK / 10 SEC</span>
+        </div>
+        <div class="all-nodes-theater-clock-meta">
+          <span>${formatAtlasFloorLabel(floorOrdinal)}</span>
+          <span>${summaries.length} ONLINE</span>
+          <span>WAD ${totalWadUpkeep > 0 ? `-${totalWadUpkeep}` : "0"}</span>
+        </div>
+        <button
+          class="all-nodes-theater-clock-toggle${enabled ? " is-active" : ""}"
+          type="button"
+          data-theater-autotick-toggle="${enabled ? "off" : "on"}"
+          aria-pressed="${enabled ? "true" : "false"}"
+        >
+          <span class="all-nodes-theater-clock-toggle-track">
+            <span class="all-nodes-theater-clock-toggle-thumb"></span>
+          </span>
+          <span class="all-nodes-theater-clock-toggle-copy">
+            <span class="all-nodes-theater-clock-toggle-state">${enabled ? "ONLINE" : "OFFLINE"}</span>
+            <span class="all-nodes-theater-clock-toggle-desc">${enabled ? "The current atlas floor advances automatically until switched off." : "Flip the switch to push all online sectors forward in the background."}</span>
+          </span>
+        </button>
+        <div class="all-nodes-theater-clock-status">
+          <div class="all-nodes-theater-clock-line">${describeTheaterAutoTickCoverage(summaries)}</div>
+          <div class="all-nodes-theater-clock-line all-nodes-theater-clock-line--muted">${incomeSummary || "No active income streams are registered on this floor yet."}</div>
+        </div>
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${THEATER_AUTO_TICK_LAYOUT_ID}" aria-label="Resize theater clock"></button>
+    </div>
+  `;
+}
+
 function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
   if (node.action === MATERIALS_REFINERY_LAYOUT_ID) {
     return renderMaterialRefineryNodeContent(isPinned);
+  }
+  if (node.action === THEATER_AUTO_TICK_LAYOUT_ID) {
+    return renderTheaterAutoTickNodeContent(isPinned);
   }
 
   const availability = isEscNodeAction(node.action)
@@ -1607,12 +1975,10 @@ function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
     : "active";
   const variantClass = node.variant ? ` ${node.variant}` : "";
   const disabledClass = availability === "disabled" ? " all-nodes-node-btn--disabled" : "";
-  const pip = node.action === "dispatch"
-    ? renderDispatchNodePip()
-    : node.action === "roster"
-      ? renderRosterNodePip()
-      : node.action === "schema"
-        ? renderSchemaNodePip()
+  const pip = node.action === "roster"
+    ? renderRosterNodePip()
+    : node.action === "schema"
+      ? renderSchemaNodePip()
       : "";
   return `
     <div class="all-nodes-item-shell">
@@ -2061,6 +2427,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
 
   cleanupAllNodesWindowListeners();
   ensureBaseCampLayoutVersion();
+  ensureTheaterAutoTickStateSync();
   initializeQuestState();
 
   if (fromFieldMap) {
@@ -2382,6 +2749,14 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
+  root.querySelectorAll<HTMLElement>("[data-theater-autotick-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setBaseCampTheaterAutoTickEnabled(button.dataset.theaterAutotickToggle === "on");
+    });
+  });
+
   attachPointerGridDrag(root);
   attachPointerResize(root);
 
@@ -2531,7 +2906,7 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label, .all-nodes-refinery-craft-btn")) {
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label, .all-nodes-refinery-craft-btn, .all-nodes-theater-clock-toggle")) {
         return;
       }
 
@@ -2837,6 +3212,11 @@ async function handleNodeAction(action: string): Promise<void> {
     return;
   }
 
+  if (action === THEATER_AUTO_TICK_LAYOUT_ID) {
+    setBaseCampTheaterAutoTickEnabled(!isBaseCampTheaterAutoTickEnabled());
+    return;
+  }
+
   syncPinnedItemFrames(document);
   cleanupAllNodesWindowListeners();
 
@@ -2897,11 +3277,6 @@ async function handleNodeAction(action: string): Promise<void> {
     case "port":
       import("./PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("esc");
-      });
-      break;
-    case "dispatch":
-      import("./DispatchScreen").then(({ renderDispatchScreen }) => {
-        renderDispatchScreen("esc");
       });
       break;
     case "quarters":

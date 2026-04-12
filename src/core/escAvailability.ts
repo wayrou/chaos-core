@@ -15,6 +15,7 @@ export type EscNodeAction =
   | "black-market"
   | "schema"
   | "foundry-annex"
+  | "theater-auto-tick"
   | "codex"
   | "settings"
   | "comms-array";

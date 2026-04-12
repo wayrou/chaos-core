@@ -50,7 +50,6 @@ import { getResolvedBattleCard } from "./cardCatalog";
 // STEP 6 & 7: Import gear workbench functions
 import {
   GearSlotData,
-  getDefaultGearSlots,
   generateBattleRewardCards,
   getLibraryCard,
 } from "./gearWorkbench";
@@ -525,30 +524,13 @@ export function createBattleUnitState(
       ? [...base.drawPile]
       : ["core_basic_attack", "core_basic_attack", "core_guard", "core_wait"];
   } else {
-    // STEP 6: Player units - build deck from equipment + slotted cards
-    const baseCards = buildDeckFromLoadout(unitClass, loadout, equipment, modules);
-
-    // Get slotted cards from gear workbench
-    const gearSlots = opts.gearSlots ?? {};
-
-    // Collect all equipped gear IDs
-    const equippedGearIds: string[] = [];
-    if (loadout.primaryWeapon) equippedGearIds.push(loadout.primaryWeapon);
-    if (loadout.secondaryWeapon) equippedGearIds.push(loadout.secondaryWeapon);
-    if (loadout.helmet) equippedGearIds.push(loadout.helmet);
-    if (loadout.chestpiece) equippedGearIds.push(loadout.chestpiece);
-    if (loadout.accessory1) equippedGearIds.push(loadout.accessory1);
-    if (loadout.accessory2) equippedGearIds.push(loadout.accessory2);
-
-    // Get slotted cards from each piece of gear
-    const slottedCards: string[] = [];
-    equippedGearIds.forEach(eqId => {
-      const slots = gearSlots[eqId] ?? getDefaultGearSlots(eqId);
-      slottedCards.push(...slots.slottedCards);
-    });
-
-    // Combine base cards + slotted cards
-    deckCards = [...baseCards, ...slottedCards];
+    deckCards = buildDeckFromLoadout(
+      unitClass,
+      loadout,
+      equipment,
+      modules,
+      opts.gearSlots,
+    );
   }
 
   // Calculate equipment stat bonuses

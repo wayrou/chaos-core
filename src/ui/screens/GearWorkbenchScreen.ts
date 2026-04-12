@@ -18,15 +18,12 @@ import {
   GearSlotData,
   CardLibrary,
   LibraryCard,
-  CompiledDeck,
   LIBRARY_CARD_DATABASE,
   getDefaultGearSlots,
   getLibraryCards,
   filterLibraryCards,
   slotCard,
   unslotCard,
-  compileDeck,
-  getDeckPreview,
   getStarterCardLibrary,
   CardRarity,
   CardCategory,
@@ -257,16 +254,7 @@ export function renderGearWorkbenchScreen(
     search: workbenchState.searchFilter || undefined,
   });
 
-  // Get unit's equipped gear for deck preview and gear selector
   const unitEquipment = getUnitEquippedGear(state, workbenchState.selectedUnitId);
-  const unitGearSlots = unitEquipment.map(eqId => {
-    const eq = equipmentById[eqId];
-    return gearSlots[eqId] ?? getDefaultGearSlots(eqId, eq);
-  });
-  const compiledDeck = compileDeck(unitGearSlots);
-  const deckPreview = getDeckPreview(compiledDeck);
-
-  // equipmentById already retrieved above
 
   const backBtnText = workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
     ? "← UNIT ROSTER"
@@ -277,15 +265,12 @@ export function renderGearWorkbenchScreen(
       : "← BASE CAMP";
 
   app.innerHTML = /*html*/ `
-    <div class="workbench-root town-screen ${workbenchState.isCompiling ? 'workbench-root--compiling' : ''}">
-      <!-- Compile Overlay -->
-      ${workbenchState.isCompiling ? renderCompileOverlay() : ''}
-      
+    <div class="workbench-root town-screen">
       <!-- Header -->
       <div class="workbench-header town-screen__header">
         <div class="workbench-header-left town-screen__titleblock">
           <h1 class="workbench-title">WORKSHOP</h1>
-          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • DECK COMPILER v2.3</div>
+          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • LIVE SLOTTING</div>
         </div>
         <div class="workbench-header-right town-screen__header-right">
           <button class="workbench-back-btn town-screen__back-btn" id="backBtn">${backBtnText}</button>
@@ -326,8 +311,6 @@ export function renderGearWorkbenchScreen(
             filteredCards,
             cardLibrary,
             gearSlots,
-            compiledDeck,
-            deckPreview,
             selectedEquipment
           )
     }
@@ -812,10 +795,11 @@ function renderCustomizeGearTab(
   filteredCards: LibraryCard[],
   cardLibrary: CardLibrary,
   _gearSlots: Record<string, GearSlotData>,
-  compiledDeck: CompiledDeck,
-  deckPreview: string[],
   selectedEquipment?: any
 ): string {
+  const compiledDeck = { totalCards: 0 };
+  const deckPreview: string[] = [];
+
   return `
     <!-- Left Panel: Selected Gear -->
     <div class="workbench-gear-panel">
@@ -824,7 +808,62 @@ function renderCustomizeGearTab(
       <!-- Gear Selector -->
       ${renderGearSelector(customizableEquipmentIds, unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
       
-      ${selectedGear ? renderGearEditor(selectedGear, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
+      ${selectedGear ? renderGearEditor(selectedGear!, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
+    </div>
+    
+    <!-- Right Panel: Card Library -->
+    <div class="workbench-library-panel">
+      <div class="panel-section-title">CARD LIBRARY</div>
+      
+      <!-- Filters -->
+      <div class="library-filters">
+        <input type="text" 
+               class="library-search" 
+               id="cardSearch"
+               placeholder="Search cards..." 
+               value="${workbenchState.searchFilter}">
+        
+        <div class="filter-row">
+          <select class="filter-select" id="rarityFilter">
+            <option value="">All Rarities</option>
+            <option value="common" ${workbenchState.rarityFilter === 'common' ? 'selected' : ''}>Common</option>
+            <option value="uncommon" ${workbenchState.rarityFilter === 'uncommon' ? 'selected' : ''}>Uncommon</option>
+            <option value="rare" ${workbenchState.rarityFilter === 'rare' ? 'selected' : ''}>Rare</option>
+            <option value="epic" ${workbenchState.rarityFilter === 'epic' ? 'selected' : ''}>Epic</option>
+          </select>
+          
+          <select class="filter-select" id="categoryFilter">
+            <option value="">All Types</option>
+            <option value="attack" ${workbenchState.categoryFilter === 'attack' ? 'selected' : ''}>Attack</option>
+            <option value="defense" ${workbenchState.categoryFilter === 'defense' ? 'selected' : ''}>Defense</option>
+            <option value="mobility" ${workbenchState.categoryFilter === 'mobility' ? 'selected' : ''}>Mobility</option>
+            <option value="buff" ${workbenchState.categoryFilter === 'buff' ? 'selected' : ''}>Buff</option>
+            <option value="debuff" ${workbenchState.categoryFilter === 'debuff' ? 'selected' : ''}>Debuff</option>
+            <option value="steam" ${workbenchState.categoryFilter === 'steam' ? 'selected' : ''}>Steam</option>
+            <option value="chaos" ${workbenchState.categoryFilter === 'chaos' ? 'selected' : ''}>Chaos</option>
+          </select>
+        </div>
+      </div>
+      
+      <!-- Card List -->
+      <div class="library-card-list" id="cardLibraryList">
+        ${filteredCards.length > 0
+      ? filteredCards.map(card => renderLibraryCard(card, cardLibrary[card.id] ?? 0)).join('')
+      : '<div class="library-empty">No cards match your filters</div>'
+    }
+      </div>
+    </div>
+  `;
+
+  return `
+    <!-- Left Panel: Selected Gear -->
+    <div class="workbench-gear-panel">
+      <div class="panel-section-title">SELECTED GEAR</div>
+      
+      <!-- Gear Selector -->
+      ${renderGearSelector(customizableEquipmentIds, unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
+      
+      ${selectedGear ? renderGearEditor(selectedGear!, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
       
       <!-- Deck Preview -->
       <div class="deck-preview">

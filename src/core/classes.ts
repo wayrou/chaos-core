@@ -93,15 +93,28 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
   // TIER 0 - STARTER JOBS
   // ==========================================================================
 
-  squire: {
-    id: "squire",
-    name: "Squire",
-    description: "Balanced frontline unit, adaptive and reliable.",
-    tier: 0,
-    baseStats: { maxHp: 12, atk: 8, def: 6, agi: 3, acc: 6 },
-    weaponTypes: ["sword"],
-    unlockConditions: [{ type: "always_unlocked" }],
-    innateAbility: "Gained Ground: +1 DEF when adjacent to ally",
+  "squire": {
+    "id": "squire",
+    "name": "Squire",
+    "description": "Balanced frontline unit, adaptive and reliable.",
+    "tier": 0,
+    "baseStats": {
+      "maxHp": 12,
+      "atk": 8,
+      "def": 6,
+      "agi": 3,
+      "acc": 6,
+    },
+    "weaponTypes": [
+      "sword",
+      "shield",
+    ],
+    "unlockConditions": [
+      {
+        "type": "always_unlocked",
+      },
+    ],
+    "innateAbility": "Gained Ground: +1 DEF when adjacent to ally",
   },
 
   ranger: {
@@ -182,7 +195,7 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
     description: "Defensive vanguard. Anti-rush frontline specialist.",
     tier: 2,
     baseStats: { maxHp: 130, atk: 9, def: 11, agi: 4, acc: 6 },
-    weaponTypes: ["sword", "greatsword"],
+    weaponTypes: ["sword", "greatsword", "shield"],
     unlockConditions: [
       { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
       { type: "milestone", description: "Complete 3 battles with no ally KOs" },
@@ -196,7 +209,7 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
     description: "Protector with healing and mitigation abilities.",
     tier: 2,
     baseStats: { maxHp: 125, atk: 9, def: 10, agi: 4, acc: 7 },
-    weaponTypes: ["sword", "greatsword"],
+    weaponTypes: ["sword", "greatsword", "shield"],
     unlockConditions: [
       { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
       { type: "milestone", description: "Save an ally from lethal damage 5 times" },
@@ -210,7 +223,7 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
     description: "Hybrid melee-ranged control and overwatch.",
     tier: 2,
     baseStats: { maxHp: 110, atk: 8, def: 7, agi: 6, acc: 8 },
-    weaponTypes: ["sword", "bow"],
+    weaponTypes: ["sword", "bow", "shield"],
     unlockConditions: [
       { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
       { type: "milestone", description: "Deal melee and ranged damage in one battle" },

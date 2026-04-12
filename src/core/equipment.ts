@@ -18,6 +18,7 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import type { ImportedCard, ImportedGear } from "../content/technica/types";
+import { getLibraryCardDatabase, type GearSlotData, type LibraryCard } from "./gearWorkbench";
 
 // ----------------------------------------------------------------------------
 // ENUMS & CONSTANTS
@@ -75,10 +76,10 @@ export type EquipmentCardType = "core" | "class" | "equipment" | "gambit";
 
 export const CLASS_WEAPON_RESTRICTIONS: Record<BuiltInUnitClass, WeaponType[]> = {
   // Squire tree
-  squire: ["sword"],
-  sentry: ["sword", "greatsword"],
-  paladin: ["sword", "greatsword"],
-  watchGuard: ["sword", "bow"],
+  squire: ["sword", "shield"],
+  sentry: ["sword", "greatsword", "shield"],
+  paladin: ["sword", "greatsword", "shield"],
+  watchGuard: ["sword", "bow", "shield"],
 
   // Ranger tree
   ranger: ["bow"],
@@ -337,6 +338,17 @@ function toImportedEquipmentCard(card: ImportedCard): EquipmentCard {
   };
 }
 
+function toLibraryEquipmentCard(card: LibraryCard): EquipmentCard {
+  return {
+    id: card.id,
+    name: card.name,
+    type: card.category === "chaos" ? "gambit" : "equipment",
+    strainCost: card.strainCost,
+    description: card.description,
+    artPath: card.artPath,
+  };
+}
+
 function toRuntimeEquipment(gear: ImportedGear): Equipment {
   if (gear.slot === "weapon") {
     return {
@@ -397,6 +409,12 @@ export function getAllEquipmentCards(): Record<string, EquipmentCard> {
       if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
     }
   }
+  for (const card of Object.values(getLibraryCardDatabase())) {
+    if (isTechnicaContentDisabled("card", card.id)) continue;
+    if (!all[card.id]) {
+      all[card.id] = toLibraryEquipmentCard(card);
+    }
+  }
   for (const card of getAllImportedCards()) {
     all[card.id] = toImportedEquipmentCard(card);
   }
@@ -418,11 +436,30 @@ export function getAllModules(): Record<string, Module> {
   return all;
 }
 
+function getEquipmentDeckCards(
+  equipment: Equipment,
+  gearSlots?: GearSlotData
+): string[] {
+  const baseCards = Array.isArray(equipment.cardsGranted) ? equipment.cardsGranted : [];
+  if (!gearSlots) {
+    return [...baseCards];
+  }
+
+  const slottedCards = Array.isArray(gearSlots.slottedCards) ? gearSlots.slottedCards : [];
+  if (baseCards.length > 0) {
+    return [...baseCards, ...slottedCards];
+  }
+
+  const lockedCards = Array.isArray(gearSlots.lockedCards) ? gearSlots.lockedCards : [];
+  return [...lockedCards, ...slottedCards];
+}
+
 export function buildDeckFromLoadout(
   unitClass: UnitClass,
   loadout: UnitLoadout,
   equipmentById: Record<string, Equipment>,
-  modulesById: Record<string, Module>
+  modulesById: Record<string, Module>,
+  gearSlotsById?: Record<string, GearSlotData>
 ): string[] {
   const deck: string[] = [];
 
@@ -457,7 +494,7 @@ export function buildDeckFromLoadout(
     const equip = equipmentById[equipId];
     if (!equip) continue;
 
-    for (const cardId of equip.cardsGranted) {
+    for (const cardId of getEquipmentDeckCards(equip, gearSlotsById?.[equipId])) {
       if (isTechnicaContentDisabled("card", cardId)) continue;
       deck.push(cardId);
     }

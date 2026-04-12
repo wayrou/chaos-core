@@ -256,6 +256,11 @@ function parseEffectsFromDescription(description: string, target: BattleCardTarg
 
   if (damage && damage > 0 && target === "enemy") {
     addEffect(effects, { type: "damage", amount: damage });
+  } else if (target === "enemy") {
+    const damageMatch = lower.match(/deal\s+(\d+)\s+damage/);
+    if (damageMatch) {
+      addEffect(effects, { type: "damage", amount: parseInt(damageMatch[1], 10) });
+    }
   }
 
   const healMatch = lower.match(/(?:restore|heal|recover)\s+(\d+)\s+hp/);

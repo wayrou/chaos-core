@@ -71,12 +71,6 @@ export function renderEchoRunTitleScreen(): void {
                 Enter a draft-only simulation run built around temporary operators, branching strata,
                 escalating boss chains, and endlessly climbing route maps.
               </p>
-              <div class="echo-run-title-screen__chip-row">
-                <span class="echo-run-title-screen__chip">Branching Strata</span>
-                <span class="echo-run-title-screen__chip">Echo Field Drafting</span>
-                <span class="echo-run-title-screen__chip">Boss Chains</span>
-                <span class="echo-run-title-screen__chip">No Carryover</span>
-              </div>
               ${hasResumeRun ? `
                 <div class="echo-run-title-screen__resume-note">
                   ACTIVE RUN DETECTED // STRATUM ${activeRun.currentStratum} // ENCOUNTER ${activeRun.encounterNumber} // ${activeRunStageLabel.toUpperCase()}
@@ -94,28 +88,6 @@ export function renderEchoRunTitleScreen(): void {
             </div>
 
             <div class="echo-run-title-screen__side">
-              <section class="echo-run-title-screen__panel">
-                <div class="echo-run-title-screen__panel-kicker">Simulation Profile</div>
-                <div class="echo-run-title-screen__stat-grid">
-                  <div class="echo-run-title-screen__stat">
-                    <span>Format</span>
-                    <strong>Endless Draft Run</strong>
-                  </div>
-                  <div class="echo-run-title-screen__stat">
-                    <span>Squad Model</span>
-                    <strong>Temporary Operators</strong>
-                  </div>
-                  <div class="echo-run-title-screen__stat">
-                    <span>Pressure</span>
-                    <strong>Persistent HP</strong>
-                  </div>
-                  <div class="echo-run-title-screen__stat">
-                    <span>Route Logic</span>
-                    <strong>Encounter / Support / Boss</strong>
-                  </div>
-                </div>
-              </section>
-
               <section class="echo-run-title-screen__panel echo-run-title-screen__panel--route">
                 <div class="echo-run-title-screen__panel-kicker">Route Preview</div>
                 <div class="echo-run-title-screen__route">

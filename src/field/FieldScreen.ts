@@ -13,7 +13,7 @@ import {
 } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
-import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
+import { ensureTheaterAutoTickStateSync, renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import {
   checkCompanionReachedTarget,
@@ -76,6 +76,7 @@ import {
 } from "../core/campaign";
 import {
   BASIC_RESOURCE_KEYS,
+  RESOURCE_SHORT_LABELS,
   createEmptyResourceWallet,
   getResourceEntries,
   type ResourceKey,
@@ -141,6 +142,10 @@ import {
   getBaseCampNodeLayout,
   type BaseCampNodeId,
 } from "./baseCampBuild";
+import {
+  getCurrentOpsTerminalAtlasFloor,
+  getOpsTerminalAtlasWarmEconomySummaries,
+} from "../core/opsTerminalAtlas";
 import {
   canCraftDecorItem,
   craftDecorItem,
@@ -1769,6 +1774,7 @@ type PinnedColorTheme = {
 const PINNED_QUAC_LAYOUT_ID = "quac-terminal";
 const PINNED_RESOURCE_LAYOUT_ID = "resource-tracker";
 const PINNED_QUEST_TRACKER_LAYOUT_ID = "quest-tracker";
+const PINNED_THEATER_AUTO_TICK_LAYOUT_ID = "theater-auto-tick";
 const PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
   metalScrap: "M",
   wood: "T",
@@ -1787,12 +1793,12 @@ const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
-  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve teams on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
   { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
   { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
+  { action: PINNED_THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Advance active theaters in the background", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
@@ -1948,12 +1954,12 @@ const PINNED_QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> 
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
-  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "black-market", aliases: ["black market", "black-market", "mods", "field mods", "contraband"] },
   { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
   { action: "foundry-annex", aliases: ["foundry", "annex", "foundry annex", "foundry + annex"] },
+  { action: PINNED_THEATER_AUTO_TICK_LAYOUT_ID, aliases: ["theater clock", "theater tick", "theater timer", "auto tick", "advance theaters", "background theater"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
@@ -4233,6 +4239,66 @@ function renderPinnedRosterNodePip(): string {
   `;
 }
 
+function isPinnedTheaterAutoTickEnabled(): boolean {
+  return Boolean(getGameState().uiLayout?.baseCampTheaterAutoTickEnabled);
+}
+
+function getPinnedAtlasFloorOrdinalSafe(): number {
+  try {
+    return getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+  } catch {
+    return 1;
+  }
+}
+
+function renderPinnedTheaterAutoTickCard(): string {
+  const enabled = isPinnedTheaterAutoTickEnabled();
+  const floorOrdinal = getPinnedAtlasFloorOrdinalSafe();
+  const summaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const totalWadUpkeep = summaries.reduce((total, summary) => total + Math.max(0, summary.wadUpkeepPerTick ?? 0), 0);
+  const incomeSummary = summaries
+    .flatMap((summary) => getResourceEntries(summary.incomePerTick))
+    .filter(({ amount }) => Number(amount ?? 0) > 0)
+    .slice(0, 3)
+    .map(({ key, amount }) => `${RESOURCE_SHORT_LABELS[key] ?? key.toUpperCase()} +${Math.round(Number(amount ?? 0))}`)
+    .join(" // ");
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--theater-clock">
+      ${renderPinnedOverlayToolbar(PINNED_THEATER_AUTO_TICK_LAYOUT_ID, "theater clock")}
+      <section class="all-nodes-theater-clock-panel" aria-label="Theater clock">
+        <div class="all-nodes-theater-clock-heading">
+          <span class="all-nodes-theater-clock-kicker">BACKGROUND THEATER TICKS</span>
+          <span class="all-nodes-theater-clock-rate">+1 TICK / 10 SEC</span>
+        </div>
+        <div class="all-nodes-theater-clock-meta">
+          <span>FLOOR ${String(Math.max(1, floorOrdinal)).padStart(2, "0")}</span>
+          <span>${summaries.length} ONLINE</span>
+          <span>WAD ${totalWadUpkeep > 0 ? `-${totalWadUpkeep}` : "0"}</span>
+        </div>
+        <button
+          class="all-nodes-theater-clock-toggle${enabled ? " is-active" : ""}"
+          type="button"
+          data-field-theater-autotick-toggle="${enabled ? "off" : "on"}"
+          aria-pressed="${enabled ? "true" : "false"}"
+        >
+          <span class="all-nodes-theater-clock-toggle-track">
+            <span class="all-nodes-theater-clock-toggle-thumb"></span>
+          </span>
+          <span class="all-nodes-theater-clock-toggle-copy">
+            <span class="all-nodes-theater-clock-toggle-state">${enabled ? "ONLINE" : "OFFLINE"}</span>
+            <span class="all-nodes-theater-clock-toggle-desc">${enabled ? "Atlas sectors keep advancing while you stay in field mode." : "Flip the switch to keep online theaters moving in the background."}</span>
+          </span>
+        </button>
+        <div class="all-nodes-theater-clock-status">
+          <div class="all-nodes-theater-clock-line">${summaries.length > 0 ? `${summaries[0]?.sectorLabel ?? "SECTOR"} ${summaries[0]?.zoneName ?? "ONLINE"}${summaries.length > 1 ? ` // +${summaries.length - 1} more` : ""}` : "No operational theaters are online on this floor."}</div>
+          <div class="all-nodes-theater-clock-line all-nodes-theater-clock-line--muted">${incomeSummary || "No active income streams are registered on this floor yet."}</div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
   const availability = isFieldEscNodeAction(node.action)
     ? getEscActionAvailability(node.action, getFieldEscAvailabilityContext())
@@ -4546,6 +4612,14 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
     `;
   }
 
+  if (itemId === PINNED_THEATER_AUTO_TICK_LAYOUT_ID) {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--theater-clock" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedTheaterAutoTickCard()}
+      </div>
+    `;
+  }
+
   const node = PINNED_NODE_LAYOUT.find((entry) => entry.action === itemId);
   if (!node) return "";
 
@@ -4634,6 +4708,33 @@ function handlePinnedOverlayClick(e: MouseEvent): void {
     return;
   }
 
+  const theaterAutoTickButton = target.closest<HTMLElement>("[data-field-theater-autotick-toggle]");
+  if (theaterAutoTickButton) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const enabled = theaterAutoTickButton.dataset.fieldTheaterAutotickToggle === "on";
+    updateGameState((state) => ({
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampTheaterAutoTickEnabled: enabled,
+      },
+    }));
+    ensureTheaterAutoTickStateSync();
+    showSystemPing({
+      type: enabled ? "success" : "info",
+      title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+      message: enabled
+        ? "Operational theaters will advance by 1 tick every 10 seconds."
+        : "Background theater advancement has been paused.",
+      channel: "esc-theater-auto-tick",
+      replaceChannel: true,
+    });
+    updatePinnedNodesOverlay();
+    return;
+  }
+
   const nodeButton = target.closest<HTMLElement>("[data-field-node-action]");
   if (!nodeButton) return;
 
@@ -4694,6 +4795,8 @@ function handlePinnedOverlayInput(e: Event): void {
 function createPinnedNodesOverlay(): void {
   const root = document.getElementById("app");
   if (!root) return;
+
+  ensureTheaterAutoTickStateSync();
 
   let overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay) {
@@ -5939,6 +6042,29 @@ async function handleNodeAction(action: string): Promise<void> {
       channel: "outer-deck-field-esc-lock",
       replaceChannel: true,
     });
+    return;
+  }
+
+  if (action === PINNED_THEATER_AUTO_TICK_LAYOUT_ID) {
+    const enabled = !isPinnedTheaterAutoTickEnabled();
+    updateGameState((state) => ({
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampTheaterAutoTickEnabled: enabled,
+      },
+    }));
+    ensureTheaterAutoTickStateSync();
+    showSystemPing({
+      type: enabled ? "success" : "info",
+      title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+      message: enabled
+        ? "Operational theaters will advance by 1 tick every 10 seconds."
+        : "Background theater advancement has been paused.",
+      channel: "esc-theater-auto-tick",
+      replaceChannel: true,
+    });
+    updatePinnedNodesOverlay();
     return;
   }
 

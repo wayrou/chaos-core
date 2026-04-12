@@ -426,11 +426,15 @@ export const PAK_DATABASE: Record<string, PAKFile> = {
 // ----------------------------------------------------------------------------
 
 export function getDefaultGearSlots(equipmentId: string, equipment?: any): GearSlotData {
+  const runtimeLockedCards = Array.isArray(equipment?.cardsGranted) ? equipment.cardsGranted : [];
+
   // Check if this is built gear with chassis metadata
   if (equipment?.chassisId) {
     const chassis = getChassisById(equipment.chassisId);
     if (chassis) {
-      const lockedCards = Array.isArray(equipment.lockedCards) ? equipment.lockedCards : [];
+      const lockedCards = Array.isArray(equipment.lockedCards)
+        ? equipment.lockedCards
+        : runtimeLockedCards;
       const lockedSlots = Number.isFinite(equipment?.provenance?.bias?.slotsLocked)
         ? equipment.provenance.bias.slotsLocked
         : 0;
@@ -448,7 +452,7 @@ export function getDefaultGearSlots(equipmentId: string, equipment?: any): GearS
   const isAccessory = equipmentId.startsWith("accessory_") || equipmentId.startsWith("built_accessory_");
 
   // Default locked cards based on equipment
-  const lockedCards = getEquipmentLockedCards(equipmentId);
+  const lockedCards = runtimeLockedCards.length > 0 ? runtimeLockedCards : getEquipmentLockedCards(equipmentId);
 
   return {
     lockedCards,

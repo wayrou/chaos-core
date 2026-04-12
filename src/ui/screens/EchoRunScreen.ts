@@ -17,9 +17,221 @@ import type { EchoRewardChoice, EchoRunNode, EchoUnitDraftOption } from "../../c
 import { showConfirmDialog } from "../components/confirmDialog";
 
 const echoDraftPreviewByStage = new Map<string, string>();
+const echoMapSelectionByStratum = new Map<string, string>();
+const echoMapViewportByStratum = new Map<string, { x: number; y: number; zoom: number }>();
+
+const ECHO_MAP_MIN_ZOOM = 0.7;
+const ECHO_MAP_MAX_ZOOM = 1.65;
+const ECHO_MAP_DEFAULT_ZOOM = 1;
+const ECHO_MAP_PAN_SPEED = 18;
+
+let echoMapAnimationFrame: number | null = null;
+let echoMapKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
+let echoMapKeyupHandler: ((event: KeyboardEvent) => void) | null = null;
+let echoMapWheelHandler: ((event: WheelEvent) => void) | null = null;
+let echoMapPressedKeys = new Set<string>();
+let echoMapShiftHeld = false;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 function getEchoPreviewStageKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
   return `${run.id}:${run.stage}:${run.encounterNumber}`;
+}
+
+function getEchoMapSelectionKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  return `${run.id}:map:${run.currentStratum}`;
+}
+
+function getEchoMapViewportKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  return `${run.id}:viewport:${run.currentStratum}`;
+}
+
+function getEchoMapViewportState(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): { x: number; y: number; zoom: number } {
+  return echoMapViewportByStratum.get(getEchoMapViewportKey(run)) ?? { x: 0, y: 70, zoom: ECHO_MAP_DEFAULT_ZOOM };
+}
+
+function setEchoMapViewportState(run: NonNullable<ReturnType<typeof getActiveEchoRun>>, state: { x: number; y: number; zoom: number }): void {
+  echoMapViewportByStratum.set(getEchoMapViewportKey(run), state);
+}
+
+function cleanupEchoMapInteractions(): void {
+  if (echoMapAnimationFrame !== null) {
+    cancelAnimationFrame(echoMapAnimationFrame);
+    echoMapAnimationFrame = null;
+  }
+  if (echoMapKeydownHandler) {
+    window.removeEventListener("keydown", echoMapKeydownHandler);
+    echoMapKeydownHandler = null;
+  }
+  if (echoMapKeyupHandler) {
+    window.removeEventListener("keyup", echoMapKeyupHandler);
+    echoMapKeyupHandler = null;
+  }
+  if (echoMapWheelHandler) {
+    window.removeEventListener("wheel", echoMapWheelHandler);
+    echoMapWheelHandler = null;
+  }
+  echoMapPressedKeys = new Set<string>();
+  echoMapShiftHeld = false;
+}
+
+function clampEchoMapViewport(
+  state: { x: number; y: number; zoom: number },
+  viewportEl: HTMLElement,
+  boardWidth: number,
+  boardHeight: number,
+): { x: number; y: number; zoom: number } {
+  const zoom = clampNumber(state.zoom, ECHO_MAP_MIN_ZOOM, ECHO_MAP_MAX_ZOOM);
+  const scaledWidth = boardWidth * zoom;
+  const scaledHeight = boardHeight * zoom;
+  const maxX = Math.max(120, (scaledWidth - viewportEl.clientWidth) / 2 + 120);
+  const maxY = Math.max(120, (scaledHeight - viewportEl.clientHeight) / 2 + 120);
+  return {
+    x: clampNumber(state.x, -maxX, maxX),
+    y: clampNumber(state.y, -maxY, maxY),
+    zoom,
+  };
+}
+
+function applyEchoMapViewport(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): void {
+  const viewportEl = document.getElementById("echoRunMapViewport") as HTMLElement | null;
+  const canvasEl = document.getElementById("echoRunMapCanvas") as HTMLElement | null;
+  const zoomLabelEl = document.getElementById("echoRunMapZoomLabel");
+  if (!viewportEl || !canvasEl) {
+    return;
+  }
+
+  const boardWidth = Number(canvasEl.dataset.boardWidth ?? "0");
+  const boardHeight = Number(canvasEl.dataset.boardHeight ?? "0");
+  if (!boardWidth || !boardHeight) {
+    return;
+  }
+
+  const nextState = clampEchoMapViewport(getEchoMapViewportState(run), viewportEl, boardWidth, boardHeight);
+  setEchoMapViewportState(run, nextState);
+  canvasEl.style.transform = `translate(-50%, -50%) translate(${nextState.x}px, ${nextState.y}px) scale(${nextState.zoom})`;
+  if (zoomLabelEl) {
+    zoomLabelEl.textContent = `${Math.round(nextState.zoom * 100)}%`;
+  }
+}
+
+function setupEchoMapInteractions(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): void {
+  cleanupEchoMapInteractions();
+  applyEchoMapViewport(run);
+
+  const viewportEl = document.getElementById("echoRunMapViewport") as HTMLElement | null;
+  const canvasEl = document.getElementById("echoRunMapCanvas") as HTMLElement | null;
+  if (!viewportEl || !canvasEl) {
+    return;
+  }
+
+  const boardWidth = Number(canvasEl.dataset.boardWidth ?? "0");
+  const boardHeight = Number(canvasEl.dataset.boardHeight ?? "0");
+  if (!boardWidth || !boardHeight) {
+    return;
+  }
+
+  const updateLoop = () => {
+    const activeState = { ...getEchoMapViewportState(run) };
+    const speed = echoMapShiftHeld ? ECHO_MAP_PAN_SPEED * 1.8 : ECHO_MAP_PAN_SPEED;
+    let didMove = false;
+
+    if (echoMapPressedKeys.has("w") || echoMapPressedKeys.has("arrowup")) {
+      activeState.y += speed;
+      didMove = true;
+    }
+    if (echoMapPressedKeys.has("s") || echoMapPressedKeys.has("arrowdown")) {
+      activeState.y -= speed;
+      didMove = true;
+    }
+    if (echoMapPressedKeys.has("a") || echoMapPressedKeys.has("arrowleft")) {
+      activeState.x += speed;
+      didMove = true;
+    }
+    if (echoMapPressedKeys.has("d") || echoMapPressedKeys.has("arrowright")) {
+      activeState.x -= speed;
+      didMove = true;
+    }
+
+    if (didMove) {
+      setEchoMapViewportState(run, activeState);
+      applyEchoMapViewport(run);
+    }
+
+    echoMapAnimationFrame = window.requestAnimationFrame(updateLoop);
+  };
+
+  echoMapKeydownHandler = (event: KeyboardEvent) => {
+    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+      return;
+    }
+    if (event.key === "Shift") {
+      echoMapShiftHeld = true;
+      return;
+    }
+    const normalized = event.key.toLowerCase();
+    if (!["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(normalized)) {
+      return;
+    }
+    event.preventDefault();
+    echoMapPressedKeys.add(normalized);
+  };
+
+  echoMapKeyupHandler = (event: KeyboardEvent) => {
+    if (event.key === "Shift") {
+      echoMapShiftHeld = false;
+      return;
+    }
+    echoMapPressedKeys.delete(event.key.toLowerCase());
+  };
+
+  echoMapWheelHandler = (event: WheelEvent) => {
+    if (!viewportEl.contains(event.target as Node)) {
+      return;
+    }
+    event.preventDefault();
+    const state = getEchoMapViewportState(run);
+    const delta = event.deltaY > 0 ? -0.08 : 0.08;
+    setEchoMapViewportState(run, {
+      ...state,
+      zoom: clampNumber(state.zoom + delta, ECHO_MAP_MIN_ZOOM, ECHO_MAP_MAX_ZOOM),
+    });
+    applyEchoMapViewport(run);
+  };
+
+  window.addEventListener("keydown", echoMapKeydownHandler);
+  window.addEventListener("keyup", echoMapKeyupHandler);
+  window.addEventListener("wheel", echoMapWheelHandler, { passive: false });
+
+  const zoomInBtn = document.getElementById("echoRunMapZoomInBtn");
+  zoomInBtn?.addEventListener("click", () => {
+    const state = getEchoMapViewportState(run);
+    setEchoMapViewportState(run, {
+      ...state,
+      zoom: clampNumber(state.zoom + 0.12, ECHO_MAP_MIN_ZOOM, ECHO_MAP_MAX_ZOOM),
+    });
+    applyEchoMapViewport(run);
+  });
+
+  const zoomOutBtn = document.getElementById("echoRunMapZoomOutBtn");
+  zoomOutBtn?.addEventListener("click", () => {
+    const state = getEchoMapViewportState(run);
+    setEchoMapViewportState(run, {
+      ...state,
+      zoom: clampNumber(state.zoom - 0.12, ECHO_MAP_MIN_ZOOM, ECHO_MAP_MAX_ZOOM),
+    });
+    applyEchoMapViewport(run);
+  });
+
+  const resetBtn = document.getElementById("echoRunMapResetBtn");
+  resetBtn?.addEventListener("click", () => {
+    setEchoMapViewportState(run, { x: 0, y: 70, zoom: ECHO_MAP_DEFAULT_ZOOM });
+    applyEchoMapViewport(run);
+  });
+
+  echoMapAnimationFrame = window.requestAnimationFrame(updateLoop);
 }
 
 function getSelectedEchoPreviewChoice(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoRewardChoice | null {
@@ -44,6 +256,147 @@ function getSelectedEchoPreviewChoice(run: NonNullable<ReturnType<typeof getActi
 
 function setSelectedEchoPreviewChoice(run: NonNullable<ReturnType<typeof getActiveEchoRun>>, choiceId: string): void {
   echoDraftPreviewByStage.set(getEchoPreviewStageKey(run), choiceId);
+}
+
+function getEchoMapNodeState(
+  node: EchoRunNode,
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+): {
+  isAvailable: boolean;
+  isCompleted: boolean;
+  isCurrent: boolean;
+  isObscured: boolean;
+  stateLabel: string;
+} {
+  const isAvailable = run.availableNodeIds.includes(node.id);
+  const isCompleted = run.completedNodeIds.includes(node.id);
+  const isCurrent = run.currentNodeId === node.id || run.pendingNodeId === node.id;
+  const isObscured = !isAvailable && !isCompleted && !isCurrent;
+  const stateLabel = isCompleted
+    ? "Cleared"
+    : isCurrent
+      ? "Current Route"
+      : isAvailable
+        ? "Reachable"
+        : node.stratum === run.currentStratum
+          ? "Obscured"
+          : "Future";
+
+  return {
+    isAvailable,
+    isCompleted,
+    isCurrent,
+    isObscured,
+    stateLabel,
+  };
+}
+
+function getSelectedEchoMapNode(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoRunNode | null {
+  const currentNodes = Object.values(run.nodesById).filter((node) => node.stratum === run.currentStratum);
+  if (currentNodes.length === 0) {
+    return null;
+  }
+
+  const selectionKey = getEchoMapSelectionKey(run);
+  const savedId = echoMapSelectionByStratum.get(selectionKey);
+  const matched = savedId ? currentNodes.find((node) => node.id === savedId) ?? null : null;
+  if (matched) {
+    return matched;
+  }
+
+  const fallback = currentNodes.find((node) => getEchoMapNodeState(node, run).isCurrent)
+    ?? currentNodes.find((node) => getEchoMapNodeState(node, run).isAvailable)
+    ?? currentNodes[0]
+    ?? null;
+
+  if (fallback) {
+    echoMapSelectionByStratum.set(selectionKey, fallback.id);
+  }
+  return fallback;
+}
+
+function setSelectedEchoMapNode(run: NonNullable<ReturnType<typeof getActiveEchoRun>>, nodeId: string): void {
+  echoMapSelectionByStratum.set(getEchoMapSelectionKey(run), nodeId);
+}
+
+function getEchoMapNodeGlyph(nodeType: EchoRunNode["nodeType"], obscured: boolean): string {
+  if (obscured) {
+    return "?";
+  }
+  switch (nodeType) {
+    case "support":
+      return "+";
+    case "elite":
+      return "!";
+    case "boss":
+      return "B";
+    case "boss_chain_a":
+      return "I";
+    case "boss_chain_b":
+      return "II";
+    case "milestone":
+      return "M";
+    case "encounter":
+    default:
+      return "o";
+  }
+}
+
+function getEchoMapNodeShape(nodeType: EchoRunNode["nodeType"]): string {
+  switch (nodeType) {
+    case "support":
+      return "square";
+    case "elite":
+      return "diamond";
+    case "boss":
+    case "boss_chain_a":
+    case "boss_chain_b":
+      return "hex";
+    case "milestone":
+      return "pill";
+    case "encounter":
+    default:
+      return "circle";
+  }
+}
+
+function getEchoMapNodeActionLabel(node: EchoRunNode): string {
+  return node.nodeType === "support" || node.nodeType === "milestone" ? "ACCESS NODE" : "ENGAGE NODE";
+}
+
+function getEchoMapAnchors(count: number): number[] {
+  if (count <= 1) {
+    return [0.5];
+  }
+  if (count === 2) {
+    return [0.34, 0.66];
+  }
+  if (count === 3) {
+    return [0.2, 0.5, 0.8];
+  }
+  return Array.from({ length: count }, (_, index) => (index + 1) / (count + 1));
+}
+
+function getEchoLayerLabel(layer: number, totalLayers: number, layerNodes: EchoRunNode[]): string {
+  if (layer === 1) {
+    return "Entry";
+  }
+  if (layer === totalLayers) {
+    return "Milestone";
+  }
+  const hasBoss = layerNodes.some((node) => node.nodeType === "boss" || node.nodeType === "boss_chain_a" || node.nodeType === "boss_chain_b");
+  if (hasBoss) {
+    return "Boss";
+  }
+  const hasElite = layerNodes.some((node) => node.nodeType === "elite");
+  if (hasElite) {
+    return "Pressure";
+  }
+  const hasSupport = layerNodes.some((node) => node.nodeType === "support");
+  if (hasSupport) {
+    return "Support";
+  }
+  return `Layer ${layer.toString().padStart(2, "0")}`;
 }
 
 function formatEchoEquipmentLabel(equipmentId: string | null, slotLabel: string): string {
@@ -207,6 +560,32 @@ function renderModifierSummary(run: NonNullable<ReturnType<typeof getActiveEchoR
   }).join("");
 }
 
+function renderEchoSidebarPanels(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  return `
+    <section class="echo-run-panel">
+      <div class="echo-run-panel__title">Draft Squad</div>
+      ${run.squadUnitIds.length > 0 ? run.squadUnitIds.map((unitId) => renderUnitSummaryCard(unitId, run)).join("") : `<div class="echo-run-empty">No drafted units yet.</div>`}
+    </section>
+    <section class="echo-run-panel">
+      <div class="echo-run-panel__title">Echo Fields</div>
+      ${renderFieldSummary(run)}
+    </section>
+    <section class="echo-run-panel">
+      <div class="echo-run-panel__title">Tactical Modifiers</div>
+      ${renderModifierSummary(run)}
+    </section>
+    ${run.lastEncounterSummary ? `
+      <section class="echo-run-panel echo-run-panel--summary">
+        <div class="echo-run-panel__title">Last Encounter</div>
+        <div class="echo-run-summary-stat"><span>Type</span><strong>${run.lastEncounterSummary.encounterType.toUpperCase()}</strong></div>
+        <div class="echo-run-summary-stat"><span>Score</span><strong>+${run.lastEncounterSummary.scoreGained}</strong></div>
+        <div class="echo-run-summary-stat"><span>Rerolls</span><strong>+${run.lastEncounterSummary.rerollsEarned}</strong></div>
+        <div class="echo-run-summary-stat"><span>Field Triggers</span><strong>${run.lastEncounterSummary.fieldTriggerCount}</strong></div>
+      </section>
+    ` : ""}
+  `;
+}
+
 function renderChoiceCard(
   choice: NonNullable<ReturnType<typeof getActiveEchoRun>>["draftChoices"][number],
   options: { isPreviewed: boolean },
@@ -275,32 +654,36 @@ function renderMapNodeCard(
   node: EchoRunNode,
   run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
 ): string {
-  const isAvailable = run.availableNodeIds.includes(node.id);
-  const isCompleted = run.completedNodeIds.includes(node.id);
-  const isCurrent = run.currentNodeId === node.id || run.pendingNodeId === node.id;
-  const stateLabel = isCompleted
-    ? "CLEARED"
-    : isAvailable
-      ? "AVAILABLE"
-      : node.stratum === run.currentStratum
-        ? "LOCKED"
-        : "FUTURE";
+  const nodeState = getEchoMapNodeState(node, run);
+  const title = nodeState.isObscured ? "Unknown Contact" : node.title;
+  const subtitle = nodeState.isObscured ? "Route signature unavailable" : node.subtitle;
+  const meta = nodeState.isObscured ? "Advance deeper to resolve this node." : `Tier ${node.dangerTier} // ${node.rewardBias}`;
+  const glyph = getEchoMapNodeGlyph(node.nodeType, nodeState.isObscured);
+  const shape = getEchoMapNodeShape(node.nodeType);
 
   return `
-    <article class="echo-run-map-node echo-run-map-node--${node.nodeType}${isAvailable ? " echo-run-map-node--available" : ""}${isCompleted ? " echo-run-map-node--completed" : ""}${isCurrent ? " echo-run-map-node--current" : ""}">
-      <div class="echo-run-map-node__state">${stateLabel}</div>
-      <div class="echo-run-map-node__title">${node.title}</div>
-      <div class="echo-run-map-node__subtitle">${node.subtitle}</div>
-      <div class="echo-run-map-node__meta">Tier ${node.dangerTier} // ${node.rewardBias}</div>
-      <div class="echo-run-map-node__copy">${node.description}</div>
-      <button class="echo-run-choice-card__button" type="button" data-echo-node-id="${node.id}" ${isAvailable ? "" : "disabled"}>
-        ${node.nodeType === "support" ? "ACCESS NODE" : "ENGAGE NODE"}
-      </button>
-    </article>
+    <button
+      class="echo-run-map-node echo-run-map-node--${node.nodeType}${nodeState.isAvailable ? " echo-run-map-node--available" : ""}${nodeState.isCompleted ? " echo-run-map-node--completed" : ""}${nodeState.isCurrent ? " echo-run-map-node--current" : ""}${nodeState.isObscured ? " echo-run-map-node--obscured" : ""}"
+      type="button"
+      data-echo-map-select="${node.id}"
+      aria-label="${title}"
+    >
+      <span class="echo-run-map-node__shape echo-run-map-node__shape--${shape}">
+        <span class="echo-run-map-node__glyph">${glyph}</span>
+      </span>
+      <span class="echo-run-map-node__state">${nodeState.stateLabel}</span>
+      <span class="echo-run-map-node__title">${title}</span>
+      <span class="echo-run-map-node__subtitle">${subtitle}</span>
+      <span class="echo-run-map-node__meta">${meta}</span>
+    </button>
   `;
 }
 
-function renderMapStage(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+function renderMapStage(
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+  stageTitle: string,
+  stageCopy: string,
+): string {
   const currentStratumNodes = Object.values(run.nodesById)
     .filter((node) => node.stratum === run.currentStratum)
     .sort((left, right) => left.layer - right.layer || left.branchIndex - right.branchIndex);
@@ -312,33 +695,202 @@ function renderMapStage(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): 
     grouped.set(node.layer, bucket);
   });
 
-  const layersHtml = Array.from(grouped.entries())
-    .sort((left, right) => left[0] - right[0])
-    .map(([layer, nodes]) => `
-      <section class="echo-run-map-layer">
-        <div class="echo-run-map-layer__label">LAYER ${layer.toString().padStart(2, "0")}</div>
-        <div class="echo-run-map-layer__nodes">
-          ${nodes.map((node) => renderMapNodeCard(node, run)).join("")}
+  const layerEntries = Array.from(grouped.entries()).sort((left, right) => left[0] - right[0]);
+  const maxLayer = layerEntries[layerEntries.length - 1]?.[0] ?? 1;
+  const boardWidth = 1700;
+  const boardHeight = Math.max(1280, 420 + maxLayer * 190);
+  const paddingX = 180;
+  const paddingY = 150;
+  const innerWidth = boardWidth - paddingX * 2;
+  const innerHeight = boardHeight - paddingY * 2;
+  const positions = new Map<string, { x: number; y: number }>();
+
+  layerEntries.forEach(([layer, nodes]) => {
+    const anchors = getEchoMapAnchors(nodes.length);
+    const sway = nodes.length === 1 ? 0 : ((layer % 2 === 0) ? 0.025 : -0.025);
+    nodes.forEach((node, index) => {
+      const anchor = clampNumber(anchors[index] + sway * (index - ((nodes.length - 1) / 2)), 0.12, 0.88);
+      const progress = maxLayer <= 1 ? 0 : (layer - 1) / (maxLayer - 1);
+      const x = paddingX + anchor * innerWidth;
+      const y = boardHeight - paddingY - progress * innerHeight;
+      positions.set(node.id, { x, y });
+    });
+  });
+
+  const selectedNode = getSelectedEchoMapNode(run);
+  const selectedNodeState = selectedNode ? getEchoMapNodeState(selectedNode, run) : null;
+  const selectedNodeTitle = !selectedNode
+    ? "No Route Selected"
+    : selectedNodeState?.isObscured
+      ? "Unknown Contact"
+      : selectedNode.title;
+  const selectedNodeSubtitle = !selectedNode
+    ? "No data"
+    : selectedNodeState?.isObscured
+      ? "Route signature unavailable"
+      : selectedNode.subtitle;
+  const selectedNodeDescription = !selectedNode
+    ? "Select a node to inspect the current route."
+    : selectedNodeState?.isObscured
+      ? "This contact sits beyond current route intel. Clear reachable nodes to resolve its exact function."
+      : selectedNode.description;
+  const selectedNodeMeta = !selectedNode
+    ? "No target available."
+    : selectedNodeState?.isObscured
+      ? "Data obscured // deeper route required"
+      : `Tier ${selectedNode.dangerTier} // ${selectedNode.rewardBias}`;
+  const selectedNodeTypeLabel = !selectedNode
+    ? "NO NODE"
+    : selectedNodeState?.isObscured
+      ? "UNKNOWN CONTACT"
+      : selectedNode.nodeType.replace(/_/g, " ").toUpperCase();
+
+  const connectionSvg = run.edges
+    .filter((edge) => {
+      const fromNode = run.nodesById[edge.fromNodeId];
+      const toNode = run.nodesById[edge.toNodeId];
+      return fromNode?.stratum === run.currentStratum && toNode?.stratum === run.currentStratum;
+    })
+    .map((edge) => {
+      const from = positions.get(edge.fromNodeId);
+      const to = positions.get(edge.toNodeId);
+      const fromNode = run.nodesById[edge.fromNodeId];
+      const toNode = run.nodesById[edge.toNodeId];
+      if (!from || !to || !fromNode || !toNode) {
+        return "";
+      }
+      const fromState = getEchoMapNodeState(fromNode, run);
+      const toState = getEchoMapNodeState(toNode, run);
+      const controlY = (from.y + to.y) / 2;
+      const selectedConnection = selectedNode && (selectedNode.id === fromNode.id || selectedNode.id === toNode.id);
+      const connectionClass = fromState.isCompleted && (toState.isCompleted || toState.isCurrent)
+        ? "echo-run-map-connection--cleared"
+        : fromState.isCurrent || fromState.isAvailable || toState.isAvailable || toState.isCurrent
+          ? "echo-run-map-connection--reachable"
+          : toState.isObscured
+            ? "echo-run-map-connection--obscured"
+            : "echo-run-map-connection--idle";
+      return `
+        <path
+          class="echo-run-map-connection ${connectionClass}${selectedConnection ? " echo-run-map-connection--selected" : ""}"
+          d="M ${from.x.toFixed(1)} ${from.y.toFixed(1)} C ${from.x.toFixed(1)} ${controlY.toFixed(1)}, ${to.x.toFixed(1)} ${controlY.toFixed(1)}, ${to.x.toFixed(1)} ${to.y.toFixed(1)}"
+        />
+      `;
+    })
+    .join("");
+
+  const layerMarkers = layerEntries
+    .map(([layer, nodes]) => {
+      const sample = nodes[0];
+      const point = sample ? positions.get(sample.id) : null;
+      if (!point) {
+        return "";
+      }
+      const layerObscured = nodes.every((node) => getEchoMapNodeState(node, run).isObscured);
+      return `
+        <div class="echo-run-map-layer-marker${layerObscured ? " echo-run-map-layer-marker--obscured" : ""}" style="top:${((point.y / boardHeight) * 100).toFixed(2)}%;">
+          ${layerObscured ? "Obscured Layer" : getEchoLayerLabel(layer, maxLayer, nodes)}
         </div>
-      </section>
-    `)
+      `;
+    })
+    .join("");
+
+  const nodesHtml = currentStratumNodes
+    .map((node) => {
+      const point = positions.get(node.id);
+      if (!point) {
+        return "";
+      }
+      const isSelected = selectedNode?.id === node.id;
+      return `
+        <div class="echo-run-map-node-wrap${isSelected ? " echo-run-map-node-wrap--selected" : ""}" style="left:${((point.x / boardWidth) * 100).toFixed(2)}%; top:${((point.y / boardHeight) * 100).toFixed(2)}%;">
+          ${renderMapNodeCard(node, run)}
+        </div>
+      `;
+    })
     .join("");
 
   return `
-    <section class="echo-run-choice-stage echo-run-choice-stage--map">
-      <div class="echo-run-choice-stage__header">
-        <div class="echo-run-choice-stage__title">Stratum ${run.currentStratum} Route Map</div>
-        <div class="echo-run-choice-stage__actions">
-          <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+    <section class="echo-run-map-scene">
+      <div class="echo-run-map-viewport" id="echoRunMapViewport">
+        <div
+          class="echo-run-map-canvas"
+          id="echoRunMapCanvas"
+          data-board-width="${boardWidth}"
+          data-board-height="${boardHeight}"
+        >
+          <div class="echo-run-map-board" style="width:${boardWidth}px; height:${boardHeight}px;">
+            <div class="echo-run-map-board__grid" aria-hidden="true"></div>
+            <svg class="echo-run-map-board__routes" viewBox="0 0 ${boardWidth} ${boardHeight}" preserveAspectRatio="none" aria-hidden="true">
+              ${connectionSvg}
+            </svg>
+            <div class="echo-run-map-board__markers">
+              ${layerMarkers}
+            </div>
+            <div class="echo-run-map-board__nodes">
+              ${nodesHtml}
+            </div>
+          </div>
         </div>
       </div>
-      <div class="echo-run-map-stage__summary">
-        <div class="echo-run-meta-chip"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
-        <div class="echo-run-meta-chip"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
-        <div class="echo-run-meta-chip"><span>Reachable Nodes</span><strong>${run.availableNodeIds.length}</strong></div>
-      </div>
-      <div class="echo-run-map-stage">
-        ${layersHtml}
+
+      <section class="echo-run-map-window echo-run-map-window--command">
+        <div class="echo-run-map-window__kicker">S/COM_OS // ECHO ROUTE</div>
+        <h2 class="echo-run-map-window__title">${stageTitle}</h2>
+        <p class="echo-run-map-window__copy">${stageCopy}</p>
+        <div class="echo-run-map-window__actions">
+          <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+        </div>
+      </section>
+
+      <aside class="echo-run-map-window-stack echo-run-map-window-stack--left">
+        ${renderEchoSidebarPanels(run)}
+      </aside>
+
+      <section class="echo-run-map-window echo-run-map-window--status">
+        <div class="echo-run-map-window__kicker">Route State</div>
+        <div class="echo-run-map-stage__summary">
+          <div class="echo-run-meta-chip"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
+          <div class="echo-run-meta-chip"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
+          <div class="echo-run-meta-chip"><span>Reachable Nodes</span><strong>${run.availableNodeIds.length}</strong></div>
+        </div>
+        <div class="echo-run-map-zoom-controls">
+          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__btn" type="button" id="echoRunMapZoomOutBtn">-</button>
+          <div class="echo-run-map-zoom-controls__label" id="echoRunMapZoomLabel">100%</div>
+          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__btn" type="button" id="echoRunMapZoomInBtn">+</button>
+          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__reset" type="button" id="echoRunMapResetBtn">RESET VIEW</button>
+        </div>
+      </section>
+
+      <section class="echo-run-map-window echo-run-map-window--detail echo-run-map-detail${selectedNodeState?.isObscured ? " echo-run-map-detail--obscured" : ""}">
+        <div class="echo-run-map-detail__copy">
+          <div class="echo-run-map-detail__kicker">${selectedNodeState?.stateLabel ?? "No Route"} // ${selectedNodeTypeLabel}</div>
+          <h3 class="echo-run-map-detail__title">${selectedNodeTitle}</h3>
+          <div class="echo-run-map-detail__subtitle">${selectedNodeSubtitle}</div>
+          <div class="echo-run-map-detail__meta">${selectedNodeMeta}</div>
+          <p class="echo-run-map-detail__description">${selectedNodeDescription}</p>
+        </div>
+        <div class="echo-run-map-detail__actions">
+          ${selectedNode ? `
+            <button
+              class="echo-run-choice-card__button echo-run-map-detail__button"
+              type="button"
+              data-echo-node-id="${selectedNode.id}"
+              ${selectedNodeState?.isAvailable ? "" : "disabled"}
+            >
+              ${getEchoMapNodeActionLabel(selectedNode)}
+            </button>
+          ` : ""}
+          ${selectedNode && !selectedNodeState?.isAvailable ? `
+            <div class="echo-run-map-detail__hint">
+              ${selectedNodeState?.isObscured ? "Clear a reachable route to resolve this contact." : "This route is not unlocked yet."}
+            </div>
+          ` : ""}
+        </div>
+      </section>
+
+      <div class="echo-run-map-hud-hint">
+        WASD / ARROW KEYS TO PAN<br />MOUSE WHEEL OR +/- TO ZOOM
       </div>
     </section>
   `;
@@ -397,6 +949,7 @@ export function renderEchoRunScreen(): void {
   }
 
   syncEchoScreenState();
+  cleanupEchoMapInteractions();
 
   const stageTitle = run.stage === "initial_units"
     ? "Initial Unit Draft"
@@ -424,11 +977,24 @@ export function renderEchoRunScreen(): void {
 
   const selectedPreviewChoice = getSelectedEchoPreviewChoice(run);
   const shouldShowDraftStage = run.stage === "initial_units" || run.stage === "initial_field" || run.stage === "reward" || run.stage === "milestone";
+  const previewRailContent = selectedPreviewChoice?.unitOption
+    ? `
+      <aside class="echo-run-preview-rail" aria-label="Full unit readout">
+        ${renderEchoUnitDraftPreview(selectedPreviewChoice.unitOption)}
+      </aside>
+    `
+    : "";
+  if (run.stage === "map") {
+    app.innerHTML = `
+      <div class="echo-run-root echo-run-root--map">
+        ${renderMapStage(run, stageTitle, stageCopy)}
+      </div>
+    `;
+    setupEchoMapInteractions(run);
+  } else {
   const mainContent = run.stage === "results"
     ? renderEchoResults(run)
-    : run.stage === "map"
-      ? renderMapStage(run)
-      : `
+    : `
         <section class="echo-run-choice-stage">
           <div class="echo-run-choice-stage__header">
             <div class="echo-run-choice-stage__title">${stageTitle}</div>
@@ -439,13 +1005,12 @@ export function renderEchoRunScreen(): void {
               <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
             </div>
           </div>
-          <div class="echo-run-choice-stage__body${selectedPreviewChoice?.unitOption ? " echo-run-choice-stage__body--with-preview" : ""}">
+          <div class="echo-run-choice-stage__body">
             <div class="echo-run-choice-grid">
               ${run.draftChoices.map((choice) => renderChoiceCard(choice, {
                 isPreviewed: selectedPreviewChoice?.id === choice.id,
               })).join("")}
             </div>
-            ${selectedPreviewChoice?.unitOption ? renderEchoUnitDraftPreview(selectedPreviewChoice.unitOption) : ""}
           </div>
         </section>
       `;
@@ -466,38 +1031,21 @@ export function renderEchoRunScreen(): void {
           </div>
         </header>
 
-        <div class="echo-run-body">
+        <div class="echo-run-body${previewRailContent ? " echo-run-body--with-preview" : ""}">
           <aside class="echo-run-sidebar">
-            <section class="echo-run-panel">
-              <div class="echo-run-panel__title">Draft Squad</div>
-              ${run.squadUnitIds.length > 0 ? run.squadUnitIds.map((unitId) => renderUnitSummaryCard(unitId, run)).join("") : `<div class="echo-run-empty">No drafted units yet.</div>`}
-            </section>
-            <section class="echo-run-panel">
-              <div class="echo-run-panel__title">Echo Fields</div>
-              ${renderFieldSummary(run)}
-            </section>
-            <section class="echo-run-panel">
-              <div class="echo-run-panel__title">Tactical Modifiers</div>
-              ${renderModifierSummary(run)}
-            </section>
-            ${run.lastEncounterSummary ? `
-              <section class="echo-run-panel echo-run-panel--summary">
-                <div class="echo-run-panel__title">Last Encounter</div>
-                <div class="echo-run-summary-stat"><span>Type</span><strong>${run.lastEncounterSummary.encounterType.toUpperCase()}</strong></div>
-                <div class="echo-run-summary-stat"><span>Score</span><strong>+${run.lastEncounterSummary.scoreGained}</strong></div>
-                <div class="echo-run-summary-stat"><span>Rerolls</span><strong>+${run.lastEncounterSummary.rerollsEarned}</strong></div>
-                <div class="echo-run-summary-stat"><span>Field Triggers</span><strong>${run.lastEncounterSummary.fieldTriggerCount}</strong></div>
-              </section>
-            ` : ""}
+            ${renderEchoSidebarPanels(run)}
           </aside>
 
           <main class="echo-run-main">
             ${mainContent}
           </main>
+
+          ${previewRailContent}
         </div>
       </div>
     </div>
   `;
+  }
 
   if (shouldShowDraftStage) {
     document.querySelectorAll<HTMLElement>("[data-echo-choice-id]").forEach((button) => {
@@ -522,6 +1070,17 @@ export function renderEchoRunScreen(): void {
       };
     });
   }
+
+  document.querySelectorAll<HTMLElement>("[data-echo-map-select]").forEach((button) => {
+    button.onclick = () => {
+      const nodeId = button.getAttribute("data-echo-map-select");
+      if (!nodeId) {
+        return;
+      }
+      setSelectedEchoMapNode(run, nodeId);
+      renderEchoRunScreen();
+    };
+  });
 
   document.querySelectorAll<HTMLElement>("[data-echo-node-id]").forEach((button) => {
     button.onclick = () => {

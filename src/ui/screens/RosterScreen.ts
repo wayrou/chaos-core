@@ -110,6 +110,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
+  const gearSlotsById = state.gearSlots ?? {};
   const preset = normalizeTheaterDeploymentPreset(state.theaterDeploymentPreset, state.partyUnitIds ?? []);
   const presetMembership = new Map<string, TheaterSquadPreset>();
   preset.squads.forEach((squad) => squad.unitIds.forEach((unitId) => { if (!presetMembership.has(unitId)) presetMembership.set(unitId, squad); }));
@@ -117,15 +118,14 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const isLiveTheaterOperation = returnTo === "operation" && Boolean(state.operation?.theater);
   const partyUnits = unitIds.filter((id) => partyUnitIds.includes(id));
   const reserveUnits = unitIds.filter((id) => !partyUnitIds.includes(id));
-  const portraitPath = getUnitManagementStandIconPath();
-
   const renderUnitCard = (unitId: string, isInParty: boolean) => {
     const unit = units[unitId];
     if (!unit) return "";
     const loadout: UnitLoadout = (unit as any).loadout || { primaryWeapon: null, secondaryWeapon: null, helmet: null, chestpiece: null, accessory1: null, accessory2: null };
     const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
     const unitClass: UnitClass = (unit as any).unitClass || "squire";
-    const deckSize = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById).length;
+    const portraitPath = getUnitManagementStandIconPath(unitClass);
+    const deckSize = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById, gearSlotsById).length;
     const baseStats = (unit as any).stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
     const assignedSquad = presetMembership.get(unitId) ?? null;
     const isDispatched = busyDispatchUnitIds.has(unitId);

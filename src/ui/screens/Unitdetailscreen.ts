@@ -261,6 +261,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
+  const gearSlotsById = state.gearSlots ?? {};
   const cardsById = getAllEquipmentCards();
 
   const unitClass: UnitClass = (unit as any).unitClass || "squire";
@@ -275,7 +276,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
   const baseStats = (unit as any).stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
   const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
-  const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById);
+  const deck = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById, gearSlotsById);
 
   const totalAtk = baseStats.atk + equipStats.atk;
   const totalDef = baseStats.def + equipStats.def;
@@ -306,7 +307,13 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
         if (s.acc !== 0) statParts.push(`ACC ${formatStatWithSign(s.acc)}`);
         if (s.hp !== 0) statParts.push(`HP ${formatStatWithSign(s.hp)}`);
         equipStatsStr = statParts.join(" / ");
-        cardsGranted = `${equip.cardsGranted.length} cards`;
+        const customizedGear = equipId ? gearSlotsById[equipId] : undefined;
+        const slotCardCount = customizedGear
+          ? (equip.cardsGranted.length > 0
+            ? customizedGear.slottedCards.length
+            : customizedGear.lockedCards.length + customizedGear.slottedCards.length)
+          : 0;
+        cardsGranted = `${equip.cardsGranted.length + slotCardCount} cards`;
       }
 
       return `
@@ -375,7 +382,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     })
     .join("");
 
-  const portraitPath = getUnitManagementStandIconPath();
+  const portraitPath = getUnitManagementStandIconPath(unitClass);
 
   // Calculate PWR for the unit
   const pwr = (unit as any).pwr ?? calculatePWR({

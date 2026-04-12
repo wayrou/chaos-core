@@ -5,7 +5,8 @@
 import { UnitId } from "./types";
 
 const DEFAULT_UNIT_PORTRAIT_PATH = "/assets/portraits/units/core/Test_Portrait.png";
-const UNIT_MANAGEMENT_STAND_ICON_PATH = "/assets/portraits/units/core/Unit_Stand_Test.png";
+const DEFAULT_UNIT_MANAGEMENT_STAND_ICON_PATH = "/assets/portraits/units/core/Unit_Stand_Test.png";
+const SQUIRE_UNIT_MANAGEMENT_STAND_ICON_PATH = "/assets/portraits/units/core/Squire_Stand.png";
 
 /**
  * Gets the portrait path for a unit based on its ID.
@@ -32,8 +33,10 @@ export function getUnitPortraitPath(unitId: UnitId | string | undefined): string
   return standardPath;
 }
 
-export function getUnitManagementStandIconPath(): string {
-  return UNIT_MANAGEMENT_STAND_ICON_PATH;
+export function getUnitManagementStandIconPath(unitClass?: string | null): string {
+  return unitClass === "squire"
+    ? SQUIRE_UNIT_MANAGEMENT_STAND_ICON_PATH
+    : DEFAULT_UNIT_MANAGEMENT_STAND_ICON_PATH;
 }
 
 /**
