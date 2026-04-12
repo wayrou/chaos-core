@@ -223,6 +223,10 @@ const previousButtonStatesByPad: boolean[][] = [];
 const previousAxisDigitalByPad: Record<number, Record<string, boolean>> = {};
 
 const DEBUG_OVERLAY_ID = "controllerDebugOverlay";
+// Keep manual UI focus/navigation active, but leave the global DOM mutation
+// observer disabled so screen transitions do not trigger the old focus-scan stalls.
+const CONTROLLER_UI_FOCUS_ENABLED = true;
+const CONTROLLER_UI_FOCUS_OBSERVER_ENABLED = false;
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "a[href]",
@@ -251,7 +255,9 @@ export function initControllerSupport(): void {
   window.addEventListener("gamepadconnected", onGamepadConnected);
   window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
   startPolling();
-  ensureFocusObserver();
+  if (CONTROLLER_UI_FOCUS_ENABLED && CONTROLLER_UI_FOCUS_OBSERVER_ENABLED) {
+    ensureFocusObserver();
+  }
   ensureDebugOverlay();
   syncDebugOverlay();
   initialized = true;
@@ -867,6 +873,30 @@ function ensureFocusObserver(): void {
     return;
   }
 
+  const nodeMayAffectFocusState = (node: Node | null, selector: string): boolean => {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+
+    const extendedSelector = `${selector}, [data-controller-default-focus='true']`;
+    return node.matches(extendedSelector) || node.querySelector(extendedSelector) !== null;
+  };
+
+  const isFocusMutationRelevant = (records: MutationRecord[]): boolean => {
+    const selector = currentContext?.focusSelector || FOCUSABLE_SELECTOR;
+    return records.some((record) => {
+      if (record.type === "childList") {
+        return (
+          nodeMayAffectFocusState(record.target, selector)
+          || Array.from(record.addedNodes).some((node) => nodeMayAffectFocusState(node, selector))
+          || Array.from(record.removedNodes).some((node) => nodeMayAffectFocusState(node, selector))
+        );
+      }
+
+      return nodeMayAffectFocusState(record.target, selector);
+    });
+  };
+
   const startObserver = () => {
     const target = document.body;
     if (!target) {
@@ -874,8 +904,11 @@ function ensureFocusObserver(): void {
       return;
     }
 
-    focusObserver = new MutationObserver(() => {
+    focusObserver = new MutationObserver((records) => {
       if (suppressFocusRefresh) {
+        return;
+      }
+      if (!isFocusMutationRelevant(records)) {
         return;
       }
       scheduleFocusRefresh();
@@ -885,7 +918,7 @@ function ensureFocusObserver(): void {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["disabled", "hidden", "class", "style", "data-controller-exclude", "data-controller-focusable"],
+      attributeFilter: ["disabled", "hidden", "aria-hidden", "data-controller-exclude", "data-controller-focusable"],
     });
   };
 
@@ -900,6 +933,12 @@ function clearScheduledFocusRefresh(): void {
 }
 
 function scheduleFocusRefresh(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    clearScheduledFocusRefresh();
+    focusableElements = [];
+    currentFocusIndex = 0;
+    return;
+  }
   clearScheduledFocusRefresh();
   focusRefreshRaf = requestAnimationFrame(() => {
     focusRefreshRaf = null;
@@ -908,6 +947,13 @@ function scheduleFocusRefresh(): void {
 }
 
 export function updateFocusableElements(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    focusableElements = [];
+    currentFocusIndex = 0;
+    syncDebugOverlay();
+    return;
+  }
+
   const root = resolveFocusRoot();
   const nextFocusable = Array.from(
     root.querySelectorAll<HTMLElement>(currentContext?.focusSelector || FOCUSABLE_SELECTOR),
@@ -916,11 +962,17 @@ export function updateFocusableElements(): void {
   const previousFocus = focusableElements[currentFocusIndex]
     ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 
-  focusableElements = nextFocusable;
-  focusableElements.forEach((element, index) => {
-    element.classList.add("controller-focusable");
-    element.dataset.focusIndex = String(index);
-  });
+  const previousSuppressFocusRefresh = suppressFocusRefresh;
+  suppressFocusRefresh = true;
+  try {
+    focusableElements = nextFocusable;
+    focusableElements.forEach((element, index) => {
+      element.classList.add("controller-focusable");
+      element.dataset.focusIndex = String(index);
+    });
+  } finally {
+    suppressFocusRefresh = previousSuppressFocusRefresh;
+  }
 
   if (focusableElements.length <= 0) {
     currentFocusIndex = 0;
@@ -1019,6 +1071,9 @@ function isElementFocusable(element: HTMLElement): boolean {
 type FocusDirection = "up" | "down" | "left" | "right";
 
 function navigateFocus(direction: FocusDirection): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   if (focusableElements.length <= 0) {
     updateFocusableElements();
   }
@@ -1076,6 +1131,9 @@ function navigateFocus(direction: FocusDirection): void {
 }
 
 function setFocusByElement(element: HTMLElement): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   const index = focusableElements.findIndex((candidate) => candidate === element);
   if (index >= 0) {
     setFocus(index);
@@ -1083,6 +1141,9 @@ function setFocusByElement(element: HTMLElement): void {
 }
 
 function setFocus(index: number): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   if (focusableElements.length <= 0) {
     return;
   }
@@ -1104,6 +1165,9 @@ function setFocus(index: number): void {
 }
 
 function activateFocusedElement(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   const element = focusableElements[currentFocusIndex];
   if (!element) {
     return;

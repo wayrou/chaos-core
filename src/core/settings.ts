@@ -42,6 +42,7 @@ export interface GameSettings {
   autosaveEnabled: boolean;
   confirmEndTurn: boolean;
   showTutorialHints: boolean;
+  dismissedTutorialHintIds: string[];
 
   // Controls
   controllerEnabled: boolean;
@@ -72,6 +73,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   autosaveEnabled: true,
   confirmEndTurn: false,
   showTutorialHints: true,
+  dismissedTutorialHintIds: [],
 
   controllerEnabled: true,
   controllerVibration: true,
@@ -158,6 +160,25 @@ function isTauriAvailable(): boolean {
 // ----------------------------------------------------------------------------
 
 const SETTINGS_STORAGE_KEY = "chaoscore_settings";
+const SETTINGS_IO_TIMEOUT_MS = 1500;
+
+async function withSettingsTimeout<T>(label: string, task: Promise<T>): Promise<T> {
+  let timeoutId: number | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(`${label} timed out after ${SETTINGS_IO_TIMEOUT_MS}ms`));
+        }, SETTINGS_IO_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
 
 async function saveSettingsToDisk(): Promise<void> {
   const json = JSON.stringify(currentSettings);
@@ -165,7 +186,7 @@ async function saveSettingsToDisk(): Promise<void> {
   if (isTauriAvailable()) {
     const invoke = getTauriInvoke()!;
     try {
-      await invoke("save_settings", { json });
+      await withSettingsTimeout("save_settings", invoke("save_settings", { json }));
     } catch (e) {
       console.warn("[SETTINGS] Tauri save failed, using localStorage", e);
       localStorage.setItem(SETTINGS_STORAGE_KEY, json);
@@ -182,7 +203,7 @@ async function loadSettingsFromDisk(): Promise<GameSettings | null> {
     if (isTauriAvailable()) {
       const invoke = getTauriInvoke()!;
       try {
-        json = (await invoke("load_settings")) as string;
+        json = (await withSettingsTimeout("load_settings", invoke("load_settings"))) as string;
       } catch {
         // Fall back to localStorage
         json = localStorage.getItem(SETTINGS_STORAGE_KEY);

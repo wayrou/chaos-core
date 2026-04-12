@@ -9,6 +9,8 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "preview": "vite preview",
+    "backend": "cargo run --manifest-path src-tauri/Cargo.toml --bin chaos_backend",
+    "backend:check": "cargo check --manifest-path src-tauri/Cargo.toml --bin chaos_backend",
     "tauri": "tauri"
   },
   "dependencies": {

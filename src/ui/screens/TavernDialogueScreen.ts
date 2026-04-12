@@ -25,6 +25,7 @@ import {
   TavernMealBuff,
   TAVERN_MEAL_DEFINITIONS,
 } from "../../core/tavernMeals";
+import { pickAmbientChatterLine, resetAmbientChatterSurfacing } from "../../core/chatterSystem";
 import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import { showSystemPing } from "../components/systemPing";
 import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
@@ -41,7 +42,7 @@ interface TavernScreenOptions {
 }
 
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string; aerissResponse?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
 let currentTavernScreenContext: {
@@ -124,7 +125,7 @@ function getTavernDialogue(
 }
 
 // NPC dialogue data - tavern flavor chatter
-const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+const NPC_DIALOGUES: Array<{ name: string; text: string; aerissResponse?: string }> = [
   { name: "BARTENDER", text: "Keep the glasses full and the talk quiet. Command has ears everywhere." },
   { name: "SQUAD LEADER", text: "Third squad didn't make it back from the ridge. Chaos surges are no joke." },
   { name: "RUMOR MONGER", text: "Heard there's a cache of military-grade mods buried in the sector 7 wastes." },
@@ -326,6 +327,7 @@ export function renderTavernDialogueScreen(
   activeNpcWindows = [];
   activeConversations.clear();
   npcWindowIdCounter = 0;
+  resetAmbientChatterSurfacing("tavern");
   const initialCount = 2 + Math.floor(Math.random() * 2);
   for (let i = 0; i < initialCount; i++) {
     addNpcWindow();
@@ -720,8 +722,7 @@ function startNpcWindowSystem(): void {
 }
 
 function addNpcWindow(): void {
-  const dialogue =
-    NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const dialogue = pickAmbientChatterLine("tavern", NPC_DIALOGUES);
   const windowId = `tavern-npc-window-${npcWindowIdCounter++}`;
   const conversationId = `conv-${windowId}`;
 
@@ -729,6 +730,7 @@ function addNpcWindow(): void {
     id: windowId,
     name: dialogue.name,
     text: dialogue.text,
+    aerissResponse: dialogue.aerissResponse,
     timestamp: Date.now(),
     conversationId,
   });
@@ -858,26 +860,29 @@ function handleNpcWindowClick(windowId: string, conversationId: string): void {
 
   let conversation = activeConversations.get(conversationId) || [];
 
-  let responseType = "default";
-  const text = window.text.toLowerCase();
-  if (
-    text.includes("danger") ||
-    text.includes("survive") ||
-    text.includes("killed") ||
-    text.includes("chaos")
-  ) {
-    responseType = "danger";
-  } else if (
-    text.includes("intel") ||
-    text.includes("rumor") ||
-    text.includes("manifest") ||
-    text.includes("sector")
-  ) {
-    responseType = "intel";
-  }
+  let aerissResponse = window.aerissResponse?.trim() ?? "";
+  if (!aerissResponse) {
+    let responseType = "default";
+    const text = window.text.toLowerCase();
+    if (
+      text.includes("danger") ||
+      text.includes("survive") ||
+      text.includes("killed") ||
+      text.includes("chaos")
+    ) {
+      responseType = "danger";
+    } else if (
+      text.includes("intel") ||
+      text.includes("rumor") ||
+      text.includes("manifest") ||
+      text.includes("sector")
+    ) {
+      responseType = "intel";
+    }
 
-  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
-  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
+    const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+    aerissResponse = responses[Math.floor(Math.random() * responses.length)] ?? AERISS_RESPONSES.default[0];
+  }
 
   conversation.push({
     name: "AERISS",

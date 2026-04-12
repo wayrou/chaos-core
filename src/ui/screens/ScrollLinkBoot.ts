@@ -1,7 +1,11 @@
 // src/ui/screens/ScrollLinkBoot.ts
 import { setMusicCue } from "../../core/audioSystem";
 import { startTerminalTypingByIds } from "../components/terminalFeedback";
-import { renderMainMenu } from "./MainMenuScreen";
+
+async function loadMainMenu(): Promise<void> {
+  const { renderMainMenu } = await import("./MainMenuScreen");
+  await renderMainMenu();
+}
 
 export function renderScrollLinkBoot() {
   setMusicCue("boot");
@@ -80,7 +84,40 @@ export function renderScrollLinkBoot() {
     },
     onComplete: () => {
       window.setTimeout(() => {
-        void renderMainMenu();
+        void loadMainMenu().catch((error) => {
+          console.error("[BOOT] Failed to open main menu:", error);
+          const bootRoot = document.getElementById("app");
+          if (!bootRoot) {
+            return;
+          }
+          const detail = error instanceof Error ? error.message : "Unknown startup failure";
+          bootRoot.innerHTML = `
+            <div class="scrolllink-boot">
+              <div class="boot-inner boot-window">
+                <div class="boot-header">
+                  <div class="boot-window-header">
+                    <span class="boot-window-title">S/COM_OS // BOOT RECOVERY</span>
+                    <span class="boot-window-status">[HALT]</span>
+                  </div>
+                </div>
+                <div class="boot-body" id="bootBody">
+                  <div class="boot-logo">S/COM_OS</div>
+                  <div class="boot-subtitle">MAIN MENU HANDOFF FAILED</div>
+                  <div class="boot-log">
+                    <div class="boot-line"><span class="boot-prompt">S/COM&gt;</span><span class="boot-text"> ${detail}</span></div>
+                    <div class="boot-line"><span class="boot-prompt">S/COM&gt;</span><span class="boot-text"> Retry boot to continue.</span></div>
+                  </div>
+                  <div style="margin-top:18px;display:flex;justify-content:center;">
+                    <button id="bootRetryBtn" class="splash-skip-btn" type="button">RETRY</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+          document.getElementById("bootRetryBtn")?.addEventListener("click", () => {
+            renderScrollLinkBoot();
+          });
+        });
       }, 520);
     },
   });

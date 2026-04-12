@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { importTechnicaEntry, type TechnicaManifest } from "./importer";
 import {
   getAllImportedBattleCards,
+  getAllImportedChatterEntries,
   getAllImportedClassDefinitions,
   getAllImportedDialogues,
   getAllImportedFieldMaps,
@@ -122,6 +123,17 @@ function isMailShape(value: unknown): value is { id: string; subject: string } {
       "subject" in value &&
       "from" in value &&
       "bodyPages" in value
+  );
+}
+
+function isChatterShape(value: unknown): value is { id: string; location: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "location" in value &&
+      "content" in value &&
+      "aerissResponse" in value
   );
 }
 
@@ -329,6 +341,25 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
     };
   }
 
+  if (isChatterShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "chatter",
+      contentType: "chatter",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "chatter.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: `${String(entryData.location)} chatter`,
+      description: "Standalone Technica chatter runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
   if (isFieldEnemyShape(entryData)) {
     return {
       schemaVersion: "1.0.0",
@@ -495,6 +526,7 @@ function persistInstalledContent(): void {
 function getExistingDependencyBuckets() {
   const mapIds = new Set(getAllImportedFieldMaps().map((entry) => entry.id));
   const questIds = new Set(getAllImportedQuests().map((entry) => entry.id));
+  const chatterIds = new Set(getAllImportedChatterEntries().map((entry) => entry.id));
   const keyItemIds = new Set(getAllImportedKeyItems().map((entry) => entry.id));
   const dialogueIds = new Set(getAllImportedDialogues().map((entry) => entry.id));
   const gearIds = new Set(getAllImportedGear().map((entry) => entry.id));
@@ -505,7 +537,7 @@ function getExistingDependencyBuckets() {
   const classIds = new Set(getAllImportedClassDefinitions().map((entry) => entry.id));
   const sceneIds = new Set(mapIds);
 
-  return { mapIds, questIds, keyItemIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
+  return { mapIds, questIds, chatterIds, keyItemIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
 }
 
 function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
@@ -729,6 +761,7 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
     {
       map: 0,
       mail: 0,
+      chatter: 0,
       quest: 0,
       key_item: 0,
       faction: 0,

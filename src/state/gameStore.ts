@@ -58,23 +58,40 @@ function syncSchemaState(state: GameState): GameState {
 // ----------------------------------------------------------------------------
 
 /**
- * Get current game state, lazily creating it if needed
+ * Get current game state, lazily creating it if needed.
+ * Includes a recursion guard to prevent infinite loops from normalizers.
  */
+let _getGameStateDepth = 0;
+let _setGameStateDepth = 0;
+
 export function getGameState(): GameState {
+  _getGameStateDepth++;
+  if (_getGameStateDepth > 5) {
+    _getGameStateDepth--;
+    return _gameState!;
+  }
   if (!_gameState) {
     _gameState = syncSchemaState(syncPublishedTechnicaContent(createNewGameState()));
   } else {
     _gameState = syncSchemaState(syncPublishedTechnicaContent(_gameState));
   }
+  _getGameStateDepth--;
   return _gameState;
 }
 
 /**
- * Replace the entire game state and notify listeners
+ * Replace the entire game state and notify listeners.
+ * Includes a recursion guard to prevent infinite loops from listeners.
  */
 export function setGameState(newState: GameState): void {
+  _setGameStateDepth++;
+  if (_setGameStateDepth > 5) {
+    _setGameStateDepth--;
+    return;
+  }
   _gameState = syncSchemaState(syncPublishedTechnicaContent(newState));
   notifyListeners();
+  _setGameStateDepth--;
 }
 
 /**

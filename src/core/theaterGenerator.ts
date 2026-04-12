@@ -13,6 +13,7 @@ import {
 } from "./types";
 import {
   createEmptyFortificationPips,
+  normalizeTheaterRoomNaturalStock,
   normalizeFortificationPips,
 } from "./schemaSystem";
 import { createEmptyTheaterAutomationState } from "./theaterAutomation";
@@ -629,6 +630,11 @@ function createRoom(
   definition: TheaterDefinition,
   room: TheaterRoomSeed,
 ): TheaterRoom {
+  const naturalStock = normalizeTheaterRoomNaturalStock(
+    room.tags,
+    room.naturalResourceStock,
+    room.naturalResourceStockMax,
+  );
   const coreSlots = Array.isArray(room.coreSlots)
     ? room.coreSlots.map((assignment) => assignment ? {
       ...assignment,
@@ -668,6 +674,8 @@ function createRoom(
     coreSlots,
     coreAssignment: room.coreAssignment ?? coreSlots.find((assignment) => assignment !== null) ?? null,
     enemySite: room.enemySite ? { ...room.enemySite } : null,
+    naturalResourceStock: naturalStock.current,
+    naturalResourceStockMax: naturalStock.max,
     battleSizeOverride: room.battleSizeOverride ? { ...room.battleSizeOverride } : undefined,
   };
 }

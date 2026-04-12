@@ -1,0 +1,21 @@
+{
+  "contentId": "company_of_storms",
+  "contentType": "faction",
+  "dependencies": [],
+  "description": "Chaos Core runtime faction export.",
+  "entryFile": "company_of_storms.faction.json",
+  "exportType": "faction",
+  "exportedAt": "2026-04-11T03:09:46.585Z",
+  "files": [
+    "manifest.json",
+    "company_of_storms.faction.json",
+    "company_of_storms.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "faction.v1",
+  "title": "Company of Storms"
+}

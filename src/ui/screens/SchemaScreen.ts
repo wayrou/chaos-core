@@ -27,6 +27,7 @@ import {
   getResourceEntries,
   RESOURCE_KEYS,
 } from "../../core/resources";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import {
   canSessionAffordCost,
   getLocalSessionPlayerSlot,
@@ -504,6 +505,7 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
   const state = getGameState();
   const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
   const resources = wallet.resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
   const schema = getSchemaUnlockState(state);
   const selectedTab = getResolvedSchemaTab(activeSchemaTab);
   activeSchemaTab = selectedTab;
@@ -540,7 +542,10 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
                 </div>
                 ${RESOURCE_KEYS.map((key) => `
                   <div class="schema-screen__resource-item">
-                    <span class="schema-screen__resource-label">${formatResourceLabel(key)}</span>
+                    <div class="schema-screen__resource-main">
+                      <img src="${fallbackInventoryIcon}" alt="" class="schema-screen__resource-icon" aria-hidden="true" />
+                      <span class="schema-screen__resource-label">${formatResourceLabel(key)}</span>
+                    </div>
                     <span class="schema-screen__resource-value">${resources[key]}</span>
                   </div>
                 `).join("")}

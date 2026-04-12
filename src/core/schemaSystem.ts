@@ -8,6 +8,7 @@ import {
   GameState,
   SchemaUnlockState,
   TheaterRoom,
+  TheaterRoomNaturalStock,
   TheaterRoomTag,
 } from "./types";
 import {
@@ -20,6 +21,12 @@ import {
 import { canSessionAffordCost, spendSessionCost } from "./session";
 
 type ResourceWallet = GameState["resources"];
+
+const EMPTY_NATURAL_STOCK: TheaterRoomNaturalStock = {
+  metalScrap: 0,
+  wood: 0,
+  steamComponents: 0,
+};
 
 export const SCHEMA_STARTER_CORE_TYPES: CoreType[] = [
   "supply_depot",
@@ -125,6 +132,14 @@ export const ROOM_TAG_LABELS: Record<string, string> = {
 
 function withZeroIncome(incomePerTick?: Partial<ResourceWallet>): ResourceWallet {
   return createEmptyResourceWallet(incomePerTick);
+}
+
+function withNaturalStock(stock?: Partial<TheaterRoomNaturalStock> | null): TheaterRoomNaturalStock {
+  return {
+    metalScrap: Math.max(0, Math.floor(Number(stock?.metalScrap ?? 0))),
+    wood: Math.max(0, Math.floor(Number(stock?.wood ?? 0))),
+    steamComponents: Math.max(0, Math.floor(Number(stock?.steamComponents ?? 0))),
+  };
 }
 
 function addResourceWallet(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
@@ -884,6 +899,63 @@ export function getRoomTags(roomOrTags: TheaterRoom | TheaterRoomTag[] | null | 
     ? roomOrTags
     : roomOrTags?.tags ?? [];
   return Array.from(new Set(tags));
+}
+
+export function getNaturalResourceStockCapacityForRoom(
+  roomOrTags: TheaterRoom | TheaterRoomTag[] | null | undefined,
+): TheaterRoomNaturalStock {
+  const tags = getRoomTags(roomOrTags);
+  const stock = { ...EMPTY_NATURAL_STOCK };
+
+  stock.metalScrap += 3000;
+  stock.wood += 3000;
+  stock.steamComponents += 2500;
+
+  if (tags.includes("metal_rich")) {
+    stock.metalScrap += 4000;
+  }
+  if (tags.includes("timber_rich")) {
+    stock.wood += 4000;
+  }
+  if (tags.includes("salvage_rich")) {
+    stock.metalScrap += 2500;
+    stock.wood += 1500;
+  }
+  if (tags.includes("resource_pocket")) {
+    stock.metalScrap += 2000;
+    stock.wood += 2000;
+  }
+  if (tags.includes("steam_vent")) {
+    stock.steamComponents += 5500;
+  }
+
+  return withNaturalStock(stock);
+}
+
+export function normalizeTheaterRoomNaturalStock(
+  roomOrTags: TheaterRoom | TheaterRoomTag[] | null | undefined,
+  currentStock?: Partial<TheaterRoomNaturalStock> | null,
+  maxStock?: Partial<TheaterRoomNaturalStock> | null,
+): { current: TheaterRoomNaturalStock; max: TheaterRoomNaturalStock } {
+  const normalizedMax = withNaturalStock(
+    maxStock && Object.values(maxStock).some((value) => Number(value ?? 0) > 0)
+      ? maxStock
+      : getNaturalResourceStockCapacityForRoom(roomOrTags),
+  );
+  const normalizedCurrent = withNaturalStock(
+    currentStock && Object.values(currentStock).some((value) => value !== undefined)
+      ? {
+          metalScrap: Math.min(Number(currentStock.metalScrap ?? normalizedMax.metalScrap), normalizedMax.metalScrap),
+          wood: Math.min(Number(currentStock.wood ?? normalizedMax.wood), normalizedMax.wood),
+          steamComponents: Math.min(Number(currentStock.steamComponents ?? normalizedMax.steamComponents), normalizedMax.steamComponents),
+        }
+      : normalizedMax,
+  );
+
+  return {
+    current: normalizedCurrent,
+    max: normalizedMax,
+  };
 }
 
 export function roomHasTag(roomOrTags: TheaterRoom | TheaterRoomTag[] | null | undefined, tag: TheaterRoomTag): boolean {

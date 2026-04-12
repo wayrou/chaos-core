@@ -174,6 +174,8 @@ type MultiplayerLobbyPreviewConfig = {
 };
 
 type SkirmishSurface = "comms" | "staging";
+type CommsSurface = "main" | "lobby_skirmish_console";
+type CommsContextMode = "auto" | "multiplayer";
 
 let multiplayerLobbyPreviewConfig: MultiplayerLobbyPreviewConfig = {
   operatorCallsign: "",
@@ -195,6 +197,8 @@ let squadTransportSubscribed = false;
 let squadTransportStatusHydrated = false;
 let activeCommsReturnTo: CommsReturnTo = "basecamp";
 let activeSkirmishSurface: SkirmishSurface = "comms";
+let activeCommsSurface: CommsSurface = "main";
+let activeCommsContextMode: CommsContextMode = "auto";
 let squadClientAssignedSlot: SessionPlayerSlot = "P2";
 let lobbyClientAssignedSlot: NetworkPlayerSlot = "P2";
 const squadRemotePeerSlots = new Map<string, SessionPlayerSlot>();
@@ -429,6 +433,88 @@ function formatResourcePoolSummary(pool: ResourceLedger["shared"] | null | undef
   return `${Math.max(0, Math.floor(pool.wad ?? 0))} WAD${resourceEntries ? ` // ${resourceEntries}` : ""}`;
 }
 
+function cloneCoopResourcePool(pool: ResourceLedger["shared"] | null | undefined): ResourceLedger["shared"] {
+  return {
+    wad: Math.max(0, Math.floor(pool?.wad ?? 0)),
+    resources: RESOURCE_KEYS.reduce((acc, key) => {
+      acc[key] = Math.max(0, Math.floor(pool?.resources?.[key] ?? 0));
+      return acc;
+    }, {} as ResourceLedger["shared"]["resources"]),
+  };
+}
+
+function cloneCoopResourceLedger(ledger: ResourceLedger): ResourceLedger {
+  return {
+    preset: ledger.preset,
+    shared: cloneCoopResourcePool(ledger.shared),
+    perPlayer: SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+      acc[slot] = cloneCoopResourcePool(ledger.perPlayer[slot]);
+      return acc;
+    }, {} as ResourceLedger["perPlayer"]),
+  };
+}
+
+function rebuildSharedPoolFromPartitionedLedger(ledger: ResourceLedger): ResourceLedger["shared"] {
+  const shared = cloneCoopResourcePool(null);
+  for (const slot of SESSION_PLAYER_SLOTS) {
+    const pool = ledger.perPlayer[slot];
+    shared.wad += Math.max(0, Math.floor(pool?.wad ?? 0));
+    for (const key of RESOURCE_KEYS) {
+      shared.resources[key] += Math.max(0, Math.floor(pool?.resources?.[key] ?? 0));
+    }
+  }
+  return shared;
+}
+
+function applyStagedCoopTransfer(
+  currentLobby: LobbyState,
+  request: {
+    fromPlayerId: SessionPlayerSlot;
+    toPlayerId: SessionPlayerSlot;
+    kind: "wad" | "resource";
+    wadAmount?: number;
+    resourceKey?: ResourceKey;
+    resourceAmount?: number;
+  },
+): LobbyState | null {
+  if (currentLobby.activity.kind !== "coop_operations") {
+    return null;
+  }
+  const ledger = cloneCoopResourceLedger(currentLobby.activity.coopOperations.resourceLedger);
+  if (ledger.preset !== "partitioned" || request.fromPlayerId === request.toPlayerId) {
+    return null;
+  }
+
+  const fromPool = cloneCoopResourcePool(ledger.perPlayer[request.fromPlayerId]);
+  const toPool = cloneCoopResourcePool(ledger.perPlayer[request.toPlayerId]);
+
+  if (request.kind === "wad") {
+    const wadAmount = Math.max(0, Math.floor(request.wadAmount ?? 0));
+    if (wadAmount <= 0 || fromPool.wad < wadAmount) {
+      return null;
+    }
+    fromPool.wad -= wadAmount;
+    toPool.wad += wadAmount;
+  } else {
+    const resourceKey = request.resourceKey;
+    const resourceAmount = Math.max(0, Math.floor(request.resourceAmount ?? 0));
+    if (!resourceKey || resourceAmount <= 0 || fromPool.resources[resourceKey] < resourceAmount) {
+      return null;
+    }
+    fromPool.resources[resourceKey] -= resourceAmount;
+    toPool.resources[resourceKey] += resourceAmount;
+  }
+
+  ledger.perPlayer[request.fromPlayerId] = fromPool;
+  ledger.perPlayer[request.toPlayerId] = toPool;
+  ledger.shared = rebuildSharedPoolFromPartitionedLedger(ledger);
+
+  return setCoopOperationsEconomyState(currentLobby, {
+    resourceLedger: ledger,
+    pendingTransfers: currentLobby.activity.coopOperations.pendingTransfers,
+  });
+}
+
 function getActiveLocalCoopSessionSlot(lobby: LobbyState | null | undefined): SessionPlayerSlot | null {
   return getLocalCoopParticipant(lobby)?.sessionSlot ?? null;
 }
@@ -559,6 +645,8 @@ function commitLobbyState(
           : "network_lobby",
       );
     });
+  } else if (isCommsArrayMounted()) {
+    renderActiveSkirmishScreen(activeCommsReturnTo);
   }
 }
 
@@ -844,7 +932,11 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
   }
   syncCoopTransferDraft(lobby);
   const activity = lobby.activity.coopOperations;
-  const ledger = getCoopResourceLedger(lobby);
+  const resolvedPreset = activity.economyPreset ?? getCoopResourceLedger(lobby).preset;
+  const ledger = {
+    ...getCoopResourceLedger(lobby),
+    preset: resolvedPreset,
+  };
   const pendingTransfers = getCoopPendingTransfers(lobby);
   const participants = getSelectedCoopParticipants(lobby);
   const activeOperators = getActiveCoopOperators(lobby);
@@ -854,8 +946,7 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
   const sessionCallsigns = getSessionSlotCallsignMap(lobby);
   const transferTargets = activeOperators.filter((participant) => participant.sessionSlot && participant.sessionSlot !== localSessionSlot);
   const canSubmitTransfer = Boolean(
-    activity.status === "active"
-    && ledger.preset === "partitioned"
+    ledger.preset === "partitioned"
     && localSessionSlot
     && coopTransferDraft.targetPlayerId
     && coopTransferDraft.amount > 0,
@@ -907,15 +998,15 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
           }).join("")}
         </div>
       ` : ""}
-      ${activity.status === "active" && ledger.preset === "partitioned" && localSessionSlot ? `
+      ${ledger.preset === "partitioned" ? `
         <div class="training-config" style="margin-top: 0.9rem;">
           <div class="config-row">
             <label class="config-label">From:</label>
-            <div class="config-select" style="display:flex;align-items:center;">${escapeHtml(localSessionSlot)} // ${escapeHtml(sessionCallsigns[localSessionSlot] ?? localSessionSlot)}</div>
+            <div class="config-select" style="display:flex;align-items:center;">${localSessionSlot ? `${escapeHtml(localSessionSlot)} // ${escapeHtml(sessionCallsigns[localSessionSlot] ?? localSessionSlot)}` : "No active operator allocation"}</div>
           </div>
           <div class="config-row">
             <label class="config-label">To:</label>
-            <select class="config-select" id="coopTransferTargetSelect">
+            <select class="config-select" id="coopTransferTargetSelect" ${transferTargets.length > 0 && localSessionSlot ? "" : "disabled"}>
               ${transferTargets.length > 0
                 ? transferTargets.map((participant) => `
                     <option value="${participant.sessionSlot}" ${coopTransferDraft.targetPlayerId === participant.sessionSlot ? "selected" : ""}>
@@ -927,7 +1018,7 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
           </div>
           <div class="config-row">
             <label class="config-label">Transfer:</label>
-            <select class="config-select" id="coopTransferKindSelect">
+            <select class="config-select" id="coopTransferKindSelect" ${localSessionSlot ? "" : "disabled"}>
               <option value="wad" ${coopTransferDraft.kind === "wad" ? "selected" : ""}>WAD</option>
               <option value="resource" ${coopTransferDraft.kind === "resource" ? "selected" : ""}>RESOURCE</option>
             </select>
@@ -935,7 +1026,7 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
           ${coopTransferDraft.kind === "resource" ? `
             <div class="config-row">
               <label class="config-label">Resource:</label>
-              <select class="config-select" id="coopTransferResourceKeySelect">
+              <select class="config-select" id="coopTransferResourceKeySelect" ${localSessionSlot ? "" : "disabled"}>
                 ${RESOURCE_KEYS.map((resourceKey) => `
                   <option value="${resourceKey}" ${coopTransferDraft.resourceKey === resourceKey ? "selected" : ""}>
                     ${escapeHtml(formatResourceShortLabel(resourceKey))}
@@ -946,8 +1037,14 @@ function renderCoopEconomyPanel(lobby: LobbyState | null | undefined): string {
           ` : ""}
           <div class="config-row">
             <label class="config-label">Amount:</label>
-            <input class="config-select" id="coopTransferAmountInput" type="number" min="1" step="1" value="${Math.max(1, Math.floor(coopTransferDraft.amount))}" />
+            <input class="config-select" id="coopTransferAmountInput" type="number" min="1" step="1" value="${Math.max(1, Math.floor(coopTransferDraft.amount))}" ${localSessionSlot ? "" : "disabled"} />
           </div>
+          ${activity.status !== "active" ? `
+            <div class="config-note">
+              <span class="note-icon">P</span>
+              <span>Partitioned transfers made here adjust the staged operator allocations before launch.</span>
+            </div>
+          ` : ""}
           <div class="comms-array-button-group" style="margin-top: 0.75rem;">
             <button class="comms-array-btn ${canLocalHostLobby(lobby) ? "comms-array-btn--primary" : ""}" id="submitCoopTransferBtn" ${canSubmitTransfer ? "" : "disabled"}>
               ${canLocalHostLobby(lobby) ? "SEND TRANSFER" : "REQUEST TRANSFER"}
@@ -1046,6 +1143,44 @@ function getLobbyTransportSummary(lobby: LobbyState | null): string {
   return "Host a multiplayer lobby or join a remote lobby from here.";
 }
 
+function isMultiplayerCommsContext(
+  returnTo: CommsReturnTo,
+  contextMode: CommsContextMode = activeCommsContextMode,
+): boolean {
+  if (contextMode === "multiplayer") {
+    return true;
+  }
+  const state = getGameState();
+  if (returnTo === "menu") {
+    return true;
+  }
+  return Boolean(state.lobby) && state.session.mode !== "coop_operations";
+}
+
+function getCommsArrayTitle(
+  returnTo: CommsReturnTo,
+  contextMode: CommsContextMode = activeCommsContextMode,
+): string {
+  return isMultiplayerCommsContext(returnTo, contextMode) ? "MULTIPLAYER COMMS ARRAY" : "H.A.V.E.N. COMMS ARRAY";
+}
+
+function getCommsArraySubtitle(
+  returnTo: CommsReturnTo,
+  contextMode: CommsContextMode = activeCommsContextMode,
+): string {
+  return isMultiplayerCommsContext(returnTo, contextMode)
+    ? "LOBBY OPERATIONS TERMINAL"
+    : "TACTICAL SIMULATION TERMINAL";
+}
+
+function renderCurrentCommsSurface(returnTo: CommsReturnTo = activeCommsReturnTo): void {
+  if (activeCommsSurface === "lobby_skirmish_console") {
+    renderLobbySkirmishConsoleScreen(returnTo);
+    return;
+  }
+  renderCommsArrayScreen(returnTo);
+}
+
 function getActiveSharedCampaignSlot(): SharedCampaignSlot | null {
   const lobby = getResolvedLobbyState();
   const lobbySlot =
@@ -1112,7 +1247,7 @@ async function refreshSharedCampaignBrowser(returnTo: CommsReturnTo = activeComm
   }
 
   if (isCommsArrayMounted()) {
-    renderCommsArrayScreen(returnTo);
+    renderCurrentCommsSurface(returnTo);
   }
 }
 
@@ -1932,8 +2067,10 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
   }
   const parsedOperation = hydrateCoopOperationFromLobby(lobby);
   const parsedBattle = hydrateCoopBattleFromLobby(lobby);
-  const targetMapId = localParticipant?.lastSafeMapId ?? "base_camp";
   const operationPhase = localParticipant.operationPhase ?? lobby.activity.coopOperations.operationPhase ?? null;
+  const targetMapId = operationPhase == null
+    ? "base_camp"
+    : (localParticipant?.lastSafeMapId ?? "base_camp");
   if (parsedBattle && operationPhase === "battle") {
     updateGameState((state) => (
       localParticipant.activeBattleId
@@ -1963,9 +2100,14 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
 }
 
 async function hostBeginLobbyCoopOperations(currentLobby: LobbyState): Promise<void> {
-  if (currentLobby.activity.kind !== "coop_operations") {
-    await hostLaunchLobbyCoopOperations(currentLobby);
-    return;
+  let launchLobby = currentLobby;
+  if (launchLobby.activity.kind !== "coop_operations") {
+    await hostLaunchLobbyCoopOperations(launchLobby);
+    const stagedLobby = getResolvedLobbyState();
+    if (!stagedLobby || stagedLobby.activity.kind !== "coop_operations") {
+      return;
+    }
+    launchLobby = stagedLobby;
   }
   const sharedCampaignSlot = getActiveSharedCampaignSlot();
   if (!sharedCampaignSlot) {
@@ -1973,7 +2115,7 @@ async function hostBeginLobbyCoopOperations(currentLobby: LobbyState): Promise<v
   }
   const sharedCampaignLabel = getActiveSharedCampaignLabel() ?? getSharedCampaignSlotName(sharedCampaignSlot);
   const stagedLobby = setCoopOperationsSharedCampaign(
-    currentLobby,
+    launchLobby,
     sharedCampaignSlot,
     sharedCampaignLabel,
     getGameState().session.sharedCampaignLastSavedAt ?? null,
@@ -2043,10 +2185,16 @@ async function hostRequestCoopTransfer(
   },
   autoApprove = false,
 ): Promise<void> {
-  if (
-    currentLobby.activity.kind !== "coop_operations"
-    || currentLobby.activity.coopOperations.status !== "active"
-  ) {
+  if (currentLobby.activity.kind !== "coop_operations") {
+    return;
+  }
+  if (currentLobby.activity.coopOperations.status !== "active") {
+    const stagedLobby = applyStagedCoopTransfer(currentLobby, request);
+    if (!stagedLobby) {
+      throw new Error("Unable to apply the staged transfer.");
+    }
+    commitLobbyState(stagedLobby, "Staged transfer applied to the partitioned operator allocations.", "success", false);
+    await broadcastLobbySnapshot(stagedLobby);
     return;
   }
   updateGameState((state) => requestSessionTradeTransfer(state, request));
@@ -2363,7 +2511,11 @@ export async function beginLobbyCoopOperations(): Promise<void> {
   await hostBeginLobbyCoopOperations(lobby);
 }
 
-export async function openSharedCoopOperationsEntry(): Promise<boolean> {
+export async function startLobbyCoopOperations(_selectedSlots?: NetworkPlayerSlot[]): Promise<void> {
+  await beginLobbyCoopOperations();
+}
+
+export async function openSharedCoopOperationsEntry(beforeScreenOpen?: () => void): Promise<boolean> {
   ensureCoopOperationsStateSync();
   const lobby = getResolvedLobbyState();
   if (!lobby || lobby.activity.kind !== "coop_operations" || lobby.activity.coopOperations.status !== "active") {
@@ -2385,12 +2537,14 @@ export async function openSharedCoopOperationsEntry(): Promise<boolean> {
   if (!lobby.activity.coopOperations.operationSnapshot) {
     if (canLocalHostLobby(lobby)) {
       const { renderOperationSelectScreen } = await import("./OperationSelectScreen");
+      beforeScreenOpen?.();
       renderOperationSelectScreen("field");
     } else {
       showNotification("Awaiting host operation deployment from H.A.V.E.N.", "info");
     }
     return true;
   }
+  beforeScreenOpen?.();
   await enterActiveCoopOperations(lobby);
   return true;
 }
@@ -2554,7 +2708,6 @@ async function handleRemoteLobbyCommand(sourcePeerId: string, payload: string): 
       if (
         !currentLobby
         || currentLobby.activity.kind !== "coop_operations"
-        || currentLobby.activity.coopOperations.status !== "active"
         || !sourceSlot
       ) {
         return;
@@ -3381,7 +3534,71 @@ function renderSkirmishPlaylistEditor(lobby: LobbyState | null | undefined): str
   `;
 }
 
-function renderSquadOnlineSection(): string {
+function renderLobbySkirmishConsoleBody(lobby: LobbyState): string {
+  const currentRound = getActiveLobbyPlaylistRound(lobby);
+  const pendingChallenge = lobby.pendingChallenge ?? null;
+  const canEnterSkirmish = Boolean(isLocalLobbySkirmishFighter(lobby) && getLobbyLocalSkirmishMatch(lobby));
+  const rosterMarkup = NETWORK_PLAYER_SLOTS.map((slot) => {
+    const member = lobby.members[slot];
+    return `
+      <div class="binding-item">
+        <span class="binding-action">${slot}${member ? ` // ${escapeHtml(member.callsign)}` : " // OPEN"}</span>
+        <span class="binding-keys">${member ? `${member.authorityRole.toUpperCase()} // ${member.presence.toUpperCase()}` : "Awaiting link"}</span>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="comms-array-content">
+      <div class="comms-array-section">
+        <div class="comms-array-section-header">
+          <h2 class="section-title">SKIRMISH</h2>
+          <div class="section-status section-status--active">${lobby.activity.kind === "skirmish" ? lobby.activity.skirmish.status.toUpperCase() : "READY"}</div>
+        </div>
+        <div class="comms-array-section-body">
+          <p class="section-description">
+            Issue Skirmish challenges from the lobby, build playlists of authored tactical maps, and reopen any active Skirmish from here.
+          </p>
+
+          ${pendingChallenge ? `
+            <div class="config-note config-note--stacked">
+              <span class="note-icon">C</span>
+              <span>Pending Challenge // ${escapeHtml(pendingChallenge.challengerCallsign)} vs ${escapeHtml(pendingChallenge.challengeeCallsign)}</span>
+              ${renderSkirmishObjectivePreview(pendingChallenge.playlist.rounds[0] ?? { id: "preview", gridWidth: 8, gridHeight: 5, objectiveType: "elimination" })}
+            </div>
+          ` : ""}
+
+          ${lobby.activity.kind === "skirmish" && currentRound ? `
+            <div class="config-note config-note--stacked">
+              <span class="note-icon">S</span>
+              <span>Active Skirmish // ${escapeHtml(lobby.activity.skirmish.challengerCallsign)} vs ${escapeHtml(lobby.activity.skirmish.challengeeCallsign)} // ${escapeHtml(getSquadWinConditionLabel(currentRound.objectiveType))}</span>
+              ${renderSkirmishObjectivePreview(currentRound)}
+            </div>
+          ` : ""}
+
+          ${renderSkirmishPlaylistEditor(lobby)}
+
+          ${canEnterSkirmish ? `
+            <div class="comms-array-button-group" style="margin-top: 1rem;">
+              <button class="comms-array-btn comms-array-btn--primary" id="openSkirmishStageBtn">
+                OPEN SKIRMISH
+              </button>
+            </div>
+          ` : ""}
+
+          <div class="settings-category" style="margin-top: 1rem;">
+            <div class="settings-category-header">LOBBY ROSTER</div>
+            <div class="bindings-list">
+              ${rosterMarkup}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo): string {
   const state = getGameState();
   const lobby = getResolvedLobbyState();
   const match = getLobbyLocalSkirmishMatch(lobby) ?? getSquadMatchState();
@@ -3399,14 +3616,10 @@ function renderSquadOnlineSection(): string {
       : transportRole === "host"
         ? "HOST READY"
         : "MULTIPLAYER READY";
-  const lobbyMembers = lobby ? NETWORK_PLAYER_SLOTS.map((slot) => lobby.members[slot]).filter(Boolean) : [];
   const currentRound = lobby ? getActiveLobbyPlaylistRound(lobby) : null;
   const pendingChallenge = lobby?.pendingChallenge ?? null;
-  const lobbySummary = lobby
-    ? `${lobbyMembers.length}/8 operators linked // host ${lobby.members[lobby.hostSlot]?.callsign ?? lobby.hostSlot} // join ${lobby.joinCode}`
-    : "Create or join a shared multiplayer lobby. The lobby field becomes the shared staging space for both Skirmish and Co-Op Operations.";
   const canEnterSkirmish = Boolean(lobby && isLocalLobbySkirmishFighter(lobby) && match && match.phase !== "lobby");
-  const canEnterLobbyField = Boolean(lobby);
+  const canEnterLobbyField = Boolean(lobby) && returnTo !== "field";
   const coopSelectedParticipants = getSelectedCoopParticipants(lobby);
   const coopActiveOperators = getActiveCoopOperators(lobby);
   const coopStandbyParticipants = getStandbyCoopParticipants(lobby);
@@ -3422,37 +3635,24 @@ function renderSquadOnlineSection(): string {
   const activeSharedCampaignLabel = getActiveSharedCampaignLabel();
   const showSharedCampaignControls = Boolean(lobby && canLocalHostLobby(lobby));
   const selectedSharedCampaignInfo = getSharedCampaignInfo(selectedSharedCampaignSlot);
-  const selectedSharedCampaignTimestamp = selectedSharedCampaignInfo?.timestamp
-    ? formatSaveTimestamp(selectedSharedCampaignInfo.timestamp)
-    : "Empty";
   const activeSharedCampaignLastSavedAt = getGameState().session.sharedCampaignLastSavedAt;
   const sharedCampaignSummary = activeSharedCampaignSlot
     ? `${activeSharedCampaignLabel ?? getSharedCampaignSlotName(activeSharedCampaignSlot)} // ${activeSharedCampaignSlot}${activeSharedCampaignLastSavedAt ? ` // ${formatSaveTimestamp(activeSharedCampaignLastSavedAt)}` : ""}`
-    : "No shared campaign is staged for this lobby yet.";
+    : null;
   const canLaunchCoopOperations = Boolean(
     lobby
     && canLocalHostLobby(lobby)
     && lobby.activity.kind === "coop_operations"
+    && lobby.activity.coopOperations.status !== "active"
     && activeSharedCampaignSlot
     && lobby.activity.coopOperations.selectedSlots.length > 0,
-  );
-  const canEnterCoopOperations = Boolean(
-    lobby
-    && lobby.activity.kind === "coop_operations"
-    && lobby.activity.coopOperations.status === "active",
-  ) && Boolean(
-    lobby?.localSlot
-    && lobby.activity.kind === "coop_operations"
-    && lobby.activity.coopOperations.participants[lobby.localSlot]?.selected
-    && !lobby.activity.coopOperations.participants[lobby.localSlot]?.standby
-    && lobby.activity.coopOperations.participants[lobby.localSlot]?.sessionSlot,
   );
   const manualJoinAddress = multiplayerLobbyPreviewConfig.joinAddress.trim();
   const joinCodeCard = lobby ? `
     <div class="comms-array-join-code-card">
       <div class="comms-array-join-code-card__label">Join Code</div>
       <div class="comms-array-join-code-card__value">${escapeHtml(lobby.joinCode)}</div>
-      <div class="comms-array-join-code-card__copy">Share this code with the lobby. Manual direct-connect is still available below when you need the host address.</div>
+      <div class="comms-array-join-code-card__copy">Share this code with the lobby so other operators can join the session.</div>
     </div>
   ` : "";
 
@@ -3482,22 +3682,8 @@ function renderSquadOnlineSection(): string {
                 <label class="config-label">Host Address:</label>
                 <input class="config-select" id="multiplayerJoinAddressInput" value="${escapeHtml(multiplayerLobbyPreviewConfig.joinAddress)}" placeholder="192.168.x.x:PORT" />
               </div>
-              <div class="config-note">
-                <span class="note-icon">NET</span>
-                <span>The join code is the player-facing lobby identifier. Direct connect still needs the host address in the current build.</span>
-              </div>
             </details>
           ` : ""}
-
-          <div class="config-note">
-            <span class="note-icon">L</span>
-            <span>${escapeHtml(lobbySummary)}</span>
-          </div>
-
-          <div class="config-note">
-            <span class="note-icon">NET</span>
-            <span>${escapeHtml(getLobbyTransportSummary(lobby))}</span>
-          </div>
 
           ${currentRound ? `
             <div class="config-note config-note--stacked">
@@ -3515,8 +3701,6 @@ function renderSquadOnlineSection(): string {
             </div>
           ` : ""}
 
-          ${renderSkirmishPlaylistEditor(lobby)}
-
           ${lobby?.activity.kind === "coop_operations" ? `
             <div class="config-note">
               <span class="note-icon">O</span>
@@ -3533,10 +3717,12 @@ function renderSquadOnlineSection(): string {
           ${showSharedCampaignControls ? `
             <div class="settings-category" style="margin-top: 1rem;">
               <div class="settings-category-header">SHARED CAMPAIGN</div>
-              <div class="config-note">
-                <span class="note-icon">S</span>
-                <span>${escapeHtml(sharedCampaignSummary)}</span>
-              </div>
+              ${sharedCampaignSummary ? `
+                <div class="config-note">
+                  <span class="note-icon">S</span>
+                  <span>${escapeHtml(sharedCampaignSummary)}</span>
+                </div>
+              ` : ""}
               <div class="bindings-list">
                 ${Object.values(SHARED_CAMPAIGN_SLOTS).map((slot) => {
                   const info = getSharedCampaignInfo(slot);
@@ -3550,16 +3736,7 @@ function renderSquadOnlineSection(): string {
                   `;
                 }).join("")}
               </div>
-              <div class="config-note">
-                <span class="note-icon">></span>
-                <span>${selectedSharedCampaignInfo?.preview
-                  ? `${escapeHtml(selectedSharedCampaignInfo.preview.callsign)} // ${escapeHtml(selectedSharedCampaignInfo.preview.squadName)} // ${escapeHtml(selectedSharedCampaignInfo.preview.operationName)} // ${selectedSharedCampaignTimestamp}`
-                  : `${escapeHtml(getSharedCampaignSlotName(selectedSharedCampaignSlot))} is empty. Prepare it from the current state or from a fresh title-screen seed.`}</span>
-              </div>
               <div class="comms-array-button-group" style="margin-top: 0.75rem;">
-                <button class="comms-array-btn" id="prepareSharedCampaignBtn">
-                  PREPARE SELECTED SLOT
-                </button>
                 <button class="comms-array-btn" id="loadSharedCampaignBtn" ${selectedSharedCampaignInfo ? "" : "disabled"}>
                   LOAD SELECTED SLOT
                 </button>
@@ -3601,12 +3778,7 @@ function renderSquadOnlineSection(): string {
           ` : ""}
           ${canLaunchCoopOperations ? `
             <button class="comms-array-btn comms-array-btn--primary" id="launchCoopOperationsBtn">
-              LAUNCH CO-OP OPS
-            </button>
-          ` : ""}
-          ${canEnterCoopOperations ? `
-            <button class="comms-array-btn" id="enterCoopOperationsBtn">
-              ENTER H.A.V.E.N.
+              START CO-OP OPERATION
             </button>
           ` : ""}
           ${canEnterSkirmish ? `
@@ -3621,7 +3793,7 @@ function renderSquadOnlineSection(): string {
           ` : ""}
           ${transportAvailable && transportRole !== "idle" ? `
             <button class="comms-array-btn" id="disconnectSquadTransportBtn">
-              DISCONNECT NETWORK
+              DISCONNECT LOBBY
             </button>
           ` : ""}
         </div>
@@ -3714,32 +3886,39 @@ export function renderActiveSkirmishScreen(returnTo: CommsReturnTo = activeComms
     renderSkirmishStagingScreen(returnTo);
     return;
   }
-  renderCommsArrayScreen(returnTo);
+  renderCurrentCommsSurface(returnTo);
 }
 
-export function renderCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): void {
+export function renderCommsArrayScreen(
+  returnTo: CommsReturnTo = "basecamp",
+  contextMode: CommsContextMode = activeCommsContextMode,
+): void {
   const app = document.getElementById("app");
   if (!app) return;
   
+  activeCommsContextMode = contextMode;
   ensureSquadTransportIntegration(returnTo);
   ensureSharedCampaignAutosaveSync();
   ensureSharedCampaignBrowserHydrated(returnTo);
   syncSelectedSharedCampaignSlotFromState();
   activeSkirmishSurface = "comms";
+  activeCommsSurface = "main";
   const backButtonText = returnTo === "operation"
     ? "ACTIVE OPERATION"
     : returnTo === "menu"
       ? "MAIN MENU"
       : getBaseCampReturnLabel(returnTo);
-  const showSaveBoundSections = returnTo !== "menu";
+  const isMultiplayerSurface = isMultiplayerCommsContext(returnTo, contextMode);
+  const showTrainingBattles = !isMultiplayerSurface;
+  const showSaveBoundSections = !isMultiplayerSurface;
   
   app.innerHTML = `
     <div class="comms-array-root">
       <!-- Header -->
       <div class="comms-array-header">
         <div class="comms-array-header-left">
-          <h1 class="comms-array-title">COMMS ARRAY</h1>
-          <div class="comms-array-subtitle">TACTICAL SIMULATION TERMINAL</div>
+          <h1 class="comms-array-title">${getCommsArrayTitle(returnTo, contextMode)}</h1>
+          <div class="comms-array-subtitle">${getCommsArraySubtitle(returnTo, contextMode)}</div>
         </div>
         <div class="comms-array-header-right">
           <button class="comms-array-back-btn" id="backBtn" data-return-to="${returnTo}">
@@ -3750,9 +3929,9 @@ export function renderCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): vo
       </div>
       <!-- Content -->
       <div class="comms-array-content">
-        ${renderSquadOnlineSection()}
+        ${renderSquadOnlineSection(returnTo)}
         
-        <!-- Section 2: Training Battles (Bots) -->
+        ${showTrainingBattles ? `
         <div class="comms-array-section">
           <div class="comms-array-section-header">
             <h2 class="section-title">TRAINING BATTLES</h2>
@@ -3805,6 +3984,7 @@ export function renderCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): vo
             </div>
           </div>
         </div>
+        ` : ""}
 
         ${showSaveBoundSections ? `
         <div class="comms-array-section">
@@ -3879,6 +4059,10 @@ export function renderCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): vo
   attachCommsArrayListeners(returnTo);
 }
 
+export function renderMultiplayerCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): void {
+  renderCommsArrayScreen(returnTo, "multiplayer");
+}
+
 function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
@@ -3900,6 +4084,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
   document.querySelectorAll<HTMLElement>("#backToCommsBtn").forEach((button) => {
     button.onclick = () => {
       activeSkirmishSurface = "comms";
+      activeCommsSurface = "main";
       renderCommsArrayScreen(returnTo);
     };
   });
@@ -4004,22 +4189,15 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
   }
 
   document.querySelectorAll<HTMLButtonElement>("[data-shared-campaign-slot]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const slot = button.dataset.sharedCampaignSlot ?? "";
       if (!isSharedCampaignSlot(slot)) {
         return;
       }
       selectedSharedCampaignSlot = slot;
-      renderCommsArrayScreen(returnTo);
-    });
-  });
-
-  const prepareSharedCampaignBtn = document.getElementById("prepareSharedCampaignBtn");
-  if (prepareSharedCampaignBtn) {
-    prepareSharedCampaignBtn.addEventListener("click", async () => {
       try {
         await prepareSelectedSharedCampaign(returnTo);
-        showNotification(`${getSharedCampaignSlotName(selectedSharedCampaignSlot)} prepared for Co-Op Operations.`, "success");
+        showNotification(`${getSharedCampaignSlotName(slot)} prepared for Co-Op Operations.`, "success");
       } catch (error) {
         showNotification(
           error instanceof Error ? error.message : "Failed to prepare the shared campaign slot.",
@@ -4027,7 +4205,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
         );
       }
     });
-  }
+  });
 
   const loadSharedCampaignBtn = document.getElementById("loadSharedCampaignBtn");
   if (loadSharedCampaignBtn) {
@@ -4091,17 +4269,6 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
     };
   }
 
-  const enterCoopOperationsBtn = document.getElementById("enterCoopOperationsBtn");
-  if (enterCoopOperationsBtn) {
-    enterCoopOperationsBtn.onclick = async () => {
-      const lobby = getResolvedLobbyState();
-      if (lobby?.activity.kind !== "coop_operations" || lobby.activity.coopOperations.status !== "active") {
-        return;
-      }
-      await enterActiveCoopOperations(lobby);
-    };
-  }
-
   const setCoopEconomySharedBtn = document.getElementById("setCoopEconomySharedBtn");
   if (setCoopEconomySharedBtn) {
     setCoopEconomySharedBtn.addEventListener("click", async () => {
@@ -4148,7 +4315,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
   if (coopTransferKindSelect) {
     coopTransferKindSelect.addEventListener("change", () => {
       coopTransferDraft.kind = coopTransferKindSelect.value === "resource" ? "resource" : "wad";
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   }
 
@@ -4178,7 +4345,6 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
       if (
         !lobby
         || lobby.activity.kind !== "coop_operations"
-        || lobby.activity.coopOperations.status !== "active"
         || !localParticipant?.sessionSlot
         || !coopTransferDraft.targetPlayerId
         || coopTransferDraft.amount <= 0
@@ -4480,7 +4646,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
       skirmishPlaylistDraft = {
         rounds: [...skirmishPlaylistDraft.rounds, nextRound],
       };
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   }
 
@@ -4496,7 +4662,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
       if (skirmishPlaylistDraft.rounds.length <= 0) {
         skirmishPlaylistDraft = getDefaultLobbyPlaylist();
       }
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   });
 
@@ -4517,7 +4683,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
           };
         }),
       };
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   });
 
@@ -4538,7 +4704,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
           });
         }),
       };
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   });
 
@@ -4563,7 +4729,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
         return;
       }
       await requestLobbySkirmishChallenge(targetSlot as NetworkPlayerSlot, clonePlaylist(skirmishPlaylistDraft));
-      renderCommsArrayScreen(returnTo);
+      renderCurrentCommsSurface(returnTo);
     });
   }
   
@@ -4632,6 +4798,44 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
       startCustomOperation();
     };
   }
+}
+
+export function renderLobbySkirmishConsoleScreen(returnTo: CommsReturnTo = "basecamp"): void {
+  const app = document.getElementById("app");
+  if (!app) return;
+
+  ensureSquadTransportIntegration(returnTo);
+  ensureSharedCampaignAutosaveSync();
+  ensureSharedCampaignBrowserHydrated(returnTo);
+  syncSelectedSharedCampaignSlotFromState();
+  activeCommsSurface = "lobby_skirmish_console";
+  const lobby = getResolvedLobbyState();
+
+  if (!lobby) {
+    activeCommsSurface = "main";
+    renderMultiplayerCommsArrayScreen(returnTo);
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="comms-array-root">
+      <div class="comms-array-header">
+        <div class="comms-array-header-left">
+          <h1 class="comms-array-title">SKIRMISH</h1>
+          <div class="comms-array-subtitle">LOBBY CHALLENGES AND PLAYLISTS</div>
+        </div>
+        <div class="comms-array-header-right">
+          <button class="comms-array-back-btn" id="backToCommsBtn">
+            <span class="btn-icon">â†</span>
+            <span class="btn-text">MULTIPLAYER COMMS ARRAY</span>
+          </button>
+        </div>
+      </div>
+      ${renderLobbySkirmishConsoleBody(lobby)}
+    </div>
+  `;
+
+  attachCommsArrayListeners(returnTo);
 }
 
 function startTrainingBattle(returnTo: CommsReturnTo): void {

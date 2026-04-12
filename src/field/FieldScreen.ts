@@ -39,6 +39,7 @@ import {
   clearControllerContext,
   getAssignedGamepad,
   isGamepadActionActive,
+  registerControllerContext,
   updateFocusableElements,
 } from "../core/controllerSupport";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
@@ -81,6 +82,16 @@ import {
   type ResourceWallet,
 } from "../core/resources";
 import {
+  canCraftMaterialRefineryRecipe,
+  countAdvancedMaterialOwned,
+  craftMaterialRefineryRecipe,
+  getMaterialRefineryRecipe,
+  getMaterialRefineryRecipes,
+  getMaterialRefineryShortage,
+  type AdvancedMaterialId,
+  type MaterialRefineryContext,
+} from "../core/materialRefinery";
+import {
   BOWBLADE_BASE_ATTACK_CYCLE_MS,
   BOWBLADE_BASE_MAX_ENERGY_CELLS,
   BOWBLADE_BASE_MELEE_CHARGE_GAIN,
@@ -111,6 +122,7 @@ import {
 import { getActiveQuests, initializeQuestState, updateQuestProgress } from "../quests/questManager";
 import { renderQuestTrackerWidget } from "../ui/components/questTrackerWidget";
 import { showSystemPing } from "../ui/components/systemPing";
+import { showTutorialCallout, showTutorialCalloutSequence } from "../ui/components/tutorialCallout";
 import { playNamedAudioHook, playPlaceholderSfx, setMusicCue } from "../core/audioSystem";
 import {
   subscribeToFeedback,
@@ -155,6 +167,7 @@ import {
   type EscNodeAction,
 } from "../core/escAvailability";
 import {
+  getOuterDeckFieldContext,
   getOuterDeckSubareaByMapId,
   isOuterDeckBranchMap,
   isOuterDeckOverworldMap,
@@ -198,6 +211,18 @@ let isPanelOpen = false;
 
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
+let fieldFocusableRefreshTimerId: number | null = null;
+
+function scheduleFieldFocusableRefresh(delayMs = 48): void {
+  if (fieldFocusableRefreshTimerId !== null) {
+    window.clearTimeout(fieldFocusableRefreshTimerId);
+  }
+
+  fieldFocusableRefreshTimerId = window.setTimeout(() => {
+    fieldFocusableRefreshTimerId = null;
+    updateFocusableElements();
+  }, delayMs);
+}
 
 function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []): FieldNpc[] {
   const currentNpcById = new Map(currentNpcs.map((npc) => [npc.id, npc]));
@@ -336,6 +361,7 @@ let stickyNoteDragResumePending = false;
 let lastNetworkLobbyAvatarSyncKey = "";
 let lastMinimapRevealKey = "";
 let cleanupFieldFeedbackListener: (() => void) | null = null;
+let cleanupFieldControllerContext: (() => void) | null = null;
 let smoothedFieldCameraCenter: { x: number; y: number } | null = null;
 let currentFieldCameraTransform = {
   offsetX: 0,
@@ -375,6 +401,31 @@ let havenBuildDragState: {
   valid: boolean;
 } | null = null;
 const fieldTileHtmlCache = new WeakMap<FieldMap, string>();
+const FIELD_TILE_BACKGROUND_COLOR = "#23201e";
+const FIELD_TILE_PATTERN_STYLES = {
+  floor: {
+    fill: "#5a4738",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  wall: {
+    fill: "#43434a",
+    stroke: "rgba(86, 86, 95, 0.22)",
+  },
+  grass: {
+    fill: "#525543",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  dirt: {
+    fill: "#5f4a38",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  stone: {
+    fill: "#5a4738",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+} as const;
+
+type FieldTilePatternKey = keyof typeof FIELD_TILE_PATTERN_STYLES;
 
 type HavenBuildObjectMeta =
   | {
@@ -457,6 +508,43 @@ const FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS = 900;
 const FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS = 520;
 const HAVEN_BUILD_PAN_SPEED = 720;
 const HAVEN_BUILD_PAN_FAST_MULTIPLIER = 2.25;
+
+function getFieldBetaMarkerHtml(mapId: FieldMap["id"]): string {
+  const fieldContext = getOuterDeckFieldContext(String(mapId));
+  if (fieldContext === "haven") {
+    return "";
+  }
+
+  const label = fieldContext === "outerDeckOverworld" ? "OUTER DECKS // BETA FIELD SYSTEM" : "OUTER DECK SUBAREA // BETA FIELD SYSTEM";
+  return `<div class="field-beta-marker">${label}</div>`;
+}
+
+function maybeShowFieldTutorials(mapId: FieldMap["id"]): void {
+  const fieldContext = getOuterDeckFieldContext(String(mapId));
+  if (mapId === "base_camp") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_haven_field",
+        title: "HAVEN Field Hub",
+        message: "Walk the base camp to reach its stations directly instead of driving everything through menus.",
+        detail: "Use the Ops Terminal to deploy, the roster and workshop nodes to prepare your squad, and the field routes to move between HAVEN spaces.",
+        channel: "tutorial-field",
+      },
+    ]);
+    return;
+  }
+
+  if (fieldContext !== "haven") {
+    showTutorialCallout({
+      id: "tutorial_outer_deck_beta",
+      title: "Outer Decks Are In Beta",
+      message: "Everything outside HAVEN is currently a beta field layer tied to expeditions and recovery routes.",
+      detail: "Expect tuning and routing changes here while the beta focuses on Regions 1-2 and the first 6 floors of the campaign.",
+      durationMs: 9000,
+      channel: "tutorial-field",
+    });
+  }
+}
 
 function isHavenBuildMapActive(): boolean {
   return currentMap?.id === "base_camp";
@@ -982,6 +1070,55 @@ function isActiveCoopOperationsLobby(lobby: LobbyState | null | undefined): bool
   );
 }
 
+function shouldSuppressEscMenuAccess(): boolean {
+  // Keep E.S.C. locked only while the player is physically inside the
+  // dedicated multiplayer lobby field map. Once they're back in any other
+  // field context, Escape should behave like the normal field-to-E.S.C. flow.
+  return isNetworkLobbyMapActive();
+}
+
+function registerFieldControllerContext(): void {
+  cleanupFieldControllerContext?.();
+  cleanupFieldControllerContext = registerControllerContext({
+    id: "field",
+    defaultMode: "cursor",
+    focusRoot: () => document.querySelector(".field-root"),
+    onAction: (action) => {
+      if (!document.querySelector(".field-root")) {
+        return false;
+      }
+
+      if (action === "pause" || action === "menu") {
+        if (shouldSuppressEscMenuAccess()) {
+          return true;
+        }
+        if (isHavenBuildModeEnabled()) {
+          setHavenBuildMode(false);
+          return true;
+        }
+        toggleAllNodesPanel();
+        return true;
+      }
+
+      return false;
+    },
+    getDebugState: () => ({
+      focus: currentMap?.id ? String(currentMap.id) : "field",
+      hovered: activeInteractionPrompt ?? "none",
+      window: isHavenBuildModeEnabled() ? "build" : "field",
+      x: Math.round(fieldState?.player.x ?? 0),
+      y: Math.round(fieldState?.player.y ?? 0),
+    }),
+  });
+}
+
+function suspendFieldForScreenTransition(): void {
+  if (fieldState) {
+    fieldState.isPaused = true;
+  }
+  teardownFieldMode();
+}
+
 function getRenderableLobbyForCurrentField(): LobbyState | null {
   const lobby = getActiveNetworkLobby();
   if (!lobby) {
@@ -1165,7 +1302,7 @@ function cycleNetworkLobbyWindowColor(): void {
   });
 }
 
-function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x: number; y: number; kind: "relay" | "friendly_breach" | "enemy_breach" }> {
+function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x: number; y: number; kind: "relay" | "friendly_breach" | "enemy_breach" | "extraction" }> {
   const width = clampLobbyGridWidth(round.gridWidth);
   const height = clampLobbyGridHeight(round.gridHeight);
   const centerX = Math.floor(width / 2);
@@ -1218,6 +1355,19 @@ function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x:
     ];
   }
 
+  if (round.objectiveType === "extraction") {
+    return [
+      { x: centerX, y: centerY, kind: "extraction" as const },
+      { x: Math.max(1, centerX - 1), y: centerY, kind: "extraction" as const },
+    ].filter((cell, index, all) =>
+      cell.x > 0
+      && cell.x < width - 1
+      && cell.y > 0
+      && cell.y < height - 1
+      && all.findIndex((candidate) => candidate.x === cell.x && candidate.y === cell.y) === index,
+    );
+  }
+
   return [];
 }
 
@@ -1234,7 +1384,15 @@ function renderLobbyRoundPreview(round: NetworkLobbyPlaylistDraftRound): string 
         x === width - 1 ? "network-lobby-preview__cell--enemy-deploy" : "",
         previewCell ? `network-lobby-preview__cell--${previewCell.kind}` : "",
       ].filter(Boolean).join(" ");
-      const label = previewCell?.kind === "relay" ? "R" : previewCell?.kind === "friendly_breach" ? "H" : previewCell?.kind === "enemy_breach" ? "O" : "";
+      const label = previewCell?.kind === "relay"
+        ? "R"
+        : previewCell?.kind === "friendly_breach"
+          ? "H"
+          : previewCell?.kind === "enemy_breach"
+            ? "O"
+            : previewCell?.kind === "extraction"
+              ? "X"
+              : "";
       return `<div class="${classes}">${label}</div>`;
     }).join(""),
   ).join("");
@@ -1255,14 +1413,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
   const pendingChallenge = lobby.pendingChallenge;
   const isChallengee = Boolean(pendingChallenge && localSlot && pendingChallenge.challengeeSlot === localSlot);
   const isChallenger = Boolean(pendingChallenge && localSlot && pendingChallenge.challengerSlot === localSlot);
-  const connectedSlots = NETWORK_PLAYER_SLOTS.filter((slot) => Boolean(lobby.members[slot]?.connected));
-  const localCanStageCoop = localSlot === lobby.hostSlot;
-  const coopStatus = lobby.activity.kind === "coop_operations"
-    ? lobby.activity.coopOperations.status.toUpperCase()
-    : "IDLE";
-  const canLaunchCoop = localCanStageCoop
-    && lobby.activity.kind === "coop_operations"
-    && lobby.activity.coopOperations.selectedSlots.length > 0;
   const localIsSkirmishFighter = lobby.activity.kind === "skirmish"
     && localSlot
     && (lobby.activity.skirmish.challengerSlot === localSlot || lobby.activity.skirmish.challengeeSlot === localSlot);
@@ -1309,51 +1459,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
         </div>
       </section>
 
-      ${lobby.activity.kind === "idle" ? `
-        <section class="network-lobby-panel">
-          <div class="network-lobby-panel__title">Issue Skirmish Challenge</div>
-          <div class="network-lobby-form">
-            <label>
-              <span>Challengee</span>
-              <select id="networkLobbyChallengeeSelect">
-                <option value="">Select operator</option>
-                ${connectedSlots
-                  .filter((slot) => slot !== localSlot)
-                  .map((slot) => `<option value="${slot}" ${networkLobbyUiState.challengeeSlot === slot ? "selected" : ""}>${slot} // ${lobby.members[slot]?.callsign ?? slot}</option>`)
-                  .join("")}
-              </select>
-            </label>
-            <div class="network-lobby-form__playlist">
-              ${networkLobbyUiState.playlistDraft.map((round, index) => `
-                <div class="network-lobby-round-card">
-                  <div class="network-lobby-round-card__header">
-                    <strong>ROUND ${index + 1}</strong>
-                    ${networkLobbyUiState.playlistDraft.length > 1 ? `<button class="network-lobby-shell__btn network-lobby-shell__btn--ghost" type="button" data-lobby-round-remove="${index}">REMOVE</button>` : ""}
-                  </div>
-                  <div class="network-lobby-round-card__controls">
-                    <label><span>Width</span><input type="number" min="4" max="10" value="${round.gridWidth}" data-lobby-round-width="${index}" /></label>
-                    <label><span>Height</span><input type="number" min="3" max="8" value="${round.gridHeight}" data-lobby-round-height="${index}" /></label>
-                    <label>
-                      <span>Objective</span>
-                      <select data-lobby-round-objective="${index}">
-                        ${(["elimination", "control_relay", "breakthrough"] as SkirmishObjectiveType[]).map((objectiveType) => (
-                          `<option value="${objectiveType}" ${round.objectiveType === objectiveType ? "selected" : ""}>${getSquadWinConditionLabel(objectiveType)}</option>`
-                        )).join("")}
-                      </select>
-                    </label>
-                  </div>
-                  ${renderLobbyRoundPreview(round)}
-                </div>
-              `).join("")}
-            </div>
-            <div class="network-lobby-panel__actions">
-              <button class="network-lobby-shell__btn network-lobby-shell__btn--ghost" type="button" id="networkLobbyAddPlaylistRoundBtn">ADD ROUND</button>
-              <button class="network-lobby-shell__btn" type="button" id="networkLobbySendChallengeBtn" ${networkLobbyUiState.challengeeSlot ? "" : "disabled"}>SEND CHALLENGE</button>
-            </div>
-          </div>
-        </section>
-      ` : ""}
-
       ${pendingChallenge ? `
         <section class="network-lobby-panel">
           <div class="network-lobby-panel__title">Pending Challenge</div>
@@ -1388,39 +1493,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
           </div>
         </section>
       ` : ""}
-
-        <section class="network-lobby-panel">
-          <div class="network-lobby-panel__title">Co-Op Operations</div>
-          <div class="network-lobby-panel__copy">Host-owned staging for up to 8 operators. Current activity: ${coopStatus}.</div>
-          <div class="network-lobby-coop-grid">
-            ${connectedSlots.map((slot) => `
-              <label class="network-lobby-coop-slot">
-                <input type="checkbox" data-lobby-coop-slot="${slot}" ${networkLobbyUiState.coopSelectedSlots.includes(slot) ? "checked" : ""} ${localCanStageCoop ? "" : "disabled"} />
-                <span>${slot} // ${lobby.members[slot]?.callsign ?? slot}${lobby.activity.kind === "coop_operations" && lobby.activity.coopOperations.participants[slot]?.selected
-                  ? lobby.activity.coopOperations.participants[slot]?.standby
-                    ? " // STANDBY"
-                    : ` // ${lobby.activity.coopOperations.participants[slot]?.sessionSlot ?? "ACTIVE"}`
-                  : ""}</span>
-              </label>
-            `).join("")}
-          </div>
-          <div class="network-lobby-panel__copy">
-            ${lobby.activity.kind === "coop_operations"
-              ? `${lobby.activity.coopOperations.selectedSlots.length - lobby.activity.coopOperations.standbySlots.length}/${SESSION_PLAYER_SLOTS.length} active operator slots filled${lobby.activity.coopOperations.standbySlots.length > 0 ? ` // ${lobby.activity.coopOperations.standbySlots.length} standby` : ""}.`
-              : `Up to ${SESSION_PLAYER_SLOTS.length} live operator slots run at once. Extra selected members will stand by in H.A.V.E.N.`}
-          </div>
-          <div class="network-lobby-panel__actions">
-            ${localCanStageCoop ? `
-              <button class="network-lobby-shell__btn" type="button" id="networkLobbyStageCoopBtn">${lobby.activity.kind === "coop_operations" ? "UPDATE STAGING" : "STAGE CO-OP OPS"}</button>
-              ${canLaunchCoop ? `<button class="network-lobby-shell__btn" type="button" id="networkLobbyBeginCoopBtn">LAUNCH H.A.V.E.N.</button>` : ""}
-            ` : `<span class="network-lobby-panel__copy">Only the host can stage Co-Op Operations.</span>`}
-          </div>
-        </section>
-
-      <section class="network-lobby-panel">
-        <div class="network-lobby-panel__title">Lobby Link</div>
-        <div class="network-lobby-panel__copy">${connectedSlots.length}/8 operators connected. Share the join code for identification; use the manual host address only when you need direct connect.</div>
-      </section>
 
       <section class="network-lobby-panel">
         <div class="network-lobby-panel__actions">
@@ -1522,6 +1594,17 @@ function attachNetworkLobbyOverlayHandlers(container: HTMLElement): void {
     leaveBtn.onclick = () => {
       import("../ui/screens/CommsArrayScreen").then(async ({ leaveCurrentMultiplayerLobby }) => {
         await leaveCurrentMultiplayerLobby();
+      });
+    };
+  }
+
+  const openSkirmishConsoleBtn = container.querySelector<HTMLElement>("#networkLobbyOpenSkirmishConsoleBtn");
+  if (openSkirmishConsoleBtn) {
+    openSkirmishConsoleBtn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void import("../ui/screens/CommsArrayScreen").then(({ renderLobbySkirmishConsoleScreen }) => {
+        renderLobbySkirmishConsoleScreen("field");
       });
     };
   }
@@ -1656,23 +1739,15 @@ function attachNetworkLobbyOverlayHandlers(container: HTMLElement): void {
       } else {
         networkLobbyUiState.coopSelectedSlots = networkLobbyUiState.coopSelectedSlots.filter((selectedSlot) => selectedSlot !== slot);
       }
+      renderFieldScreen("network_lobby");
     };
   });
 
-  const stageCoopBtn = container.querySelector<HTMLElement>("#networkLobbyStageCoopBtn");
-  if (stageCoopBtn) {
-    stageCoopBtn.onclick = () => {
-      import("../ui/screens/CommsArrayScreen").then(async ({ launchLobbyCoopOperations }) => {
-        await launchLobbyCoopOperations(networkLobbyUiState.coopSelectedSlots);
-      });
-    };
-  }
-
-  const beginCoopBtn = container.querySelector<HTMLElement>("#networkLobbyBeginCoopBtn");
-  if (beginCoopBtn) {
-    beginCoopBtn.onclick = () => {
-      import("../ui/screens/CommsArrayScreen").then(async ({ beginLobbyCoopOperations }) => {
-        await beginLobbyCoopOperations();
+  const startCoopBtn = container.querySelector<HTMLElement>("#networkLobbyStartCoopBtn");
+  if (startCoopBtn) {
+    startCoopBtn.onclick = () => {
+      void import("../ui/screens/CommsArrayScreen").then(async ({ startLobbyCoopOperations }) => {
+        await startLobbyCoopOperations(networkLobbyUiState.coopSelectedSlots);
       });
     };
   }
@@ -1694,6 +1769,12 @@ type PinnedColorTheme = {
 const PINNED_QUAC_LAYOUT_ID = "quac-terminal";
 const PINNED_RESOURCE_LAYOUT_ID = "resource-tracker";
 const PINNED_QUEST_TRACKER_LAYOUT_ID = "quest-tracker";
+const PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
+  metalScrap: "M",
+  wood: "T",
+  chaosShards: "C",
+  steamComponents: "S",
+};
 
 const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -2255,7 +2336,7 @@ function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avata
 
   void handleInteraction(zone, currentMap, () => {
     resumeFieldAfterInteraction(playerId, savedPlayerPos, zone, interactionKey);
-  }).catch((error) => {
+  }, suspendFieldForScreenTransition).catch((error) => {
     console.error("[FIELD] Error handling interaction:", error);
     if (fieldState) {
       fieldState.isPaused = false;
@@ -2592,6 +2673,7 @@ export function renderFieldScreen(
   mapId: FieldMap["id"] = "base_camp",
   options?: { openBuildMode?: boolean },
 ): void {
+  teardownFieldMode();
   setMusicCue(mapId === "base_camp" || mapId === "quarters" ? "haven-field" : "quiet");
   const root = document.getElementById("app");
   if (!root) return;
@@ -2861,6 +2943,9 @@ export function renderFieldScreen(
   }
   createPinnedNodesOverlay();
   requestAnimationFrame(() => drawPinnedMinimapOverlay());
+  if (previousMapId !== mapId) {
+    maybeShowFieldTutorials(mapId);
+  }
 }
 
 function formatBuildResourceCost(cost?: { metalScrap?: number; wood?: number; chaosShards?: number; steamComponents?: number }): string {
@@ -3080,40 +3165,91 @@ function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
     return cachedHtml;
   }
 
-  const segments: string[] = [];
+  const rects: string[] = [];
+  const mapPixelWidth = map.width * tileSize;
+  const mapPixelHeight = map.height * tileSize;
+  const patternDefs = (Object.entries(FIELD_TILE_PATTERN_STYLES) as Array<[FieldTilePatternKey, { fill: string; stroke: string }]>)
+    .map(([key, style]) => `
+      <pattern id="field-tile-pattern-${key}" patternUnits="userSpaceOnUse" width="${tileSize}" height="${tileSize}">
+        <rect width="${tileSize}" height="${tileSize}" fill="${style.fill}"></rect>
+        <path d="M ${tileSize - 0.5} 0 V ${tileSize} M 0 ${tileSize - 0.5} H ${tileSize}" stroke="${style.stroke}" stroke-width="1" shape-rendering="crispEdges"></path>
+      </pattern>
+    `)
+    .join("");
+
+  const getPatternKey = (tile: FieldMap["tiles"][number][number]): FieldTilePatternKey => {
+    if (!tile || !tile.walkable || tile.type === "wall") {
+      return "wall";
+    }
+    if (tile.type === "grass") {
+      return "grass";
+    }
+    if (tile.type === "dirt") {
+      return "dirt";
+    }
+    if (tile.type === "stone") {
+      return "stone";
+    }
+    return "floor";
+  };
+
   for (let y = 0; y < map.height; y += 1) {
     const row = map.tiles[y];
     if (!row || row.length === 0) {
       continue;
     }
 
-    let runStartX = 0;
-    let runTile = row[0];
-    for (let x = 1; x <= map.width; x += 1) {
-      const nextTile = x < map.width ? row[x] : null;
-      const continuesRun = Boolean(
-        nextTile
-        && nextTile.walkable === runTile.walkable
-        && nextTile.type === runTile.type,
+    let segmentPatternKey: FieldTilePatternKey | null = null;
+    let segmentStartX = 0;
+    let segmentLength = 0;
+    const flushSegment = (): void => {
+      if (!segmentPatternKey || segmentLength <= 0) {
+        return;
+      }
+      rects.push(
+        `<rect x="${segmentStartX * tileSize}" y="${y * tileSize}" width="${segmentLength * tileSize}" height="${tileSize}" fill="url(#field-tile-pattern-${segmentPatternKey})"></rect>`,
       );
-      if (continuesRun) {
+    };
+
+    for (let x = 0; x < map.width; x += 1) {
+      const tile = row[x];
+      if (!tile) {
+        flushSegment();
+        segmentPatternKey = null;
+        segmentLength = 0;
         continue;
       }
 
-      const runWidth = x - runStartX;
-      const tileClass = runTile.walkable ? "field-tile-walkable" : "field-tile-wall";
-      segments.push(
-        `<div class="field-tile ${tileClass} field-tile-${runTile.type}" style="left: ${runStartX * tileSize}px; top: ${y * tileSize}px; width: ${runWidth * tileSize}px; height: ${tileSize}px;"></div>`,
-      );
-
-      if (nextTile) {
-        runStartX = x;
-        runTile = nextTile;
+      const patternKey = getPatternKey(tile);
+      if (patternKey === segmentPatternKey) {
+        segmentLength += 1;
+        continue;
       }
+
+      flushSegment();
+      segmentPatternKey = patternKey;
+      segmentStartX = x;
+      segmentLength = 1;
     }
+
+    flushSegment();
   }
 
-  const html = segments.join("");
+  const html = `
+    <svg
+      class="field-tile-layer"
+      aria-hidden="true"
+      focusable="false"
+      width="${mapPixelWidth}"
+      height="${mapPixelHeight}"
+      viewBox="0 0 ${mapPixelWidth} ${mapPixelHeight}"
+      preserveAspectRatio="none"
+      shape-rendering="crispEdges">
+      <defs>${patternDefs}</defs>
+      <rect width="${mapPixelWidth}" height="${mapPixelHeight}" fill="${FIELD_TILE_BACKGROUND_COLOR}"></rect>
+      ${rects.join("")}
+    </svg>
+  `;
   fieldTileHtmlCache.set(map, html);
   return html;
 }
@@ -3204,7 +3340,7 @@ function render(): void {
       <div class="field-player field-player-p1${combatClass}${attackClass}${invulnerableClass}${dashClass}${stepPulseClass}"
            style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p1Avatar.facing}">
-        <div class="field-player-sprite">${combatActive ? "⚔" : "A"}</div>
+        <div class="field-player-sprite"></div>
       </div>
     `;
   }
@@ -3216,7 +3352,7 @@ function render(): void {
       <div class="field-player field-player-p2${dashClass}${stepPulseClass}" 
            style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p2Avatar.facing}">
-        <div class="field-player-sprite">A</div>
+        <div class="field-player-sprite"></div>
       </div>
     `;
   }
@@ -3339,6 +3475,7 @@ function render(): void {
     ${weaponWindowHtml}
 
     <div class="field-hud">
+      ${getFieldBetaMarkerHtml(currentMap.id)}
       ${combatStatusHtml}
       <div class="field-hud-instructions">
         ${isHavenBuildModeEnabled() ? buildModeHudInstructions : controllerHudInstructions}
@@ -3404,7 +3541,8 @@ function render(): void {
   });
   attachHavenBuildListeners(fieldRoot);
   drawPinnedMinimapOverlay();
-  updateFocusableElements();
+  registerFieldControllerContext();
+  scheduleFieldFocusableRefresh();
 }
 
 function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
@@ -4009,6 +4147,10 @@ function updatePanelVisibility(): void {
 }
 
 function toggleAllNodesPanel(): void {
+  if (shouldSuppressEscMenuAccess()) {
+    return;
+  }
+
   // Navigate to the standalone All Nodes Menu Screen
   // This exits field mode and shows the menu as an independent screen
   const currentMapId = fieldState?.currentMap ?? "base_camp";
@@ -4136,6 +4278,81 @@ function renderPinnedResourceCard(wad: number, resources: ResourceWallet): strin
               <span class="all-nodes-balance-value">${entry.amount}</span>
             </div>
           `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function getPinnedMaterialRefineryContext(): MaterialRefineryContext {
+  const mapId = fieldState?.currentMap ?? currentMap?.id ?? "base_camp";
+  return getOuterDeckFieldContext(String(mapId)) === "outerDeckBranch" ? "expedition" : "haven";
+}
+
+function formatPinnedMaterialRefineryCost(recipeId: AdvancedMaterialId): string {
+  const recipe = getMaterialRefineryRecipe(recipeId);
+  return Object.entries(recipe.cost)
+    .map(([resourceKey, amount]) => `${amount}${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}`)
+    .join(" + ");
+}
+
+function formatPinnedMaterialRefineryShortage(recipeId: AdvancedMaterialId): string {
+  const shortage = getMaterialRefineryShortage(getGameState(), recipeId);
+  if (shortage.length === 0) {
+    return "READY";
+  }
+
+  return shortage
+    .map((entry) => `${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[entry.resourceKey] ?? entry.resourceKey} ${entry.available}/${entry.required}`)
+    .join(" · ");
+}
+
+function renderPinnedMaterialsRefineryCard(): string {
+  const state = getGameState();
+  const context = getPinnedMaterialRefineryContext();
+  const destinationLabel = context === "expedition" ? "FORWARD LOCKER" : "BASE STORAGE";
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--materials-refinery">
+      ${renderPinnedOverlayToolbar("materials-refinery", "light crafting")}
+      <section class="all-nodes-refinery-panel" aria-label="Light crafting">
+        <div class="all-nodes-refinery-heading">
+          <div class="all-nodes-refinery-title">LIGHT CRAFTING</div>
+          <span class="all-nodes-refinery-destination">${destinationLabel}</span>
+        </div>
+        <div class="all-nodes-refinery-resource-strip">
+          ${BASIC_RESOURCE_KEYS.map((resourceKey) => `
+            <div class="all-nodes-refinery-resource-item">
+              <span>${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}</span>
+              <strong>${Number(state.resources?.[resourceKey] ?? 0)}</strong>
+            </div>
+          `).join("")}
+        </div>
+        <div class="all-nodes-refinery-grid">
+          ${getMaterialRefineryRecipes().map((recipe) => {
+            const owned = countAdvancedMaterialOwned(state, recipe.id);
+            const canCraft = canCraftMaterialRefineryRecipe(state, recipe.id);
+            return `
+              <article class="all-nodes-refinery-card${canCraft ? "" : " all-nodes-refinery-card--locked"}">
+                <div class="all-nodes-refinery-card-header">
+                  <div class="all-nodes-refinery-card-name">${recipe.name}</div>
+                  <span class="all-nodes-refinery-card-owned">x${owned}</span>
+                </div>
+                <div class="all-nodes-refinery-card-meta">
+                  <span class="all-nodes-refinery-card-cost">${formatPinnedMaterialRefineryCost(recipe.id)}</span>
+                  <span class="all-nodes-refinery-card-status${canCraft ? "" : " all-nodes-refinery-card-status--short"}">${formatPinnedMaterialRefineryShortage(recipe.id)}</span>
+                </div>
+                <button
+                  class="all-nodes-refinery-craft-btn"
+                  type="button"
+                  data-refinery-craft-id="${recipe.id}"
+                  ${canCraft ? "" : "disabled"}
+                >
+                  MAKE
+                </button>
+              </article>
+            `;
+          }).join("")}
         </div>
       </section>
     </div>
@@ -4321,6 +4538,14 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
     `;
   }
 
+  if (itemId === "materials-refinery") {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--materials-refinery" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedMaterialsRefineryCard()}
+      </div>
+    `;
+  }
+
   const node = PINNED_NODE_LAYOUT.find((entry) => entry.action === itemId);
   if (!node) return "";
 
@@ -4390,6 +4615,21 @@ function handlePinnedOverlayClick(e: MouseEvent): void {
     const pinned = new Set(readPinnedOverlayItems());
     pinned.delete(itemId);
     persistPinnedOverlayItems(Array.from(pinned));
+    updatePinnedNodesOverlay();
+    return;
+  }
+
+  const refineryButton = target.closest<HTMLElement>("[data-refinery-craft-id]");
+  if (refineryButton) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const recipeId = refineryButton.dataset.refineryCraftId as AdvancedMaterialId | undefined;
+    if (!recipeId) {
+      return;
+    }
+
+    updateGameState((prev) => craftMaterialRefineryRecipe(prev, recipeId, getPinnedMaterialRefineryContext()));
     updatePinnedNodesOverlay();
     return;
   }
@@ -5367,6 +5607,9 @@ function handleKeyDown(e: KeyboardEvent): void {
   if (key === "escape" || e.code === "Escape" || e.keyCode === 27) {
     e.preventDefault();
     e.stopPropagation();
+    if (shouldSuppressEscMenuAccess()) {
+      return;
+    }
     if (isHavenBuildModeEnabled()) {
       setHavenBuildMode(false);
       return;
@@ -5717,6 +5960,7 @@ async function handleNodeAction(action: string): Promise<void> {
     fieldState.isPaused = true;
   }
 
+  suspendFieldForScreenTransition();
   closeAllNodesPanel();
 
   switch (action) {
@@ -5809,7 +6053,7 @@ async function handleNodeAction(action: string): Promise<void> {
       break;
     case "comms-array":
       import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen("field");
+        renderCommsArrayScreen("field", "auto");
       });
       break;
     case "endless-field-nodes":
@@ -6054,6 +6298,10 @@ export function teardownFieldMode(): void {
   stopGameLoop();
   resetFieldControllerActionTracking();
   cleanupGlobalListeners();
+  if (fieldFocusableRefreshTimerId !== null) {
+    window.clearTimeout(fieldFocusableRefreshTimerId);
+    fieldFocusableRefreshTimerId = null;
+  }
   document.getElementById("allNodesPanel")?.remove();
   document.getElementById("fieldPinnedOverlay")?.remove();
   document.getElementById("fieldFeedbackOverlay")?.remove();
@@ -6069,6 +6317,8 @@ export function teardownFieldMode(): void {
   havenBuildDragState = null;
   activeAutoInteractionZoneKey = null;
   suppressedAutoInteractionZoneKey = null;
+  cleanupFieldControllerContext?.();
+  cleanupFieldControllerContext = null;
   cleanupFieldFeedbackListener?.();
   cleanupFieldFeedbackListener = null;
 }

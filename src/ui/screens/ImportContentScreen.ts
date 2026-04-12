@@ -20,6 +20,9 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "quest") {
     return "QUEST";
   }
+  if (entry.manifest.contentType === "chatter") {
+    return "CHATTER";
+  }
   if (entry.manifest.contentType === "key_item") {
     return "KEY ITEM";
   }
@@ -70,6 +73,14 @@ function getEntryActionLabel(entry: InstalledTechnicaContent): string | null {
     return "PREVIEW";
   }
   return null;
+}
+
+function getEntryPassiveHint(entry: InstalledTechnicaContent): string {
+  if (entry.manifest.contentType === "chatter") {
+    return "Shows up in the black market, tavern, or port chatter pools.";
+  }
+
+  return "Ready for Chaos Core.";
 }
 
 function renderResultSection(results: TechnicaFileImportResult[]): string {
@@ -155,13 +166,13 @@ function renderInstalledContentSection(installedEntries: InstalledTechnicaConten
                 ${
                   entry.warnings.length > 0
                     ? `<p class="import-library-card__warnings">${entry.warnings.join(" ")}</p>`
-                    : `<p class="import-library-card__ready">Ready for Chaos Core.</p>`
+                    : `<p class="import-library-card__ready">${getEntryPassiveHint(entry)}</p>`
                 }
                 <div class="import-library-card__footer">
                   ${
                     actionLabel
                       ? `<button class="import-library-card__action" data-entry-key="${entry.key}" data-entry-action="${actionLabel.toLowerCase()}">${actionLabel}</button>`
-                      : `<span class="import-library-card__hint">Shows up on the in-game Quest Board.</span>`
+                      : `<span class="import-library-card__hint">${getEntryPassiveHint(entry)}</span>`
                   }
                 </div>
               </article>

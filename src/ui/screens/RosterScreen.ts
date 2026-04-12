@@ -20,7 +20,6 @@ import {
 } from "../../core/equipment";
 import { getUnitManagementStandIconPath } from "../../core/portraits";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
-import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import type { TheaterDeploymentPreset, TheaterSquadPreset } from "../../core/types";
 import {
@@ -109,7 +108,6 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const unitIds = Object.keys(units);
   const partyUnitIds = state.partyUnitIds ?? [];
   const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
-  const statBank = getStatBank(state);
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const modulesById = (state as any).modulesById || getAllModules();
   const preset = normalizeTheaterDeploymentPreset(state.theaterDeploymentPreset, state.partyUnitIds ?? []);
@@ -182,7 +180,6 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
         <div class="roster-header town-screen__header">
           <div class="roster-header-left town-screen__titleblock"><h1 class="roster-title">UNIT ROSTER</h1><div class="roster-subtitle">S/COM_OS // UNIT_MANAGEMENT</div></div>
           <div class="roster-header-right town-screen__header-right">
-            <div class="roster-count roster-count--stat"><span class="roster-count-label">${STAT_SHORT_LABEL}</span><span class="roster-count-value">${statBank}</span></div>
             <div class="roster-count"><span class="roster-count-label">UNITS</span><span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span></div>
             <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}" type="button"><span class="btn-icon">â†</span><span class="btn-text">${returnTo === "operation" ? "THEATER COMMAND" : returnTo === "field" ? "FIELD MODE" : returnTo === "loadout" ? "LOADOUT" : getBaseCampReturnLabel(returnTo as BaseCampReturnTo)}</span></button>
           </div>
@@ -194,7 +191,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
                 <div><div class="roster-section-title">THEATER DEPLOYMENT</div><div class="roster-section-subtitle">Persistent launch squads for theater operations</div></div>
                 ${isLiveTheaterOperation ? `<span class="roster-deployment-status">LIVE THEATER OPERATION</span>` : `<button class="roster-auto-equip-btn" id="rosterAddDeploymentSquadBtn" type="button">+ NEW SQUAD</button>`}
               </div>
-              <div class="roster-deployment-copy">${isLiveTheaterOperation ? "Saved presets are read-only while a theater operation is active. Use Theater Command for live squad changes." : `Select a squad, then assign units below. ${THEATER_SQUAD_UNIT_LIMIT} units max per squad.`}</div>
+              <div class="roster-deployment-copy">${isLiveTheaterOperation ? "Saved presets are read-only while a theater operation is active. Use Theater Command for live squad changes, and open any unit's Manage screen below to swap equipped gear from the forward locker." : `Select a squad, then assign units below. ${THEATER_SQUAD_UNIT_LIMIT} units max per squad.`}</div>
             </div>
             <div class="roster-deployment-layout">
               <div class="roster-deployment-ledger">
@@ -238,6 +235,16 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
       </div>
     </div>
   `;
+
+  const rosterBackIcon = root.querySelector<HTMLElement>(".roster-back-btn .btn-icon");
+  if (rosterBackIcon) {
+    rosterBackIcon.innerHTML = "&larr;";
+  }
+
+  const autoEquipPartyBtn = root.querySelector<HTMLButtonElement>("#autoEquipPartyBtn");
+  if (autoEquipPartyBtn) {
+    autoEquipPartyBtn.textContent = "AUTO-EQUIP ALL";
+  }
 
   if (returnTo === "operation") registerRosterOperationReturnHotkey(); else unregisterRosterOperationReturnHotkey();
   if (returnTo !== "loadout" && returnTo !== "operation") registerBaseCampReturnHotkey("roster-screen", returnTo, { allowFieldEKey: true, activeSelector: ".roster-root" }); else unregisterBaseCampReturnHotkey("roster-screen");

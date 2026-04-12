@@ -21,6 +21,7 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+import { clearControllerContext } from "../../core/controllerSupport";
 
 let selectedCategory: InventoryCategory | "all" = "all";
 let searchQuery = "";
@@ -805,6 +806,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
 export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
+  clearControllerContext();
 
   const state = getGameState();
   const vm = buildInventoryVM(state);

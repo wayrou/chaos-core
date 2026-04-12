@@ -1,0 +1,21 @@
+{
+  "contentId": "port_routes_are_tight_this_week_if_the_charter",
+  "contentType": "chatter",
+  "dependencies": [],
+  "description": "Chaos Core runtime chatter export.",
+  "entryFile": "port_routes_are_tight_this_week_if_the_charter.chatter.json",
+  "exportType": "chatter",
+  "exportedAt": "2026-04-11T01:15:57.612Z",
+  "files": [
+    "manifest.json",
+    "port_routes_are_tight_this_week_if_the_charter.chatter.json",
+    "port_routes_are_tight_this_week_if_the_charter.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "chatter.v1",
+  "title": "port chatter"
+}

@@ -1,7 +1,8 @@
 {
   "bodyPages": [
     "Your requisition for the foundry stabilizer kit has been approved. Report to the lower stores before next deployment.",
-    "Bring the sealant canister with you. Maintenance signed off on the transfer, but they want visual confirmation before they release the second crate."
+    "Bring the sealant canister with you. Maintenance signed off on the transfer, but they want visual confirmation before they release the second crate.",
+    "TEST TEST TEST"
   ],
   "category": "official",
   "createdAt": "2026-04-07T02:57:33.748Z",
@@ -15,5 +16,5 @@
   ],
   "subject": "Foundry Allotment Approved",
   "unlockAfterFloor": 0,
-  "updatedAt": "2026-04-07T03:16:04.936Z"
+  "updatedAt": "2026-04-11T06:17:19.383Z"
 }

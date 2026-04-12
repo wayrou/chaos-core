@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { FieldMap } from "../../field/types";
 import { upsertLibraryCard } from "../../core/gearWorkbench";
 import type { Quest } from "../../quests/types";
@@ -5,6 +6,7 @@ import { DEFAULT_FACTIONS } from "./defaultFactions";
 import type {
   DisabledTechnicaContent,
   ImportedCard,
+  ImportedChatterEntry,
   ImportedClassDefinition,
   ImportedCodexEntry,
   ImportedDialogue,
@@ -29,10 +31,24 @@ type ImportMetaWithOptionalGlob = ImportMeta & {
   glob?: <TModule>(pattern: string, options: { eager: true }) => Record<string, TModule>;
 };
 
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+type GeneratedRegistryFile = {
+  updatedAt?: unknown;
+  entriesByType?: Partial<Record<TechnicaContentType, unknown>>;
+};
+
+type GeneratedVersionFile = {
+  updatedAt?: unknown;
+  contentType?: unknown;
+  contentId?: unknown;
+};
+
 const importedMaps = new Map<string, FieldMap>();
 const importedQuests = new Map<string, Quest>();
 const importedDialogues = new Map<string, ImportedDialogue>();
 const importedMailEntries = new Map<string, ImportedMailEntry>();
+const importedChatterEntries = new Map<string, ImportedChatterEntry>();
 const importedKeyItems = new Map<string, ImportedKeyItem>();
 const importedFactions = new Map<string, ImportedFaction>();
 const importedItems = new Map<string, ImportedItem>();
@@ -50,6 +66,7 @@ let technicaRegistryFingerprintCache = "";
 const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
   ["dialogue", new Set()],
   ["mail", new Set()],
+  ["chatter", new Set()],
   ["quest", new Set()],
   ["key_item", new Set()],
   ["faction", new Set()],
@@ -69,6 +86,7 @@ const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
 const GENERATED_RUNTIME_FILE_EXTENSIONS: Record<TechnicaContentType, string> = {
   dialogue: ".dialogue.json",
   mail: ".mail.json",
+  chatter: ".chatter.json",
   quest: ".quest.json",
   key_item: ".key_item.json",
   faction: ".faction.json",
@@ -84,6 +102,29 @@ const GENERATED_RUNTIME_FILE_EXTENSIONS: Record<TechnicaContentType, string> = {
   class: ".class.json",
   codex: ".codex.json",
 };
+
+const HYDRATABLE_GENERATED_CONTENT_TYPES: TechnicaContentType[] = [
+  "dialogue",
+  "mail",
+  "chatter",
+  "quest",
+  "key_item",
+  "faction",
+  "map",
+  "field_enemy",
+  "npc",
+  "item",
+  "gear",
+  "card",
+  "fieldmod",
+  "unit",
+  "operation",
+  "class",
+  "codex",
+];
+
+let generatedRegistryHydrationPromise: Promise<void> | null = null;
+let generatedRegistryHydrated = false;
 
 function getImportedUnitSpawnRole(unit: ImportedUnitTemplate): "player" | "enemy" {
   return unit.spawnRole === "enemy" ? "enemy" : "player";
@@ -107,8 +148,66 @@ function recordTechnicaRegistrySnapshot(contentType: TechnicaContentType, conten
   technicaRegistryFingerprintCache = "";
 }
 
+function recordDisabledTechnicaContentSnapshot(entry: DisabledTechnicaContent): void {
+  technicaRegistrySnapshots.set(`disabled:${entry.contentType}:${entry.id}`, JSON.stringify(entry));
+  technicaRegistryFingerprintCache = "";
+}
+
+function getTauriInvoke(): TauriInvoke | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const anyWindow = window as unknown as {
+    __TAURI__?: { invoke?: TauriInvoke };
+    __TAURI_INTERNALS__?: unknown;
+  };
+  if (typeof anyWindow.__TAURI__?.invoke === "function") {
+    return anyWindow.__TAURI__.invoke;
+  }
+
+  return anyWindow.__TAURI__ || anyWindow.__TAURI_INTERNALS__ ? invoke : null;
+}
+
+function isTauriAvailable(): boolean {
+  return getTauriInvoke() !== null;
+}
+
+async function readGeneratedJsonThroughTauri<TValue>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<TValue | null> {
+  const invoke = getTauriInvoke();
+  if (!invoke) {
+    return null;
+  }
+
+  try {
+    const raw = await invoke(command, args);
+    if (typeof raw !== "string" || !raw.trim()) {
+      return null;
+    }
+
+    return JSON.parse(raw) as TValue;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchGeneratedRuntimeEntry<TValue>(contentType: TechnicaContentType, contentId: string): Promise<TValue | null> {
-  if (typeof window === "undefined" || !import.meta.env.DEV || !contentId.trim()) {
+  if (!contentId.trim()) {
+    return null;
+  }
+
+  const tauriEntry = await readGeneratedJsonThroughTauri<TValue>("read_generated_technica_entry", {
+    contentType,
+    contentId
+  });
+  if (tauriEntry) {
+    return tauriEntry;
+  }
+
+  if (typeof window === "undefined" || !import.meta.env.DEV) {
     return null;
   }
 
@@ -130,6 +229,70 @@ async function fetchGeneratedRuntimeEntry<TValue>(contentType: TechnicaContentTy
   }
 }
 
+async function fetchGeneratedRuntimeRegistry(): Promise<GeneratedRegistryFile | null> {
+  const tauriRegistry = await readGeneratedJsonThroughTauri<GeneratedRegistryFile>("read_generated_technica_registry");
+  if (tauriRegistry) {
+    return tauriRegistry;
+  }
+
+  if (typeof window === "undefined" || !import.meta.env.DEV) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`/src/content/technica/generated/registry.json?t=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as GeneratedRegistryFile;
+  } catch {
+    return null;
+  }
+}
+
+export async function readGeneratedTechnicaVersionMarker(): Promise<GeneratedVersionFile | null> {
+  const tauriVersion = await readGeneratedJsonThroughTauri<GeneratedVersionFile>("read_generated_technica_version");
+  if (tauriVersion) {
+    return tauriVersion;
+  }
+
+  if (typeof window === "undefined" || !import.meta.env.DEV) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`/src/content/technica/generated/version.json?t=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as GeneratedVersionFile;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGeneratedRegistryIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value.map((entry) => String(entry).trim()).filter(Boolean)));
+}
+
 if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   loadGeneratedRegistry(
     import.meta.glob<JsonModule<DisabledTechnicaContent>>("./disabled/*/*.disabled.json", { eager: true }) as Record<
@@ -139,6 +302,7 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
     (entry) => {
       if (entry.origin === "game") {
         disabledContentIds.get(entry.contentType)?.add(entry.id);
+        recordDisabledTechnicaContentSnapshot(entry);
       }
     }
   );
@@ -184,6 +348,14 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
       JsonModule<ImportedMailEntry>
     >,
     registerImportedMailEntry
+  );
+
+  loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedChatterEntry>>("./generated/chatter/*.chatter.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedChatterEntry>
+    >,
+    registerImportedChatterEntry
   );
 
   loadGeneratedRegistry(
@@ -347,6 +519,19 @@ export function getAllImportedMailEntries(): ImportedMailEntry[] {
   return Array.from(importedMailEntries.values());
 }
 
+export function registerImportedChatterEntry(entry: ImportedChatterEntry): void {
+  importedChatterEntries.set(entry.id, entry);
+  recordTechnicaRegistrySnapshot("chatter", entry.id, entry);
+}
+
+export function getImportedChatterEntry(entryId: string): ImportedChatterEntry | null {
+  return importedChatterEntries.get(entryId) || null;
+}
+
+export function getAllImportedChatterEntries(): ImportedChatterEntry[] {
+  return Array.from(importedChatterEntries.values());
+}
+
 export function registerImportedKeyItem(item: ImportedKeyItem): void {
   importedKeyItems.set(item.id, item);
   recordTechnicaRegistrySnapshot("key_item", item.id, item);
@@ -387,7 +572,7 @@ export function getAllImportedItems(): ImportedItem[] {
 }
 
 export function getImportedStarterItems(): ImportedItem[] {
-  return getAllImportedItems();
+  return getAllImportedItems().filter((entry) => entry.acquisition?.startsWithPlayer !== false);
 }
 
 export function registerImportedNpc(npc: ImportedNpcTemplate): void {
@@ -506,6 +691,10 @@ export function registerImportedUnitTemplate(unit: ImportedUnitTemplate): void {
 }
 
 export function getImportedUnit(unitId: string): ImportedUnitTemplate | null {
+  if (isTechnicaContentDisabled("unit", unitId)) {
+    return null;
+  }
+
   return importedUnits.get(unitId) || null;
 }
 
@@ -514,7 +703,7 @@ export function getImportedUnitTemplate(unitId: string): ImportedUnitTemplate | 
 }
 
 export function getAllImportedUnits(): ImportedUnitTemplate[] {
-  return Array.from(importedUnits.values());
+  return Array.from(importedUnits.values()).filter((entry) => !isTechnicaContentDisabled("unit", entry.id));
 }
 
 export function getAllImportedUnitTemplates(): ImportedUnitTemplate[] {
@@ -573,6 +762,8 @@ function getTechnicaRegistry(contentType: TechnicaContentType): Map<string, unkn
       return importedDialogues;
     case "mail":
       return importedMailEntries;
+    case "chatter":
+      return importedChatterEntries;
     case "key_item":
       return importedKeyItems;
     case "faction":
@@ -624,6 +815,62 @@ export function getTechnicaRegistryFingerprint(): string {
   return technicaRegistryFingerprintCache;
 }
 
+export async function hydrateGeneratedTechnicaRegistry(): Promise<void> {
+  if (generatedRegistryHydrated) {
+    return;
+  }
+
+  if (generatedRegistryHydrationPromise) {
+    return generatedRegistryHydrationPromise;
+  }
+
+  generatedRegistryHydrationPromise = (async () => {
+    const registry = await fetchGeneratedRuntimeRegistry();
+    if (!registry?.entriesByType) {
+      generatedRegistryHydrated = true;
+      return;
+    }
+
+    const { importTechnicaRuntimeEntry } = await import("./importer");
+    let importedAnyEntries = false;
+
+    for (const contentType of HYDRATABLE_GENERATED_CONTENT_TYPES) {
+      const contentIds = normalizeGeneratedRegistryIds(registry.entriesByType[contentType]);
+      for (const contentId of contentIds) {
+        const entry = await fetchGeneratedRuntimeEntry<unknown>(contentType, contentId);
+        if (!entry) {
+          continue;
+        }
+
+        try {
+          importTechnicaRuntimeEntry(contentType, entry, { syncToGameState: false });
+          importedAnyEntries = true;
+        } catch (error) {
+          console.warn(`[TECHNICA] Skipping generated ${contentType} '${contentId}' during startup hydration.`, error);
+        }
+      }
+    }
+
+    if (importedAnyEntries) {
+      const [{ hasGameState, updateGameState }, { syncPublishedTechnicaContentState }] = await Promise.all([
+        import("../../state/gameStore"),
+        import("./stateSync"),
+      ]);
+
+      if (hasGameState()) {
+        const registryFingerprint = getTechnicaRegistryFingerprint();
+        updateGameState((prev) => syncPublishedTechnicaContentState(prev, registryFingerprint));
+      }
+    }
+
+    generatedRegistryHydrated = true;
+  })().finally(() => {
+    generatedRegistryHydrationPromise = null;
+  });
+
+  return generatedRegistryHydrationPromise;
+}
+
 export async function reloadGeneratedTechnicaEntry(
   contentType: TechnicaContentType,
   contentId: string
@@ -634,6 +881,11 @@ export async function reloadGeneratedTechnicaEntry(
   }
 
   const { importTechnicaRuntimeEntry } = await import("./importer");
-  importTechnicaRuntimeEntry(contentType, entry, { syncToGameState: true });
-  return true;
+  try {
+    importTechnicaRuntimeEntry(contentType, entry, { syncToGameState: true });
+    return true;
+  } catch (error) {
+    console.warn(`[TECHNICA] Failed to reload generated ${contentType} '${contentId}'.`, error);
+    return false;
+  }
 }

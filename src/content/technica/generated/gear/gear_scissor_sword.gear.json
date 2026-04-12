@@ -5,7 +5,7 @@
     "bulkBu": 2,
     "massKg": 4,
     "powerW": 0,
-    "startingOwned": true
+    "startingOwned": false
   },
   "isMechanical": false,
   "metadata": {

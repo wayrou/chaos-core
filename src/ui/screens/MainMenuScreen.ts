@@ -22,15 +22,16 @@ import {
   loadGame,
 } from "../../core/saveSystem";
 import { initializeSettings } from "../../core/settings";
-import { clearControllerContext, initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
+import { clearControllerContext, initControllerSupport, registerControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
 import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
+import { hydrateGeneratedTechnicaRegistry } from "../../content/technica";
 import { initializeTechnicaContentLibrary } from "../../content/technica/library";
 import { setMusicCue } from "../../core/audioSystem";
 import { renderImportContentScreen } from "./ImportContentScreen";
 import chaosCoreLogo from "../../assets/cc logo.png";
 import { createDefaultCampaignProgress, saveCampaignProgress } from "../../core/campaign";
-import { clearActiveEchoRun, startEchoRunSession } from "../../core/echoRuns";
+import { clearActiveEchoRun } from "../../core/echoRuns";
 import {
   enhanceTerminalUiButtons,
   startTerminalTypingByIds,
@@ -49,6 +50,13 @@ let floatingTerminalCount = 0;
 let floatingTerminalZIndex = 220;
 let cleanupMainMenuWorkspace: (() => void) | null = null;
 let cleanupMainMenuTerminalFx: (() => void) | null = null;
+
+function teardownMainMenuWorkspace(): void {
+  cleanupMainMenuWorkspace?.();
+  cleanupMainMenuWorkspace = null;
+  cleanupMainMenuTerminalFx?.();
+  cleanupMainMenuTerminalFx = null;
+}
 
 type MainMenuActionId =
   | "continue"
@@ -256,6 +264,7 @@ async function initializeGame(): Promise<void> {
     // Non-fatal - game can continue without recipes
   }
 
+  await hydrateGeneratedTechnicaRegistry();
   initializeTechnicaContentLibrary();
   
   isInitialized = true;
@@ -291,6 +300,7 @@ async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
 export async function renderMainMenu(): Promise<void> {
   await initializeGame();
   setMusicCue("main-menu");
+  teardownMainMenuWorkspace();
   
   const root = document.getElementById("app");
   if (!root) {
@@ -426,6 +436,7 @@ export async function renderMainMenu(): Promise<void> {
         class="mainmenu-background-cycle"
         type="button"
         data-action="cycle-background"
+        data-controller-exclude="true"
         aria-label="Cycle title background theme"
         title="Cycle title background theme"
       >
@@ -437,6 +448,7 @@ export async function renderMainMenu(): Promise<void> {
         class="mainmenu-terminal-fab"
         type="button"
         data-action="new-terminal"
+        data-controller-exclude="true"
         aria-label="Open new S/COM_OS window"
         title="Open new S/COM_OS window"
       >
@@ -510,6 +522,13 @@ export async function renderMainMenu(): Promise<void> {
   const mainMenuRoot = root.querySelector<HTMLElement>(".mainmenu-root");
   if (mainMenuRoot) {
     applyMainMenuBackgroundTheme(mainMenuRoot, getStoredMainMenuBackgroundThemeKey());
+    registerControllerContext({
+      id: "main-menu",
+      defaultMode: "focus",
+      focusRoot: () => document.querySelector<HTMLElement>(".mainmenu-root"),
+      defaultFocusSelector: 'button[data-action="continue"], button[data-action="new-op"]',
+      suppressGameplayInput: true,
+    });
   }
 
   upgradeMainMenuToWorkspace(hasContinue, saves.length > 0, mostRecentSave);
@@ -868,7 +887,16 @@ function buildMainMenuButtonTiles(
     </div>
   `);
 
-  return tiles.join("");
+  let html = tiles.join("");
+  html = html.split(' data-mainmenu-color="').join(' data-controller-exclude="true" data-mainmenu-color="');
+  html = html.split(' data-mainmenu-minimize="').join(' data-controller-exclude="true" data-mainmenu-minimize="');
+  html = html.split(' data-mainmenu-resize="').join(' data-controller-exclude="true" data-mainmenu-resize="');
+  if (hasContinue) {
+    html = html.replace('data-action="continue" type="button"', 'data-action="continue" type="button" data-controller-default-focus="true"');
+  } else {
+    html = html.replace('data-action="new-op" type="button"', 'data-action="new-op" type="button" data-controller-default-focus="true"');
+  }
+  return html;
 }
 
 function getMainMenuViewport(): { width: number; height: number } {
@@ -1515,6 +1543,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
         saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
         setGameState(result.state);
         enableAutosave(() => getGameState());
+        teardownMainMenuWorkspace();
         void resumeLoadedGame("field");
       } else {
         alert("Failed to load save: " + (result.error ?? "Unknown error"));
@@ -1549,6 +1578,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       }
 
       enableAutosave(() => getGameState());
+      teardownMainMenuWorkspace();
       renderFieldScreen("base_camp");
 
       newOpBtn.disabled = false;
@@ -1559,10 +1589,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const echoRunsBtn = root.querySelector<HTMLButtonElement>('button[data-action="echo-runs"]');
   if (echoRunsBtn) {
     echoRunsBtn.addEventListener("click", async () => {
-      clearActiveEchoRun();
-      startEchoRunSession();
-      const { renderEchoRunScreen } = await import("./EchoRunScreen");
-      renderEchoRunScreen();
+      const { renderEchoRunTitleScreen } = await import("./EchoRunTitleScreen");
+      teardownMainMenuWorkspace();
+      renderEchoRunTitleScreen();
     });
   }
 
@@ -1570,6 +1599,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (multiplayerBtn) {
     multiplayerBtn.addEventListener("click", async () => {
       const { renderCommsArrayScreen } = await import("./CommsArrayScreen");
+      teardownMainMenuWorkspace();
       renderCommsArrayScreen("menu");
     });
   }
@@ -1578,6 +1608,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (mapBuilderBtn) {
     mapBuilderBtn.addEventListener("click", async () => {
       const { renderMapBuilderScreen } = await import("./MapBuilderScreen");
+      teardownMainMenuWorkspace();
       renderMapBuilderScreen();
     });
   }
@@ -1594,6 +1625,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const settingsBtn = root.querySelector<HTMLButtonElement>('button[data-action="settings"]');
   if (settingsBtn) {
     settingsBtn.addEventListener("click", () => {
+      teardownMainMenuWorkspace();
       renderSettingsScreen("menu");
     });
   }
@@ -1601,6 +1633,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const importContentBtn = root.querySelector<HTMLButtonElement>('button[data-action="import-content"]');
   if (importContentBtn) {
     importContentBtn.addEventListener("click", () => {
+      teardownMainMenuWorkspace();
       renderImportContentScreen();
     });
   }
@@ -1781,6 +1814,7 @@ function openLoadModal(saves: SaveInfo[]): void {
             setGameState(result.state);
             enableAutosave(() => getGameState());
             hideMainMenuModal("loadModal", 'button[data-action="load"]');
+            teardownMainMenuWorkspace();
             void resumeLoadedGame("esc");
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));

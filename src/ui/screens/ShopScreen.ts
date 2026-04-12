@@ -24,6 +24,7 @@ import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import { getResourceEntries, RESOURCE_KEYS, type ResourceKey } from "../../core/resources";
 import {
   canSessionAffordCost,
@@ -261,6 +262,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   const state = getGameState();
   const wallet = getQuartermasterWallet(state);
   const resources = wallet.resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
   const backButtonText = returnTo === "operation" ? "ACTIVE OPERATION" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
@@ -320,22 +322,22 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
       <div class="shop-footer">
         <div class="resource-display">
           <div class="resource-item">
-            <span class="resource-icon">⚙</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
             <span class="resource-value">${resources.metalScrap ?? 0}</span>
             <span class="resource-label">Metal</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon">🪵</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
             <span class="resource-value">${resources.wood ?? 0}</span>
             <span class="resource-label">Wood</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon">💎</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
             <span class="resource-value">${resources.chaosShards ?? 0}</span>
             <span class="resource-label">Shards</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon"></span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
             <span class="resource-value">${resources.steamComponents ?? 0}</span>
             <span class="resource-label">Steam</span>
           </div>
@@ -347,6 +349,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
             || entry.key === "chargeCells"
           )).map((entry) => `
             <div class="resource-item">
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-value">${entry.amount}</span>
               <span class="resource-label">${entry.label}</span>
             </div>
@@ -1090,6 +1093,7 @@ function createEquipmentFromShopItem(itemId: string, item: ShopItem): any {
     else if (itemId.includes("gun")) weaponType = "gun";
     else if (itemId.includes("staff")) weaponType = "staff";
     else if (itemId.includes("dagger")) weaponType = "dagger";
+    else if (itemId.includes("shield")) weaponType = "shield";
     
     return {
       id: itemId,

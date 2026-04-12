@@ -203,6 +203,15 @@ export interface ImportedMailEntry {
   updatedAt?: string;
 }
 
+export interface ImportedChatterEntry {
+  id: string;
+  location: "black_market" | "tavern" | "port";
+  content: string;
+  aerissResponse: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ImportedClassDefinition {
   id: string;
   name: string;
@@ -354,6 +363,7 @@ export type ImportedQuest = Quest;
 export type TechnicaContentType =
   | "dialogue"
   | "mail"
+  | "chatter"
   | "quest"
   | "key_item"
   | "faction"

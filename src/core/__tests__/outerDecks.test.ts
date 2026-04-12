@@ -11,12 +11,15 @@ import {
   getOuterDeckFieldContext,
   getOuterDeckSubareaByMapId,
   getUnlockedOuterDeckZoneIds,
+  hasOuterDeckZoneBeenReclaimed,
+  isOuterDeckMechanicResolved,
   isOuterDeckBranchMap,
   isOuterDeckOverworldMap,
   isOuterDeckZoneUnlocked,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
   markOuterDeckSubareaCleared,
+  resolveOuterDeckMechanic,
 } from "../outerDecks";
 
 describe("outerDecks", () => {
@@ -54,11 +57,15 @@ describe("outerDecks", () => {
   it("marks clear/cache/npc flags on an active branch expedition", () => {
     const started = beginOuterDeckExpedition(createNewGameState(), "counterweight_shaft", 20);
     const midSubarea = started.outerDecks?.activeExpedition?.subareas[1];
+    const entrySubarea = started.outerDecks?.activeExpedition?.subareas[0];
 
     const clearedState = markOuterDeckSubareaCleared(started, midSubarea.id);
     expect(clearedState.outerDecks?.activeExpedition?.clearedSubareaIds).toContain(midSubarea.id);
 
-    const cachedState = markOuterDeckCacheClaimed(clearedState, midSubarea.cacheId);
+    const resolvedState = resolveOuterDeckMechanic(clearedState, entrySubarea.requiredMechanicId);
+    expect(isOuterDeckMechanicResolved(resolvedState, entrySubarea.requiredMechanicId)).toBe(true);
+
+    const cachedState = markOuterDeckCacheClaimed(resolvedState, midSubarea.cacheId);
     expect(cachedState.outerDecks?.activeExpedition?.rewardCacheClaimedIds).toContain(midSubarea.cacheId);
 
     const npcState = markOuterDeckNpcEncounterSeen(cachedState, midSubarea.npcEncounterId);
@@ -75,6 +82,7 @@ describe("outerDecks", () => {
     expect(completionResult.state.outerDecks?.activeExpedition).toBeNull();
     expect(completionResult.state.outerDecks?.zoneCompletionCounts.counterweight_shaft).toBe(1);
     expect(completionResult.state.outerDecks?.runHistory.at(-1)?.outcome).toBe("completed");
+    expect(hasOuterDeckZoneBeenReclaimed(completionResult.state, "counterweight_shaft")).toBe(true);
 
     const abortedState = beginOuterDeckExpedition(createNewGameState(), "outer_scaffold", 10);
     const aborted = abortOuterDeckExpedition(abortedState, 30);

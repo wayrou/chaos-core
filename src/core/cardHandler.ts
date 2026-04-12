@@ -22,7 +22,7 @@ import {
   getTileAt,
   updateUnitWeaponState,
 } from "./battle";
-import { Card } from "./types";
+import { Card, EchoFieldPlacement } from "./types";
 import { getCoverDamageReduction, damageCover } from "./coverGenerator";
 import {
   getEchoAttackBonus,
@@ -31,7 +31,7 @@ import {
 } from "./echoFieldEffects";
 
 import { getAllStarterEquipment } from "./equipment";
-import { isChaosBattleCardId } from "./cardCatalog";
+import { getResolvedBattleCard, isChaosBattleCardId } from "./cardCatalog";
 import { applyEffectFlowToBattle } from "./effectFlow";
 import {
   addHeat,
@@ -56,6 +56,36 @@ function isHostileTarget(user: BattleUnitState, targetUnit: BattleUnitState | nu
 
 function isAlliedTarget(user: BattleUnitState, targetUnit: BattleUnitState | null | undefined): boolean {
   return Boolean(targetUnit && targetUnit.isEnemy === user.isEnemy);
+}
+
+function normalizeCardToken(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function cardMatches(card: Card, ids: string[], names: string[] = []): boolean {
+  const normalizedId = normalizeCardToken(card.id);
+  const normalizedName = normalizeCardToken(card.name);
+  return ids.some((value) => normalizeCardToken(value) === normalizedId)
+    || names.some((value) => normalizeCardToken(value) === normalizedName);
+}
+
+function getCardDamageAmount(card: Card): number {
+  const explicitDamage = Number((card as any).damage ?? 0);
+  if (explicitDamage > 0) {
+    return explicitDamage;
+  }
+
+  const damageEffect = (card.effects || []).find((effect: any) => effect.type === "damage") as any;
+  if (typeof damageEffect?.amount === "number" && damageEffect.amount > 0) {
+    return damageEffect.amount;
+  }
+
+  const descriptionMatch = card.description.match(/deal\s+(\d+)\s+damage/i);
+  return descriptionMatch ? parseInt(descriptionMatch[1], 10) : 0;
 }
 
 function addTimedBuff(
@@ -83,10 +113,28 @@ function addTimedBuff(
   };
 }
 
-function discardCardFromHand(battle: BattleState, unitId: string, cardId: string): BattleState {
+function discardCardFromHand(battle: BattleState, unitId: string, cardOrId: string | Card): BattleState {
   const unit = battle.units[unitId];
   if (!unit) return battle;
-  const cardIndex = unit.hand.indexOf(cardId);
+
+  const targetId = typeof cardOrId === "string" ? cardOrId : cardOrId.id;
+  const targetName = typeof cardOrId === "string" ? null : normalizeCardToken(cardOrId.name);
+  const normalizedTargetId = normalizeCardToken(targetId);
+  let cardIndex = unit.hand.indexOf(targetId);
+  if (cardIndex < 0) {
+    cardIndex = unit.hand.findIndex((handCardId) => normalizeCardToken(handCardId) === normalizedTargetId);
+  }
+  if (cardIndex < 0 && targetName) {
+    cardIndex = unit.hand.findIndex((handCardId) => {
+      const resolvedHandCard = getResolvedBattleCard(handCardId);
+      if (!resolvedHandCard) {
+        return false;
+      }
+      return normalizeCardToken(resolvedHandCard.name) === targetName;
+    });
+  }
+
+  const discardedCardId = cardIndex < 0 ? targetId : unit.hand[cardIndex];
   const nextHand =
     cardIndex < 0
       ? unit.hand
@@ -99,7 +147,7 @@ function discardCardFromHand(battle: BattleState, unitId: string, cardId: string
       [unitId]: {
         ...unit,
         hand: nextHand,
-        discardPile: isChaosBattleCardId(cardId) ? unit.discardPile : [...unit.discardPile, cardId],
+        discardPile: isChaosBattleCardId(discardedCardId) ? unit.discardPile : [...unit.discardPile, discardedCardId],
       },
     },
   };
@@ -302,7 +350,7 @@ function finalizeCardUsage(
   next = finalizeWeaponCardRuntime(next, userId, context);
   next = applyTheaterCombatInstability(next, userId);
   if (next.units[userId]) {
-    next = discardCardFromHand(next, userId, card.id);
+    next = discardCardFromHand(next, userId, card);
   }
   if (next.units[userId] && card.chaosCardsToCreate?.length) {
     next = addCardsToHand(next, userId, card.chaosCardsToCreate);
@@ -537,13 +585,186 @@ export function handleCardPlay(
   // ========================================
   // WAIT / END TURN CARDS
   // ========================================
-  if (card.id === "core_wait" || card.name.toLowerCase() === "wait" ||
-    card.effects?.some((e: any) => e.type === "end_turn")) {
-    let b: BattleState = discardCardFromHand(battle, user.id, card.id);
+  if (cardMatches(card, ["core_wait"], ["wait"])) {
+    let b: BattleState = discardCardFromHand(battle, user.id, card);
+    const currentUser = b.units[user.id];
+    if (currentUser) {
+      b = {
+        ...b,
+        units: {
+          ...b.units,
+          [user.id]: {
+            ...currentUser,
+            strain: Math.max(0, currentUser.strain - 2),
+          },
+        },
+      };
+    }
 
-    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} waits, ending their turn.`);
+    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} waits, ending their turn and reducing strain by 2.`);
     b = advanceTurn(b);
 
+    return b;
+  }
+
+  if (cardMatches(card, ["core_move_plus"], ["move"])) {
+    if (targetPos.x !== user.pos.x || targetPos.y !== user.pos.y) {
+      return null;
+    }
+
+    let b = addTimedBuff(battle, user.id, "move_up", 2, 1);
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
+    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} gains +2 MOV this turn // STRAIN +${card.strainCost}.`);
+    return b;
+  }
+
+  if (cardMatches(card, ["squire_shield_wall", "class_shield_wall"], ["shield_wall"])) {
+    if (targetPos.x !== user.pos.x || targetPos.y !== user.pos.y) {
+      return null;
+    }
+
+    const alliedUnitIds = Object.values(battle.units)
+      .filter((unit) => unit.isEnemy === user.isEnemy)
+      .map((unit) => unit.id);
+
+    let b = battle;
+    alliedUnitIds.forEach((unitId) => {
+      b = addTimedBuff(b, unitId, "def_up", 2, 1);
+    });
+
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
+    b = appendBattleLog(
+      b,
+      `SLK//UNIT   :: ${user.name} raises Shield Wall, granting +2 DEF to ${alliedUnitIds.length} allied unit${alliedUnitIds.length === 1 ? "" : "s"} // STRAIN +${card.strainCost}.`,
+    );
+    return b;
+  }
+
+  if (cardMatches(card, ["ranger_volley", "class_volley"], ["volley"])) {
+    if (!isHostileTarget(user, targetUnit) || !targetUnit?.pos) {
+      return null;
+    }
+
+    const userPos = user.pos;
+    const targetsInRange = Object.values(battle.units).filter((candidate) => (
+      isHostileTarget(user, candidate)
+      && candidate.pos
+      && getTileAt(battle, candidate.pos.x, candidate.pos.y)
+      && Math.abs(userPos.x - candidate.pos.x) + Math.abs(userPos.y - candidate.pos.y) <= cardRange
+    ));
+    if (targetsInRange.length === 0) {
+      return null;
+    }
+
+    let b = battle;
+    const actingUser = b.units[user.id];
+    if (!actingUser?.pos) {
+      return null;
+    }
+
+    if (weaponContext?.cardRules.tags.includes("attack") && actingUser.weaponState && checkWeaponJam(actingUser.weaponState)) {
+      const jammedState = {
+        ...actingUser.weaponState,
+        isJammed: true,
+        jammedTurnsRemaining: 1,
+      };
+      b = updateUnitWeaponState(b, actingUser.id, jammedState);
+      const jammedUser = b.units[actingUser.id];
+      if (jammedUser) {
+        b = applyStrain(b, jammedUser, card.strainCost + 1);
+        b = discardCardFromHand(b, actingUser.id, card);
+      }
+      b = appendBattleLog(b, `SLK//JAM   :: ${actingUser.name}'s ${weaponContext.weapon.name} jams while using ${card.name}.`);
+      return b;
+    }
+
+    const logMessages: string[] = [];
+    const triggeredPlacements: EchoFieldPlacement[] = [];
+    const equippedWeapon = getEquippedWeapon(actingUser);
+    const isRangedAttack = Boolean(equippedWeapon && ["gun", "bow", "greatbow", "staff"].includes(equippedWeapon.weaponType));
+    const baseDamage = getCardDamageAmount(card);
+    const atkBuffs = (actingUser.buffs || [])
+      .filter((buff) => buff.type === "atk_up" || buff.type === "atk_down")
+      .reduce((sum, buff) => sum + buff.amount, 0);
+    const clutchDamageDelta = weaponContext?.modifiers.damageDelta ?? 0;
+    const damageMultiplier = weaponContext?.modifiers.damageMultiplier ?? 1;
+    const ignoreDef = weaponContext?.modifiers.ignoreDef ?? 0;
+    const accuracyDelta = weaponContext?.modifiers.accuracyDelta ?? 0;
+
+    targetsInRange.forEach((listedTarget) => {
+      const currentUser = b.units[user.id];
+      const currentTarget = b.units[listedTarget.id];
+      if (!currentUser?.pos || !currentTarget?.pos) {
+        return;
+      }
+
+      const echoAttackBonus = getEchoAttackBonus(b, currentUser);
+      const echoDefenseBonus = getEchoDefenseBonus(b, currentTarget);
+      let totalDamage = Math.max(0, Math.round((baseDamage + atkBuffs + echoAttackBonus.amount + clutchDamageDelta) * damageMultiplier));
+      const defBuffs = (currentTarget.buffs || [])
+        .filter((buff) => buff.type === "def_up" || buff.type === "def_down")
+        .reduce((sum, buff) => sum + buff.amount, 0);
+      const totalDef = Math.max(0, currentTarget.def + defBuffs + echoDefenseBonus.amount - ignoreDef);
+
+      let hitChance = computeHitChance(currentUser, currentTarget, isRangedAttack, b) + accuracyDelta;
+      hitChance = Math.max(10, Math.min(100, hitChance));
+
+      const didHit = (Math.random() * 100) <= hitChance;
+      if (didHit) {
+        let finalDamage = Math.max(1, totalDamage - totalDef);
+        const targetTile = getTileAt(b, currentTarget.pos.x, currentTarget.pos.y);
+        if (targetTile) {
+          let coverReduction = getCoverDamageReduction(targetTile);
+          const attackerTile = getTileAt(b, currentUser.pos.x, currentUser.pos.y);
+          const attackerElevation = attackerTile?.elevation ?? 0;
+          const defenderElevation = targetTile.elevation ?? 0;
+          if (
+            (weaponContext?.modifiers.ignoreCover ?? false)
+            || (isRangedAttack && attackerElevation >= defenderElevation + 1 && targetTile.terrain === "light_cover")
+          ) {
+            coverReduction = 0;
+          }
+          finalDamage = Math.max(1, finalDamage - coverReduction);
+        }
+
+        const newHp = currentTarget.hp - finalDamage;
+        if (newHp <= 0) {
+          const newUnits = { ...b.units };
+          delete newUnits[currentTarget.id];
+          b = {
+            ...b,
+            units: newUnits,
+            turnOrder: b.turnOrder.filter((id) => id !== currentTarget.id),
+          };
+          logMessages.push(`hits ${currentTarget.name} for ${finalDamage} - TARGET OFFLINE`);
+        } else {
+          b = {
+            ...b,
+            units: {
+              ...b.units,
+              [currentTarget.id]: { ...currentTarget, hp: newHp },
+            },
+          };
+          logMessages.push(`hits ${currentTarget.name} for ${finalDamage} (HP ${newHp}/${currentTarget.maxHp})`);
+        }
+      } else {
+        logMessages.push(`misses ${currentTarget.name}`);
+      }
+
+      triggeredPlacements.push(...echoAttackBonus.triggeredPlacements, ...echoDefenseBonus.triggeredPlacements);
+    });
+
+    b = finalizeCardUsage(b, user.id, card, weaponContext);
+    b = appendBattleLog(
+      b,
+      `SLK//HIT    :: ${actingUser.name} ${logMessages.length > 0 ? logMessages.join("; ") : `fires ${card.name} with no valid targets`}.`,
+    );
+
+    if (triggeredPlacements.length > 0) {
+      b = incrementEchoFieldTriggerCount(b, triggeredPlacements);
+    }
+
+    b = evaluateBattleOutcome(b);
     return b;
   }
 
@@ -940,7 +1161,7 @@ export function handleCardPlay(
       const jammedUser = b.units[actingUser.id];
       if (jammedUser) {
         b = applyStrain(b, jammedUser, card.strainCost + 1);
-        b = discardCardFromHand(b, actingUser.id, card.id);
+        b = discardCardFromHand(b, actingUser.id, card);
       }
       b = appendBattleLog(b, `SLK//JAM   :: ${actingUser.name}'s ${weaponContext.weapon.name} jams while using ${card.name}.`);
       return b;

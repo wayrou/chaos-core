@@ -1,12 +1,10 @@
 {
   "currentClassId": "squire",
-  "deployInParty": false,
+  "deployInParty": true,
   "description": "A steady breach specialist prepared for early operation deployment.",
+  "faction": "company_of_quills",
   "id": "unit_lucien",
   "loadout": {},
-  "metadata": {
-    "faction": "free_company"
-  },
   "name": "Lucien",
   "pwr": 42,
   "recruitCost": 120,

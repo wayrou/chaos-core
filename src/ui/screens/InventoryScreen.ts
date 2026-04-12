@@ -7,6 +7,7 @@ import {
   MULE_CLASS_CAPS,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import {
   buildOwnedBaseStorageItems,
   moveOwnedItemToBaseStorage,
@@ -70,9 +71,9 @@ function renderBar(label: string, current: number, cap: number, unit: string): s
 }
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
-  const iconMarkup = item.iconPath
-    ? `<img src="${item.iconPath}" alt="${item.name}" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);" />`
-    : "";
+  const iconMarkup = item.kind === "unit" && !item.iconPath
+    ? ""
+    : `<img src="${getInventoryIconPath(item.iconPath)}" alt="" class="inv-item-icon" aria-hidden="true" />`;
 
   return `
     <div class="inv-item"

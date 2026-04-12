@@ -27,6 +27,7 @@ export type WeaponType =
   | "sword"
   | "greatsword"
   | "shortsword"
+  | "shield"
   | "bow"
   | "greatbow"
   | "gun"
@@ -105,6 +106,7 @@ export const CLASS_WEAPON_RESTRICTIONS: Record<BuiltInUnitClass, WeaponType[]> =
     "sword",
     "greatsword",
     "shortsword",
+    "shield",
     "bow",
     "greatbow",
     "gun",

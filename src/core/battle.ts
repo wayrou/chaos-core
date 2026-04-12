@@ -14,6 +14,7 @@ import {
   LoadPenaltyFlags,
   SquadBattleObjectiveState,
   SquadBattleSide,
+  TheaterSignalPosture,
   UnitOwnership,
 } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
@@ -245,6 +246,33 @@ export interface BattleState {
     overheating?: boolean;
     overheatSeverity?: 0 | 1 | 2;
     combatInstability?: boolean;
+    heatOnMiss?: 0 | 1 | 2;
+    heatOnAttack?: 0 | 1 | 2;
+    regionId?: string;
+    regionName?: string;
+    regionVariantLabel?: string;
+    regionMechanicLabel?: string;
+    regionRuleSummary?: string;
+    factionTag?: string;
+    enemyIntelScrambled?: boolean;
+    enemyIntelScrambleLabel?: string;
+    allyStartStatusType?: string;
+    allyStartStatusDuration?: number;
+    allyStartStatusLabel?: string;
+    enemyStartStatusType?: string;
+    enemyStartStatusDuration?: number;
+    enemyStartStatusLabel?: string;
+    obscurationActive?: boolean;
+    obscurationSeverity?: 0 | 1 | 2;
+    obscurationLabel?: string;
+    obscurationSuppressesRanged?: boolean;
+    smokeObscured?: boolean;
+    smokeSeverity?: 0 | 1 | 2;
+    burningRoom?: boolean;
+    burnSeverity?: 0 | 1 | 2 | 3;
+    supplyFireRisk?: boolean;
+    signalPosture?: TheaterSignalPosture;
+    signalBloom?: boolean;
   };
   theaterMeta?: {
     operationId: string;
@@ -1030,6 +1058,11 @@ export function advanceTurn(state: BattleState): BattleState {
       }
     }
 
+    if (currentIndex !== -1) {
+      const prevUnitId = state.turnOrder[currentIndex];
+      newState = applyTheaterRoomFireHazard(newState, prevUnitId);
+    }
+
     // Clear Stunned at end of NEXT turn - if they are stunned, decrement it now
     if (currentIndex !== -1) {
       const prevUnitId = state.turnOrder[currentIndex];
@@ -1174,6 +1207,19 @@ function isBreakthroughTileForSide(
   return (objective.breachTiles?.[side] ?? []).some((tile) => tile.x === x && tile.y === y);
 }
 
+function isExtractionTile(
+  state: BattleState,
+  objective: SquadBattleObjectiveState,
+  x: number,
+  y: number,
+): boolean {
+  const objectiveTiles = objective.extractionTiles ?? [];
+  if (objectiveTiles.some((tile) => tile.x === x && tile.y === y)) {
+    return true;
+  }
+  return Boolean(state.objectiveZones?.extraction?.some((tile) => tile.x === x && tile.y === y));
+}
+
 function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId | null): BattleState {
   if (!endingUnitId) {
     return state;
@@ -1184,13 +1230,15 @@ function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId |
     return state;
   }
 
-  if (objective.kind !== "breakthrough") {
+  if (objective.kind !== "breakthrough" && objective.kind !== "extraction") {
     return state;
   }
 
   const scoringSide: SquadBattleSide = endingUnit.isEnemy ? "enemy" : "friendly";
-  const targetSide: SquadBattleSide = scoringSide === "friendly" ? "friendly" : "enemy";
-  if (!isBreakthroughTileForSide(objective, targetSide, endingUnit.pos.x, endingUnit.pos.y)) {
+  const canExtract = objective.kind === "breakthrough"
+    ? isBreakthroughTileForSide(objective, scoringSide, endingUnit.pos.x, endingUnit.pos.y)
+    : isExtractionTile(state, objective, endingUnit.pos.x, endingUnit.pos.y);
+  if (!canExtract) {
     return state;
   }
 
@@ -1218,7 +1266,9 @@ function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId |
   nextState = setSquadObjectiveState(nextState, nextObjective);
   return appendBattleLog(
     nextState,
-    `SLK//OBJECTIVE :: ${endingUnit.name} breached the far lane and extracted. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`,
+    objective.kind === "breakthrough"
+      ? `SLK//OBJECTIVE :: ${endingUnit.name} breached the far lane and extracted. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`
+      : `SLK//OBJECTIVE :: ${endingUnit.name} reached the extraction zone and was pulled out. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`,
   );
 }
 
@@ -1236,16 +1286,36 @@ export function getActiveUnit(state: BattleState): BattleUnitState | null {
 // ----------------------------------------------------------------------------
 
 /**
+ * Resolve a battle unit's equipped weapon id from the primary runtime field,
+ * then fall back to runtime weapon state or legacy loadout data.
+ */
+export function getBattleUnitEquippedWeaponId(
+  unit: BattleUnitState | null | undefined,
+): string | null {
+  if (!unit) {
+    return null;
+  }
+  if (typeof unit.equippedWeaponId === "string" && unit.equippedWeaponId) {
+    return unit.equippedWeaponId;
+  }
+  if (typeof unit.weaponState?.equipmentId === "string" && unit.weaponState.equipmentId) {
+    return unit.weaponState.equipmentId;
+  }
+  return normalizeBattleLoadout(unit.loadout).primaryWeapon;
+}
+
+/**
  * Get the equipped weapon for a battle unit
  */
 export function getEquippedWeapon(
   unit: BattleUnitState,
   equipmentById?: Record<string, Equipment>
 ): WeaponEquipment | null {
-  if (!unit.equippedWeaponId) return null;
+  const equippedWeaponId = getBattleUnitEquippedWeaponId(unit);
+  if (!equippedWeaponId) return null;
 
   const equipment = equipmentById || getAllStarterEquipment();
-  const weapon = equipment[unit.equippedWeaponId];
+  const weapon = equipment[equippedWeaponId];
 
   if (weapon && weapon.slot === "weapon") {
     return weapon as WeaponEquipment;
@@ -1360,12 +1430,13 @@ function moveUnitByDeltaIfClear(
 }
 
 function removeRandomWeaponCardFromBattleUnit(unit: BattleUnitState): BattleUnitState {
+  const equippedWeaponId = getBattleUnitEquippedWeaponId(unit);
   const weaponCards = [
     ...unit.hand,
     ...unit.drawPile,
     ...unit.discardPile,
     ...unit.exhaustedPile,
-  ].filter((cardId) => getResolvedBattleCard(cardId)?.sourceEquipmentId === unit.equippedWeaponId);
+  ].filter((cardId) => getResolvedBattleCard(cardId)?.sourceEquipmentId === equippedWeaponId);
 
   if (weaponCards.length === 0) {
     return unit;
@@ -1473,7 +1544,7 @@ export function applyWeaponHitToUnit(
   return next;
 }
 
-function getTheaterCombatInstabilityHeatGain(state: BattleState): number {
+function getLegacyTheaterCombatInstabilityHeatGain(state: BattleState): number {
   const severity = state.theaterBonuses?.overheatSeverity ?? 0;
   if (!state.theaterBonuses?.combatInstability || severity <= 0) {
     return 0;
@@ -1481,11 +1552,26 @@ function getTheaterCombatInstabilityHeatGain(state: BattleState): number {
   return severity >= 2 ? 2 : 1;
 }
 
+function getTheaterCombatInstabilityHeatGain(
+  state: BattleState,
+  trigger: "miss" | "attack",
+): number {
+  const legacyHeatGain = getLegacyTheaterCombatInstabilityHeatGain(state);
+  const directHeatGain = trigger === "miss"
+    ? state.theaterBonuses?.heatOnMiss
+    : state.theaterBonuses?.heatOnAttack;
+  if (typeof directHeatGain === "number") {
+    return Math.max(directHeatGain, legacyHeatGain);
+  }
+  return legacyHeatGain;
+}
+
 export function applyTheaterCombatInstability(
   state: BattleState,
   unitId: UnitId,
+  trigger: "miss" | "attack" = "attack",
 ): BattleState {
-  const heatGain = getTheaterCombatInstabilityHeatGain(state);
+  const heatGain = getTheaterCombatInstabilityHeatGain(state, trigger);
   if (heatGain <= 0) {
     return state;
   }
@@ -1511,6 +1597,43 @@ export function applyTheaterCombatInstability(
     next = updateUnitWeaponState(next, unitId, overheatOutcome.state);
     next = appendBattleLog(next, `SLK//ALERT :: ${unit.name}'s weapon destabilizes under room overheat. ${overheatOutcome.summary}`);
     next = applyWeaponOverheatEffects(next, unitId, overheatOutcome.effects, "room overheat");
+  }
+  return next;
+}
+
+function applyTheaterRoomFireHazard(
+  state: BattleState,
+  unitId: UnitId,
+): BattleState {
+  const burnSeverity = state.theaterBonuses?.burnSeverity ?? 0;
+  if (!state.theaterBonuses?.burningRoom || burnSeverity <= 0) {
+    return state;
+  }
+
+  const unit = state.units[unitId];
+  if (!unit || unit.hp <= 0) {
+    return state;
+  }
+
+  const fireDamage = burnSeverity >= 3 ? 2 : 1;
+  const nextHp = Math.max(0, unit.hp - fireDamage);
+  let next: BattleState = {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: {
+        ...unit,
+        hp: nextHp,
+      },
+    },
+  };
+
+  next = appendBattleLog(next, `SLK//HAZARD :: ${unit.name} is scorched by room fire (${fireDamage}).`);
+  if (burnSeverity >= 2) {
+    next = addStatus(next, unitId, "burning", 1, "theater_room_fire");
+  }
+  if (nextHp <= 0) {
+    next = evaluateBattleOutcome(next);
   }
   return next;
 }
@@ -1550,9 +1673,12 @@ export function getUnitMovementRange(unit: BattleUnitState, battle?: BattleState
   const baseMovement = unit.agi;
   const mountBonus = getMountMovementBonus(unit);
   const echoAdjustment = battle ? getEchoMovementAdjustment(battle, unit).amount : 0;
+  const movementBuffs = (unit.buffs || [])
+    .filter((buff) => buff.type === "move_up" || buff.type === "move_down")
+    .reduce((sum, buff) => sum + buff.amount, 0);
   // Swift trait: +1 movement on first turn (turn 1)
   // This would need turn count context, so we skip it here
-  return Math.max(1, baseMovement + mountBonus + echoAdjustment);
+  return Math.max(1, baseMovement + mountBonus + echoAdjustment + movementBuffs);
 }
 
 /**
@@ -2218,7 +2344,7 @@ export function attackUnit(
     const missReason = intimidatePenalty !== 0
       ? "(mount intimidation)"
       : "(strain interference)";
-    const unstableMissState = applyTheaterCombatInstability(state, attackerId);
+    const unstableMissState = applyTheaterCombatInstability(state, attackerId, "miss");
     const echoedMissState = (
       echoAccuracyBonus.triggeredPlacements.length > 0 || echoIncomingPenalty.triggeredPlacements.length > 0
     )
@@ -2377,7 +2503,7 @@ export function attackUnit(
     trackMeleeAttackInBattle(attackerId, next);
   }
 
-  next = applyTheaterCombatInstability(next, attackerId);
+  next = applyTheaterCombatInstability(next, attackerId, "attack");
   next = evaluateBattleOutcome(next);
   return next;
 }
@@ -2679,6 +2805,8 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
           ...resolvedState.log,
           squadObjective.kind === "breakthrough"
             ? `SLK//OBJECTIVE :: ${winnerLabel} completed the breakthrough ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`
+            : squadObjective.kind === "extraction"
+              ? `SLK//OBJECTIVE :: ${winnerLabel} completed the extraction ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`
             : `SLK//OBJECTIVE :: ${winnerLabel} captured the relay ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`,
         ],
       };

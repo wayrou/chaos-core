@@ -1,6 +1,13 @@
+import { onControllerAction } from "../../core/controllerSupport";
+
 export type BaseCampReturnTo = "basecamp" | "esc" | "field";
 
-const returnHotkeyHandlers = new Map<string, (e: KeyboardEvent) => void>();
+type ReturnHotkeyBinding = {
+  keyboardHandler: (e: KeyboardEvent) => void;
+  controllerCleanup?: () => void;
+};
+
+const returnHotkeyHandlers = new Map<string, ReturnHotkeyBinding>();
 let lastBaseCampFieldMapId = "base_camp";
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -57,7 +64,8 @@ export function unregisterBaseCampReturnHotkey(id: string): void {
   const existing = returnHotkeyHandlers.get(id);
   if (!existing) return;
 
-  window.removeEventListener("keydown", existing);
+  window.removeEventListener("keydown", existing.keyboardHandler);
+  existing.controllerCleanup?.();
   returnHotkeyHandlers.delete(id);
 }
 
@@ -97,6 +105,25 @@ export function registerBaseCampReturnHotkey(
     returnFromBaseCampScreen(returnTo);
   };
 
-  returnHotkeyHandlers.set(id, handler);
+  const controllerCleanup = onControllerAction((action) => {
+    if (options.activeSelector && !document.querySelector(options.activeSelector)) {
+      unregisterBaseCampReturnHotkey(id);
+      return;
+    }
+
+    const shouldReturn = action === "cancel" || action === "pause" || action === "menu";
+    if (!shouldReturn) {
+      return;
+    }
+
+    unregisterBaseCampReturnHotkey(id);
+    options.onReturn?.();
+    returnFromBaseCampScreen(returnTo);
+  });
+
+  returnHotkeyHandlers.set(id, {
+    keyboardHandler: handler,
+    controllerCleanup,
+  });
   window.addEventListener("keydown", handler);
 }

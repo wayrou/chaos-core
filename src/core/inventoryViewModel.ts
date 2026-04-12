@@ -67,9 +67,17 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     }
   }
 
+  const explicitlyOwnedEquipmentIds = new Set<string>(state.equipmentPool ?? []);
+  equippedIds.forEach((id) => explicitlyOwnedEquipmentIds.add(id));
+  const hasExplicitEquipmentOwnership = explicitlyOwnedEquipmentIds.size > 0;
+
   // 1. EQUIPMENT
   if (state.equipmentById) {
     for (const [id, equip] of Object.entries(state.equipmentById)) {
+      if (hasExplicitEquipmentOwnership && !explicitlyOwnedEquipmentIds.has(id)) {
+        continue;
+      }
+
       const equipment = equip as Equipment;
       let sortGroup: string;
 

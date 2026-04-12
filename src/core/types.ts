@@ -37,7 +37,7 @@ export type EconomyPreset = "shared" | "partitioned";
 export type ResourceTransferKind = "wad" | "resource" | "item";
 export type ReconnectStagingState = "haven" | "staging" | "theater" | "battle" | "disconnected" | "rejoining";
 export type LobbyTransportState = "local_preview" | "hosting" | "joining" | "connected" | "reconnecting" | "closed";
-export type SkirmishObjectiveType = "elimination" | "control_relay" | "breakthrough";
+export type SkirmishObjectiveType = "elimination" | "control_relay" | "breakthrough" | "extraction";
 export type LobbyChallengeStatus = "pending" | "accepted" | "declined" | "cancelled";
 export type LobbySkirmishIntermissionDecision = "redraft" | "reuse";
 export type LobbyCoopOperationsStatus = "staging" | "active";
@@ -46,6 +46,7 @@ export type WeaponType =
   | "sword"
   | "greatsword"
   | "shortsword"
+  | "shield"
   | "bow"
   | "greatbow"
   | "gun"
@@ -562,6 +563,7 @@ export interface UILayoutState {
   baseCampPinnedItemFrames?: Record<string, BaseCampPinnedItemFrame>;
   baseCampFieldNodeLayouts?: Record<string, BaseCampFieldNodeLayout>;
   baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
+  baseCampResourceTrackerShowAdvanced?: boolean;
   minimapExploredByMap?: Record<string, string[]>;
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
@@ -641,6 +643,9 @@ export type TheaterSquadStatus = "idle" | "moving" | "pinned" | "threatened" | "
 export type TheaterSquadAutomationMode = "manual" | "undaring" | "daring";
 export type TheaterSquadAutoStatus = "idle" | "intercepting" | "pushing" | "recovering" | "holding";
 export type TheaterRoomClass = "standard" | "mega";
+export type TheaterSignalPosture = "normal" | "masked" | "bait";
+export type TheaterScavengerActivity = "quiet" | "probing" | "raiding";
+export type TheaterContainmentMode = "normal" | "venting" | "lockdown";
 export type TheaterThreatType = "patrol" | "siege";
 export type TheaterObjectiveType =
   | "deliver_supply"
@@ -1100,6 +1105,12 @@ export interface CoreAssignment {
   supportRadius: number;
 }
 
+export interface TheaterRoomNaturalStock {
+  metalScrap: number;
+  wood: number;
+  steamComponents: number;
+}
+
 export type FortificationPips = Record<FortificationType, number>;
 
 export interface TheaterRoom {
@@ -1147,6 +1158,8 @@ export interface TheaterRoom {
     consumed?: boolean;
     charges?: number;
   }>;
+  naturalResourceStock?: TheaterRoomNaturalStock;
+  naturalResourceStockMax?: TheaterRoomNaturalStock;
   supplyFlow: number;
   powerFlow: number;
   commsFlow: number;
@@ -1156,8 +1169,21 @@ export interface TheaterRoom {
   sandboxPhantomRouteRoomIds?: string[];
   sandboxCommsAttraction?: number;
   sandboxScavengerPressure?: number;
+  sandboxScavengerPresence?: number;
+  sandboxScavengerActivity?: TheaterScavengerActivity;
   sandboxEnemyPresence?: number;
   sandboxMigrationAnchorRoomId?: string | null;
+  sandboxHeatValue?: number;
+  sandboxSmokeValue?: number;
+  sandboxBurning?: boolean;
+  sandboxBurnSeverity?: 0 | 1 | 2 | 3;
+  sandboxContainmentMode?: TheaterContainmentMode;
+  sandboxEmergencyDumpTicks?: number;
+  sandboxStructuralStress?: number;
+  sandboxSignalPosture?: TheaterSignalPosture;
+  sandboxSignalBloom?: boolean;
+  sandboxSupplyFireRisk?: boolean;
+  sandboxExtractionEfficiency?: number;
   intelLevel: TheaterIntelLevel;
   fortificationPips: FortificationPips;
   tacticalEncounter: string | null;
@@ -1492,11 +1518,12 @@ export interface SquadBattleTurnState {
 export type SquadBattleSide = "friendly" | "enemy";
 
 export interface SquadBattleObjectiveState {
-  kind: "control_relay" | "breakthrough";
+  kind: "control_relay" | "breakthrough" | "extraction";
   label: string;
   description: string;
   controlTiles: Array<{ x: number; y: number }>;
   breachTiles?: Record<SquadBattleSide, Array<{ x: number; y: number }>>;
+  extractionTiles?: Array<{ x: number; y: number }>;
   targetScore: number;
   score: Record<SquadBattleSide, number>;
   controllingSide: SquadBattleSide | null;

@@ -283,6 +283,22 @@ function createBreakthroughBreachTiles(width: number, height: number): Record<Sq
   };
 }
 
+function createExtractionObjectiveTiles(width: number, height: number): Array<{ x: number; y: number }> {
+  const centerX = Math.floor(width / 2);
+  const centerY = Math.floor(height / 2);
+  const candidates = [
+    { x: centerX, y: centerY },
+    { x: Math.max(1, centerX - 1), y: centerY },
+  ];
+  return candidates.filter((tile, index, list) =>
+    tile.x > 0
+    && tile.x < width - 1
+    && tile.y > 0
+    && tile.y < height - 1
+    && list.findIndex((candidate) => candidate.x === tile.x && candidate.y === tile.y) === index,
+  );
+}
+
 function createSquadObjectiveState(match: SquadMatchState): SquadBattleObjectiveState | null {
   const { gridWidth, gridHeight, winCondition } = match.rules;
   const authoredMap = getTacticalMapById(match.rules.mapId ?? null);
@@ -305,6 +321,25 @@ function createSquadObjectiveState(match: SquadMatchState): SquadBattleObjective
       description: "Cross into the enemy breach lane and extract the scoring unit. First side to two breaches wins.",
       controlTiles: [],
       breachTiles,
+      targetScore: 2,
+      score: {
+        friendly: 0,
+        enemy: 0,
+      },
+      controllingSide: null,
+      winnerSide: null,
+      extractedUnitIds: [],
+    };
+  }
+
+  if (winCondition === "extraction") {
+    const extractionTiles = createExtractionObjectiveTiles(gridWidth, gridHeight);
+    return {
+      kind: "extraction",
+      label: "Extraction",
+      description: "Reach the extraction zone and end your turn there to pull the operator out. First side to two extractions wins.",
+      controlTiles: [],
+      extractionTiles,
       targetScore: 2,
       score: {
         friendly: 0,
@@ -501,6 +536,9 @@ function createArenaTiles(match: SquadMatchState): Tile[] {
           ...createBreakthroughBreachTiles(arenaWidth, arenaHeight).enemy,
         ]
       : []),
+    ...(match.rules.winCondition === "extraction"
+      ? createExtractionObjectiveTiles(arenaWidth, arenaHeight)
+      : []),
   ];
 
   return generateCover(
@@ -580,8 +618,18 @@ export function createSquadBattleState(match: SquadMatchState, gameState: GameSt
         ? "SLK//PLACE :: Friendly units deploy on the left edge. Opposing units deploy on the right edge. Relay nodes anchor the central lane."
         : objective?.kind === "breakthrough"
           ? "SLK//PLACE :: Friendly units deploy on the left edge. Opposing units deploy on the right edge. Breach lanes sit one column in from each far edge."
+          : objective?.kind === "extraction"
+            ? "SLK//PLACE :: Friendly units deploy on the left edge. Opposing units deploy on the right edge. Extraction zones sit toward the middle lane."
           : "SLK//PLACE :: Friendly units deploy on the left edge. Opposing units deploy on the right edge.",
     ],
+    objectiveZones: authoredMap
+      ? undefined
+      : {
+          relay: objective?.kind === "control_relay" ? objective.controlTiles.map((tile) => ({ ...tile })) : [],
+          friendlyBreach: objective?.kind === "breakthrough" ? (objective.breachTiles?.friendly ?? []).map((tile) => ({ ...tile })) : [],
+          enemyBreach: objective?.kind === "breakthrough" ? (objective.breachTiles?.enemy ?? []).map((tile) => ({ ...tile })) : [],
+          extraction: objective?.kind === "extraction" ? (objective.extractionTiles ?? []).map((tile) => ({ ...tile })) : [],
+        },
     placementState: {
       placedUnitIds: [],
       selectedUnitId: friendlyUnitIds[0] ?? null,

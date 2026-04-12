@@ -393,8 +393,15 @@ function attachGlobalUiAudioHooks(): void {
         return;
       }
 
-      void unlockAudio();
-      playPlaceholderSfx(inferUiSound(control));
+      void unlockAudio().then(() => {
+        if (control.matches('input[type="range"]')) {
+          return;
+        }
+        if (control.hasAttribute("disabled") || control.getAttribute("aria-disabled") === "true") {
+          return;
+        }
+        playPlaceholderSfx(inferUiSound(control));
+      });
     },
     true,
   );
@@ -402,14 +409,48 @@ function attachGlobalUiAudioHooks(): void {
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        void unlockAudio();
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
       }
+
+      const key = event.key;
+      if (key.length !== 1 && key !== "Enter" && key !== " ") {
+        return;
+      }
+
+      const target = event.target;
+      const control = target instanceof Element
+        ? target.closest<HTMLElement>('button, [role="button"], [data-action], a[href], summary')
+        : null;
+      if (control?.dataset.audioIgnore === "true") {
+        return;
+      }
+
+      void unlockAudio().then(() => {
+        if (!control || (key !== "Enter" && key !== " ")) {
+          return;
+        }
+        if (control.hasAttribute("disabled") || control.getAttribute("aria-disabled") === "true") {
+          return;
+        }
+        playPlaceholderSfx(inferUiSound(control));
+      });
     },
     true,
   );
 
   globalUiHooksAttached = true;
+}
+
+function scheduleTonePatternPlayback(
+  ctx: AudioContext,
+  destination: GainNode,
+  steps: ToneStep[],
+): void {
+  const now = ctx.currentTime + 0.002;
+  steps.forEach((step) => {
+    scheduleTone(ctx, destination, now + step.at, step, 1);
+  });
 }
 
 function playTonePattern(steps: ToneStep[]): void {
@@ -425,10 +466,19 @@ function playTonePattern(steps: ToneStep[]): void {
     return;
   }
 
-  const now = ctx.currentTime + 0.002;
-  steps.forEach((step) => {
-    scheduleTone(ctx, destination, now + step.at, step, 1);
-  });
+  if (ctx.state !== "running" || !audioUnlocked) {
+    void unlockAudio().then(() => {
+      const resumedCtx = ensureAudioGraph();
+      const resumedDestination = sfxGainNode;
+      if (!resumedCtx || !resumedDestination || resumedCtx.state !== "running") {
+        return;
+      }
+      scheduleTonePatternPlayback(resumedCtx, resumedDestination, steps);
+    });
+    return;
+  }
+
+  scheduleTonePatternPlayback(ctx, destination, steps);
 }
 
 export function initializeAudioSystem(): void {

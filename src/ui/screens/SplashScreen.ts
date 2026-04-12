@@ -5,8 +5,6 @@
 
 import mpSplashVideo from "../../assets/MP_splash.mp4";
 import ardyciaSplashVideo from "../../assets/Ardycia_Splash.mp4";
-import { setMusicCue } from "../../core/audioSystem";
-import { clearControllerContext } from "../../core/controllerSupport";
 import { renderScrollLinkBoot } from "./ScrollLinkBoot";
 
 type SplashClip = {
@@ -23,6 +21,37 @@ const SPLASH_SEQUENCE: SplashClip[] = [
 let activeSplashTimeout: number | null = null;
 let splashInputCleanup: (() => void) | null = null;
 let splashSequenceExiting = false;
+
+function syncSplashAudioCue(): void {
+  void import("../../core/audioSystem")
+    .then(({ setMusicCue }) => {
+      setMusicCue("splash");
+    })
+    .catch((error) => {
+      console.warn("[SPLASH] Failed to set splash music cue:", error);
+    });
+}
+
+function clearSplashControllerContext(): void {
+  void import("../../core/controllerSupport")
+    .then(({ clearControllerContext }) => {
+      clearControllerContext();
+    })
+    .catch((error) => {
+      console.warn("[SPLASH] Failed to clear controller context:", error);
+    });
+}
+
+function transitionToScrollLinkBoot(): void {
+  if (splashSequenceExiting) {
+    return;
+  }
+
+  splashSequenceExiting = true;
+  clearSplashTimeout();
+  clearSplashInputHandlers();
+  renderScrollLinkBoot();
+}
 
 function clearSplashTimeout(): void {
   if (activeSplashTimeout !== null) {
@@ -46,13 +75,7 @@ function isGamepadButtonPressed(button: GamepadButton | undefined): boolean {
 }
 
 function completeSplashSequence(): void {
-  if (splashSequenceExiting) {
-    return;
-  }
-  splashSequenceExiting = true;
-  clearSplashTimeout();
-  clearSplashInputHandlers();
-  renderScrollLinkBoot();
+  transitionToScrollLinkBoot();
 }
 
 function attachSplashSkipInputs(skipSequence: () => void): void {
@@ -131,11 +154,11 @@ function renderSplashClip(index: number): void {
     return;
   }
   document.body.setAttribute("data-screen", "splash");
-  clearControllerContext();
+  clearSplashControllerContext();
 
   const clip = SPLASH_SEQUENCE[index];
   if (!clip) {
-    renderScrollLinkBoot();
+    transitionToScrollLinkBoot();
     return;
   }
 
@@ -198,7 +221,7 @@ function renderSplashClip(index: number): void {
 
 export function renderSplashScreen(): void {
   splashSequenceExiting = false;
-  setMusicCue("splash");
+  syncSplashAudioCue();
   clearSplashTimeout();
   clearSplashInputHandlers();
   renderSplashClip(0);

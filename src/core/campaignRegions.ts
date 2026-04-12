@@ -1,0 +1,524 @@
+export const CAMPAIGN_REGION_FLOOR_COUNT = 3;
+export const CAMPAIGN_REGION_COUNT = 4;
+export const MAX_CAMPAIGN_FLOOR_ORDINAL = CAMPAIGN_REGION_FLOOR_COUNT * CAMPAIGN_REGION_COUNT;
+
+export type CampaignRegionId = "industrial" | "overgrowth" | "flooded" | "chaos";
+export type CampaignFloorVariantId = "teach" | "remix" | "pressure";
+
+export type CampaignRegionThemeTokens = {
+  rootGlow: string;
+  rootTop: string;
+  rootBottom: string;
+  surfaceGlow: string;
+  surfaceTop: string;
+  surfaceBottom: string;
+  accent: string;
+  accentSoft: string;
+  accentStrong: string;
+  panelBorder: string;
+  panelTop: string;
+  panelBottom: string;
+  bannerTop: string;
+  bannerBottom: string;
+  bannerBorder: string;
+  textStrong: string;
+  textMuted: string;
+};
+
+export type CampaignRegionStartStatusType = "dazed" | "guarded" | "suppressed" | "vulnerable";
+
+export type CampaignRegionStartStatusConfig = {
+  type: CampaignRegionStartStatusType;
+  duration: number;
+  label: string;
+};
+
+export type CampaignRegionBattleModifier = {
+  heatOnMiss: 0 | 1 | 2;
+  heatOnAttack: 0 | 1 | 2;
+  combatInstability: boolean;
+  overheatSeverity: 0 | 1 | 2;
+  obscurationSeverity: 0 | 1 | 2;
+  obscurationSuppressesRanged: boolean;
+  scrambleEnemyIntel: boolean;
+  intelScrambleLabel?: string;
+  allyStartStatus?: CampaignRegionStartStatusConfig | null;
+  enemyStartStatus?: CampaignRegionStartStatusConfig | null;
+};
+
+export type CampaignRegionFloorConfig = {
+  floorInRegion: 1 | 2 | 3;
+  variantId: CampaignFloorVariantId;
+  variantLabel: string;
+  ruleSummary: string;
+  passiveEffectText: string;
+  threatLevel: string;
+  battleModifier: CampaignRegionBattleModifier;
+};
+
+export type CampaignRegionConfig = {
+  regionId: CampaignRegionId;
+  displayName: string;
+  status: "slice" | "stub";
+  theme: CampaignRegionThemeTokens;
+  factionTag: string;
+  mechanicLabel: string;
+  rewardPreview: string[];
+  zonePrefixes: string[];
+  zoneSuffixes: string[];
+  floors: Record<1 | 2 | 3, CampaignRegionFloorConfig>;
+};
+
+export type ResolvedCampaignRegionPresentation = CampaignRegionFloorConfig & {
+  floorOrdinal: number;
+  floorInRegion: 1 | 2 | 3;
+  regionIndex: number;
+  regionId: CampaignRegionId;
+  regionName: string;
+  factionTag: string;
+  mechanicLabel: string;
+  rewardPreview: string[];
+  theme: CampaignRegionThemeTokens;
+  status: "slice" | "stub";
+};
+
+const CAMPAIGN_REGION_ORDER: CampaignRegionId[] = ["industrial", "overgrowth", "flooded", "chaos"];
+const CAMPAIGN_VARIANT_ORDER: CampaignFloorVariantId[] = ["teach", "remix", "pressure"];
+
+const INDUSTRIAL_REGION: CampaignRegionConfig = {
+  regionId: "industrial",
+  displayName: "Industrial",
+  status: "slice",
+  theme: {
+    rootGlow: "rgba(187, 102, 46, 0.2)",
+    rootTop: "rgba(28, 14, 10, 0.98)",
+    rootBottom: "rgba(14, 9, 7, 1)",
+    surfaceGlow: "rgba(201, 107, 49, 0.18)",
+    surfaceTop: "rgba(31, 17, 12, 0.98)",
+    surfaceBottom: "rgba(15, 10, 8, 1)",
+    accent: "#d77d3d",
+    accentSoft: "rgba(215, 125, 61, 0.18)",
+    accentStrong: "#ffb46c",
+    panelBorder: "rgba(197, 109, 58, 0.52)",
+    panelTop: "rgba(87, 45, 26, 0.95)",
+    panelBottom: "rgba(44, 24, 18, 0.92)",
+    bannerTop: "rgba(103, 46, 24, 0.94)",
+    bannerBottom: "rgba(49, 23, 15, 0.94)",
+    bannerBorder: "rgba(255, 157, 92, 0.44)",
+    textStrong: "#fff0db",
+    textMuted: "#caa27c",
+  },
+  factionTag: "Foundry Syndicate",
+  mechanicLabel: "Furnace Pressure",
+  rewardPreview: ["Scrap Alloy", "Pressure Valves", "Furnace Cores", "Machine Seals"],
+  zonePrefixes: ["Boiler", "Cinder", "Forge", "Piston", "Rivet", "Slag", "Smelter", "Valve"],
+  zoneSuffixes: ["Annex", "Line", "Rail", "Relay", "Spine", "Stack", "Works", "Yard"],
+  floors: {
+    1: {
+      floorInRegion: 1,
+      variantId: "teach",
+      variantLabel: "Teach Variant",
+      ruleSummary: "Furnace Pressure: missed mechanical attacks add +1 heat.",
+      passiveEffectText: "Region Rule // Teach: furnace pressure punishes missed mechanical attacks with +1 heat.",
+      threatLevel: "Warm Start",
+      battleModifier: {
+        heatOnMiss: 1,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 1,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    2: {
+      floorInRegion: 2,
+      variantId: "remix",
+      variantLabel: "Remix Variant",
+      ruleSummary: "Furnace Pressure: every mechanical attack adds +1 heat.",
+      passiveEffectText: "Region Rule // Remix: furnace pressure now taxes every mechanical attack with +1 heat.",
+      threatLevel: "Pressurized",
+      battleModifier: {
+        heatOnMiss: 1,
+        heatOnAttack: 1,
+        combatInstability: true,
+        overheatSeverity: 1,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    3: {
+      floorInRegion: 3,
+      variantId: "pressure",
+      variantLabel: "Pressure Variant",
+      ruleSummary: "Furnace Pressure: every mechanical attack adds +2 heat.",
+      passiveEffectText: "Region Rule // Pressure: furnace pressure surges and every mechanical attack adds +2 heat.",
+      threatLevel: "Critical Pressure",
+      battleModifier: {
+        heatOnMiss: 2,
+        heatOnAttack: 2,
+        combatInstability: true,
+        overheatSeverity: 2,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+  },
+};
+
+const OVERGROWTH_REGION: CampaignRegionConfig = {
+  regionId: "overgrowth",
+  displayName: "Overgrowth",
+  status: "slice",
+  theme: {
+    rootGlow: "rgba(66, 132, 78, 0.18)",
+    rootTop: "rgba(10, 24, 12, 0.98)",
+    rootBottom: "rgba(7, 16, 10, 1)",
+    surfaceGlow: "rgba(86, 164, 103, 0.14)",
+    surfaceTop: "rgba(13, 28, 16, 0.98)",
+    surfaceBottom: "rgba(8, 18, 12, 1)",
+    accent: "#71b97f",
+    accentSoft: "rgba(113, 185, 127, 0.18)",
+    accentStrong: "#b1e0a8",
+    panelBorder: "rgba(95, 169, 110, 0.48)",
+    panelTop: "rgba(28, 55, 34, 0.95)",
+    panelBottom: "rgba(16, 33, 20, 0.92)",
+    bannerTop: "rgba(36, 70, 42, 0.94)",
+    bannerBottom: "rgba(17, 35, 22, 0.94)",
+    bannerBorder: "rgba(150, 214, 129, 0.38)",
+    textStrong: "#eef7ea",
+    textMuted: "#a6c49f",
+  },
+  factionTag: "Canopy Host",
+  mechanicLabel: "Tangle Growth",
+  rewardPreview: ["Spore Resin", "Root Fiber", "Bloom Glands", "Canopy Nectar"],
+  zonePrefixes: ["Bramble", "Canopy", "Moss", "Root", "Spore", "Vine"],
+  zoneSuffixes: ["Bloom", "Hollow", "Nest", "Run", "Sprawl", "Thicket"],
+  floors: {
+    1: {
+      floorInRegion: 1,
+      variantId: "teach",
+      variantLabel: "Teach Variant",
+      ruleSummary: "Tangle Growth: creeping roots reduce movement by 1.",
+      passiveEffectText: "Region Rule // Teach: creeping roots constrict every route and reduce movement by 1.",
+      threatLevel: "Encroaching",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 1,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    2: {
+      floorInRegion: 2,
+      variantId: "remix",
+      variantLabel: "Remix Variant",
+      ruleSummary: "Tangle Growth: movement is reduced by 1 and ranged fire starts suppressed.",
+      passiveEffectText: "Region Rule // Remix: root-lanes still reduce movement by 1, and spore cover suppresses ranged fire on deployment.",
+      threatLevel: "Entangled",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 1,
+        obscurationSuppressesRanged: true,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    3: {
+      floorInRegion: 3,
+      variantId: "pressure",
+      variantLabel: "Pressure Variant",
+      ruleSummary: "Tangle Growth: movement is reduced by 2 and ranged fire starts suppressed.",
+      passiveEffectText: "Region Rule // Pressure: the canopy surges, movement drops by 2, and every squad enters under spore suppression.",
+      threatLevel: "Overrun",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 2,
+        obscurationSuppressesRanged: true,
+        scrambleEnemyIntel: false,
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+  },
+};
+
+const FLOODED_REGION: CampaignRegionConfig = {
+  regionId: "flooded",
+  displayName: "Flooded",
+  status: "slice",
+  theme: {
+    rootGlow: "rgba(44, 118, 148, 0.16)",
+    rootTop: "rgba(8, 18, 29, 0.98)",
+    rootBottom: "rgba(6, 12, 20, 1)",
+    surfaceGlow: "rgba(68, 150, 183, 0.12)",
+    surfaceTop: "rgba(11, 23, 36, 0.98)",
+    surfaceBottom: "rgba(7, 14, 24, 1)",
+    accent: "#64abc3",
+    accentSoft: "rgba(100, 171, 195, 0.18)",
+    accentStrong: "#a9d8ea",
+    panelBorder: "rgba(86, 154, 178, 0.48)",
+    panelTop: "rgba(21, 49, 67, 0.95)",
+    panelBottom: "rgba(13, 28, 38, 0.92)",
+    bannerTop: "rgba(23, 60, 79, 0.94)",
+    bannerBottom: "rgba(11, 29, 38, 0.94)",
+    bannerBorder: "rgba(119, 193, 214, 0.38)",
+    textStrong: "#eef8fb",
+    textMuted: "#a8c2cf",
+  },
+  factionTag: "Drowned Relay",
+  mechanicLabel: "Rising Flow",
+  rewardPreview: ["Flood Glass", "Tide Cells", "Sealant Mesh", "Silt Capacitors"],
+  zonePrefixes: ["Abyss", "Channel", "Drain", "Harbor", "Leak", "Tide"],
+  zoneSuffixes: ["Basin", "Gate", "Lock", "Pool", "Reach", "Vault"],
+  floors: {
+    1: {
+      floorInRegion: 1,
+      variantId: "teach",
+      variantLabel: "Teach Variant",
+      ruleSummary: "Rising Flow: squads enter battle dazed for 1 round.",
+      passiveEffectText: "Region Rule // Teach: flood-surge footing throws squad aim off and every unit enters dazed for 1 round.",
+      threatLevel: "Undertow",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: false,
+        allyStartStatus: {
+          type: "dazed",
+          duration: 1,
+          label: "Rising Flow",
+        },
+        enemyStartStatus: null,
+      },
+    },
+    2: {
+      floorInRegion: 2,
+      variantId: "remix",
+      variantLabel: "Remix Variant",
+      ruleSummary: "Rising Flow: squads enter dazed and drowned relay static scrambles hostile telemetry.",
+      passiveEffectText: "Region Rule // Remix: squads still enter dazed, and drowned relay chatter blanks the hostile telemetry feed.",
+      threatLevel: "Crosscurrent",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: true,
+        intelScrambleLabel: "Drowned Relay Static",
+        allyStartStatus: {
+          type: "dazed",
+          duration: 1,
+          label: "Rising Flow",
+        },
+        enemyStartStatus: null,
+      },
+    },
+    3: {
+      floorInRegion: 3,
+      variantId: "pressure",
+      variantLabel: "Pressure Variant",
+      ruleSummary: "Rising Flow: squads enter dazed, enemies start guarded, and hostile telemetry is scrambled.",
+      passiveEffectText: "Region Rule // Pressure: flood channels stagger the squad, drowned cover hardens hostiles, and the relay feed is fully scrambled.",
+      threatLevel: "Maelstrom",
+      battleModifier: {
+        heatOnMiss: 0,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 0,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: true,
+        intelScrambleLabel: "Drowned Relay Static",
+        allyStartStatus: {
+          type: "dazed",
+          duration: 1,
+          label: "Rising Flow",
+        },
+        enemyStartStatus: {
+          type: "guarded",
+          duration: 1,
+          label: "Flood Cover",
+        },
+      },
+    },
+  },
+};
+
+const CHAOS_REGION: CampaignRegionConfig = {
+  regionId: "chaos",
+  displayName: "Chaos",
+  status: "slice",
+  theme: {
+    rootGlow: "rgba(143, 61, 48, 0.18)",
+    rootTop: "rgba(24, 8, 12, 0.98)",
+    rootBottom: "rgba(12, 5, 8, 1)",
+    surfaceGlow: "rgba(154, 72, 62, 0.14)",
+    surfaceTop: "rgba(29, 9, 15, 0.98)",
+    surfaceBottom: "rgba(14, 6, 10, 1)",
+    accent: "#d06e60",
+    accentSoft: "rgba(208, 110, 96, 0.18)",
+    accentStrong: "#f0a396",
+    panelBorder: "rgba(176, 87, 77, 0.48)",
+    panelTop: "rgba(71, 24, 25, 0.95)",
+    panelBottom: "rgba(34, 13, 16, 0.92)",
+    bannerTop: "rgba(82, 26, 28, 0.94)",
+    bannerBottom: "rgba(34, 11, 15, 0.94)",
+    bannerBorder: "rgba(225, 119, 104, 0.38)",
+    textStrong: "#fff0ee",
+    textMuted: "#d0aaa6",
+  },
+  factionTag: "Entropy Choir",
+  mechanicLabel: "Chaos Bloom",
+  rewardPreview: ["Entropy Resin", "Redglass", "Null Sigils", "Bloom Shards"],
+  zonePrefixes: ["Ash", "Fracture", "Null", "Rift", "Ruin", "Veil"],
+  zoneSuffixes: ["Breach", "Cage", "Chamber", "Fold", "Spire", "Wake"],
+  floors: {
+    1: {
+      floorInRegion: 1,
+      variantId: "teach",
+      variantLabel: "Teach Variant",
+      ruleSummary: "Chaos Bloom: hostile telemetry is scrambled and missed mechanical attacks add +1 heat.",
+      passiveEffectText: "Region Rule // Teach: entropy static blanks telemetry, and missed mechanical attacks bleed +1 heat.",
+      threatLevel: "Distorted",
+      battleModifier: {
+        heatOnMiss: 1,
+        heatOnAttack: 0,
+        combatInstability: false,
+        overheatSeverity: 1,
+        obscurationSeverity: 0,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: true,
+        intelScrambleLabel: "Entropy Static",
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    2: {
+      floorInRegion: 2,
+      variantId: "remix",
+      variantLabel: "Remix Variant",
+      ruleSummary: "Chaos Bloom: telemetry is scrambled, movement is reduced by 1, and every mechanical attack adds +1 heat.",
+      passiveEffectText: "Region Rule // Remix: entropy static persists, bloom distortion drags movement by 1, and every mechanical attack adds +1 heat.",
+      threatLevel: "Ruptured",
+      battleModifier: {
+        heatOnMiss: 1,
+        heatOnAttack: 1,
+        combatInstability: true,
+        overheatSeverity: 1,
+        obscurationSeverity: 1,
+        obscurationSuppressesRanged: false,
+        scrambleEnemyIntel: true,
+        intelScrambleLabel: "Entropy Static",
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+    3: {
+      floorInRegion: 3,
+      variantId: "pressure",
+      variantLabel: "Pressure Variant",
+      ruleSummary: "Chaos Bloom: telemetry is scrambled, movement is reduced by 1, ranged fire starts suppressed, and every mechanical attack adds +2 heat.",
+      passiveEffectText: "Region Rule // Pressure: chaos bloom scrambles telemetry, crushes routes under distortion, suppresses ranged fire, and drives every mechanical attack to +2 heat.",
+      threatLevel: "Cataclysmic",
+      battleModifier: {
+        heatOnMiss: 2,
+        heatOnAttack: 2,
+        combatInstability: true,
+        overheatSeverity: 2,
+        obscurationSeverity: 1,
+        obscurationSuppressesRanged: true,
+        scrambleEnemyIntel: true,
+        intelScrambleLabel: "Entropy Static",
+        allyStartStatus: null,
+        enemyStartStatus: null,
+      },
+    },
+  },
+};
+
+export const CAMPAIGN_REGION_CONFIGS: Record<CampaignRegionId, CampaignRegionConfig> = {
+  industrial: INDUSTRIAL_REGION,
+  overgrowth: OVERGROWTH_REGION,
+  flooded: FLOODED_REGION,
+  chaos: CHAOS_REGION,
+};
+
+export function clampCampaignFloorOrdinal(floorOrdinal: number): number {
+  const numericFloor = Math.max(1, Math.floor(floorOrdinal || 1));
+  return Math.min(MAX_CAMPAIGN_FLOOR_ORDINAL, numericFloor);
+}
+
+export function getRegionForFloor(floorOrdinal: number): CampaignRegionId {
+  const clampedFloor = clampCampaignFloorOrdinal(floorOrdinal);
+  const regionIndex = Math.floor((clampedFloor - 1) / CAMPAIGN_REGION_FLOOR_COUNT);
+  return CAMPAIGN_REGION_ORDER[regionIndex] ?? "industrial";
+}
+
+export function getFloorRegionVariant(floorOrdinal: number): CampaignFloorVariantId {
+  const clampedFloor = clampCampaignFloorOrdinal(floorOrdinal);
+  const floorInRegion = ((clampedFloor - 1) % CAMPAIGN_REGION_FLOOR_COUNT);
+  return CAMPAIGN_VARIANT_ORDER[floorInRegion] ?? "teach";
+}
+
+export function getCampaignRegionConfig(regionId: CampaignRegionId): CampaignRegionConfig {
+  return CAMPAIGN_REGION_CONFIGS[regionId] ?? INDUSTRIAL_REGION;
+}
+
+export function getActiveRegionPresentation(floorOrdinal: number): ResolvedCampaignRegionPresentation {
+  const clampedFloor = clampCampaignFloorOrdinal(floorOrdinal);
+  const regionId = getRegionForFloor(clampedFloor);
+  const regionConfig = getCampaignRegionConfig(regionId);
+  const floorInRegion = (((clampedFloor - 1) % CAMPAIGN_REGION_FLOOR_COUNT) + 1) as 1 | 2 | 3;
+  const floorConfig = regionConfig.floors[floorInRegion];
+
+  return {
+    ...floorConfig,
+    floorOrdinal: clampedFloor,
+    floorInRegion,
+    regionIndex: Math.floor((clampedFloor - 1) / CAMPAIGN_REGION_FLOOR_COUNT) + 1,
+    regionId,
+    regionName: regionConfig.displayName,
+    factionTag: regionConfig.factionTag,
+    mechanicLabel: regionConfig.mechanicLabel,
+    rewardPreview: [...regionConfig.rewardPreview],
+    theme: regionConfig.theme,
+    status: regionConfig.status,
+  };
+}
+
+export function buildCampaignRegionZoneName(
+  floorOrdinal: number,
+  pick: <T>(items: T[]) => T,
+): string {
+  const presentation = getActiveRegionPresentation(floorOrdinal);
+  const regionConfig = getCampaignRegionConfig(presentation.regionId);
+  const prefix = pick(regionConfig.zonePrefixes) ?? regionConfig.zonePrefixes[0] ?? "Sector";
+  const suffix = pick(regionConfig.zoneSuffixes) ?? regionConfig.zoneSuffixes[0] ?? "Works";
+  return `${prefix} ${suffix}`.toUpperCase();
+}

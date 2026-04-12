@@ -40,6 +40,7 @@ import {
   confirmPlacement,
   removePlacedUnit as unplaceBattleUnit,
   setPlacementSelectedUnit as selectBattlePlacementUnit,
+  getBattleUnitEquippedWeaponId,
   getEquippedWeapon,
   getMovePath,
   getReachableMovementTiles,
@@ -69,6 +70,7 @@ import {
 } from "../../core/controllerSupport";
 import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampReturn";
 import { showSystemPing } from "../components/systemPing";
+import { showTutorialCalloutSequence } from "../components/tutorialCallout";
 import { playPlaceholderSfx, setMusicCue } from "../../core/audioSystem";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { createEmptyResourceWallet } from "../../core/resources";
@@ -264,6 +266,37 @@ function getSquadObjectiveStatusLabel(battle: BattleState): string {
   const objective = getSquadObjective(battle);
   if (!objective) {
     return "";
+  }
+  if (objective.kind === "extraction") {
+    if (objective.winnerSide === "friendly") {
+      return "HOST EXTRACTION COMPLETE";
+    }
+    if (objective.winnerSide === "enemy") {
+      return "OPPOSITION EXTRACTION COMPLETE";
+    }
+    if (objective.controllingSide === "friendly") {
+      return "HOST EXTRACTION REGISTERED";
+    }
+    if (objective.controllingSide === "enemy") {
+      return "OPPOSITION EXTRACTION REGISTERED";
+    }
+    const extractionTiles = objective.extractionTiles ?? battle.objectiveZones?.extraction ?? [];
+    const anyFriendlyOnExtraction = Object.values(battle.units).some((unit) =>
+      !unit.isEnemy
+      && unit.hp > 0
+      && unit.pos
+      && extractionTiles.some((tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y),
+    );
+    const anyEnemyOnExtraction = Object.values(battle.units).some((unit) =>
+      unit.isEnemy
+      && unit.hp > 0
+      && unit.pos
+      && extractionTiles.some((tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y),
+    );
+    if (anyFriendlyOnExtraction || anyEnemyOnExtraction) {
+      return "EXTRACTION WINDOW CONTESTED";
+    }
+    return "EXTRACTION WINDOW OPEN";
   }
   if (objective.kind === "breakthrough") {
     if (objective.winnerSide === "friendly") {
@@ -869,7 +902,7 @@ const CARD_DATABASE: Record<string, Card> = {
   "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
   "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 3, range: 0, description: "Attack enemy that enters range." },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
-  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 1." },
+  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 2." },
 
   // ELM RECURVE BOW (Range 3-6)
   "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
@@ -1020,21 +1053,57 @@ function fallbackGetCardById(id: string): Card {
 
 function renderWeaponWindow(unit: BattleUnitState | undefined): string {
   try {
-    if (!unit || !unit.equippedWeaponId) {
+    if (!unit) {
       return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
     }
+    const resolvedWeaponId = getBattleUnitEquippedWeaponId(unit);
     const state = getGameState();
     const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
     const weapon = getEquippedWeapon(unit, equipmentById);
 
     if (!weapon) {
-      return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`;
+      return resolvedWeaponId
+        ? `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`
+        : `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
     }
     const combatInstability = Boolean(localBattleState?.theaterBonuses?.combatInstability);
     const overheatSeverity = localBattleState?.theaterBonuses?.overheatSeverity ?? 0;
+    const obscurationActive = Boolean(
+      localBattleState?.theaterBonuses?.obscurationActive
+      ?? localBattleState?.theaterBonuses?.smokeObscured,
+    );
+    const obscurationSeverity = localBattleState?.theaterBonuses?.obscurationSeverity
+      ?? localBattleState?.theaterBonuses?.smokeSeverity
+      ?? 0;
+    const obscurationLabel = localBattleState?.theaterBonuses?.obscurationLabel ?? "Smoke Obscuration";
+    const obscurationSuppressesRanged = Boolean(
+      localBattleState?.theaterBonuses?.obscurationSuppressesRanged
+      ?? localBattleState?.theaterBonuses?.smokeObscured,
+    );
+    const enemyIntelScrambled = Boolean(localBattleState?.theaterBonuses?.enemyIntelScrambled);
+    const enemyIntelScrambleLabel = localBattleState?.theaterBonuses?.enemyIntelScrambleLabel ?? "Telemetry Static";
+    const burningRoom = Boolean(localBattleState?.theaterBonuses?.burningRoom);
+    const burnSeverity = localBattleState?.theaterBonuses?.burnSeverity ?? 0;
+    const supplyFireRisk = Boolean(localBattleState?.theaterBonuses?.supplyFireRisk);
     const instabilityWarning = combatInstability ? `
       Combat Instability Active // Room Overheat L${overheatSeverity > 0 ? overheatSeverity : 1} // Heat Accelerated
     ` : null;
+    const obscurationWarning = obscurationActive ? `
+      ${obscurationLabel} Active // Move -${Math.max(1, obscurationSeverity)}${obscurationSuppressesRanged ? " // Ranged Fire Suppressed" : ""}
+    ` : null;
+    const intelWarning = enemyIntelScrambled ? `
+      ${enemyIntelScrambleLabel} Active // Enemy Telemetry Scrambled
+    ` : null;
+    const riskWarning = supplyFireRisk ? `
+      Volatile Supply Load // Fire Risk Elevated
+    ` : null;
+    const fireWarning = burningRoom ? `
+      Room Fire Active // Ambient Thermal Damage Each Turn${burnSeverity >= 2 ? " // Ignition Pressure Rising" : ""}
+    ` : null;
+    const combinedWarning = [instabilityWarning, obscurationWarning, intelWarning, riskWarning, fireWarning]
+      .map((warning) => warning?.replace(/\s+/g, " ").trim() ?? "")
+      .filter(Boolean)
+      .join(" // ");
 
     const selectedCard =
       selectedCardIndex !== null && unit.hand[selectedCardIndex]
@@ -1068,7 +1137,7 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
         doubleClutchActive: false,
       },
       {
-        instabilityWarning,
+        instabilityWarning: combinedWarning || null,
         cardDisabledHint: selectedCardHint ? `SELECTED CARD LOCKED // ${selectedCardHint.toUpperCase()}` : null,
       },
     );
@@ -3178,7 +3247,7 @@ function renderBattleEnemyIntelNode(battle: BattleState): string {
             </div>
             <div class="battle-intel-card__meta">
               <span>${formatBattlePosition(unit)}</span>
-              <span>${formatBattleEquipmentName(unit.loadout?.primaryWeapon ?? (unit.loadout as any)?.weapon ?? unit.equippedWeaponId ?? null, ((getGameState() as any).equipmentById || getAllStarterEquipment()) as Record<string, any>)}</span>
+              <span>${formatBattleEquipmentName(getBattleUnitEquippedWeaponId(unit), ((getGameState() as any).equipmentById || getAllStarterEquipment()) as Record<string, any>)}</span>
             </div>
           </article>
         `).join("")}
@@ -4453,7 +4522,35 @@ function didCardResolve(previousState: BattleState, nextState: BattleState, unit
   return didHandChange || nextUnit.strain !== previousUnit.strain || nextState.activeUnitId !== previousState.activeUnitId;
 }
 
-function updateTurnStateAfterCardPlay(previousState: BattleState, nextState: BattleState, unitId: string): boolean {
+function normalizeBattleCardToken(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isMovementBoostCard(card: Card | null | undefined): boolean {
+  if (!card) {
+    return false;
+  }
+
+  const normalizedId = normalizeBattleCardToken(card.id);
+  const normalizedName = normalizeBattleCardToken(card.name);
+  if (normalizedId === "core_move_plus" || normalizedName === "move") {
+    return true;
+  }
+
+  return card.target === "self"
+    && (card.effects || []).some((effect: any) => effect.type === "move" && Number(effect.tiles ?? effect.amount ?? 0) > 0);
+}
+
+function updateTurnStateAfterCardPlay(
+  previousState: BattleState,
+  nextState: BattleState,
+  unitId: string,
+  playedCard?: Card | null,
+): boolean {
   if (!didCardResolve(previousState, nextState, unitId)) {
     return false;
   }
@@ -4462,8 +4559,19 @@ function updateTurnStateAfterCardPlay(previousState: BattleState, nextState: Bat
     const nextUnit = nextState.units[nextState.activeUnitId] ?? null;
     resetTurnStateForUnit(nextUnit, nextState);
   } else {
-    turnState.hasActed = true;
-    turnState.movementOnlyAfterAttack = Boolean(nextState.units[unitId]?.weaponState?.allowMoveAfterAttack);
+    const nextUnit = nextState.units[unitId] ?? null;
+    if (nextUnit && isMovementBoostCard(playedCard) && nextUnit.pos) {
+      const origin = turnState.originalPosition ?? nextUnit.pos;
+      const totalCost = getDistance(origin.x, origin.y, nextUnit.pos.x, nextUnit.pos.y);
+      turnState.hasActed = true;
+      turnState.movementOnlyAfterAttack = true;
+      turnState.hasCommittedMove = false;
+      turnState.hasMoved = totalCost > 0;
+      turnState.movementRemaining = Math.max(0, getUnitMovementRange(nextUnit, nextState) - totalCost);
+    } else {
+      turnState.hasActed = true;
+      turnState.movementOnlyAfterAttack = Boolean(nextState.units[unitId]?.weaponState?.allowMoveAfterAttack);
+    }
   }
 
   return true;
@@ -4519,7 +4627,7 @@ function executeLocalBattleCardPlay(
     const playedCard = freshActiveUnit.hand[cardIndex] ? resolveCard(freshActiveUnit.hand[cardIndex]) : null;
     const shouldAnimateAttack = shouldUseAttackBumpAnimation(freshActiveUnit, targetUnit, playedCard);
     let nextState = playCardFromScreen(stateWithFacing, freshActiveUnit.id, cardIndex, targetUnitId);
-    updateTurnStateAfterCardPlay(stateWithFacing, nextState, freshActiveUnit.id);
+    updateTurnStateAfterCardPlay(stateWithFacing, nextState, freshActiveUnit.id, playedCard);
     selectedCardIndex = null;
     nextState = evaluateBattleOutcome(nextState);
 
@@ -5084,7 +5192,7 @@ function applyRemoteBattleCommandToCurrentBattle(
     }
 
     let nextState = playCardFromScreen(stateWithFacing, activeUnit.id, command.cardIndex, command.targetUnitId);
-    updateTurnStateAfterCardPlay(stateWithFacing, nextState, activeUnit.id);
+    updateTurnStateAfterCardPlay(stateWithFacing, nextState, activeUnit.id, card);
     selectedCardIndex = null;
     nextState = evaluateBattleOutcome(nextState);
 
@@ -5258,6 +5366,11 @@ export function renderBattleScreen() {
     : echoContext
       ? "ABANDON ECHO"
       : "EXIT BATTLE";
+  const showDebugAutoWinButton = !isPlacementPhase
+    && battle.phase !== "victory"
+    && battle.phase !== "defeat"
+    && !isSquadBattle(battle)
+    && !isCoopOperationsBattle(battle);
 
   app.innerHTML = `
     <div class="battle-root battle-root--${phase}">
@@ -5292,6 +5405,7 @@ export function renderBattleScreen() {
             ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
           </button>
           <div class="battle-header-actions">
+            ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
             <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
           </div>
         </div>
@@ -5309,6 +5423,30 @@ export function renderBattleScreen() {
       ${renderBattleExitConfirmModal(battle)}
     </div>
   `;
+
+  if (phase === "placement") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_battle_placement",
+        title: "Deployment Phase",
+        message: "Place your squad before the first live turn starts.",
+        detail: "Use the highlighted placement tiles to set your opener, then confirm deployment to hand initiative over to the battle loop.",
+        channel: "tutorial-battle-placement",
+      },
+    ]);
+  }
+
+  if (phase !== "victory" && phase !== "defeat") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_battle_cards_strain",
+        title: "Cards And Strain",
+        message: "Cards define your unit actions, while strain is the pressure system that keeps turns from spiraling forever.",
+        detail: "Play the hand you need, then watch each unit's strain meter. Pushing beyond the safe threshold is possible, but it carries risk.",
+        channel: "tutorial-battle-cards",
+      },
+    ]);
+  }
 
   // CRITICAL: Restore animation container if it was preserved
   if (preservedAnimationContainer && preservedGridContainer) {
@@ -5881,16 +6019,49 @@ function renderPlacementUI(battle: BattleState): string {
         && placementCounts.enemy > 0
       : placedCount > 0;
   const theaterBonuses = battle.theaterBonuses;
+  const obscurationActive = Boolean(theaterBonuses?.obscurationActive ?? theaterBonuses?.smokeObscured);
+  const obscurationSeverity = theaterBonuses?.obscurationSeverity
+    ?? theaterBonuses?.smokeSeverity
+    ?? 0;
+  const obscurationLabel = (theaterBonuses?.obscurationLabel ?? "Smoke Obscuration").toUpperCase();
+  const obscurationSuppressesRanged = Boolean(
+    theaterBonuses?.obscurationSuppressesRanged
+    ?? theaterBonuses?.smokeObscured,
+  );
+  const enemyIntelScrambled = Boolean(theaterBonuses?.enemyIntelScrambled);
+  const enemyIntelScrambleLabel = (theaterBonuses?.enemyIntelScrambleLabel ?? "Telemetry Static").toUpperCase();
+  const allyStartStatusType = theaterBonuses?.allyStartStatusType?.toUpperCase() ?? null;
+  const allyStartStatusDuration = theaterBonuses?.allyStartStatusDuration ?? 0;
+  const allyStartStatusLabel = (theaterBonuses?.allyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "DEPLOYMENT").toUpperCase();
+  const enemyStartStatusType = theaterBonuses?.enemyStartStatusType?.toUpperCase() ?? null;
+  const enemyStartStatusDuration = theaterBonuses?.enemyStartStatusDuration ?? 0;
+  const enemyStartStatusLabel = (theaterBonuses?.enemyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "HOSTILES").toUpperCase();
   const theaterBonusBlock = theaterBonuses
     ? `
         <div class="placement-theater-briefing">
           <div class="placement-theater-briefing__title">SQUAD BRIEFING // ${(theaterBonuses.squadDisplayName ?? theaterBonuses.squadId.toUpperCase()).toUpperCase()}</div>
+          ${theaterBonuses.regionName ? `<div class="placement-theater-briefing__row">
+            <span>Region Active</span>
+            <strong>${theaterBonuses.regionName.toUpperCase()} // ${(theaterBonuses.regionVariantLabel ?? "ACTIVE").toUpperCase()}</strong>
+          </div>` : ""}
+          ${theaterBonuses.factionTag ? `<div class="placement-theater-briefing__row">
+            <span>Faction</span>
+            <strong>${theaterBonuses.factionTag.toUpperCase()}</strong>
+          </div>` : ""}
           <div class="placement-theater-briefing__row">
             <span>Hostiles</span>
-            <strong>${theaterBonuses.enemyPreview.length > 0 ? theaterBonuses.enemyPreview.join(", ") : "Telemetry unavailable"}</strong>
+            <strong>${theaterBonuses.enemyPreview.length > 0 ? theaterBonuses.enemyPreview.join(", ") : enemyIntelScrambled ? "Telemetry scrambled" : "Telemetry unavailable"}</strong>
           </div>
+          ${theaterBonuses.regionRuleSummary ? `<div class="placement-theater-briefing__note placement-theater-briefing__note--region">${(theaterBonuses.regionMechanicLabel ?? "REGION RULE").toUpperCase()} // ${theaterBonuses.regionRuleSummary}</div>` : ""}
           ${theaterBonuses.detailedEnemyIntel ? `<div class="placement-theater-briefing__note">Enemy Intel window active for this assault.</div>` : ""}
-          ${theaterBonuses.combatInstability ? `<div class="placement-theater-briefing__note">COMBAT INSTABILITY ACTIVE // STRAIN x2 // WEAPON HEAT ACCELERATED</div>` : ""}
+          ${enemyIntelScrambled ? `<div class="placement-theater-briefing__note">${enemyIntelScrambleLabel} // HOSTILE TELEMETRY SCRAMBLED</div>` : ""}
+          ${allyStartStatusType ? `<div class="placement-theater-briefing__note">${allyStartStatusLabel} // SQUAD STARTS ${allyStartStatusType} FOR ${allyStartStatusDuration} ROUND${allyStartStatusDuration === 1 ? "" : "S"}</div>` : ""}
+          ${enemyStartStatusType ? `<div class="placement-theater-briefing__note">${enemyStartStatusLabel} // HOSTILES START ${enemyStartStatusType} FOR ${enemyStartStatusDuration} ROUND${enemyStartStatusDuration === 1 ? "" : "S"}</div>` : ""}
+          ${theaterBonuses.overheating ? `<div class="placement-theater-briefing__note">ROOM OVERHEAT ACTIVE // STRAIN x2 // WEAPON HEAT ACCELERATED</div>` : ""}
+          ${!theaterBonuses.overheating && theaterBonuses.combatInstability ? `<div class="placement-theater-briefing__note">COMBAT INSTABILITY ACTIVE // MECHANICAL WEAPONS HEAT FASTER</div>` : ""}
+          ${obscurationActive ? `<div class="placement-theater-briefing__note">${obscurationLabel} ACTIVE // MOVE -${Math.max(1, obscurationSeverity)}${obscurationSuppressesRanged ? " // RANGED FIRE SUPPRESSED" : ""}</div>` : ""}
+          ${theaterBonuses.burningRoom ? `<div class="placement-theater-briefing__note">ROOM FIRE ACTIVE // AMBIENT FIRE DAMAGE EACH TURN${(theaterBonuses.burnSeverity ?? 0) >= 2 ? " // IGNITION PRESSURE RISING" : ""}</div>` : ""}
+          ${theaterBonuses.supplyFireRisk ? `<div class="placement-theater-briefing__note">VOLATILE SUPPLY LOAD // FIRE RISK ELEVATED</div>` : ""}
         </div>
       `
     : "";
@@ -6347,8 +6518,50 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
   // Normal battle overlay
   if (battle.phase === "victory") {
-    const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0, squadXp: 0 };
+    const r = battle.rewards ?? {
+      wad: 0,
+      metalScrap: 0,
+      wood: 0,
+      chaosShards: 0,
+      steamComponents: 0,
+      squadXp: 0,
+    };
+    const advancedRewards = {
+      alloy: Number((battle.rewards as any)?.alloy ?? 0),
+      drawcord: Number((battle.rewards as any)?.drawcord ?? 0),
+      fittings: Number((battle.rewards as any)?.fittings ?? 0),
+      resin: Number((battle.rewards as any)?.resin ?? 0),
+      chargeCells: Number((battle.rewards as any)?.chargeCells ?? 0),
+    };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
+    const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
+    const survivingFriendlies = Object.values(battle.units).filter((unit) => !unit.isEnemy);
+    const totalFriendlyHp = survivingFriendlies.reduce((sum, unit) => sum + Math.max(0, unit.hp), 0);
+    const totalFriendlyMaxHp = survivingFriendlies.reduce((sum, unit) => sum + Math.max(1, unit.maxHp), 0);
+    const integrityPercent = totalFriendlyMaxHp > 0
+      ? Math.max(0, Math.min(100, Math.round((totalFriendlyHp / totalFriendlyMaxHp) * 100)))
+      : 0;
+    const latestBattleNote = (battle.log[battle.log.length - 1] ?? "")
+      .replace(/^SLK\/\/[A-Z_]+\s*::\s*/i, "")
+      .trim() || "Reward packet ready for transfer.";
+    const rewardPacketTypes = [
+      r.wad,
+      r.metalScrap,
+      r.wood,
+      r.chaosShards,
+      r.steamComponents,
+      advancedRewards.alloy,
+      advancedRewards.drawcord,
+      advancedRewards.fittings,
+      advancedRewards.resin,
+      advancedRewards.chargeCells,
+      r.squadXp ?? 0,
+    ].filter((amount) => amount > 0).length;
+    const victoryStatusLabel = isDefenseBattle
+      ? "PERIMETER HELD"
+      : isTheaterOperationBattle
+        ? "ROOM SECURED"
+        : "HOSTILES BROKEN";
 
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
@@ -6376,7 +6589,30 @@ function renderBattleResultOverlay(battle: BattleState): string {
               Hostile resistance broken. Claim the reward package and continue the operation.
             </div>
           `}
-          <div class="battle-result-message">Shared squad bank updated. Reward packet ready for transfer.</div>
+          <div class="battle-result-message">${escapeBattleText(latestBattleNote)}</div>
+          <div class="battle-result-summary">
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">SURVIVORS</div>
+              <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
+              <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">INTEGRITY</div>
+              <div class="battle-result-summary-card__value">${integrityPercent}%</div>
+              <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">TURN COUNT</div>
+              <div class="battle-result-summary-card__value">${battle.turnCount}</div>
+              <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">STATUS</div>
+              <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
+              <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
+            </article>
+          </div>
+          <div class="battle-result-section-title">Reward Packet</div>
           <div class="battle-reward-grid">
             <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
             <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
@@ -6384,6 +6620,11 @@ function renderBattleResultOverlay(battle: BattleState): string {
             <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
             <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
             <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
+            ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
+            ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
+            ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
+            ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
+            ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
             ${unlockableId && unlockableId !== "pending" && unlockableName ? `
               <div class="battle-reward-item battle-reward-item--unlockable">
                 <div class="reward-label">NEW UNLOCK</div>
@@ -6718,6 +6959,7 @@ function handleBattleHudDebugAutoWin(): void {
         wood: 5,
         chaosShards: 2,
         steamComponents: 2,
+        squadXp: 0,
       },
     };
   }
@@ -6949,6 +7191,13 @@ function attachBattleListeners() {
       } else {
         returnFromBattle(battle);
       }
+    };
+  }
+
+  const debugAutoWinBtn = document.getElementById("debugAutoWinBtn");
+  if (debugAutoWinBtn) {
+    debugAutoWinBtn.onclick = () => {
+      handleBattleHudDebugAutoWin();
     };
   }
 

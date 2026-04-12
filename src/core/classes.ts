@@ -164,7 +164,7 @@ export const CLASS_DEFINITIONS: Record<BuiltInClassId, ClassDefinition> = {
     description: "Adaptive generalist. Can use any weapon with minor penalties.",
     tier: 1,
     baseStats: { maxHp: 12, atk: 7, def: 5, agi: 3, acc: 6 },
-    weaponTypes: ["sword", "bow", "staff", "shortsword"], // Can use any
+    weaponTypes: ["sword", "shield", "bow", "staff", "shortsword"], // Can use any
     unlockConditions: [
       { type: "class_rank", requiredClass: "squire", requiredRank: 2 },
       { type: "class_rank", requiredClass: "ranger", requiredRank: 2 },

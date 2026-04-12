@@ -1,4 +1,5 @@
 import { getImportedKeyItem } from "../content/technica";
+import { getInventoryIconPath } from "./inventoryIcons";
 import type { GameState, InventoryItem } from "./types";
 
 function humanizeId(value: string): string {
@@ -19,7 +20,7 @@ function buildKeyItemInventoryItem(itemId: string, quantity: number, existing?: 
     bulkBu: 0,
     powerW: 0,
     description: definition?.description ?? existing?.description,
-    iconPath: definition?.iconPath ?? existing?.iconPath,
+    iconPath: getInventoryIconPath(definition?.iconPath ?? existing?.iconPath),
     metadata: {
       ...(existing?.metadata ?? {}),
       ...(definition?.metadata ?? {}),

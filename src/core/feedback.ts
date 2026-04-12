@@ -2,6 +2,7 @@ import {
   BASE_STRAIN_THRESHOLD,
   type BattleState,
   type BattleUnitState,
+  getBattleUnitEquippedWeaponId,
   getEquippedWeapon,
 } from "./battle";
 import { type NamedAudioHookId, playNamedAudioHook } from "./audioSystem";
@@ -89,12 +90,12 @@ function getDefaultAudioHook(type: FeedbackType): NamedAudioHookId | null {
       return "attack_crit";
     case "resource":
       return "resource_pickup";
+    case "ui_confirm":
+      return "ui_click";
     case "weapon_node_damage":
       return "node_damage";
     case "weapon_overheat":
       return "weapon_overheat";
-    case "ui_confirm":
-      return "ui_click";
     default:
       return null;
   }
@@ -110,7 +111,6 @@ function getDefaultHapticPattern(type: FeedbackType): FeedbackHapticPattern | nu
     case "warning":
       return "error";
     case "resource":
-    case "ui_confirm":
       return "confirm";
     case "strain":
       return "damage";
@@ -276,7 +276,11 @@ function deriveWeaponFeedback(
   requests: FeedbackRequest[],
   seen: Set<string>,
 ): void {
-  if (!previousUnit.weaponState || !nextUnit.weaponState || previousUnit.equippedWeaponId !== nextUnit.equippedWeaponId) {
+  if (
+    !previousUnit.weaponState
+    || !nextUnit.weaponState
+    || getBattleUnitEquippedWeaponId(previousUnit) !== getBattleUnitEquippedWeaponId(nextUnit)
+  ) {
     return;
   }
 

@@ -39,6 +39,7 @@ import {
   canCraftMaterialRefineryRecipe,
   countAdvancedMaterialOwned,
   craftMaterialRefineryRecipe,
+  getMaterialRefineryEffectiveOutputQuantity,
   getMaterialRefineryRecipes,
   getMaterialRefineryShortage,
   type AdvancedMaterialId,
@@ -1529,9 +1530,17 @@ function formatMaterialRefineryShortage(recipeId: AdvancedMaterialId): string {
 }
 
 function shouldShowExpandedResourceTracker(): boolean {
-  const layout = readItemSizes()[RESOURCE_LAYOUT_ID] ?? DEFAULT_ITEM_LAYOUTS[RESOURCE_LAYOUT_ID];
-  return (layout?.colSpan ?? DEFAULT_RESOURCE_COL_SPAN) > DEFAULT_RESOURCE_COL_SPAN
-    || (layout?.rowSpan ?? DEFAULT_RESOURCE_ROW_SPAN) > DEFAULT_RESOURCE_ROW_SPAN;
+  return getGameState().uiLayout?.baseCampResourceTrackerShowAdvanced ?? true;
+}
+
+function setExpandedResourceTrackerVisible(showAdvanced: boolean): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampResourceTrackerShowAdvanced: showAdvanced,
+    },
+  }));
 }
 
 function renderMaterialRefineryNodeContent(isPinned: boolean): string {
@@ -1559,6 +1568,7 @@ function renderMaterialRefineryNodeContent(isPinned: boolean): string {
           ${getMaterialRefineryRecipes().map((recipe) => {
             const owned = countAdvancedMaterialOwned(state, recipe.id);
             const canCraft = canCraftMaterialRefineryRecipe(state, recipe.id);
+            const outputQuantity = getMaterialRefineryEffectiveOutputQuantity(state, recipe.id);
             return `
               <article class="all-nodes-refinery-card${canCraft ? "" : " all-nodes-refinery-card--locked"}">
                 <div class="all-nodes-refinery-card-header">
@@ -1575,7 +1585,7 @@ function renderMaterialRefineryNodeContent(isPinned: boolean): string {
                   data-refinery-craft-id="${recipe.id}"
                   ${canCraft ? "" : "disabled"}
                 >
-                  MAKE
+                  MAKE x${outputQuantity}
                 </button>
               </article>
             `;
@@ -1631,6 +1641,14 @@ function renderResourceTrackerContent(
       <section class="all-nodes-balance-panel" aria-label="Resource balances">
         <div class="all-nodes-balance-heading">
           <span class="all-nodes-balance-kicker">RESOURCE BALANCE</span>
+          <button
+            class="all-nodes-balance-toggle"
+            type="button"
+            data-resource-tracker-toggle="${showAdvanced ? "core-only" : "advanced"}"
+            aria-pressed="${showAdvanced ? "true" : "false"}"
+          >
+            ${showAdvanced ? "CORE ONLY" : "SHOW ADVANCED"}
+          </button>
         </div>
         <div class="all-nodes-balance-grid">
           <div class="all-nodes-balance-item">
@@ -2352,6 +2370,15 @@ function attachAllNodesMenuListeners(): void {
       updateGameState((prev) => craftMaterialRefineryRecipe(prev, recipeId, getMaterialRefineryContext()));
       renderAllNodesMenuScreen(lastFieldMap);
       requestAnimationFrame(() => focusWorkspaceItem(MATERIALS_REFINERY_LAYOUT_ID));
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-resource-tracker-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setExpandedResourceTrackerVisible(button.dataset.resourceTrackerToggle === "advanced");
+      renderAllNodesMenuScreen(lastFieldMap);
+      requestAnimationFrame(() => focusWorkspaceItem(RESOURCE_LAYOUT_ID));
     });
   });
 

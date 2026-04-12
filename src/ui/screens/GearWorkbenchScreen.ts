@@ -74,6 +74,7 @@ import {
   CONSUMABLE_DATABASE,
 } from "../../core/crafting";
 import { showSystemPing } from "../components/systemPing";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import {
   getLocalSessionPlayerSlot,
   getSessionResourcePool,
@@ -637,6 +638,7 @@ function renderChaoticDoctrineCard(isSelected: boolean): string {
 export function renderEndlessCraftTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
   const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
 
   // Get available chassis (all slot types)
   const availableChassis = ALL_CHASSIS.filter(c => unlockedChassisIds.includes(c.id));
@@ -647,11 +649,11 @@ export function renderEndlessCraftTab(state: GameState): string {
     : null;
 
   // Material options
-  const materialOptions: Array<{ id: CraftingMaterialId; name: string; icon: string; available: number }> = [
-    { id: "metal_scrap", name: "Metal Scrap", icon: "⚙", available: resources.metalScrap },
-    { id: "wood", name: "Wood", icon: "🪵", available: resources.wood },
-    { id: "chaos_shard", name: "Chaos Shard", icon: "💎", available: resources.chaosShards },
-    { id: "steam_component", name: "Steam Component", icon: "⚡", available: resources.steamComponents },
+  const materialOptions: Array<{ id: CraftingMaterialId; name: string; available: number }> = [
+    { id: "metal_scrap", name: "Metal Scrap", available: resources.metalScrap },
+    { id: "wood", name: "Wood", available: resources.wood },
+    { id: "chaos_shard", name: "Chaos Shard", available: resources.chaosShards },
+    { id: "steam_component", name: "Steam Component", available: resources.steamComponents },
   ];
 
   // Calculate cost
@@ -738,7 +740,9 @@ export function renderEndlessCraftTab(state: GameState): string {
       return `
               <div class="endless-material-card ${!canAdd && count === 0 ? 'endless-material-card--disabled' : ''}" 
                    data-material-id="${mat.id}">
-                <div class="material-card-icon">${mat.icon}</div>
+                <div class="material-card-icon">
+                  <img src="${fallbackInventoryIcon}" alt="" class="material-card-icon-img" aria-hidden="true" />
+                </div>
                 <div class="material-card-name">${mat.name}</div>
                 <div class="material-card-count">Available: ${mat.available}</div>
                 <div class="material-card-selected">Selected: ${count}</div>
@@ -911,11 +915,14 @@ function renderGearSelector(
   const options = gearIds.map(eqId => {
     const eq = equipmentById[eqId];
     const name = eq?.name ?? formatEquipmentName(eqId);
+    const iconPath = getInventoryIconPath(eq?.iconPath);
     const isSelected = eqId === selectedId;
     return `
       <button class="gear-selector-option ${isSelected ? 'gear-selector-option--selected' : ''}"
               data-equipment-id="${eqId}">
-        <span class="gear-option-icon">${getEquipmentIcon(eqId)}</span>
+        <span class="gear-option-icon">
+          <img src="${iconPath}" alt="" class="gear-option-icon-img" aria-hidden="true" />
+        </span>
         <span class="gear-option-name">${name}</span>
         ${equippedSet.has(eqId) ? '<span class="gear-option-badge">EQUIPPED</span>' : ''}
       </button>
@@ -930,19 +937,6 @@ function renderGearSelector(
       </div>
     </div>
   `;
-}
-
-function getEquipmentIcon(equipmentId: string): string {
-  if (equipmentId.includes('weapon') || equipmentId.includes('sword') || equipmentId.includes('bow') || equipmentId.includes('staff')) {
-    return '⚔';
-  }
-  if (equipmentId.includes('helm') || equipmentId.includes('hood')) {
-    return '🪖';
-  }
-  if (equipmentId.includes('chest') || equipmentId.includes('armor') || equipmentId.includes('jerkin')) {
-    return '🛡';
-  }
-  return '💎';
 }
 
 function renderGearEditor(gear: GearSlotData, equipmentId: string, equipment?: any): string {
@@ -1884,6 +1878,7 @@ function detachGearWorkbenchExitHotkey(): void {
 function renderCraftTab(state: GameState): string {
   const knownRecipeIds = state.knownRecipeIds ?? getStarterRecipeIds();
   const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
 
   const knownRecipes = getKnownRecipes(knownRecipeIds);
   const categoryRecipes = getRecipesByCategory(knownRecipes, workbenchState.craftingCategory);
@@ -1904,22 +1899,22 @@ function renderCraftTab(state: GameState): string {
           <div class="panel-section-title">MATERIALS</div>
           <div class="resource-grid">
             <div class="resource-item">
-              <span class="resource-icon">⚙</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Metal</span>
               <span class="resource-value">${resources.metalScrap}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">🪵</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Wood</span>
               <span class="resource-value">${resources.wood}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">💎</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Shards</span>
               <span class="resource-value">${resources.chaosShards}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">⚡</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Steam</span>
               <span class="resource-value">${resources.steamComponents}</span>
             </div>

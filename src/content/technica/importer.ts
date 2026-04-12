@@ -4,6 +4,7 @@ import { hasGameState, updateGameState } from "../../state/gameStore";
 import {
   getTechnicaRegistryFingerprint,
   registerImportedCard,
+  registerImportedChatterEntry,
   registerImportedClass,
   registerImportedCodexEntry,
   registerImportedDialogue,
@@ -25,6 +26,7 @@ import { syncImportedMailUnlocks } from "../../core/mailSystem";
 import { syncPublishedTechnicaContentState } from "./stateSync";
 import type {
   ImportedCard,
+  ImportedChatterEntry,
   ImportedClassDefinition,
   ImportedCodexEntry,
   ImportedDialogue,
@@ -44,6 +46,7 @@ export interface TechnicaManifestDependency {
   contentType:
     | "map"
     | "mail"
+    | "chatter"
     | "quest"
     | "key_item"
     | "faction"
@@ -67,8 +70,8 @@ export interface TechnicaManifest {
   schemaVersion: string;
   sourceApp: "Technica";
   sourceAppVersion?: string;
-  exportType: "map" | "mail" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
-  contentType: "map" | "mail" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
+  exportType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
+  contentType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
   targetGame: string;
   targetSchemaVersion: string;
   exportedAt: string;
@@ -122,6 +125,17 @@ function isMailEntry(value: unknown): value is ImportedMailEntry {
   );
 }
 
+function isChatterEntry(value: unknown): value is ImportedChatterEntry {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "location" in value &&
+      "content" in value &&
+      "aerissResponse" in value
+  );
+}
+
 function isFieldEnemyDefinition(value: unknown): value is ImportedFieldEnemyDefinition {
   return Boolean(
     value &&
@@ -165,10 +179,30 @@ function isCard(value: unknown): value is ImportedCard {
     value &&
       typeof value === "object" &&
       "id" in value &&
+      "name" in value &&
+      "description" in value &&
       "type" in value &&
-      "effects" in value &&
-      "targetType" in value
+      "targetType" in value &&
+      "strainCost" in value &&
+      "range" in value &&
+      (("effects" in value && Array.isArray((value as { effects?: unknown }).effects)) || "effectFlow" in value)
   );
+}
+
+function normalizeImportedCard(value: unknown): ImportedCard | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  if (!isCard(value)) {
+    return null;
+  }
+
+  const card = value as ImportedCard & { effects?: ImportedCard["effects"] };
+  return {
+    ...card,
+    effects: Array.isArray(card.effects) ? [...card.effects] : [],
+  };
 }
 
 function isFieldMod(value: unknown): value is ImportedFieldMod {
@@ -353,6 +387,16 @@ export function importTechnicaRuntimeEntry(
       }
       return entryData.id;
 
+    case "chatter":
+      if (!isChatterEntry(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core chatter shape.");
+      }
+      registerImportedChatterEntry(entryData);
+      if (options?.syncToGameState) {
+        syncPublishedTechnicaGameState();
+      }
+      return entryData.id;
+
     case "field_enemy": {
       if (!isFieldEnemyDefinition(entryData)) {
         throw new Error("Entry data does not match the expected Chaos Core field enemy shape.");
@@ -402,10 +446,11 @@ export function importTechnicaRuntimeEntry(
     }
 
     case "card": {
-      if (!isCard(entryData)) {
+      const normalizedCard = normalizeImportedCard(entryData);
+      if (!normalizedCard) {
         throw new Error("Entry data does not match the expected Chaos Core card shape.");
       }
-      const resolvedCard = withResolvedCardAssets(entryData, options);
+      const resolvedCard = withResolvedCardAssets(normalizedCard, options);
       registerImportedCard(resolvedCard);
       if (options?.syncToGameState) {
         syncPublishedTechnicaGameState();

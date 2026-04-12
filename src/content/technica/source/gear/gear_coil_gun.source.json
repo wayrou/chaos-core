@@ -22,12 +22,12 @@
     "massKg": 4,
     "bulkBu": 2,
     "powerW": 0,
-    "startingOwned": true
+    "startingOwned": false
   },
   "metadata": {
     "source": "Technica sample",
     "role": "frontline"
   },
   "createdAt": "2026-04-03T01:44:01.157Z",
-  "updatedAt": "2026-04-03T02:16:12.475Z"
+  "updatedAt": "2026-04-11T02:54:58.471Z"
 }

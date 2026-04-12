@@ -20,6 +20,7 @@ import {
   generatePortManifest,
 } from "../../core/portManifestGenerator";
 import { loadCampaignProgress } from "../../core/campaign";
+import { pickAmbientChatterLine, resetAmbientChatterSurfacing } from "../../core/chatterSystem";
 import { formatResourceLabel, getResourceEntries } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
@@ -28,7 +29,7 @@ import { formatResourceLabel, getResourceEntries } from "../../core/resources";
 
 let manifestUpdatedStampVisible = false;
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string; aerissResponse?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
 
@@ -74,6 +75,7 @@ export function renderPortScreen(returnTo: BaseCampReturnTo = "basecamp"): void 
   activeNpcWindows = [];
   activeConversations.clear();
   npcWindowIdCounter = 0;
+  resetAmbientChatterSurfacing("port");
   const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
   for (let i = 0; i < initialCount; i++) {
     addNpcWindow();
@@ -309,7 +311,7 @@ function formatResourceName(resource: ResourceType): string {
 // ----------------------------------------------------------------------------
 
 // NPC dialogue data - conversations between NPCs
-const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+const NPC_DIALOGUES: Array<{ name: string; text: string; aerissResponse?: string }> = [
   { name: "DOCK MASTER", text: "The caravans come and go, but the manifest never lies. Every scrap, every shard, every component—it's all accounted for." },
   { name: "CARAVAN MERCHANT", text: "Been running these routes for twenty years. Seen empires rise and fall, but the trade routes? They never change." },
   { name: "WAREHOUSE KEEPER", text: "Storage is tight these days. Everyone wants to hoard, but hoarding doesn't feed the operation." },
@@ -416,7 +418,7 @@ function startNpcWindowSystem(): void {
 }
 
 function addNpcWindow(): void {
-  const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const dialogue = pickAmbientChatterLine("port", NPC_DIALOGUES);
   const windowId = `npc-window-${npcWindowIdCounter++}`;
   const conversationId = `conv-${windowId}`;
   
@@ -424,6 +426,7 @@ function addNpcWindow(): void {
     id: windowId,
     name: dialogue.name,
     text: dialogue.text,
+    aerissResponse: dialogue.aerissResponse,
     timestamp: Date.now(),
     conversationId,
   });
@@ -554,20 +557,21 @@ function handleNpcWindowClick(windowId: string, conversationId: string): void {
   // Get or create conversation
   let conversation = activeConversations.get(conversationId) || [];
   
-  // Determine response type based on dialogue content
-  let responseType = "default";
-  const text = window.text.toLowerCase();
-  if (text.includes("trade") || text.includes("manifest") || text.includes("shipment")) {
-    responseType = "trade";
-  } else if (text.includes("supply") || text.includes("resource") || text.includes("scrap")) {
-    responseType = "supply";
-  } else if (text.includes("dangerous") || text.includes("chaos") || text.includes("enemy")) {
-    responseType = "danger";
+  let aerissResponse = window.aerissResponse?.trim() ?? "";
+  if (!aerissResponse) {
+    let responseType = "default";
+    const text = window.text.toLowerCase();
+    if (text.includes("trade") || text.includes("manifest") || text.includes("shipment")) {
+      responseType = "trade";
+    } else if (text.includes("supply") || text.includes("resource") || text.includes("scrap")) {
+      responseType = "supply";
+    } else if (text.includes("dangerous") || text.includes("chaos") || text.includes("enemy")) {
+      responseType = "danger";
+    }
+    
+    const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+    aerissResponse = responses[Math.floor(Math.random() * responses.length)] ?? AERISS_RESPONSES.default[0];
   }
-  
-  // Get random Aeriss response
-  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
-  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
   
   // Add Aeriss response to conversation
   conversation.push({

@@ -5,7 +5,7 @@
   "description": "Chaos Core runtime equipment export.",
   "entryFile": "gear_coil_gun.gear.json",
   "exportType": "gear",
-  "exportedAt": "2026-04-03T02:16:17.795Z",
+  "exportedAt": "2026-04-11T02:55:04.917Z",
   "files": [
     "manifest.json",
     "gear_coil_gun.gear.json",

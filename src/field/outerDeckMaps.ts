@@ -11,10 +11,13 @@ import {
   getOuterDeckZoneGateLabel,
   getOuterDeckZoneLockedMessage,
   hasOuterDeckCacheBeenClaimed,
+  hasOuterDeckZoneBeenReclaimed,
   hasSeenOuterDeckNpcEncounter,
+  isOuterDeckMechanicResolved,
   isOuterDeckOverworldMap,
   isOuterDeckSubareaCleared,
   isOuterDeckZoneUnlocked,
+  type OuterDeckMechanicId,
   type OuterDeckRewardBundle,
   type OuterDeckSubareaSpec,
   type OuterDeckZoneId,
@@ -155,6 +158,21 @@ function buildEnemyReward(zoneId: OuterDeckZoneId, index: number): OuterDeckRewa
   }
 }
 
+function buildEliteEnemyReward(zoneId: OuterDeckZoneId): OuterDeckRewardBundle {
+  switch (zoneId) {
+    case "counterweight_shaft":
+      return { wad: 42, resources: { metalScrap: 2, steamComponents: 2 } };
+    case "outer_scaffold":
+      return { wad: 46, resources: { wood: 2, steamComponents: 2 } };
+    case "drop_bay":
+      return { wad: 50, resources: { metalScrap: 2, wood: 2, steamComponents: 1 } };
+    case "supply_intake_port":
+      return { wad: 54, resources: { chaosShards: 2, steamComponents: 2, wood: 1 } };
+    default:
+      return {};
+  }
+}
+
 function getZoneSalvageResourceSpec(
   zoneId: OuterDeckZoneId,
   kind: OuterDeckSubareaSpec["kind"] | "overworld",
@@ -194,6 +212,10 @@ function getZoneSalvageResourceSpec(
 }
 
 function buildEnemyObjects(subarea: OuterDeckSubareaSpec): FieldObject[] {
+  if (subarea.kind === "reward") {
+    return buildRewardRoomEnemyObjects(subarea);
+  }
+
   const positions = [
     { x: 7, y: 4 },
     { x: 14, y: 4 },
@@ -221,6 +243,103 @@ function buildEnemyObjects(subarea: OuterDeckSubareaSpec): FieldObject[] {
       },
     };
   });
+}
+
+type OuterDeckEliteSpec = {
+  name: string;
+  enemyKind: string;
+  hp: number;
+  speed: number;
+  aggroRange: number;
+  width: number;
+  height: number;
+};
+
+const OUTER_DECK_ELITE_SPECS: Record<OuterDeckZoneId, OuterDeckEliteSpec> = {
+  counterweight_shaft: {
+    name: "Lift Spine Overseer",
+    enemyKind: "counterweight_overseer",
+    hp: 8,
+    speed: 96,
+    aggroRange: 288,
+    width: 48,
+    height: 48,
+  },
+  outer_scaffold: {
+    name: "Relay Roost Warden",
+    enemyKind: "relay_warden",
+    hp: 8,
+    speed: 104,
+    aggroRange: 304,
+    width: 48,
+    height: 48,
+  },
+  drop_bay: {
+    name: "Dispatch Cradle Brute",
+    enemyKind: "dispatch_brute",
+    hp: 9,
+    speed: 92,
+    aggroRange: 288,
+    width: 52,
+    height: 52,
+  },
+  supply_intake_port: {
+    name: "Quarantine Lock Sentinel",
+    enemyKind: "quarantine_sentinel",
+    hp: 9,
+    speed: 94,
+    aggroRange: 296,
+    width: 52,
+    height: 52,
+  },
+};
+
+function buildRewardRoomEnemyObjects(subarea: OuterDeckSubareaSpec): FieldObject[] {
+  const elite = OUTER_DECK_ELITE_SPECS[subarea.zoneId];
+  const escortKind = subarea.enemyKinds.find((enemyKind) => enemyKind !== elite.enemyKind) ?? subarea.enemyKinds[0];
+  const objects: FieldObject[] = [
+    {
+      id: `${subarea.id.replace(/[:]/g, "_")}_elite`,
+      x: 11,
+      y: 6,
+      width: 1,
+      height: 1,
+      type: "enemy",
+      sprite: "field_enemy",
+      metadata: {
+        name: elite.name,
+        enemyKind: elite.enemyKind,
+        hp: elite.hp,
+        width: elite.width,
+        height: elite.height,
+        speed: elite.speed,
+        aggroRange: elite.aggroRange,
+        drops: buildEliteEnemyReward(subarea.zoneId),
+      },
+    },
+  ];
+
+  if (escortKind) {
+    objects.push({
+      id: `${subarea.id.replace(/[:]/g, "_")}_escort`,
+      x: 7,
+      y: 8,
+      width: 1,
+      height: 1,
+      type: "enemy",
+      sprite: "field_enemy",
+      metadata: {
+        name: formatEnemyLabel(escortKind),
+        enemyKind: escortKind,
+        hp: 4,
+        speed: 94,
+        aggroRange: 240,
+        drops: buildEnemyReward(subarea.zoneId, 0),
+      },
+    });
+  }
+
+  return objects;
 }
 
 type OverworldPlaceholderEnemySpec = {
@@ -269,8 +388,10 @@ function formatEnemyLabel(enemyKind: string): string {
   return enemyKind.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
 }
 
-function buildOverworldEnemyObjects(): FieldObject[] {
-  return OVERWORLD_PLACEHOLDER_ENEMIES.map((enemy, index) => ({
+function buildOverworldEnemyObjects(state: GameState): FieldObject[] {
+  return OVERWORLD_PLACEHOLDER_ENEMIES
+    .filter((enemy) => !hasOuterDeckZoneBeenReclaimed(state, enemy.zoneId))
+    .map((enemy, index) => ({
     id: enemy.id,
     x: enemy.x,
     y: enemy.y,
@@ -286,11 +407,11 @@ function buildOverworldEnemyObjects(): FieldObject[] {
       aggroRange: enemy.aggroRange ?? 224,
       drops: buildEnemyReward(enemy.zoneId, index % 2),
     },
-  }));
+    }));
 }
 
-function buildOverworldSalvageObjects(): FieldObject[] {
-  return OVERWORLD_EXTRA_SALVAGE.map((salvage) => {
+function buildOverworldSalvageObjects(state: GameState): FieldObject[] {
+  const baseSalvage: FieldObject[] = OVERWORLD_EXTRA_SALVAGE.map((salvage) => {
     const salvageSpec = getZoneSalvageResourceSpec(salvage.zoneId, "overworld");
     return {
       id: salvage.id,
@@ -298,7 +419,7 @@ function buildOverworldSalvageObjects(): FieldObject[] {
       y: salvage.y,
       width: 1,
       height: 1,
-      type: "resource",
+      type: "resource" as const,
       sprite: "resource",
       metadata: {
         ...salvageSpec,
@@ -307,6 +428,29 @@ function buildOverworldSalvageObjects(): FieldObject[] {
       },
     };
   });
+
+  const reclaimedSalvage: FieldObject[] = (["counterweight_shaft", "outer_scaffold", "drop_bay", "supply_intake_port"] as OuterDeckZoneId[])
+    .filter((zoneId) => hasOuterDeckZoneBeenReclaimed(state, zoneId))
+    .map((zoneId) => {
+      const gateTile = getOuterDeckOverworldGateTile(zoneId);
+      const salvageSpec = getZoneSalvageResourceSpec(zoneId, "overworld");
+      return {
+        id: `outer_deck_reclaimed_salvage_${zoneId}`,
+        x: gateTile.x + (zoneId === "outer_scaffold" ? -4 : zoneId === "supply_intake_port" ? 9 : 0),
+        y: gateTile.y + (zoneId === "counterweight_shaft" ? 5 : zoneId === "drop_bay" ? -5 : zoneId === "supply_intake_port" ? -4 : 0),
+        width: 1,
+        height: 1,
+        type: "resource" as const,
+        sprite: "resource",
+        metadata: {
+          ...salvageSpec,
+          amount: salvageSpec.amount + 1,
+          name: `${salvageSpec.name} Cache`,
+        },
+      };
+    });
+
+  return [...baseSalvage, ...reclaimedSalvage];
 }
 
 function buildTransitionZone(
@@ -328,6 +472,63 @@ function buildTransitionZone(
       handlerId: "outer_deck_transition",
       targetSubareaId,
       autoTrigger: true,
+    },
+  };
+}
+
+type MechanicObjectSpec = {
+  name: string;
+  sprite: string;
+  x: number;
+  y: number;
+};
+
+const OUTER_DECK_MECHANIC_OBJECTS: Record<OuterDeckMechanicId, MechanicObjectSpec> = {
+  counterweight_shaft_restore_lift_power: {
+    name: "Lift Control Junction",
+    sprite: "terminal",
+    x: 9,
+    y: 6,
+  },
+  outer_scaffold_extend_bridge: {
+    name: "Scaffold Winch",
+    sprite: "terminal",
+    x: 9,
+    y: 6,
+  },
+  drop_bay_route_crane: {
+    name: "Cargo Crane Console",
+    sprite: "terminal",
+    x: 9,
+    y: 6,
+  },
+  supply_intake_port_clear_sorter_jam: {
+    name: "Sorter Jam Release",
+    sprite: "terminal",
+    x: 9,
+    y: 6,
+  },
+};
+
+function buildMechanicInteractionZone(subarea: OuterDeckSubareaSpec): InteractionZone | null {
+  if (!subarea.requiredMechanicId || !subarea.requiredMechanicLabel) {
+    return null;
+  }
+
+  const spec = OUTER_DECK_MECHANIC_OBJECTS[subarea.requiredMechanicId];
+  return {
+    id: `${subarea.mapId}_mechanic_zone`,
+    x: spec.x,
+    y: spec.y,
+    width: 2,
+    height: 2,
+    action: "custom",
+    label: subarea.requiredMechanicLabel,
+    metadata: {
+      handlerId: "outer_deck_mechanic",
+      mechanicId: subarea.requiredMechanicId,
+      mechanicLabel: subarea.requiredMechanicLabel,
+      mechanicHint: subarea.requiredMechanicHint,
     },
   };
 }
@@ -396,6 +597,9 @@ function buildBranchContent(state: GameState, subarea: OuterDeckSubareaSpec): { 
   const objects: FieldObject[] = [];
   decorateBranchTiles(tiles, subarea, objects);
   const salvageSpec = getZoneSalvageResourceSpec(subarea.zoneId, subarea.kind);
+  const mechanicResolved = subarea.requiredMechanicId
+    ? isOuterDeckMechanicResolved(state, subarea.requiredMechanicId)
+    : true;
 
   if (subarea.returnToSubareaId) {
     objects.push({
@@ -420,6 +624,20 @@ function buildBranchContent(state: GameState, subarea: OuterDeckSubareaSpec): { 
       type: "station",
       sprite: "bulkhead",
       metadata: { name: subarea.gateVerb },
+    });
+  }
+
+  if (subarea.requiredMechanicId && !mechanicResolved) {
+    const mechanicObject = OUTER_DECK_MECHANIC_OBJECTS[subarea.requiredMechanicId];
+    objects.push({
+      id: `${subarea.mapId}_mechanic`,
+      x: mechanicObject.x,
+      y: mechanicObject.y,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: mechanicObject.sprite,
+      metadata: { name: mechanicObject.name },
     });
   }
 
@@ -499,6 +717,11 @@ function buildBranchContent(state: GameState, subarea: OuterDeckSubareaSpec): { 
       5,
       subarea.advanceToSubareaId,
     ));
+  }
+
+  const mechanicInteractionZone = buildMechanicInteractionZone(subarea);
+  if (mechanicInteractionZone && !mechanicResolved) {
+    interactionZones.push(mechanicInteractionZone);
   }
 
   if (subarea.cacheId && !hasOuterDeckCacheBeenClaimed(state, subarea.cacheId)) {
@@ -609,8 +832,68 @@ function createOverworldTiles(): FieldMap["tiles"] {
   return tiles;
 }
 
-function createOuterDeckOverworldMap(): FieldMap {
+function applyReclaimedLaneGeometry(tiles: FieldMap["tiles"], state: GameState): void {
+  if (hasOuterDeckZoneBeenReclaimed(state, "counterweight_shaft")) {
+    fillRect(tiles, 63, 1, 14, 12, true, "floor");
+  }
+  if (hasOuterDeckZoneBeenReclaimed(state, "outer_scaffold")) {
+    fillRect(tiles, 124, 38, 15, 14, true, "floor");
+  }
+  if (hasOuterDeckZoneBeenReclaimed(state, "drop_bay")) {
+    fillRect(tiles, 63, 78, 14, 11, true, "stone");
+  }
+  if (hasOuterDeckZoneBeenReclaimed(state, "supply_intake_port")) {
+    fillRect(tiles, 1, 38, 15, 14, true, "floor");
+  }
+}
+
+function buildReclaimedOverworldObjects(state: GameState): FieldObject[] {
+  return ([
+    {
+      zoneId: "counterweight_shaft" as const,
+      id: "outer_deck_counterweight_service_lift",
+      name: "Service Lift Online",
+      x: 66,
+      y: 9,
+    },
+    {
+      zoneId: "outer_scaffold" as const,
+      id: "outer_deck_scaffold_outpost",
+      name: "Lookout Railing Restored",
+      x: 127,
+      y: 44,
+    },
+    {
+      zoneId: "drop_bay" as const,
+      id: "outer_deck_dropbay_salvage_locker",
+      name: "Drop Bay Salvage Locker",
+      x: 66,
+      y: 78,
+    },
+    {
+      zoneId: "supply_intake_port" as const,
+      id: "outer_deck_intake_supply_rack",
+      name: "Quartermaster Supply Rack",
+      x: 14,
+      y: 39,
+    },
+  ])
+    .filter((entry) => hasOuterDeckZoneBeenReclaimed(state, entry.zoneId))
+    .map((entry) => ({
+      id: entry.id,
+      x: entry.x,
+      y: entry.y,
+      width: 2,
+      height: 2,
+      type: "station" as const,
+      sprite: "terminal",
+      metadata: { name: entry.name },
+    }));
+}
+
+function createOuterDeckOverworldMap(state: GameState): FieldMap {
   const tiles = createOverworldTiles();
+  applyReclaimedLaneGeometry(tiles, state);
   const progress = loadCampaignProgress();
   const objects: FieldObject[] = [
     {
@@ -663,8 +946,9 @@ function createOuterDeckOverworldMap(): FieldMap {
       sprite: "bulkhead",
       metadata: { name: "Supply Intake Port Gate" },
     },
-    ...buildOverworldEnemyObjects(),
-    ...buildOverworldSalvageObjects(),
+    ...buildReclaimedOverworldObjects(state),
+    ...buildOverworldEnemyObjects(state),
+    ...buildOverworldSalvageObjects(state),
     {
       id: "outer_deck_overworld_salvage_nw",
       x: HAVEN_FOOTPRINT_LEFT - 18,
@@ -771,7 +1055,7 @@ export function createOuterDeckFieldMap(
   state: GameState = getGameState(),
 ): FieldMap | null {
   if (isOuterDeckOverworldMap(mapId)) {
-    return createOuterDeckOverworldMap();
+    return createOuterDeckOverworldMap(state);
   }
   return createOuterDeckBranchMap(mapId, state);
 }

@@ -1,5 +1,7 @@
 import type { GameState, InventoryItem } from "./types";
 import type { ResourceKey } from "./resources";
+import { hasSeenOuterDeckNpcEncounter } from "./outerDecks";
+import { getInventoryIconPath } from "./inventoryIcons";
 
 export type AdvancedMaterialId =
   | "resource_alloy"
@@ -94,6 +96,17 @@ const ADVANCED_MATERIAL_DESCRIPTIONS: Record<AdvancedMaterialId, string> = {
   resource_charge_cell: "Portable charge cell containing condensed expedition power.",
 };
 
+const MATERIAL_REFINERY_SUPPORT_OUTPUT_BONUS: Record<AdvancedMaterialId, Array<{
+  encounterId: "shaft_mechanist" | "scaffold_spotter" | "dropbay_loader" | "intake_quartermaster";
+  bonus: number;
+}>> = {
+  resource_alloy: [{ encounterId: "shaft_mechanist", bonus: 1 }],
+  resource_drawcord: [{ encounterId: "scaffold_spotter", bonus: 1 }],
+  resource_fittings: [{ encounterId: "dropbay_loader", bonus: 1 }],
+  resource_resin: [{ encounterId: "intake_quartermaster", bonus: 1 }],
+  resource_charge_cell: [{ encounterId: "intake_quartermaster", bonus: 1 }],
+};
+
 function getInventoryBinForContext(context: MaterialRefineryContext): "baseStorage" | "forwardLocker" {
   return context === "expedition" ? "forwardLocker" : "baseStorage";
 }
@@ -132,6 +145,17 @@ export function getMaterialRefineryRecipe(recipeId: AdvancedMaterialId): Materia
   return MATERIAL_REFINERY_RECIPES[recipeId];
 }
 
+export function getMaterialRefineryEffectiveOutputQuantity(
+  state: GameState,
+  recipeId: AdvancedMaterialId,
+): number {
+  const recipe = getMaterialRefineryRecipe(recipeId);
+  const supportBonus = (MATERIAL_REFINERY_SUPPORT_OUTPUT_BONUS[recipeId] ?? []).reduce((total, entry) => (
+    hasSeenOuterDeckNpcEncounter(state, entry.encounterId) ? total + entry.bonus : total
+  ), 0);
+  return recipe.outputQuantity + supportBonus;
+}
+
 export function createAdvancedMaterialInventoryItem(
   materialId: AdvancedMaterialId,
   quantity = 1,
@@ -146,6 +170,7 @@ export function createAdvancedMaterialInventoryItem(
     bulkBu: 0,
     powerW: 0,
     description: ADVANCED_MATERIAL_DESCRIPTIONS[materialId],
+    iconPath: getInventoryIconPath(),
     metadata: {
       resourceType: materialId,
       advancedResource: true,
@@ -216,7 +241,7 @@ export function craftMaterialRefineryRecipe(
     ...state.inventory,
     [inventoryBin]: addInventoryItemToBin(
       state.inventory?.[inventoryBin] ?? [],
-      createAdvancedMaterialInventoryItem(recipeId, recipe.outputQuantity),
+      createAdvancedMaterialInventoryItem(recipeId, getMaterialRefineryEffectiveOutputQuantity(state, recipeId)),
     ),
   };
 

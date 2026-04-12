@@ -11,6 +11,7 @@ import { renderRosterScreen } from "./RosterScreen";
 import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
 import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../core/inventory";
 import { InventoryState, InventoryItem } from "../../core/types";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import {
   buildOwnedBaseStorageItems,
   isPartyAutoStagedLockerItem,
@@ -32,6 +33,7 @@ import {
 } from "../../core/inventoryFolders";
 import { abandonRun } from "../../core/campaignManager";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { showTutorialCalloutSequence } from "../components/tutorialCallout";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
@@ -314,6 +316,22 @@ export function renderLoadoutScreen(): void {
   // Attach event listeners
   attachLoadoutListeners();
   updateFocusableElements();
+  showTutorialCalloutSequence([
+    {
+      id: "tutorial_loadout_forward_locker",
+      title: "Forward Locker",
+      message: "Anything staged in the forward locker travels with the squad into the next operation.",
+      detail: "Party units and equipped gear auto-stage here. Use this screen to trim carried items and avoid overload penalties before you deploy.",
+      channel: "tutorial-loadout-locker",
+    },
+    {
+      id: "tutorial_loadout_deploy",
+      title: "Deploy Check",
+      message: "The beta campaign flow starts from this staging pass: roster, locker, then deploy.",
+      detail: "Current beta content is focused on Regions 1-2 and Floors 01-06, so this screen is part of the supported preparation loop.",
+      channel: "tutorial-loadout-deploy",
+    },
+  ]);
 }
 
 // ============================================================================
@@ -449,9 +467,9 @@ function formatClassName(cls: string): string {
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
   const isLocked = isPartyAutoStagedLockerItem(item);
-  const iconMarkup = item.iconPath
-    ? `<img src="${item.iconPath}" alt="${item.name}" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);" />`
-    : "";
+  const iconMarkup = item.kind === "unit" && !item.iconPath
+    ? ""
+    : `<img src="${getInventoryIconPath(item.iconPath)}" alt="" class="inv-item-icon" aria-hidden="true" />`;
   const noteMarkup = isLocked
     ? `<div class="inv-item-note">${item.kind === "unit" ? "DEPLOY UNIT // AUTO-STAGED" : "EQUIPPED GEAR // AUTO-STAGED"}</div>`
     : "";

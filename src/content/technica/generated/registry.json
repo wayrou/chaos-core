@@ -1,0 +1,48 @@
+{
+  "entriesByType": {
+    "card": [
+      "core_move_plus",
+      "core_overwatch",
+      "guard_self"
+    ],
+    "chatter": [
+      "port_routes_are_tight_this_week_if_the_charter"
+    ],
+    "codex": [
+      "codex_haven_foundry_notes",
+      "faction_mistguard"
+    ],
+    "dialogue": [
+      "untitled_dialogue",
+      "village_guide_intro"
+    ],
+    "faction": [
+      "company_of_storms"
+    ],
+    "gear": [
+      "gear_coil_gun",
+      "gear_quill_sword",
+      "gear_scissor_sword",
+      "shield_pattern_shield"
+    ],
+    "item": [
+      "item_phase_battery"
+    ],
+    "mail": [
+      "mail_foundry_dispatch"
+    ],
+    "map": [
+      "oak_square"
+    ],
+    "npc": [
+      "npc_test2"
+    ],
+    "quest": [
+      "check_the_courier_board"
+    ],
+    "unit": [
+      "unit_lucien"
+    ]
+  },
+  "updatedAt": 1775971942018
+}

@@ -12,6 +12,12 @@ export type OuterDeckNpcEncounterId =
   | "dropbay_loader"
   | "intake_quartermaster";
 
+export type OuterDeckMechanicId =
+  | "counterweight_shaft_restore_lift_power"
+  | "outer_scaffold_extend_bridge"
+  | "drop_bay_route_crane"
+  | "supply_intake_port_clear_sorter_jam";
+
 export type OuterDeckRewardBundle = {
   wad?: number;
   resources?: {
@@ -35,6 +41,9 @@ export interface OuterDeckSubareaSpec {
   enemyKinds: string[];
   advanceToSubareaId: string | null;
   returnToSubareaId: string | null;
+  requiredMechanicId?: OuterDeckMechanicId | null;
+  requiredMechanicLabel?: string | null;
+  requiredMechanicHint?: string | null;
   cacheId?: string | null;
   npcEncounterId?: OuterDeckNpcEncounterId | null;
 }
@@ -59,6 +68,7 @@ export interface OuterDeckExpeditionState {
   currentSubareaId: string;
   subareas: OuterDeckSubareaSpec[];
   clearedSubareaIds: string[];
+  resolvedMechanicIds: OuterDeckMechanicId[];
   rewardCacheClaimedIds: string[];
   npcEncounterIds: OuterDeckNpcEncounterId[];
   completionRewardClaimed: boolean;
@@ -181,6 +191,9 @@ function createSubareas(
     gateVerb: string;
     enemyCount: number;
     enemyKinds: string[];
+    requiredMechanicId?: OuterDeckMechanicId | null;
+    requiredMechanicLabel?: string | null;
+    requiredMechanicHint?: string | null;
     cacheId?: string | null;
     npcEncounterId?: OuterDeckNpcEncounterId | null;
   }>,
@@ -196,6 +209,9 @@ function createSubareas(
     enemyKinds: [...spec.enemyKinds],
     advanceToSubareaId: specs[index + 1] ? `${zoneId}:${specs[index + 1].slug}` : null,
     returnToSubareaId: index > 0 ? `${zoneId}:${specs[index - 1].slug}` : null,
+    requiredMechanicId: spec.requiredMechanicId ?? null,
+    requiredMechanicLabel: spec.requiredMechanicLabel ?? null,
+    requiredMechanicHint: spec.requiredMechanicHint ?? null,
     cacheId: spec.cacheId ?? null,
     npcEncounterId: spec.npcEncounterId ?? null,
   }));
@@ -226,6 +242,9 @@ const OUTER_DECK_ZONE_DEFINITIONS: Record<OuterDeckZoneId, OuterDeckZoneDefiniti
         gateVerb: "POWER LIFT",
         enemyCount: 2,
         enemyKinds: ["maintenance_drone", "climbing_scavenger"],
+        requiredMechanicId: "counterweight_shaft_restore_lift_power",
+        requiredMechanicLabel: "RESTORE LIFT POWER",
+        requiredMechanicHint: "Route emergency power through the maintenance lift controls first.",
       },
       {
         slug: "lift_spine",
@@ -271,6 +290,9 @@ const OUTER_DECK_ZONE_DEFINITIONS: Record<OuterDeckZoneId, OuterDeckZoneDefiniti
         gateVerb: "EXTEND BRIDGE",
         enemyCount: 2,
         enemyKinds: ["scaffold_sniper", "fast_flanker"],
+        requiredMechanicId: "outer_scaffold_extend_bridge",
+        requiredMechanicLabel: "RESTART WINCH",
+        requiredMechanicHint: "Kick the scaffold winch back online before the bridge can extend.",
       },
       {
         slug: "signal_span",
@@ -316,6 +338,9 @@ const OUTER_DECK_ZONE_DEFINITIONS: Record<OuterDeckZoneId, OuterDeckZoneDefiniti
         gateVerb: "RELEASE CLAMPS",
         enemyCount: 2,
         enemyKinds: ["cargo_looter", "cargo_ambusher"],
+        requiredMechanicId: "drop_bay_route_crane",
+        requiredMechanicLabel: "ROUTE CRANE",
+        requiredMechanicHint: "Route the cargo crane before the clamp lane will open.",
       },
       {
         slug: "cargo_field",
@@ -361,6 +386,9 @@ const OUTER_DECK_ZONE_DEFINITIONS: Record<OuterDeckZoneId, OuterDeckZoneDefiniti
         gateVerb: "POWER INTAKE",
         enemyCount: 2,
         enemyKinds: ["swarm_cluster", "sort_bot"],
+        requiredMechanicId: "supply_intake_port_clear_sorter_jam",
+        requiredMechanicLabel: "CLEAR SORTER JAM",
+        requiredMechanicHint: "Clear the sorter jam before the intake gate can cycle open.",
       },
       {
         slug: "sorting_channel",
@@ -400,6 +428,7 @@ function cloneActiveExpedition(expedition: OuterDeckExpeditionState | null): Out
     ...expedition,
     subareas: cloneSubareas(expedition.subareas),
     clearedSubareaIds: [...expedition.clearedSubareaIds],
+    resolvedMechanicIds: [...expedition.resolvedMechanicIds],
     rewardCacheClaimedIds: [...expedition.rewardCacheClaimedIds],
     npcEncounterIds: [...expedition.npcEncounterIds],
   };
@@ -542,12 +571,20 @@ export function isOuterDeckSubareaCleared(state: GameState, subareaId: string): 
   return Boolean(getSafeOuterDecksState(state).activeExpedition?.clearedSubareaIds.includes(subareaId));
 }
 
+export function isOuterDeckMechanicResolved(state: GameState, mechanicId: OuterDeckMechanicId): boolean {
+  return Boolean(getSafeOuterDecksState(state).activeExpedition?.resolvedMechanicIds.includes(mechanicId));
+}
+
 export function hasOuterDeckCacheBeenClaimed(state: GameState, cacheId: string): boolean {
   return Boolean(getSafeOuterDecksState(state).activeExpedition?.rewardCacheClaimedIds.includes(cacheId));
 }
 
 export function hasSeenOuterDeckNpcEncounter(state: GameState, encounterId: OuterDeckNpcEncounterId): boolean {
   return getSafeOuterDecksState(state).seenNpcEncounterIds.includes(encounterId);
+}
+
+export function hasOuterDeckZoneBeenReclaimed(state: GameState, zoneId: OuterDeckZoneId): boolean {
+  return Math.max(0, Number(getSafeOuterDecksState(state).zoneCompletionCounts[zoneId] ?? 0)) > 0;
 }
 
 export function beginOuterDeckExpedition(
@@ -563,6 +600,7 @@ export function beginOuterDeckExpedition(
     currentSubareaId: zone.subareas[0]!.id,
     subareas: cloneSubareas(zone.subareas),
     clearedSubareaIds: [],
+    resolvedMechanicIds: [],
     rewardCacheClaimedIds: [],
     npcEncounterIds: [],
     completionRewardClaimed: false,
@@ -597,6 +635,23 @@ export function markOuterDeckSubareaCleared(state: GameState, subareaId: string)
   }
 
   expedition.clearedSubareaIds.push(subareaId);
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    activeExpedition: expedition,
+  });
+}
+
+export function resolveOuterDeckMechanic(
+  state: GameState,
+  mechanicId: OuterDeckMechanicId,
+): GameState {
+  const outerDecks = getSafeOuterDecksState(state);
+  const expedition = cloneActiveExpedition(outerDecks.activeExpedition);
+  if (!expedition || expedition.resolvedMechanicIds.includes(mechanicId)) {
+    return state;
+  }
+
+  expedition.resolvedMechanicIds.push(mechanicId);
   return withOuterDecksState(state, {
     ...outerDecks,
     activeExpedition: expedition,

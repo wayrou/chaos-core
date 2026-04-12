@@ -8174,7 +8174,7 @@ function createConfiguredBaseCampMap(): FieldMap {
     height: 2,
     type: "station",
     sprite: "bulkhead",
-    metadata: { name: "Outer Deck Access" },
+    metadata: { name: "Outer Deck Access [Beta]" },
   });
   map.interactionZones.unshift({
     id: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
@@ -8183,7 +8183,7 @@ function createConfiguredBaseCampMap(): FieldMap {
     width: 4,
     height: 2,
     action: "custom",
-    label: "OUTER DECKS",
+    label: "OUTER DECKS [BETA]",
     metadata: {
       handlerId: "outer_deck_enter_overworld",
       autoTrigger: true,
@@ -8489,16 +8489,6 @@ function createNetworkLobbyMap(): FieldMap {
       metadata: { name: "Operations Table" },
     },
     {
-      id: "lobby_comms_uplink",
-      x: 16,
-      y: 3,
-      width: 3,
-      height: 2,
-      type: "station",
-      sprite: "uplink",
-      metadata: { name: "Comms Uplink" },
-    },
-    {
       id: "lobby_lounge_bench",
       x: 5,
       y: 10,
@@ -8547,15 +8537,6 @@ function createNetworkLobbyMap(): FieldMap {
         action: "custom",
         label: "OPERATIONS TABLE",
         metadata: { handlerId: "lobby_ops_table" },
-      },
-      {
-        id: "network_lobby_comms_uplink",
-        x: 16,
-        y: 3,
-        width: 3,
-        height: 2,
-        action: "comms-array",
-        label: "COMMS UPLINK",
       },
     ],
   };

@@ -5,8 +5,10 @@ import {
   canCraftMaterialRefineryRecipe,
   countAdvancedMaterialOwned,
   craftMaterialRefineryRecipe,
+  getMaterialRefineryEffectiveOutputQuantity,
   getMaterialRefineryShortage,
 } from "../materialRefinery";
+import { markOuterDeckNpcEncounterSeen } from "../outerDecks";
 
 describe("materialRefinery", () => {
   it("deducts base resources and stores output in base storage from HAVEN", () => {
@@ -43,5 +45,17 @@ describe("materialRefinery", () => {
 
     const next = craftMaterialRefineryRecipe(state, "resource_charge_cell", "haven");
     expect(next).toBe(state);
+  });
+
+  it("applies outer deck support bonuses to light crafting output", () => {
+    const state = createNewGameState();
+    state.resources.chaosShards = 3;
+    state.resources.steamComponents = 2;
+
+    const unlocked = markOuterDeckNpcEncounterSeen(state, "intake_quartermaster");
+    expect(getMaterialRefineryEffectiveOutputQuantity(unlocked, "resource_charge_cell")).toBe(2);
+
+    const next = craftMaterialRefineryRecipe(unlocked, "resource_charge_cell", "haven");
+    expect(countAdvancedMaterialOwned(next, "resource_charge_cell")).toBe(2);
   });
 });

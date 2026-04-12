@@ -1,0 +1,27 @@
+{
+  "contentId": "shield_pattern_shield",
+  "contentType": "gear",
+  "dependencies": [
+    {
+      "contentType": "card",
+      "id": "guard_self",
+      "relation": "grants-card"
+    }
+  ],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "shield_pattern_shield.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-12T05:32:21.987Z",
+  "files": [
+    "manifest.json",
+    "shield_pattern_shield.gear.json",
+    "shield_pattern_shield.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Pattern Shield"
+}

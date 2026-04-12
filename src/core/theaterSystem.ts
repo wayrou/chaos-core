@@ -37,6 +37,8 @@ import {
   TheaterRuntimeContext,
   TheaterObjectiveCompletion,
   TheaterRoom,
+  TheaterContainmentMode,
+  TheaterSignalPosture,
   TheaterSquadPreset,
   TheaterSquadState,
   TheaterSquadAutomationMode,
@@ -58,6 +60,7 @@ import {
   isCoreTypeUnlocked,
   isFieldAssetUnlocked,
   isFortificationUnlocked,
+  normalizeTheaterRoomNaturalStock,
   normalizeFortificationPips,
   roomHasTag,
   SCHEMA_CORE_DEFINITIONS,
@@ -118,6 +121,7 @@ import {
   applyShakenStatusToUnitIds,
   expireShakenStatusesForTheater,
 } from "./operationStatuses";
+import { getActiveRegionPresentation } from "./campaignRegions";
 
 type ResourceWallet = GameState["resources"];
 
@@ -190,9 +194,32 @@ const THEATER_ROOM_BASE: Omit<
   battleMapId: null,
   placedFieldAssets: [],
   fieldAssetRuntimeState: {},
+  naturalResourceStock: { metalScrap: 0, wood: 0, steamComponents: 0 },
+  naturalResourceStockMax: { metalScrap: 0, wood: 0, steamComponents: 0 },
   supplyFlow: 0,
   powerFlow: 0,
   commsFlow: 0,
+  sandboxOverheating: false,
+  sandboxOverheatSeverity: 0,
+  sandboxRouteNoise: false,
+  sandboxPhantomRouteRoomIds: [],
+  sandboxCommsAttraction: 0,
+  sandboxScavengerPressure: 0,
+  sandboxScavengerPresence: 0,
+  sandboxScavengerActivity: "quiet",
+  sandboxEnemyPresence: 0,
+  sandboxMigrationAnchorRoomId: null,
+  sandboxHeatValue: 0,
+  sandboxSmokeValue: 0,
+  sandboxBurning: false,
+  sandboxBurnSeverity: 0,
+  sandboxContainmentMode: "normal",
+  sandboxEmergencyDumpTicks: 0,
+  sandboxStructuralStress: 0,
+  sandboxSignalPosture: "normal",
+  sandboxSignalBloom: false,
+  sandboxSupplyFireRisk: false,
+  sandboxExtractionEfficiency: 1,
   intelLevel: 0,
   fortificationPips: createEmptyFortificationPips(),
   powerGateWatts: {},
@@ -485,6 +512,11 @@ function projectTheaterPosition(
 }
 
 function createRoom(definition: TheaterDefinition, room: TheaterRoomSeed): TheaterRoom {
+  const naturalStock = normalizeTheaterRoomNaturalStock(
+    room.tags,
+    room.naturalResourceStock,
+    room.naturalResourceStockMax,
+  );
   const coreSlots = (room.coreSlots && room.coreSlots.length > 0)
     ? room.coreSlots.map((assignment) => assignment ? {
       ...assignment,
@@ -513,6 +545,8 @@ function createRoom(definition: TheaterDefinition, room: TheaterRoomSeed): Theat
     coreSlots,
     coreAssignment: primaryCoreAssignment,
     enemySite: room.enemySite ? { ...room.enemySite } : null,
+    naturalResourceStock: naturalStock.current,
+    naturalResourceStockMax: naturalStock.max,
     battleSizeOverride: room.battleSizeOverride ? { ...room.battleSizeOverride } : undefined,
   };
 }
@@ -750,7 +784,13 @@ function cloneTheater(theater: TheaterNetworkState): TheaterNetworkState {
     rooms: Object.fromEntries(
       Object.entries(theater.rooms).map(([roomId, room]) => [
         roomId,
-        {
+        (() => {
+          const naturalStock = normalizeTheaterRoomNaturalStock(
+            room,
+            room.naturalResourceStock,
+            room.naturalResourceStockMax,
+          );
+          return {
           ...room,
           position: { ...room.position },
           localPosition: { ...room.localPosition },
@@ -791,9 +831,12 @@ function cloneTheater(theater: TheaterNetworkState): TheaterNetworkState {
           battleMapId: room.battleMapId ?? getDefaultBattleMapIdForRoom(room),
           placedFieldAssets: clonePlacedFieldAssets(room),
           fieldAssetRuntimeState: cloneFieldAssetRuntimeState(room),
+          naturalResourceStock: naturalStock.current,
+          naturalResourceStockMax: naturalStock.max,
           battleSizeOverride: room.battleSizeOverride ? { ...room.battleSizeOverride } : undefined,
           tags: [...room.tags],
-        },
+        };
+        })(),
       ]),
     ),
     currentRoomId: theater.currentRoomId,
@@ -1723,7 +1766,33 @@ const SANDBOX_ROUTE_NOISE_POWER_THRESHOLD = 500;
 const SANDBOX_OVERHEAT_POWER_THRESHOLD = 300;
 const SANDBOX_HIGH_COMMS_THRESHOLD = 500;
 const SANDBOX_HIGH_SUPPLY_THRESHOLD = 500;
+const SANDBOX_SIGNAL_BLOOM_BW_THRESHOLD = 700;
 const SANDBOX_COLLAPSE_SUPPLY_THRESHOLD = 0;
+const SANDBOX_SCAVENGER_THEFT_PER_PRESENCE = 18;
+const SANDBOX_EMERGENCY_DUMP_SUPPLY_REDUCTION = 400;
+
+function clampSandboxLevel(value: number, max: number): number {
+  return Math.max(0, Math.min(max, Math.round(value)));
+}
+
+function getSandboxSignalPosture(room: TheaterRoom): TheaterSignalPosture {
+  return room.sandboxSignalPosture ?? "normal";
+}
+
+function getSandboxContainmentMode(room: TheaterRoom): TheaterContainmentMode {
+  return room.sandboxContainmentMode ?? "normal";
+}
+
+function getSandboxEmergencyDumpTicks(room: TheaterRoom): number {
+  return Math.max(0, Number(room.sandboxEmergencyDumpTicks ?? 0));
+}
+
+function getSandboxEffectiveSupply(room: TheaterRoom): number {
+  const emergencyDumpReduction = getSandboxEmergencyDumpTicks(room) > 0
+    ? SANDBOX_EMERGENCY_DUMP_SUPPLY_REDUCTION
+    : 0;
+  return Math.max(0, room.supplyFlow - emergencyDumpReduction);
+}
 
 function getSandboxOverheatSeverity(room: TheaterRoom): 0 | 1 | 2 {
   if (room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD && room.supplyFlow > SANDBOX_HIGH_SUPPLY_THRESHOLD) {
@@ -1735,18 +1804,30 @@ function getSandboxOverheatSeverity(room: TheaterRoom): 0 | 1 | 2 {
   return 0;
 }
 
-function getSandboxCommsAttraction(room: TheaterRoom): number {
-  if (room.commsFlow <= SANDBOX_HIGH_COMMS_THRESHOLD) {
-    return 0;
+function getSandboxSignalBloom(room: TheaterRoom): boolean {
+  const posture = getSandboxSignalPosture(room);
+  if (posture === "masked") {
+    return false;
   }
-  return Math.max(1, Math.ceil((room.commsFlow - SANDBOX_HIGH_COMMS_THRESHOLD) / 100));
+  return room.commsFlow > SANDBOX_SIGNAL_BLOOM_BW_THRESHOLD || (posture === "bait" && room.commsFlow > 250);
+}
+
+function getSandboxCommsAttraction(room: TheaterRoom): number {
+  const posture = getSandboxSignalPosture(room);
+  const postureModifier = posture === "masked" ? -2 : posture === "bait" ? 3 : 0;
+  const baseAttraction = room.commsFlow <= SANDBOX_HIGH_COMMS_THRESHOLD
+    ? 0
+    : Math.max(1, Math.ceil((room.commsFlow - SANDBOX_HIGH_COMMS_THRESHOLD) / 100));
+  const bloomModifier = getSandboxSignalBloom(room) ? 1 : 0;
+  return Math.max(0, baseAttraction + postureModifier + bloomModifier);
 }
 
 function getSandboxScavengerPressure(room: TheaterRoom): number {
-  if (room.supplyFlow <= SANDBOX_HIGH_SUPPLY_THRESHOLD) {
+  const effectiveSupply = getSandboxEffectiveSupply(room);
+  if (effectiveSupply <= SANDBOX_HIGH_SUPPLY_THRESHOLD) {
     return 0;
   }
-  return Math.max(1, Math.ceil((room.supplyFlow - SANDBOX_HIGH_SUPPLY_THRESHOLD) / 100));
+  return Math.max(1, Math.ceil((effectiveSupply - SANDBOX_HIGH_SUPPLY_THRESHOLD) / 100));
 }
 
 function getSandboxEnemyPresenceByRoom(theater: TheaterNetworkState): Map<RoomId, number> {
@@ -1762,12 +1843,159 @@ function getSandboxEnemyPresenceByRoom(theater: TheaterNetworkState): Map<RoomId
       touchedRooms.forEach((roomId) => {
         presence.set(roomId, (presence.get(roomId) ?? 0) + 1);
       });
-    });
+  });
   return presence;
 }
 
+function getSandboxOpenAdjacentRooms(theater: TheaterNetworkState, roomId: RoomId): TheaterRoom[] {
+  const room = theater.rooms[roomId];
+  if (!room) {
+    return [];
+  }
+  return room.adjacency
+    .filter((adjacentId) => canTraverseTheaterEdge(theater, roomId, adjacentId))
+    .map((adjacentId) => theater.rooms[adjacentId])
+    .filter((adjacent): adjacent is TheaterRoom => Boolean(adjacent));
+}
+
+function getSandboxGuardingSquadCount(theater: TheaterNetworkState, roomId: RoomId): number {
+  return theater.squads.filter((squad) => {
+    const squadNodeId = squad.currentNodeId ?? squad.currentRoomId;
+    return getTheaterRootRoomIdForNode(theater, squadNodeId) === roomId;
+  }).length;
+}
+
+function getSandboxSupplyFireRisk(room: TheaterRoom): boolean {
+  return room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD && getSandboxEffectiveSupply(room) > SANDBOX_HIGH_SUPPLY_THRESHOLD;
+}
+
+function getSandboxHeatValue(
+  theater: TheaterNetworkState,
+  room: TheaterRoom,
+  previousTheater?: TheaterNetworkState | null,
+): number {
+  const previousRoom = previousTheater?.rooms[room.id];
+  const openAdjacentRooms = getSandboxOpenAdjacentRooms(theater, room.id);
+  const containmentMode = getSandboxContainmentMode(room);
+  const ventBonus = containmentMode === "venting" ? 2 : 0;
+  const containedLoad = containmentMode === "lockdown" ? 1 : 0;
+  const previousBurnSeverity = previousRoom?.sandboxBurnSeverity ?? 0;
+  const baseHeat = (getSandboxOverheatSeverity(room) * 2)
+    + (getSandboxSupplyFireRisk(room) ? 1 : 0)
+    + Math.min(2, previousBurnSeverity)
+    + containedLoad;
+  const previousHeat = Math.max(0, (previousRoom?.sandboxHeatValue ?? 0) - (openAdjacentRooms.length >= 2 ? 2 : 1) - ventBonus);
+  const neighborHeat = openAdjacentRooms.reduce((total, adjacent) => {
+    const adjacentPrevious = previousTheater?.rooms[adjacent.id];
+    const adjacentHeat = adjacentPrevious?.sandboxHeatValue ?? (getSandboxOverheatSeverity(adjacent) * 2);
+    return total + (adjacentHeat >= 2 ? 1 : 0);
+  }, 0);
+  const venting = baseHeat > 0
+    ? Math.max(0, openAdjacentRooms.length - 2)
+    : Math.max(0, openAdjacentRooms.length - 1);
+  return clampSandboxLevel(Math.max(baseHeat, previousHeat, baseHeat + neighborHeat - venting - ventBonus), 5);
+}
+
+function getSandboxSmokeValue(
+  theater: TheaterNetworkState,
+  room: TheaterRoom,
+  previousTheater?: TheaterNetworkState | null,
+): number {
+  const previousRoom = previousTheater?.rooms[room.id];
+  const openAdjacentRooms = getSandboxOpenAdjacentRooms(theater, room.id);
+  const containmentMode = getSandboxContainmentMode(room);
+  const ventBonus = containmentMode === "venting" ? 1 : 0;
+  const previousSmoke = Math.max(0, (previousRoom?.sandboxSmokeValue ?? 0) - 1 - ventBonus);
+  const neighborSmoke = openAdjacentRooms.reduce((total, adjacent) => {
+    const adjacentPrevious = previousTheater?.rooms[adjacent.id];
+    return total + ((adjacentPrevious?.sandboxSmokeValue ?? 0) > 0 ? 1 : 0);
+  }, 0);
+  const industrialSmoke = room.damaged && (roomHasOperationalCoreType(room, "refinery") || roomHasOperationalCoreType(room, "generator"))
+    ? 1
+    : 0;
+  const containedLoad = (openAdjacentRooms.length <= 1 || containmentMode === "lockdown") && (room.sandboxHeatValue ?? 0) >= 2 ? 1 : 0;
+  const previousBurnSeverity = previousRoom?.sandboxBurnSeverity ?? 0;
+  const baseSmoke = (room.sandboxSupplyFireRisk ? 2 : ((room.sandboxHeatValue ?? 0) >= 3 ? 1 : 0))
+    + industrialSmoke
+    + containedLoad
+    + previousBurnSeverity;
+  const venting = Math.max(0, openAdjacentRooms.length - 1) + ventBonus;
+  return clampSandboxLevel(Math.max(baseSmoke, previousSmoke, baseSmoke + neighborSmoke - venting), 4);
+}
+
+function getSandboxBurnSeverity(
+  room: TheaterRoom,
+  previousRoom?: TheaterRoom | null,
+  advanceDynamics = false,
+): 0 | 1 | 2 | 3 {
+  const previousBurnSeverity = previousRoom?.sandboxBurnSeverity ?? 0;
+  const heatValue = room.sandboxHeatValue ?? 0;
+  const smokeValue = room.sandboxSmokeValue ?? 0;
+  const containmentMode = getSandboxContainmentMode(room);
+  let desiredBurnSeverity = 0;
+  if (room.sandboxSupplyFireRisk && heatValue >= 4 && smokeValue >= 2) {
+    desiredBurnSeverity = 1;
+  }
+  if (room.sandboxSupplyFireRisk && heatValue >= 5 && smokeValue >= 2) {
+    desiredBurnSeverity = 2;
+  }
+  if (room.sandboxSupplyFireRisk && heatValue >= 5 && smokeValue >= 3) {
+    desiredBurnSeverity = 3;
+  }
+  if (containmentMode === "venting") {
+    desiredBurnSeverity = Math.max(0, desiredBurnSeverity - 1);
+  }
+  if (getSandboxEmergencyDumpTicks(room) > 0) {
+    desiredBurnSeverity = Math.max(0, desiredBurnSeverity - 1);
+  }
+  if (!advanceDynamics) {
+    return Math.max(room.sandboxBurnSeverity ?? previousBurnSeverity, desiredBurnSeverity) as 0 | 1 | 2 | 3;
+  }
+  if (desiredBurnSeverity > previousBurnSeverity) {
+    return Math.min(3, previousBurnSeverity + 1) as 0 | 1 | 2 | 3;
+  }
+  if (desiredBurnSeverity < previousBurnSeverity) {
+    return Math.max(0, previousBurnSeverity - 1) as 0 | 1 | 2 | 3;
+  }
+  return previousBurnSeverity as 0 | 1 | 2 | 3;
+}
+
+function getSandboxScavengerMigrationTarget(theater: TheaterNetworkState, fromRoomId: RoomId): TheaterRoom | null {
+  const candidates = Object.values(theater.rooms)
+    .filter((room) => room.id !== fromRoomId && room.secured && (room.sandboxScavengerPressure ?? 0) > 0)
+    .map((room) => ({
+      room,
+      distance: getRoomDistance(theater, fromRoomId, room.id),
+      guarded: getSandboxGuardingSquadCount(theater, room.id),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.distance));
+
+  if (candidates.length <= 0) {
+    return null;
+  }
+
+  candidates.sort((left, right) => (
+    (right.room.sandboxScavengerPressure ?? 0) - (left.room.sandboxScavengerPressure ?? 0)
+    || left.guarded - right.guarded
+    || left.distance - right.distance
+    || left.room.id.localeCompare(right.room.id)
+  ));
+  return candidates[0]?.room ?? null;
+}
+
+function getSandboxScavengerActivity(theater: TheaterNetworkState, room: TheaterRoom): "quiet" | "probing" | "raiding" {
+  const presence = room.sandboxScavengerPresence ?? 0;
+  if (presence <= 0) {
+    return "quiet";
+  }
+  if (getSandboxGuardingSquadCount(theater, room.id) > 0) {
+    return "probing";
+  }
+  return presence >= 2 || (room.sandboxScavengerPressure ?? 0) >= 2 ? "raiding" : "probing";
+}
+
 function getSandboxPhantomRouteTargets(theater: TheaterNetworkState, room: TheaterRoom): RoomId[] {
-  if (room.powerFlow <= SANDBOX_ROUTE_NOISE_POWER_THRESHOLD) {
+  if (!room.sandboxRouteNoise) {
     return [];
   }
 
@@ -1779,7 +2007,7 @@ function getSandboxPhantomRouteTargets(theater: TheaterNetworkState, room: Theat
       realThreatEndpointIds.add(threat.targetRoomId);
     });
 
-  const desiredCount = getSandboxOverheatSeverity(room) >= 2 ? 2 : 1;
+  const desiredCount = (getSandboxOverheatSeverity(room) >= 2 || room.sandboxSignalBloom) ? 2 : 1;
   const candidates = Object.values(theater.rooms)
     .filter((candidate) => candidate.id !== room.id)
     .map((candidate) => ({
@@ -1806,22 +2034,114 @@ function getSandboxPhantomRouteTargets(theater: TheaterNetworkState, room: Theat
   return fallback.map((candidate) => candidate.room.id);
 }
 
-function applySandboxRoomDerivedState(theater: TheaterNetworkState): TheaterNetworkState {
+function applySandboxScavengerMigration(theater: TheaterNetworkState): Array<{ fromRoomId: RoomId; toRoomId: RoomId }> {
+  const moves: Array<{ fromRoomId: RoomId; toRoomId: RoomId }> = [];
+  const sourceRooms = Object.values(theater.rooms)
+    .filter((room) => (room.sandboxScavengerPresence ?? 0) > 0 && (room.sandboxScavengerPressure ?? 0) <= 0)
+    .sort((left, right) => (
+      (right.sandboxScavengerPresence ?? 0) - (left.sandboxScavengerPresence ?? 0)
+      || left.id.localeCompare(right.id)
+    ));
+
+  sourceRooms.forEach((room) => {
+    const targetRoom = getSandboxScavengerMigrationTarget(theater, room.id);
+    if (!targetRoom || targetRoom.id === room.id) {
+      return;
+    }
+    room.sandboxScavengerPresence = Math.max(0, (room.sandboxScavengerPresence ?? 0) - 1);
+    targetRoom.sandboxScavengerPresence = Math.min(3, (targetRoom.sandboxScavengerPresence ?? 0) + 1);
+    moves.push({ fromRoomId: room.id, toRoomId: targetRoom.id });
+  });
+
+  return moves;
+}
+
+function applySandboxRoomDerivedState(
+  theater: TheaterNetworkState,
+  previousTheater?: TheaterNetworkState | null,
+  advanceDynamics = false,
+): TheaterNetworkState {
+  const priorTheater = previousTheater ?? theater;
   const threatPresenceByRoom = getSandboxEnemyPresenceByRoom(theater);
 
   Object.values(theater.rooms).forEach((room) => {
+    const previousRoom = priorTheater.rooms[room.id];
+    const containmentMode = room.sandboxContainmentMode ?? previousRoom?.sandboxContainmentMode ?? "normal";
+    const previousEmergencyDumpTicks = previousRoom?.sandboxEmergencyDumpTicks ?? room.sandboxEmergencyDumpTicks ?? 0;
+    const emergencyDumpTicks = advanceDynamics
+      ? Math.max(0, previousEmergencyDumpTicks - 1)
+      : Math.max(0, room.sandboxEmergencyDumpTicks ?? previousEmergencyDumpTicks);
     const overheatSeverity = getSandboxOverheatSeverity(room);
+    const signalBloom = getSandboxSignalBloom(room);
+    const previousPresence = previousRoom?.sandboxScavengerPresence ?? room.sandboxScavengerPresence ?? 0;
+    const guardedSquads = getSandboxGuardingSquadCount(theater, room.id);
+    const scavengerPressure = getSandboxScavengerPressure(room);
+    const desiredScavengerPresence = room.secured && !room.underThreat && scavengerPressure > 0
+      ? Math.min(3, scavengerPressure + (guardedSquads > 0 ? 0 : 1))
+      : 0;
+    const scavengerPresence = advanceDynamics
+      ? desiredScavengerPresence > previousPresence
+        ? Math.min(3, previousPresence + 1)
+      : desiredScavengerPresence < previousPresence
+          ? Math.max(0, previousPresence - 1)
+          : previousPresence
+      : Math.max(0, room.sandboxScavengerPresence ?? previousPresence);
+
+    room.sandboxContainmentMode = containmentMode;
+    room.sandboxEmergencyDumpTicks = emergencyDumpTicks;
     room.sandboxOverheatSeverity = overheatSeverity;
     room.sandboxOverheating = overheatSeverity > 0;
-    room.sandboxRouteNoise = room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD;
+    room.sandboxSignalBloom = signalBloom;
+    room.sandboxRouteNoise = room.powerFlow > SANDBOX_ROUTE_NOISE_POWER_THRESHOLD || signalBloom;
     room.sandboxCommsAttraction = getSandboxCommsAttraction(room);
-    room.sandboxScavengerPressure = getSandboxScavengerPressure(room);
+    room.sandboxScavengerPressure = scavengerPressure;
+    room.sandboxScavengerPresence = scavengerPresence;
     room.sandboxEnemyPresence = threatPresenceByRoom.get(room.id) ?? 0;
     room.sandboxMigrationAnchorRoomId = null;
     room.sandboxPhantomRouteRoomIds = [];
+    room.sandboxSupplyFireRisk = getSandboxSupplyFireRisk(room);
+    room.sandboxHeatValue = 0;
+    room.sandboxSmokeValue = 0;
+    room.sandboxBurning = false;
+    room.sandboxBurnSeverity = 0;
+    room.sandboxStructuralStress = Math.max(0, room.sandboxStructuralStress ?? previousRoom?.sandboxStructuralStress ?? 0);
+    room.sandboxExtractionEfficiency = getSandboxRoomExtractionEfficiency(room);
   });
 
   Object.values(theater.rooms).forEach((room) => {
+    room.sandboxHeatValue = advanceDynamics
+      ? getSandboxHeatValue(theater, room, priorTheater)
+      : Math.max(room.sandboxHeatValue ?? 0, (room.sandboxOverheatSeverity ?? 0) * 2, room.sandboxSupplyFireRisk ? 1 : 0);
+  });
+
+  Object.values(theater.rooms).forEach((room) => {
+    room.sandboxSmokeValue = advanceDynamics
+      ? getSandboxSmokeValue(theater, room, priorTheater)
+      : Math.max(room.sandboxSmokeValue ?? 0, room.sandboxSupplyFireRisk ? 2 : 0);
+  });
+
+  Object.values(theater.rooms).forEach((room) => {
+    const previousRoom = priorTheater.rooms[room.id];
+    const burnSeverity = getSandboxBurnSeverity(room, previousRoom, advanceDynamics);
+    const annexLoad = Object.values(theater.annexesById ?? {}).filter((annex) => annex.parentRoomId === room.id).length;
+    const previousStress = previousRoom?.sandboxStructuralStress ?? 0;
+    const desiredStress = burnSeverity > 0
+      ? Math.min(6, burnSeverity + ((room.sandboxHeatValue ?? 0) >= 4 ? 1 : 0) + (annexLoad > 0 ? 1 : 0))
+      : (room.sandboxHeatValue ?? 0) >= 3
+        ? Math.min(3, 1 + (annexLoad > 1 ? 1 : 0))
+        : 0;
+    const structuralStress = advanceDynamics
+      ? desiredStress > previousStress
+        ? Math.min(6, previousStress + 1)
+        : desiredStress < previousStress
+          ? Math.max(0, previousStress - 1)
+          : previousStress
+      : Math.max(room.sandboxStructuralStress ?? previousStress, desiredStress);
+
+    room.sandboxBurnSeverity = burnSeverity;
+    room.sandboxBurning = burnSeverity > 0;
+    room.sandboxStructuralStress = structuralStress;
+    room.sandboxScavengerActivity = getSandboxScavengerActivity(theater, room);
     room.sandboxPhantomRouteRoomIds = room.sandboxRouteNoise
       ? getSandboxPhantomRouteTargets(theater, room)
       : [];
@@ -1830,9 +2150,110 @@ function applySandboxRoomDerivedState(theater: TheaterNetworkState): TheaterNetw
   return theater;
 }
 
+function collapseAnnexBranchInTheater(theater: TheaterNetworkState, annexId: string): string[] {
+  const annex = theater.annexesById?.[annexId];
+  if (!annex) {
+    return [];
+  }
+
+  const removedAnnexIds = [annexId, ...collectAnnexBranchIds(theater, annexId)];
+  const automation = theater.automation ?? createEmptyTheaterAutomationState();
+  removedAnnexIds.forEach((removedId) => {
+    const removedAnnex = theater.annexesById?.[removedId];
+    if (!removedAnnex) {
+      return;
+    }
+    removedAnnex.moduleSlots.forEach((moduleId) => {
+      if (!moduleId) {
+        return;
+      }
+      delete automation.moduleInstancesById[moduleId];
+      delete automation.moduleRuntimeById[moduleId];
+    });
+    delete theater.annexesById?.[removedId];
+  });
+
+  theater.squads = theater.squads.map((squad) => (
+    removedAnnexIds.includes(squad.currentNodeId ?? squad.currentRoomId)
+      ? {
+          ...squad,
+          currentNodeId: annex.parentNodeId,
+          currentRoomId: annex.parentRoomId,
+          automationMode: "manual",
+          autoStatus: "idle",
+          autoTargetRoomId: null,
+        }
+      : squad
+  ));
+
+  if (removedAnnexIds.includes(theater.currentNodeId ?? theater.currentRoomId)) {
+    theater.currentNodeId = annex.parentNodeId;
+    theater.currentRoomId = annex.parentRoomId;
+  }
+  if (removedAnnexIds.includes(theater.selectedNodeId ?? theater.selectedRoomId)) {
+    theater.selectedNodeId = annex.parentNodeId;
+    theater.selectedRoomId = annex.parentRoomId;
+  }
+
+  return removedAnnexIds;
+}
+
+function applySandboxStructuralDamage(
+  theater: TheaterNetworkState,
+  emitEvents = false,
+): TheaterNetworkState {
+  let next = theater;
+
+  Object.values(next.rooms).forEach((room) => {
+    if ((room.sandboxStructuralStress ?? 0) >= 4 && !room.damaged) {
+      room.damaged = true;
+      if (emitEvents) {
+        next = addTheaterEvent(next, `Structural stress compromised room(${room.id})`);
+      }
+    }
+
+    if ((room.sandboxBurnSeverity ?? 0) < 2 || next.tickCount % 3 !== 0) {
+      return;
+    }
+
+    const directChildAnnex = Object.values(next.annexesById ?? {})
+      .filter((annex) => annex.parentRoomId === room.id)
+      .sort((left, right) => left.annexId.localeCompare(right.annexId))[0];
+    if (!directChildAnnex) {
+      return;
+    }
+
+    directChildAnnex.integrity = Math.max(0, directChildAnnex.integrity - 1);
+    const annexLabel = ANNEX_FRAME_DEFINITIONS[directChildAnnex.frameType]?.displayName ?? directChildAnnex.annexId;
+    if (emitEvents) {
+      next = addTheaterEvent(next, `Annex(${directChildAnnex.annexId}) lost integrity under room fire in room(${room.id})`);
+    }
+
+    if (directChildAnnex.integrity > 0) {
+      return;
+    }
+
+    const removedAnnexIds = collapseAnnexBranchInTheater(next, directChildAnnex.annexId);
+    if (emitEvents && removedAnnexIds.length > 0) {
+      next = addTheaterEvent(next, `Annex(${directChildAnnex.annexId}) collapsed from thermal stress in room(${room.id})`);
+    }
+    if (removedAnnexIds.includes(next.currentNodeId ?? next.currentRoomId)) {
+      next.currentNodeId = room.id;
+      next.currentRoomId = room.id;
+    }
+    if (removedAnnexIds.includes(next.selectedNodeId ?? next.selectedRoomId)) {
+      next.selectedNodeId = room.id;
+      next.selectedRoomId = room.id;
+    }
+  });
+
+  return next;
+}
+
 function appendSandboxThresholdEvents(
   theater: TheaterNetworkState,
   previousTheater: TheaterNetworkState | null | undefined,
+  scavengerMoves: Array<{ fromRoomId: RoomId; toRoomId: RoomId }>,
 ): TheaterNetworkState {
   let next = theater;
   Object.values(next.rooms).forEach((room) => {
@@ -1843,6 +2264,20 @@ function appendSandboxThresholdEvents(
     const currentRouteNoise = room.sandboxRouteNoise ?? false;
     const previousCommsAttraction = previousRoom?.sandboxCommsAttraction ?? 0;
     const currentCommsAttraction = room.sandboxCommsAttraction ?? 0;
+    const previousSmokeValue = previousRoom?.sandboxSmokeValue ?? 0;
+    const currentSmokeValue = room.sandboxSmokeValue ?? 0;
+    const previousBurnSeverity = previousRoom?.sandboxBurnSeverity ?? 0;
+    const currentBurnSeverity = room.sandboxBurnSeverity ?? 0;
+    const previousSignalBloom = previousRoom?.sandboxSignalBloom ?? false;
+    const currentSignalBloom = room.sandboxSignalBloom ?? false;
+    const previousSupplyFireRisk = previousRoom?.sandboxSupplyFireRisk ?? false;
+    const currentSupplyFireRisk = room.sandboxSupplyFireRisk ?? false;
+    const previousStructuralStress = previousRoom?.sandboxStructuralStress ?? 0;
+    const currentStructuralStress = room.sandboxStructuralStress ?? 0;
+    const previousScavengerPresence = previousRoom?.sandboxScavengerPresence ?? 0;
+    const currentScavengerPresence = room.sandboxScavengerPresence ?? 0;
+    const previousScavengerActivity = previousRoom?.sandboxScavengerActivity ?? "quiet";
+    const currentScavengerActivity = room.sandboxScavengerActivity ?? "quiet";
 
     if (currentOverheatSeverity > 0 && previousOverheatSeverity <= 0) {
       next = addTheaterEvent(next, `Overheat detected in room(${room.id})`);
@@ -1856,6 +2291,33 @@ function appendSandboxThresholdEvents(
     if (currentCommsAttraction > 0 && previousCommsAttraction <= 0) {
       next = addTheaterEvent(next, `High comms signature in room(${room.id}) is attracting enemy attention`);
     }
+    if (currentSignalBloom && !previousSignalBloom) {
+      next = addTheaterEvent(next, `Signal bloom in room(${room.id}) is leaking false telemetry`);
+    }
+    if (currentSmokeValue > 0 && previousSmokeValue <= 0) {
+      next = addTheaterEvent(next, `Smoke buildup detected in room(${room.id})`);
+    }
+    if (currentSupplyFireRisk && !previousSupplyFireRisk) {
+      next = addTheaterEvent(next, `Supply fire risk rising in room(${room.id})`);
+    }
+    if (currentBurnSeverity > 0 && previousBurnSeverity <= 0) {
+      next = addTheaterEvent(next, `Ignition in room(${room.id})`);
+    }
+    if (currentBurnSeverity > previousBurnSeverity && currentBurnSeverity > 1) {
+      next = addTheaterEvent(next, `Room(${room.id}) fire intensity increased`);
+    }
+    if (currentStructuralStress >= 3 && previousStructuralStress < 3) {
+      next = addTheaterEvent(next, `Structural stress rising in room(${room.id})`);
+    }
+    if (currentScavengerPresence > 0 && previousScavengerPresence <= 0) {
+      next = addTheaterEvent(next, `Scavenger activity rising in room(${room.id})`);
+    }
+    if (currentScavengerActivity === "raiding" && previousScavengerActivity !== "raiding") {
+      next = addTheaterEvent(next, `Scavenger raiders reached room(${room.id})`);
+    }
+  });
+  scavengerMoves.forEach(({ fromRoomId, toRoomId }) => {
+    next = addTheaterEvent(next, `Scavenger bands shifted from room(${fromRoomId}) to room(${toRoomId})`);
   });
   return next;
 }
@@ -1949,16 +2411,57 @@ function applySandboxCollapseInward(theater: TheaterNetworkState): TheaterNetwor
   return next;
 }
 
+function applySandboxScavengerRaids(
+  theater: TheaterNetworkState,
+  emitEvents = false,
+): TheaterNetworkState {
+  let next = theater;
+  Object.values(next.rooms).forEach((room) => {
+    const presence = room.sandboxScavengerPresence ?? 0;
+    if ((room.sandboxScavengerActivity ?? "quiet") !== "raiding" || presence <= 0) {
+      return;
+    }
+    if (getSandboxGuardingSquadCount(next, room.id) > 0) {
+      return;
+    }
+
+    const theftAmount = Math.min(room.supplyFlow, presence * SANDBOX_SCAVENGER_THEFT_PER_PRESENCE);
+    if (theftAmount > 0) {
+      room.supplyFlow = Math.max(0, room.supplyFlow - theftAmount);
+      if (emitEvents && next.tickCount % 2 === 0) {
+        next = addTheaterEvent(next, `Scavengers skimmed ${theftAmount} crates in room(${room.id})`);
+      }
+    }
+
+    const naturalStock = normalizeTheaterRoomNaturalStock(
+      room,
+      room.naturalResourceStock,
+      room.naturalResourceStockMax,
+    );
+    const nextStock = { ...naturalStock.current };
+    nextStock.metalScrap = Math.max(0, nextStock.metalScrap - (presence * 4));
+    nextStock.wood = Math.max(0, nextStock.wood - (presence * 4));
+    nextStock.steamComponents = Math.max(0, nextStock.steamComponents - (presence * 3));
+    room.naturalResourceStock = nextStock;
+    room.naturalResourceStockMax = naturalStock.max;
+  });
+  return next;
+}
+
 function applySandboxSlice(
   theater: TheaterNetworkState,
   previousTheater?: TheaterNetworkState | null,
   emitEvents = false,
 ): TheaterNetworkState {
-  let next = applySandboxRoomDerivedState(theater);
+  let next = applySandboxRoomDerivedState(theater, previousTheater, emitEvents);
+  const scavengerMoves = emitEvents ? applySandboxScavengerMigration(next) : [];
+  next = applySandboxRoomDerivedState(next, previousTheater, emitEvents);
   if (emitEvents) {
-    next = appendSandboxThresholdEvents(next, previousTheater);
+    next = applySandboxStructuralDamage(next, true);
+    next = appendSandboxThresholdEvents(next, previousTheater, scavengerMoves);
+    next = applySandboxScavengerRaids(next, true);
     next = applySandboxCollapseInward(next);
-    next = applySandboxRoomDerivedState(next);
+    next = applySandboxRoomDerivedState(next, previousTheater, true);
   }
   return applySandboxMigrationAnchors(next);
 }
@@ -2244,18 +2747,137 @@ function sumWadUpkeep(theater: TheaterNetworkState, ticks: number): number {
   }, 0);
 }
 
-function sumResourceIncome(theater: TheaterNetworkState, ticks: number): ResourceWallet {
-  const upkeep = createEmptyResourceWallet();
+const NATURAL_STOCK_KEYS = ["metalScrap", "wood", "steamComponents"] as const;
 
-  Object.values(theater.rooms).forEach((room) => {
+const NATURAL_STOCK_RECOVERY_RATES: Record<typeof NATURAL_STOCK_KEYS[number], number> = {
+  metalScrap: 0.00045,
+  wood: 0.0008,
+  steamComponents: 0.001,
+};
+
+function getNaturalStockYieldMultiplier(
+  room: TheaterRoom,
+  stockKey: typeof NATURAL_STOCK_KEYS[number],
+): number {
+  const max = Math.max(0, room.naturalResourceStockMax?.[stockKey] ?? 0);
+  const current = Math.max(0, room.naturalResourceStock?.[stockKey] ?? 0);
+  if (max <= 0 || current <= 0) {
+    return 0;
+  }
+  const ratio = current / max;
+  if (ratio <= 0.05) {
+    return 0.25;
+  }
+  if (ratio <= 0.15) {
+    return 0.45;
+  }
+  if (ratio <= 0.33) {
+    return 0.7;
+  }
+  if (ratio <= 0.6) {
+    return 0.85;
+  }
+  return 1;
+}
+
+function getSandboxRoomExtractionEfficiency(room: TheaterRoom): number {
+  if (roomHasOperationalCoreType(room, "mine")) {
+    return getNaturalStockYieldMultiplier(room, "metalScrap");
+  }
+  if (roomHasOperationalCoreType(room, "refinery")) {
+    return getNaturalStockYieldMultiplier(room, "steamComponents");
+  }
+  return 1;
+}
+
+function recoverRoomNaturalStock(room: TheaterRoom, ticks: number): void {
+  const naturalStock = normalizeTheaterRoomNaturalStock(
+    room,
+    room.naturalResourceStock,
+    room.naturalResourceStockMax,
+  );
+  const nextStock = { ...naturalStock.current };
+  NATURAL_STOCK_KEYS.forEach((stockKey) => {
+    const max = Math.max(0, naturalStock.max[stockKey] ?? 0);
+    if (max <= 0) {
+      nextStock[stockKey] = 0;
+      return;
+    }
+    const recoveryRate = NATURAL_STOCK_RECOVERY_RATES[stockKey];
+    const baseRecovery = Math.max(1, Math.round(max * recoveryRate * Math.max(1, ticks)));
+    const threatenedPenalty = room.underThreat || room.damaged ? 0.5 : 1;
+    const recoveryAmount = Math.max(0, Math.round(baseRecovery * threatenedPenalty));
+    nextStock[stockKey] = Math.min(max, (nextStock[stockKey] ?? 0) + recoveryAmount);
+  });
+  room.naturalResourceStock = nextStock;
+  room.naturalResourceStockMax = naturalStock.max;
+}
+
+function getRoomNaturalStockIncome(
+  room: TheaterRoom,
+  coreAssignment: CoreAssignment,
+  ticks: number,
+): Partial<ResourceWallet> {
+  const naturalStock = normalizeTheaterRoomNaturalStock(
+    room,
+    room.naturalResourceStock,
+    room.naturalResourceStockMax,
+  );
+  const currentStock = { ...naturalStock.current };
+  room.naturalResourceStock = currentStock;
+  room.naturalResourceStockMax = naturalStock.max;
+
+  const income = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    const desired = Math.max(0, (coreAssignment.incomePerTick?.[key] ?? 0) * ticks);
+    if (desired <= 0) {
+      return;
+    }
+
+    if (NATURAL_STOCK_KEYS.includes(key as typeof NATURAL_STOCK_KEYS[number])) {
+      const stockKey = key as typeof NATURAL_STOCK_KEYS[number];
+      const available = currentStock[stockKey] ?? 0;
+      const effectiveDesired = Math.max(0, Math.ceil(desired * getNaturalStockYieldMultiplier(room, stockKey)));
+      const granted = Math.min(available, effectiveDesired);
+      currentStock[stockKey] = Math.max(0, available - granted);
+      income[key] += granted;
+      return;
+    }
+
+    income[key] += desired;
+  });
+
+  return income;
+}
+
+function collectResourceIncome(theater: TheaterNetworkState, ticks: number): {
+  theater: TheaterNetworkState;
+  incomePerTick: ResourceWallet;
+} {
+  const next = cloneTheater(theater);
+  const incomePerTick = createEmptyResourceWallet();
+
+  Object.values(next.rooms).forEach((room) => {
+    recoverRoomNaturalStock(room, ticks);
     getRoomOperationalCoreAssignments(room).forEach((coreAssignment) => {
+      const roomIncome = (coreAssignment.type === "mine" || coreAssignment.type === "refinery")
+        ? getRoomNaturalStockIncome(room, coreAssignment, ticks)
+        : createEmptyResourceWallet(
+            Object.fromEntries(
+              RESOURCE_KEYS.map((key) => [key, Math.max(0, (coreAssignment.incomePerTick?.[key] ?? 0) * ticks)]),
+            ) as Partial<ResourceWallet>,
+          );
+
       RESOURCE_KEYS.forEach((key) => {
-        upkeep[key] += (coreAssignment.incomePerTick?.[key] ?? 0) * ticks;
+        incomePerTick[key] += roomIncome[key] ?? 0;
       });
     });
   });
 
-  return upkeep;
+  return {
+    theater: next,
+    incomePerTick,
+  };
 }
 
 function addResources(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
@@ -2284,15 +2906,17 @@ function applyTheaterSessionEconomyForTicks(
 ): { state: GameState; theater: TheaterNetworkState } {
   const economyTheater = recomputeTheaterNetwork(theater);
   const wadUpkeep = sumWadUpkeep(economyTheater, ticks);
-  const resourceIncome = toResourceWalletDelta(sumResourceIncome(economyTheater, ticks));
   const spendResult = wadUpkeep > 0 ? spendSessionCost(state, { wad: wadUpkeep }) : null;
   let nextState = state;
-  let nextTheater = cloneTheater(theater);
+  let nextTheater = cloneTheater(economyTheater);
 
   if (wadUpkeep <= 0 || spendResult?.success) {
     if (spendResult?.success) {
       nextState = spendResult.state;
     }
+    const resourceCollection = collectResourceIncome(nextTheater, ticks);
+    nextTheater = resourceCollection.theater;
+    const resourceIncome = toResourceWalletDelta(resourceCollection.incomePerTick);
     if (hasPositiveResourceDelta(resourceIncome)) {
       nextState = grantSessionResources(nextState, { resources: resourceIncome });
     }
@@ -3275,9 +3899,15 @@ function getEdgeRect(fromNodeId: string, toNodeId: string, theater: TheaterNetwo
   };
 }
 
-function doesAnnexCandidateOverlapConnection(theater: TheaterNetworkState, position: { x: number; y: number }, size: { width: number; height: number }): boolean {
+function doesAnnexCandidateOverlapConnection(
+  theater: TheaterNetworkState,
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+  ignoredNodeIds: string[] = [],
+): boolean {
   const candidateRect = createNodeRect(position, size);
   const edges = new Set<string>();
+  const ignoredIds = new Set(ignoredNodeIds);
 
   Object.values(theater.rooms).forEach((room) => {
     room.adjacency.forEach((adjacentId) => {
@@ -3290,6 +3920,9 @@ function doesAnnexCandidateOverlapConnection(theater: TheaterNetworkState, posit
 
   return Array.from(edges).some((edgeId) => {
     const [fromNodeId, toNodeId] = edgeId.split("__");
+    if (ignoredIds.has(fromNodeId) || ignoredIds.has(toNodeId)) {
+      return false;
+    }
     const edgeRect = getEdgeRect(fromNodeId, toNodeId, theater);
     return edgeRect ? rectOverlaps(candidateRect, edgeRect) : false;
   });
@@ -3438,7 +4071,10 @@ export function buildTheaterAnnex(
     y: nextParent.position.y + offset.y,
   };
 
-  if (doesAnnexCandidateOverlap(nextTheater, position, size) || doesAnnexCandidateOverlapConnection(nextTheater, position, size)) {
+  if (
+    doesAnnexCandidateOverlap(nextTheater, position, size)
+    || doesAnnexCandidateOverlapConnection(nextTheater, position, size, [parentNodeId])
+  ) {
     return {
       state: setTheaterSelectedNode(state, parentNodeId),
       success: false,
@@ -3829,6 +4465,134 @@ export function toggleTheaterPartitionState(
     ),
     success: true,
     message: `${partition.state === "open" ? "Opened" : "Closed"} ${FOUNDRY_PARTITION_DEFINITIONS[partition.partitionType]?.displayName ?? "partition"}.`,
+  };
+}
+
+export function setTheaterRoomSignalPosture(
+  state: GameState,
+  roomId: RoomId,
+  posture: TheaterSignalPosture,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+
+  const room = theater.rooms[roomId];
+  if (!room) {
+    return { state, success: false, message: "Selected room is unavailable." };
+  }
+  if (!room.secured) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Secure the room before changing its signal posture.",
+    };
+  }
+
+  room.sandboxSignalPosture = posture;
+  const postureLabel = posture === "masked" ? "MASKED" : posture === "bait" ? "BAIT" : "NORMAL";
+  return {
+    state: buildConfiguredTheaterState(
+      state,
+      operation,
+      theater,
+      `SIGNATURE :: ${room.label} posture set to ${postureLabel}.`,
+    ),
+    success: true,
+    message: `${room.label} signal posture updated.`,
+  };
+}
+
+export function setTheaterRoomContainmentMode(
+  state: GameState,
+  roomId: RoomId,
+  mode: TheaterContainmentMode,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+
+  const nextTheater = cloneTheater(theater);
+  const room = nextTheater.rooms[roomId];
+  if (!room) {
+    return { state, success: false, message: "Selected room is unavailable." };
+  }
+  if (!room.secured) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Secure the room before changing containment posture.",
+    };
+  }
+
+  room.sandboxContainmentMode = mode;
+  if (mode === "venting" || mode === "lockdown") {
+    room.adjacency.forEach((adjacentId) => {
+      const edgeId = getTheaterEdgeId(room.id, adjacentId);
+      const partition = nextTheater.partitionsByEdgeId?.[edgeId];
+      if (partition?.partitionType === "blast_door") {
+        partition.state = mode === "lockdown" ? "closed" : "open";
+      }
+    });
+  }
+
+  const label = mode === "venting" ? "VENTING" : mode === "lockdown" ? "LOCKDOWN" : "NORMAL";
+  return {
+    state: buildConfiguredTheaterState(
+      state,
+      operation,
+      nextTheater,
+      `CONTAINMENT :: ${room.label} set to ${label}.`,
+    ),
+    success: true,
+    message: `${room.label} containment posture updated.`,
+  };
+}
+
+export function triggerTheaterEmergencyDump(
+  state: GameState,
+  roomId: RoomId,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+
+  const nextTheater = cloneTheater(theater);
+  const room = nextTheater.rooms[roomId];
+  if (!room) {
+    return { state, success: false, message: "Selected room is unavailable." };
+  }
+  if (!room.secured) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Secure the room before dumping volatile stock.",
+    };
+  }
+  if ((room.sandboxEmergencyDumpTicks ?? 0) > 0) {
+    return {
+      state: setTheaterSelectedRoom(state, roomId),
+      success: false,
+      message: "Emergency dump is already running in that room.",
+    };
+  }
+
+  room.sandboxEmergencyDumpTicks = 4;
+  return {
+    state: buildConfiguredTheaterState(
+      state,
+      operation,
+      nextTheater,
+      `CONTAINMENT :: ${room.label} initiated an emergency dump to reduce volatile load.`,
+    ),
+    success: true,
+    message: `${room.label} emergency dump initiated.`,
   };
 }
 
@@ -4416,15 +5180,24 @@ function selectPatrolTargetRoom(theater: TheaterNetworkState, sourceRoomId: Room
   let bestScore = Number.NEGATIVE_INFINITY;
   candidates.forEach((room) => {
     const hasOperationalCore = roomHasOperationalCore(room);
+    const posture = getSandboxSignalPosture(room);
     const isFrontier = room.adjacency.some((adjacentId) => !theater.rooms[adjacentId]?.secured);
     const isMajorRoute = room.supplyFlow > 0 || room.powerFlow > 0 || room.commsFlow > 0;
+    const industrialNoise = roomHasOperationalCoreType(room, "mine")
+      || roomHasOperationalCoreType(room, "refinery")
+      || roomHasOperationalCoreType(room, "generator")
+      || getAutomatedTurretCountForRoom(theater, room.id) > 0;
+    const postureScore = posture === "masked" ? -35 : posture === "bait" ? 55 : 0;
     const score =
       (hasOperationalCore ? 100 : 0)
       + (isFrontier ? 70 : 0)
       + (isMajorRoute ? 40 : 0)
+      + (industrialNoise ? 18 : 0)
       + room.depthFromUplink
       + (getSandboxCommsAttraction(room) * 2)
-      + (room.underThreat ? -20 : 0);
+      + ((room.sandboxSignalBloom ?? false) ? 12 : 0)
+      + (room.underThreat ? -20 : 0)
+      + postureScore;
 
     if (score > bestScore) {
       bestScore = score;
@@ -6052,6 +6825,7 @@ function buildTheaterBattleStateForSquad(
   });
 
   const isCutOff = room.secured ? !room.supplied : neighborPressure;
+  const signalPosture = getSandboxSignalPosture(room);
   const hasCommandSupport = roomHasLinkedOperationalCore(theater, room, "command_center", 100);
   const hasMedicalSupport = roomHasLinkedOperationalCore(theater, room, "medical_ward", 100);
   const hasArmorySupport = roomHasLinkedOperationalCore(theater, room, "armory", 100);
@@ -6059,8 +6833,37 @@ function buildTheaterBattleStateForSquad(
   const hasRefinerySupport = roomHasLinkedOperationalCore(theater, room, "refinery", 50);
   const supplyOnline = room.supplied;
   const commsOnline = room.commsLinked && room.commsFlow >= Math.max(SQUAD_CONTROL_BW_PER_UNIT, deployedUnitIds.length * SQUAD_CONTROL_BW_PER_UNIT);
-  const detailedEnemyIntel = room.commsLinked && room.commsFlow >= 100;
+  const detailedEnemyIntel = signalPosture !== "masked" && room.commsLinked && room.commsFlow >= 100;
   const powerTurretCount = Math.max(0, Math.floor(room.powerFlow / 100)) + getAutomatedTurretCountForRoom(theater, room.id);
+  const smokeSeverity = clampSandboxLevel(room.sandboxSmokeValue ?? 0, 2) as 0 | 1 | 2;
+  const smokeObscured = smokeSeverity > 0;
+  const regionPresentation = getActiveRegionPresentation(theater.definition.floorOrdinal ?? 1);
+  const regionBattleModifier = regionPresentation.battleModifier;
+  const regionHeatOnMiss = regionBattleModifier.heatOnMiss > 0 ? regionBattleModifier.heatOnMiss : undefined;
+  const regionHeatOnAttack = regionBattleModifier.heatOnAttack > 0 ? regionBattleModifier.heatOnAttack : undefined;
+  const allyStartStatus = regionBattleModifier.allyStartStatus ?? null;
+  const enemyStartStatus = regionBattleModifier.enemyStartStatus ?? null;
+  const enemyIntelScrambled = Boolean(regionBattleModifier.scrambleEnemyIntel);
+  const enemyIntelScrambleLabel = enemyIntelScrambled
+    ? (regionBattleModifier.intelScrambleLabel ?? regionPresentation.mechanicLabel)
+    : undefined;
+  const regionObscurationSeverity = regionBattleModifier.obscurationSeverity;
+  const regionObscurationActive = regionObscurationSeverity > 0;
+  const combinedObscurationSeverity = Math.max(smokeSeverity, regionObscurationSeverity) as 0 | 1 | 2;
+  const obscurationActive = combinedObscurationSeverity > 0;
+  const obscurationSuppressesRanged = Boolean(smokeObscured || regionBattleModifier.obscurationSuppressesRanged);
+  const obscurationLabel = regionObscurationActive
+    ? regionPresentation.mechanicLabel
+    : smokeObscured
+      ? "Smoke Obscuration"
+      : undefined;
+  const combinedCombatInstability = Boolean((room.sandboxOverheating ?? false) || regionBattleModifier.combatInstability);
+  const combinedOverheatSeverity = Math.max(
+    room.sandboxOverheatSeverity ?? 0,
+    regionBattleModifier.overheatSeverity,
+  ) as 0 | 1 | 2;
+  const burningRoom = Boolean(room.sandboxBurning);
+  const burnSeverity = Math.max(0, room.sandboxBurnSeverity ?? 0) as 0 | 1 | 2 | 3;
 
   const units = { ...battle.units };
   const isObjectiveRoom = theater.objectiveDefinition?.targetRoomId === room.id;
@@ -6091,9 +6894,29 @@ function buildTheaterBattleStateForSquad(
         unit.hp += 1;
       }
     }
+
+    const startStatus = unit.isEnemy ? enemyStartStatus : allyStartStatus;
+    if (startStatus && !(unit.statuses ?? []).some((status) => status.type === startStatus.type)) {
+      unit.statuses = [
+        ...(unit.statuses ?? []),
+        { type: startStatus.type, duration: startStatus.duration },
+      ];
+    }
+
+    if (obscurationActive) {
+      unit.agi = Math.max(1, unit.agi - combinedObscurationSeverity);
+      if (obscurationSuppressesRanged && !(unit.statuses ?? []).some((status) => status.type === "suppressed")) {
+        unit.statuses = [
+          ...(unit.statuses ?? []),
+          { type: "suppressed", duration: 1 },
+        ];
+      }
+    }
   });
 
   const enemyUnits = Object.values(units).filter((unit) => unit.isEnemy);
+  const combinedDetailedEnemyIntel = detailedEnemyIntel && !enemyIntelScrambled;
+  const enemyPreview = combinedDetailedEnemyIntel ? enemyUnits.map((unit) => unit.name) : [];
   if (powerTurretCount > 0 && enemyUnits.length > 0) {
     for (let index = 0; index < powerTurretCount; index += 1) {
       const target = enemyUnits[index % enemyUnits.length];
@@ -6105,6 +6928,8 @@ function buildTheaterBattleStateForSquad(
     `THEATER//ROOM :: ${room.label} [${room.sectorTag}]`,
     `THEATER//LOGISTICS :: SUP=${room.supplied ? "ONLINE" : "CUT"} PWR=${room.powered ? "RAILED" : "OFF"} COMMS=${room.commsVisible ? "VISIBLE" : "BLIND"}`,
     `THEATER//SQUAD :: ${(squad.displayName || squad.squadId.toUpperCase()).toUpperCase()} deploying with ${deployedUnitIds.length} combat-ready unit(s).`,
+    `THEATER//REGION :: ${regionPresentation.regionName.toUpperCase()} // ${regionPresentation.variantLabel.toUpperCase()} // ${regionPresentation.factionTag.toUpperCase()}`,
+    `THEATER//REGION RULE :: ${regionPresentation.mechanicLabel.toUpperCase()} :: ${regionPresentation.ruleSummary}`,
   ];
   if (tacticalMap) {
     theaterBattleLog.push(`THEATER//TACTICAL :: ${tacticalMap.name} loaded for ${room.label}.`);
@@ -6146,12 +6971,49 @@ function buildTheaterBattleStateForSquad(
     console.log("[THEATER] tactical battle receives comms bonus", room.id, squad.squadId);
     theaterBattleLog.push("THEATER//COMMS BONUS :: Comms uplink stable. Enemy presence preview and initiative advantage granted.");
   }
-  if (detailedEnemyIntel) {
+  if (combinedDetailedEnemyIntel) {
     theaterBattleLog.push("THEATER//INTEL :: Full enemy telemetry resolved. Detailed combat dossiers available.");
+  }
+  if (enemyIntelScrambled) {
+    theaterBattleLog.push(`THEATER//STATIC :: ${enemyIntelScrambleLabel} is scrambling hostile telemetry in ${room.label}.`);
   }
   if (room.sandboxOverheating) {
     console.log("[THEATER] tactical battle inherits overheating", room.id, room.sandboxOverheatSeverity ?? 1);
     theaterBattleLog.push(`THEATER//ALERT :: Combat instability active in room(${room.id}). Strain accumulation doubled and weapon heat accelerated.`);
+  }
+  if (!room.sandboxOverheating && (regionHeatOnMiss || regionHeatOnAttack)) {
+    theaterBattleLog.push(`THEATER//PRESSURE :: ${regionPresentation.ruleSummary}`);
+  }
+  if (allyStartStatus) {
+    theaterBattleLog.push(`THEATER//FLOW :: ${allyStartStatus.label} is applying ${allyStartStatus.type.toUpperCase()} to allied units on deployment.`);
+  }
+  if (enemyStartStatus) {
+    theaterBattleLog.push(`THEATER//HOSTILES :: ${enemyStartStatus.label} is applying ${enemyStartStatus.type.toUpperCase()} to hostile units on deployment.`);
+  }
+  if (regionObscurationActive) {
+    const suppressionClause = regionBattleModifier.obscurationSuppressesRanged
+      ? " and ranged fire enters the fight suppressed."
+      : ".";
+    theaterBattleLog.push(
+      `THEATER//CANOPY :: ${regionPresentation.mechanicLabel} is active in room(${room.id}). Movement reduced by ${regionObscurationSeverity}${suppressionClause}`,
+    );
+  }
+  if (smokeObscured) {
+    theaterBattleLog.push(`THEATER//SMOKE :: Room(${room.id}) is obscured by smoke. Movement reduced by ${smokeSeverity} and ranged fire enters the fight suppressed.`);
+  }
+  if (burningRoom) {
+    theaterBattleLog.push(`THEATER//FIRE :: Room(${room.id}) is actively burning. Ambient thermal damage will strike every turn and ignition pressure is elevated.`);
+  }
+  if (room.sandboxSupplyFireRisk) {
+    theaterBattleLog.push(`THEATER//FIRE RISK :: Dense supply and heat load are making ${room.label} volatile.`);
+  }
+  if (signalPosture === "masked") {
+    theaterBattleLog.push(`THEATER//POSTURE :: ${room.label} is running masked signal posture. Enemy attraction is dampened, but detailed enemy telemetry is reduced.`);
+  } else if (signalPosture === "bait") {
+    theaterBattleLog.push(`THEATER//POSTURE :: ${room.label} is broadcasting bait signatures to draw hostile attention and spoof route confidence.`);
+  }
+  if (room.sandboxSignalBloom) {
+    theaterBattleLog.push(`THEATER//BLOOM :: Signal bloom is leaking false intel into local telemetry.`);
   }
   if (powerTurretCount > 0) {
     console.log("[THEATER] tactical battle receives power bonus", room.id, squad.squadId, powerTurretCount);
@@ -6172,11 +7034,38 @@ function buildTheaterBattleStateForSquad(
       supplyOnline,
       commsOnline,
       powerTurretCount,
-      enemyPreview: enemyUnits.map((unit) => unit.name),
-      detailedEnemyIntel,
+      enemyPreview,
+      detailedEnemyIntel: combinedDetailedEnemyIntel,
       overheating: room.sandboxOverheating ?? false,
-      overheatSeverity: room.sandboxOverheatSeverity ?? 0,
-      combatInstability: room.sandboxOverheating ?? false,
+      overheatSeverity: combinedOverheatSeverity,
+      combatInstability: combinedCombatInstability,
+      heatOnMiss: regionHeatOnMiss,
+      heatOnAttack: regionHeatOnAttack,
+      regionId: regionPresentation.regionId,
+      regionName: regionPresentation.regionName,
+      regionVariantLabel: regionPresentation.variantLabel,
+      regionMechanicLabel: regionPresentation.mechanicLabel,
+      regionRuleSummary: regionPresentation.ruleSummary,
+      factionTag: regionPresentation.factionTag,
+      enemyIntelScrambled,
+      enemyIntelScrambleLabel,
+      allyStartStatusType: allyStartStatus?.type,
+      allyStartStatusDuration: allyStartStatus?.duration,
+      allyStartStatusLabel: allyStartStatus?.label,
+      enemyStartStatusType: enemyStartStatus?.type,
+      enemyStartStatusDuration: enemyStartStatus?.duration,
+      enemyStartStatusLabel: enemyStartStatus?.label,
+      obscurationActive,
+      obscurationSeverity: obscurationActive ? combinedObscurationSeverity : undefined,
+      obscurationLabel,
+      obscurationSuppressesRanged: obscurationActive ? obscurationSuppressesRanged : undefined,
+      smokeObscured,
+      smokeSeverity,
+      burningRoom,
+      burnSeverity,
+      supplyFireRisk: room.sandboxSupplyFireRisk ?? false,
+      signalPosture,
+      signalBloom: room.sandboxSignalBloom ?? false,
     },
     theaterMeta: {
       operationId,
@@ -6659,9 +7548,10 @@ export function formatResourceCost(cost: Partial<ResourceWallet>): string {
 
 export function getTheaterUpkeepPerTick(theater: TheaterNetworkState): TheaterEconomyPerTick {
   const recomputedTheater = recomputeTheaterNetwork(theater);
+  const resourceCollection = collectResourceIncome(recomputedTheater, 1);
   return {
     wadUpkeep: sumWadUpkeep(recomputedTheater, 1),
-    incomePerTick: sumResourceIncome(recomputedTheater, 1),
+    incomePerTick: resourceCollection.incomePerTick,
   };
 }
 

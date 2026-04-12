@@ -117,6 +117,24 @@ function createBreakthroughObjective(map: TacticalMapDefinition): SquadBattleObj
   };
 }
 
+function createExtractionObjective(map: TacticalMapDefinition): SquadBattleObjectiveState {
+  return {
+    kind: "extraction",
+    label: "Extraction",
+    description: "Reach the authored extraction zone and end your turn there to pull the operator out.",
+    controlTiles: [],
+    extractionTiles: map.zones.extraction.map((point) => ({ ...point })),
+    targetScore: 2,
+    score: {
+      friendly: 0,
+      enemy: 0,
+    },
+    controllingSide: null,
+    winnerSide: null,
+    extractedUnitIds: [],
+  };
+}
+
 export function createSquadObjectiveStateFromTacticalMap(
   map: TacticalMapDefinition,
   objectiveType: SkirmishObjectiveType,
@@ -130,6 +148,13 @@ export function createSquadObjectiveStateFromTacticalMap(
     && map.zones.enemyBreach.length > 0
   ) {
     return createBreakthroughObjective(map);
+  }
+  if (
+    objectiveType === "extraction"
+    && map.zones.extraction.length > 0
+    && map.objects.some((objectDef) => objectDef.type === "extraction_anchor")
+  ) {
+    return createExtractionObjective(map);
   }
   return null;
 }
@@ -189,7 +214,7 @@ export function createBuilderQuickTestBattle(
     `SLK//MAP    :: Quick test loaded for ${map.name}.`,
   ];
 
-  if (objectiveType === "control_relay" || objectiveType === "breakthrough") {
+  if (objectiveType === "control_relay" || objectiveType === "breakthrough" || objectiveType === "extraction") {
     battle.objectiveZones = {
       relay: map.zones.relay.map((point) => ({ ...point })),
       friendlyBreach: map.zones.friendlyBreach.map((point) => ({ ...point })),

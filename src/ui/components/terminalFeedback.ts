@@ -1,5 +1,3 @@
-import { triggerFeedback } from "../../core/feedback";
-
 type TerminalPromptMatch = {
   prompt: string;
   text: string;
@@ -248,16 +246,6 @@ export function enhanceTerminalUiButtons(
     if (!button || !root.contains(button) || button.hasAttribute("disabled")) {
       return;
     }
-
-    triggerFeedback({
-      type: "ui_confirm",
-      source: "ui",
-      intensity: 1,
-      haptic: null,
-      meta: {
-        label: button.textContent?.trim() ?? "",
-      },
-    });
 
     button.classList.remove("terminal-ui-button--press-flash");
     void button.offsetWidth;

@@ -1,22 +1,25 @@
 import {
   getAllImportedCards,
+  getAllImportedChatterEntries,
   getAllImportedClassDefinitions,
   getAllImportedCodexEntries,
   getAllImportedDialogues,
   getAllImportedFieldEnemyDefinitions,
+  getAllImportedFactions,
   getAllImportedFieldMaps,
   getAllImportedFieldMods,
   getAllImportedGear,
   getAllImportedItems,
+  getAllImportedKeyItems,
   getAllImportedMailEntries,
   getAllImportedNpcs,
   getAllImportedOperations,
   getAllImportedQuests,
   getAllImportedUnitTemplates,
+  readGeneratedTechnicaVersionMarker,
   reloadGeneratedTechnicaEntry,
 } from "./index";
 import { showSystemPing } from "../../ui/components/systemPing";
-import generatedContentVersion from "./generated/version.json";
 import type { TechnicaContentType } from "./types";
 
 type ImportedTechnicaDescriptor = {
@@ -26,6 +29,7 @@ type ImportedTechnicaDescriptor = {
 };
 
 const TECHNICA_SEEN_CONTENT_STORAGE_KEY = "chaoscore_technica_seen_content_v1";
+const TECHNICA_SEEN_PUBLISH_VERSION_STORAGE_KEY = "chaoscore_technica_seen_publish_version_v1";
 const TECHNICA_GENERATED_VERSION_POLL_INTERVAL_MS = 1500;
 const TECHNICA_CODEX_UPDATED_EVENT = "chaoscore:codex-updated";
 let technicaGeneratedVersionWatcherStarted = false;
@@ -34,7 +38,10 @@ function isTechnicaContentType(value: unknown): value is TechnicaContentType {
   switch (value) {
     case "dialogue":
     case "mail":
+    case "chatter":
     case "quest":
+    case "key_item":
+    case "faction":
     case "map":
     case "field_enemy":
     case "npc":
@@ -73,6 +80,21 @@ function buildImportedTechnicaSnapshot(): ImportedTechnicaDescriptor[] {
       key: `mail:${entry.id}`,
       typeLabel: "Mail",
       title: entry.subject,
+    })),
+    ...getAllImportedKeyItems().map((entry) => ({
+      key: `key_item:${entry.id}`,
+      typeLabel: "Key Item",
+      title: entry.name,
+    })),
+    ...getAllImportedFactions().map((entry) => ({
+      key: `faction:${entry.id}`,
+      typeLabel: "Faction",
+      title: entry.name,
+    })),
+    ...getAllImportedChatterEntries().map((entry) => ({
+      key: `chatter:${entry.id}`,
+      typeLabel: "Chatter",
+      title: entry.content,
     })),
     ...getAllImportedFieldEnemyDefinitions().map((entry) => ({
       key: `field_enemy:${entry.id}`,
@@ -157,11 +179,67 @@ function writeSeenTechnicaContentKeys(keys: Iterable<string>): void {
   window.localStorage.setItem(TECHNICA_SEEN_CONTENT_STORAGE_KEY, JSON.stringify(Array.from(keys)));
 }
 
+function readSeenTechnicaPublishVersion(): number {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const raw = window.localStorage.getItem(TECHNICA_SEEN_PUBLISH_VERSION_STORAGE_KEY);
+  const parsed = Number(raw ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function writeSeenTechnicaPublishVersion(updatedAt: number): void {
+  if (typeof window === "undefined" || !Number.isFinite(updatedAt) || updatedAt <= 0) {
+    return;
+  }
+
+  window.localStorage.setItem(TECHNICA_SEEN_PUBLISH_VERSION_STORAGE_KEY, String(updatedAt));
+}
+
 function formatNotificationDetail(entries: ImportedTechnicaDescriptor[]): string {
   return entries
     .slice(0, 3)
     .map((entry) => `${entry.typeLabel}: ${entry.title}`)
     .join(" | ");
+}
+
+function getDescriptorForTechnicaContent(
+  contentType: TechnicaContentType,
+  contentId: string
+): ImportedTechnicaDescriptor | null {
+  const normalizedContentId = contentId.trim();
+  if (!normalizedContentId) {
+    return null;
+  }
+
+  return buildImportedTechnicaSnapshot().find((entry) => entry.key === `${contentType}:${normalizedContentId}`) ?? null;
+}
+
+function getUpdatedAtFromVersionMarker(value: { updatedAt?: unknown } | null): number {
+  return typeof value?.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : 0;
+}
+
+function getContentIdFromVersionMarker(value: { contentId?: unknown } | null): string {
+  return typeof value?.contentId === "string" && value.contentId.trim() ? value.contentId.trim() : "";
+}
+
+function notifyTechnicaPublishApplied(contentType: TechnicaContentType, contentId: string): void {
+  const descriptor = getDescriptorForTechnicaContent(contentType, contentId);
+  const message = descriptor ? `${descriptor.title} synced from Technica.` : `${contentType}:${contentId} synced from Technica.`;
+  const detail = descriptor
+    ? `${descriptor.typeLabel} content is now live in Chaos Core.`
+    : "Published content is now live in Chaos Core.";
+
+  showSystemPing({
+    type: "success",
+    title: "Technica Publish Applied",
+    message,
+    detail,
+    durationMs: 5600,
+    channel: "technica-publish-applied",
+    replaceChannel: true,
+  });
 }
 
 export function notifyIfNewTechnicaContentLoaded(): number {
@@ -210,77 +288,83 @@ export function getTechnicaCodexUpdatedEventName(): string {
   return TECHNICA_CODEX_UPDATED_EVENT;
 }
 
+export async function notifyIfTechnicaPublishVersionAdvanced(): Promise<boolean> {
+  const nextVersion = await readGeneratedTechnicaVersionMarker();
+  const nextUpdatedAt = getUpdatedAtFromVersionMarker(nextVersion);
+  if (nextUpdatedAt <= 0 || nextUpdatedAt <= readSeenTechnicaPublishVersion()) {
+    return false;
+  }
+
+  const nextContentType = nextVersion?.contentType;
+  const nextContentId = getContentIdFromVersionMarker(nextVersion);
+  if (isTechnicaContentType(nextContentType) && nextContentId) {
+    notifyTechnicaPublishApplied(nextContentType, nextContentId);
+  } else {
+    showSystemPing({
+      type: "success",
+      title: "Technica Publish Applied",
+      message: "Published content synced from Technica.",
+      detail: "Updated content is now live in Chaos Core.",
+      durationMs: 5600,
+      channel: "technica-publish-applied",
+      replaceChannel: true,
+    });
+  }
+
+  writeSeenTechnicaPublishVersion(nextUpdatedAt);
+  return true;
+}
+
 export function watchForGeneratedTechnicaContentChanges(): void {
-  if (technicaGeneratedVersionWatcherStarted || typeof window === "undefined" || !import.meta.env.DEV) {
+  if (technicaGeneratedVersionWatcherStarted || typeof window === "undefined") {
     return;
   }
 
   technicaGeneratedVersionWatcherStarted = true;
 
-  const versionUrl = new URL("./generated/version.json", import.meta.url);
-  let lastSeenUpdatedAt =
-    typeof generatedContentVersion?.updatedAt === "number" && Number.isFinite(generatedContentVersion.updatedAt)
-      ? generatedContentVersion.updatedAt
-      : 0;
+  void (async () => {
+    let lastSeenUpdatedAt = getUpdatedAtFromVersionMarker(await readGeneratedTechnicaVersionMarker());
 
-  window.setInterval(() => {
-    void (async () => {
-      try {
-        const response = await fetch(`${versionUrl.href}?t=${Date.now()}`, {
-          cache: "no-store",
-          headers: {
-            Accept: "application/json"
-          }
-        });
+    window.setInterval(() => {
+      void (async () => {
+        try {
+          const nextVersion = await readGeneratedTechnicaVersionMarker();
+          const nextUpdatedAt = getUpdatedAtFromVersionMarker(nextVersion);
 
-        if (!response.ok) {
-          return;
-        }
+          if (nextUpdatedAt > lastSeenUpdatedAt) {
+            lastSeenUpdatedAt = nextUpdatedAt;
 
-        const nextVersion = (await response.json()) as {
-          updatedAt?: unknown;
-          contentType?: unknown;
-          contentId?: unknown;
-        };
-        const nextUpdatedAt =
-          typeof nextVersion.updatedAt === "number" && Number.isFinite(nextVersion.updatedAt)
-            ? nextVersion.updatedAt
-            : 0;
+            const nextContentType = nextVersion?.contentType;
+            const nextContentId = getContentIdFromVersionMarker(nextVersion);
 
-        if (nextUpdatedAt > lastSeenUpdatedAt) {
-          lastSeenUpdatedAt = nextUpdatedAt;
-
-          const nextContentType = nextVersion.contentType;
-          const nextContentId =
-            typeof nextVersion.contentId === "string" && nextVersion.contentId.trim()
-              ? nextVersion.contentId.trim()
-              : "";
-
-          if (isTechnicaContentType(nextContentType) && nextContentId) {
-            const reloaded = await reloadGeneratedTechnicaEntry(nextContentType, nextContentId);
-            if (reloaded) {
-              if (nextContentType === "codex") {
-                const { syncImportedCodexUnlocks } = await import("../../core/codexSystem");
-                syncImportedCodexUnlocks();
-                emitCodexUpdated();
+            if (isTechnicaContentType(nextContentType) && nextContentId) {
+              const reloaded = await reloadGeneratedTechnicaEntry(nextContentType, nextContentId);
+              if (reloaded) {
+                if (nextContentType === "codex") {
+                  const { syncImportedCodexUnlocks } = await import("../../core/codexSystem");
+                  syncImportedCodexUnlocks();
+                  emitCodexUpdated();
+                }
+                if (nextContentType === "mail") {
+                  const { syncImportedMailUnlocks } = await import("../../core/mailSystem");
+                  syncImportedMailUnlocks();
+                }
+                notifyIfNewTechnicaContentLoaded();
+                notifyTechnicaPublishApplied(nextContentType, nextContentId);
+                writeSeenTechnicaPublishVersion(nextUpdatedAt);
+                return;
               }
-              if (nextContentType === "mail") {
-                const { syncImportedMailUnlocks } = await import("../../core/mailSystem");
-                syncImportedMailUnlocks();
-              }
-              notifyIfNewTechnicaContentLoaded();
-              return;
             }
+
+            window.location.reload();
+            return;
           }
 
-          window.location.reload();
-          return;
+          lastSeenUpdatedAt = Math.max(lastSeenUpdatedAt, nextUpdatedAt);
+        } catch {
+          // Ignore polling failures while the runtime is refreshing.
         }
-
-        lastSeenUpdatedAt = Math.max(lastSeenUpdatedAt, nextUpdatedAt);
-      } catch {
-        // Ignore polling failures while the dev server is refreshing.
-      }
-    })();
-  }, TECHNICA_GENERATED_VERSION_POLL_INTERVAL_MS);
+      })();
+    }, TECHNICA_GENERATED_VERSION_POLL_INTERVAL_MS);
+  })();
 }

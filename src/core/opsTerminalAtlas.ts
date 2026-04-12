@@ -17,6 +17,10 @@ import {
   saveCampaignProgress,
 } from "./campaign";
 import {
+  buildCampaignRegionZoneName,
+  getActiveRegionPresentation,
+} from "./campaignRegions";
+import {
   ensureOperationHasTheater,
   getTheaterCoreOfflineReason,
   getTheaterUpkeepPerTick,
@@ -125,46 +129,6 @@ const DIRECTION_ORDER: TheaterSprawlDirection[] = [
   "northwest",
 ];
 
-const SECTOR_PREFIXES = [
-  "Adaptive",
-  "Blackglass",
-  "Cinder",
-  "Fracture",
-  "Ghostline",
-  "Ironwake",
-  "Null",
-  "Procedural",
-  "Signal",
-  "Static",
-  "Veil",
-  "Warden",
-];
-
-const SECTOR_SUFFIXES = [
-  "Annex",
-  "Breach",
-  "Causeway",
-  "Gallery",
-  "Lattice",
-  "Lock",
-  "Pocket",
-  "Relay",
-  "Spine",
-  "Transit",
-  "Vault",
-  "Works",
-];
-
-const PASSIVE_EFFECTS = [
-  "Passive Benefit // Logistics caches reduce first-contact strain.",
-  "Passive Benefit // Recovery lanes improve post-fight stabilization.",
-  "Passive Flux // Sensor drift causes incomplete theater telemetry.",
-  "Passive Penalty // Heat shear disrupts long-range sightlines.",
-  "Passive Penalty // Static pockets distort support routing.",
-  "Passive Benefit // Supply rails improve salvage retention.",
-];
-
-const THREAT_LEVELS = ["Low", "Moderate", "High", "Severe", "Critical"];
 const KEY_TYPES: TheaterKeyType[] = ["triangle", "square", "circle", "spade", "star"];
 
 type SeededRng = {
@@ -315,7 +279,8 @@ function getSectorCompassLabel(direction: TheaterSprawlDirection): string {
 }
 
 function formatFloorLabel(floorOrdinal: number): string {
-  return `FLOOR ${String(floorOrdinal).padStart(2, "0")} // ACTIVE DUNGEON SURVEY`;
+  const presentation = getActiveRegionPresentation(floorOrdinal);
+  return `FLOOR ${String(floorOrdinal).padStart(2, "0")} // ${presentation.regionName.toUpperCase()} SURVEY`;
 }
 
 function resolveSectorState(
@@ -642,15 +607,16 @@ function buildSectorTheater(
   seed: string,
   rng: SeededRng,
 ): OpsTerminalAtlasSectorState {
+  const regionPresentation = getActiveRegionPresentation(floorOrdinal);
   const sectorId = getSectorId(floorOrdinal, sectorIndex);
   const operationId = getOperationId(floorOrdinal, sectorIndex);
   const linkedOperationId = floorOrdinal === 1 ? LEGACY_OPERATION_LINKS[sectorIndex] : undefined;
   const sectorLabel = `SECTOR ${getSectorCompassLabel(sprawlDirection)}-${String(sectorIndex + 1).padStart(2, "0")}`;
-  const zoneName = `${rng.pick(SECTOR_PREFIXES)} ${rng.pick(SECTOR_SUFFIXES)}`.toUpperCase();
+  const zoneName = buildCampaignRegionZoneName(floorOrdinal, rng.pick);
   const codename = zoneName;
-  const passiveEffectText = rng.pick(PASSIVE_EFFECTS);
-  const threatLevel = rng.pick(THREAT_LEVELS);
-  const description = `Floor ${floorOrdinal} ingress through ${sectorLabel}. Push from the HAVEN-facing uplink and stabilize the sector lattice.`;
+  const passiveEffectText = regionPresentation.passiveEffectText;
+  const threatLevel = regionPresentation.threatLevel;
+  const description = `${regionPresentation.regionName} Region // ${regionPresentation.variantLabel} // ingress through ${sectorLabel}. Push from the HAVEN-facing uplink and stabilize the sector lattice.`;
   const prototype = buildSectorOperationPrototype(
     floorOrdinal,
     floorId,

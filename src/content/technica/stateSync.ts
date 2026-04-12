@@ -1,6 +1,7 @@
 import { createDefaultAffinities } from "../../core/affinity";
 import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "../../core/campaign";
 import { getAllStarterEquipment } from "../../core/equipment";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import { getSchemaUnlockState } from "../../core/schemaSystem";
 import type { GameState, InventoryItem, Unit } from "../../core/types";
 import {
@@ -11,6 +12,7 @@ import {
   getAllImportedKeyItems,
   getAllImportedMailEntries,
   getAllImportedUnits,
+  isTechnicaContentDisabled,
 } from "./index";
 import type { ImportedCard, ImportedItem, ImportedKeyItem, ImportedUnitTemplate } from "./types";
 
@@ -106,6 +108,7 @@ function buildImportedInventoryItem(item: ImportedItem, existing?: InventoryItem
     ...(existing ?? {}),
     ...item,
     quantity,
+    iconPath: getInventoryIconPath(item.iconPath ?? existing?.iconPath),
   };
 }
 
@@ -121,7 +124,7 @@ function buildImportedKeyItemInventoryItem(item: ImportedKeyItem, existing: Inve
     bulkBu: Number(item.bulkBu ?? existing.bulkBu ?? 0),
     powerW: Number(item.powerW ?? existing.powerW ?? 0),
     description: item.description ?? existing.description,
-    iconPath: item.iconPath ?? existing.iconPath,
+    iconPath: getInventoryIconPath(item.iconPath ?? existing.iconPath),
     metadata: {
       ...(existing.metadata ?? {}),
       ...(item.metadata ?? {}),
@@ -139,7 +142,7 @@ function buildRuntimeCard(card: ImportedCard, existing?: GameState["cardsById"][
     strainCost: card.strainCost,
     targetType: card.targetType,
     range: card.range,
-    effects: [...card.effects],
+    effects: [...(card.effects ?? [])],
     effectFlow: card.effectFlow,
     artPath: card.artPath,
     sourceEquipmentId: card.sourceEquipmentId ?? existing?.sourceEquipmentId,
@@ -196,6 +199,71 @@ function buildRuntimeUnit(unit: ImportedUnitTemplate, existing?: RuntimeFriendly
       weapon: primaryWeapon,
     },
     controller,
+  };
+}
+
+function syncDisabledUnits(state: GameState): GameState {
+  const disabledUnitIds = new Set<string>();
+  const collectIfDisabled = (unitId: unknown): void => {
+    if (typeof unitId === "string" && isTechnicaContentDisabled("unit", unitId)) {
+      disabledUnitIds.add(unitId);
+    }
+  };
+
+  Object.keys(state.unitsById ?? {}).forEach(collectIfDisabled);
+  (state.profile?.rosterUnitIds ?? []).forEach(collectIfDisabled);
+  (state.partyUnitIds ?? []).forEach(collectIfDisabled);
+  Object.values(state.players ?? {}).forEach((player) => {
+    (player?.controlledUnitIds ?? []).forEach(collectIfDisabled);
+  });
+  (state.theaterDeploymentPreset?.squads ?? []).forEach((squad) => {
+    (squad?.unitIds ?? []).forEach(collectIfDisabled);
+  });
+
+  if (disabledUnitIds.size === 0) {
+    return state;
+  }
+
+  const unitsById = Object.fromEntries(
+    Object.entries(state.unitsById ?? {}).filter(([unitId]) => !disabledUnitIds.has(unitId)),
+  ) as GameState["unitsById"];
+
+  const players = state.players
+    ? (Object.fromEntries(
+        Object.entries(state.players).map(([playerId, player]) => [
+          playerId,
+          {
+            ...player,
+            controlledUnitIds: (player?.controlledUnitIds ?? []).filter((unitId) => !disabledUnitIds.has(unitId)),
+          },
+        ]),
+      ) as GameState["players"])
+    : state.players;
+
+  const theaterDeploymentPreset = state.theaterDeploymentPreset
+    ? {
+        ...state.theaterDeploymentPreset,
+        squads: (state.theaterDeploymentPreset.squads ?? [])
+          .map((squad) => ({
+            ...squad,
+            unitIds: (squad?.unitIds ?? []).filter((unitId) => !disabledUnitIds.has(unitId)),
+          }))
+          .filter((squad) => squad.unitIds.length > 0),
+      }
+    : state.theaterDeploymentPreset;
+
+  return {
+    ...state,
+    profile: state.profile
+      ? {
+          ...state.profile,
+          rosterUnitIds: (state.profile.rosterUnitIds ?? []).filter((unitId) => !disabledUnitIds.has(unitId)),
+        }
+      : state.profile,
+    partyUnitIds: (state.partyUnitIds ?? []).filter((unitId) => !disabledUnitIds.has(unitId)),
+    players,
+    theaterDeploymentPreset,
+    unitsById,
   };
 }
 
@@ -385,7 +453,33 @@ function syncImportedMail(state: GameState): GameState {
   let changed = false;
 
   importedMailEntries.forEach((entry) => {
-    if (deliveredIds.has(entry.id)) {
+    const normalizedCategory = normalizeMailCategory(entry.category);
+    const normalizedFrom = String(entry.from ?? "S/COM_OS");
+    const normalizedSubject = String(entry.subject ?? entry.id);
+    const normalizedBodyPages =
+      Array.isArray(entry.bodyPages) && entry.bodyPages.length > 0
+        ? entry.bodyPages.map((page) => String(page).trim()).filter(Boolean)
+        : [normalizedSubject];
+
+    const existingIndex = inbox.findIndex((mail) => mail.id === entry.id);
+    if (existingIndex >= 0) {
+      const existing = inbox[existingIndex];
+      const bodyPagesChanged = JSON.stringify(existing.bodyPages ?? []) !== JSON.stringify(normalizedBodyPages);
+      if (
+        existing.category !== normalizedCategory ||
+        existing.from !== normalizedFrom ||
+        existing.subject !== normalizedSubject ||
+        bodyPagesChanged
+      ) {
+        inbox[existingIndex] = {
+          ...existing,
+          category: normalizedCategory,
+          from: normalizedFrom,
+          subject: normalizedSubject,
+          bodyPages: normalizedBodyPages,
+        };
+        changed = true;
+      }
       return;
     }
 
@@ -420,13 +514,10 @@ function syncImportedMail(state: GameState): GameState {
 
     inbox.push({
       id: entry.id,
-      category: normalizeMailCategory(entry.category),
-      from: String(entry.from ?? "S/COM_OS"),
-      subject: String(entry.subject ?? entry.id),
-      bodyPages:
-        Array.isArray(entry.bodyPages) && entry.bodyPages.length > 0
-          ? entry.bodyPages.map((page) => String(page).trim()).filter(Boolean)
-          : [String(entry.subject ?? entry.id)],
+      category: normalizedCategory,
+      from: normalizedFrom,
+      subject: normalizedSubject,
+      bodyPages: normalizedBodyPages,
       receivedAt: nextReceivedAt,
       read: false,
     });
@@ -528,6 +619,7 @@ export function syncPublishedTechnicaContentState(state: GameState, registryFing
   nextState = syncImportedGear(nextState);
   nextState = syncImportedCards(nextState);
   nextState = syncImportedUnits(nextState);
+  nextState = syncDisabledUnits(nextState);
   nextState = syncImportedMail(nextState);
   nextState = syncImportedCodex(nextState);
 

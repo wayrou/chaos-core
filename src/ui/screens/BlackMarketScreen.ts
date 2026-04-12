@@ -20,19 +20,20 @@ import {
   getSessionResourcePool,
   spendSessionCost,
 } from "../../core/session";
+import { pickAmbientChatterLine, resetAmbientChatterSurfacing } from "../../core/chatterSystem";
 
 // ----------------------------------------------------------------------------
 // NPC CONVERSATION SYSTEM STATE
 // ----------------------------------------------------------------------------
 
 let npcWindowInterval: number | null = null;
-let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string }> = [];
+let activeNpcWindows: Array<{ id: string; name: string; text: string; timestamp: number; conversationId?: string; aerissResponse?: string }> = [];
 let npcWindowIdCounter = 0;
 let activeConversations: Map<string, Array<{ name: string; text: string }>> = new Map();
 let currentReturnTo: BaseCampReturnTo = "basecamp";
 
 // NPC dialogue data - conversations in the black market
-const NPC_DIALOGUES: Array<{ name: string; text: string }> = [
+const NPC_DIALOGUES: Array<{ name: string; text: string; aerissResponse?: string }> = [
   { name: "SHADY DEALER", text: "Got some hot mods fresh off the line. Military-grade, but... unofficially." },
   { name: "UNDERGROUND TECH", text: "These field mods aren't in any official catalog. You didn't see them here." },
   { name: "SMUGGLER", text: "Brought these in through the back channels. Command doesn't know they exist." },
@@ -98,6 +99,7 @@ export function renderBlackMarketScreen(returnTo: BaseCampReturnTo = "basecamp")
   activeNpcWindows = [];
   activeConversations.clear();
   npcWindowIdCounter = 0;
+  resetAmbientChatterSurfacing("black_market");
   const initialCount = 2 + Math.floor(Math.random() * 2); // 2-3 windows
   for (let i = 0; i < initialCount; i++) {
     addNpcWindow();
@@ -414,7 +416,7 @@ function startNpcWindowSystem(): void {
 }
 
 function addNpcWindow(): void {
-  const dialogue = NPC_DIALOGUES[Math.floor(Math.random() * NPC_DIALOGUES.length)];
+  const dialogue = pickAmbientChatterLine("black_market", NPC_DIALOGUES);
   const windowId = `blackmarket-npc-window-${npcWindowIdCounter++}`;
   const conversationId = `conv-${windowId}`;
 
@@ -422,6 +424,7 @@ function addNpcWindow(): void {
     id: windowId,
     name: dialogue.name,
     text: dialogue.text,
+    aerissResponse: dialogue.aerissResponse,
     timestamp: Date.now(),
     conversationId,
   });
@@ -552,22 +555,23 @@ function handleNpcWindowClick(windowId: string, conversationId: string): void {
   // Get or create conversation
   let conversation = activeConversations.get(conversationId) || [];
 
-  // Determine response type based on dialogue content
-  let responseType = "default";
-  const text = window.text.toLowerCase();
-  if (text.includes("shady") || text.includes("off the books") || text.includes("unofficially")) {
-    responseType = "shady";
-  } else if (text.includes("expensive") || text.includes("premium") || text.includes("cost")) {
-    responseType = "expensive";
-  } else if (text.includes("illegal") || text.includes("contraband") || text.includes("command")) {
-    responseType = "illegal";
-  } else if (text.includes("experimental") || text.includes("risk") || text.includes("dangerous")) {
-    responseType = "experimental";
-  }
+  let aerissResponse = window.aerissResponse?.trim() ?? "";
+  if (!aerissResponse) {
+    let responseType = "default";
+    const text = window.text.toLowerCase();
+    if (text.includes("shady") || text.includes("off the books") || text.includes("unofficially")) {
+      responseType = "shady";
+    } else if (text.includes("expensive") || text.includes("premium") || text.includes("cost")) {
+      responseType = "expensive";
+    } else if (text.includes("illegal") || text.includes("contraband") || text.includes("command")) {
+      responseType = "illegal";
+    } else if (text.includes("experimental") || text.includes("risk") || text.includes("dangerous")) {
+      responseType = "experimental";
+    }
 
-  // Get random Aeriss response
-  const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
-  const aerissResponse = responses[Math.floor(Math.random() * responses.length)];
+    const responses = AERISS_RESPONSES[responseType] || AERISS_RESPONSES.default;
+    aerissResponse = responses[Math.floor(Math.random() * responses.length)] ?? AERISS_RESPONSES.default[0];
+  }
 
   // Add Aeriss response to conversation
   conversation.push({

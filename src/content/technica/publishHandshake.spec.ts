@@ -1,0 +1,193 @@
+import { describe, expect, it, vi } from "vitest";
+import type { GameState } from "../../core/types";
+import type { ImportedMailEntry } from "./types";
+import { syncPublishedTechnicaContentState } from "./stateSync";
+
+const importedMailRegistry = vi.hoisted(() => {
+  let entries: ImportedMailEntry[] = [];
+
+  return {
+    get(): ImportedMailEntry[] {
+      return entries.map((entry) => ({
+        ...entry,
+        bodyPages: [...entry.bodyPages],
+      }));
+    },
+    set(nextEntries: ImportedMailEntry[]): void {
+      entries = nextEntries.map((entry) => ({
+        ...entry,
+        bodyPages: [...entry.bodyPages],
+      }));
+    },
+  };
+});
+
+const disabledUnitRegistry = vi.hoisted(() => {
+  let unitIds = new Set<string>();
+
+  return {
+    reset(): void {
+      unitIds = new Set<string>();
+    },
+    set(nextUnitIds: string[]): void {
+      unitIds = new Set(nextUnitIds);
+    },
+    has(contentType: string, contentId: string): boolean {
+      return contentType === "unit" && unitIds.has(contentId);
+    },
+  };
+});
+
+vi.mock("./index", () => ({
+  getAllImportedCards: () => [],
+  getAllImportedCodexEntries: () => [],
+  getAllImportedGear: () => [],
+  getAllImportedItems: () => [],
+  getAllImportedKeyItems: () => [],
+  getAllImportedMailEntries: () => importedMailRegistry.get(),
+  getAllImportedUnits: () => [],
+  isTechnicaContentDisabled: (contentType: string, contentId: string) => disabledUnitRegistry.has(contentType, contentId),
+}));
+
+vi.mock("../../core/campaign", () => ({
+  getHighestReachedFloorOrdinal: () => 0,
+  loadCampaignProgress: () => ({}),
+}));
+
+vi.mock("../../core/equipment", () => ({
+  getAllStarterEquipment: () => [],
+}));
+
+vi.mock("../../core/schemaSystem", () => ({
+  getSchemaUnlockState: () => ({
+    unlockedCoreTypes: [],
+    unlockedFortificationPips: [],
+  }),
+}));
+
+function createImportedMailEntry(id: string, subject: string, bodyPages: string[]): ImportedMailEntry {
+  return {
+    id,
+    category: "system",
+    from: "Technica Smoke Test",
+    subject,
+    bodyPages,
+    unlockAfterFloor: 0,
+    requiredDialogueIds: [],
+    requiredGearIds: [],
+    requiredItemIds: [],
+    requiredSchemaIds: [],
+    requiredFieldModIds: [],
+    createdAt: "2026-04-11T00:00:00.000Z",
+    updatedAt: "2026-04-11T00:00:00.000Z",
+  };
+}
+
+function createFreshState(): GameState {
+  return {
+    quarters: {
+      mail: {
+        inbox: [],
+      },
+    },
+    equipmentById: {},
+    equipmentPool: [],
+    consumables: {},
+    inventory: {
+      baseStorage: [],
+      forwardLocker: [],
+    },
+    runFieldModInventory: [],
+    quests: {
+      completedQuests: [],
+    },
+    unlockedCodexEntries: [],
+    technicaSync: {
+      registryFingerprint: "",
+    },
+  } as GameState;
+}
+
+describe("Technica publish handshake", () => {
+  it("delivers floor-0 published mail to a fresh game state", () => {
+    disabledUnitRegistry.reset();
+    const mailId = "mail_publish_handshake_floor0";
+    importedMailRegistry.set([createImportedMailEntry(mailId, "TEST TEST TEST", ["TEST TEST TEST"])]);
+
+    const syncedState = syncPublishedTechnicaContentState(createFreshState(), "mail-floor0-v1");
+    const deliveredMail = syncedState.quarters?.mail?.inbox.find((entry) => entry.id === mailId);
+
+    expect(deliveredMail).toBeDefined();
+    expect(deliveredMail?.subject).toBe("TEST TEST TEST");
+    expect(deliveredMail?.bodyPages).toEqual(["TEST TEST TEST"]);
+  });
+
+  it("updates already-delivered mail when the published Technica entry changes", () => {
+    disabledUnitRegistry.reset();
+    const mailId = "mail_publish_handshake_update";
+    importedMailRegistry.set([createImportedMailEntry(mailId, "Before publish", ["Before publish"])]);
+
+    let syncedState = syncPublishedTechnicaContentState(createFreshState(), "mail-update-v1");
+
+    importedMailRegistry.set([
+      createImportedMailEntry(mailId, "After publish", ["After publish", "TEST TEST TEST"]),
+    ]);
+    syncedState = syncPublishedTechnicaContentState(syncedState, "mail-update-v2");
+
+    const deliveredMail = syncedState.quarters?.mail?.inbox.find((entry) => entry.id === mailId);
+
+    expect(deliveredMail).toBeDefined();
+    expect(deliveredMail?.subject).toBe("After publish");
+    expect(deliveredMail?.bodyPages).toEqual(["After publish", "TEST TEST TEST"]);
+  });
+
+  it("prunes disabled units from saved roster and deployment state", () => {
+    disabledUnitRegistry.set(["unit_marksman_1", "unit_mage_1"]);
+
+    const syncedState = syncPublishedTechnicaContentState(
+      {
+        ...createFreshState(),
+        unitsById: {
+          unit_aeriss: { id: "unit_aeriss", name: "Aeriss", isEnemy: false },
+          unit_marksman_1: { id: "unit_marksman_1", name: "Mistguard Marksman", isEnemy: false },
+          unit_mage_1: { id: "unit_mage_1", name: "Field Mage", isEnemy: false },
+        },
+        partyUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
+        profile: {
+          rosterUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
+        },
+        players: {
+          P1: {
+            controlledUnitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
+          },
+        },
+        theaterDeploymentPreset: {
+          squads: [
+            {
+              squadId: "tp_1",
+              displayName: "Squad 1",
+              icon: "amber",
+              colorKey: "amber",
+              unitIds: ["unit_aeriss", "unit_marksman_1", "unit_mage_1"],
+            },
+          ],
+        },
+      } as GameState,
+      "disabled-units-v1",
+    );
+
+    expect(Object.keys(syncedState.unitsById ?? {})).toEqual(["unit_aeriss"]);
+    expect(syncedState.partyUnitIds).toEqual(["unit_aeriss"]);
+    expect(syncedState.profile?.rosterUnitIds).toEqual(["unit_aeriss"]);
+    expect(syncedState.players?.P1?.controlledUnitIds).toEqual(["unit_aeriss"]);
+    expect(syncedState.theaterDeploymentPreset?.squads).toEqual([
+      {
+        squadId: "tp_1",
+        displayName: "Squad 1",
+        icon: "amber",
+        colorKey: "amber",
+        unitIds: ["unit_aeriss"],
+      },
+    ]);
+  });
+});

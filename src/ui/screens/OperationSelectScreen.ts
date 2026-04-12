@@ -31,6 +31,10 @@ import {
   saveCampaignProgress,
   type CampaignProgress,
 } from "../../core/campaign";
+import {
+  getActiveRegionPresentation,
+  type ResolvedCampaignRegionPresentation,
+} from "../../core/campaignRegions";
 import { getNotesState, getStuckNotesForSurface } from "../../core/notesSystem";
 import { CoreType, TheaterMapMode, TheaterRoom, TheaterSprawlDirection } from "../../core/types";
 import { getGameState, updateGameState } from "../../state/gameStore";
@@ -41,6 +45,7 @@ import {
   enhanceTerminalUiButtons,
   startTerminalTypingByIds,
 } from "../components/terminalFeedback";
+import { showTutorialCallout } from "../components/tutorialCallout";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import {
   clearControllerContext,
@@ -151,6 +156,7 @@ const FLOOR_TRANSITION_DURATION_MS = 420;
 const MAP_DRAG_THRESHOLD_PX = 6;
 const ATLAS_STICKY_NOTE_WIDTH = 248;
 const ATLAS_STICKY_NOTE_HEIGHT = 220;
+const BETA_CAMPAIGN_MAX_FLOOR = 6;
 
 const SECTOR_COLORS = [
   { color: "#ffbf63", glow: "rgba(255, 191, 99, 0.24)" },
@@ -379,6 +385,53 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function getAtlasRegionThemeStyle(regionPresentation: ResolvedCampaignRegionPresentation): string {
+  const { theme } = regionPresentation;
+  return [
+    `--opsatlas-region-root-glow:${theme.rootGlow}`,
+    `--opsatlas-region-root-top:${theme.rootTop}`,
+    `--opsatlas-region-root-bottom:${theme.rootBottom}`,
+    `--opsatlas-region-surface-glow:${theme.surfaceGlow}`,
+    `--opsatlas-region-surface-top:${theme.surfaceTop}`,
+    `--opsatlas-region-surface-bottom:${theme.surfaceBottom}`,
+    `--opsatlas-region-accent:${theme.accent}`,
+    `--opsatlas-region-accent-soft:${theme.accentSoft}`,
+    `--opsatlas-region-accent-strong:${theme.accentStrong}`,
+    `--opsatlas-region-panel-border:${theme.panelBorder}`,
+    `--opsatlas-region-panel-top:${theme.panelTop}`,
+    `--opsatlas-region-panel-bottom:${theme.panelBottom}`,
+    `--opsatlas-region-banner-top:${theme.bannerTop}`,
+    `--opsatlas-region-banner-bottom:${theme.bannerBottom}`,
+    `--opsatlas-region-banner-border:${theme.bannerBorder}`,
+    `--opsatlas-region-text-strong:${theme.textStrong}`,
+    `--opsatlas-region-text-muted:${theme.textMuted}`,
+  ].join(";");
+}
+
+function renderRegionActiveBanner(regionPresentation: ResolvedCampaignRegionPresentation): string {
+  return `
+    <section class="opsatlas-region-banner" aria-label="Active campaign region">
+      <div class="opsatlas-region-banner__kicker">REGION ACTIVE // ${escapeHtml(regionPresentation.regionName.toUpperCase())}</div>
+      <div class="opsatlas-region-banner__header">
+        <div>
+          <h2>${escapeHtml(regionPresentation.regionName)} Region</h2>
+          <div class="opsatlas-region-banner__meta">
+            <span>Floor ${String(regionPresentation.floorOrdinal).padStart(2, "0")}</span>
+            <span>${escapeHtml(regionPresentation.variantLabel)}</span>
+            <span>${escapeHtml(regionPresentation.factionTag)}</span>
+          </div>
+        </div>
+        <div class="opsatlas-region-banner__badge">${escapeHtml(regionPresentation.mechanicLabel)}</div>
+      </div>
+      <p class="opsatlas-region-banner__copy">${escapeHtml(regionPresentation.ruleSummary)}</p>
+      <div class="opsatlas-region-banner__rewards">
+        <span>Region Drops</span>
+        <strong>${escapeHtml(regionPresentation.rewardPreview.join(" / "))}</strong>
+      </div>
+    </section>
+  `;
 }
 
 function mergeTheaterStarterReserve(
@@ -693,14 +746,15 @@ function resolveSelectedTheaterId(floor: OpsTerminalAtlasFloorState): string {
 
 function getDefaultWindowFrame(): AtlasWindowFrame {
   const width = Math.min(420, Math.max(WINDOW_MIN_WIDTH, Math.round(window.innerWidth * 0.28)));
+  const topOffset = WINDOW_TOP_SAFE + 176;
   const height = Math.min(
-    Math.max(WINDOW_MIN_HEIGHT, window.innerHeight - WINDOW_TOP_SAFE - WINDOW_BOTTOM_SAFE - 24),
-    Math.round(window.innerHeight * 0.78),
+    Math.max(WINDOW_MIN_HEIGHT, window.innerHeight - topOffset - WINDOW_BOTTOM_SAFE - 24),
+    Math.round(window.innerHeight * 0.68),
   );
 
   return {
     x: WINDOW_MARGIN,
-    y: WINDOW_TOP_SAFE + 14,
+    y: topOffset,
     width,
     height,
   };
@@ -1434,6 +1488,7 @@ function startAtlasSectorOperation(theaterId: string): void {
 
 function renderSectorCard(view: AtlasSectorView): string {
   const { sector } = view;
+  const regionPresentation = getActiveRegionPresentation(sector.floorOrdinal);
   const stateLabel = formatSectorState(view.currentState);
   const deployLabel = sector.theater.objectiveComplete
     ? "REDEPLOY"
@@ -1451,6 +1506,7 @@ function renderSectorCard(view: AtlasSectorView): string {
         <div class="opsatlas-sector-card__header-copy">
           <div class="opsatlas-sector-card__kicker">${escapeHtml(sector.sectorLabel)} // FLOOR ${String(sector.floorOrdinal).padStart(2, "0")}</div>
           <h3>${escapeHtml(sector.zoneName)}</h3>
+          <div class="opsatlas-sector-card__region">${escapeHtml(regionPresentation.regionName.toUpperCase())} // ${escapeHtml(regionPresentation.variantLabel.toUpperCase())}</div>
         </div>
         <span class="opsatlas-sector-card__state opsatlas-sector-card__state--${view.currentState}">
           ${stateLabel}
@@ -1919,14 +1975,18 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   }
 
   const { floor, highestGeneratedFloorOrdinal, warmEconomySummaries, coreSummaries } = atlasData;
+  const regionPresentation = getActiveRegionPresentation(floor.floorOrdinal);
   const arrivalTransitionDirection = pendingFloorArrivalDirection;
   pendingFloorArrivalDirection = null;
   hydrateUiLayout(floor);
   const atlasDebugFloorBypassEnabled = isAtlasDebugFloorBypassEnabled();
   const floorComplete = floor.sectors.every((sector) => sector.theater.objectiveComplete);
   const nextFloorAlreadyGenerated = highestGeneratedFloorOrdinal > floor.floorOrdinal;
-  const canMoveToNextFloor = floorComplete || nextFloorAlreadyGenerated || atlasDebugFloorBypassEnabled;
-  const floorTransitStatus = nextFloorAlreadyGenerated
+  const betaFloorCapReached = floor.floorOrdinal >= BETA_CAMPAIGN_MAX_FLOOR;
+  const canMoveToNextFloor = !betaFloorCapReached && (floorComplete || nextFloorAlreadyGenerated || atlasDebugFloorBypassEnabled);
+  const floorTransitStatus = betaFloorCapReached
+    ? `Beta Scope Reached // Floor ${String(BETA_CAMPAIGN_MAX_FLOOR).padStart(2, "0")} is the current campaign cap`
+    : nextFloorAlreadyGenerated
     ? `Archive Transit // Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")} already charted`
     : floorComplete
       ? `Descent Cleared // Generate Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")}`
@@ -1945,11 +2005,12 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   currentAtlasContentBounds = getAtlasContentBounds(sectorViews, floor.floorId);
 
   root.innerHTML = `
-    <div class="opsatlas-root ard-noise">
+    <div class="opsatlas-root ard-noise" style="${getAtlasRegionThemeStyle(regionPresentation)}">
       <div class="opsatlas-surface" id="opsAtlasSurface">
         <div class="opsatlas-hud">
           <div class="opsatlas-hud__title">
             <div class="opsatlas-hud__kicker">A.T.L.A.S. // ADAPTIVE THEATER LOGISTICS AND SURVEY</div>
+            ${renderRegionActiveBanner(regionPresentation)}
             <div class="opsatlas-floor-switcher opsatlas-floor-switcher--title" aria-label="Floor transit controls">
               <div class="opsatlas-floor-switcher__label">Floor Transit</div>
               <div class="opsatlas-floor-switcher__controls">
@@ -2096,8 +2157,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
         <section class="opsatlas-window" id="opsAtlasWindow" data-opsatlas-window-root="operations">
           <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="operations">
             <div class="opsatlas-window__title-block">
-              <div class="opsatlas-window__kicker">OPS TERMINAL // CURRENT FLOOR OPERATIONS</div>
-              <h2>Sector Operations</h2>
+              <div class="opsatlas-window__kicker">OPS TERMINAL // REGION ACTIVE OPERATIONS</div>
+              <h2>${escapeHtml(regionPresentation.regionName)} Sector Operations</h2>
             </div>
             <div class="opsatlas-window__hint">Drag to move // Resize from corner</div>
           </header>
@@ -2814,4 +2875,13 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
     root.classList.remove("opsatlas-root--map-panning");
     document.body.style.userSelect = "";
   };
+
+  showTutorialCallout({
+    id: "tutorial_atlas_regions_and_floors",
+    title: "Regions And Floors",
+    message: "A.T.L.A.S. is the theater survey layer for the region/floor campaign structure.",
+    detail: "Choose a sector operation on the current floor, complete its objective, then descend. The current beta focus is Regions 1-2 and Floors 01-06.",
+    durationMs: 9000,
+    channel: "tutorial-atlas",
+  });
 }

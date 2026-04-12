@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "gear_quill_sword",
+  "name": "Quill Sword",
+  "description": "A balanced sword, standard issue for the Fairhaven military. It has a slightly broader blade for better durability.",
+  "slot": "weapon",
+  "weaponType": "sword",
+  "isMechanical": false,
+  "stats": {
+    "atk": 2,
+    "def": 1,
+    "agi": 0,
+    "acc": 1,
+    "hp": 2
+  },
+  "cardsGranted": [],
+  "moduleSlots": 1,
+  "attachedModules": [],
+  "wear": 0,
+  "inventory": {
+    "massKg": 4,
+    "bulkBu": 2,
+    "powerW": 0,
+    "startingOwned": true
+  },
+  "metadata": {
+    "source": "Technica sample",
+    "role": "frontline"
+  },
+  "createdAt": "2026-04-03T01:44:01.157Z",
+  "updatedAt": "2026-04-12T05:13:55.399Z"
+}

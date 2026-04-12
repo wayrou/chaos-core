@@ -4,7 +4,7 @@
   "id": "faction_mistguard",
   "title": "The Mistguard",
   "entryType": "faction",
-  "content": "SLK//DECRYPTING...\n\nTo be a Mistguard is to accept an early grave. They are the only fools willing to step outside the Iron Gates and breathe the fog. Their mandate is twofold: reclaim lost tech, and ensure the horrors of the valley do not knock on our walls.\n\n04/08/26 test",
+  "content": "SLK//DECRYPTING...\n\nTo be a Mistguard is to accept an early grave. They are the only fools willing to step outside the Iron Gates and breathe the fog. Their mandate is twofold: reclaim lost tech, and ensure the horrors of the valley do not knock on our walls.\n\n04/12/26 test",
   "unlockAfterFloor": 0,
   "requiredDialogueIds": [],
   "requiredQuestIds": [],
@@ -13,5 +13,5 @@
   "requiredSchemaIds": [],
   "requiredFieldModIds": [],
   "createdAt": "2026-04-07T01:30:12.541Z",
-  "updatedAt": "2026-04-09T02:44:22.203Z"
+  "updatedAt": "2026-04-12T05:11:32.756Z"
 }
