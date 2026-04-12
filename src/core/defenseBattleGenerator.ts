@@ -6,7 +6,7 @@
 import { GameState } from "./types";
 import { BattleState, BattleUnitState, createGrid, createBattleUnitState, calculateMaxUnitsPerSide } from "./battle";
 import { getAllStarterEquipment, getAllModules } from "./equipment";
-import { generateElevationMap } from "./isometric";
+import { generateStructuredBoardLayout } from "./terrainGeneration";
 import { computeLoadPenaltyFlags } from "./inventory";
 import { triggerBattleStart } from "./fieldModBattleIntegration";
 import { EncounterDefinition } from "./campaign";
@@ -154,9 +154,12 @@ export function createDefenseBattle(
 
   // Grid setup
   const { gridWidth, gridHeight } = encounter;
-  const maxElevation = 2;
-  const elevationMap = generateElevationMap(gridWidth, gridHeight, maxElevation);
+  const boardLayout = generateStructuredBoardLayout(gridWidth, gridHeight, encounterSeed, "defense");
+  const elevationMap = boardLayout.elevations;
   const tiles = createGrid(gridWidth, gridHeight, elevationMap);
+  tiles.forEach((tile) => {
+    tile.surface = boardLayout.surfaces[`${tile.pos.x},${tile.pos.y}`] ?? "stone";
+  });
   const maxUnitsPerSide = calculateMaxUnitsPerSide(gridWidth, gridHeight);
 
   // Equipment data

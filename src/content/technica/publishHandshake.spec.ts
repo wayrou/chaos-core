@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameState } from "../../core/types";
-import type { ImportedMailEntry } from "./types";
+import type { ImportedMailEntry, ImportedUnitTemplate } from "./types";
 import { syncPublishedTechnicaContentState } from "./stateSync";
 
 const importedMailRegistry = vi.hoisted(() => {
@@ -17,6 +17,35 @@ const importedMailRegistry = vi.hoisted(() => {
       entries = nextEntries.map((entry) => ({
         ...entry,
         bodyPages: [...entry.bodyPages],
+      }));
+    },
+  };
+});
+
+const importedUnitRegistry = vi.hoisted(() => {
+  let entries: ImportedUnitTemplate[] = [];
+
+  return {
+    get(): ImportedUnitTemplate[] {
+      return entries.map((entry) => ({
+        ...entry,
+        stats: { ...entry.stats },
+        loadout: { ...entry.loadout },
+        traits: [...(entry.traits ?? [])],
+        enemySpawnFloorOrdinals: [...(entry.enemySpawnFloorOrdinals ?? [])],
+        requiredQuestIds: [...(entry.requiredQuestIds ?? [])],
+        metadata: { ...(entry.metadata ?? {}) },
+      }));
+    },
+    set(nextEntries: ImportedUnitTemplate[]): void {
+      entries = nextEntries.map((entry) => ({
+        ...entry,
+        stats: { ...entry.stats },
+        loadout: { ...entry.loadout },
+        traits: [...(entry.traits ?? [])],
+        enemySpawnFloorOrdinals: [...(entry.enemySpawnFloorOrdinals ?? [])],
+        requiredQuestIds: [...(entry.requiredQuestIds ?? [])],
+        metadata: { ...(entry.metadata ?? {}) },
       }));
     },
   };
@@ -45,7 +74,7 @@ vi.mock("./index", () => ({
   getAllImportedItems: () => [],
   getAllImportedKeyItems: () => [],
   getAllImportedMailEntries: () => importedMailRegistry.get(),
-  getAllImportedUnits: () => [],
+  getAllImportedUnits: () => importedUnitRegistry.get(),
   isTechnicaContentDisabled: (contentType: string, contentId: string) => disabledUnitRegistry.has(contentType, contentId),
 }));
 
@@ -83,6 +112,39 @@ function createImportedMailEntry(id: string, subject: string, bodyPages: string[
   };
 }
 
+function createImportedUnitTemplate(id: string, primaryWeapon: string): ImportedUnitTemplate {
+  return {
+    id,
+    name: "Lucien",
+    description: "Imported unit template for regression coverage.",
+    currentClassId: "squire",
+    spawnRole: "player",
+    enemySpawnFloorOrdinals: [],
+    requiredQuestIds: [],
+    stats: {
+      maxHp: 15,
+      atk: 9,
+      def: 7,
+      agi: 4,
+      acc: 7,
+    },
+    loadout: {
+      primaryWeapon,
+      secondaryWeapon: "",
+      helmet: "",
+      chestpiece: "",
+      accessory1: "",
+      accessory2: "",
+    },
+    traits: ["Frontline"],
+    pwr: 42,
+    recruitCost: 120,
+    startingInRoster: true,
+    deployInParty: true,
+    metadata: {},
+  };
+}
+
 function createFreshState(): GameState {
   return {
     quarters: {
@@ -109,8 +171,13 @@ function createFreshState(): GameState {
 }
 
 describe("Technica publish handshake", () => {
-  it("delivers floor-0 published mail to a fresh game state", () => {
+  beforeEach(() => {
+    importedMailRegistry.set([]);
+    importedUnitRegistry.set([]);
     disabledUnitRegistry.reset();
+  });
+
+  it("delivers floor-0 published mail to a fresh game state", () => {
     const mailId = "mail_publish_handshake_floor0";
     importedMailRegistry.set([createImportedMailEntry(mailId, "TEST TEST TEST", ["TEST TEST TEST"])]);
 
@@ -123,7 +190,6 @@ describe("Technica publish handshake", () => {
   });
 
   it("updates already-delivered mail when the published Technica entry changes", () => {
-    disabledUnitRegistry.reset();
     const mailId = "mail_publish_handshake_update";
     importedMailRegistry.set([createImportedMailEntry(mailId, "Before publish", ["Before publish"])]);
 
@@ -139,6 +205,48 @@ describe("Technica publish handshake", () => {
     expect(deliveredMail).toBeDefined();
     expect(deliveredMail?.subject).toBe("After publish");
     expect(deliveredMail?.bodyPages).toEqual(["After publish", "TEST TEST TEST"]);
+  });
+
+  it("restores imported starter weapons when an existing unit saved blank loadout ids", () => {
+    importedUnitRegistry.set([createImportedUnitTemplate("unit_lucien", "gear_quill_sword")]);
+
+    const syncedState = syncPublishedTechnicaContentState(
+      {
+        ...createFreshState(),
+        unitsById: {
+          unit_lucien: {
+            id: "unit_lucien",
+            name: "Lucien",
+            isEnemy: false,
+            loadout: {
+              primaryWeapon: "",
+              secondaryWeapon: "",
+              helmet: "",
+              chestpiece: "",
+              accessory1: "",
+              accessory2: "",
+              weapon: "",
+            },
+          },
+        },
+        partyUnitIds: [],
+        profile: {
+          rosterUnitIds: [],
+        },
+        players: {
+          P1: {
+            controlledUnitIds: [],
+          },
+        },
+      } as GameState,
+      "unit-sync-v1",
+    );
+
+    expect(syncedState.unitsById?.unit_lucien?.loadout?.primaryWeapon).toBe("gear_quill_sword");
+    expect((syncedState.unitsById?.unit_lucien?.loadout as { weapon?: string | null } | undefined)?.weapon).toBe("gear_quill_sword");
+    expect(syncedState.profile?.rosterUnitIds).toContain("unit_lucien");
+    expect(syncedState.partyUnitIds).toContain("unit_lucien");
+    expect(syncedState.players?.P1?.controlledUnitIds).toContain("unit_lucien");
   });
 
   it("prunes disabled units from saved roster and deployment state", () => {

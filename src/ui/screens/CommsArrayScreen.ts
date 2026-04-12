@@ -4,8 +4,8 @@
 // ============================================================================
 
 import { getGameState, setGameState, subscribe, updateGameState } from "../../state/gameStore";
-import { createTrainingEncounter, TrainingConfig } from "../../core/trainingEncounter";
-import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { type TrainingConfig } from "../../core/trainingEncounter";
+import { createTrainingBattle } from "../../core/trainingBattle";
 import { applyExternalBattleState, applyRemoteCoopBattleCommand, applyRemoteSquadBattleCommand, renderBattleScreen } from "./BattleScreen";
 import type { BattleState as RuntimeBattleState } from "../../core/battle";
 import { mountBattleContextById, mountBattleState } from "../../core/session";
@@ -85,7 +85,7 @@ import {
   updateLobbySkirmishSnapshot,
   upsertLobbyMember,
 } from "../../core/multiplayerLobby";
-import { getTacticalMapById, getTacticalMapCatalog } from "../../core/tacticalMaps";
+import { getTacticalMapById, getTacticalMapCatalog, type TacticalMapDefinition } from "../../core/tacticalMaps";
 import {
   approveSessionTradeTransfer,
   cancelSessionTradeTransfer,
@@ -139,15 +139,49 @@ import { formatResourceShortLabel, getResourceEntries, RESOURCE_KEYS } from "../
 
 type CommsReturnTo = BaseCampReturnTo | "operation" | "menu";
 
-// Training config state
-let trainingConfig: TrainingConfig = {
-  gridW: 6,
-  gridH: 4,
-  difficulty: "normal",
-  rules: {
-    noRewards: true,
-  },
+type TrainingMapSelection = {
+  catalog: ReturnType<typeof getTacticalMapCatalog>;
+  allMaps: TacticalMapDefinition[];
+  selectedMap: TacticalMapDefinition | null;
+  config: TrainingConfig;
 };
+
+function resolveTrainingMapSelection(config: TrainingConfig): TrainingMapSelection {
+  const catalog = getTacticalMapCatalog();
+  const allMaps = [...catalog.builtInMaps, ...catalog.customMaps];
+  const selectedMap = getTacticalMapById(config.mapId ?? null) ?? allMaps[0] ?? null;
+  return {
+    catalog,
+    allMaps,
+    selectedMap,
+    config: selectedMap
+      ? {
+          ...config,
+          mapId: selectedMap.id,
+          gridW: selectedMap.width,
+          gridH: selectedMap.height,
+        }
+      : {
+          ...config,
+          mapId: null,
+        },
+  };
+}
+
+function createDefaultTrainingConfig(): TrainingConfig {
+  return resolveTrainingMapSelection({
+    gridW: 8,
+    gridH: 5,
+    mapId: null,
+    difficulty: "normal",
+    rules: {
+      noRewards: true,
+    },
+  }).config;
+}
+
+// Training config state
+let trainingConfig: TrainingConfig = createDefaultTrainingConfig();
 
 // Store last training config for rematch
 let lastTrainingConfig: TrainingConfig | null = null;
@@ -175,7 +209,7 @@ type MultiplayerLobbyPreviewConfig = {
 
 type SkirmishSurface = "comms" | "staging";
 type CommsSurface = "main" | "lobby_skirmish_console";
-type CommsContextMode = "auto" | "multiplayer";
+type CommsContextMode = "auto" | "haven" | "multiplayer";
 
 let multiplayerLobbyPreviewConfig: MultiplayerLobbyPreviewConfig = {
   operatorCallsign: "",
@@ -1149,6 +1183,9 @@ function isMultiplayerCommsContext(
 ): boolean {
   if (contextMode === "multiplayer") {
     return true;
+  }
+  if (contextMode === "haven") {
+    return false;
   }
   const state = getGameState();
   if (returnTo === "menu") {
@@ -3911,6 +3948,8 @@ export function renderCommsArrayScreen(
   const isMultiplayerSurface = isMultiplayerCommsContext(returnTo, contextMode);
   const showTrainingBattles = !isMultiplayerSurface;
   const showSaveBoundSections = !isMultiplayerSurface;
+  const trainingMapSelection = resolveTrainingMapSelection(trainingConfig);
+  trainingConfig = trainingMapSelection.config;
   
   app.innerHTML = `
     <div class="comms-array-root">
@@ -3939,28 +3978,49 @@ export function renderCommsArrayScreen(
           </div>
           <div class="comms-array-section-body">
             <p class="section-description">
-              Practice against AI opponents. No rewards, unlimited retries.
+              Practice against AI opponents on authored tactical maps. Built-in boards and your Map Builder saves both show up here. No rewards, unlimited retries.
             </p>
             
             <!-- Training Configuration -->
             <div class="training-config">
               <div class="config-row">
-                <label class="config-label">Grid Width:</label>
-                <select class="config-select" id="gridWidthSelect">
-                  ${[4, 5, 6, 7, 8].map(w => 
-                    `<option value="${w}" ${trainingConfig.gridW === w ? 'selected' : ''}>${w}</option>`
-                  ).join('')}
+                <label class="config-label">Tactical Map:</label>
+                <select class="config-select" id="trainingMapSelect" ${trainingMapSelection.allMaps.length > 0 ? "" : "disabled"}>
+                  ${trainingMapSelection.catalog.builtInMaps.length > 0 ? `
+                    <optgroup label="Built-In Maps">
+                      ${trainingMapSelection.catalog.builtInMaps.map((map) => `
+                        <option value="${map.id}" ${trainingMapSelection.selectedMap?.id === map.id ? "selected" : ""}>${escapeHtml(map.name)} // ${escapeHtml(map.theme.replace(/_/g, " "))}</option>
+                      `).join("")}
+                    </optgroup>
+                  ` : ""}
+                  ${trainingMapSelection.catalog.customMaps.length > 0 ? `
+                    <optgroup label="Custom Maps">
+                      ${trainingMapSelection.catalog.customMaps.map((map) => `
+                        <option value="${map.id}" ${trainingMapSelection.selectedMap?.id === map.id ? "selected" : ""}>${escapeHtml(map.name)} // ${escapeHtml(map.theme.replace(/_/g, " "))}</option>
+                      `).join("")}
+                    </optgroup>
+                  ` : ""}
                 </select>
               </div>
-              
-              <div class="config-row">
-                <label class="config-label">Grid Height:</label>
-                <select class="config-select" id="gridHeightSelect">
-                  ${[3, 4, 5, 6].map(h => 
-                    `<option value="${h}" ${trainingConfig.gridH === h ? 'selected' : ''}>${h}</option>`
-                  ).join('')}
-                </select>
-              </div>
+
+              ${trainingMapSelection.selectedMap ? `
+                <div class="config-note config-note--stacked">
+                  <span class="note-icon">M</span>
+                  <span>GRID ${trainingMapSelection.selectedMap.width}x${trainingMapSelection.selectedMap.height} // ${escapeHtml(trainingMapSelection.selectedMap.metadata.author)}</span>
+                  <span>${escapeHtml(trainingMapSelection.selectedMap.metadata.tags.join(", ") || "No tags")}</span>
+                </div>
+                ${renderSkirmishObjectivePreview({
+                  gridWidth: trainingMapSelection.selectedMap.width,
+                  gridHeight: trainingMapSelection.selectedMap.height,
+                  objectiveType: "elimination",
+                  mapId: trainingMapSelection.selectedMap.id,
+                })}
+              ` : `
+                <div class="config-note">
+                  <span class="note-icon">!</span>
+                  <span>No tactical maps are available. Open Map Builder to save a board first.</span>
+                </div>
+              `}
               
               <div class="config-row">
                 <label class="config-label">Bot Difficulty:</label>
@@ -3973,12 +4033,12 @@ export function renderCommsArrayScreen(
               
               <div class="config-note">
                 <span class="note-icon">ℹ</span>
-                <span>No Rewards: Always enabled (training mode)</span>
+                <span>No Rewards: Always enabled. Training uses elimination rules on the selected board.</span>
               </div>
             </div>
             
             <div class="comms-array-button-group">
-              <button class="comms-array-btn comms-array-btn--primary" id="startTrainingBtn">
+              <button class="comms-array-btn comms-array-btn--primary" id="startTrainingBtn" ${trainingMapSelection.selectedMap ? "" : "disabled"}>
                 START TRAINING
               </button>
             </div>
@@ -4061,6 +4121,10 @@ export function renderCommsArrayScreen(
 
 export function renderMultiplayerCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): void {
   renderCommsArrayScreen(returnTo, "multiplayer");
+}
+
+export function renderHavenCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): void {
+  renderCommsArrayScreen(returnTo, "haven");
 }
 
 function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
@@ -4734,23 +4798,20 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
   }
   
   // Training config controls
-  const gridWidthSelect = document.getElementById("gridWidthSelect") as HTMLSelectElement;
-  const gridHeightSelect = document.getElementById("gridHeightSelect") as HTMLSelectElement;
+  const trainingMapSelect = document.getElementById("trainingMapSelect") as HTMLSelectElement | null;
   const difficultySelect = document.getElementById("difficultySelect") as HTMLSelectElement;
   const customDifficultySelect = document.getElementById("customDifficultySelect") as HTMLSelectElement | null;
   const customFloorsSelect = document.getElementById("customFloorsSelect") as HTMLSelectElement | null;
   const customDensitySelect = document.getElementById("customDensitySelect") as HTMLSelectElement | null;
   const customSprawlSelect = document.getElementById("customSprawlSelect") as HTMLSelectElement | null;
   
-  if (gridWidthSelect) {
-    gridWidthSelect.addEventListener("change", () => {
-      trainingConfig.gridW = parseInt(gridWidthSelect.value);
-    });
-  }
-  
-  if (gridHeightSelect) {
-    gridHeightSelect.addEventListener("change", () => {
-      trainingConfig.gridH = parseInt(gridHeightSelect.value);
+  if (trainingMapSelect) {
+    trainingMapSelect.addEventListener("change", () => {
+      trainingConfig = resolveTrainingMapSelection({
+        ...trainingConfig,
+        mapId: trainingMapSelect.value || null,
+      }).config;
+      renderCurrentCommsSurface(returnTo);
     });
   }
   
@@ -4840,39 +4901,23 @@ export function renderLobbySkirmishConsoleScreen(returnTo: CommsReturnTo = "base
 
 function startTrainingBattle(returnTo: CommsReturnTo): void {
   const state = getGameState();
-  
-  // Validate grid bounds
-  if (trainingConfig.gridW < 4 || trainingConfig.gridW > 8) {
-    showNotification("Grid width must be between 4 and 8", "error");
+
+  const trainingMapSelection = resolveTrainingMapSelection(trainingConfig);
+  trainingConfig = trainingMapSelection.config;
+  if (!trainingMapSelection.selectedMap) {
+    showNotification("No tactical map is available for training.", "error");
     return;
   }
-  if (trainingConfig.gridH < 3 || trainingConfig.gridH > 6) {
-    showNotification("Grid height must be between 3 and 6", "error");
-    return;
-  }
-  
-  // Create training encounter
-  const encounter = createTrainingEncounter(state, trainingConfig);
-  
-  if (!encounter) {
-    showNotification("Failed to create training encounter", "error");
-    return;
-  }
-  
+
   // Store config for rematch
   lastTrainingConfig = { ...trainingConfig };
-  
-  // Create battle from encounter
-  const battle = createBattleFromEncounter(state, encounter, `training_${Date.now()}`);
-  
+
+  const battle = createTrainingBattle(state, trainingConfig, `training_${trainingMapSelection.selectedMap.id}_${Date.now()}`);
   if (!battle) {
     showNotification("Failed to create battle", "error");
     return;
   }
   
-  // Mark as training battle
-  (battle as any).isTraining = true;
-  (battle as any).trainingConfig = trainingConfig;
   (battle as any).returnTo = returnTo;
   
   // Store battle in state

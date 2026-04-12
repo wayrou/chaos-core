@@ -550,6 +550,17 @@ export interface PlayerNoteStickyAnchor {
   colorKey?: string;
 }
 
+export interface BattleCameraViewPreset {
+  orbitYaw: number;
+  orbitPitch: number;
+  orbitDistance: number;
+  zoomFactor: number;
+  focusX: number;
+  focusY: number;
+  focusZ: number;
+  hasManualPan: boolean;
+}
+
 export interface UILayoutState {
   baseCampLayoutVersion?: number;
   baseCampResetPresetIndex?: number;
@@ -565,6 +576,8 @@ export interface UILayoutState {
   baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
   baseCampResourceTrackerShowAdvanced?: boolean;
   baseCampTheaterAutoTickEnabled?: boolean;
+  battleActiveViewIndex?: number;
+  battleViewPresets?: Record<string, BattleCameraViewPreset>;
   minimapExploredByMap?: Record<string, string[]>;
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;

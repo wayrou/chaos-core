@@ -278,9 +278,26 @@ export function buildOwnedBaseStorageItems(state: GameState): InventoryItem[] {
   }
 
   for (const legacyItem of state.inventory?.baseStorage ?? []) {
-    if (!addedIds.has(legacyItem.id)) {
-      derivedItems.push(legacyItem);
+    if (addedIds.has(legacyItem.id)) {
+      continue;
     }
+
+    const reservedQty = reservedInForwardLocker.get(legacyItem.id) ?? 0;
+    const legacyQty = Math.max(legacyItem.quantity || 1, 1);
+    const remainingQty = legacyQty - reservedQty;
+    if (remainingQty <= 0) {
+      continue;
+    }
+
+    if (remainingQty === legacyQty) {
+      derivedItems.push(legacyItem);
+      continue;
+    }
+
+    derivedItems.push({
+      ...legacyItem,
+      quantity: remainingQty,
+    });
   }
 
   return derivedItems.sort((a, b) => a.name.localeCompare(b.name));

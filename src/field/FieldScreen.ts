@@ -149,14 +149,21 @@ import {
 import {
   canCraftDecorItem,
   craftDecorItem,
+  getFieldDecorFootprintSize,
+  getFieldDecorTurretProfile,
   getAvailableFieldDecor,
   getCraftableDecorItems,
   getDecorItemById,
+  getPlacedFieldDecor,
   moveFieldDecor,
+  normalizeFieldDecorRotationQuarterTurns,
   placeFieldDecor,
   removeFieldDecor,
   renderDecorSpriteSvg,
+  setFieldDecorRotation,
   seedInitialDecor,
+  type DecorItem,
+  type FieldDecorRotationQuarterTurns,
 } from "../core/decorSystem";
 import {
   buildFieldMinimapModel,
@@ -389,7 +396,7 @@ let havenBuildPanInput = {
   right: false,
   fast: false,
 };
-let havenBuildPaletteSelection: { kind: "node"; nodeId: BaseCampNodeId } | { kind: "decor"; decorId: string } | null = null;
+let havenBuildPaletteSelection: { kind: "node"; nodeId: BaseCampNodeId } | HavenBuildDecorSelection | null = null;
 let havenBuildDragState: {
   kind: "node" | "decor";
   itemId: string;
@@ -405,6 +412,7 @@ let havenBuildDragState: {
   latestY: number;
   valid: boolean;
 } | null = null;
+const fieldTurretLastFireAtMs = new Map<string, number>();
 const fieldTileHtmlCache = new WeakMap<FieldMap, string>();
 const FIELD_TILE_BACKGROUND_COLOR = "#23201e";
 const FIELD_TILE_PATTERN_STYLES = {
@@ -446,6 +454,12 @@ type HavenBuildObjectMeta =
       width: number;
       height: number;
     };
+
+type HavenBuildDecorSelection = {
+  kind: "decor";
+  decorId: string;
+  rotationQuarterTurns: FieldDecorRotationQuarterTurns;
+};
 
 type NetworkLobbyPlaylistDraftRound = {
   gridWidth: number;
@@ -505,6 +519,7 @@ const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
 const FIELD_COMPANION_ATTACK_RANGE = 56;
 const FIELD_CAMERA_SMOOTHING = 0.2;
+const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
 const FIELD_FOOTSTEP_DISTANCE = 82;
 const FIELD_DASH_FOOTSTEP_DISTANCE = 56;
 const FIELD_STEP_PULSE_DURATION_MS = 150;
@@ -555,8 +570,16 @@ function isHavenBuildMapActive(): boolean {
   return currentMap?.id === "base_camp";
 }
 
+function isFieldBuildModeMapActive(): boolean {
+  return Boolean(currentMap && currentMap.id !== "quarters" && currentMap.id !== "network_lobby");
+}
+
+function canPanDuringBuildMode(): boolean {
+  return isHavenBuildMapActive();
+}
+
 function isHavenBuildModeEnabled(): boolean {
-  return havenBuildModeActive && isHavenBuildMapActive();
+  return havenBuildModeActive && isFieldBuildModeMapActive();
 }
 
 function resetHavenBuildPanState(): void {
@@ -809,7 +832,7 @@ function syncCurrentMapFromState(): void {
 }
 
 function setHavenBuildMode(active: boolean): void {
-  if (!isHavenBuildMapActive()) {
+  if (!isFieldBuildModeMapActive()) {
     havenBuildModeActive = false;
     havenBuildResumePaused = false;
     resetHavenBuildPanState();
@@ -822,7 +845,7 @@ function setHavenBuildMode(active: boolean): void {
     showSystemPing({
       type: "info",
       title: "BUILD MODE LOCKED",
-      message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock HAVEN build mode.`,
+      message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock field build mode.`,
       channel: "haven-build",
     });
     havenBuildModeActive = false;
@@ -863,7 +886,7 @@ function getBuildNodeIdForObject(objectId: string): BaseCampNodeId | null {
 }
 
 function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObjectMeta | null {
-  if (!isHavenBuildMapActive()) {
+  if (!isFieldBuildModeMapActive()) {
     return null;
   }
 
@@ -886,6 +909,10 @@ function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObje
     return null;
   }
 
+  if (!isHavenBuildMapActive()) {
+    return null;
+  }
+
   const nodeId = getBuildNodeIdForObject(obj.id);
   if (!nodeId) {
     return null;
@@ -897,6 +924,102 @@ function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObje
     width: obj.width,
     height: obj.height,
   };
+}
+
+function getAvailableFieldDecorCountForState(state: ReturnType<typeof getGameState>, decorId: string): number {
+  return getAvailableFieldDecor(state).filter((decor) => decor.id === decorId).length;
+}
+
+function getCurrentAvailableFieldDecorCount(decorId: string): number {
+  return getAvailableFieldDecorCountForState(getGameState(), decorId);
+}
+
+function getAvailableFieldDecorStock(state: ReturnType<typeof getGameState>): Array<{ decor: DecorItem; availableCount: number }> {
+  const stock = new Map<string, { decor: DecorItem; availableCount: number }>();
+  getAvailableFieldDecor(state).forEach((decor) => {
+    const existing = stock.get(decor.id);
+    if (existing) {
+      existing.availableCount += 1;
+      return;
+    }
+    stock.set(decor.id, {
+      decor,
+      availableCount: 1,
+    });
+  });
+  return [...stock.values()];
+}
+
+function createHavenBuildDecorSelection(decorId: string): HavenBuildDecorSelection {
+  const retainedRotation = havenBuildPaletteSelection?.kind === "decor" && havenBuildPaletteSelection.decorId === decorId
+    ? havenBuildPaletteSelection.rotationQuarterTurns
+    : 0;
+  return {
+    kind: "decor",
+    decorId,
+    rotationQuarterTurns: retainedRotation,
+  };
+}
+
+function rotateSelectedBuildDecor(deltaQuarterTurns: number = 1): void {
+  if (havenBuildPaletteSelection?.kind !== "decor") {
+    return;
+  }
+
+  havenBuildPaletteSelection = {
+    ...havenBuildPaletteSelection,
+    rotationQuarterTurns: normalizeFieldDecorRotationQuarterTurns(
+      havenBuildPaletteSelection.rotationQuarterTurns + deltaQuarterTurns,
+    ),
+  };
+  render();
+}
+
+function rotatePlacedBuildDecor(placementId: string): void {
+  if (!currentMap) {
+    return;
+  }
+
+  const placedDecor = getPlacedFieldDecor(getGameState(), currentMap.id)
+    .find(({ placement }) => placement.placementId === placementId);
+  if (!placedDecor) {
+    return;
+  }
+
+  const nextRotation = normalizeFieldDecorRotationQuarterTurns(
+    (placedDecor.placement.rotationQuarterTurns ?? 0) + 1,
+  );
+  const footprint = getFieldDecorFootprintSize(placedDecor.decor, nextRotation);
+  const placement = validateBuildPlacement(
+    placedDecor.placement.x,
+    placedDecor.placement.y,
+    footprint.width,
+    footprint.height,
+    `field_decor_${placementId}`,
+    null,
+  );
+  if (!placement.valid) {
+    showSystemPing({
+      type: "error",
+      title: "CANNOT ROTATE DECOR",
+      message: placement.reason || "That rotation would collide with the current layout.",
+      channel: "haven-build",
+    });
+    return;
+  }
+
+  if (!setFieldDecorRotation(placementId, nextRotation)) {
+    showSystemPing({
+      type: "error",
+      title: "ROTATION FAILED",
+      message: "That decoration could not be reoriented right now.",
+      channel: "haven-build",
+    });
+    return;
+  }
+
+  syncCurrentMapFromState();
+  render();
 }
 
 function getBuildPlacementFromClientPosition(clientX: number, clientY: number): { tileX: number; tileY: number } | null {
@@ -931,6 +1054,7 @@ function validateBuildPlacement(
   width: number,
   height: number,
   excludedObjectId: string | null = null,
+  excludedZoneId: string | null = null,
 ): { valid: boolean; reason?: string } {
   if (!currentMap) {
     return { valid: false, reason: "No active map." };
@@ -940,10 +1064,21 @@ function validateBuildPlacement(
     return { valid: false, reason: "Out of bounds." };
   }
 
+  const excludedObject = excludedObjectId
+    ? currentMap.objects.find((object) => object.id === excludedObjectId) ?? null
+    : null;
+
   for (let tileY = y; tileY < y + height; tileY += 1) {
     for (let tileX = x; tileX < x + width; tileX += 1) {
       const tile = currentMap.tiles[tileY]?.[tileX];
-      if (!tile?.walkable) {
+      const insideExcludedObject = Boolean(
+        excludedObject
+        && tileX >= excludedObject.x
+        && tileX < excludedObject.x + excludedObject.width
+        && tileY >= excludedObject.y
+        && tileY < excludedObject.y + excludedObject.height,
+      );
+      if (!tile?.walkable && !insideExcludedObject) {
         return { valid: false, reason: "Placement must stay on open floor." };
       }
     }
@@ -963,6 +1098,22 @@ function validateBuildPlacement(
 
   if (overlap) {
     return { valid: false, reason: "Another object is already there." };
+  }
+
+  const overlapsZone = currentMap.interactionZones.some((zone) => {
+    if (zone.id === excludedZoneId) {
+      return false;
+    }
+    return (
+      x < zone.x + zone.width
+      && x + width > zone.x
+      && y < zone.y + zone.height
+      && y + height > zone.y
+    );
+  });
+
+  if (overlapsZone) {
+    return { valid: false, reason: "Route controls and interaction gates must stay clear." };
   }
 
   return { valid: true };
@@ -1029,13 +1180,14 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
   if (!decor) {
     return;
   }
+  const footprint = getFieldDecorFootprintSize(decor, havenBuildPaletteSelection.rotationQuarterTurns);
   const origin = clampBuildOrigin(
-    tileX - Math.floor(decor.tileWidth / 2),
-    tileY - Math.floor(decor.tileHeight / 2),
-    decor.tileWidth,
-    decor.tileHeight,
+    tileX - Math.floor(footprint.width / 2),
+    tileY - Math.floor(footprint.height / 2),
+    footprint.width,
+    footprint.height,
   );
-  const placement = validateBuildPlacement(origin.x, origin.y, decor.tileWidth, decor.tileHeight, null);
+  const placement = validateBuildPlacement(origin.x, origin.y, footprint.width, footprint.height, null);
   if (!placement.valid) {
     showSystemPing({
       type: "error",
@@ -1045,7 +1197,13 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
     });
     return;
   }
-  if (!placeFieldDecor(havenBuildPaletteSelection.decorId, currentMap.id, origin.x, origin.y)) {
+  if (!placeFieldDecor(
+    havenBuildPaletteSelection.decorId,
+    currentMap.id,
+    origin.x,
+    origin.y,
+    havenBuildPaletteSelection.rotationQuarterTurns,
+  )) {
     showSystemPing({
       type: "error",
       title: "DECOR LOCKED",
@@ -1054,7 +1212,9 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
     });
     return;
   }
-  havenBuildPaletteSelection = null;
+  havenBuildPaletteSelection = getCurrentAvailableFieldDecorCount(havenBuildPaletteSelection.decorId) > 0
+    ? havenBuildPaletteSelection
+    : null;
   syncCurrentMapFromState();
   render();
 }
@@ -2695,6 +2855,7 @@ export function renderFieldScreen(
   if (previousMapId !== mapId) {
     activeAutoInteractionZoneKey = null;
     suppressedAutoInteractionZoneKey = null;
+    fieldTurretLastFireAtMs.clear();
   }
 
   setBaseCampFieldReturnMap(mapId);
@@ -2944,7 +3105,7 @@ export function renderFieldScreen(
 
   startGameLoop();
   render();
-  if (mapId === "base_camp" && options?.openBuildMode) {
+  if (options?.openBuildMode) {
     setHavenBuildMode(true);
   }
   createPinnedNodesOverlay();
@@ -2967,8 +3128,10 @@ function formatBuildResourceCost(cost?: { metalScrap?: number; wood?: number; ch
 function renderFieldObjectContents(obj: FieldMap["objects"][number]): string {
   if (obj.type === "decoration") {
     const decor = getDecorItemById(String(obj.metadata?.decorId ?? ""));
+    const rotationQuarterTurns = normalizeFieldDecorRotationQuarterTurns(Number(obj.metadata?.rotationQuarterTurns ?? 0));
+    const rotationDegrees = rotationQuarterTurns * 90;
     return `
-      <div class="field-decor-visual">
+      <div class="field-decor-visual"${rotationDegrees !== 0 ? ` style="transform: rotate(${rotationDegrees}deg);"` : ""}>
         ${decor ? renderDecorSpriteSvg(decor) : `<div class="field-object-placeholder">${obj.metadata?.name || "DECOR"}</div>`}
       </div>
       ${isHavenBuildModeEnabled() ? `<div class="field-build-object-label">${decor?.name ?? obj.metadata?.name ?? "DECOR"}</div>` : ""}
@@ -3035,7 +3198,7 @@ function clampBuildCameraCenter(centerX: number, centerY: number): { x: number; 
 }
 
 function updateHavenBuildPan(deltaTime: number): boolean {
-  if (!isHavenBuildModeEnabled() || !currentMap || deltaTime <= 0) {
+  if (!isHavenBuildModeEnabled() || !canPanDuringBuildMode() || !currentMap || deltaTime <= 0) {
     return false;
   }
 
@@ -3081,10 +3244,20 @@ function renderHavenBuildPanel(): string {
     ? "WASD / ARROWS"
     : `${getPlayerActionLabel("P1", "up")} / ${getPlayerActionLabel("P1", "left")}`;
   const buildFastLabel = getPlayerActionLabel("P1", "special1");
-  const storedNodes = getBaseCampNodeDefinitions()
-    .filter((definition) => getBaseCampNodeLayout(state.uiLayout, definition.id).hidden);
-  const availableDecor = getAvailableFieldDecor(state);
+  const buildInHaven = isHavenBuildMapActive();
+  const storedNodes = buildInHaven
+    ? getBaseCampNodeDefinitions()
+      .filter((definition) => getBaseCampNodeLayout(state.uiLayout, definition.id).hidden)
+    : [];
+  const availableDecorStock = getAvailableFieldDecorStock(state);
+  const availableDecorCounts = new Map(availableDecorStock.map(({ decor, availableCount }) => [decor.id, availableCount]));
   const craftableDecor = getCraftableDecorItems(state);
+  const selectedDecor = havenBuildPaletteSelection?.kind === "decor"
+    ? getDecorItemById(havenBuildPaletteSelection.decorId)
+    : null;
+  const selectedFootprint = selectedDecor && havenBuildPaletteSelection?.kind === "decor"
+    ? getFieldDecorFootprintSize(selectedDecor, havenBuildPaletteSelection.rotationQuarterTurns)
+    : null;
   const selectedLabel = havenBuildPaletteSelection
     ? havenBuildPaletteSelection.kind === "node"
       ? getBaseCampNodeDefinition(havenBuildPaletteSelection.nodeId)?.label ?? havenBuildPaletteSelection.nodeId
@@ -3095,19 +3268,26 @@ function renderHavenBuildPanel(): string {
     <aside class="field-build-panel" data-build-panel="true">
       <div class="field-build-panel__header">
         <div>
-          <div class="field-build-panel__eyebrow">HAVEN // BUILD MODE</div>
-          <div class="field-build-panel__title">FIELD LAYOUT</div>
+          <div class="field-build-panel__eyebrow">${buildInHaven ? "HAVEN // BUILD MODE" : "FIELD // BUILD MODE"}</div>
+          <div class="field-build-panel__title">${buildInHaven ? "FIELD LAYOUT" : "FORWARD FABRICATION"}</div>
         </div>
         <button class="field-build-panel__close" type="button" data-build-close="true">DONE</button>
       </div>
       <div class="field-build-panel__copy">
-        Drag visible nodes and decor on the map. Stored items can be selected here, then placed with a click on open floor.
+        ${buildInHaven
+          ? "Drag visible nodes and place stored field items on open floor."
+          : "Place and reposition fabricated field items in the current zone. HAVEN node layout stays locked here."}
       </div>
-      <div class="field-build-panel__copy">PAN :: ${buildPanLabel} // HOLD ${buildFastLabel} TO SPEED PAN</div>
+      <div class="field-build-panel__copy">${buildInHaven ? `PAN :: ${buildPanLabel} // HOLD ${buildFastLabel} TO SPEED PAN` : "CAMERA :: LOCKED OUTSIDE HAVEN"}</div>
       <div class="field-build-panel__selection">SELECTED :: ${selectedLabel}</div>
+      ${selectedDecor && selectedFootprint
+        ? `<div class="field-build-panel__copy">ROTATE :: R // FOOTPRINT :: ${selectedFootprint.width}x${selectedFootprint.height} // READY :: ${availableDecorCounts.get(selectedDecor.id) ?? 0}</div>`
+        : ""}
       ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-place-center="true">PLACE AT VIEW CENTER</button>` : ""}
+      ${havenBuildPaletteSelection?.kind === "decor" ? `<button class="field-build-panel__clear" type="button" data-build-rotate-selection="true">ROTATE SELECTED</button>` : ""}
       ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-clear="true">CLEAR SELECTION</button>` : ""}
 
+      ${buildInHaven ? `
       <section class="field-build-panel__section">
         <div class="field-build-panel__section-title">STORED NODES</div>
         <div class="field-build-panel__grid">
@@ -3122,28 +3302,29 @@ function renderHavenBuildPanel(): string {
             : `<div class="field-build-panel__empty">No stored nodes.</div>`}
         </div>
       </section>
+      ` : ""}
 
       <section class="field-build-panel__section">
-        <div class="field-build-panel__section-title">DECOR LOCKER</div>
+        <div class="field-build-panel__section-title">FIELD LOCKER</div>
         <div class="field-build-decor-list">
-          ${availableDecor.length > 0
-            ? availableDecor.map((decor) => `
+          ${availableDecorStock.length > 0
+            ? availableDecorStock.map(({ decor, availableCount }) => `
               <button class="field-build-decor-card ${havenBuildPaletteSelection?.kind === "decor" && havenBuildPaletteSelection.decorId === decor.id ? "field-build-decor-card--active" : ""}"
                       type="button"
                       data-build-select-decor="${decor.id}">
                 <div class="field-build-decor-card__sprite">${renderDecorSpriteSvg(decor)}</div>
                 <div class="field-build-decor-card__copy">
                   <div class="field-build-decor-card__name">${decor.name}</div>
-                  <div class="field-build-decor-card__meta">${decor.tileWidth}x${decor.tileHeight} TILE${decor.tileWidth * decor.tileHeight > 1 ? "S" : ""}</div>
+                  <div class="field-build-decor-card__meta">${decor.tileWidth}x${decor.tileHeight} TILE${decor.tileWidth * decor.tileHeight > 1 ? "S" : ""} // READY ${availableCount}</div>
                 </div>
               </button>
             `).join("")
-            : `<div class="field-build-panel__empty">No unplaced decor in storage.</div>`}
+            : `<div class="field-build-panel__empty">No unplaced field items in storage.</div>`}
         </div>
       </section>
 
       <section class="field-build-panel__section">
-        <div class="field-build-panel__section-title">FABRICATE DECOR</div>
+        <div class="field-build-panel__section-title">FABRICATE FIELD KIT</div>
         <div class="field-build-decor-list">
           ${craftableDecor.length > 0
             ? craftableDecor.map((decor) => `
@@ -3151,14 +3332,14 @@ function renderHavenBuildPanel(): string {
                 <div class="field-build-decor-card__sprite">${renderDecorSpriteSvg(decor)}</div>
                 <div class="field-build-decor-card__copy">
                   <div class="field-build-decor-card__name">${decor.name}</div>
-                  <div class="field-build-decor-card__meta">${formatBuildResourceCost(decor.craftCost)}</div>
+                  <div class="field-build-decor-card__meta">${formatBuildResourceCost(decor.craftCost)} // READY ${availableDecorCounts.get(decor.id) ?? 0}</div>
                 </div>
                 <button class="field-build-craft-btn" type="button" data-build-craft-decor="${decor.id}" ${canCraftDecorItem(decor.id, state) ? "" : "disabled"}>
                   FABRICATE
                 </button>
               </div>
             `).join("")
-            : `<div class="field-build-panel__empty">All current decor pieces are already owned.</div>`}
+            : `<div class="field-build-panel__empty">No field fabrication recipes are online.</div>`}
         </div>
       </section>
     </aside>
@@ -3300,7 +3481,14 @@ function render(): void {
         ? "cursor: pointer;"
         : "";
     const buildControls = isHavenBuildModeEnabled() && buildMeta
-      ? `<button class="field-build-object-remove" type="button" data-build-remove="${buildMeta.itemId}" data-build-remove-kind="${buildMeta.kind}" aria-label="Store item">_</button>`
+      ? `
+        <div class="field-build-object-controls">
+          ${buildMeta.kind === "decor"
+            ? `<button class="field-build-object-rotate" type="button" data-build-rotate-decor="${buildMeta.itemId}" aria-label="Rotate item">R</button>`
+            : ""}
+          <button class="field-build-object-remove" type="button" data-build-remove="${buildMeta.itemId}" data-build-remove-kind="${buildMeta.kind}" aria-label="Store item">_</button>
+        </div>
+      `
       : "";
 
     objectsHtml += `
@@ -3426,7 +3614,9 @@ function render(): void {
   const attackLabel = getPlayerActionLabel("P1", "attack");
   const interactLabel = getPlayerActionLabel("P1", "interact");
   const cancelLabel = getPlayerActionLabel("P1", "cancel");
-  const buildModeHudInstructions = `BUILD MODE // ${moveLabel} TO PAN // HOLD ${dashLabel} TO SPEED PAN // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.`;
+  const buildModeHudInstructions = canPanDuringBuildMode()
+    ? `BUILD MODE // ${moveLabel} TO PAN // HOLD ${dashLabel} TO SPEED PAN // R TO ROTATE // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.`
+    : "BUILD MODE // CAMERA LOCKED IN FIELD ZONES // R TO ROTATE // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.";
   const buildModeHeaderHtml = isHavenBuildModeEnabled()
     ? `<div class="field-build-mode-header">BUILD MODE ACTIVE</div>`
     : "";
@@ -3578,6 +3768,13 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
     placeCurrentBuildSelectionAtViewCenter();
   });
 
+  const rotateSelectionButton = fieldRoot.querySelector<HTMLElement>("[data-build-rotate-selection='true']");
+  rotateSelectionButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    rotateSelectedBuildDecor();
+  });
+
   fieldRoot.querySelectorAll<HTMLElement>("[data-build-select-node]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -3599,7 +3796,7 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
       if (!decorId) {
         return;
       }
-      havenBuildPaletteSelection = { kind: "decor", decorId };
+      havenBuildPaletteSelection = createHavenBuildDecorSelection(decorId);
       render();
     });
   });
@@ -3617,12 +3814,12 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
         showSystemPing({
           type: "error",
           title: "FABRICATION FAILED",
-          message: "Resources or ownership rules blocked that decor build.",
+          message: "Resources blocked that decor build.",
           channel: "haven-build",
         });
         return;
       }
-      havenBuildPaletteSelection = { kind: "decor", decorId };
+      havenBuildPaletteSelection = createHavenBuildDecorSelection(decorId);
       showSystemPing({
         type: "success",
         title: "DECOR FABRICATED",
@@ -3631,6 +3828,18 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
       });
       syncCurrentMapFromState();
       render();
+    });
+  });
+
+  fieldRoot.querySelectorAll<HTMLElement>("[data-build-rotate-decor]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const placementId = button.dataset.buildRotateDecor;
+      if (!placementId) {
+        return;
+      }
+      rotatePlacedBuildDecor(placementId);
     });
   });
 
@@ -3679,7 +3888,7 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
   fieldRoot.querySelectorAll<HTMLElement>(".field-object[data-build-kind]").forEach((element) => {
     element.onpointerdown = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest(".field-build-object-remove")) {
+      if (target.closest(".field-build-object-remove") || target.closest(".field-build-object-rotate")) {
         return;
       }
 
@@ -3736,12 +3945,16 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
         const excludedObjectId = havenBuildDragState.kind === "node"
           ? getBaseCampNodeDefinition(havenBuildDragState.itemId as BaseCampNodeId)?.objectId ?? null
           : `field_decor_${havenBuildDragState.itemId}`;
+        const excludedZoneId = havenBuildDragState.kind === "node"
+          ? getBaseCampNodeDefinition(havenBuildDragState.itemId as BaseCampNodeId)?.zoneId ?? null
+          : null;
         const placement = validateBuildPlacement(
           nextOrigin.x,
           nextOrigin.y,
           havenBuildDragState.width,
           havenBuildDragState.height,
           excludedObjectId,
+          excludedZoneId,
         );
         havenBuildDragState.latestX = nextOrigin.x;
         havenBuildDragState.latestY = nextOrigin.y;
@@ -5225,6 +5438,67 @@ function performFieldRangedAttack(player: { x: number; y: number; facing: "north
   });
 }
 
+function updateFieldAutoTurrets(currentTime: number): void {
+  if (!fieldState?.projectiles || !fieldState.fieldEnemies || !currentMap) {
+    return;
+  }
+
+  const fieldEnemies = fieldState.fieldEnemies;
+  const projectiles = fieldState.projectiles;
+  const liveEnemies = fieldEnemies.filter((enemy) => enemy.hp > 0);
+  if (liveEnemies.length === 0) {
+    return;
+  }
+
+  currentMap.objects.forEach((object) => {
+    if (object.type !== "decoration") {
+      return;
+    }
+
+    const decorId = typeof object.metadata?.decorId === "string" ? object.metadata.decorId : "";
+    const turretProfile = decorId ? getFieldDecorTurretProfile(decorId) : null;
+    if (!turretProfile) {
+      return;
+    }
+
+    const lastFiredAt = fieldTurretLastFireAtMs.get(object.id) ?? Number.NEGATIVE_INFINITY;
+    if (currentTime - lastFiredAt < turretProfile.cooldownMs) {
+      return;
+    }
+
+    const turretX = (object.x + (object.width / 2)) * FIELD_TILE_SIZE;
+    const turretY = (object.y + (object.height / 2)) * FIELD_TILE_SIZE;
+    let nearestEnemy: FieldEnemy | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    liveEnemies.forEach((enemy) => {
+      const distance = Math.hypot(enemy.x - turretX, enemy.y - turretY);
+      if (distance > turretProfile.rangePx || distance >= nearestDistance) {
+        return;
+      }
+      nearestEnemy = enemy;
+      nearestDistance = distance;
+    });
+
+    if (!nearestEnemy || nearestDistance <= 0) {
+      return;
+    }
+
+    const targetEnemy = nearestEnemy as FieldEnemy;
+    fieldTurretLastFireAtMs.set(object.id, currentTime);
+    projectiles.push({
+      id: `field_turret_projectile_${object.id}_${currentTime}`,
+      x: turretX,
+      y: turretY,
+      vx: ((targetEnemy.x - turretX) / nearestDistance) * turretProfile.projectileSpeed,
+      vy: ((targetEnemy.y - turretY) / nearestDistance) * turretProfile.projectileSpeed,
+      damage: turretProfile.damage,
+      lifetime: 0,
+      maxLifetime: FIELD_TURRET_PROJECTILE_LIFETIME,
+    });
+  });
+}
+
 function updateFieldCombat(deltaTime: number, currentTime: number): void {
   if (!fieldState?.combat || !fieldState.fieldEnemies || !fieldState.projectiles || !currentMap) {
     return;
@@ -5242,6 +5516,7 @@ function updateFieldCombat(deltaTime: number, currentTime: number): void {
     }
   }
 
+  updateFieldAutoTurrets(currentTime);
   updateFieldProjectiles(deltaTime);
   updateFieldEnemies(deltaTime, currentTime);
   updateFieldPlayerPressure(deltaTime);
@@ -5733,7 +6008,14 @@ function handleKeyDown(e: KeyboardEvent): void {
       || key === "arrowleft"
       || key === "arrowright";
 
-    if (isShift || isBuildPanKey) {
+    if (!e.repeat && (key === "r" || e.code === "KeyR") && havenBuildPaletteSelection?.kind === "decor") {
+      e.preventDefault();
+      e.stopPropagation();
+      rotateSelectedBuildDecor();
+      return;
+    }
+
+    if (canPanDuringBuildMode() && (isShift || isBuildPanKey)) {
       e.preventDefault();
       e.stopPropagation();
       if (isShift) {
@@ -5882,7 +6164,7 @@ function handleKeyUp(e: KeyboardEvent): void {
       || key === "arrowleft"
       || key === "arrowright";
 
-    if (isShift || isBuildPanKey) {
+    if (canPanDuringBuildMode() && (isShift || isBuildPanKey)) {
       e.preventDefault();
       e.stopPropagation();
       if (isShift) {
@@ -6178,8 +6460,8 @@ async function handleNodeAction(action: string): Promise<void> {
       });
       break;
     case "comms-array":
-      import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen("field", "auto");
+      import("../ui/screens/CommsArrayScreen").then(({ renderHavenCommsArrayScreen }) => {
+        renderHavenCommsArrayScreen("field");
       });
       break;
     case "endless-field-nodes":
@@ -6443,6 +6725,7 @@ export function teardownFieldMode(): void {
   havenBuildDragState = null;
   activeAutoInteractionZoneKey = null;
   suppressedAutoInteractionZoneKey = null;
+  fieldTurretLastFireAtMs.clear();
   cleanupFieldControllerContext?.();
   cleanupFieldControllerContext = null;
   cleanupFieldFeedbackListener?.();

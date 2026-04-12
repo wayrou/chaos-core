@@ -2458,7 +2458,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const outerDeckFieldContext = getOuterDeckFieldContext(lastFieldMap);
   const expeditionActive = outerDeckFieldContext === "outerDeckBranch";
   const returnToHavenAvailable = outerDeckFieldContext !== "haven";
-  const buildModeUnlocked = lastFieldMap === "base_camp" && isHavenBuildModeUnlocked(campaignProgress);
+  const buildModeUnlocked = lastFieldMap !== "quarters" && isHavenBuildModeUnlocked(campaignProgress);
   const activeOrder = fullOrder.filter((id) => !minimized.has(id));
   const dockOrder = fullOrder.filter((id) => minimized.has(id));
 
@@ -2572,7 +2572,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
               id="allNodesBuildModeBtn"
               type="button"
             >
-              HAVEN BUILD MODE
+              FIELD BUILD MODE
             </button>
           ` : ""}
           <button class="all-nodes-quit-title-btn" id="allNodesQuitTitleBtn" type="button">
@@ -2797,7 +2797,7 @@ function attachAllNodesMenuListeners(): void {
       showSystemPing({
         type: "info",
         title: "BUILD MODE LOCKED",
-        message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock HAVEN build mode.`,
+        message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock field build mode.`,
         channel: "esc-build-mode",
       });
       return;
@@ -2805,7 +2805,7 @@ function attachAllNodesMenuListeners(): void {
 
     syncPinnedItemFrames(document);
     cleanupAllNodesWindowListeners();
-    renderFieldScreen("base_camp", { openBuildMode: true });
+    renderFieldScreen(lastFieldMap as any, { openBuildMode: true });
   });
 
   root.querySelector<HTMLElement>("#allNodesReturnHavenBtn")?.addEventListener("click", (event) => {

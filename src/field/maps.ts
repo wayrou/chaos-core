@@ -22,7 +22,7 @@ import {
   getBaseCampNodeLayout,
   isBaseCampNodeUnlocked,
 } from "./baseCampBuild";
-import { getPlacedFieldDecor } from "../core/decorSystem";
+import { getFieldDecorFootprintSize, getPlacedFieldDecor, isFieldDecorBlocking } from "../core/decorSystem";
 import {
   OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
   OUTER_DECK_HAVEN_EXIT_OBJECT_TILE,
@@ -45,6 +45,19 @@ function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: num
       if (tile.type === "wall") {
         tile.type = "floor";
       }
+    }
+  }
+}
+
+function setMapAreaBlocked(map: FieldMap, left: number, top: number, width: number, height: number): void {
+  for (let y = top; y < top + height; y += 1) {
+    for (let x = left; x < left + width; x += 1) {
+      const tile = map.tiles[y]?.[x];
+      if (!tile) {
+        continue;
+      }
+      tile.walkable = false;
+      tile.type = "wall";
     }
   }
 }
@@ -8060,22 +8073,34 @@ function applyBaseCampBuildLayout(map: FieldMap): void {
     moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);
   });
 
+  applyPlacedFieldBuildObjects(map);
+}
+
+function applyPlacedFieldBuildObjects(map: FieldMap): void {
+  const state = getGameState();
+
   getPlacedFieldDecor(state, map.id).forEach(({ placement, decor }) => {
+    const footprint = getFieldDecorFootprintSize(decor, placement.rotationQuarterTurns);
     map.objects.push({
       id: `field_decor_${placement.placementId}`,
       x: placement.x,
       y: placement.y,
-      width: decor.tileWidth,
-      height: decor.tileHeight,
+      width: footprint.width,
+      height: footprint.height,
       type: "decoration",
       sprite: decor.spriteKey,
       metadata: {
         name: decor.name,
         decorId: decor.id,
         placementId: placement.placementId,
+        rotationQuarterTurns: placement.rotationQuarterTurns ?? 0,
         spriteKey: decor.spriteKey,
       },
     });
+
+    if (isFieldDecorBlocking(decor.id)) {
+      setMapAreaBlocked(map, placement.x, placement.y, footprint.width, footprint.height);
+    }
   });
 }
 
@@ -8622,24 +8647,31 @@ export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
     return ensureNodeFootprintsWalkable(createKeyRoomMap(mapId));
   }
   if (mapId === OUTER_DECK_OVERWORLD_MAP_ID) {
-    return ensureNodeFootprintsWalkable(createOuterDeckFieldMap(mapId) as FieldMap);
+    const map = createOuterDeckFieldMap(mapId) as FieldMap;
+    applyPlacedFieldBuildObjects(map);
+    return ensureNodeFootprintsWalkable(map);
   }
   if (typeof mapId === "string" && mapId.startsWith("outerdeck_")) {
     const map = createOuterDeckFieldMap(mapId);
     if (map) {
+      applyPlacedFieldBuildObjects(map);
       return ensureNodeFootprintsWalkable(map);
     }
   }
   if (mapId === COUNTERWEIGHT_WORKSHOP_MAP_ID) {
-    return ensureNodeFootprintsWalkable(createWeaponsmithWorkshopFieldMap());
+    const map = createWeaponsmithWorkshopFieldMap();
+    applyPlacedFieldBuildObjects(map);
+    return ensureNodeFootprintsWalkable(map);
   }
   if (mapId === "base_camp" && !isTechnicaContentDisabled("map", "base_camp")) {
     return ensureNodeFootprintsWalkable(createConfiguredBaseCampMap());
   }
-  const map = maps.get(mapId) || getImportedFieldMap(mapId);
-  if (!map) {
+  const sourceMap = maps.get(mapId) || getImportedFieldMap(mapId);
+  if (!sourceMap) {
     throw new Error(`Field map not found: ${mapId}`);
   }
+  const map = cloneFieldMap(sourceMap);
+  applyPlacedFieldBuildObjects(map);
   return ensureNodeFootprintsWalkable(map);
 }
 

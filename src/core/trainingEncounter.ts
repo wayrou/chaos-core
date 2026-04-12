@@ -12,8 +12,9 @@ import { getEnemyDefinition } from "./enemies";
 // ----------------------------------------------------------------------------
 
 export interface TrainingConfig {
-  gridW: number; // 4..8
-  gridH: number; // 3..6
+  gridW: number; // 4..10
+  gridH: number; // 3..8
+  mapId?: string | null;
   difficulty: "easy" | "normal" | "hard";
   rules: {
     noRewards: true; // Always true for training
@@ -25,18 +26,18 @@ export interface TrainingConfig {
 // ----------------------------------------------------------------------------
 
 /**
- * Create a training encounter with customizable grid size and difficulty
+ * Create a training encounter with customizable grid size and difficulty.
  */
 export function createTrainingEncounter(
   state: GameState,
   config: TrainingConfig
 ): EncounterDefinition | null {
   // Validate grid bounds
-  if (config.gridW < 4 || config.gridW > 8) {
+  if (config.gridW < 4 || config.gridW > 10) {
     console.error("[TRAINING] Invalid grid width:", config.gridW);
     return null;
   }
-  if (config.gridH < 3 || config.gridH > 6) {
+  if (config.gridH < 3 || config.gridH > 8) {
     console.error("[TRAINING] Invalid grid height:", config.gridH);
     return null;
   }
@@ -166,4 +167,3 @@ function generateTrainingEnemies(config: TrainingConfig): Array<{
   
   return enemyUnits;
 }
-

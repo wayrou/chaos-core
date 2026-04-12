@@ -3676,11 +3676,17 @@
     0 12px 20px rgba(0, 0, 0, 0.24);
 }
 
-.field-build-object-remove {
+.field-build-object-controls {
   position: absolute;
   top: -8px;
   right: -8px;
   z-index: 3;
+  display: flex;
+  gap: 6px;
+}
+
+.field-build-object-remove,
+.field-build-object-rotate {
   width: 22px;
   height: 22px;
   border: 1px solid rgba(198, 149, 93, 0.52);
@@ -3695,7 +3701,8 @@
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.26);
 }
 
-.field-build-object-remove:hover {
+.field-build-object-remove:hover,
+.field-build-object-rotate:hover {
   border-color: rgba(241, 192, 123, 0.8);
   background: rgba(57, 41, 27, 0.96);
 }
@@ -3736,6 +3743,7 @@
   display: grid;
   place-items: center;
   pointer-events: none;
+  transition: transform 0.15s ease;
 }
 
 .decor-sprite-svg {

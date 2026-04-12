@@ -2,6 +2,8 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBattleScreen } from "./BattleScreen";
 import { renderMainMenu } from "./MainMenuScreen";
 import { createBuilderQuickTestBattle } from "../../core/tacticalBattle";
+import { BattleSceneController } from "../battle3d/BattleSceneController";
+import { createMapPreviewBoardSnapshot } from "../battle3d/snapshot";
 import {
   commitTacticalMapImportReview,
   cloneTacticalMapDefinition,
@@ -65,6 +67,7 @@ let builderObject: TacticalMapObjectType = "barricade_wall";
 let builderTraversalKind: TacticalTraversalKind = "ladder";
 let builderPendingTraversalStart: TacticalMapPoint | null = null;
 let builderZoom = 1;
+let builderSelectedPoint: TacticalMapPoint | null = null;
 let builderMessage: { type: "success" | "error" | "info"; text: string } | null = null;
 let builderImportText = "";
 let builderImportReview:
@@ -74,6 +77,7 @@ let builderImportReview:
     sourceLabel: string;
   }
   | null = null;
+let mapBuilderPreviewController: BattleSceneController | null = null;
 
 function escapeHtml(value: string): string {
   return value
@@ -180,6 +184,43 @@ function setBuilderDraft(nextDraft: TacticalMapDefinition): void {
       author: getBuilderAuthor(),
     },
   };
+  if (builderSelectedPoint && !builderDraft.tiles.some((tile) => tile.x === builderSelectedPoint?.x && tile.y === builderSelectedPoint?.y)) {
+    builderSelectedPoint = null;
+  }
+}
+
+function getMapBuilderPreviewController(): BattleSceneController {
+  if (!mapBuilderPreviewController) {
+    mapBuilderPreviewController = new BattleSceneController();
+  }
+  return mapBuilderPreviewController;
+}
+
+function syncMapBuilderPreview(draft: TacticalMapDefinition): void {
+  const host = document.getElementById("mapBuilderPreviewHost") as HTMLElement | null;
+  if (!host) {
+    return;
+  }
+
+  const controller = getMapBuilderPreviewController();
+  controller.mount(host);
+  controller.setZoomFactor(Math.max(0.8, Math.min(1.5, builderZoom + 0.15)));
+  controller.setInteractionHandlers({
+    onPrimaryPick: (pick) => {
+      builderSelectedPoint = { x: pick.x, y: pick.y };
+      renderMapBuilderScreen();
+    },
+  });
+  controller.sync(createMapPreviewBoardSnapshot(draft, {
+    selectedTile: builderSelectedPoint,
+    traversalSource: builderPendingTraversalStart,
+  }));
+  controller.focusTile(builderSelectedPoint ?? builderPendingTraversalStart ?? draft.zones.relay[0] ?? draft.tiles[0] ?? null);
+}
+
+function teardownMapBuilderPreview(): void {
+  mapBuilderPreviewController?.dispose();
+  mapBuilderPreviewController = null;
 }
 
 function withUpdatedDraft(updater: (draft: TacticalMapDefinition) => TacticalMapDefinition): void {
@@ -217,6 +258,7 @@ function isPlayableTile(draft: TacticalMapDefinition, point: TacticalMapPoint): 
 
 function applyBuilderCellAction(x: number, y: number): void {
   const point = { x, y };
+  builderSelectedPoint = { ...point };
   const draft = ensureBuilderDraft();
   const hasTile = isPlayableTile(draft, point);
 
@@ -734,15 +776,26 @@ export function renderMapBuilderScreen(): void {
         </aside>
 
         <main class="map-builder-main">
-          <section class="map-builder-panel">
-            <div class="map-builder-panel__title">Canvas</div>
-            <div class="map-builder-canvas" style="--map-builder-zoom:${builderZoom}; grid-template-columns: repeat(${draft.width}, 1fr);">
-              ${buildGridMarkup(draft)}
-            </div>
-            <div class="map-builder-note">
-              ${builderPendingTraversalStart ? `Traversal start: ${builderPendingTraversalStart.x},${builderPendingTraversalStart.y}` : "Click tiles to paint footprint, zones, objects, and traversal links."}
-            </div>
-          </section>
+          <div class="map-builder-main-grid">
+            <section class="map-builder-panel">
+              <div class="map-builder-panel__title">Canvas</div>
+              <div class="map-builder-canvas" style="--map-builder-zoom:${builderZoom}; grid-template-columns: repeat(${draft.width}, 1fr);">
+                ${buildGridMarkup(draft)}
+              </div>
+              <div class="map-builder-note">
+                ${builderPendingTraversalStart ? `Traversal start: ${builderPendingTraversalStart.x},${builderPendingTraversalStart.y}` : "Click tiles to paint footprint, zones, objects, and traversal links."}
+              </div>
+            </section>
+            <section class="map-builder-panel map-builder-preview-panel">
+              <div class="map-builder-panel__title">3D Preview</div>
+              <div class="map-builder-preview-shell">
+                <div class="map-builder-preview-host" id="mapBuilderPreviewHost"></div>
+              </div>
+              <div class="map-builder-note">
+                ${builderSelectedPoint ? `Focused tile: ${builderSelectedPoint.x},${builderSelectedPoint.y}` : "Preview uses the live battle board renderer. Click the 2D grid or 3D board to focus a tile."}
+              </div>
+            </section>
+          </div>
           ${builderMessage ? `<div class="map-builder-message map-builder-message--${builderMessage.type}">${escapeHtml(builderMessage.text)}</div>` : ""}
           ${importReviewMarkup}
         </main>
@@ -764,9 +817,15 @@ export function renderMapBuilderScreen(): void {
     }
   };
 
-  attachClick("mapBuilderBackBtn", () => void renderMainMenu());
+  attachClick("mapBuilderBackBtn", () => {
+    teardownMapBuilderPreview();
+    void renderMainMenu();
+  });
   attachClick("mapBuilderSaveBtn", () => saveDraft());
-  attachClick("mapBuilderQuickTestBtn", () => relaunchMapBuilderQuickTest());
+  attachClick("mapBuilderQuickTestBtn", () => {
+    teardownMapBuilderPreview();
+    relaunchMapBuilderQuickTest();
+  });
   attachClick("mapBuilderDuplicateBtn", () => {
     const draftCopy = cloneTacticalMapDefinition(ensureBuilderDraft());
     draftCopy.id = createTacticalMapId("custom");
@@ -945,4 +1004,6 @@ export function renderMapBuilderScreen(): void {
       applyBuilderCellAction(x, y);
     });
   });
+
+  syncMapBuilderPreview(draft);
 }

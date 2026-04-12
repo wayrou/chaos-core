@@ -18,7 +18,7 @@ import {
   UnitOwnership,
 } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
-import { generateElevationMap } from "./isometric";
+import { generateElevationMap } from "./terrainGeneration";
 import { getShakenStartingStrain } from "./operationStatuses";
 
 import {
@@ -88,6 +88,7 @@ import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
 import type {
   TacticalMapObjectDefinition,
+  TacticalMapSurface,
   TacticalMapZoneSet,
   TacticalTraversalLinkDefinition,
 } from "./tacticalMaps";
@@ -132,6 +133,7 @@ export interface Tile {
   pos: Vec2;
   terrain: TerrainType;
   elevation?: number; // Height level for isometric rendering (0 = ground, 1+ = raised)
+  surface?: TacticalMapSurface;
   cover?: CoverState | null; // Only present if terrain is light_cover or heavy_cover
 }
 
@@ -290,13 +292,22 @@ export interface BattleState {
 // ----------------------------------------------------------------------------
 
 function normalizeBattleLoadout(loadoutLike: Partial<UnitLoadout> & { weapon?: string | null } | undefined): UnitLoadout {
+  const normalizeEquipmentId = (value: string | null | undefined): string | null => {
+    if (typeof value !== "string") {
+      return value ?? null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
   return {
-    primaryWeapon: loadoutLike?.primaryWeapon ?? loadoutLike?.weapon ?? null,
-    secondaryWeapon: loadoutLike?.secondaryWeapon ?? null,
-    helmet: loadoutLike?.helmet ?? null,
-    chestpiece: loadoutLike?.chestpiece ?? null,
-    accessory1: loadoutLike?.accessory1 ?? null,
-    accessory2: loadoutLike?.accessory2 ?? null,
+    primaryWeapon: normalizeEquipmentId(loadoutLike?.primaryWeapon) ?? normalizeEquipmentId(loadoutLike?.weapon) ?? null,
+    secondaryWeapon: normalizeEquipmentId(loadoutLike?.secondaryWeapon) ?? null,
+    helmet: normalizeEquipmentId(loadoutLike?.helmet) ?? null,
+    chestpiece: normalizeEquipmentId(loadoutLike?.chestpiece) ?? null,
+    accessory1: normalizeEquipmentId(loadoutLike?.accessory1) ?? null,
+    accessory2: normalizeEquipmentId(loadoutLike?.accessory2) ?? null,
   };
 }
 
@@ -471,6 +482,7 @@ export function createGrid(width: number, height: number, elevationMap?: number[
         pos: { x, y },
         terrain,
         elevation,
+        surface: "industrial",
       });
     }
   }

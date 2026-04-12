@@ -748,6 +748,7 @@ function buildMainMenuButtonTiles(
   mostRecentSave: SaveInfo | null,
 ): string {
   const tiles: string[] = [];
+  const nonBetaFeatureTag = '<span class="mainmenu-feature-status mainmenu-feature-status--nonbeta">NON-BETA</span>';
 
   if (hasContinue) {
     tiles.push(`
@@ -793,6 +794,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">◈</span>
         <span class="btn-text node-label">ECHO RUNS</span>
         <span class="btn-subtitle node-desc">Draft-only simulation mode</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="echo-runs" aria-label="Resize echo runs"></button>
     </div>
@@ -809,6 +811,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">COM</span>
         <span class="btn-text node-label">MULTIPLAYER</span>
         <span class="btn-subtitle node-desc">Lobby, Skirmish, Co-Op Ops</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="multiplayer" aria-label="Resize multiplayer"></button>
     </div>
@@ -825,6 +828,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">MAP</span>
         <span class="btn-text node-label">MAP BUILDER</span>
         <span class="btn-subtitle node-desc">Custom Skirmish Maps & Quick Tests</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="map-builder" aria-label="Resize map builder"></button>
     </div>

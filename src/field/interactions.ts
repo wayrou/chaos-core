@@ -259,8 +259,8 @@ export async function handleInteraction(
       break;
 
     case "comms-array":
-      import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        openScreen(() => renderCommsArrayScreen("field", "auto"));
+      import("../ui/screens/CommsArrayScreen").then(({ renderHavenCommsArrayScreen }) => {
+        openScreen(() => renderHavenCommsArrayScreen("field"));
       });
       break;
 

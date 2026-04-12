@@ -8,7 +8,7 @@ const renderOperationMap = renderActiveOperationSurface; // Alias for compatibil
 import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { getUnlockableById } from "../../core/unlockables";
 import { handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp, getPlayerInput } from "../../core/playerInput";
-import { EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, SquadBattleTurnState, SessionPlayerSlot } from "../../core/types";
+import { type BattleCameraViewPreset, EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, SquadBattleTurnState, SessionPlayerSlot } from "../../core/types";
 import {
   getBattleStateById,
   getMountedOrActiveBattleState,
@@ -49,6 +49,7 @@ import {
 } from "../../core/battle";
 import { hasLineOfSight } from "../../core/lineOfSight";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { createTrainingBattle } from "../../core/trainingBattle";
 import { getAllStarterEquipment } from "../../core/equipment";
 import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
@@ -81,8 +82,9 @@ import {
   type FeedbackPosition,
   type FeedbackRequest,
 } from "../../core/feedback";
-// Isometric imports removed - using simple grid now
-import { BattleGridRenderer } from "./BattleGridRenderer";
+import { BattleSceneController } from "../battle3d/BattleSceneController";
+import { createBattleBoardSnapshot } from "../battle3d/snapshot";
+import type { BattleBoardPick, BattleBoardPoint } from "../battle3d/types";
 // Mount system imports
 import { isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
@@ -144,8 +146,215 @@ let pendingAutoBattleStepDueAtMs = 0;
 let cleanupBattleFeedbackListener: (() => void) | null = null;
 let battleHitStopUntilMs = 0;
 let battleHitStopTimerId: number | null = null;
+let battleSceneController: BattleSceneController | null = null;
+const BATTLE_VIEW_SLOT_COUNT = 2;
+const DEFAULT_BATTLE_VIEW_PRESETS: BattleCameraViewPreset[] = [
+  {
+    orbitYaw: Math.PI / 4,
+    orbitPitch: 0.82,
+    orbitDistance: 13,
+    zoomFactor: 1.3,
+    focusX: 0,
+    focusY: 0.45,
+    focusZ: 0,
+    hasManualPan: false,
+  },
+  {
+    orbitYaw: (Math.PI * 3) / 4,
+    orbitPitch: 0.82,
+    orbitDistance: 13,
+    zoomFactor: 1.3,
+    focusX: 0,
+    focusY: 0.45,
+    focusZ: 0,
+    hasManualPan: false,
+  },
+];
+let battleViewPresetCache: Record<string, BattleCameraViewPreset> | null = null;
+let battleActiveViewIndexCache: number | null = null;
+let battleViewPersistTimerId: number | null = null;
+let battleLastAppliedViewSignature: string | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
+
+function clampBattleViewIndex(index: number): number {
+  return Math.max(0, Math.min(BATTLE_VIEW_SLOT_COUNT - 1, index));
+}
+
+function getBattleViewStorageKey(index: number): string {
+  return String(clampBattleViewIndex(index));
+}
+
+function cloneBattleViewPreset(preset: BattleCameraViewPreset): BattleCameraViewPreset {
+  return { ...preset };
+}
+
+function getDefaultBattleViewPreset(index: number): BattleCameraViewPreset {
+  return cloneBattleViewPreset(DEFAULT_BATTLE_VIEW_PRESETS[clampBattleViewIndex(index)] ?? DEFAULT_BATTLE_VIEW_PRESETS[0]);
+}
+
+function normalizeBattleViewPreset(
+  preset: Partial<BattleCameraViewPreset> | undefined,
+  index: number,
+): BattleCameraViewPreset {
+  const fallback = getDefaultBattleViewPreset(index);
+  const safeNumber = (value: number | undefined, fallbackValue: number): number => (
+    typeof value === "number" && Number.isFinite(value) ? value : fallbackValue
+  );
+
+  return {
+    orbitYaw: safeNumber(preset?.orbitYaw, fallback.orbitYaw),
+    orbitPitch: Math.max(0.35, Math.min(1.25, safeNumber(preset?.orbitPitch, fallback.orbitPitch))),
+    orbitDistance: Math.max(4.5, Math.min(30, safeNumber(preset?.orbitDistance, fallback.orbitDistance))),
+    zoomFactor: Math.max(0.6, Math.min(1.6, safeNumber(preset?.zoomFactor, fallback.zoomFactor))),
+    focusX: safeNumber(preset?.focusX, fallback.focusX),
+    focusY: safeNumber(preset?.focusY, fallback.focusY),
+    focusZ: safeNumber(preset?.focusZ, fallback.focusZ),
+    hasManualPan: typeof preset?.hasManualPan === "boolean" ? preset.hasManualPan : fallback.hasManualPan,
+  };
+}
+
+function readStoredBattleViewPresets(state = getGameState()): Record<string, BattleCameraViewPreset> {
+  const savedPresets = state.uiLayout?.battleViewPresets ?? {};
+  return Object.fromEntries(
+    Array.from({ length: BATTLE_VIEW_SLOT_COUNT }, (_, index) => {
+      const key = getBattleViewStorageKey(index);
+      return [key, normalizeBattleViewPreset(savedPresets[key], index)];
+    }),
+  ) as Record<string, BattleCameraViewPreset>;
+}
+
+function readActiveBattleViewIndex(state = getGameState()): number {
+  return clampBattleViewIndex(state.uiLayout?.battleActiveViewIndex ?? 0);
+}
+
+function ensureBattleViewPresetCache(state = getGameState()): void {
+  if (battleViewPresetCache && battleActiveViewIndexCache !== null) {
+    return;
+  }
+
+  battleViewPresetCache = readStoredBattleViewPresets(state);
+  battleActiveViewIndexCache = readActiveBattleViewIndex(state);
+}
+
+function getCachedBattleViewPresets(state = getGameState()): Record<string, BattleCameraViewPreset> {
+  ensureBattleViewPresetCache(state);
+  return battleViewPresetCache ?? readStoredBattleViewPresets(state);
+}
+
+function getActiveBattleViewIndex(state = getGameState()): number {
+  ensureBattleViewPresetCache(state);
+  return battleActiveViewIndexCache ?? readActiveBattleViewIndex(state);
+}
+
+function getActiveBattleViewPreset(state = getGameState()): BattleCameraViewPreset {
+  const activeIndex = getActiveBattleViewIndex(state);
+  const presets = getCachedBattleViewPresets(state);
+  return cloneBattleViewPreset(presets[getBattleViewStorageKey(activeIndex)] ?? getDefaultBattleViewPreset(activeIndex));
+}
+
+function areBattleViewPresetsEqual(a: BattleCameraViewPreset, b: BattleCameraViewPreset): boolean {
+  return a.orbitYaw === b.orbitYaw
+    && a.orbitPitch === b.orbitPitch
+    && a.orbitDistance === b.orbitDistance
+    && a.zoomFactor === b.zoomFactor
+    && a.focusX === b.focusX
+    && a.focusY === b.focusY
+    && a.focusZ === b.focusZ
+    && a.hasManualPan === b.hasManualPan;
+}
+
+function cloneBattleViewPresetRecord(presets: Record<string, BattleCameraViewPreset>): Record<string, BattleCameraViewPreset> {
+  return Object.fromEntries(
+    Object.entries(presets).map(([key, preset]) => [key, cloneBattleViewPreset(preset)]),
+  ) as Record<string, BattleCameraViewPreset>;
+}
+
+function flushBattleViewPresetState(): void {
+  if (battleViewPersistTimerId !== null) {
+    window.clearTimeout(battleViewPersistTimerId);
+    battleViewPersistTimerId = null;
+  }
+
+  if (!battleViewPresetCache || battleActiveViewIndexCache === null) {
+    return;
+  }
+
+  const currentState = getGameState();
+  const storedActiveIndex = readActiveBattleViewIndex(currentState);
+  const storedPresets = readStoredBattleViewPresets(currentState);
+  const nextPresets = cloneBattleViewPresetRecord(battleViewPresetCache);
+  const isSame =
+    storedActiveIndex === battleActiveViewIndexCache
+    && Array.from({ length: BATTLE_VIEW_SLOT_COUNT }, (_, index) => {
+      const key = getBattleViewStorageKey(index);
+      return areBattleViewPresetsEqual(
+        storedPresets[key] ?? getDefaultBattleViewPreset(index),
+        nextPresets[key] ?? getDefaultBattleViewPreset(index),
+      );
+    }).every(Boolean);
+
+  if (isSame) {
+    return;
+  }
+
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      battleActiveViewIndex: battleActiveViewIndexCache ?? 0,
+      battleViewPresets: cloneBattleViewPresetRecord(nextPresets),
+    },
+  }));
+}
+
+function scheduleBattleViewPresetStatePersist(): void {
+  if (battleViewPersistTimerId !== null) {
+    window.clearTimeout(battleViewPersistTimerId);
+  }
+
+  battleViewPersistTimerId = window.setTimeout(() => {
+    battleViewPersistTimerId = null;
+    flushBattleViewPresetState();
+  }, 220);
+}
+
+function captureActiveBattleViewPreset(view: BattleCameraViewPreset, persist = true): void {
+  ensureBattleViewPresetCache();
+  const activeIndex = getActiveBattleViewIndex();
+  const presetKey = getBattleViewStorageKey(activeIndex);
+  const normalizedPreset = normalizeBattleViewPreset(view, activeIndex);
+
+  if (!battleViewPresetCache) {
+    battleViewPresetCache = readStoredBattleViewPresets();
+  }
+
+  battleViewPresetCache[presetKey] = normalizedPreset;
+  battleZoom = normalizedPreset.zoomFactor;
+
+  if (persist) {
+    scheduleBattleViewPresetStatePersist();
+  }
+}
+
+function resetBattleViewPresetSessionState(): void {
+  flushBattleViewPresetState();
+  battleViewPresetCache = null;
+  battleActiveViewIndexCache = null;
+  battleLastAppliedViewSignature = null;
+}
+
+function activateBattleViewPreset(viewIndex: number): void {
+  if (battleSceneController) {
+    captureActiveBattleViewPreset(battleSceneController.getViewState(), false);
+  }
+
+  ensureBattleViewPresetCache();
+  battleActiveViewIndexCache = clampBattleViewIndex(viewIndex);
+  battleLastAppliedViewSignature = null;
+  flushBattleViewPresetState();
+  renderBattleScreen();
+}
 
 type AutoBattleCardOption = {
   cardIndex: number;
@@ -1316,7 +1525,7 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
   }
 
   // Find the battle grid container
-  const gridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+  const gridContainer = getBattleGridContainer();
   if (!gridContainer) {
     console.error(`[ANIMATION] Grid container not found for animation container`);
     return null;
@@ -1345,6 +1554,10 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
 }
 
 function getBattleTileCenterPx(pos: Vec2): { x: number; y: number } {
+  const projected = battleSceneController?.projectTileToOverlay(pos.x, pos.y);
+  if (projected) {
+    return projected;
+  }
   return {
     x: BATTLE_GRID_PADDING_PX + pos.x * (BATTLE_TILE_SIZE_PX + BATTLE_TILE_GAP_PX) + BATTLE_TILE_SIZE_PX / 2,
     y: BATTLE_GRID_PADDING_PX + pos.y * (BATTLE_TILE_SIZE_PX + BATTLE_TILE_GAP_PX) + BATTLE_TILE_SIZE_PX / 2,
@@ -1352,31 +1565,32 @@ function getBattleTileCenterPx(pos: Vec2): { x: number; y: number } {
 }
 
 function getBattleGridContainer(): HTMLElement | null {
-  return document.querySelector(".battle-grid-container--simple") as HTMLElement | null;
+  return document.getElementById("battleGridContainer") as HTMLElement | null;
+}
+
+function getBattleBoardHost(): HTMLElement | null {
+  return document.getElementById("battleBoard3dHost") as HTMLElement | null;
+}
+
+function getBattleSceneControllerInstance(): BattleSceneController {
+  if (!battleSceneController) {
+    battleSceneController = new BattleSceneController();
+  }
+  return battleSceneController;
 }
 
 function getOriginalBattleUnitElement(unitId: string): HTMLElement | null {
-  const gridContainer = getBattleGridContainer();
-  if (!gridContainer) {
-    return null;
-  }
-
-  return gridContainer.querySelector(`.battle-unit[data-unit-id="${unitId}"]:not([data-animating="true"])`) as HTMLElement | null;
+  void unitId;
+  return null;
 }
 
 function setOriginalBattleUnitHidden(unitId: string, hidden: boolean): void {
-  const originalUnit = getOriginalBattleUnitElement(unitId);
-  if (!originalUnit) {
-    return;
-  }
-
-  originalUnit.style.opacity = hidden ? "0" : "1";
-  originalUnit.style.visibility = hidden ? "hidden" : "visible";
-  originalUnit.style.pointerEvents = hidden ? "none" : "auto";
+  void unitId;
+  void hidden;
 }
 
 function getBattleFeedbackLayer(): HTMLElement | null {
-  const overlays = document.querySelector(".battle-grid-overlays") as HTMLElement | null;
+  const overlays = document.getElementById("battleBoardOverlay") as HTMLElement | null;
   if (!overlays) {
     return null;
   }
@@ -1391,14 +1605,12 @@ function getBattleFeedbackLayer(): HTMLElement | null {
   return layer;
 }
 
-function getBattleFeedbackTileElement(position: FeedbackPosition | undefined): HTMLElement | null {
+function getBattleFeedbackPoint(position: FeedbackPosition | undefined): { x: number; y: number } | null {
   if (!position || position.space !== "battle-tile") {
     return null;
   }
 
-  return document.querySelector(
-    `.battle-tile[data-x="${position.x}"][data-y="${position.y}"]`,
-  ) as HTMLElement | null;
+  return battleSceneController?.projectTileToOverlay(position.x, position.y) ?? null;
 }
 
 function queueBattleFeedbackElement(
@@ -1527,15 +1739,14 @@ function renderBattleFeedbackRequest(request: FeedbackRequest): void {
     return;
   }
 
-  // Compose small feedback layers per event instead of baking effects into battle state.
-  const tile = getBattleFeedbackTileElement(request.position);
-  if (!tile) {
+  const point = getBattleFeedbackPoint(request.position);
+  if (!point) {
     applyBattleWeaponFeedback(request);
     return;
   }
 
-  const centerX = tile.offsetLeft + tile.offsetWidth / 2;
-  const centerY = tile.offsetTop + tile.offsetHeight / 2;
+  const centerX = point.x;
+  const centerY = point.y;
 
   if (
     request.type === "hit"
@@ -1586,11 +1797,7 @@ function renderBattleFeedbackRequest(request: FeedbackRequest): void {
   if (request.type === "strain") {
     const battleUnitId = String(request.meta?.["unitId"] ?? "");
     if (battleUnitId) {
-      pulseBattleElement(
-        `.battle-unit[data-unit-id="${battleUnitId}"] .battle-unit-portrait-wrapper`,
-        "battle-unit-portrait-wrapper--strain-pulse",
-        720,
-      );
+      battleSceneController?.triggerUnitPulse(battleUnitId);
     }
   }
 
@@ -1675,18 +1882,15 @@ function createAnimatedBattleUnitElement(unit: BattleUnitState, extraClass: stri
 
 function hasActiveBattleAnimation(): boolean {
   return Boolean(
-    (activeMovementAnim && activeMovementAnim.active) ||
-    (activeAttackBumpAnim && activeAttackBumpAnim.active)
+    battleSceneController?.hasActiveAnimations()
+    || (activeMovementAnim && activeMovementAnim.active)
+    || (activeAttackBumpAnim && activeAttackBumpAnim.active)
   );
 }
 
 function setBattleZoom(z: number) {
   battleZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
-  const inner = document.querySelector(".battle-grid-zoom-inner") as HTMLElement | null;
-  if (inner) {
-    inner.style.transform = `scale(${battleZoom})`;
-    inner.style.transformOrigin = "center center";
-  }
+  battleSceneController?.setZoomFactor(battleZoom);
 }
 
 function zoomIn() {
@@ -1992,7 +2196,7 @@ let uiPanelsMinimized = false;
 let isEndlessBattleMode = false;
 let endlessBattleCount = 0;
 
-const BATTLE_PAN_SPEED = 15;
+const BATTLE_PAN_SPEED = 4;
 const BATTLE_PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 
 function cleanupBattlePanHandlers(): void {
@@ -2024,11 +2228,6 @@ function setupBattlePanHandlers(): void {
     keysPressed: new Set(),
     shiftPressed: false,
   };
-
-  const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement | null;
-  if (panWrapper) {
-    panWrapper.style.transform = `translate(${battlePanState.x}px, ${battlePanState.y}px)`;
-  }
 
   battleKeydownHandler = (e: KeyboardEvent) => {
     // Update player input system
@@ -2077,6 +2276,29 @@ function setupBattlePanHandlers(): void {
           finalizeBattleHudEndTurn(newState);
           return;
         }
+      }
+    }
+
+    if (document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+      if (e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(-0.14, 0);
+        return;
+      }
+      if (e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0.14, 0);
+        return;
+      }
+      if (e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0, 0.08);
+        return;
+      }
+      if (e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0, -0.08);
+        return;
       }
     }
 
@@ -2134,18 +2356,13 @@ function startBattlePanLoop(): void {
 
     if (battlePanState.keysPressed.has("w") || battlePanState.keysPressed.has("arrowup")) dy += currentSpeed;
     if (battlePanState.keysPressed.has("s") || battlePanState.keysPressed.has("arrowdown")) dy -= currentSpeed;
-    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx += currentSpeed;
-    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx -= currentSpeed;
+    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx -= currentSpeed;
+    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx += currentSpeed;
 
     if (dx !== 0 || dy !== 0) {
       battlePanState.x += dx;
       battlePanState.y += dy;
-
-      // Apply transform to battle grid pan wrapper
-      const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
-      if (panWrapper) {
-        panWrapper.style.transform = `translate(${battlePanState.x}px, ${battlePanState.y}px)`;
-      }
+      battleSceneController?.panScreen(-dx, -dy);
     }
 
     if (battlePanState.keysPressed.size > 0) {
@@ -2163,10 +2380,8 @@ function resetBattlePan(): void {
   battlePanState.y = 0;
   battlePanState.keysPressed.clear();
   battlePanState.shiftPressed = false;
-  const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
-  if (panWrapper) {
-    panWrapper.style.transform = `translate(0px, 0px)`;
-  }
+  const focusUnit = localBattleState?.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
+  battleSceneController?.focusTile(focusUnit?.pos ?? hoveredTile);
 }
 
 function resetBattleUiSessionState(): void {
@@ -2180,6 +2395,10 @@ function resetBattleUiSessionState(): void {
   resetTurnStateForUnit(null);
   resetBattlePan();
   uiPanelsMinimized = false;
+  battleSceneController?.setViewChangeHandler(null);
+  resetBattleViewPresetSessionState();
+  battleSceneController?.dispose();
+  battleSceneController = null;
 }
 
 function getBattlePartyUnits(battle: BattleState): BattleUnitState[] {
@@ -2323,27 +2542,20 @@ function triggerScreenShake(intensity = 1): void {
 }
 
 function showFloatingText(text: string, type: "damage" | "heal" | "crit", x: number, y: number) {
-  const grid = document.querySelector(".battle-grid") as HTMLElement;
-  if (!grid) return;
-
-  const tile = grid.querySelector(`.battle-tile[data-x="${x}"][data-y="${y}"]`) as HTMLElement;
-  if (!tile) return;
+  const layer = getBattleFeedbackLayer();
+  const point = battleSceneController?.projectTileToOverlay(x, y);
+  if (!layer || !point) return;
 
   const el = document.createElement("div");
   el.className = `floating-combat-text floating-combat-text--${type}`;
   el.textContent = text;
-
-  // Ensure the grid limits absolute positioning correctly
-  grid.style.position = "relative";
-
-  el.style.left = `${tile.offsetLeft + (tile.offsetWidth / 2)}px`;
-  el.style.top = `${tile.offsetTop + (tile.offsetHeight / 2)}px`;
-
-  grid.appendChild(el);
+  el.style.left = `${point.x}px`;
+  el.style.top = `${point.y}px`;
+  layer.appendChild(el);
 
   setTimeout(() => {
-    if (el.parentNode === grid) {
-      grid.removeChild(el);
+    if (el.parentNode === layer) {
+      layer.removeChild(el);
     }
   }, 1500);
 }
@@ -2979,8 +3191,7 @@ function moveBattleControllerCursor(
           : direction === "left"
             ? { x: Math.max(0, activeUnit.pos.x - 1), y: activeUnit.pos.y }
             : { x: Math.min(battle.gridWidth - 1, activeUnit.pos.x + 1), y: activeUnit.pos.y };
-    const tile = document.querySelector<HTMLElement>(`.battle-tile[data-x="${nextFacingTile.x}"][data-y="${nextFacingTile.y}"]`);
-    tile?.click();
+    handleBattleBoardActionPick(nextFacingTile, battle, activeUnit, Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)));
     return;
   }
 
@@ -2996,12 +3207,25 @@ function moveBattleControllerCursor(
 }
 
 function clickBattleControllerCursorTile(): void {
-  if (!battleControllerCursor) {
+  if (!battleControllerCursor || !localBattleState) {
     return;
   }
 
-  const tile = document.querySelector<HTMLElement>(`.battle-tile[data-x="${battleControllerCursor.x}"][data-y="${battleControllerCursor.y}"]`);
-  tile?.click();
+  const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
+  if (localBattleState.phase === "placement") {
+    const isClientNetworkPlacement = Boolean(
+      (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState))
+      && getGameState().session.authorityRole === "client",
+    );
+    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement);
+    return;
+  }
+  handleBattleBoardActionPick(
+    battleControllerCursor,
+    localBattleState,
+    activeUnit,
+    Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit)),
+  );
 }
 
 function cycleBattleControllerSelectedCard(step: 1 | -1, activeUnit: BattleUnitState | undefined): boolean {
@@ -3526,6 +3750,20 @@ function startMovementAnimation(
   battle: BattleState,
   onComplete: () => void
 ): void {
+  if (battleSceneController) {
+    if (!path || path.length < 2 || !battle.units[unitId]) {
+      onComplete();
+      return;
+    }
+    battleSceneController.animateUnitMove(
+      unitId,
+      path,
+      Math.max(180, (path.length - 1) * 200),
+      onComplete,
+    );
+    return;
+  }
+
   // Validate inputs
   if (!path || path.length < 2) {
     if (DEBUG_MOVEMENT) console.log(`[MOVEMENT] No movement needed for ${unitId}`);
@@ -3913,6 +4151,11 @@ function startAttackBumpAnimation(
   targetId: string,
   onComplete: () => void
 ): void {
+  if (battleSceneController) {
+    battleSceneController.animateAttackBump(attackerId, targetId, ATTACK_BUMP_DURATION_MS, onComplete);
+    return;
+  }
+
   const attacker = battle.units[attackerId];
   const target = battle.units[targetId];
   if (!attacker || !target || !attacker.pos || !target.pos) {
@@ -5371,6 +5614,7 @@ export function renderBattleScreen() {
     && battle.phase !== "defeat"
     && !isSquadBattle(battle)
     && !isCoopOperationsBattle(battle);
+  const activeBattleViewIndex = getActiveBattleViewIndex(state);
 
   app.innerHTML = `
     <div class="battle-root battle-root--${phase}">
@@ -5395,9 +5639,15 @@ export function renderBattleScreen() {
               <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
             </div>
           ` : ""}
+          <div class="battle-view-switcher" aria-label="Battle camera view switcher">
+            <span class="battle-view-switcher-label">VIEW</span>
+            <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
+            <span class="battle-view-switcher-separator">|</span>
+            <button class="battle-view-switcher-btn${activeBattleViewIndex === 1 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="1">2</button>
+          </div>
           <div class="battle-pan-controls">
             <div class="battle-pan-hint">
-              <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom
+              <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
             </div>
             <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
           </div>
@@ -5410,15 +5660,6 @@ export function renderBattleScreen() {
           </div>
         </div>
       </div>
-      
-      <!-- Pan controls hint -->
-      <div class="battle-pan-controls">
-        <div class="battle-pan-hint">
-          <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom
-        </div>
-        <button class="battle-pan-reset" id="resetBattlePanBtn">⟲ CENTER</button>
-      </div>
-      
       ${renderBattleResultOverlay(battle)}
       ${renderBattleExitConfirmModal(battle)}
     </div>
@@ -5450,10 +5691,8 @@ export function renderBattleScreen() {
 
   // CRITICAL: Restore animation container if it was preserved
   if (preservedAnimationContainer && preservedGridContainer) {
-    // Find the new grid container
-    const newGridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+    const newGridContainer = getBattleGridContainer();
     if (newGridContainer) {
-      // Check if container already exists in new DOM
       let existingContainer = newGridContainer.querySelector('.battle-animation-container') as HTMLElement;
 
       if (existingContainer) {
@@ -5477,8 +5716,7 @@ export function renderBattleScreen() {
       console.warn(`[RENDER] Could not find new grid container to restore animation container`);
     }
   } else {
-    // Initialize animation container reference if it exists
-    const gridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+    const gridContainer = getBattleGridContainer();
     if (gridContainer) {
       const animContainer = gridContainer.querySelector('.battle-animation-container') as HTMLElement;
       if (animContainer) {
@@ -5486,12 +5724,10 @@ export function renderBattleScreen() {
       }
     }
 
-    // Clear reference if animation is not active and container is empty
     if (!hasActiveBattleAnimation()) {
       const animContainer = getOrCreateAnimationContainer();
       if (animContainer && animContainer.children.length === 0) {
-        // Container is empty, safe to clear reference
-        // But keep it for next animation
+        persistentAnimationContainer = animContainer;
       }
     }
   }
@@ -6242,13 +6478,32 @@ function renderPlacementUI(battle: BattleState): string {
 
 */
 
-function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined, isPlacementPhase: boolean = false): string {
+interface BattleBoardRenderState {
+  moveTiles: Set<string>;
+  attackTiles: Set<string>;
+  facingTiles: Set<string>;
+  placementTiles: Set<string>;
+  hiddenUnitIds: Set<string>;
+  echoPlacements: EchoFieldPlacement[];
+  echoPlacementMode: "units" | "fields" | null;
+  selectedEchoFieldDraftId: string | null;
+  focusTile: { x: number; y: number } | null;
+}
+
+let currentBattleBoardRenderState: BattleBoardRenderState | null = null;
+
+function computeBattleBoardRenderState(
+  battle: BattleState,
+  selectedCardIdx: number | null,
+  activeUnit: BattleUnitState | undefined,
+  isPlacementPhase: boolean,
+): BattleBoardRenderState {
   const units = getUnitsArray(battle);
   const echoContext = getEchoContext(battle);
-
-  // Calculate move/attack tiles if needed
   const moveOpts = new Set<string>();
   const atkOpts = new Set<string>();
+  const facingTiles = new Set<string>();
+  const placementTiles = new Set<string>();
 
   if (
     activeUnit
@@ -6287,33 +6542,91 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
     }
   }
 
-  // Calculate facing selection tiles if in facing selection phase
-  const facingTiles = new Set<string>();
   if (turnState.isFacingSelection && activeUnit && activeUnit.pos) {
     const { x, y } = activeUnit.pos;
-    // Add adjacent tiles for facing selection
-    if (x > 0) facingTiles.add(`${x - 1},${y}`); // west
-    if (x < battle.gridWidth - 1) facingTiles.add(`${x + 1},${y}`); // east
-    if (y > 0) facingTiles.add(`${x},${y - 1}`); // north
-    if (y < battle.gridHeight - 1) facingTiles.add(`${x},${y + 1}`); // south
+    if (x > 0) facingTiles.add(`${x - 1},${y}`);
+    if (x < battle.gridWidth - 1) facingTiles.add(`${x + 1},${y}`);
+    if (y > 0) facingTiles.add(`${x},${y - 1}`);
+    if (y < battle.gridHeight - 1) facingTiles.add(`${x},${y + 1}`);
   }
 
-  // Use the new simple renderer - it uses unit.pos as single source of truth
-  return BattleGridRenderer.render(
-    battle,
-    selectedCardIdx,
-    activeUnit,
-    isPlacementPhase,
-    battleZoom,
-    moveOpts,
-    atkOpts,
+  const hiddenUnitIds = getHiddenAnimatedUnitIds();
+  const echoPlacements = echoContext?.fieldPlacements ?? [];
+  const echoPlacementMode = echoContext?.placementMode ?? null;
+  const selectedEchoFieldDraftId = echoContext?.selectedFieldDraftId ?? null;
+  const isEchoFieldPlacementMode = isPlacementPhase && echoPlacementMode === "fields";
+  const sessionState = getGameState().session;
+  const isSquadPlacement = isPlacementPhase && battle.modeContext?.kind === "squad" && !isEchoFieldPlacementMode;
+  const localSpawnZone = isSquadPlacement && sessionState.authorityRole === "client"
+    ? battle.spawnZones?.enemySpawn ?? []
+    : battle.spawnZones?.friendlySpawn ?? [];
+  const fallbackPlacementColumn = isSquadPlacement && sessionState.authorityRole === "client"
+    ? battle.gridWidth - 1
+    : 0;
+
+  if (isPlacementPhase && battle.placementState && !isEchoFieldPlacementMode) {
+    const placementState = battle.placementState;
+    const placedCount = placementState.placedUnitIds.reduce((count, unitId) => {
+      const placedUnit = battle.units[unitId];
+      if (!placedUnit || !placedUnit.pos) {
+        return count;
+      }
+      const placedPos = placedUnit.pos;
+      if (localSpawnZone.length > 0) {
+        const inLocalSpawnZone = localSpawnZone.some(
+          (point) => point.x === placedPos.x && point.y === placedPos.y,
+        );
+        return inLocalSpawnZone ? count + 1 : count;
+      }
+      const unitPlacementColumn = placedUnit.isEnemy ? battle.gridWidth - 1 : 0;
+      return unitPlacementColumn === fallbackPlacementColumn ? count + 1 : count;
+    }, 0);
+
+    if (placedCount < placementState.maxUnitsPerSide) {
+      if (localSpawnZone.length > 0) {
+        localSpawnZone.forEach((point) => {
+          const occupied = units.some((unit) => unit.pos && unit.pos.x === point.x && unit.pos.y === point.y);
+          if (!occupied) {
+            placementTiles.add(`${point.x},${point.y}`);
+          }
+        });
+      } else {
+        for (let y = 0; y < battle.gridHeight; y += 1) {
+          const occupied = units.some((unit) => unit.pos && unit.pos.x === fallbackPlacementColumn && unit.pos.y === y);
+          if (!occupied) {
+            placementTiles.add(`${fallbackPlacementColumn},${y}`);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    moveTiles: moveOpts,
+    attackTiles: atkOpts,
     facingTiles,
-    hoveredTile,
-    getHiddenAnimatedUnitIds(),
-    echoContext?.fieldPlacements ?? [],
-    echoContext?.placementMode ?? null,
-    echoContext?.selectedFieldDraftId ?? null,
-  );
+    placementTiles,
+    hiddenUnitIds,
+    echoPlacements,
+    echoPlacementMode,
+    selectedEchoFieldDraftId,
+    focusTile: activeUnit?.pos ? { ...activeUnit.pos } : hoveredTile ? { ...hoveredTile } : null,
+  };
+}
+
+function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined, isPlacementPhase: boolean = false): string {
+  currentBattleBoardRenderState = computeBattleBoardRenderState(battle, selectedCardIdx, activeUnit, isPlacementPhase);
+
+  return `
+    <div class="battle-grid-pan-wrapper">
+      <div class="battle-grid-zoom-viewport">
+        <div class="battle-grid-container battle-grid-container--3d" id="battleGridContainer">
+          <div class="battle-3d-host" id="battleBoard3dHost"></div>
+          <div class="battle-grid-overlays battle-grid-overlays--3d" id="battleBoardOverlay"></div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 /**
@@ -7143,6 +7456,317 @@ function handleBattleHudConsumableUse(consumableId: string, targetId: string): v
   });
 }
 
+function syncBattleBoardScene(
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  isPlacementPhase: boolean,
+): void {
+  const host = getBattleBoardHost();
+  if (!host) {
+    return;
+  }
+
+  const renderState = currentBattleBoardRenderState ?? computeBattleBoardRenderState(
+    battle,
+    selectedCardIndex,
+    activeUnit,
+    isPlacementPhase,
+  );
+  currentBattleBoardRenderState = renderState;
+
+  const scene = getBattleSceneControllerInstance();
+  scene.mount(host);
+  scene.setViewChangeHandler((view) => {
+    captureActiveBattleViewPreset(view);
+  });
+  scene.sync(createBattleBoardSnapshot(battle, {
+    moveTiles: renderState.moveTiles,
+    attackTiles: renderState.attackTiles,
+    placementTiles: renderState.placementTiles,
+    facingTiles: renderState.facingTiles,
+    hoveredTile,
+    hiddenUnitIds: renderState.hiddenUnitIds,
+    echoFieldPlacements: renderState.echoPlacements,
+    selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
+    focusTile: renderState.focusTile,
+  }));
+
+  const activeViewIndex = getActiveBattleViewIndex();
+  const activeViewSignature = `${battle.id}:${activeViewIndex}`;
+  if (battleLastAppliedViewSignature !== activeViewSignature) {
+    const activeViewPreset = getActiveBattleViewPreset();
+    battleZoom = activeViewPreset.zoomFactor;
+    scene.applyViewState(activeViewPreset, false);
+    battleLastAppliedViewSignature = activeViewSignature;
+  }
+}
+
+function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
+  if (!nextTile && hoveredTile === null) {
+    return;
+  }
+  if (nextTile && hoveredTile && hoveredTile.x === nextTile.x && hoveredTile.y === nextTile.y) {
+    return;
+  }
+  hoveredTile = nextTile ? { ...nextTile } : null;
+  renderBattleScreen();
+}
+
+function battleBoardSetHas(set: Set<string>, point: BattleBoardPoint): boolean {
+  return set.has(`${point.x},${point.y}`);
+}
+
+function handleBattleBoardPlacementPick(
+  pick: BattleBoardPick,
+  battle: BattleState,
+  isClientNetworkPlacement: boolean,
+): void {
+  if (!localBattleState || !localBattleState.placementState) {
+    return;
+  }
+
+  const occupiedUnitId = pick.unitId
+    ?? Object.values(localBattleState.units).find((unit) => unit.pos?.x === pick.x && unit.pos?.y === pick.y && unit.hp > 0)?.id
+    ?? null;
+  if (occupiedUnitId) {
+    const unit = localBattleState.units[occupiedUnitId];
+    if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)) {
+      if (isClientNetworkPlacement) {
+        void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId: occupiedUnitId });
+        return;
+      }
+      const newState = unplaceBattleUnit(localBattleState, occupiedUnitId);
+      setBattleState(newState);
+      renderBattleScreen();
+      return;
+    }
+  }
+
+  if (getEchoContext(localBattleState)?.placementMode === "fields") {
+    const currentEchoContext = getEchoContext(localBattleState);
+    const draftId = currentEchoContext?.selectedFieldDraftId ?? currentEchoContext?.availableFields[0]?.draftId ?? null;
+    if (!draftId) {
+      return;
+    }
+
+    let newState = upsertEchoFieldPlacement(localBattleState, draftId, { x: pick.x, y: pick.y });
+    const remainingFields = getUnplacedEchoFields(newState);
+    if (remainingFields.length > 0) {
+      newState = selectEchoPlacementField(newState, remainingFields[0].draftId);
+    }
+    setBattleState(newState);
+    renderBattleScreen();
+    return;
+  }
+
+  if (!currentBattleBoardRenderState || !battleBoardSetHas(currentBattleBoardRenderState.placementTiles, pick)) {
+    return;
+  }
+
+  const occupied = Object.values(localBattleState.units).some(
+    (unit) => unit.pos && unit.pos.x === pick.x && unit.pos.y === pick.y && unit.hp > 0,
+  );
+  if (occupied) {
+    return;
+  }
+
+  const selectedUnitId = localBattleState.placementState.selectedUnitId;
+  let unitToPlace: BattleUnitState | undefined | null = null;
+  if (selectedUnitId) {
+    const selectedUnit = localBattleState.units[selectedUnitId];
+    if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit)
+      && !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
+      unitToPlace = selectedUnit;
+    }
+  }
+
+  if (!unitToPlace) {
+    unitToPlace = getLocalPlacementUnits(localBattleState).find(
+      (unit) => !localBattleState!.placementState!.placedUnitIds.includes(unit.id) && !unit.pos,
+    );
+  }
+
+  if (!unitToPlace) {
+    return;
+  }
+
+  const validPlacementTiles = getPlacementTilesForUnit(localBattleState, unitToPlace);
+  if (!validPlacementTiles.some((tilePos) => tilePos.x === pick.x && tilePos.y === pick.y)) {
+    return;
+  }
+
+  if (isClientNetworkPlacement) {
+    void sendLocalNetworkPlacementCommand({ type: "place_unit", unitId: unitToPlace.id, x: pick.x, y: pick.y });
+    return;
+  }
+
+  const newState = placeUnit(localBattleState, unitToPlace.id, { x: pick.x, y: pick.y });
+  setBattleState(newState);
+  renderBattleScreen();
+}
+
+function handleBattleBoardActionPick(
+  pick: BattleBoardPick,
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  isPlayerTurn: boolean,
+): void {
+  if (isBattleHudPointerInteraction) return;
+  if (isAnimatingEnemyTurn) return;
+  if (hasActiveBattleAnimation()) return;
+  if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) return;
+  if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
+  if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
+  if (!currentBattleBoardRenderState) return;
+
+  const { x, y } = pick;
+
+  if (turnState.isFacingSelection && battleBoardSetHas(currentBattleBoardRenderState.facingTiles, pick)) {
+    if (!activeUnit.pos) return;
+    const dx = x - activeUnit.pos.x;
+    const dy = y - activeUnit.pos.y;
+    let newFacing: "north" | "south" | "east" | "west";
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      newFacing = dx > 0 ? "east" : "west";
+    } else {
+      newFacing = dy > 0 ? "south" : "north";
+    }
+
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
+        type: "end_turn",
+        unitId: activeUnit.id,
+        facing: newFacing,
+      });
+      turnState.isFacingSelection = false;
+      renderBattleScreen();
+      return;
+    }
+
+    const newUnits = { ...localBattleState.units };
+    newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+    const newState = { ...localBattleState, units: newUnits };
+    setBattleState(newState);
+    finalizeBattleHudEndTurn(newState);
+    return;
+  }
+
+  if (battleBoardSetHas(currentBattleBoardRenderState.moveTiles, pick)) {
+    if (!turnState.hasMoved && activeUnit.pos) {
+      turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
+    }
+
+    const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
+    const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
+    const currentX = activeUnit.pos?.x ?? 0;
+    const currentY = activeUnit.pos?.y ?? 0;
+    const maxMove = getUnitMovementRange(activeUnit);
+    const path = getMovePath(localBattleState, { x: currentX, y: currentY }, { x, y }, maxMove);
+    if (path.length < 2) {
+      return;
+    }
+
+    const totalCost = getDistance(originX, originY, x, y);
+    if (totalCost > maxMove) {
+      return;
+    }
+
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      if (!turnState.hasMoved && activeUnit.pos) {
+        turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
+      }
+      turnState.movementRemaining = Math.max(0, maxMove - totalCost);
+      turnState.hasMoved = true;
+      turnState.hasCommittedMove = true;
+      void sendLocalNetworkBattleCommand({
+        type: "move_unit",
+        unitId: activeUnit.id,
+        x,
+        y,
+      });
+      renderBattleScreen();
+      return;
+    }
+
+    executeLocalBattleMove(activeUnit.id, path, 40);
+    return;
+  }
+
+  const units = getUnitsArray(localBattleState);
+  const targetUnit = units.find((unit) => unit.pos?.x === x && unit.pos?.y === y && unit.hp > 0);
+  if (targetUnit) {
+    if (turnState.hasActed) {
+      return;
+    }
+
+    const ux = activeUnit.pos?.x ?? 0;
+    const uy = activeUnit.pos?.y ?? 0;
+    const dist = getDistance(ux, uy, x, y);
+
+    let cardToPlay: number | null = selectedCardIndex;
+    let shouldPlay = false;
+    let targetUnitId = "";
+
+    if (cardToPlay === null && activeUnit.hand.length > 0) {
+      for (let index = 0; index < activeUnit.hand.length; index += 1) {
+        const card = resolveCard(activeUnit.hand[index]);
+        if (canCardTargetUnit(card, activeUnit, targetUnit, dist)) {
+          cardToPlay = index;
+          shouldPlay = true;
+          targetUnitId = targetUnit.id;
+          break;
+        }
+      }
+    } else if (cardToPlay !== null) {
+      const card = resolveCard(activeUnit.hand[cardToPlay]);
+      if (canCardTargetUnit(card, activeUnit, targetUnit, dist)) {
+        shouldPlay = true;
+        targetUnitId = targetUnit.id;
+      }
+    }
+
+    if (shouldPlay && cardToPlay !== null) {
+      if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+        selectedCardIndex = null;
+        void sendLocalNetworkBattleCommand({
+          type: "play_card",
+          unitId: activeUnit.id,
+          cardIndex: cardToPlay,
+          targetUnitId,
+        });
+        renderBattleScreen();
+        return;
+      }
+
+      executeLocalBattleCardPlay(activeUnit.id, cardToPlay, targetUnitId, 40);
+      return;
+    }
+  }
+
+  if (battleBoardSetHas(currentBattleBoardRenderState.attackTiles, pick) && selectedCardIndex !== null && targetUnit) {
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      const playedCardIndex = selectedCardIndex;
+      if (playedCardIndex !== null) {
+        selectedCardIndex = null;
+        void sendLocalNetworkBattleCommand({
+          type: "play_card",
+          unitId: activeUnit.id,
+          cardIndex: playedCardIndex,
+          targetUnitId: targetUnit.id,
+        });
+        renderBattleScreen();
+      }
+      return;
+    }
+
+    const playedCardIndex = selectedCardIndex;
+    if (playedCardIndex !== null) {
+      executeLocalBattleCardPlay(activeUnit.id, playedCardIndex, targetUnit.id, 40);
+    }
+  }
+}
+
 function attachBattleListeners() {
   if (!localBattleState) return;
 
@@ -7151,17 +7775,7 @@ function attachBattleListeners() {
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit));
   const isPlacementPhase = battle.phase === "placement";
   setupBattleHudResizeListener();
-
-  // Zoom controls - mouse wheel only
-  const zoomViewport = document.querySelector(".battle-grid-zoom-viewport");
-  if (zoomViewport) {
-    zoomViewport.addEventListener("wheel", (e: Event) => {
-      e.preventDefault();
-      const wheelEvent = e as WheelEvent;
-      if (wheelEvent.deltaY < 0) zoomIn();
-      else zoomOut();
-    }, { passive: false });
-  }
+  syncBattleBoardScene(battle, activeUnit, isPlacementPhase);
 
   // Exit battle button
   const exitBtn = document.getElementById("exitBattleBtn");
@@ -7231,6 +7845,17 @@ function attachBattleListeners() {
   document.querySelectorAll<HTMLElement>("#resetBattlePanBtn").forEach((resetPanBtn) => {
     resetPanBtn.onclick = () => {
       resetBattlePan();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-battle-view-index]").forEach((viewBtn) => {
+    viewBtn.onclick = (event) => {
+      event.preventDefault();
+      const nextIndex = Number.parseInt(viewBtn.dataset.battleViewIndex ?? "", 10);
+      if (!Number.isFinite(nextIndex)) {
+        return;
+      }
+      activateBattleViewPreset(nextIndex);
     };
   });
 
@@ -7366,467 +7991,73 @@ function attachBattleListeners() {
       });
     }
 
-    // Simple placement click handler using data attributes
-    const gridContainer = document.getElementById("battleGridContainer") ||
-      document.querySelector(".battle-grid-container--simple");
-    if (gridContainer) {
-      // Remove old handler
-      const oldHandler = (gridContainer as any).__placementHandler;
-      if (oldHandler) {
-        gridContainer.removeEventListener("click", oldHandler);
+    const placementPanel = document.querySelector('.battle-node[data-battle-node-id="placement"] .battle-placement-panel');
+    if (placementPanel) {
+      const oldPanelHandler = (placementPanel as any).__placementPanelHandler;
+      if (oldPanelHandler) {
+        placementPanel.removeEventListener("click", oldPanelHandler);
       }
 
-      // Create new handler
-      const placementHandler = (e: Event) => {
+      const placementPanelHandler = (e: Event) => {
         const mouseEvent = e as MouseEvent;
-        const target = mouseEvent.target as HTMLElement | null;
-        if (target?.closest(".battle-placement-panel")) {
+        mouseEvent.stopPropagation();
+        const fieldItem = (mouseEvent.target as HTMLElement).closest(".placement-field-item") as HTMLElement | null;
+        if (fieldItem && localBattleState) {
+          mouseEvent.preventDefault();
+          const draftId = fieldItem.getAttribute("data-echo-field-draft-id");
+          if (draftId) {
+            const newState = selectEchoPlacementField(localBattleState, draftId);
+            setBattleState(newState);
+            renderBattleScreen();
+          }
           return;
         }
-        // Check if clicking on a placed unit (to remove it) - prioritize unit clicks
-        const placedUnitEl = target?.closest(".battle-unit[data-unit-id]") as HTMLElement | null;
-        if (placedUnitEl && localBattleState && localBattleState.placementState) {
-          const unitId = placedUnitEl.getAttribute("data-unit-id");
+
+        const unitItem = (mouseEvent.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
+        if (unitItem && localBattleState && localBattleState.placementState) {
+          mouseEvent.preventDefault();
+
+          const unitId = unitItem.getAttribute("data-unit-id");
+          const isPlaced = unitItem.getAttribute("data-placed") === "true";
+
           if (unitId) {
-            const unit = localBattleState.units[unitId];
-            if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(unitId)) {
-              // Remove placed unit
-              mouseEvent.preventDefault();
-              mouseEvent.stopPropagation();
+            if (isPlaced) {
               if (isClientNetworkPlacement) {
                 void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId });
                 return;
               }
-              let newState = unplaceBattleUnit(localBattleState, unitId);
+              const newState = unplaceBattleUnit(localBattleState, unitId);
               setBattleState(newState);
               renderBattleScreen();
-              return;
-            }
-          }
-        }
-
-        if (getEchoContext(localBattleState)?.placementMode === "fields") {
-          const tile = target?.closest(".battle-tile") as HTMLElement | null;
-          if (!tile) return;
-          const coords = BattleGridRenderer.getTileCoordinates(tile);
-          if (!coords) return;
-          const currentEchoContext = getEchoContext(localBattleState);
-          const draftId = currentEchoContext?.selectedFieldDraftId ?? currentEchoContext?.availableFields[0]?.draftId ?? null;
-          if (!draftId) return;
-
-          let newState = upsertEchoFieldPlacement(localBattleState!, draftId, coords);
-          const remainingFields = getUnplacedEchoFields(newState);
-          if (remainingFields.length > 0) {
-            newState = selectEchoPlacementField(newState, remainingFields[0].draftId);
-          }
-          setBattleState(newState);
-          renderBattleScreen();
-          return;
-        }
-
-        // Otherwise, try to place selected unit
-        const tile = target?.closest(".battle-tile--placement-option") as HTMLElement | null;
-        if (!tile) return;
-
-        const coords = BattleGridRenderer.getTileCoordinates(tile);
-        if (!coords) return;
-
-        const { x, y } = coords;
-
-        if (!localBattleState || !localBattleState.placementState) return;
-        if (y < 0 || y >= localBattleState.gridHeight) return;
-
-        const occupied = Object.values(localBattleState.units).some(
-          u => u.pos && u.pos.x === x && u.pos.y === y && u.hp > 0
-        );
-        if (occupied) return;
-
-        // Use selected unit if available, otherwise use first unplaced
-        const selectedUnitId = localBattleState.placementState.selectedUnitId;
-        let unitToPlace = null;
-
-        if (selectedUnitId) {
-          const selectedUnit = localBattleState.units[selectedUnitId];
-          if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit) &&
-            !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
-            unitToPlace = selectedUnit;
-          }
-        }
-
-        if (!localBattleState || !localBattleState.placementState) return;
-
-        if (!unitToPlace) {
-          const placementUnits = getLocalPlacementUnits(localBattleState);
-          unitToPlace = placementUnits.find(
-            u => !localBattleState!.placementState!.placedUnitIds.includes(u.id) && !u.pos
-          );
-        }
-
-        if (!unitToPlace || !localBattleState) return;
-
-        const validPlacementTiles = getPlacementTilesForUnit(localBattleState, unitToPlace);
-        if (!validPlacementTiles.some((tilePos) => tilePos.x === x && tilePos.y === y)) {
-          return;
-        }
-
-        if (isClientNetworkPlacement) {
-          void sendLocalNetworkPlacementCommand({ type: "place_unit", unitId: unitToPlace.id, x, y });
-          return;
-        }
-
-        let newState = placeUnit(localBattleState, unitToPlace.id, { x, y });
-        setBattleState(newState);
-        renderBattleScreen();
-      };
-
-      // Add click handler for unit selection in placement panel
-      const placementPanel = document.querySelector('.battle-node[data-battle-node-id="placement"] .battle-placement-panel');
-      if (placementPanel) {
-        // Remove old handler if exists
-        const oldPanelHandler = (placementPanel as any).__placementPanelHandler;
-        if (oldPanelHandler) {
-          placementPanel.removeEventListener("click", oldPanelHandler);
-        }
-
-        const placementPanelHandler = (e: Event) => {
-          const mouseEvent = e as MouseEvent;
-          mouseEvent.stopPropagation();
-          const fieldItem = (mouseEvent.target as HTMLElement).closest(".placement-field-item") as HTMLElement | null;
-          if (fieldItem && localBattleState) {
-            mouseEvent.preventDefault();
-            const draftId = fieldItem.getAttribute("data-echo-field-draft-id");
-            if (draftId) {
-              const newState = selectEchoPlacementField(localBattleState, draftId);
+            } else {
+              const newState = selectBattlePlacementUnit(localBattleState, unitId);
               setBattleState(newState);
               renderBattleScreen();
-            }
-            return;
-          }
-
-          const unitItem = (mouseEvent.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
-          if (unitItem && localBattleState && localBattleState.placementState) {
-            mouseEvent.preventDefault();
-
-            const unitId = unitItem.getAttribute("data-unit-id");
-            const isPlaced = unitItem.getAttribute("data-placed") === "true";
-
-            if (unitId) {
-              if (isPlaced) {
-                // Clicking a placed unit removes it
-                if (isClientNetworkPlacement) {
-                  void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId });
-                  return;
-                }
-                let newState = unplaceBattleUnit(localBattleState, unitId);
-                setBattleState(newState);
-                renderBattleScreen();
-              } else {
-                // Clicking an unplaced unit selects it for placement
-                let newState = selectBattlePlacementUnit(localBattleState, unitId);
-                setBattleState(newState);
-                renderBattleScreen();
-                if (isClientNetworkPlacement) {
-                  void sendLocalNetworkPlacementCommand({ type: "select_placement_unit", unitId });
-                }
+              if (isClientNetworkPlacement) {
+                void sendLocalNetworkPlacementCommand({ type: "select_placement_unit", unitId });
               }
             }
           }
-        };
+        }
+      };
 
-        (placementPanel as any).__placementPanelHandler = placementPanelHandler;
-        placementPanel.addEventListener("click", placementPanelHandler);
-      }
-
-      (gridContainer as any).__placementHandler = placementHandler;
-      gridContainer.addEventListener("click", placementHandler);
+      (placementPanel as any).__placementPanelHandler = placementPanelHandler;
+      placementPanel.addEventListener("click", placementPanelHandler);
     }
+
+    getBattleSceneControllerInstance().setInteractionHandlers({
+      onPrimaryPick: (pick) => handleBattleBoardPlacementPick(pick, battle, isClientNetworkPlacement),
+      onHoverTile: (tile) => updateHoveredBattleTile(tile),
+    });
 
     // Don't attach normal battle listeners during placement
     return;
   }
 
-  // Simple click handler for movement and attacks using data attributes
-  const gridContainer = document.getElementById("battleGridContainer") ||
-    document.querySelector(".battle-grid-container--simple");
-  if (gridContainer && !isPlacementPhase) {
-    // Remove old handler
-    const oldHandler = (gridContainer as any).__battleHandler;
-    if (oldHandler) {
-      gridContainer.removeEventListener("click", oldHandler);
-    }
-
-    // Create new handler
-    const battleHandler = (e: Event) => {
-      const mouseEvent = e as MouseEvent;
-      if (isBattleHudPointerInteraction) return;
-      // CRITICAL: Block all actions if battle is over or enemy is acting
-      if (isAnimatingEnemyTurn) return;
-      if (hasActiveBattleAnimation()) return;
-      if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
-        return;
-      }
-
-      const tile = (mouseEvent.target as HTMLElement).closest(".battle-tile") as HTMLElement;
-      if (!tile) return;
-
-      const coords = BattleGridRenderer.getTileCoordinates(tile);
-      if (!coords) return;
-
-      const { x, y } = coords;
-
-      if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
-      if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
-
-      // Handle final facing selection before ending the turn
-      if (turnState.isFacingSelection && tile.classList.contains("battle-tile--facing-option")) {
-        if (!activeUnit.pos) return;
-
-        // Determine facing based on clicked tile position relative to unit
-        const dx = x - activeUnit.pos.x;
-        const dy = y - activeUnit.pos.y;
-        let newFacing: "north" | "south" | "east" | "west";
-
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          newFacing = dx > 0 ? "east" : "west";
-        } else {
-          newFacing = dy > 0 ? "south" : "north";
-        }
-
-        if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-          void sendLocalNetworkBattleCommand({
-            type: "end_turn",
-            unitId: activeUnit.id,
-            facing: newFacing,
-          });
-          turnState.isFacingSelection = false;
-          renderBattleScreen();
-          return;
-        }
-
-        // Update facing, then finish the turn with that orientation
-        const newUnits = { ...localBattleState.units };
-        newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
-        const newState = { ...localBattleState, units: newUnits };
-        setBattleState(newState);
-        finalizeBattleHudEndTurn(newState);
-        return;
-      }
-
-      // Handle movement
-      if (tile.classList.contains("battle-tile--move-option")) {
-        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-        if (hasActiveBattleAnimation()) return;
-
-        if (!turnState.hasMoved && activeUnit.pos) {
-          turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
-        }
-
-        const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
-        const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
-        const currentX = activeUnit.pos?.x ?? 0;
-        const currentY = activeUnit.pos?.y ?? 0;
-        const maxMove = getUnitMovementRange(activeUnit);
-
-        // Validate destination is within bounds
-        if (x < 0 || x >= localBattleState.gridWidth ||
-          y < 0 || y >= localBattleState.gridHeight) {
-          console.error("[MOVE] Destination out of bounds!", { x, y, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
-          return;
-        }
-
-        // Validate current position
-        if (currentX < 0 || currentX >= localBattleState.gridWidth ||
-          currentY < 0 || currentY >= localBattleState.gridHeight) {
-          console.error("[MOVE] Current position out of bounds!", { currentX, currentY, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
-          return;
-        }
-
-        const path = getMovePath(localBattleState, { x: currentX, y: currentY }, { x, y }, maxMove);
-
-        if (path.length < 2) {
-          console.warn("[MOVE] No valid path found", { from: { x: currentX, y: currentY }, to: { x, y } });
-          return;
-        }
-
-        // CRITICAL: Validate path ends at destination
-        const pathEnd = path[path.length - 1];
-        if (pathEnd.x !== x || pathEnd.y !== y) {
-          console.error("[MOVE] Path does not end at destination!", {
-            expected: { x, y },
-            actual: pathEnd,
-            path
-          });
-          return;
-        }
-
-        const totalCost = getDistance(originX, originY, x, y);
-        if (totalCost > maxMove) {
-          console.warn("[MOVE] Path cost exceeds movement range", { totalCost, movement: maxMove });
-          return;
-        }
-
-        if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-          if (!turnState.hasMoved && activeUnit.pos) {
-            turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
-          }
-          turnState.movementRemaining = Math.max(0, maxMove - totalCost);
-          turnState.hasMoved = true;
-          turnState.hasCommittedMove = true;
-          void sendLocalNetworkBattleCommand({
-            type: "move_unit",
-            unitId: activeUnit.id,
-            x,
-            y,
-          });
-          renderBattleScreen();
-          return;
-        }
-
-        executeLocalBattleMove(activeUnit.id, path, 40);
-        return;
-      }
-
-      // Handle attack - check if there's a unit here first, then check card selection
-      const units = getUnitsArray(localBattleState);
-      const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
-
-      // If clicking on an enemy or ally unit, try to attack
-      if (tgt && isPlayerTurn && activeUnit && localBattleState) {
-        if (turnState.hasActed) {
-          return;
-        }
-        const ux = activeUnit.pos?.x ?? 0;
-        const uy = activeUnit.pos?.y ?? 0;
-        const dist = getDistance(ux, uy, x, y);
-
-        let cardToPlay: number | null = selectedCardIndex;
-        let shouldPlay = false;
-        let targetUnitId = "";
-
-        // If no card is selected, try to auto-select the first valid attack card
-        if (cardToPlay === null && activeUnit.hand.length > 0) {
-          // Find first card that can target this unit
-          for (let i = 0; i < activeUnit.hand.length; i++) {
-            const cardIdOrObj = activeUnit.hand[i];
-            const card = resolveCard(cardIdOrObj);
-            if (canCardTargetUnit(card, activeUnit, tgt, dist)) {
-              cardToPlay = i;
-              shouldPlay = true;
-              targetUnitId = tgt.id;
-              break;
-            }
-          }
-        } else if (cardToPlay !== null) {
-          // Card is already selected, check if it can target this unit
-          const cardIdOrObj = activeUnit.hand[cardToPlay];
-          const card = resolveCard(cardIdOrObj);
-          if (canCardTargetUnit(card, activeUnit, tgt, dist)) {
-            shouldPlay = true;
-            targetUnitId = tgt.id;
-          }
-        }
-
-        if (shouldPlay && cardToPlay !== null) {
-          if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-            selectedCardIndex = null;
-            void sendLocalNetworkBattleCommand({
-              type: "play_card",
-              unitId: activeUnit.id,
-              cardIndex: cardToPlay,
-              targetUnitId,
-            });
-            renderBattleScreen();
-            return;
-          }
-
-          executeLocalBattleCardPlay(activeUnit.id, cardToPlay, targetUnitId, 40);
-          return;
-        }
-      }
-
-      // Legacy/Fallback attack logic for specific tile states
-      if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
-        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-
-        const cardIdOrObj = activeUnit.hand[selectedCardIndex];
-        const card = resolveCard(cardIdOrObj);
-        const ux = activeUnit.pos?.x ?? 0;
-        const uy = activeUnit.pos?.y ?? 0;
-        const dist = getDistance(ux, uy, x, y);
-
-        let shouldPlay = false;
-        let targetUnitId = "";
-
-        if (tgt && canCardTargetUnit(card, activeUnit, tgt, dist)) {
-          shouldPlay = true;
-          targetUnitId = tgt.id;
-        }
-
-        if (shouldPlay) {
-          if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-            const playedCardIndex = selectedCardIndex;
-            if (playedCardIndex !== null) {
-              selectedCardIndex = null;
-              void sendLocalNetworkBattleCommand({
-                type: "play_card",
-                unitId: activeUnit.id,
-                cardIndex: playedCardIndex,
-                targetUnitId,
-              });
-              renderBattleScreen();
-            }
-            return;
-          }
-
-          const playedCardIndex = selectedCardIndex;
-          if (playedCardIndex !== null) {
-            executeLocalBattleCardPlay(activeUnit.id, playedCardIndex, targetUnitId, 40);
-          }
-        }
-      }
-    };
-
-    (gridContainer as any).__battleHandler = battleHandler;
-    gridContainer.addEventListener("click", battleHandler);
-
-    // Hover handler for range previews and target indicators
-    const hoverHandler = (e: MouseEvent) => {
-      if (isBattleHudPointerInteraction) return;
-      const tile = (e.target as HTMLElement).closest(".battle-tile") as HTMLElement;
-      if (!tile) {
-        if (hoveredTile !== null) {
-          hoveredTile = null;
-          renderBattleScreen();
-        }
-        return;
-      }
-
-      const coords = BattleGridRenderer.getTileCoordinates(tile);
-      if (!coords) return;
-
-      if (hoveredTile?.x !== coords.x || hoveredTile?.y !== coords.y) {
-        hoveredTile = coords;
-        renderBattleScreen();
-      }
-    };
-
-    const leaveHandler = () => {
-      if (hoveredTile !== null) {
-        hoveredTile = null;
-        renderBattleScreen();
-      }
-    };
-
-    const oldHoverHandler = (gridContainer as any).__hoverHandler;
-    const oldLeaveHandler = (gridContainer as any).__leaveHandler;
-    if (oldHoverHandler) gridContainer.removeEventListener("mousemove", oldHoverHandler);
-    if (oldLeaveHandler) gridContainer.removeEventListener("mouseleave", oldLeaveHandler);
-
-    (gridContainer as any).__hoverHandler = hoverHandler;
-    (gridContainer as any).__leaveHandler = leaveHandler;
-    gridContainer.addEventListener("mousemove", hoverHandler);
-    gridContainer.addEventListener("mouseleave", leaveHandler);
-  }
+  getBattleSceneControllerInstance().setInteractionHandlers({
+    onPrimaryPick: (pick) => handleBattleBoardActionPick(pick, battle, activeUnit, isPlayerTurn),
+    onHoverTile: (tile) => updateHoveredBattleTile(tile),
+  });
 
   // OLD TILE CLICK HANDLER - REMOVED (replaced by new grid click handler system above)
 
@@ -8543,31 +8774,19 @@ function handleTrainingBattleComplete(battle: BattleState): void {
       import("./CommsArrayScreen").then(({ getLastTrainingConfig }) => {
         const lastConfig = getLastTrainingConfig();
         if (lastConfig && trainingConfig) {
-          // Start training battle directly with stored config
-          import("../../core/trainingEncounter").then(({ createTrainingEncounter }) => {
-            import("../../core/battleFromEncounter").then(({ createBattleFromEncounter }) => {
-              import("../../state/gameStore").then(({ getGameState, updateGameState }) => {
-                import("./BattleScreen").then(({ renderBattleScreen }) => {
-                  const state = getGameState();
-                  const encounter = createTrainingEncounter(state, lastConfig);
-                  if (encounter) {
-                    const battle = createBattleFromEncounter(state, encounter, `training_${Date.now()}`);
-                    if (battle) {
-                      (battle as any).isTraining = true;
-                      (battle as any).trainingConfig = lastConfig;
-                      (battle as any).returnTo = returnTo;
-                      updateGameState(prev => ({
-                        ...prev,
-                            currentBattle: battle,
-                        phase: "battle",
-                      }));
-                      renderBattleScreen();
-                    }
-                  }
-                });
-              });
-            });
-          });
+          const state = getGameState();
+          const nextBattle = createTrainingBattle(state, lastConfig, `training_${Date.now()}`);
+          if (nextBattle) {
+            (nextBattle as any).returnTo = returnTo;
+            updateGameState((prev) => ({
+              ...prev,
+              currentBattle: nextBattle,
+              phase: "battle",
+            }));
+            renderBattleScreen();
+            return;
+          }
+          renderBattleReturnDestination(returnTo);
         } else {
           renderBattleReturnDestination(returnTo);
         }

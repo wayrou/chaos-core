@@ -4,7 +4,9 @@
   "description": "A steady breach specialist prepared for early operation deployment.",
   "faction": "company_of_quills",
   "id": "unit_lucien",
-  "loadout": {},
+  "loadout": {
+    "primaryWeapon": "gear_quill_sword"
+  },
   "name": "Lucien",
   "pwr": 42,
   "recruitCost": 120,

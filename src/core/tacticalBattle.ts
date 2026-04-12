@@ -16,6 +16,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "floor",
       elevation: 0,
+      surface: "industrial",
     };
   }
 
@@ -25,6 +26,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "light_cover",
       elevation: baseTile.elevation,
+      surface: baseTile.surface,
       cover: {
         type: "light_cover",
         hp: 4,
@@ -38,6 +40,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "wall",
       elevation: baseTile.elevation,
+      surface: baseTile.surface,
     };
   }
 
@@ -45,6 +48,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
     pos: { x: point.x, y: point.y },
     terrain: "floor",
     elevation: baseTile.elevation,
+    surface: baseTile.surface,
   };
 }
 
@@ -193,6 +197,7 @@ export function createBuilderQuickTestBattle(
   const trainingConfig: TrainingConfig = {
     gridW: map.width,
     gridH: map.height,
+    mapId: map.id,
     difficulty: "normal",
     rules: {
       noRewards: true,

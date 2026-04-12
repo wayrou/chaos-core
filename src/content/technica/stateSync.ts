@@ -149,15 +149,43 @@ function buildRuntimeCard(card: ImportedCard, existing?: GameState["cardsById"][
   };
 }
 
+function normalizeLoadoutEquipmentId(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return value ?? null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function buildRuntimeUnit(unit: ImportedUnitTemplate, existing?: RuntimeFriendlyUnit): RuntimeFriendlyUnit {
   const currentHp = Number(existing?.hp ?? unit.stats.maxHp);
   const nextHp = Math.max(0, Math.min(currentHp, unit.stats.maxHp));
-  const primaryWeapon = existing?.loadout?.primaryWeapon ?? existing?.loadout?.weapon ?? unit.loadout.primaryWeapon ?? null;
-  const secondaryWeapon = existing?.loadout?.secondaryWeapon ?? unit.loadout.secondaryWeapon ?? null;
-  const helmet = existing?.loadout?.helmet ?? unit.loadout.helmet ?? null;
-  const chestpiece = existing?.loadout?.chestpiece ?? unit.loadout.chestpiece ?? null;
-  const accessory1 = existing?.loadout?.accessory1 ?? unit.loadout.accessory1 ?? null;
-  const accessory2 = existing?.loadout?.accessory2 ?? unit.loadout.accessory2 ?? null;
+  const primaryWeapon =
+    normalizeLoadoutEquipmentId(existing?.loadout?.primaryWeapon)
+    ?? normalizeLoadoutEquipmentId(existing?.loadout?.weapon)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.primaryWeapon)
+    ?? null;
+  const secondaryWeapon =
+    normalizeLoadoutEquipmentId(existing?.loadout?.secondaryWeapon)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.secondaryWeapon)
+    ?? null;
+  const helmet =
+    normalizeLoadoutEquipmentId(existing?.loadout?.helmet)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.helmet)
+    ?? null;
+  const chestpiece =
+    normalizeLoadoutEquipmentId(existing?.loadout?.chestpiece)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.chestpiece)
+    ?? null;
+  const accessory1 =
+    normalizeLoadoutEquipmentId(existing?.loadout?.accessory1)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.accessory1)
+    ?? null;
+  const accessory2 =
+    normalizeLoadoutEquipmentId(existing?.loadout?.accessory2)
+    ?? normalizeLoadoutEquipmentId(unit.loadout.accessory2)
+    ?? null;
   const controller = existing?.controller ?? (unit.deployInParty ? "P1" : undefined);
 
   return {
