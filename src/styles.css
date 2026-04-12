@@ -36172,6 +36172,10 @@ body {
   justify-content: flex-end;
 }
 
+.echo-run-header__back-btn {
+  align-self: flex-start;
+}
+
 .echo-run-meta-chip {
   min-width: 7rem;
   padding: 0.75rem 0.9rem;
@@ -37007,6 +37011,10 @@ body {
   gap: 0.7rem;
   flex-wrap: wrap;
   margin-top: 0.95rem;
+}
+
+.echo-run-map-window__actions--tight {
+  margin-top: 0.55rem;
 }
 
 .echo-run-map-window--status .echo-run-map-stage__summary {

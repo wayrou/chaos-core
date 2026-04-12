@@ -29,6 +29,7 @@ let echoMapAnimationFrame: number | null = null;
 let echoMapKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
 let echoMapKeyupHandler: ((event: KeyboardEvent) => void) | null = null;
 let echoMapWheelHandler: ((event: WheelEvent) => void) | null = null;
+let echoRunEscapeHandler: ((event: KeyboardEvent) => void) | null = null;
 let echoMapPressedKeys = new Set<string>();
 let echoMapShiftHeld = false;
 
@@ -72,6 +73,10 @@ function cleanupEchoMapInteractions(): void {
   if (echoMapWheelHandler) {
     window.removeEventListener("wheel", echoMapWheelHandler);
     echoMapWheelHandler = null;
+  }
+  if (echoRunEscapeHandler) {
+    window.removeEventListener("keydown", echoRunEscapeHandler);
+    echoRunEscapeHandler = null;
   }
   echoMapPressedKeys = new Set<string>();
   echoMapShiftHeld = false;
@@ -506,6 +511,34 @@ function leaveEchoRunsToMainMenu(): void {
   });
 }
 
+function returnToEchoRunTitleScreen(): void {
+  import("./EchoRunTitleScreen").then(({ renderEchoRunTitleScreen }) => {
+    renderEchoRunTitleScreen();
+  });
+}
+
+function exitEchoRunToTitleScreen(): void {
+  cleanupEchoMapInteractions();
+  returnToEchoRunTitleScreen();
+}
+
+function setupEchoRunEscapeShortcut(): void {
+  if (echoRunEscapeHandler) {
+    window.removeEventListener("keydown", echoRunEscapeHandler);
+  }
+  echoRunEscapeHandler = (event: KeyboardEvent) => {
+    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+      return;
+    }
+    if (event.key !== "Escape") {
+      return;
+    }
+    event.preventDefault();
+    exitEchoRunToTitleScreen();
+  };
+  window.addEventListener("keydown", echoRunEscapeHandler);
+}
+
 function renderUnitSummaryCard(unitId: string, run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
   const unit = run.unitsById[unitId];
   if (!unit) {
@@ -839,6 +872,7 @@ function renderMapStage(
         <h2 class="echo-run-map-window__title">${stageTitle}</h2>
         <p class="echo-run-map-window__copy">${stageCopy}</p>
         <div class="echo-run-map-window__actions">
+          <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">ECHO TITLE</button>
           <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
         </div>
       </section>
@@ -849,6 +883,9 @@ function renderMapStage(
 
       <section class="echo-run-map-window echo-run-map-window--status">
         <div class="echo-run-map-window__kicker">Route State</div>
+        <div class="echo-run-map-window__actions echo-run-map-window__actions--tight">
+          <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
+        </div>
         <div class="echo-run-map-stage__summary">
           <div class="echo-run-meta-chip"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
           <div class="echo-run-meta-chip"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
@@ -930,6 +967,7 @@ function renderEchoResults(run: NonNullable<ReturnType<typeof getActiveEchoRun>>
       ` : ""}
       <div class="echo-run-results__actions">
         <button class="echo-run-primary-btn" type="button" id="echoRunRestartBtn">START NEW ECHO RUN</button>
+        <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">RETURN TO ECHO TITLE</button>
         <button class="echo-run-secondary-btn" type="button" id="echoRunReturnMenuBtn">RETURN TO MAIN MENU</button>
       </div>
     </section>
@@ -1002,6 +1040,7 @@ export function renderEchoRunScreen(): void {
               ${run.stage === "reward" ? `
                 <button class="echo-run-secondary-btn" type="button" id="echoRunRerollBtn" ${run.rerolls <= 0 ? "disabled" : ""}>REROLL (${run.rerolls})</button>
               ` : ""}
+              <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">ECHO TITLE</button>
               <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
             </div>
           </div>
@@ -1025,6 +1064,7 @@ export function renderEchoRunScreen(): void {
             <p class="echo-run-header__copy">${stageCopy}</p>
           </div>
           <div class="echo-run-header__meta">
+            <button class="echo-run-secondary-btn echo-run-header__back-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
             <div class="echo-run-meta-chip"><span>Encounter</span><strong>${run.encounterNumber}</strong></div>
             <div class="echo-run-meta-chip"><span>Rerolls</span><strong>${run.rerolls}</strong></div>
             <div class="echo-run-meta-chip"><span>Score</span><strong>${run.totalScore}</strong></div>
@@ -1097,6 +1137,12 @@ export function renderEchoRunScreen(): void {
     };
   });
 
+  document.querySelectorAll<HTMLElement>('[data-echo-return-title="true"]').forEach((button) => {
+    button.onclick = () => {
+      exitEchoRunToTitleScreen();
+    };
+  });
+
   const rerollBtn = document.getElementById("echoRunRerollBtn");
   if (rerollBtn) {
     rerollBtn.onclick = () => {
@@ -1136,6 +1182,8 @@ export function renderEchoRunScreen(): void {
       leaveEchoRunsToMainMenu();
     };
   }
+
+  setupEchoRunEscapeShortcut();
 }
 
 export default renderEchoRunScreen;
