@@ -29,6 +29,12 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "faction") {
     return "FACTION";
   }
+  if (entry.manifest.contentType === "chassis") {
+    return "CHASSIS";
+  }
+  if (entry.manifest.contentType === "doctrine") {
+    return "DOCTRINE";
+  }
   if (entry.manifest.contentType === "dialogue") {
     return "DIALOGUE";
   }
@@ -301,6 +307,8 @@ export function renderImportContentScreen(): void {
   const systemsCount =
     counts.mail +
     counts.key_item +
+    counts.chassis +
+    counts.doctrine +
     counts.npc +
     counts.gear +
     counts.item +

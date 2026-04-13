@@ -5,20 +5,19 @@
 
 import { Equipment, EquipmentStats, WeaponEquipment, ArmorEquipment, AccessoryEquipment } from "./equipment";
 import { GearSlotData } from "./gearWorkbench";
-import { GearChassis, getChassisById } from "../data/gearChassis";
-import { getDoctrineById } from "../data/gearDoctrines";
+import { type GearChassis } from "../data/gearChassis";
+import { getChassisById, getDoctrineById } from "./gearCatalog";
 import { GameState } from "./types";
 import { createSeededRNG, generateSeed, randomInt } from "./rng";
 import { createGenerationContext, generateEndlessGearFromRecipe } from "./endlessGear/generateEndlessGear";
 import { CraftingMaterialId } from "./endlessGear/types";
 import { getLocalSessionPlayerSlot, getSessionResourcePool } from "./session";
-
-interface BuildCost {
-  metalScrap: number;
-  wood: number;
-  chaosShards: number;
-  steamComponents: number;
-}
+import {
+  addResourceWallet,
+  createEmptyResourceWallet,
+  hasEnoughResources,
+  type ResourceWallet,
+} from "./resources";
 
 export interface BuildGearResult {
   success: boolean;
@@ -27,12 +26,10 @@ export interface BuildGearResult {
   gearSlots?: GearSlotData;
 }
 
-const CHAOTIC_BUILD_SURCHARGE: BuildCost = {
-  metalScrap: 0,
-  wood: 0,
+const CHAOTIC_BUILD_SURCHARGE: ResourceWallet = createEmptyResourceWallet({
   chaosShards: 2,
   steamComponents: 2,
-};
+});
 
 const CHAOTIC_MATERIAL_POOL: CraftingMaterialId[] = [
   "metal_scrap",
@@ -159,7 +156,7 @@ export function buildChaoticGear(
 /**
  * Get build cost for chassis + doctrine combination
  */
-export function getBuildCost(chassisId: string, doctrineId: string): BuildCost | null {
+export function getBuildCost(chassisId: string, doctrineId: string): ResourceWallet | null {
   const chassis = getChassisById(chassisId);
   const doctrine = getDoctrineById(doctrineId);
 
@@ -167,26 +164,16 @@ export function getBuildCost(chassisId: string, doctrineId: string): BuildCost |
     return null;
   }
 
-  return {
-    metalScrap: chassis.buildCost.metalScrap + doctrine.buildCostModifier.metalScrap,
-    wood: chassis.buildCost.wood + doctrine.buildCostModifier.wood,
-    chaosShards: chassis.buildCost.chaosShards + doctrine.buildCostModifier.chaosShards,
-    steamComponents: chassis.buildCost.steamComponents + doctrine.buildCostModifier.steamComponents,
-  };
+  return addResourceWallet(chassis.buildCost, doctrine.buildCostModifier);
 }
 
-export function getChaoticBuildCost(chassisId: string): BuildCost | null {
+export function getChaoticBuildCost(chassisId: string): ResourceWallet | null {
   const chassis = getChassisById(chassisId);
   if (!chassis) {
     return null;
   }
 
-  return {
-    metalScrap: chassis.buildCost.metalScrap + CHAOTIC_BUILD_SURCHARGE.metalScrap,
-    wood: chassis.buildCost.wood + CHAOTIC_BUILD_SURCHARGE.wood,
-    chaosShards: chassis.buildCost.chaosShards + CHAOTIC_BUILD_SURCHARGE.chaosShards,
-    steamComponents: chassis.buildCost.steamComponents + CHAOTIC_BUILD_SURCHARGE.steamComponents,
-  };
+  return addResourceWallet(chassis.buildCost, CHAOTIC_BUILD_SURCHARGE);
 }
 
 /**
@@ -202,12 +189,9 @@ export function canAffordChaoticBuild(chassisId: string, state: GameState): bool
   return cost ? hasRequiredResources(cost, state) : false;
 }
 
-function hasRequiredResources(cost: BuildCost, state: GameState): boolean {
+function hasRequiredResources(cost: ResourceWallet, state: GameState): boolean {
   const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
-  return resources.metalScrap >= cost.metalScrap &&
-    resources.wood >= cost.wood &&
-    resources.chaosShards >= cost.chaosShards &&
-    resources.steamComponents >= cost.steamComponents;
+  return hasEnoughResources(resources, cost);
 }
 
 function createBaseStats(chassis: GearChassis): EquipmentStats {

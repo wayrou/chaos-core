@@ -404,7 +404,7 @@ function renderShopContent(state: any): string {
     case "unlockables":
       // Generate unlockable items dynamically
       try {
-        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList());
+        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList(), undefined, state);
         
         // Convert to ShopItem format
         items = unowned.map(unlock => ({

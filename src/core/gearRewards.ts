@@ -1,5 +1,6 @@
-import { getChassisById, type ChassisSlotType } from "../data/gearChassis";
-import { getDoctrineById, type IntentTag } from "../data/gearDoctrines";
+import { type ChassisSlotType } from "../data/gearChassis";
+import { type IntentTag } from "../data/gearDoctrines";
+import { getChassisById, getDoctrineById } from "./gearCatalog";
 import type { Equipment, EquipmentStats } from "./equipment";
 import { getAllStarterEquipment } from "./equipment";
 import { getDefaultGearSlots, type GearSlotData } from "./gearWorkbench";

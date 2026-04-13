@@ -29,17 +29,11 @@ import {
   CardCategory,
 } from "../../core/gearWorkbench";
 import {
-  getChassisById,
-  getChassisBySlotType,
   ChassisSlotType,
   GearChassis,
-  ALL_CHASSIS,
 } from "../../data/gearChassis";
-import {
-  ALL_DOCTRINES,
-  getDoctrineById,
-  GearDoctrine
-} from "../../data/gearDoctrines";
+import { GearDoctrine } from "../../data/gearDoctrines";
+import { getAllChassis, getAllDoctrines, getChassisById, getChassisBySlotType, getDoctrineById } from "../../core/gearCatalog";
 import {
   buildChaoticGear,
   buildGear,
@@ -77,6 +71,7 @@ import {
   getSessionResourcePool,
   spendSessionCost,
 } from "../../core/session";
+import { getResourceEntries } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -387,7 +382,7 @@ function renderBuildGearTab(state: GameState): string {
     : [];
 
   // Get available doctrines
-  const availableDoctrines = ALL_DOCTRINES.filter(d => unlockedDoctrineIds.includes(d.id));
+  const availableDoctrines = getAllDoctrines().filter(d => unlockedDoctrineIds.includes(d.id));
   const usingChaoticBuild = workbenchState.buildDoctrineId === CHAOTIC_DOCTRINE_ID;
 
   // Get selected chassis and doctrine
@@ -568,18 +563,11 @@ function renderBuildGearTab(state: GameState): string {
             <div class="summary-cost">
               <div class="summary-label">BUILD COST:</div>
               <div class="cost-items">
-                <span class="cost-item ${localResources.metalScrap >= buildCost.metalScrap ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.metalScrap} Metal (${localResources.metalScrap})
-                </span>
-                <span class="cost-item ${localResources.wood >= buildCost.wood ? '' : 'cost-item--insufficient'}">
-                  🪵 ${buildCost.wood} Wood (${localResources.wood})
-                </span>
-                <span class="cost-item ${localResources.chaosShards >= buildCost.chaosShards ? '' : 'cost-item--insufficient'}">
-                  💎 ${buildCost.chaosShards} Shards (${localResources.chaosShards})
-                </span>
-                <span class="cost-item ${localResources.steamComponents >= buildCost.steamComponents ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.steamComponents} Steam (${localResources.steamComponents})
-                </span>
+                ${getResourceEntries(buildCost).map((entry) => `
+                  <span class="cost-item ${Number(localResources[entry.key] ?? 0) >= entry.amount ? '' : 'cost-item--insufficient'}">
+                    ${escapeHtml(entry.shortLabel)} ${entry.amount} (${Number(localResources[entry.key] ?? 0)})
+                  </span>
+                `).join("")}
               </div>
             </div>
           ` : ''}
@@ -675,7 +663,7 @@ export function renderEndlessCraftTab(state: GameState): string {
   const fallbackInventoryIcon = getInventoryIconPath();
 
   // Get available chassis (all slot types)
-  const availableChassis = ALL_CHASSIS.filter(c => unlockedChassisIds.includes(c.id));
+  const availableChassis = getAllChassis().filter(c => unlockedChassisIds.includes(c.id));
 
   // Get selected chassis
   const selectedChassis = workbenchState.endlessChassisId

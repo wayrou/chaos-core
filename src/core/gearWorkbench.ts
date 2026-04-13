@@ -8,7 +8,7 @@
 // ----------------------------------------------------------------------------
 
 import { getAllImportedCards } from "../content/technica";
-import { getChassisById } from "../data/gearChassis";
+import { getChassisById } from "./gearCatalog";
 import { isTechnicaContentDisabled } from "../content/technica";
 
 export type CardRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";

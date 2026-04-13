@@ -3,10 +3,14 @@
 // Unified system for tracking unlockable chassis, doctrines, and field mods
 // ============================================================================
 
-import { ALL_CHASSIS, GearChassis } from "../data/gearChassis";
-import { ALL_DOCTRINES, GearDoctrine } from "../data/gearDoctrines";
+import type { GearChassis } from "../data/gearChassis";
+import type { GearDoctrine } from "../data/gearDoctrines";
+import { getAllChassis, getAllDoctrines } from "./gearCatalog";
 import { getAllFieldModDefs } from "./fieldModDefinitions";
 import { getAllDecorItems } from "./decorSystem";
+import type { ResourceWallet } from "./resources";
+import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "./campaign";
+import type { GameState } from "./types";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -21,13 +25,9 @@ export interface UnlockableDefinition {
   description: string;
   rarity: "common" | "uncommon" | "rare" | "epic";
   tags?: string[];
-  cost?: {
-    wad?: number;
-    metalScrap?: number;
-    wood?: number;
-    chaosShards?: number;
-    steamComponents?: number;
-  };
+  cost?: Partial<ResourceWallet> & { wad?: number };
+  unlockAfterFloor?: number;
+  requiredQuestIds?: string[];
   sourceRules?: {
     shopEligible: boolean;
     rewardEligible: boolean;
@@ -45,7 +45,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
   const registry: Record<string, UnlockableDefinition> = {};
 
   // Add all chassis
-  for (const chassis of ALL_CHASSIS) {
+  for (const chassis of getAllChassis()) {
     registry[chassis.id] = {
       id: chassis.id,
       type: "chassis",
@@ -53,12 +53,9 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       description: chassis.description,
       rarity: determineChassisRarity(chassis),
       tags: [chassis.slotType],
-      cost: {
-        metalScrap: chassis.buildCost.metalScrap,
-        wood: chassis.buildCost.wood,
-        chaosShards: chassis.buildCost.chaosShards,
-        steamComponents: chassis.buildCost.steamComponents,
-      },
+      cost: chassis.buildCost,
+      unlockAfterFloor: Number(chassis.unlockAfterFloor ?? 0),
+      requiredQuestIds: chassis.requiredQuestIds ?? [],
       sourceRules: {
         shopEligible: true,
         rewardEligible: true,
@@ -67,7 +64,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
   }
 
   // Add all doctrines
-  for (const doctrine of ALL_DOCTRINES) {
+  for (const doctrine of getAllDoctrines()) {
     registry[doctrine.id] = {
       id: doctrine.id,
       type: "doctrine",
@@ -75,12 +72,9 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       description: doctrine.description,
       rarity: determineDoctrineRarity(doctrine),
       tags: doctrine.intentTags,
-      cost: {
-        metalScrap: doctrine.buildCostModifier.metalScrap,
-        wood: doctrine.buildCostModifier.wood,
-        chaosShards: doctrine.buildCostModifier.chaosShards,
-        steamComponents: doctrine.buildCostModifier.steamComponents,
-      },
+      cost: doctrine.buildCostModifier,
+      unlockAfterFloor: Number(doctrine.unlockAfterFloor ?? 0),
+      requiredQuestIds: doctrine.requiredQuestIds ?? [],
       sourceRules: {
         shopEligible: true,
         rewardEligible: true,
@@ -131,8 +125,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
  */
 function determineChassisRarity(chassis: GearChassis): "common" | "uncommon" | "rare" | "epic" {
   // Simple heuristic: more slots + higher cost = rarer
-  const totalCost = chassis.buildCost.metalScrap + chassis.buildCost.wood + 
-                   chassis.buildCost.chaosShards + chassis.buildCost.steamComponents;
+  const totalCost = Object.values(chassis.buildCost).reduce((sum, amount) => sum + Number(amount ?? 0), 0);
   
   if (totalCost >= 40 || chassis.maxCardSlots >= 5) return "rare";
   if (totalCost >= 25 || chassis.maxCardSlots >= 4) return "uncommon";
@@ -143,16 +136,36 @@ function determineChassisRarity(chassis: GearChassis): "common" | "uncommon" | "
  * Determine rarity for a doctrine based on its modifiers
  */
 function determineDoctrineRarity(doctrine: GearDoctrine): "common" | "uncommon" | "rare" | "epic" {
-  const totalCost = doctrine.buildCostModifier.metalScrap + doctrine.buildCostModifier.wood +
-                   doctrine.buildCostModifier.chaosShards + doctrine.buildCostModifier.steamComponents;
+  const totalCost = Object.values(doctrine.buildCostModifier).reduce((sum, amount) => sum + Number(amount ?? 0), 0);
   
   if (totalCost >= 8) return "rare";
   if (totalCost >= 4) return "uncommon";
   return "common";
 }
 
-// Export the registry
-export const UNLOCKABLE_REGISTRY = buildUnlockableRegistry();
+function getUnlockableRegistry(): Record<string, UnlockableDefinition> {
+  return buildUnlockableRegistry();
+}
+
+function meetsUnlockRequirements(unlockable: UnlockableDefinition, state?: GameState): boolean {
+  const floorGate = Number(unlockable.unlockAfterFloor ?? 0);
+  if (floorGate > 0) {
+    const highestReachedFloorOrdinal = getHighestReachedFloorOrdinal(loadCampaignProgress());
+    if (highestReachedFloorOrdinal < floorGate) {
+      return false;
+    }
+  }
+
+  const requiredQuestIds = unlockable.requiredQuestIds ?? [];
+  if (requiredQuestIds.length > 0) {
+    const completedQuestIds = new Set(state?.quests?.completedQuests ?? []);
+    if (requiredQuestIds.some((questId) => !completedQuestIds.has(questId))) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 // ----------------------------------------------------------------------------
 // UTILITIES
@@ -162,22 +175,22 @@ export const UNLOCKABLE_REGISTRY = buildUnlockableRegistry();
  * Get unlockable definition by ID
  */
 export function getUnlockableById(id: string): UnlockableDefinition | undefined {
-  return UNLOCKABLE_REGISTRY[id];
+  return getUnlockableRegistry()[id];
 }
 
 /**
  * Get all unlockables of a specific type
  */
 export function getUnlockablesByType(type: UnlockableType): UnlockableDefinition[] {
-  return Object.values(UNLOCKABLE_REGISTRY).filter(u => u.type === type);
+  return Object.values(getUnlockableRegistry()).filter(u => u.type === type);
 }
 
 /**
  * Get all unlockables eligible for shops
  */
-export function getShopEligibleUnlockables(): UnlockableDefinition[] {
-  return Object.values(UNLOCKABLE_REGISTRY).filter(
-    u => u.sourceRules?.shopEligible !== false
+export function getShopEligibleUnlockables(state?: GameState): UnlockableDefinition[] {
+  return Object.values(getUnlockableRegistry()).filter(
+    (u) => u.sourceRules?.shopEligible !== false && meetsUnlockRequirements(u, state)
   );
 }
 
@@ -185,7 +198,7 @@ export function getShopEligibleUnlockables(): UnlockableDefinition[] {
  * Get all unlockables eligible for rewards
  */
 export function getRewardEligibleUnlockables(): UnlockableDefinition[] {
-  return Object.values(UNLOCKABLE_REGISTRY).filter(
+  return Object.values(getUnlockableRegistry()).filter(
     u => u.sourceRules?.rewardEligible !== false
   );
 }
@@ -205,12 +218,13 @@ export function filterUnlockablesByRarity(
  */
 export function getUnownedUnlockables(
   ownedIds: string[],
-  type?: UnlockableType
+  type?: UnlockableType,
+  state?: GameState
 ): UnlockableDefinition[] {
   const ownedSet = new Set(ownedIds);
   const candidates = type 
     ? getUnlockablesByType(type)
-    : Object.values(UNLOCKABLE_REGISTRY);
+    : Object.values(getUnlockableRegistry());
   
-  return candidates.filter(u => !ownedSet.has(u.id));
+  return candidates.filter(u => !ownedSet.has(u.id) && meetsUnlockRequirements(u, state));
 }

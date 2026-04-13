@@ -125,7 +125,7 @@ export interface ImportedChassis {
   allowedCardTags?: string[];
   allowedCardFamilies?: string[];
   description?: string;
-  buildCost?: ResourceWallet;
+  buildCost?: Partial<ResourceWallet>;
   unlockAfterFloor?: number;
   requiredQuestIds?: string[];
 }
@@ -138,7 +138,7 @@ export interface ImportedDoctrine {
   stabilityModifier?: number;
   strainBias?: number;
   procBias?: number;
-  buildCostModifier?: ResourceWallet;
+  buildCostModifier?: Partial<ResourceWallet>;
   doctrineRules?: string;
   description?: string;
   unlockAfterFloor?: number;

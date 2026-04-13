@@ -4,7 +4,9 @@ import {
   getAllImportedBattleCards,
   getAllImportedChatterEntries,
   getAllImportedClassDefinitions,
+  getAllImportedChassis,
   getAllImportedDialogues,
+  getAllImportedDoctrines,
   getAllImportedFieldMaps,
   getAllImportedGear,
   getAllImportedItems,
@@ -102,6 +104,28 @@ function isKeyItemShape(value: unknown): value is { id: string; name: string } {
 
 function isFactionShape(value: unknown): value is { id: string; name: string } {
   return Boolean(value && typeof value === "object" && "id" in value && "name" in value);
+}
+
+function isChassisShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "slotType" in value &&
+      "maxCardSlots" in value
+  );
+}
+
+function isDoctrineShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "intentTags" in value &&
+      "buildCostModifier" in value
+  );
 }
 
 function isDialogueShape(value: unknown): value is { id: string; title: string } {
@@ -297,6 +321,44 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
       contentId: entryData.id,
       title: entryData.name,
       description: "Standalone Technica faction runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isChassisShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "chassis",
+      contentType: "chassis",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "gear-chassis.v2",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica chassis runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isDoctrineShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "doctrine",
+      contentType: "doctrine",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "gear-doctrine.v2",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica doctrine runtime file.",
       entryFile: fileName,
       dependencies: [],
       files: [fileName]
@@ -535,9 +597,26 @@ function getExistingDependencyBuckets() {
   const unitIds = new Set(getAllImportedUnitTemplates().map((entry) => entry.id));
   const operationIds = new Set(getAllImportedOperations().map((entry) => entry.id ?? entry.codename));
   const classIds = new Set(getAllImportedClassDefinitions().map((entry) => entry.id));
+  const chassisIds = new Set(getAllImportedChassis().map((entry) => entry.id));
+  const doctrineIds = new Set(getAllImportedDoctrines().map((entry) => entry.id));
   const sceneIds = new Set(mapIds);
 
-  return { mapIds, questIds, chatterIds, keyItemIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
+  return {
+    mapIds,
+    questIds,
+    chatterIds,
+    keyItemIds,
+    dialogueIds,
+    gearIds,
+    itemIds,
+    cardIds,
+    unitIds,
+    operationIds,
+    classIds,
+    chassisIds,
+    doctrineIds,
+    sceneIds
+  };
 }
 
 function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
@@ -577,6 +656,14 @@ function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
     }
     if (manifest.contentType === "class") {
       buckets.classIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "chassis") {
+      buckets.chassisIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "doctrine") {
+      buckets.doctrineIds.add(manifest.contentId);
     }
   });
 
@@ -765,6 +852,8 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
       quest: 0,
       key_item: 0,
       faction: 0,
+      chassis: 0,
+      doctrine: 0,
       dialogue: 0,
       field_enemy: 0,
       npc: 0,
