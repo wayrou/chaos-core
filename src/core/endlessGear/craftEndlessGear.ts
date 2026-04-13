@@ -9,6 +9,7 @@ import { GameState } from "../types";
 import { getChassisById } from "../../data/gearChassis";
 import { getDefaultGearSlots } from "../gearWorkbench";
 import { updateGameState } from "../../state/gameStore";
+import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../session";
 
 /**
  * Craft endless gear from recipe and add to inventory
@@ -35,7 +36,7 @@ export function craftEndlessGear(
   }
   
   // Check resources
-  const resources = state.resources;
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
   if (materialCounts.metal_scrap && resources.metalScrap < materialCounts.metal_scrap) {
     return { success: false, error: "Insufficient Metal Scrap" };
   }
@@ -154,11 +155,10 @@ export function canAffordEndlessRecipe(
   state: GameState
 ): boolean {
   const cost = getEndlessRecipeCost(materials);
-  const resources = state.resources;
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
   
   return resources.metalScrap >= cost.metalScrap &&
          resources.wood >= cost.wood &&
          resources.chaosShards >= cost.chaosShards &&
          resources.steamComponents >= cost.steamComponents;
 }
-

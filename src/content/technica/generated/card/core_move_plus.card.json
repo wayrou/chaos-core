@@ -4,6 +4,12 @@
   "description": "Move 2 extra tiles this turn.",
   "id": "core_move_plus",
   "name": "Move+",
+  "effects": [
+    {
+      "type": "move",
+      "tiles": 2
+    }
+  ],
   "range": 0,
   "rarity": "common",
   "strainCost": 6,

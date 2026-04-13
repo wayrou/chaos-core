@@ -19,5 +19,6 @@ export function getCurrentRoom(
   if (!operation) return null;
   const floor = getCurrentFloor(operation);
   if (!floor || !operation.currentRoomId) return null;
-  return floor.nodes.find((n) => n.id === operation.currentRoomId) ?? null;
+  const floorNodes = floor.nodes ?? floor.rooms ?? [];
+  return floorNodes.find((n) => n.id === operation.currentRoomId) ?? null;
 }

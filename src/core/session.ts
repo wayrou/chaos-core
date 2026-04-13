@@ -3,6 +3,7 @@ import {
   NETWORK_PLAYER_SLOTS,
   SESSION_PLAYER_SLOTS,
   type AuthorityRole,
+  type BattleRuntimeContext,
   type CampaignState,
   type EconomyPreset,
   type GameState,
@@ -12,6 +13,7 @@ import {
   type PlayerPresence,
   type PlayerSlot,
   type PendingTheaterBattleConfirmationState,
+  type ResourceKey,
   type ResourcePool,
   type ResourceWallet,
   type ReconnectStagingState,
@@ -19,15 +21,20 @@ import {
   type SessionPlayerState,
   type SessionState,
   type TheaterAssignment,
+  type TheaterRuntimeContext,
+  type TradeTransfer,
   type UnitOwnership,
 } from "./types";
+import type { BattleState as RuntimeBattleState } from "./battle";
+import {
+  addResourceWallet,
+  createEmptyResourceWallet,
+  hasEnoughResources,
+  RESOURCE_KEYS,
+  subtractResourceWallet,
+} from "./resources";
 
-const EMPTY_RESOURCE_WALLET: ResourceWallet = {
-  metalScrap: 0,
-  wood: 0,
-  chaosShards: 0,
-  steamComponents: 0,
-};
+const EMPTY_RESOURCE_WALLET: ResourceWallet = createEmptyResourceWallet();
 
 const LOCAL_COOP_RESTRICTED_FIELD_ACTIONS = new Set<string>([
   "shop",
@@ -46,12 +53,7 @@ function isLocalPlayerSlot(slot: SessionPlayerSlot): slot is PlayerSlot {
 }
 
 function cloneResourceWallet(wallet?: Partial<ResourceWallet> | null): ResourceWallet {
-  return {
-    metalScrap: wallet?.metalScrap ?? 0,
-    wood: wallet?.wood ?? 0,
-    chaosShards: wallet?.chaosShards ?? 0,
-    steamComponents: wallet?.steamComponents ?? 0,
-  };
+  return createEmptyResourceWallet(wallet);
 }
 
 function createResourcePool(wad = 0, resources?: Partial<ResourceWallet> | null): ResourcePool {
@@ -59,6 +61,137 @@ function createResourcePool(wad = 0, resources?: Partial<ResourceWallet> | null)
     wad,
     resources: cloneResourceWallet(resources),
   };
+}
+
+function cloneResourcePool(pool?: Partial<ResourcePool> | null): ResourcePool {
+  return createResourcePool(Number(pool?.wad ?? 0), pool?.resources);
+}
+
+function cloneTradeTransfer(transfer: TradeTransfer): TradeTransfer {
+  return {
+    ...transfer,
+    note: transfer.note ?? undefined,
+  };
+}
+
+function clonePendingTransfers(transfers?: TradeTransfer[] | null): TradeTransfer[] {
+  return Array.isArray(transfers) ? transfers.map(cloneTradeTransfer) : [];
+}
+
+function cloneResourceLedger(
+  ledger: SessionState["resourceLedger"] | null | undefined,
+): SessionState["resourceLedger"] {
+  return {
+    preset: ledger?.preset ?? "shared",
+    shared: cloneResourcePool(ledger?.shared),
+    perPlayer: SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+      acc[slot] = cloneResourcePool(ledger?.perPlayer?.[slot]);
+      return acc;
+    }, {} as SessionState["resourceLedger"]["perPlayer"]),
+  };
+}
+
+function sumResourcePools(pools: Array<ResourcePool | null | undefined>): ResourcePool {
+  let wad = 0;
+  let resources = createEmptyResourceWallet();
+  for (const pool of pools) {
+    wad += Number(pool?.wad ?? 0);
+    resources = addResourceWallet(resources, pool?.resources);
+  }
+  return createResourcePool(wad, resources);
+}
+
+function getEconomyParticipantSlotsFromSession(session: SessionState): SessionPlayerSlot[] {
+  const activeSlots = SESSION_PLAYER_SLOTS.filter((slot) => {
+    const player = session.players?.[slot];
+    return Boolean(
+      player
+      && (
+        player.connected
+        || player.presence === "local"
+        || player.presence === "remote"
+        || player.stagingState !== "disconnected"
+      ),
+    );
+  });
+  return activeSlots.length > 0 ? activeSlots : ["P1"];
+}
+
+function getLocalSessionPlayerSlotFromSession(session: SessionState): SessionPlayerSlot {
+  const localSlot = SESSION_PLAYER_SLOTS.find((slot) => {
+    const player = session.players?.[slot];
+    return Boolean(player?.presence === "local" && player.connected);
+  });
+  return localSlot ?? session.ownerSlot ?? "P1";
+}
+
+function distributeIntegerEvenly(
+  amount: number,
+  slots: SessionPlayerSlot[],
+): Record<SessionPlayerSlot, number> {
+  const next = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+    acc[slot] = 0;
+    return acc;
+  }, {} as Record<SessionPlayerSlot, number>);
+  if (slots.length <= 0 || amount <= 0) {
+    return next;
+  }
+  const base = Math.floor(amount / slots.length);
+  let remainder = amount % slots.length;
+  for (const slot of slots) {
+    next[slot] = base + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) {
+      remainder -= 1;
+    }
+  }
+  return next;
+}
+
+function distributeResourcePoolEvenly(
+  pool: ResourcePool,
+  slots: SessionPlayerSlot[],
+): SessionState["resourceLedger"]["perPlayer"] {
+  const next = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+    acc[slot] = createResourcePool(0, EMPTY_RESOURCE_WALLET);
+    return acc;
+  }, {} as SessionState["resourceLedger"]["perPlayer"]);
+  const targetSlots: SessionPlayerSlot[] = slots.length > 0 ? slots : ["P1"];
+  const wadShares = distributeIntegerEvenly(Math.max(0, Math.floor(pool.wad)), targetSlots);
+  for (const slot of targetSlots) {
+    next[slot].wad = wadShares[slot];
+  }
+  for (const key of RESOURCE_KEYS) {
+    const resourceAmount = Math.max(0, Math.floor(pool.resources[key] ?? 0));
+    const shares = distributeIntegerEvenly(resourceAmount, targetSlots);
+    for (const slot of targetSlots) {
+      next[slot].resources[key] = shares[slot];
+    }
+  }
+  return next;
+}
+
+function hasAnyPartitionedAllocations(
+  perPlayer: SessionState["resourceLedger"]["perPlayer"],
+  slots: SessionPlayerSlot[],
+): boolean {
+  return slots.some((slot) => {
+    const pool = perPlayer[slot];
+    return pool.wad > 0 || RESOURCE_KEYS.some((key) => Number(pool.resources[key] ?? 0) > 0);
+  });
+}
+
+function createSessionTradeTransferId(): string {
+  return `transfer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getTransferAmountLabel(transfer: TradeTransfer): string {
+  if (transfer.kind === "wad") {
+    return `${Math.max(0, Math.floor(transfer.wadAmount ?? 0))} WAD`;
+  }
+  if (transfer.kind === "resource" && transfer.resourceKey) {
+    return `${Math.max(0, Math.floor(transfer.resourceAmount ?? 0))} ${transfer.resourceKey}`;
+  }
+  return transfer.kind.toUpperCase();
 }
 
 function createCampaignStateSeed(operationId: string | null = null): CampaignState {
@@ -85,6 +218,193 @@ function clonePendingTheaterBattleConfirmation(
     : null;
 }
 
+function cloneTheaterRuntimeContext(
+  context: TheaterRuntimeContext | null | undefined,
+): TheaterRuntimeContext | null {
+  return context
+    ? {
+        theaterId: context.theaterId,
+        operationId: context.operationId ?? null,
+        snapshot: context.snapshot,
+        phase: context.phase ?? null,
+        battleSnapshot: context.battleSnapshot ?? null,
+        pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+          context.pendingTheaterBattleConfirmation,
+        ),
+        updatedAt: context.updatedAt ?? Date.now(),
+      }
+    : null;
+}
+
+function cloneBattleRuntimeContext(
+  context: BattleRuntimeContext | null | undefined,
+): BattleRuntimeContext | null {
+  return context
+    ? {
+        battleId: context.battleId,
+        theaterId: context.theaterId ?? null,
+        roomId: context.roomId ?? null,
+        squadId: context.squadId ?? null,
+        snapshot: context.snapshot,
+        phase: context.phase ?? null,
+        updatedAt: context.updatedAt ?? Date.now(),
+      }
+    : null;
+}
+
+function cloneTheaterRuntimeContexts(
+  contexts?: Record<string, TheaterRuntimeContext> | null,
+): Record<string, TheaterRuntimeContext> {
+  if (!contexts) {
+    return {};
+  }
+  return Object.entries(contexts).reduce((acc, [theaterId, context]) => {
+    const cloned = cloneTheaterRuntimeContext(context);
+    if (cloned) {
+      acc[theaterId] = cloned;
+    }
+    return acc;
+  }, {} as Record<string, TheaterRuntimeContext>);
+}
+
+function cloneBattleRuntimeContexts(
+  contexts?: Record<string, BattleRuntimeContext> | null,
+): Record<string, BattleRuntimeContext> {
+  if (!contexts) {
+    return {};
+  }
+  return Object.entries(contexts).reduce((acc, [battleId, context]) => {
+    const cloned = cloneBattleRuntimeContext(context);
+    if (cloned) {
+      acc[battleId] = cloned;
+    }
+    return acc;
+  }, {} as Record<string, BattleRuntimeContext>);
+}
+
+function parseBattleRuntimeSnapshot(
+  snapshot: string | null | undefined,
+): RuntimeBattleState | null {
+  if (!snapshot) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(snapshot) as RuntimeBattleState;
+    return parsed?.id && parsed?.units ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getBattleRuntimeContext(
+  state: GameState,
+  battleId: string | null | undefined,
+): BattleRuntimeContext | null {
+  if (!battleId) {
+    return null;
+  }
+  return state.session.activeBattleContexts?.[battleId] ?? null;
+}
+
+export function getBattleStateById(
+  state: GameState,
+  battleId: string | null | undefined,
+): RuntimeBattleState | null {
+  if (!battleId) {
+    return null;
+  }
+  if (state.currentBattle?.id === battleId) {
+    return state.currentBattle;
+  }
+  return parseBattleRuntimeSnapshot(getBattleRuntimeContext(state, battleId)?.snapshot);
+}
+
+export function getMountedOrActiveBattleState(state: GameState): RuntimeBattleState | null {
+  return state.currentBattle
+    ?? getBattleStateById(state, state.session.activeBattleId ?? null);
+}
+
+export function mountBattleState(
+  state: GameState,
+  battle: RuntimeBattleState | null,
+): GameState {
+  if (!battle) {
+    return {
+      ...state,
+      currentBattle: null,
+      session: {
+        ...state.session,
+        activeBattleId: null,
+      },
+    };
+  }
+  if (
+    state.currentBattle?.id === battle.id
+    && state.session.activeBattleId === battle.id
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    currentBattle: battle,
+    phase: "battle",
+    session: {
+      ...state.session,
+      activeBattleId: battle.id,
+    },
+  };
+}
+
+export function mountBattleContextById(
+  state: GameState,
+  battleId: string | null | undefined,
+): GameState {
+  const battle = getBattleStateById(state, battleId);
+  return battle ? mountBattleState(state, battle) : state;
+}
+
+export function replaceBattleStateById(
+  state: GameState,
+  battleId: string,
+  battle: RuntimeBattleState | null,
+): GameState {
+  const nextActiveBattleContexts = { ...state.session.activeBattleContexts };
+  if (battle) {
+    nextActiveBattleContexts[battleId] = {
+      battleId,
+      theaterId: battle.theaterMeta?.theaterId ?? null,
+      roomId: battle.theaterMeta?.roomId ?? battle.roomId ?? null,
+      squadId:
+        battle.theaterBonuses?.squadId
+        ?? battle.theaterMeta?.squadId
+        ?? null,
+      snapshot: JSON.stringify(battle),
+      phase: battle.phase ?? null,
+      updatedAt: Date.now(),
+    };
+  } else {
+    delete nextActiveBattleContexts[battleId];
+  }
+
+  const shouldMount =
+    state.currentBattle?.id === battleId
+    || state.session.activeBattleId === battleId;
+
+  return {
+    ...state,
+    currentBattle: shouldMount ? battle : state.currentBattle,
+    phase: shouldMount && battle ? "battle" : state.phase,
+    session: {
+      ...state.session,
+      activeBattleContexts: nextActiveBattleContexts,
+      activeBattleId:
+        state.session.activeBattleId === battleId
+          ? (battle?.id ?? null)
+          : state.session.activeBattleId,
+    },
+  };
+}
+
 function getDefaultPlayerPresence(active: boolean): PlayerPresence {
   return active ? "local" : "inactive";
 }
@@ -102,9 +422,11 @@ function createSessionPlayerState(
   inputSource: PlayerInputSource,
   active: boolean,
   controlledUnitIds: string[] = [],
+  callsign: string | null = null,
 ): SessionPlayerState {
   return {
     slot,
+    callsign: callsign?.trim() || null,
     presence: getDefaultPlayerPresence(active),
     authorityRole: getDefaultPlayerAuthorityRole(active),
     connected: active,
@@ -113,6 +435,7 @@ function createSessionPlayerState(
     stagingState: getDefaultPlayerStagingState(active),
     currentTheaterId: null,
     assignedSquadId: null,
+    activeBattleId: null,
     lastSafeRoomId: null,
     lastSafeMapId: active ? "base_camp" : null,
   };
@@ -132,12 +455,13 @@ function getCoopParticipantNetworkSlot(
   lobby: LobbyState,
   sessionSlot: SessionPlayerSlot,
 ): NetworkPlayerSlot | null {
-  if (lobby.activity.kind !== "coop_operations") {
+  const coopOperations = lobby.activity.kind === "coop_operations" ? lobby.activity.coopOperations : null;
+  if (!coopOperations) {
     return null;
   }
   const match = NETWORK_PLAYER_SLOTS.find((slot) =>
-    lobby.activity.coopOperations.participants[slot]?.selected
-    && lobby.activity.coopOperations.participants[slot]?.sessionSlot === sessionSlot,
+    coopOperations.participants[slot]?.selected
+    && coopOperations.participants[slot]?.sessionSlot === sessionSlot,
   );
   return match ?? null;
 }
@@ -156,6 +480,9 @@ export function createDefaultSessionState(
     authorityRole: "local",
     ownerSlot: "P1",
     maxPlayers: 2,
+    sharedCampaignSlot: null,
+    sharedCampaignLabel: null,
+    sharedCampaignLastSavedAt: null,
     resourceLedger: {
       preset: "shared",
       shared: sharedPool,
@@ -189,6 +516,8 @@ export function createDefaultSessionState(
       acc[slot] = createTheaterAssignment(slot);
       return acc;
     }, {} as SessionState["theaterAssignments"]),
+    activeTheaterContexts: {},
+    activeBattleContexts: {},
     pendingTheaterBattleConfirmation: null,
     activeBattleId: null,
     campaign: createCampaignStateSeed(seed?.operation?.id ?? null),
@@ -250,6 +579,7 @@ function normalizeSessionPlayer(
     player?.inputSource ?? "remote",
     player?.active ?? false,
     player?.controlledUnitIds ?? [],
+    existing?.callsign ?? (slot === "P1" ? state.profile?.callsign ?? null : null),
   );
   const previous = existing ?? fallback;
   if (state.session?.mode === "coop_operations") {
@@ -262,18 +592,23 @@ function normalizeSessionPlayer(
     return {
       ...previous,
       slot,
+      callsign: isLocalParticipant
+        ? state.profile?.callsign ?? previous.callsign ?? null
+        : previous.callsign ?? null,
       inputSource: isLocalParticipant ? state.players.P1.inputSource : "remote",
       controlledUnitIds: isLocalParticipant ? [...state.players.P1.controlledUnitIds] : [...previous.controlledUnitIds],
       stagingState: nextStagingState,
       lastSafeMapId: isLocalParticipant && state.players.P1.avatar
         ? previous.lastSafeMapId ?? "base_camp"
         : previous.lastSafeMapId,
+      activeBattleId: previous.activeBattleId ?? null,
     };
   }
   if (!player) {
     return {
       ...previous,
       slot,
+      callsign: previous.callsign ?? null,
       connected: previous.connected && previous.presence !== "inactive",
       presence: previous.presence ?? "inactive",
       stagingState: previous.connected ? previous.stagingState : "disconnected",
@@ -283,6 +618,9 @@ function normalizeSessionPlayer(
   return {
     ...previous,
     slot,
+    callsign: slot === "P1"
+      ? state.profile?.callsign ?? previous.callsign ?? null
+      : previous.callsign ?? null,
     presence: normalizePresence(previous.presence, player.active),
     authorityRole: player.active ? previous.authorityRole : "local",
     connected: player.active,
@@ -294,6 +632,7 @@ function normalizeSessionPlayer(
       state.phase,
       controlledBattleUnits.length > 0,
     ),
+    activeBattleId: previous.activeBattleId ?? null,
     lastSafeMapId: player.avatar ? (previous.lastSafeMapId ?? "base_camp") : previous.lastSafeMapId,
   };
 }
@@ -447,32 +786,109 @@ export function withNormalizedSessionState(state: GameState): GameState {
   const nextPlayers = SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
     const normalizedPlayer = normalizeSessionPlayer(state, slot, currentSession.players?.[slot]);
     const assignment = nextAssignments[slot];
+    const assignmentSquadId = assignment.squadId ?? normalizedPlayer.assignedSquadId ?? null;
+    const activeBattleSquadId =
+      state.currentBattle?.theaterBonuses?.squadId
+      ?? state.currentBattle?.theaterMeta?.squadId
+      ?? null;
+    const controlsActiveBattleUnit = Object.values(state.currentBattle?.units ?? {}).some(
+      (unit) => !unit.isEnemy && (unit.controller ?? "P1") === slot,
+    );
+    const resolvedActiveBattleId = state.currentBattle?.id
+      ? (
+          controlsActiveBattleUnit
+          || (assignmentSquadId !== null && activeBattleSquadId === assignmentSquadId)
+        )
+          ? state.currentBattle.id
+          : normalizedPlayer.activeBattleId
+      : normalizedPlayer.stagingState === "battle"
+        ? normalizedPlayer.activeBattleId
+        : null;
     acc[slot] = {
       ...normalizedPlayer,
       currentTheaterId: assignment.theaterId,
       assignedSquadId: assignment.squadId,
+      activeBattleId: resolvedActiveBattleId,
       lastSafeRoomId: assignment.roomId ?? normalizedPlayer.lastSafeRoomId,
     };
     return acc;
   }, {} as SessionState["players"]);
+  const nextActiveTheaterContexts = cloneTheaterRuntimeContexts(currentSession.activeTheaterContexts);
+  const nextActiveBattleContexts = cloneBattleRuntimeContexts(currentSession.activeBattleContexts);
+  const activeTheater = state.operation?.theater;
+  const activeBattleTheaterId = state.currentBattle?.theaterMeta?.theaterId ?? null;
+  const activeBattleSnapshot = state.currentBattle ? JSON.stringify(state.currentBattle) : null;
+  const activeBattleId = state.currentBattle?.id ?? currentSession.activeBattleId ?? null;
+  if (activeBattleId && activeBattleSnapshot) {
+    nextActiveBattleContexts[activeBattleId] = {
+      battleId: activeBattleId,
+      theaterId: activeBattleTheaterId,
+      roomId: state.currentBattle?.theaterMeta?.roomId ?? state.currentBattle?.roomId ?? null,
+      squadId:
+        state.currentBattle?.theaterBonuses?.squadId
+        ?? state.currentBattle?.theaterMeta?.squadId
+        ?? null,
+      snapshot: activeBattleSnapshot,
+      phase: state.currentBattle?.phase ?? null,
+      updatedAt: Date.now(),
+    };
+  }
+  if (currentSession.mode === "coop_operations" && activeTheater) {
+    nextActiveTheaterContexts[activeTheater.definition.id] = {
+      theaterId: activeTheater.definition.id,
+      operationId: state.operation?.id ?? null,
+      snapshot: JSON.stringify(activeTheater),
+      phase: state.phase,
+      battleSnapshot: activeBattleTheaterId === activeTheater.definition.id ? activeBattleSnapshot : null,
+      pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+        currentSession.pendingTheaterBattleConfirmation,
+      ),
+      updatedAt: Date.now(),
+    };
+  } else if (
+    currentSession.mode === "coop_operations"
+    && activeBattleTheaterId
+    && activeBattleSnapshot
+    && nextActiveTheaterContexts[activeBattleTheaterId]
+  ) {
+    nextActiveTheaterContexts[activeBattleTheaterId] = {
+      ...nextActiveTheaterContexts[activeBattleTheaterId],
+      battleSnapshot: activeBattleSnapshot,
+      phase: state.phase,
+      updatedAt: Date.now(),
+    };
+  }
+  const normalizedResourceLedger = cloneResourceLedger(currentSession.resourceLedger);
+  const normalizedPendingTransfers = clonePendingTransfers(currentSession.pendingTransfers);
+  const normalizedEconomySlots = getEconomyParticipantSlotsFromSession(currentSession);
+  const normalizedSharedPool =
+    normalizedResourceLedger.preset === "partitioned"
+      ? sumResourcePools(normalizedEconomySlots.map((slot) => normalizedResourceLedger.perPlayer[slot]))
+      : sharedPool;
   const nextSession: SessionState = {
     ...currentSession,
     mode: normalizeMode(currentSession.mode, state.players.P2.active),
     authorityRole: currentSession.authorityRole ?? "local",
     ownerSlot: currentSession.ownerSlot ?? "P1",
     maxPlayers: currentSession.maxPlayers ?? 2,
-    activeBattleId: state.currentBattle?.id ?? null,
+    activeBattleId: state.currentBattle?.id ?? currentSession.activeBattleId ?? null,
+    sharedCampaignSlot: currentSession.sharedCampaignSlot ?? null,
+    sharedCampaignLabel: currentSession.sharedCampaignLabel ?? null,
+    sharedCampaignLastSavedAt: currentSession.sharedCampaignLastSavedAt ?? null,
     resourceLedger: {
-      ...currentSession.resourceLedger,
-      preset: currentSession.resourceLedger?.preset ?? "shared",
-      shared: sharedPool,
+      ...normalizedResourceLedger,
+      preset: normalizedResourceLedger.preset ?? "shared",
+      shared: normalizedSharedPool,
       perPlayer: SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
-        acc[slot] = currentSession.resourceLedger?.perPlayer?.[slot] ?? createResourcePool(0, EMPTY_RESOURCE_WALLET);
+        acc[slot] = normalizedResourceLedger.perPlayer[slot] ?? createResourcePool(0, EMPTY_RESOURCE_WALLET);
         return acc;
       }, {} as SessionState["resourceLedger"]["perPlayer"]),
     },
+    pendingTransfers: normalizedPendingTransfers,
     players: nextPlayers,
     theaterAssignments: nextAssignments,
+    activeTheaterContexts: nextActiveTheaterContexts,
+    activeBattleContexts: nextActiveBattleContexts,
     pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
       currentSession.pendingTheaterBattleConfirmation,
     ),
@@ -619,6 +1035,31 @@ export function launchCoopOperationsSessionFromLobby(
 
   const activity = lobby.activity.coopOperations;
   const currentSession = state.session ?? createDefaultSessionState(state);
+  const selectedSessionSlots = activity.selectedSlots
+    .map((slot) => activity.participants[slot]?.sessionSlot)
+    .filter((slot): slot is SessionPlayerSlot => Boolean(slot));
+  const seededSharedPool = createResourcePool(state.wad, state.resources);
+  const currentLedger = cloneResourceLedger(currentSession.resourceLedger);
+  const activityLedger = cloneResourceLedger(activity.resourceLedger);
+  const seededPartitionedPerPlayer =
+    activity.economyPreset === "partitioned"
+      ? hasAnyPartitionedAllocations(activityLedger.perPlayer, selectedSessionSlots)
+        ? activityLedger.perPlayer
+        : currentLedger.preset === "partitioned" && hasAnyPartitionedAllocations(currentLedger.perPlayer, selectedSessionSlots)
+          ? currentLedger.perPlayer
+          : distributeResourcePoolEvenly(seededSharedPool, selectedSessionSlots)
+      : currentLedger.perPlayer;
+  const launchedResourceLedger: SessionState["resourceLedger"] = {
+    preset: activity.economyPreset,
+    shared:
+      activity.economyPreset === "partitioned"
+        ? sumResourcePools(selectedSessionSlots.map((slot) => seededPartitionedPerPlayer[slot]))
+        : seededSharedPool,
+    perPlayer:
+      activity.economyPreset === "partitioned"
+        ? seededPartitionedPerPlayer
+        : currentLedger.perPlayer,
+  };
   const localNetworkSlot = lobby.localSlot;
   const nextPlayers = SESSION_PLAYER_SLOTS.reduce((acc, sessionSlot) => {
     const networkSlot = getCoopParticipantNetworkSlot(lobby, sessionSlot);
@@ -630,20 +1071,23 @@ export function launchCoopOperationsSessionFromLobby(
       ? {
           ...previous,
           slot: sessionSlot,
+          callsign: participant.callsign ?? previous.callsign ?? (isLocalParticipant ? state.profile?.callsign ?? null : null),
           presence: isLocalParticipant ? "local" : participant.connected ? "remote" : "disconnected",
           authorityRole: participant.authorityRole,
           connected: participant.connected,
           inputSource: isLocalParticipant ? state.players.P1.inputSource : "remote",
           controlledUnitIds: isLocalParticipant ? [...state.players.P1.controlledUnitIds] : [],
           stagingState: participant.connected ? participant.stagingState : "rejoining",
-          currentTheaterId: null,
-          assignedSquadId: null,
-          lastSafeRoomId: null,
+          currentTheaterId: participant.currentTheaterId,
+          assignedSquadId: participant.assignedSquadId,
+          activeBattleId: participant.activeBattleId,
+          lastSafeRoomId: participant.currentRoomId,
           lastSafeMapId: participant.lastSafeMapId ?? "base_camp",
         }
       : {
           ...previous,
           slot: sessionSlot,
+          callsign: previous.callsign ?? null,
           presence: "inactive",
           authorityRole: "client",
           connected: false,
@@ -652,6 +1096,7 @@ export function launchCoopOperationsSessionFromLobby(
           stagingState: "disconnected",
           currentTheaterId: null,
           assignedSquadId: null,
+          activeBattleId: null,
           lastSafeRoomId: null,
           lastSafeMapId: null,
         };
@@ -665,9 +1110,9 @@ export function launchCoopOperationsSessionFromLobby(
     })();
     acc[sessionSlot] = {
       playerId: sessionSlot,
-      theaterId: null,
-      squadId: null,
-      roomId: null,
+      theaterId: participant?.currentTheaterId ?? null,
+      squadId: participant?.assignedSquadId ?? null,
+      roomId: participant?.currentRoomId ?? null,
       stagingState: participant?.connected ? participant.stagingState : participant ? "rejoining" : "disconnected",
     };
     return acc;
@@ -683,16 +1128,24 @@ export function launchCoopOperationsSessionFromLobby(
       authorityRole: localNetworkSlot === lobby.hostSlot ? "host" : "client",
       ownerSlot: "P1",
       maxPlayers: Math.max(2, Math.min(SESSION_PLAYER_SLOTS.length, activity.selectedSlots.length || 1)),
-      activeBattleId: null,
+      sharedCampaignSlot: activity.sharedCampaignSlot ?? currentSession.sharedCampaignSlot ?? null,
+      sharedCampaignLabel: activity.sharedCampaignLabel ?? currentSession.sharedCampaignLabel ?? null,
+      sharedCampaignLastSavedAt: activity.sharedCampaignLastSavedAt ?? currentSession.sharedCampaignLastSavedAt ?? null,
+      activeBattleId: localNetworkSlot
+        ? activity.participants[localNetworkSlot]?.activeBattleId ?? null
+        : null,
       pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
-        activity.pendingTheaterBattleConfirmation,
+        localNetworkSlot
+          ? activity.participants[localNetworkSlot]?.pendingTheaterBattleConfirmation
+            ?? activity.pendingTheaterBattleConfirmation
+          : activity.pendingTheaterBattleConfirmation,
       ),
-      resourceLedger: {
-        ...currentSession.resourceLedger,
-        preset: activity.economyPreset,
-      },
+      resourceLedger: launchedResourceLedger,
+      pendingTransfers: clonePendingTransfers(activity.pendingTransfers),
       players: nextPlayers,
       theaterAssignments: nextAssignments,
+      activeTheaterContexts: cloneTheaterRuntimeContexts(activity.theaterContexts),
+      activeBattleContexts: cloneBattleRuntimeContexts(activity.battleContexts),
       campaign: currentSession.campaign ?? createCampaignStateSeed(state.operation?.id ?? null),
     },
   });
@@ -710,15 +1163,369 @@ export function clearCoopOperationsSession(state: GameState): GameState {
     phase: "field",
     session: {
       ...resetSession,
+      sharedCampaignSlot: state.session.sharedCampaignSlot ?? null,
+      sharedCampaignLabel: state.session.sharedCampaignLabel ?? null,
+      sharedCampaignLastSavedAt: state.session.sharedCampaignLastSavedAt ?? null,
       resourceLedger: {
         ...resetSession.resourceLedger,
         shared: createResourcePool(state.wad, state.resources),
       },
       pendingTheaterBattleConfirmation: null,
+      activeTheaterContexts: {},
+      activeBattleContexts: {},
     },
   });
 }
 
 export function getSharedEconomyPreset(state: GameState): EconomyPreset {
   return state.session.resourceLedger.preset;
+}
+
+export function getSessionEconomyParticipantSlots(state: GameState): SessionPlayerSlot[] {
+  return getEconomyParticipantSlotsFromSession(state.session ?? createDefaultSessionState(state));
+}
+
+export function getLocalSessionPlayerSlot(state: GameState): SessionPlayerSlot {
+  return getLocalSessionPlayerSlotFromSession(state.session ?? createDefaultSessionState(state));
+}
+
+export function getSessionResourcePool(
+  state: GameState,
+  playerId: SessionPlayerSlot,
+): ResourcePool {
+  const session = state.session ?? createDefaultSessionState(state);
+  const ledger = cloneResourceLedger(session.resourceLedger);
+  return ledger.preset === "shared"
+    ? cloneResourcePool(ledger.shared)
+    : cloneResourcePool(ledger.perPlayer[playerId]);
+}
+
+export interface SessionSpendCost {
+  wad?: number;
+  resources?: Partial<ResourceWallet>;
+}
+
+export interface SessionEconomyResolution {
+  playerId: SessionPlayerSlot;
+  pool: ResourcePool;
+}
+
+export interface SessionSpendResult {
+  success: boolean;
+  state: GameState;
+  playerId: SessionPlayerSlot;
+  pool: ResourcePool;
+  error?: string;
+}
+
+function resolveSessionEconomyPool(
+  state: GameState,
+  playerId?: SessionPlayerSlot | null,
+): SessionEconomyResolution {
+  const resolvedPlayerId = playerId ?? getLocalSessionPlayerSlot(state);
+  return {
+    playerId: resolvedPlayerId,
+    pool: getSessionResourcePool(state, resolvedPlayerId),
+  };
+}
+
+export function canSessionAffordCost(
+  state: GameState,
+  cost: SessionSpendCost,
+  playerId?: SessionPlayerSlot | null,
+): boolean {
+  const { pool } = resolveSessionEconomyPool(state, playerId);
+  const wadCost = Math.max(0, Math.floor(cost.wad ?? 0));
+  return pool.wad >= wadCost && hasEnoughResources(pool.resources, cost.resources);
+}
+
+export function spendSessionCost(
+  state: GameState,
+  cost: SessionSpendCost,
+  playerId?: SessionPlayerSlot | null,
+): SessionSpendResult {
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  const ledger = cloneResourceLedger(currentSession.resourceLedger);
+  const resolvedPlayerId = playerId ?? getLocalSessionPlayerSlotFromSession(currentSession);
+  const wadCost = Math.max(0, Math.floor(cost.wad ?? 0));
+  const normalizedResourceCost = createEmptyResourceWallet(cost.resources);
+  const targetPool = ledger.preset === "shared"
+    ? cloneResourcePool(ledger.shared)
+    : cloneResourcePool(ledger.perPlayer[resolvedPlayerId]);
+  if (targetPool.wad < wadCost || !hasEnoughResources(targetPool.resources, normalizedResourceCost)) {
+    return {
+      success: false,
+      state,
+      playerId: resolvedPlayerId,
+      pool: targetPool,
+      error: "Insufficient funds.",
+    };
+  }
+
+  const nextTargetPool: ResourcePool = {
+    wad: Math.max(0, targetPool.wad - wadCost),
+    resources: subtractResourceWallet(targetPool.resources, normalizedResourceCost, true),
+  };
+
+  if (ledger.preset === "shared") {
+    ledger.shared = nextTargetPool;
+  } else {
+    ledger.perPlayer[resolvedPlayerId] = nextTargetPool;
+    ledger.shared = sumResourcePools(
+      getEconomyParticipantSlotsFromSession(currentSession).map((slot) => ledger.perPlayer[slot]),
+    );
+  }
+
+  const nextState = withNormalizedSessionState({
+    ...state,
+    wad: ledger.shared.wad,
+    resources: cloneResourceWallet(ledger.shared.resources),
+    session: {
+      ...currentSession,
+      resourceLedger: ledger,
+    },
+  });
+
+  return {
+    success: true,
+    state: nextState,
+    playerId: resolvedPlayerId,
+    pool: nextTargetPool,
+  };
+}
+
+export function grantSessionResources(
+  state: GameState,
+  reward: SessionSpendCost,
+  playerId?: SessionPlayerSlot | null,
+): GameState {
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  const ledger = cloneResourceLedger(currentSession.resourceLedger);
+  const resolvedPlayerId = playerId ?? getLocalSessionPlayerSlotFromSession(currentSession);
+  const wadGain = Math.max(0, Math.floor(reward.wad ?? 0));
+  const normalizedResourceGain = createEmptyResourceWallet(reward.resources);
+
+  if (ledger.preset === "shared") {
+    ledger.shared = {
+      wad: ledger.shared.wad + wadGain,
+      resources: addResourceWallet(ledger.shared.resources, normalizedResourceGain),
+    };
+  } else {
+    ledger.perPlayer[resolvedPlayerId] = {
+      wad: ledger.perPlayer[resolvedPlayerId].wad + wadGain,
+      resources: addResourceWallet(ledger.perPlayer[resolvedPlayerId].resources, normalizedResourceGain),
+    };
+    ledger.shared = sumResourcePools(
+      getEconomyParticipantSlotsFromSession(currentSession).map((slot) => ledger.perPlayer[slot]),
+    );
+  }
+
+  return withNormalizedSessionState({
+    ...state,
+    wad: ledger.shared.wad,
+    resources: cloneResourceWallet(ledger.shared.resources),
+    session: {
+      ...currentSession,
+      resourceLedger: ledger,
+    },
+  });
+}
+
+export function setSharedEconomyPreset(
+  state: GameState,
+  preset: EconomyPreset,
+): GameState {
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  if (currentSession.resourceLedger.preset === preset) {
+    return state;
+  }
+  const currentLedger = cloneResourceLedger(currentSession.resourceLedger);
+  const economySlots = getEconomyParticipantSlotsFromSession(currentSession);
+  const totalPool =
+    currentLedger.preset === "partitioned"
+      ? sumResourcePools(economySlots.map((slot) => currentLedger.perPlayer[slot]))
+      : createResourcePool(state.wad, state.resources);
+  const nextPendingTransfers = clonePendingTransfers(currentSession.pendingTransfers).map((transfer) => (
+    preset === "shared" && transfer.status === "pending"
+      ? {
+          ...transfer,
+          status: "cancelled" as const,
+          note: transfer.note
+            ? `${transfer.note} // cancelled when lobby returned to shared economy`
+            : "Cancelled when lobby returned to shared economy.",
+        }
+      : transfer
+  ));
+  const nextLedger: SessionState["resourceLedger"] = {
+    preset,
+    shared: totalPool,
+    perPlayer:
+      preset === "partitioned"
+        ? distributeResourcePoolEvenly(totalPool, economySlots)
+        : currentLedger.perPlayer,
+  };
+  return withNormalizedSessionState({
+    ...state,
+    wad: totalPool.wad,
+    resources: cloneResourceWallet(totalPool.resources),
+    session: {
+      ...currentSession,
+      resourceLedger: nextLedger,
+      pendingTransfers: nextPendingTransfers,
+    },
+  });
+}
+
+export interface SessionTradeTransferRequest {
+  fromPlayerId: SessionPlayerSlot;
+  toPlayerId: SessionPlayerSlot;
+  kind: "wad" | "resource";
+  wadAmount?: number;
+  resourceKey?: ResourceKey;
+  resourceAmount?: number;
+  note?: string;
+}
+
+export function requestSessionTradeTransfer(
+  state: GameState,
+  request: SessionTradeTransferRequest,
+): GameState {
+  if (request.fromPlayerId === request.toPlayerId) {
+    return state;
+  }
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  if (currentSession.resourceLedger.preset !== "partitioned") {
+    return state;
+  }
+  const normalizedWadAmount = Math.max(0, Math.floor(request.wadAmount ?? 0));
+  const normalizedResourceAmount = Math.max(0, Math.floor(request.resourceAmount ?? 0));
+  if (
+    (request.kind === "wad" && normalizedWadAmount <= 0)
+    || (request.kind === "resource" && (!request.resourceKey || normalizedResourceAmount <= 0))
+  ) {
+    return state;
+  }
+  const nextTransfers: TradeTransfer[] = [
+    ...clonePendingTransfers(currentSession.pendingTransfers),
+    {
+      id: createSessionTradeTransferId(),
+      fromPlayerId: request.fromPlayerId,
+      toPlayerId: request.toPlayerId,
+      kind: request.kind,
+      status: "pending" as const,
+      createdAt: Date.now(),
+      wadAmount: request.kind === "wad" ? normalizedWadAmount : undefined,
+      resourceKey: request.kind === "resource" ? request.resourceKey : undefined,
+      resourceAmount: request.kind === "resource" ? normalizedResourceAmount : undefined,
+      note: request.note?.trim() || undefined,
+    },
+  ];
+  return withNormalizedSessionState({
+    ...state,
+    session: {
+      ...currentSession,
+      pendingTransfers: nextTransfers,
+    },
+  });
+}
+
+export function approveSessionTradeTransfer(
+  state: GameState,
+  transferId: string,
+): GameState {
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  if (currentSession.resourceLedger.preset !== "partitioned") {
+    return state;
+  }
+  const currentTransfer = currentSession.pendingTransfers.find((transfer) => transfer.id === transferId) ?? null;
+  if (!currentTransfer || currentTransfer.status !== "pending") {
+    return state;
+  }
+  const nextLedger = cloneResourceLedger(currentSession.resourceLedger);
+  const fromPool = cloneResourcePool(nextLedger.perPlayer[currentTransfer.fromPlayerId]);
+  const toPool = cloneResourcePool(nextLedger.perPlayer[currentTransfer.toPlayerId]);
+  let canComplete = false;
+  if (currentTransfer.kind === "wad") {
+    const wadAmount = Math.max(0, Math.floor(currentTransfer.wadAmount ?? 0));
+    canComplete = wadAmount > 0 && fromPool.wad >= wadAmount;
+    if (canComplete) {
+      fromPool.wad -= wadAmount;
+      toPool.wad += wadAmount;
+    }
+  } else if (currentTransfer.kind === "resource" && currentTransfer.resourceKey) {
+    const resourceAmount = Math.max(0, Math.floor(currentTransfer.resourceAmount ?? 0));
+    canComplete = resourceAmount > 0 && hasEnoughResources(fromPool.resources, {
+      [currentTransfer.resourceKey]: resourceAmount,
+    });
+    if (canComplete) {
+      fromPool.resources = subtractResourceWallet(fromPool.resources, {
+        [currentTransfer.resourceKey]: resourceAmount,
+      }, true);
+      toPool.resources = addResourceWallet(toPool.resources, {
+        [currentTransfer.resourceKey]: resourceAmount,
+      });
+    }
+  }
+  const nextTransfers: TradeTransfer[] = clonePendingTransfers(currentSession.pendingTransfers).map((transfer) => {
+    if (transfer.id !== transferId) {
+      return transfer;
+    }
+    const nextStatus: TradeTransfer["status"] = canComplete ? "completed" : "cancelled";
+    return {
+      ...transfer,
+      status: nextStatus,
+      note: canComplete
+        ? transfer.note
+        : transfer.note
+          ? `${transfer.note} // cancelled, insufficient allocation`
+          : "Cancelled, insufficient allocation.",
+    };
+  });
+  if (!canComplete) {
+    return withNormalizedSessionState({
+      ...state,
+      session: {
+        ...currentSession,
+        pendingTransfers: nextTransfers,
+      },
+    });
+  }
+  nextLedger.perPlayer[currentTransfer.fromPlayerId] = fromPool;
+  nextLedger.perPlayer[currentTransfer.toPlayerId] = toPool;
+  nextLedger.shared = sumResourcePools(
+    getEconomyParticipantSlotsFromSession(currentSession).map((slot) => nextLedger.perPlayer[slot]),
+  );
+  return withNormalizedSessionState({
+    ...state,
+    wad: nextLedger.shared.wad,
+    resources: cloneResourceWallet(nextLedger.shared.resources),
+    session: {
+      ...currentSession,
+      resourceLedger: nextLedger,
+      pendingTransfers: nextTransfers,
+    },
+  });
+}
+
+export function cancelSessionTradeTransfer(
+  state: GameState,
+  transferId: string,
+): GameState {
+  const currentSession = state.session ?? createDefaultSessionState(state);
+  const nextTransfers: TradeTransfer[] = clonePendingTransfers(currentSession.pendingTransfers).map((transfer) => (
+    transfer.id === transferId && transfer.status === "pending"
+      ? { ...transfer, status: "cancelled" as const }
+      : transfer
+  ));
+  return withNormalizedSessionState({
+    ...state,
+    session: {
+      ...currentSession,
+      pendingTransfers: nextTransfers,
+    },
+  });
+}
+
+export function describeSessionTradeTransfer(transfer: TradeTransfer): string {
+  return `${transfer.fromPlayerId} -> ${transfer.toPlayerId} // ${getTransferAmountLabel(transfer)} // ${transfer.status.toUpperCase()}`;
 }

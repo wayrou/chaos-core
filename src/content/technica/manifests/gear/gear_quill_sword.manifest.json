@@ -1,0 +1,21 @@
+{
+  "contentId": "gear_quill_sword",
+  "contentType": "gear",
+  "dependencies": [],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "gear_quill_sword.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-12T05:13:58.846Z",
+  "files": [
+    "manifest.json",
+    "gear_quill_sword.gear.json",
+    "gear_quill_sword.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Quill Sword"
+}

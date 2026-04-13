@@ -1,0 +1,5 @@
+2026/04/11-11:55:04.907 6b584 Creating DB C:\Users\alexh\Desktop\Sprawl\chaos-core\.tmp-edge-debug\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/04/11-11:55:09.110 6b584 Reusing MANIFEST C:\Users\alexh\Desktop\Sprawl\chaos-core\.tmp-edge-debug\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/04/11-11:55:33.576 4f71c Level-0 table #5: started
+2026/04/11-11:55:33.833 4f71c Level-0 table #5: 682105 bytes OK
+2026/04/11-11:55:33.974 4f71c Delete type=0 #3

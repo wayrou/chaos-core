@@ -162,7 +162,19 @@
 }
 
 .gear-option-icon {
-  font-size: var(--text-sm, 0.8rem);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gear-option-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .gear-option-name {
@@ -1327,6 +1339,30 @@
   font-weight: var(--weight-medium, 500);
 }
 
+.summary-value-input {
+  min-width: 0;
+  width: min(18rem, 58%);
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgba(168, 124, 69, 0.38);
+  border-radius: 4px;
+  background: rgba(12, 11, 10, 0.78);
+  color: var(--ink, #f0e7d8);
+  font-family: var(--font-body, "EB Garamond", serif);
+  font-size: 0.92rem;
+  text-align: right;
+}
+
+.summary-value-input:focus {
+  outline: none;
+  border-color: var(--tech-teal, #8ce6ff);
+  box-shadow: 0 0 0 1px rgba(140, 230, 255, 0.2);
+}
+
+.summary-value-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .summary-cost {
   margin-top: var(--space-2, 0.5rem);
   padding-top: var(--space-2, 0.5rem);
@@ -1528,8 +1564,19 @@
 }
 
 .material-card-icon {
-  font-size: var(--text-xl, 1.5rem);
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.material-card-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .material-card-name {

@@ -5,15 +5,22 @@
 // ============================================================================
 
 import { GameState } from "../core/types";
-import { getAllStarterEquipment } from "../core/equipment";
-import { getAllImportedGear } from "../content/technica";
 import { createNewGameState } from "../core/initialState";
+import { getTechnicaRegistryFingerprint } from "../content/technica";
+import { syncPublishedTechnicaContentState } from "../content/technica/stateSync";
 import { withNormalizedLobbyState } from "../core/multiplayerLobby";
 import { withNormalizedNotesState } from "../core/notesSystem";
-import { withNormalizedSessionState } from "../core/session";
+import {
+  getMountedOrActiveBattleState,
+  grantSessionResources,
+  mountBattleContextById,
+  mountBattleState,
+  withNormalizedSessionState,
+} from "../core/session";
 import { withNormalizedFoundryState } from "../core/foundrySystem";
 import { withNormalizedSchemaState } from "../core/schemaSystem";
 import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
+import { withNormalizedWeaponsmithState } from "../core/weaponsmith";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -24,50 +31,22 @@ let _gameState: GameState | null = null;
 type Listener = (state: GameState) => void;
 const listeners = new Set<Listener>();
 
-function syncPublishedTechnicaGear(state: GameState): GameState {
-  const importedGear = getAllImportedGear();
-  if (importedGear.length === 0) {
-    return state;
-  }
-
-  const syncedGearIds = new Set(state.technicaSync?.starterGearIds ?? []);
-  const runtimeEquipment = getAllStarterEquipment();
-  const nextEquipmentById = { ...(state.equipmentById ?? {}) };
-  const nextEquipmentPool = [...(state.equipmentPool ?? [])];
-  let changed = false;
-
-  importedGear.forEach((gear) => {
-    if (syncedGearIds.has(gear.id)) {
-      return;
-    }
-
-    nextEquipmentById[gear.id] = runtimeEquipment[gear.id] ?? gear;
-
-    syncedGearIds.add(gear.id);
-    changed = true;
-  });
-
-  if (!changed) {
-    return state;
-  }
-
-  return {
-    ...state,
-    equipmentById: nextEquipmentById,
-    equipmentPool: nextEquipmentPool,
-    technicaSync: {
-      ...state.technicaSync,
-      starterGearIds: Array.from(syncedGearIds),
-    },
-  };
+function syncPublishedTechnicaContent(state: GameState): GameState {
+  return syncPublishedTechnicaContentState(state, getTechnicaRegistryFingerprint());
 }
 
 function syncSchemaState(state: GameState): GameState {
+  const normalizedState = {
+    ...state,
+    echoRun: state.echoRun ?? null,
+  };
   return withNormalizedLobbyState(
     withNormalizedSessionState(
       withNormalizedNotesState(
         withNormalizedFoundryState(
-          withNormalizedSchemaState(withNormalizedTheaterDeploymentPresetState(state)),
+          withNormalizedSchemaState(
+            withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
+          ),
         ),
       ),
     ),
@@ -79,23 +58,40 @@ function syncSchemaState(state: GameState): GameState {
 // ----------------------------------------------------------------------------
 
 /**
- * Get current game state, lazily creating it if needed
+ * Get current game state, lazily creating it if needed.
+ * Includes a recursion guard to prevent infinite loops from normalizers.
  */
+let _getGameStateDepth = 0;
+let _setGameStateDepth = 0;
+
 export function getGameState(): GameState {
-  if (!_gameState) {
-    _gameState = syncSchemaState(syncPublishedTechnicaGear(createNewGameState()));
-  } else {
-    _gameState = syncSchemaState(syncPublishedTechnicaGear(_gameState));
+  _getGameStateDepth++;
+  if (_getGameStateDepth > 5) {
+    _getGameStateDepth--;
+    return _gameState!;
   }
+  if (!_gameState) {
+    _gameState = syncSchemaState(syncPublishedTechnicaContent(createNewGameState()));
+  } else {
+    _gameState = syncSchemaState(syncPublishedTechnicaContent(_gameState));
+  }
+  _getGameStateDepth--;
   return _gameState;
 }
 
 /**
- * Replace the entire game state and notify listeners
+ * Replace the entire game state and notify listeners.
+ * Includes a recursion guard to prevent infinite loops from listeners.
  */
 export function setGameState(newState: GameState): void {
-  _gameState = syncSchemaState(syncPublishedTechnicaGear(newState));
+  _setGameStateDepth++;
+  if (_setGameStateDepth > 5) {
+    _setGameStateDepth--;
+    return;
+  }
+  _gameState = syncSchemaState(syncPublishedTechnicaContent(newState));
   notifyListeners();
+  _setGameStateDepth--;
 }
 
 /**
@@ -199,22 +195,11 @@ export function getPhase(): GameState["phase"] {
 // ----------------------------------------------------------------------------
 
 export function addResources(resources: Partial<GameState["resources"]>): void {
-  updateGameState(state => ({
-    ...state,
-    resources: {
-      metalScrap: state.resources.metalScrap + (resources.metalScrap ?? 0),
-      wood: state.resources.wood + (resources.wood ?? 0),
-      chaosShards: state.resources.chaosShards + (resources.chaosShards ?? 0),
-      steamComponents: state.resources.steamComponents + (resources.steamComponents ?? 0),
-    },
-  }));
+  updateGameState((state) => grantSessionResources(state, { resources }));
 }
 
 export function addWad(amount: number): void {
-  updateGameState(state => ({
-    ...state,
-    wad: state.wad + amount,
-  }));
+  updateGameState((state) => grantSessionResources(state, { wad: amount }));
 }
 
 export function spendWad(amount: number): boolean {
@@ -262,11 +247,12 @@ export function updateUnit(unitId: string, updates: Partial<GameState["unitsById
 // ----------------------------------------------------------------------------
 
 export function setBattleState(battle: GameState["currentBattle"]): void {
-  updateGameState(state => ({
-    ...state,
-    currentBattle: battle,
-    phase: battle ? "battle" : state.phase,
-  }));
+  updateGameState(state => mountBattleState(state, battle));
+}
+
+export function mountBattleById(battleId: string): GameState["currentBattle"] {
+  const nextState = updateGameState((state) => mountBattleContextById(state, battleId));
+  return nextState.currentBattle;
 }
 
 export function clearBattle(): void {
@@ -278,7 +264,7 @@ export function clearBattle(): void {
 }
 
 export function getBattleState(): GameState["currentBattle"] {
-  return getGameState().currentBattle;
+  return getMountedOrActiveBattleState(getGameState());
 }
 
 // ----------------------------------------------------------------------------

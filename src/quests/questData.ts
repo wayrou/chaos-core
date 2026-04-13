@@ -40,6 +40,13 @@ export const QUEST_DATABASE: Record<string, Quest> = {
         metalScrap: 8,
         wood: 4,
       },
+      gearRewards: [
+        {
+          kind: "authored",
+          equipmentId: "gear_coil_gun",
+          fallbackToGenerated: true,
+        },
+      ],
     },
     status: "available",
   },
@@ -165,6 +172,13 @@ export const QUEST_DATABASE: Record<string, Quest> = {
         chaosShards: 4,
         steamComponents: 4,
       },
+      gearRewards: [
+        {
+          kind: "generated",
+          slotType: "weapon",
+          minStability: 68,
+        },
+      ],
     },
     status: "available",
   },

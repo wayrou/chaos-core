@@ -1,0 +1,40 @@
+0:00:11 Microsoft.Shutdown.TabStripModel.SendDetachWebContentsNotifications
+0:00:11 Browser1 Close Tab2 at 1
+0:00:11 Tab2 WebContentsDestroyed
+0:00:12 CloseTab_NoAlertIndicator
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentsAt
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseTabs
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_TabClosable
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_NotClosingAll
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentses
+0:00:12 Microsoft.Shutdown.TabStripModel.CloseWebContentses_FastShutdown
+0:00:12 Microsoft.Shutdown.TabStripModel.ShouldRunUnloadListenerBeforeClosing_false
+0:00:12 Tab3 RenderProcessGone
+0:00:12 Microsoft.Shutdown.TabStripModel.RunUnloadListenerBeforeClosing_false
+0:00:12 Microsoft.Shutdown.TabStripModel.InternalCloseTabsImpl_ClosedAll
+0:00:12 Microsoft.Shutdown.TabStripModel.SendDetachWebContentsNotifications
+0:00:12 Browser1 Close Tab3 at 1
+0:00:12 Tab3 FinishNav9 ERR_ABORTED
+0:00:12 Tab3 WebContentsDestroyed
+0:00:12 Microsoft.DataDeletionHelper.End_InterestGroups
+0:00:12 Microsoft.DataDeletionHelper.End_InterestGroups
+0:00:13 Microsoft.DataDeletionHelper.End_LocalStorage
+0:00:13 Microsoft.DataDeletionHelper.End_LocalStorage
+0:00:13 Microsoft.DataDeletionHelper.End_SessionStorage
+0:00:13 Microsoft.DataDeletionHelper.End_SessionStorage
+0:00:13 Microsoft.DataDeletionHelper.End_PrivateAggregation
+0:00:13 Microsoft.DataDeletionHelper.End_PrivateAggregation
+0:00:13 Microsoft.DataDeletionHelper.End_GpuCache
+0:00:14 Microsoft.DataDeletionHelper.End_CdmStorage
+0:00:14 Microsoft.DataDeletionHelper.End_GpuCache
+0:00:15 Microsoft.DataDeletionHelper.End_Cookies
+0:00:15 Microsoft.DataDeletionHelper.End_Cookies
+0:00:15 Themes_Reset
+0:00:16 Microsoft.DataDeletionHelper.End_CdmStorage
+0:00:19 Tab1 FinishNav1
+0:00:20 Tab1 PageLoad
+0:13:42 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp
+0:13:42 Microsoft.UnloadController.HasCompletedUnloadProcessing_False
+0:13:42 Microsoft.UnloadController.HasCompletedUnloadProcessing_False
+0:16:06 Microsoft.UnloadController.IsUnclosableApp_IsNotWebApp

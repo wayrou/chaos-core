@@ -2,11 +2,10 @@
 // CHAOS CORE - INVENTORY VIEW MODEL TESTS
 // ============================================================================
 
-import { buildInventoryVM, InventoryCategory } from "../inventoryViewModel";
+import { buildInventoryVM } from "../inventoryViewModel";
 import { GameState } from "../types";
 import { createNewGameState } from "../initialState";
 import { Equipment } from "../equipment";
-import { Module } from "../equipment";
 
 describe("Inventory View Model", () => {
   let baseState: GameState;
@@ -40,8 +39,6 @@ describe("Inventory View Model", () => {
           isMechanical: false,
           stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
           cardsGranted: [],
-          moduleSlots: 0,
-          attachedModules: [],
           wear: 100,
         } as Equipment,
         "test_armor": {
@@ -70,8 +67,6 @@ describe("Inventory View Model", () => {
           isMechanical: false,
           stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
           cardsGranted: [],
-          moduleSlots: 0,
-          attachedModules: [],
           wear: 100,
         } as Equipment,
       };
@@ -82,7 +77,8 @@ describe("Inventory View Model", () => {
         const unit = baseState.unitsById[unitId];
         if (unit) {
           unit.loadout = {
-            weapon: "test_weapon",
+            primaryWeapon: "test_weapon",
+            secondaryWeapon: null,
             helmet: null,
             chestpiece: null,
             accessory1: null,
@@ -121,6 +117,41 @@ describe("Inventory View Model", () => {
       expect(healingKit).toBeDefined();
       expect(healingKit?.owned).toBe(5);
     });
+
+    it("should include key items from storage and locker as a separate category", () => {
+      baseState.inventory.baseStorage = [
+        {
+          id: "vault_key",
+          name: "Vault Key",
+          kind: "key_item",
+          stackable: false,
+          quantity: 1,
+          massKg: 0,
+          bulkBu: 0,
+          powerW: 0,
+          description: "Opens the sealed vault.",
+        },
+      ];
+      baseState.inventory.forwardLocker = [
+        {
+          id: "vault_key",
+          name: "Vault Key",
+          kind: "key_item",
+          stackable: false,
+          quantity: 1,
+          massKg: 0,
+          bulkBu: 0,
+          powerW: 0,
+          description: "Opens the sealed vault.",
+        },
+      ];
+
+      const vm = buildInventoryVM(baseState);
+      const keyItem = vm.entries.find((entry) => entry.category === "keyItem" && entry.id === "vault_key");
+      expect(vm.countsByCategory.keyItem).toBe(1);
+      expect(keyItem).toBeDefined();
+      expect(keyItem?.owned).toBe(2);
+    });
     
     it("should exclude consumables with zero quantity", () => {
       baseState.consumables = {
@@ -138,76 +169,6 @@ describe("Inventory View Model", () => {
       baseState.consumables = {};
       const vm = buildInventoryVM(baseState);
       expect(vm.countsByCategory.consumable).toBe(0);
-    });
-  });
-  
-  describe("buildInventoryVM - Weapon Parts (Modules)", () => {
-    it("should include modules attached to owned weapons", () => {
-      baseState.modulesById = {
-        "module_test": {
-          id: "module_test",
-          name: "Test Module",
-          description: "A test module",
-          cardsGranted: [],
-        } as Module,
-      };
-      
-      baseState.equipmentById = {
-        "test_weapon": {
-          id: "test_weapon",
-          name: "Test Weapon",
-          slot: "weapon",
-          weaponType: "sword",
-          isMechanical: false,
-          stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
-          cardsGranted: [],
-          moduleSlots: 1,
-          attachedModules: ["module_test"],
-          wear: 100,
-        } as Equipment,
-      };
-      
-      const vm = buildInventoryVM(baseState);
-      expect(vm.countsByCategory.weaponPart).toBe(1);
-      const moduleEntry = vm.entries.find(e => e.id === "module_test");
-      expect(moduleEntry).toBeDefined();
-      expect(moduleEntry?.category).toBe("weaponPart");
-    });
-    
-    it("should not include modules not attached to any weapon", () => {
-      baseState.modulesById = {
-        "module_test": {
-          id: "module_test",
-          name: "Test Module",
-          description: "A test module",
-          cardsGranted: [],
-        } as Module,
-      };
-      
-      baseState.equipmentById = {
-        "test_weapon": {
-          id: "test_weapon",
-          name: "Test Weapon",
-          slot: "weapon",
-          weaponType: "sword",
-          isMechanical: false,
-          stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
-          cardsGranted: [],
-          moduleSlots: 0,
-          attachedModules: [],
-          wear: 100,
-        } as Equipment,
-      };
-      
-      const vm = buildInventoryVM(baseState);
-      expect(vm.countsByCategory.weaponPart).toBe(0);
-      expect(vm.entries.some(e => e.id === "module_test")).toBe(false);
-    });
-    
-    it("should handle empty modules", () => {
-      baseState.modulesById = {};
-      const vm = buildInventoryVM(baseState);
-      expect(vm.countsByCategory.weaponPart).toBe(0);
     });
   });
   
@@ -286,8 +247,6 @@ describe("Inventory View Model", () => {
           isMechanical: false,
           stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
           cardsGranted: [],
-          moduleSlots: 0,
-          attachedModules: [],
           wear: 100,
         } as Equipment,
       };
@@ -308,7 +267,6 @@ describe("Inventory View Model", () => {
     it("should handle completely empty inventory without crashing", () => {
       baseState.equipmentById = {};
       baseState.consumables = {};
-      baseState.modulesById = {};
       baseState.knownRecipeIds = [];
       baseState.resources = {
         metalScrap: 0,
@@ -321,7 +279,7 @@ describe("Inventory View Model", () => {
       expect(vm.entries.length).toBe(0);
       expect(vm.countsByCategory.equipment).toBe(0);
       expect(vm.countsByCategory.consumable).toBe(0);
-      expect(vm.countsByCategory.weaponPart).toBe(0);
+      expect(vm.countsByCategory.keyItem).toBe(0);
       expect(vm.countsByCategory.recipe).toBe(0);
       expect(vm.countsByCategory.resource).toBe(0);
     });
@@ -338,8 +296,6 @@ describe("Inventory View Model", () => {
           isMechanical: false,
           stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
           cardsGranted: [],
-          moduleSlots: 0,
-          attachedModules: [],
           wear: 100,
         } as Equipment,
         "armor_a": {

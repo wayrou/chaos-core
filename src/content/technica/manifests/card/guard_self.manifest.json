@@ -1,0 +1,27 @@
+{
+  "contentId": "guard_self",
+  "contentType": "card",
+  "dependencies": [
+    {
+      "contentType": "gear",
+      "id": "shield_pattern_shield",
+      "relation": "source-gear"
+    }
+  ],
+  "description": "Chaos Core runtime battle card export.",
+  "entryFile": "guard_self.card.json",
+  "exportType": "card",
+  "exportedAt": "2026-04-12T05:32:06.316Z",
+  "files": [
+    "manifest.json",
+    "guard_self.card.json",
+    "guard_self.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "battle-card.v2",
+  "title": "Guard Self"
+}

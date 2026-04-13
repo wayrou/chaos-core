@@ -16,6 +16,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "floor",
       elevation: 0,
+      surface: "industrial",
     };
   }
 
@@ -25,6 +26,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "light_cover",
       elevation: baseTile.elevation,
+      surface: baseTile.surface,
       cover: {
         type: "light_cover",
         hp: 4,
@@ -38,6 +40,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
       pos: { x: point.x, y: point.y },
       terrain: "wall",
       elevation: baseTile.elevation,
+      surface: baseTile.surface,
     };
   }
 
@@ -45,6 +48,7 @@ function createTileFromMapPoint(map: TacticalMapDefinition, point: TacticalMapPo
     pos: { x: point.x, y: point.y },
     terrain: "floor",
     elevation: baseTile.elevation,
+    surface: baseTile.surface,
   };
 }
 
@@ -117,6 +121,24 @@ function createBreakthroughObjective(map: TacticalMapDefinition): SquadBattleObj
   };
 }
 
+function createExtractionObjective(map: TacticalMapDefinition): SquadBattleObjectiveState {
+  return {
+    kind: "extraction",
+    label: "Extraction",
+    description: "Reach the authored extraction zone and end your turn there to pull the operator out.",
+    controlTiles: [],
+    extractionTiles: map.zones.extraction.map((point) => ({ ...point })),
+    targetScore: 2,
+    score: {
+      friendly: 0,
+      enemy: 0,
+    },
+    controllingSide: null,
+    winnerSide: null,
+    extractedUnitIds: [],
+  };
+}
+
 export function createSquadObjectiveStateFromTacticalMap(
   map: TacticalMapDefinition,
   objectiveType: SkirmishObjectiveType,
@@ -131,10 +153,17 @@ export function createSquadObjectiveStateFromTacticalMap(
   ) {
     return createBreakthroughObjective(map);
   }
+  if (
+    objectiveType === "extraction"
+    && map.zones.extraction.length > 0
+    && map.objects.some((objectDef) => objectDef.type === "extraction_anchor")
+  ) {
+    return createExtractionObjective(map);
+  }
   return null;
 }
 
-function assignUnitsToSpawnPoints(
+export function assignBattleUnitsToSpawnPoints(
   battle: BattleState,
   side: SquadBattleSide,
   points: TacticalMapPoint[],
@@ -168,6 +197,7 @@ export function createBuilderQuickTestBattle(
   const trainingConfig: TrainingConfig = {
     gridW: map.width,
     gridH: map.height,
+    mapId: map.id,
     difficulty: "normal",
     rules: {
       noRewards: true,
@@ -180,7 +210,7 @@ export function createBuilderQuickTestBattle(
 
   let battle = createBattleFromEncounter(state, encounter, `builder_${map.id}`);
   battle = applyTacticalMapToBattleState(battle, map);
-  battle = assignUnitsToSpawnPoints(battle, "enemy", map.zones.enemySpawn);
+  battle = assignBattleUnitsToSpawnPoints(battle, "enemy", map.zones.enemySpawn);
   battle.returnTo = "map_builder";
   (battle as any).isTraining = true;
   (battle as any).trainingConfig = trainingConfig;
@@ -189,7 +219,7 @@ export function createBuilderQuickTestBattle(
     `SLK//MAP    :: Quick test loaded for ${map.name}.`,
   ];
 
-  if (objectiveType === "control_relay" || objectiveType === "breakthrough") {
+  if (objectiveType === "control_relay" || objectiveType === "breakthrough" || objectiveType === "extraction") {
     battle.objectiveZones = {
       relay: map.zones.relay.map((point) => ({ ...point })),
       friendlyBreach: map.zones.friendlyBreach.map((point) => ({ ...point })),

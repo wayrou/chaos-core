@@ -7,15 +7,16 @@
 // ----------------------------------------------------------------------------
 
 import { isTechnicaContentDisabled } from "../content/technica";
+import {
+  RESOURCE_KEYS,
+  formatResourceLabel,
+  hasEnoughResources,
+  type ResourceKey,
+  type ResourceWallet,
+} from "./resources";
 
-export type ResourceType = "metalScrap" | "wood" | "chaosShards" | "steamComponents";
-
-export interface ResourceCost {
-  metalScrap?: number;
-  wood?: number;
-  chaosShards?: number;
-  steamComponents?: number;
-}
+export type ResourceType = ResourceKey;
+export type ResourceCost = Partial<ResourceWallet>;
 
 // Crafting categories - weapons are built in Gear Builder, not crafted
 export type CraftingCategory = "armor" | "accessory" | "consumable" | "upgrade";
@@ -346,14 +347,9 @@ export function getStarterRecipeIds(): string[] {
  */
 export function canAffordRecipe(
   recipe: Recipe,
-  resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number }
+  resources: ResourceWallet
 ): boolean {
-  const cost = recipe.cost;
-  if ((cost.metalScrap ?? 0) > resources.metalScrap) return false;
-  if ((cost.wood ?? 0) > resources.wood) return false;
-  if ((cost.chaosShards ?? 0) > resources.chaosShards) return false;
-  if ((cost.steamComponents ?? 0) > resources.steamComponents) return false;
-  return true;
+  return hasEnoughResources(resources, recipe.cost);
 }
 
 /**
@@ -371,12 +367,10 @@ export function hasRequiredItem(
  * Calculate total cost for displaying
  */
 export function getRecipeCostString(recipe: Recipe): string {
-  const parts: string[] = [];
-  if (recipe.cost.metalScrap) parts.push(`${recipe.cost.metalScrap} Metal`);
-  if (recipe.cost.wood) parts.push(`${recipe.cost.wood} Wood`);
-  if (recipe.cost.chaosShards) parts.push(`${recipe.cost.chaosShards} Chaos`);
-  if (recipe.cost.steamComponents) parts.push(`${recipe.cost.steamComponents} Steam`);
-  return parts.join(", ");
+  return RESOURCE_KEYS
+    .filter((resourceKey) => Number(recipe.cost[resourceKey] ?? 0) > 0)
+    .map((resourceKey) => `${recipe.cost[resourceKey]} ${formatResourceLabel(resourceKey)}`)
+    .join(", ");
 }
 
 /**
@@ -428,7 +422,7 @@ export interface CraftResult {
 
 export function craftItem(
   recipe: Recipe,
-  resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number },
+  resources: ResourceWallet,
   inventoryItemIds: string[]
 ): CraftResult {
   // Prevent weapon crafting - weapons are built in Gear Builder

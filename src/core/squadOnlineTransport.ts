@@ -23,6 +23,8 @@ export interface SquadTransportEvent {
   status: SquadTransportStatus;
 }
 
+const DEFAULT_CHAOS_CORE_BACKEND_ADDRESS = "127.0.0.1:4210";
+
 const DEFAULT_SQUAD_TRANSPORT_STATUS: SquadTransportStatus = {
   active: false,
   role: "idle",
@@ -41,6 +43,22 @@ const subscribers = new Set<SquadTransportSubscriber>();
 
 function isBrowserWindowAvailable(): boolean {
   return typeof window !== "undefined";
+}
+
+function getConfiguredBackendAddressFromBuild(): string | null {
+  const env = (import.meta as ImportMeta & {
+    env?: Record<string, unknown>;
+  }).env;
+  const configuredValue = typeof env?.VITE_CHAOS_CORE_BACKEND_ADDRESS === "string"
+    ? env.VITE_CHAOS_CORE_BACKEND_ADDRESS.trim()
+    : "";
+  if (configuredValue) {
+    return configuredValue;
+  }
+  if (env?.DEV) {
+    return DEFAULT_CHAOS_CORE_BACKEND_ADDRESS;
+  }
+  return null;
 }
 
 export function isTauriSquadTransportAvailable(): boolean {
@@ -118,9 +136,57 @@ export async function startSquadTransportHost(preferredPort?: number): Promise<S
   return status;
 }
 
+export function getConfiguredChaosCoreBackendAddress(): string | null {
+  return getConfiguredBackendAddressFromBuild();
+}
+
+export async function startSquadTransportBackendHost(
+  callsign?: string | null,
+  backendAddress = getConfiguredChaosCoreBackendAddress(),
+): Promise<SquadTransportStatus> {
+  const status = normalizeTransportStatus(await invokeSquadTransport<Partial<SquadTransportStatus>>("start_squad_transport_backend_host", {
+    backendAddress: backendAddress ?? null,
+    callsign: callsign?.trim() ? callsign.trim() : null,
+  }));
+  currentTransportStatus = status;
+  return status;
+}
+
+export async function startSquadTransportRelayHost(relayAddress: string, joinCode: string): Promise<SquadTransportStatus> {
+  const status = normalizeTransportStatus(await invokeSquadTransport<Partial<SquadTransportStatus>>("start_squad_transport_relay_host", {
+    relayAddress,
+    joinCode,
+  }));
+  currentTransportStatus = status;
+  return status;
+}
+
 export async function startSquadTransportJoin(hostAddress: string): Promise<SquadTransportStatus> {
   const status = normalizeTransportStatus(await invokeSquadTransport<Partial<SquadTransportStatus>>("start_squad_transport_join", {
     hostAddress,
+  }));
+  currentTransportStatus = status;
+  return status;
+}
+
+export async function startSquadTransportBackendJoin(
+  joinCode: string,
+  callsign?: string | null,
+  backendAddress = getConfiguredChaosCoreBackendAddress(),
+): Promise<SquadTransportStatus> {
+  const status = normalizeTransportStatus(await invokeSquadTransport<Partial<SquadTransportStatus>>("start_squad_transport_backend_join", {
+    backendAddress: backendAddress ?? null,
+    joinCode,
+    callsign: callsign?.trim() ? callsign.trim() : null,
+  }));
+  currentTransportStatus = status;
+  return status;
+}
+
+export async function startSquadTransportRelayJoin(relayAddress: string, joinCode: string): Promise<SquadTransportStatus> {
+  const status = normalizeTransportStatus(await invokeSquadTransport<Partial<SquadTransportStatus>>("start_squad_transport_relay_join", {
+    relayAddress,
+    joinCode,
   }));
   currentTransportStatus = status;
   return status;

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "createdAt": "2026-04-12T05:18:16.366Z",
+  "updatedAt": "2026-04-12T05:32:16.680Z",
+  "id": "shield_pattern_shield",
+  "name": "Pattern Shield",
+  "description": "A basic shield used by the Fairhaven military. It has a striped pattern on it, with rivets around the edge for durability.",
+  "slot": "weapon",
+  "isMechanical": false,
+  "stats": {
+    "atk": 0,
+    "def": 4,
+    "agi": 0,
+    "acc": 0,
+    "hp": 0
+  },
+  "cardsGranted": [
+    "guard_self"
+  ],
+  "wear": 0,
+  "inventory": {
+    "massKg": 1,
+    "bulkBu": 2,
+    "powerW": 3,
+    "startingOwned": true
+  },
+  "metadata": {},
+  "weaponType": "shield"
+}

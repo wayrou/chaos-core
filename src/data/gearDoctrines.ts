@@ -3,7 +3,9 @@
 // Behavior/intent layer for gear builder system
 // ============================================================================
 
-export type IntentTag = "assault" | "skirmish" | "suppression" | "sustain" | "control";
+import { createEmptyResourceWallet, type ResourceWallet } from "../core/resources";
+
+export type IntentTag = "assault" | "skirmish" | "suppression" | "sustain" | "control" | "mobility";
 
 export interface GearDoctrine {
   id: string;
@@ -23,18 +25,15 @@ export interface GearDoctrine {
   procBias?: number; // -0.1 to +0.1, affects proc systems
   
   // Build cost modifier (adds to chassis base cost)
-  buildCostModifier: {
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  buildCostModifier: ResourceWallet;
   
   // Flavor text rules (v1: text only, no heavy logic)
   doctrineRules?: string;
   
   // Description
   description: string;
+  unlockAfterFloor?: number;
+  requiredQuestIds?: string[];
 }
 
 // ============================================================================
@@ -49,12 +48,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     intentTags: ["assault"],
     stabilityModifier: -10,
     strainBias: 0.2,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 5,
       wood: 2,
       chaosShards: 0,
       steamComponents: 1,
-    },
+    }),
     doctrineRules: "Assault Doctrine: Cards cost 20% more strain. Gain bonus damage on first attack each turn.",
     description: "Optimized for aggressive engagements. Higher strain costs but increased offensive output.",
   },
@@ -65,12 +64,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     intentTags: ["suppression", "control"],
     stabilityModifier: -5,
     procBias: 0.1,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 3,
       wood: 1,
       chaosShards: 1,
       steamComponents: 2,
-    },
+    }),
     doctrineRules: "Suppression Doctrine: Area effect cards gain +10% proc chance. Reduced movement penalties.",
     description: "Designed for area control. Enhanced proc rates on suppression abilities.",
   },
@@ -81,12 +80,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     intentTags: ["skirmish", "mobility"],
     stabilityModifier: 5,
     strainBias: -0.1,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 2,
       wood: 3,
       chaosShards: 0,
       steamComponents: 1,
-    },
+    }),
     doctrineRules: "Skirmish Doctrine: Movement cards cost 10% less strain. +1 move range on first move each turn.",
     description: "Emphasizes mobility and efficiency. Lower strain costs, improved movement capabilities.",
   },
@@ -97,12 +96,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     intentTags: ["sustain"],
     stabilityModifier: 15,
     strainBias: -0.15,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 4,
       wood: 2,
       chaosShards: 0,
       steamComponents: 1,
-    },
+    }),
     doctrineRules: "Sustain Doctrine: All cards cost 15% less strain. Gain +5 stability. Reduced wear on equipment.",
     description: "Built for long engagements. Lower strain costs and higher stability for sustained operations.",
   },
@@ -113,12 +112,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     intentTags: ["control"],
     stabilityModifier: 0,
     procBias: 0.15,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 3,
       wood: 1,
       chaosShards: 2,
       steamComponents: 3,
-    },
+    }),
     doctrineRules: "Control Doctrine: Debuff cards gain +15% proc chance. Status effects last 1 turn longer.",
     description: "Focused on battlefield control. Enhanced effectiveness of debuff and status effects.",
   },
@@ -128,12 +127,12 @@ export const ALL_DOCTRINES: GearDoctrine[] = [
     shortDescription: "No specialization, reliable baseline",
     intentTags: ["assault", "sustain"],
     stabilityModifier: 5,
-    buildCostModifier: {
+    buildCostModifier: createEmptyResourceWallet({
       metalScrap: 0,
       wood: 0,
       chaosShards: 0,
       steamComponents: 0,
-    },
+    }),
     doctrineRules: "Balanced Doctrine: No special bonuses or penalties. Reliable performance across all situations.",
     description: "No specialization. Solid baseline performance without tradeoffs.",
   },

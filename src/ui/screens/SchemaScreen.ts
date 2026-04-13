@@ -7,17 +7,32 @@ import {
   formatResourceWalletInline,
   formatRoomTagLabel,
   getOrderedSchemaCoreTypes,
+  getOrderedSchemaFieldAssetTypes,
   getOrderedSchemaFortificationTypes,
   getSchemaUnlockState,
+  isFieldAssetUnlocked,
+  SCHEMA_FIELD_ASSET_DEFINITIONS,
   SCHEMA_CORE_DEFINITIONS,
   SCHEMA_FORTIFICATION_DEFINITIONS,
   unlockSchemaCoreTypeInState,
+  unlockSchemaFieldAssetInState,
   unlockSchemaFortificationInState,
 } from "../../core/schemaSystem";
-import { CoreType, FortificationType } from "../../core/types";
+import { CoreType, FieldAssetType, FortificationType } from "../../core/types";
 import { getSchemaCoreUnlockFloorOrdinal, isSchemaCoreTierAvailable } from "../../core/campaign";
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { showSystemPing } from "../components/systemPing";
+import {
+  formatResourceLabel,
+  getResourceEntries,
+  RESOURCE_KEYS,
+} from "../../core/resources";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+} from "../../core/session";
 import {
   BaseCampReturnTo,
   getBaseCampReturnLabel,
@@ -116,19 +131,6 @@ function attachSchemaMaterialsWindow(): void {
   };
 }
 
-function formatResourceLabel(key: "metalScrap" | "wood" | "chaosShards" | "steamComponents"): string {
-  switch (key) {
-    case "metalScrap":
-      return "Metal Scrap";
-    case "wood":
-      return "Wood";
-    case "chaosShards":
-      return "Chaos Shards";
-    case "steamComponents":
-      return "Steam Components";
-  }
-}
-
 function formatNetworkOutputLine(
   label: string,
   amount: number | undefined,
@@ -147,12 +149,7 @@ function formatNetworkOutputLine(
 function formatResourceCostWallet(
   cost: Partial<ReturnType<typeof getGameState>["resources"]> | undefined,
 ): string {
-  const parts = [
-    cost?.metalScrap ? `${cost.metalScrap} Metal Scrap` : null,
-    cost?.wood ? `${cost.wood} Wood` : null,
-    cost?.chaosShards ? `${cost.chaosShards} Chaos Shards` : null,
-    cost?.steamComponents ? `${cost.steamComponents} Steam Components` : null,
-  ].filter(Boolean);
+  const parts = getResourceEntries(cost).map((entry) => `${entry.amount} ${entry.label}`);
 
   return parts.length > 0 ? parts.join(" // ") : "No material cost";
 }
@@ -170,16 +167,14 @@ function formatUnlockCostLine(
 }
 
 function canAffordUnlock(
-  wad: number,
-  resources: ReturnType<typeof getGameState>["resources"],
+  state: ReturnType<typeof getGameState>,
   wadCost: number | undefined,
   resourceCost: Partial<ReturnType<typeof getGameState>["resources"]> | undefined,
 ): boolean {
-  return wad >= (wadCost ?? 0)
-    && resources.metalScrap >= (resourceCost?.metalScrap ?? 0)
-    && resources.wood >= (resourceCost?.wood ?? 0)
-    && resources.chaosShards >= (resourceCost?.chaosShards ?? 0)
-    && resources.steamComponents >= (resourceCost?.steamComponents ?? 0);
+  return canSessionAffordCost(state, {
+    wad: wadCost ?? 0,
+    resources: resourceCost,
+  });
 }
 
 function renderCoreAuthorizationCards(): string {
@@ -206,7 +201,7 @@ function renderCoreAuthorizationCards(): string {
       formatNetworkOutputLine("Comms Output", definition.commsOutputBw, definition.commsOutputMode, " BW"),
       formatNetworkOutputLine("Supply Output", definition.supplyOutputCrates, definition.supplyOutputMode, " crates"),
     ].filter((entry): entry is string => Boolean(entry));
-    const canAfford = canAffordUnlock(state.wad ?? 0, state.resources, definition.unlockWadCost, definition.unlockCost);
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
     const preferredTags = (definition.preferredRoomTags ?? []).map((tag) => formatRoomTagLabel(tag)).join(" // ");
 
     return `
@@ -269,7 +264,7 @@ function renderFortificationAuthorizationCards(): string {
       definition.unlockWadCost,
       definition.unlockCost,
     );
-    const canAfford = canAffordUnlock(state.wad ?? 0, state.resources, definition.unlockWadCost, definition.unlockCost);
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
     const preferredTags = (definition.preferredRoomTags ?? []).map((tag) => formatRoomTagLabel(tag)).join(" // ");
 
     return `
@@ -304,53 +299,57 @@ function renderFortificationAuthorizationCards(): string {
   }).join("");
 }
 
-function renderFieldAssetPlaceholderCards(): string {
-  const placeholderCards = [
-    {
-      kicker: "FIELD ASSET",
-      title: "Authorization Queue Offline",
-      state: "PLANNED",
-      copy: "Spend Wad and Haven materials here to unlock deployable Field Assets once this S.C.H.E.M.A. slice comes online.",
-      meta: [
-        "Planned flow: authorize support packages directly from this tab.",
-        "Future spend sink: resource-backed unlocks for operation-side utility assets.",
-        "Current release: placeholder only. No Field Assets are unlockable yet.",
-      ],
-      footer: "This section is reserved for future Field Asset unlock spending.",
-      actionLabel: "Field Assets Coming Soon",
-    },
-    {
-      kicker: "DEPLOYMENT",
-      title: "Future Asset Catalog",
-      state: "QUEUE",
-      copy: "Unlocked Field Assets will appear here for quick review before they are wired into operation and theater deployment flows.",
-      meta: [
-        "Intended use: unlock first in S.C.H.E.M.A., then deploy from live operation tooling.",
-        "Budget source: the Available Materials panel at left.",
-        "Status: placeholder catalog entry.",
-      ],
-      footer: "Use the C.O.R.E. and fortification tabs for live authorizations today.",
-      actionLabel: "Await Catalog Sync",
-    },
-  ] as const;
+function renderFieldAssetAuthorizationCards(): string {
+  const state = getGameState();
+  const schema = getSchemaUnlockState(state);
+  const orderedFieldAssetTypes = orderItemsUnlockedFirst(
+    getOrderedSchemaFieldAssetTypes(),
+    (fieldAssetType) => schema.unlockedFieldAssetTypes.includes(fieldAssetType),
+  );
 
-  return placeholderCards.map((card) => `
-    <article class="schema-screen__auth-card schema-screen__auth-card--locked">
-      <div class="schema-screen__auth-card-top">
-        <div>
-          <div class="schema-screen__auth-card-kicker">${card.kicker}</div>
-          <h3 class="schema-screen__auth-card-title">${card.title}</h3>
+  return orderedFieldAssetTypes.map((fieldAssetType) => {
+    const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[fieldAssetType];
+    if (!definition) {
+      return "";
+    }
+
+    const unlocked = isFieldAssetUnlocked(state, fieldAssetType);
+    const unlockCost = formatUnlockCostLine(
+      definition.unlockWadCost,
+      definition.unlockCost,
+    );
+    const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
+
+    return `
+      <article class="schema-screen__auth-card ${unlocked ? "schema-screen__auth-card--unlocked" : "schema-screen__auth-card--locked"}">
+        <div class="schema-screen__auth-card-top">
+          <div>
+            <div class="schema-screen__auth-card-kicker">FIELD ASSET</div>
+            <h3 class="schema-screen__auth-card-title">${definition.displayName}</h3>
+          </div>
+          <div class="schema-screen__auth-card-state schema-screen__auth-card-state--${unlocked ? "online" : "locked"}">
+            ${unlocked ? "AUTHORIZED" : "LOCKED"}
+          </div>
         </div>
-        <div class="schema-screen__auth-card-state schema-screen__auth-card-state--locked">${card.state}</div>
-      </div>
-      <p class="schema-screen__auth-card-copy">${card.copy}</p>
-      <div class="schema-screen__auth-card-meta">
-        ${card.meta.map((line) => `<span>${line}</span>`).join("")}
-      </div>
-      <div class="schema-screen__auth-card-footer">${card.footer}</div>
-      <button class="schema-screen__unlock-btn" type="button" disabled>${card.actionLabel}</button>
-    </article>
-  `).join("");
+        <p class="schema-screen__auth-card-copy">${definition.description}</p>
+        <div class="schema-screen__auth-card-meta">
+          <span>Fabrication Cost: ${formatResourceCostWallet(definition.buildCost)}</span>
+          <span>Role: ${definition.tacticalRole}</span>
+          <span>Deploy from Theater Command -> Tactical Map after a room is secured.</span>
+        </div>
+        ${unlocked
+          ? `<div class="schema-screen__auth-card-footer">Available now in room Tactical Map tabs for persistent preparation.</div>`
+          : `
+            <div class="schema-screen__auth-card-footer">
+              Unlock Cost: ${unlockCost}
+            </div>
+            <button class="schema-screen__unlock-btn" type="button" data-schema-unlock-field-asset="${fieldAssetType}" ${canAfford ? "" : "disabled"}>
+              Authorize ${definition.displayName}
+            </button>
+          `}
+      </article>
+    `;
+  }).join("");
 }
 
 function renderSchemaTabs(
@@ -360,7 +359,7 @@ function renderSchemaTabs(
   const tabs: Array<{ id: SchemaTabId; label: string; meta: string }> = [
     { id: "core", label: "C.O.R.E.", meta: `${schema.unlockedCoreTypes.length} live` },
     { id: "fortification", label: "Fortifications", meta: `${schema.unlockedFortificationPips.length} live` },
-    { id: "field-assets", label: "Field Assets", meta: "planned" },
+    { id: "field-assets", label: "Field Assets", meta: `${schema.unlockedFieldAssetTypes.length} live` },
   ];
 
   return `
@@ -395,8 +394,8 @@ function getSchemaSectionContent(
     case "field-assets":
       return {
         title: "Field Asset Authorizations",
-        count: "Placeholder",
-        bodyHtml: renderFieldAssetPlaceholderCards(),
+        count: `${schema.unlockedFieldAssetTypes.length} authorized`,
+        bodyHtml: renderFieldAssetAuthorizationCards(),
       };
     case "core":
     default:
@@ -469,6 +468,26 @@ function attachSchemaListeners(returnTo: BaseCampReturnTo): void {
     });
   });
 
+  document.querySelectorAll<HTMLElement>("[data-schema-unlock-field-asset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const fieldAssetType = button.getAttribute("data-schema-unlock-field-asset") as FieldAssetType | null;
+      if (!fieldAssetType) {
+        return;
+      }
+
+      const scrollTop = getSchemaScrollPosition();
+      const outcome = unlockSchemaFieldAssetInState(getGameState(), fieldAssetType);
+      updateGameState(() => outcome.state);
+      showSystemPing({
+        type: outcome.success ? "success" : "error",
+        title: outcome.success ? "S.C.H.E.M.A. Authorization Complete" : "S.C.H.E.M.A. Authorization Failed",
+        message: outcome.message,
+        channel: "schema-auth",
+      });
+      renderSchemaScreen(returnTo, scrollTop);
+    });
+  });
+
   registerBaseCampReturnHotkey("schema-screen", returnTo, {
     allowFieldEKey: true,
     activeSelector: ".schema-screen",
@@ -484,7 +503,9 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
   clearControllerContext();
 
   const state = getGameState();
-  const resources = state.resources;
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  const resources = wallet.resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
   const schema = getSchemaUnlockState(state);
   const selectedTab = getResolvedSchemaTab(activeSchemaTab);
   activeSchemaTab = selectedTab;
@@ -517,11 +538,14 @@ export function renderSchemaScreen(returnTo: BaseCampReturnTo = "basecamp", rest
               <div class="schema-screen__resource-list">
                 <div class="schema-screen__resource-item">
                   <span class="schema-screen__resource-label">Wad</span>
-                  <span class="schema-screen__resource-value">${state.wad}</span>
+                  <span class="schema-screen__resource-value">${wallet.wad}</span>
                 </div>
-                ${(["metalScrap", "wood", "chaosShards", "steamComponents"] as const).map((key) => `
+                ${RESOURCE_KEYS.map((key) => `
                   <div class="schema-screen__resource-item">
-                    <span class="schema-screen__resource-label">${formatResourceLabel(key)}</span>
+                    <div class="schema-screen__resource-main">
+                      <img src="${fallbackInventoryIcon}" alt="" class="schema-screen__resource-icon" aria-hidden="true" />
+                      <span class="schema-screen__resource-label">${formatResourceLabel(key)}</span>
+                    </div>
                     <span class="schema-screen__resource-value">${resources[key]}</span>
                   </div>
                 `).join("")}

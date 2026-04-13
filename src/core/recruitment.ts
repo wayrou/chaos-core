@@ -9,13 +9,16 @@
 // ============================================================================
 
 import {
+  GameState,
   UnitId,
   RecruitmentCandidate,
+  Unit,
   UnitAffinities,
   GUILD_ROSTER_LIMITS,
 } from "./types";
 import { ClassId, getClassDefinition } from "./classes";
 import { createDefaultAffinities } from "./affinity";
+import { canSessionAffordCost, spendSessionCost } from "./session";
 
 // ============================================================================
 // TYPES
@@ -262,8 +265,8 @@ function calculateContractCost(pwr: number, archetype: CandidateArchetype): numb
 export function hireCandidate(
   candidateId: string,
   candidates: RecruitmentCandidate[],
-  state: any
-): { success: boolean; error?: string } {
+  state: GameState,
+): { success: boolean; error?: string; state?: GameState } {
   const candidate = candidates.find((c) => c.id === candidateId);
   if (!candidate) {
     return { success: false, error: "Candidate not found" };
@@ -279,17 +282,18 @@ export function hireCandidate(
   }
 
   // Check WAD cost
-  if (state.wad < candidate.contractCost) {
+  const localWalletHasFunds = canSessionAffordCost(state, { wad: candidate.contractCost });
+  if (!localWalletHasFunds) {
     return {
       success: false,
-      error: `Insufficient WAD. Need ${candidate.contractCost}, have ${state.wad}`,
+      error: `Insufficient WAD. Need ${candidate.contractCost}.`,
     };
   }
 
   // Create unit from candidate
   const unitId: UnitId = `unit_${candidate.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
   
-  const newUnit = {
+  const newUnit: Unit & { stats: typeof candidate.stats } = {
     id: unitId,
     name: candidate.name,
     isEnemy: false,
@@ -306,7 +310,8 @@ export function hireCandidate(
     pwr: candidate.pwr,
     affinities: { ...candidate.affinities },
     loadout: {
-      weapon: null,
+      primaryWeapon: null,
+      secondaryWeapon: null,
       helmet: null,
       chestpiece: null,
       accessory1: null,
@@ -314,24 +319,30 @@ export function hireCandidate(
     },
   };
 
-  // Add to roster
-  state.unitsById = state.unitsById || {};
-  state.unitsById[unitId] = newUnit;
-
-  // Add to profile roster
-  if (!state.profile.rosterUnitIds) {
-    state.profile.rosterUnitIds = [];
+  const spendResult = spendSessionCost(state, { wad: candidate.contractCost });
+  if (!spendResult.success) {
+    return {
+      success: false,
+      error: `Insufficient WAD. Need ${candidate.contractCost}.`,
+    };
   }
-  state.profile.rosterUnitIds.push(unitId);
-
-  // Deduct WAD
-  state.wad -= candidate.contractCost;
 
   // Remove candidate from pool
   const updatedCandidates = candidates.filter((c) => c.id !== candidateId);
-  state.recruitmentCandidates = updatedCandidates;
+  const nextState: GameState = {
+    ...spendResult.state,
+    unitsById: {
+      ...(spendResult.state.unitsById || {}),
+      [unitId]: newUnit,
+    },
+    profile: {
+      ...spendResult.state.profile,
+      rosterUnitIds: [...(spendResult.state.profile.rosterUnitIds || []), unitId],
+    },
+    recruitmentCandidates: updatedCandidates,
+  };
 
-  return { success: true };
+  return { success: true, state: nextState };
 }
 
 /**

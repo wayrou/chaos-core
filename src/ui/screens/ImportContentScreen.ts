@@ -20,6 +20,21 @@ function getTypeLabel(entry: InstalledTechnicaContent): string {
   if (entry.manifest.contentType === "quest") {
     return "QUEST";
   }
+  if (entry.manifest.contentType === "chatter") {
+    return "CHATTER";
+  }
+  if (entry.manifest.contentType === "key_item") {
+    return "KEY ITEM";
+  }
+  if (entry.manifest.contentType === "faction") {
+    return "FACTION";
+  }
+  if (entry.manifest.contentType === "chassis") {
+    return "CHASSIS";
+  }
+  if (entry.manifest.contentType === "doctrine") {
+    return "DOCTRINE";
+  }
   if (entry.manifest.contentType === "dialogue") {
     return "DIALOGUE";
   }
@@ -64,6 +79,14 @@ function getEntryActionLabel(entry: InstalledTechnicaContent): string | null {
     return "PREVIEW";
   }
   return null;
+}
+
+function getEntryPassiveHint(entry: InstalledTechnicaContent): string {
+  if (entry.manifest.contentType === "chatter") {
+    return "Shows up in the black market, tavern, or port chatter pools.";
+  }
+
+  return "Ready for Chaos Core.";
 }
 
 function renderResultSection(results: TechnicaFileImportResult[]): string {
@@ -149,13 +172,13 @@ function renderInstalledContentSection(installedEntries: InstalledTechnicaConten
                 ${
                   entry.warnings.length > 0
                     ? `<p class="import-library-card__warnings">${entry.warnings.join(" ")}</p>`
-                    : `<p class="import-library-card__ready">Ready for Chaos Core.</p>`
+                    : `<p class="import-library-card__ready">${getEntryPassiveHint(entry)}</p>`
                 }
                 <div class="import-library-card__footer">
                   ${
                     actionLabel
                       ? `<button class="import-library-card__action" data-entry-key="${entry.key}" data-entry-action="${actionLabel.toLowerCase()}">${actionLabel}</button>`
-                      : `<span class="import-library-card__hint">Shows up on the in-game Quest Board.</span>`
+                      : `<span class="import-library-card__hint">${getEntryPassiveHint(entry)}</span>`
                   }
                 </div>
               </article>
@@ -283,6 +306,9 @@ export function renderImportContentScreen(): void {
   const enemyCount = counts.field_enemy;
   const systemsCount =
     counts.mail +
+    counts.key_item +
+    counts.chassis +
+    counts.doctrine +
     counts.npc +
     counts.gear +
     counts.item +
@@ -348,7 +374,7 @@ export function renderImportContentScreen(): void {
             <input id="importContentFileInput" type="file" accept=".zip,.json" multiple hidden />
           </div>
           <div class="import-content-notes">
-            <span>Maps open from here. Field enemies, quests, dialogue, mail, NPCs, gear, items, cards, units, operations, classes, and codex entries sync into the live runtime.</span>
+            <span>Maps open from here. Field enemies, quests, key items, dialogue, mail, NPCs, gear, items, cards, units, operations, classes, and codex entries sync into the live runtime.</span>
           </div>
         </section>
 

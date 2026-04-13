@@ -17,11 +17,26 @@ import {
   saveCampaignProgress,
 } from "./campaign";
 import {
+  buildCampaignRegionZoneName,
+  getActiveRegionPresentation,
+} from "./campaignRegions";
+import {
   ensureOperationHasTheater,
   getTheaterCoreOfflineReason,
   getTheaterUpkeepPerTick,
   isTheaterCoreOperational,
 } from "./theaterSystem";
+import {
+  addResourceWallet as addResourceWalletValues,
+  createEmptyResourceWallet,
+  RESOURCE_KEYS,
+} from "./resources";
+import {
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  grantSessionResources,
+  spendSessionCost,
+} from "./session";
 
 export interface OpsTerminalAtlasSectorState {
   theaterId: string;
@@ -114,46 +129,6 @@ const DIRECTION_ORDER: TheaterSprawlDirection[] = [
   "northwest",
 ];
 
-const SECTOR_PREFIXES = [
-  "Adaptive",
-  "Blackglass",
-  "Cinder",
-  "Fracture",
-  "Ghostline",
-  "Ironwake",
-  "Null",
-  "Procedural",
-  "Signal",
-  "Static",
-  "Veil",
-  "Warden",
-];
-
-const SECTOR_SUFFIXES = [
-  "Annex",
-  "Breach",
-  "Causeway",
-  "Gallery",
-  "Lattice",
-  "Lock",
-  "Pocket",
-  "Relay",
-  "Spine",
-  "Transit",
-  "Vault",
-  "Works",
-];
-
-const PASSIVE_EFFECTS = [
-  "Passive Benefit // Logistics caches reduce first-contact strain.",
-  "Passive Benefit // Recovery lanes improve post-fight stabilization.",
-  "Passive Flux // Sensor drift causes incomplete theater telemetry.",
-  "Passive Penalty // Heat shear disrupts long-range sightlines.",
-  "Passive Penalty // Static pockets distort support routing.",
-  "Passive Benefit // Supply rails improve salvage retention.",
-];
-
-const THREAT_LEVELS = ["Low", "Moderate", "High", "Severe", "Critical"];
 const KEY_TYPES: TheaterKeyType[] = ["triangle", "square", "circle", "spade", "star"];
 
 type SeededRng = {
@@ -217,21 +192,19 @@ function cloneAtlasState(state: OpsTerminalAtlasState): OpsTerminalAtlasState {
 }
 
 function addResourceWallet(base: ResourceWallet, delta: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: base.metalScrap + (delta.metalScrap ?? 0),
-    wood: base.wood + (delta.wood ?? 0),
-    chaosShards: base.chaosShards + (delta.chaosShards ?? 0),
-    steamComponents: base.steamComponents + (delta.steamComponents ?? 0),
-  };
+  return addResourceWalletValues(base, delta);
 }
 
 function scaleResourceWallet(wallet: Partial<ResourceWallet>, ticks: number): ResourceWallet {
-  return {
-    metalScrap: (wallet.metalScrap ?? 0) * ticks,
-    wood: (wallet.wood ?? 0) * ticks,
-    chaosShards: (wallet.chaosShards ?? 0) * ticks,
-    steamComponents: (wallet.steamComponents ?? 0) * ticks,
-  };
+  const scaled = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    scaled[key] = (wallet[key] ?? 0) * ticks;
+  });
+  return scaled;
+}
+
+function hasPositiveResourceGain(wallet: Partial<ResourceWallet> | null | undefined): boolean {
+  return RESOURCE_KEYS.some((key) => Number(wallet?.[key] ?? 0) > 0);
 }
 
 function createEmptyKeyInventory(): TheaterKeyInventory {
@@ -306,7 +279,8 @@ function getSectorCompassLabel(direction: TheaterSprawlDirection): string {
 }
 
 function formatFloorLabel(floorOrdinal: number): string {
-  return `FLOOR ${String(floorOrdinal).padStart(2, "0")} // ACTIVE DUNGEON SURVEY`;
+  const presentation = getActiveRegionPresentation(floorOrdinal);
+  return `FLOOR ${String(floorOrdinal).padStart(2, "0")} // ${presentation.regionName.toUpperCase()} SURVEY`;
 }
 
 function resolveSectorState(
@@ -365,12 +339,7 @@ function createEconomySummary(
     currentState: resolveSectorState(atlas, sector),
     tickCount: sector.theater.tickCount ?? 0,
     wadUpkeepPerTick: economy.wadUpkeep,
-    incomePerTick: {
-      metalScrap: economy.incomePerTick.metalScrap ?? 0,
-      wood: economy.incomePerTick.wood ?? 0,
-      chaosShards: economy.incomePerTick.chaosShards ?? 0,
-      steamComponents: economy.incomePerTick.steamComponents ?? 0,
-    },
+    incomePerTick: createEmptyResourceWallet(economy.incomePerTick),
   };
 }
 
@@ -393,12 +362,7 @@ function createCoreSummary(
     operational: isTheaterCoreOperational(room),
     offlineReason: getTheaterCoreOfflineReason(room),
     wadUpkeepPerTick: coreAssignment.wadUpkeepPerTick ?? 0,
-    incomePerTick: {
-      metalScrap: coreAssignment.incomePerTick?.metalScrap ?? 0,
-      wood: coreAssignment.incomePerTick?.wood ?? 0,
-      chaosShards: coreAssignment.incomePerTick?.chaosShards ?? 0,
-      steamComponents: coreAssignment.incomePerTick?.steamComponents ?? 0,
-    },
+    incomePerTick: createEmptyResourceWallet(coreAssignment.incomePerTick),
     supplyFlow: room.supplyFlow ?? 0,
     powerFlow: room.powerFlow ?? 0,
     commsFlow: room.commsFlow ?? 0,
@@ -408,10 +372,7 @@ function createCoreSummary(
 function hasEconomyActivity(summary: OpsTerminalAtlasEconomySummary): boolean {
   return (
     summary.wadUpkeepPerTick > 0
-    || summary.incomePerTick.metalScrap > 0
-    || summary.incomePerTick.wood > 0
-    || summary.incomePerTick.chaosShards > 0
-    || summary.incomePerTick.steamComponents > 0
+    || RESOURCE_KEYS.some((key) => summary.incomePerTick[key] > 0)
   );
 }
 
@@ -646,15 +607,16 @@ function buildSectorTheater(
   seed: string,
   rng: SeededRng,
 ): OpsTerminalAtlasSectorState {
+  const regionPresentation = getActiveRegionPresentation(floorOrdinal);
   const sectorId = getSectorId(floorOrdinal, sectorIndex);
   const operationId = getOperationId(floorOrdinal, sectorIndex);
   const linkedOperationId = floorOrdinal === 1 ? LEGACY_OPERATION_LINKS[sectorIndex] : undefined;
   const sectorLabel = `SECTOR ${getSectorCompassLabel(sprawlDirection)}-${String(sectorIndex + 1).padStart(2, "0")}`;
-  const zoneName = `${rng.pick(SECTOR_PREFIXES)} ${rng.pick(SECTOR_SUFFIXES)}`.toUpperCase();
+  const zoneName = buildCampaignRegionZoneName(floorOrdinal, rng.pick);
   const codename = zoneName;
-  const passiveEffectText = rng.pick(PASSIVE_EFFECTS);
-  const threatLevel = rng.pick(THREAT_LEVELS);
-  const description = `Floor ${floorOrdinal} ingress through ${sectorLabel}. Push from the HAVEN-facing uplink and stabilize the sector lattice.`;
+  const passiveEffectText = regionPresentation.passiveEffectText;
+  const threatLevel = regionPresentation.threatLevel;
+  const description = `${regionPresentation.regionName} Region // ${regionPresentation.variantLabel} // ingress through ${sectorLabel}. Push from the HAVEN-facing uplink and stabilize the sector lattice.`;
   const prototype = buildSectorOperationPrototype(
     floorOrdinal,
     floorId,
@@ -997,10 +959,10 @@ export function restartOpsTerminalAtlas(
 }
 
 export function applyWarmTheaterEconomyToState(
-  state: Pick<GameState, "wad" | "resources">,
+  state: GameState,
   activeTheaterId: string,
   tickCost: number,
-): Pick<GameState, "wad" | "resources"> {
+): GameState {
   if (tickCost <= 0) {
     return state;
   }
@@ -1017,8 +979,10 @@ export function applyWarmTheaterEconomyToState(
     return state;
   }
 
-  let wad = state.wad ?? 0;
-  let resources = { ...state.resources };
+  const playerSlot = getLocalSessionPlayerSlot(state);
+  let availableWad = getSessionResourcePool(state, playerSlot).wad;
+  let totalWadSpent = 0;
+  let totalIncomeGain = createEmptyResourceWallet();
   let mutated = false;
 
   located.floor.sectors = located.floor.sectors.map((sector) => {
@@ -1041,9 +1005,10 @@ export function applyWarmTheaterEconomyToState(
     const incomeGain = scaleResourceWallet(economy.incomePerTick, tickCost);
 
     nextSector.theater.tickCount += tickCost;
-    if (wadCost <= wad) {
-      wad -= wadCost;
-      resources = addResourceWallet(resources, incomeGain);
+    if (wadCost <= availableWad) {
+      availableWad -= wadCost;
+      totalWadSpent += wadCost;
+      totalIncomeGain = addResourceWallet(totalIncomeGain, incomeGain);
     }
 
     mutated = true;
@@ -1059,10 +1024,18 @@ export function applyWarmTheaterEconomyToState(
     opsTerminalAtlas: decorateAtlasState(atlas),
   });
 
-  return {
-    wad,
-    resources,
-  };
+  let nextState = state;
+  if (totalWadSpent > 0) {
+    const spendResult = spendSessionCost(nextState, { wad: totalWadSpent }, playerSlot);
+    if (spendResult.success) {
+      nextState = spendResult.state;
+    }
+  }
+  if (hasPositiveResourceGain(totalIncomeGain)) {
+    nextState = grantSessionResources(nextState, { resources: totalIncomeGain }, playerSlot);
+  }
+
+  return nextState;
 }
 
 export function holdPositionInOpsTerminalAtlas(
@@ -1083,8 +1056,10 @@ export function holdPositionInOpsTerminalAtlas(
     return state;
   }
 
-  let wad = state.wad ?? 0;
-  let resources = { ...state.resources };
+  const playerSlot = getLocalSessionPlayerSlot(state);
+  let availableWad = getSessionResourcePool(state, playerSlot).wad;
+  let totalWadSpent = 0;
+  let totalIncomeGain = createEmptyResourceWallet();
   let mutated = false;
 
   floor.sectors = floor.sectors.map((sector) => {
@@ -1098,9 +1073,10 @@ export function holdPositionInOpsTerminalAtlas(
     const incomeGain = scaleResourceWallet(economy.incomePerTick, resolvedTicks);
 
     nextSector.theater.tickCount += resolvedTicks;
-    if (wadCost <= wad) {
-      wad -= wadCost;
-      resources = addResourceWallet(resources, incomeGain);
+    if (wadCost <= availableWad) {
+      availableWad -= wadCost;
+      totalWadSpent += wadCost;
+      totalIncomeGain = addResourceWallet(totalIncomeGain, incomeGain);
     }
 
     mutated = true;
@@ -1116,11 +1092,18 @@ export function holdPositionInOpsTerminalAtlas(
     opsTerminalAtlas: decorateAtlasState(atlas),
   });
 
-  return {
-    ...state,
-    wad,
-    resources,
-  };
+  let nextState = state;
+  if (totalWadSpent > 0) {
+    const spendResult = spendSessionCost(nextState, { wad: totalWadSpent }, playerSlot);
+    if (spendResult.success) {
+      nextState = spendResult.state;
+    }
+  }
+  if (hasPositiveResourceGain(totalIncomeGain)) {
+    nextState = grantSessionResources(nextState, { resources: totalIncomeGain }, playerSlot);
+  }
+
+  return nextState;
 }
 
 export function getOpsTerminalAtlasSectorState(

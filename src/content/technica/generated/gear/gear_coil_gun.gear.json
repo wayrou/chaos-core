@@ -5,14 +5,13 @@
     "bulkBu": 2,
     "massKg": 4,
     "powerW": 0,
-    "startingOwned": true
+    "startingOwned": false
   },
   "isMechanical": true,
   "metadata": {
     "role": "frontline",
     "source": "Technica sample"
   },
-  "moduleSlots": 1,
   "name": "Coil Gun",
   "slot": "weapon",
   "stats": {

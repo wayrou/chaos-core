@@ -4,15 +4,96 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
- 
-    <script type="module" src="/src/main.ts" defer></script>
   </head>
 
   <body>
-  
-   <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
-  
+    <div id="app"></div>
+    <script>
+      (function () {
+        const BOOT_TIMEOUT_MS = 15000;
+        const bootState = (window.__CHAOS_CORE_BOOT__ = window.__CHAOS_CORE_BOOT__ || {
+          progress: "html-loaded",
+          startedAt: Date.now(),
+          error: null,
+        });
 
+        function hasClearedPreSplashBoot() {
+          return bootState.progress && !["html-loaded", "module-loaded", "dom-ready"].includes(bootState.progress);
+        }
+
+        function escapeHtml(value) {
+          return String(value ?? "Unknown startup failure")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+        }
+
+        function renderBootFallback(detail) {
+          if (hasClearedPreSplashBoot()) {
+            return;
+          }
+          const root = document.getElementById("app");
+          if (!root) {
+            return;
+          }
+          root.innerHTML = `
+            <div class="scrolllink-boot">
+              <div class="boot-inner boot-window">
+                <div class="boot-header">
+                  <div class="boot-window-header">
+                    <span class="boot-window-title">S/COM_OS // STARTUP RECOVERY</span>
+                    <span class="boot-window-status">[HALT]</span>
+                  </div>
+                </div>
+                <div class="boot-body">
+                  <div class="boot-logo">S/COM_OS</div>
+                  <div class="boot-subtitle">FRONTEND STARTUP FAILED</div>
+                  <div class="boot-log">
+                    <div class="boot-line"><span class="boot-prompt">S/COM&gt;</span><span class="boot-text"> ${escapeHtml(detail)}</span></div>
+                    <div class="boot-line"><span class="boot-prompt">S/COM&gt;</span><span class="boot-text"> Reload the startup pipeline to continue.</span></div>
+                  </div>
+                  <div style="margin-top:18px;display:flex;justify-content:center;">
+                    <button id="bootHtmlRecoveryRetryBtn" class="splash-skip-btn" type="button">RETRY</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+          document.getElementById("bootHtmlRecoveryRetryBtn")?.addEventListener("click", function () {
+            window.location.reload();
+          });
+        }
+
+        bootState.renderFallback = renderBootFallback;
+
+        window.addEventListener("error", function (event) {
+          const detail = event.error instanceof Error
+            ? event.error.message
+            : event.message || "Unknown startup failure";
+          bootState.error = detail;
+          renderBootFallback(detail);
+        });
+
+        window.addEventListener("unhandledrejection", function (event) {
+          const reason = event.reason instanceof Error
+            ? event.reason.message
+            : String(event.reason ?? "Unknown startup rejection");
+          bootState.error = reason;
+          renderBootFallback(reason);
+        });
+
+        window.setTimeout(function () {
+          if (hasClearedPreSplashBoot()) {
+            return;
+          }
+          renderBootFallback(
+            bootState.error || `Startup timed out before the splash screen at stage "${bootState.progress || "unknown"}" (${BOOT_TIMEOUT_MS}ms).`,
+          );
+        }, BOOT_TIMEOUT_MS);
+      })();
+    </script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

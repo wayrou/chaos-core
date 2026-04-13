@@ -15,7 +15,7 @@ describe("Training Encounter System", () => {
   });
   
   describe("createTrainingEncounter", () => {
-    it("should respect grid bounds (4-8 width, 3-6 height)", () => {
+    it("should respect grid bounds (4-10 width, 3-8 height)", () => {
       const validConfig: TrainingConfig = {
         gridW: 6,
         gridH: 4,
@@ -43,7 +43,7 @@ describe("Training Encounter System", () => {
     
     it("should reject invalid grid width (too large)", () => {
       const invalidConfig: TrainingConfig = {
-        gridW: 9, // Too large
+        gridW: 11, // Too large
         gridH: 4,
         difficulty: "normal",
         rules: { noRewards: true },
@@ -68,7 +68,7 @@ describe("Training Encounter System", () => {
     it("should reject invalid grid height (too large)", () => {
       const invalidConfig: TrainingConfig = {
         gridW: 6,
-        gridH: 7, // Too large
+        gridH: 9, // Too large
         difficulty: "normal",
         rules: { noRewards: true },
       };
@@ -136,4 +136,3 @@ describe("Training Encounter System", () => {
     });
   });
 });
-

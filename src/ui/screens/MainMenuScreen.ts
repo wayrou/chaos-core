@@ -22,15 +22,21 @@ import {
   loadGame,
 } from "../../core/saveSystem";
 import { initializeSettings } from "../../core/settings";
-import { clearControllerContext, initControllerSupport, updateFocusableElements } from "../../core/controllerSupport";
+import { clearControllerContext, initControllerSupport, registerControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { loadCraftingRecipes } from "../../core/craftingRecipes";
 import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
+import { hydrateGeneratedTechnicaRegistry } from "../../content/technica";
 import { initializeTechnicaContentLibrary } from "../../content/technica/library";
 import { setMusicCue } from "../../core/audioSystem";
 import { renderImportContentScreen } from "./ImportContentScreen";
 import chaosCoreLogo from "../../assets/cc logo.png";
 import { createDefaultCampaignProgress, saveCampaignProgress } from "../../core/campaign";
-import { clearActiveEchoRun, startEchoRunSession } from "../../core/echoRuns";
+import { clearActiveEchoRun } from "../../core/echoRuns";
+import {
+  enhanceTerminalUiButtons,
+  startTerminalTypingByIds,
+} from "../components/terminalFeedback";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
 const FLOATING_TERMINAL_TITLES = [
@@ -43,11 +49,14 @@ const FLOATING_TERMINAL_TITLES = [
 let floatingTerminalCount = 0;
 let floatingTerminalZIndex = 220;
 let cleanupMainMenuWorkspace: (() => void) | null = null;
+let cleanupMainMenuTerminalFx: (() => void) | null = null;
 
-type TerminalElements = {
-  body: HTMLElement;
-  output: HTMLElement;
-};
+function teardownMainMenuWorkspace(): void {
+  cleanupMainMenuWorkspace?.();
+  cleanupMainMenuWorkspace = null;
+  cleanupMainMenuTerminalFx?.();
+  cleanupMainMenuTerminalFx = null;
+}
 
 type MainMenuActionId =
   | "continue"
@@ -79,11 +88,20 @@ type MainMenuLayoutRecord = Partial<Record<MainMenuActionId, MainMenuButtonLayou
 
 type SavedMainMenuButtonLayoutPayload = {
   version: number;
+  viewport?: {
+    width: number;
+    height: number;
+  };
   layout: MainMenuLayoutRecord;
 };
 
+type LoadedMainMenuButtonLayout = {
+  layout: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+  viewport: { width: number; height: number } | null;
+};
+
 const MAIN_MENU_LAYOUT_STORAGE_KEY = "chaoscore_mainmenu_button_layout";
-const MAIN_MENU_LAYOUT_VERSION = 4;
+const MAIN_MENU_LAYOUT_VERSION = 5;
 const MAIN_MENU_BACKGROUND_STORAGE_KEY = "chaoscore_mainmenu_background_theme";
 const MAIN_MENU_DRAG_THRESHOLD = 6;
 const MAIN_MENU_GRID_SIZE = 4;
@@ -246,10 +264,33 @@ async function initializeGame(): Promise<void> {
     // Non-fatal - game can continue without recipes
   }
 
+  await hydrateGeneratedTechnicaRegistry();
   initializeTechnicaContentLibrary();
   
   isInitialized = true;
   console.log("[INIT] Initialization complete");
+}
+
+async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
+  const state = getGameState();
+  if (state.currentBattle?.modeContext?.kind === "echo") {
+    const { renderBattleScreen } = await import("./BattleScreen");
+    renderBattleScreen();
+    return;
+  }
+
+  if (state.echoRun && state.phase === "echo") {
+    const { renderEchoRunScreen } = await import("./EchoRunScreen");
+    renderEchoRunScreen();
+    return;
+  }
+
+  if (defaultView === "esc") {
+    renderAllNodesMenuScreen();
+    return;
+  }
+
+  renderFieldScreen("base_camp");
 }
 
 // ----------------------------------------------------------------------------
@@ -259,6 +300,7 @@ async function initializeGame(): Promise<void> {
 export async function renderMainMenu(): Promise<void> {
   await initializeGame();
   setMusicCue("main-menu");
+  teardownMainMenuWorkspace();
   
   const root = document.getElementById("app");
   if (!root) {
@@ -342,7 +384,7 @@ export async function renderMainMenu(): Promise<void> {
 
               <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
                 <span class="btn-icon">⚔</span>
-                <span class="btn-text">NEW OPERATION</span>
+                <span class="btn-text">NEW GAME</span>
               </button>
 
               ${saves.length > 0 ? `
@@ -394,6 +436,7 @@ export async function renderMainMenu(): Promise<void> {
         class="mainmenu-background-cycle"
         type="button"
         data-action="cycle-background"
+        data-controller-exclude="true"
         aria-label="Cycle title background theme"
         title="Cycle title background theme"
       >
@@ -405,6 +448,7 @@ export async function renderMainMenu(): Promise<void> {
         class="mainmenu-terminal-fab"
         type="button"
         data-action="new-terminal"
+        data-controller-exclude="true"
         aria-label="Open new S/COM_OS window"
         title="Open new S/COM_OS window"
       >
@@ -432,20 +476,270 @@ export async function renderMainMenu(): Promise<void> {
           <div class="mainmenu-modal-body" id="saveModalBody"></div>
         </div>
       </div>
+
+      <div class="mainmenu-modal" id="newOpConfirmModal" style="display: none;">
+        <div class="mainmenu-modal-content mainmenu-modal-content--confirm">
+          <div class="mainmenu-modal-header">
+            <span class="modal-title">NEW GAME</span>
+            <button class="modal-close" id="closeNewOpConfirmModal" type="button" aria-label="Close new game confirmation">âœ•</button>
+          </div>
+          <div class="mainmenu-modal-body">
+            <p class="mainmenu-confirm-copy">Starting a new game will not delete your existing saves. Continue?</p>
+            <div class="mainmenu-confirm-actions">
+              <button class="mainmenu-btn mainmenu-btn-primary" id="confirmNewOpContinueBtn" type="button" data-controller-default-focus="true">
+                <span class="btn-text">OK</span>
+              </button>
+              <button class="mainmenu-btn mainmenu-btn-secondary" id="confirmNewOpCancelBtn" type="button">
+                <span class="btn-text">CANCEL</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mainmenu-modal" id="saveOverwriteConfirmModal" style="display: none;">
+        <div class="mainmenu-modal-content mainmenu-modal-content--confirm">
+          <div class="mainmenu-modal-header">
+            <span class="modal-title">OVERWRITE SAVE</span>
+            <button class="modal-close" id="closeSaveOverwriteConfirmModal" type="button" aria-label="Close overwrite save confirmation">✕</button>
+          </div>
+          <div class="mainmenu-modal-body">
+            <p class="mainmenu-confirm-copy">Overwrite this save?</p>
+            <div class="mainmenu-confirm-actions">
+              <button class="mainmenu-btn mainmenu-btn-primary" id="confirmSaveOverwriteBtn" type="button" data-controller-default-focus="true">
+                <span class="btn-text">OVERWRITE</span>
+              </button>
+              <button class="mainmenu-btn mainmenu-btn-secondary" id="cancelSaveOverwriteBtn" type="button">
+                <span class="btn-text">CANCEL</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
   const mainMenuRoot = root.querySelector<HTMLElement>(".mainmenu-root");
   if (mainMenuRoot) {
     applyMainMenuBackgroundTheme(mainMenuRoot, getStoredMainMenuBackgroundThemeKey());
+    registerControllerContext({
+      id: "main-menu",
+      defaultMode: "focus",
+      focusRoot: () => document.querySelector<HTMLElement>(".mainmenu-root"),
+      defaultFocusSelector: 'button[data-action="continue"], button[data-action="new-op"]',
+      suppressGameplayInput: true,
+    });
   }
 
   upgradeMainMenuToWorkspace(hasContinue, saves.length > 0, mostRecentSave);
   attachMenuListeners(saves);
+  if (mainMenuRoot) {
+    enhanceTerminalUiButtons(mainMenuRoot);
+  }
   updateFocusableElements();
   
   // Start terminal animation
-  startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
+  cleanupMainMenuTerminalFx?.();
+  cleanupMainMenuTerminalFx = startTerminalAnimationByIds("terminalBody", "terminalOutput", flavorLines);
+}
+
+function getVisibleMainMenuModal(): HTMLElement | null {
+  return Array.from(document.querySelectorAll<HTMLElement>(".mainmenu-modal"))
+    .find((modal) => modal.style.display !== "none")
+    ?? null;
+}
+
+function syncMainMenuModalFocusState(activeModal: HTMLElement | null): void {
+  const mainMenuRoot = document.querySelector<HTMLElement>(".mainmenu-root");
+  if (!mainMenuRoot) {
+    return;
+  }
+
+  Array.from(mainMenuRoot.children).forEach((child) => {
+    if (!(child instanceof HTMLElement)) {
+      return;
+    }
+
+    const isModal = child.classList.contains("mainmenu-modal");
+    const isActiveModal = Boolean(activeModal && child === activeModal);
+
+    if (activeModal) {
+      if (isModal) {
+        if (isActiveModal) {
+          child.removeAttribute("data-controller-exclude");
+          child.removeAttribute("aria-hidden");
+        } else {
+          child.setAttribute("data-controller-exclude", "true");
+          child.setAttribute("aria-hidden", "true");
+        }
+      } else {
+        child.setAttribute("data-controller-exclude", "true");
+        child.setAttribute("aria-hidden", "true");
+        child.setAttribute("inert", "");
+      }
+      return;
+    }
+
+    child.removeAttribute("data-controller-exclude");
+    child.removeAttribute("aria-hidden");
+    child.removeAttribute("inert");
+  });
+}
+
+function showMainMenuModal(modalId: string, focusSelector?: string): void {
+  const modal = document.getElementById(modalId) as HTMLElement | null;
+  if (!modal) {
+    return;
+  }
+
+  modal.style.display = "flex";
+  syncMainMenuModalFocusState(modal);
+  updateFocusableElements();
+
+  requestAnimationFrame(() => {
+    const focusTarget = (focusSelector
+      ? modal.querySelector<HTMLElement>(focusSelector)
+      : null)
+      ?? modal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
+    focusTarget?.focus();
+  });
+}
+
+function hideMainMenuModal(modalId: string, restoreFocusSelector: string = 'button[data-action="new-op"]'): void {
+  const modal = document.getElementById(modalId) as HTMLElement | null;
+  if (!modal) {
+    return;
+  }
+
+  modal.style.display = "none";
+  const stillOpenModal = getVisibleMainMenuModal();
+  syncMainMenuModalFocusState(stillOpenModal);
+  updateFocusableElements();
+
+  requestAnimationFrame(() => {
+    if (stillOpenModal) {
+      const modalFocus = stillOpenModal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
+      modalFocus?.focus();
+      return;
+    }
+
+    const focusTarget = document.querySelector<HTMLElement>(restoreFocusSelector)
+      ?? document.querySelector<HTMLElement>(".mainmenu-btn");
+    focusTarget?.focus();
+  });
+}
+
+function confirmNewOperationStart(): Promise<boolean> {
+  const modal = document.getElementById("newOpConfirmModal") as HTMLElement | null;
+  const confirmBtn = document.getElementById("confirmNewOpContinueBtn") as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("confirmNewOpCancelBtn") as HTMLButtonElement | null;
+  const closeBtn = document.getElementById("closeNewOpConfirmModal") as HTMLButtonElement | null;
+
+  if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
+    return showConfirmDialog({
+      title: "START NEW GAME",
+      message: "Starting a new game will not delete your existing saves. Continue?",
+      confirmLabel: "CONTINUE",
+      cancelLabel: "CANCEL",
+      mount: () => document.querySelector(".mainmenu-root"),
+      restoreFocusSelector: 'button[data-action="new-op"]',
+    });
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", handleConfirm);
+      cancelBtn.removeEventListener("click", handleCancel);
+      closeBtn.removeEventListener("click", handleCancel);
+      modal.removeEventListener("click", handleBackdropClick);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+
+    const finish = (accepted: boolean) => {
+      cleanup();
+      hideMainMenuModal("newOpConfirmModal", 'button[data-action="new-op"]');
+      resolve(accepted);
+    };
+
+    const handleConfirm = () => finish(true);
+    const handleCancel = () => finish(false);
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (event.target === modal) {
+        finish(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    confirmBtn.addEventListener("click", handleConfirm);
+    cancelBtn.addEventListener("click", handleCancel);
+    closeBtn.addEventListener("click", handleCancel);
+    modal.addEventListener("click", handleBackdropClick);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    showMainMenuModal("newOpConfirmModal", "#confirmNewOpContinueBtn");
+  });
+}
+
+function confirmSaveOverwrite(): Promise<boolean> {
+  const modal = document.getElementById("saveOverwriteConfirmModal") as HTMLElement | null;
+  const confirmBtn = document.getElementById("confirmSaveOverwriteBtn") as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("cancelSaveOverwriteBtn") as HTMLButtonElement | null;
+  const closeBtn = document.getElementById("closeSaveOverwriteConfirmModal") as HTMLButtonElement | null;
+
+  if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
+    return showConfirmDialog({
+      title: "OVERWRITE SAVE",
+      message: "Overwrite this save?",
+      confirmLabel: "OVERWRITE",
+      cancelLabel: "CANCEL",
+      variant: "danger",
+      mount: () => document.querySelector(".mainmenu-root"),
+      restoreFocusSelector: "#saveModal .save-slot-btn, #closeSaveModal",
+    });
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", handleConfirm);
+      cancelBtn.removeEventListener("click", handleCancel);
+      closeBtn.removeEventListener("click", handleCancel);
+      modal.removeEventListener("click", handleBackdropClick);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+
+    const finish = (accepted: boolean) => {
+      cleanup();
+      hideMainMenuModal("saveOverwriteConfirmModal", "#saveModal .save-slot-btn, #closeSaveModal");
+      resolve(accepted);
+    };
+
+    const handleConfirm = () => finish(true);
+    const handleCancel = () => finish(false);
+    const handleBackdropClick = (event: MouseEvent) => {
+      if (event.target === modal) {
+        finish(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    confirmBtn.addEventListener("click", handleConfirm);
+    cancelBtn.addEventListener("click", handleCancel);
+    closeBtn.addEventListener("click", handleCancel);
+    modal.addEventListener("click", handleBackdropClick);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    showMainMenuModal("saveOverwriteConfirmModal", "#confirmSaveOverwriteBtn");
+  });
 }
 
 function buildMainMenuButtonTiles(
@@ -454,6 +748,7 @@ function buildMainMenuButtonTiles(
   mostRecentSave: SaveInfo | null,
 ): string {
   const tiles: string[] = [];
+  const nonBetaFeatureTag = '<span class="mainmenu-feature-status mainmenu-feature-status--nonbeta">NON-BETA</span>';
 
   if (hasContinue) {
     tiles.push(`
@@ -482,7 +777,7 @@ function buildMainMenuButtonTiles(
       </div>
       <button class="mainmenu-btn ${hasContinue ? "mainmenu-btn-secondary" : "mainmenu-btn-primary"} all-nodes-node-btn all-nodes-node-btn--primary" data-action="new-op" type="button">
         <span class="btn-icon node-icon">⚔</span>
-        <span class="btn-text node-label">NEW OPERATION</span>
+        <span class="btn-text node-label">NEW GAME</span>
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="new-op" aria-label="Resize new operation"></button>
     </div>
@@ -499,6 +794,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">◈</span>
         <span class="btn-text node-label">ECHO RUNS</span>
         <span class="btn-subtitle node-desc">Draft-only simulation mode</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="echo-runs" aria-label="Resize echo runs"></button>
     </div>
@@ -515,6 +811,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">COM</span>
         <span class="btn-text node-label">MULTIPLAYER</span>
         <span class="btn-subtitle node-desc">Lobby, Skirmish, Co-Op Ops</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="multiplayer" aria-label="Resize multiplayer"></button>
     </div>
@@ -531,6 +828,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">MAP</span>
         <span class="btn-text node-label">MAP BUILDER</span>
         <span class="btn-subtitle node-desc">Custom Skirmish Maps & Quick Tests</span>
+        ${nonBetaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="map-builder" aria-label="Resize map builder"></button>
     </div>
@@ -593,7 +891,23 @@ function buildMainMenuButtonTiles(
     </div>
   `);
 
-  return tiles.join("");
+  let html = tiles.join("");
+  html = html.split(' data-mainmenu-color="').join(' data-controller-exclude="true" data-mainmenu-color="');
+  html = html.split(' data-mainmenu-minimize="').join(' data-controller-exclude="true" data-mainmenu-minimize="');
+  html = html.split(' data-mainmenu-resize="').join(' data-controller-exclude="true" data-mainmenu-resize="');
+  if (hasContinue) {
+    html = html.replace('data-action="continue" type="button"', 'data-action="continue" type="button" data-controller-default-focus="true"');
+  } else {
+    html = html.replace('data-action="new-op" type="button"', 'data-action="new-op" type="button" data-controller-default-focus="true"');
+  }
+  return html;
+}
+
+function getMainMenuViewport(): { width: number; height: number } {
+  return {
+    width: Math.max(window.innerWidth, 1),
+    height: Math.max(window.innerHeight, 1),
+  };
 }
 
 function getDefaultMainMenuTileSize(actionId: MainMenuActionId): { width: number; height: number } {
@@ -635,11 +949,11 @@ function normalizeMainMenuButtonLayout(
   };
 }
 
-function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> {
+function loadSavedMainMenuButtonLayout(): LoadedMainMenuButtonLayout {
   try {
     const raw = localStorage.getItem(MAIN_MENU_LAYOUT_STORAGE_KEY);
     if (!raw) {
-      return {};
+      return { layout: {}, viewport: null };
     }
     const parsed = JSON.parse(raw) as SavedMainMenuButtonLayoutPayload | Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
     if (
@@ -651,12 +965,26 @@ function loadSavedMainMenuButtonLayout(): Partial<Record<MainMenuActionId, Parti
       && parsed.layout
       && typeof parsed.layout === "object"
     ) {
-      return parsed.layout as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>;
+      const viewport = "viewport" in parsed
+        && parsed.viewport
+        && typeof parsed.viewport === "object"
+        && typeof parsed.viewport.width === "number"
+        && Number.isFinite(parsed.viewport.width)
+        && parsed.viewport.width > 0
+        && typeof parsed.viewport.height === "number"
+        && Number.isFinite(parsed.viewport.height)
+        && parsed.viewport.height > 0
+          ? { width: parsed.viewport.width, height: parsed.viewport.height }
+          : null;
+      return {
+        layout: parsed.layout as Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>,
+        viewport,
+      };
     }
-    return {};
+    return { layout: {}, viewport: null };
   } catch (error) {
     console.warn("[MAINMENU] Failed to load button layout", error);
-    return {};
+    return { layout: {}, viewport: null };
   }
 }
 
@@ -664,6 +992,7 @@ function saveMainMenuButtonLayout(layout: Partial<Record<MainMenuActionId, MainM
   try {
     const payload: SavedMainMenuButtonLayoutPayload = {
       version: MAIN_MENU_LAYOUT_VERSION,
+      viewport: getMainMenuViewport(),
       layout,
     };
     localStorage.setItem(MAIN_MENU_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
@@ -672,39 +1001,68 @@ function saveMainMenuButtonLayout(layout: Partial<Record<MainMenuActionId, MainM
   }
 }
 
+function scaleSavedMainMenuButtonLayout(
+  layout: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>>,
+  fromViewport: { width: number; height: number },
+  toViewport: { width: number; height: number },
+): Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> {
+  const widthScale = toViewport.width / Math.max(fromViewport.width, 1);
+  const heightScale = toViewport.height / Math.max(fromViewport.height, 1);
+  const scaled: Partial<Record<MainMenuActionId, Partial<MainMenuButtonLayout>>> = {};
+
+  (Object.keys(layout) as MainMenuActionId[]).forEach((actionId) => {
+    const entry = layout[actionId];
+    if (!entry) {
+      return;
+    }
+    scaled[actionId] = {
+      ...entry,
+      x: entry.x !== undefined ? Math.round(entry.x * widthScale) : undefined,
+      y: entry.y !== undefined ? Math.round(entry.y * heightScale) : undefined,
+      width: entry.width !== undefined ? Math.round(entry.width * widthScale) : undefined,
+      height: entry.height !== undefined ? Math.round(entry.height * heightScale) : undefined,
+    };
+  });
+
+  return scaled;
+}
+
 function getDefaultMainMenuButtonLayout(
   hasContinue: boolean,
   hasLoad: boolean,
 ): Partial<Record<MainMenuActionId, MainMenuButtonLayout>> {
-  const referenceWidth = 3412;
-  const referenceHeight = 1364;
-  const scaleX = window.innerWidth / referenceWidth;
-  const scaleY = window.innerHeight / referenceHeight;
-  const scaleWidth = (value: number) => Math.round(value * scaleX);
-  const scaleHeight = (value: number) => Math.round(value * scaleY);
-  const scaledX = (value: number) => Math.round(value * scaleX);
-  const scaledY = (value: number) => Math.round(value * scaleY);
-  const continueSize = clampMainMenuTileSize(scaleWidth(387), scaleHeight(163));
-  const featuredSize = clampMainMenuTileSize(scaleWidth(359), scaleHeight(163));
-  const compactSize = clampMainMenuTileSize(scaleWidth(191), scaleHeight(61));
+  const viewport = getMainMenuViewport();
+  const layoutScale = Math.max(0.72, Math.min(1.08, Math.min(viewport.width / 1440, viewport.height / 900)));
+  const continueSize = clampMainMenuTileSize(387 * layoutScale, 163 * layoutScale);
+  const featuredSize = clampMainMenuTileSize(359 * layoutScale, 163 * layoutScale);
+  const compactSize = clampMainMenuTileSize(191 * layoutScale, 61 * layoutScale);
+  const edgeMargin = Math.max(28, Math.round(viewport.width * 0.07));
+  const topMargin = Math.max(88, Math.round(viewport.height * 0.16));
+  const bottomMargin = Math.max(72, Math.round(viewport.height * 0.1));
+  const columnGap = Math.max(32, Math.round(viewport.width * 0.032));
+  const featuredRowGap = Math.max(28, Math.round(viewport.height * 0.04));
+  const compactGap = Math.max(18, Math.round(viewport.height * 0.022));
+  const leftPrimaryX = edgeMargin;
+  const rightFeaturedX = Math.max(24, viewport.width - edgeMargin - featuredSize.width);
+  const bottomPrimaryY = Math.max(24, viewport.height - bottomMargin - continueSize.height);
   const defaults: Partial<Record<MainMenuActionId, MainMenuButtonLayout>> = {
     "echo-runs": {
-      x: scaledX(661),
-      y: scaledY(664),
+      x: rightFeaturedX,
+      y: topMargin,
       ...featuredSize,
       minimized: false,
       themeIndex: 0,
     },
     multiplayer: {
-      x: scaledX(661),
-      y: scaledY(860),
+      x: rightFeaturedX,
+      y: topMargin + featuredSize.height + featuredRowGap,
       ...featuredSize,
       minimized: false,
       themeIndex: 1,
     },
     "map-builder": {
-      x: scaledX(1044),
-      y: scaledY(860),
+      x: rightFeaturedX,
+      y: topMargin + (featuredSize.height + featuredRowGap) * 2,
       ...featuredSize,
       minimized: false,
       themeIndex: 3,
@@ -714,8 +1072,8 @@ function getDefaultMainMenuButtonLayout(
 
   if (hasContinue) {
     defaults.continue = {
-      x: scaledX(129),
-      y: scaledY(664),
+      x: leftPrimaryX,
+      y: bottomPrimaryY,
       ...continueSize,
       minimized: false,
       themeIndex: 3,
@@ -723,8 +1081,8 @@ function getDefaultMainMenuButtonLayout(
     compactActions.push("new-op");
   } else {
     defaults["new-op"] = {
-      x: scaledX(129),
-      y: scaledY(664),
+      x: leftPrimaryX,
+      y: bottomPrimaryY,
       ...continueSize,
       minimized: false,
       themeIndex: 3,
@@ -737,10 +1095,20 @@ function getDefaultMainMenuButtonLayout(
 
   compactActions.push("settings", "import-content", "exit");
 
+  const compactStackHeight = compactActions.length * compactSize.height + Math.max(0, compactActions.length - 1) * compactGap;
+  const compactColumnX = Math.min(
+    leftPrimaryX + continueSize.width + columnGap,
+    Math.max(24, rightFeaturedX - compactSize.width - columnGap),
+  );
+  const compactStartY = Math.max(
+    topMargin + Math.round(featuredSize.height * 0.35),
+    Math.round((viewport.height - compactStackHeight) * 0.5),
+  );
+
   compactActions.forEach((actionId, index) => {
     defaults[actionId] = {
-      x: scaledX(325),
-      y: scaledY(944 + index * 84),
+      x: compactColumnX,
+      y: compactStartY + index * (compactSize.height + compactGap),
       ...compactSize,
       minimized: false,
       themeIndex: 2,
@@ -837,9 +1205,13 @@ function upgradeMainMenuToWorkspace(
   version.textContent = APP_VERSION;
   mainMenuRoot.appendChild(version);
 
+  let currentViewport = getMainMenuViewport();
   const defaultLayout = getDefaultMainMenuButtonLayout(hasContinue, hasLoad);
-  const savedLayout = loadSavedMainMenuButtonLayout();
-  const hasSavedLayout = Object.keys(savedLayout).length > 0;
+  const loadedLayoutState = loadSavedMainMenuButtonLayout();
+  const savedLayout = loadedLayoutState.viewport
+    ? scaleSavedMainMenuButtonLayout(loadedLayoutState.layout, loadedLayoutState.viewport, currentViewport)
+    : loadedLayoutState.layout;
+  let isCustomLayout = Object.keys(savedLayout).length > 0;
   const layout = Object.fromEntries(
     Object.entries(defaultLayout).map(([actionId, fallback]) => [
       actionId,
@@ -847,6 +1219,19 @@ function upgradeMainMenuToWorkspace(
     ]),
   ) as Partial<Record<MainMenuActionId, MainMenuButtonLayout>>;
   const tiles = Array.from(workspace.querySelectorAll<HTMLElement>("[data-mainmenu-tile]"));
+  const applyDefaultLayout = () => {
+    const nextDefaults = getDefaultMainMenuButtonLayout(hasContinue, hasLoad);
+    (Object.keys(layout) as MainMenuActionId[]).forEach((actionId) => {
+      delete layout[actionId];
+    });
+    Object.entries(nextDefaults).forEach(([actionId, nextLayout]) => {
+      layout[actionId as MainMenuActionId] = nextLayout as MainMenuButtonLayout;
+    });
+  };
+  const persistLayout = () => {
+    isCustomLayout = true;
+    saveMainMenuButtonLayout(layout);
+  };
 
   const applyPositions = () => {
     const minimizedActionIds = tiles
@@ -874,14 +1259,41 @@ function upgradeMainMenuToWorkspace(
 
   requestAnimationFrame(() => {
     applyPositions();
-    if (hasSavedLayout) {
+    if (isCustomLayout) {
       saveMainMenuButtonLayout(layout);
     }
   });
 
-  window.addEventListener("resize", applyPositions, { passive: true });
+  const handleResize = () => {
+    const nextViewport = getMainMenuViewport();
+    if (nextViewport.width === currentViewport.width && nextViewport.height === currentViewport.height) {
+      return;
+    }
+
+    if (isCustomLayout) {
+      const scaledLayout = scaleSavedMainMenuButtonLayout(layout, currentViewport, nextViewport);
+      (Object.keys(scaledLayout) as MainMenuActionId[]).forEach((actionId) => {
+        const currentLayout = layout[actionId];
+        const scaledEntry = scaledLayout[actionId];
+        if (!currentLayout || !scaledEntry) {
+          return;
+        }
+        layout[actionId] = normalizeMainMenuButtonLayout(actionId, scaledEntry, currentLayout);
+      });
+      currentViewport = nextViewport;
+      applyPositions();
+      saveMainMenuButtonLayout(layout);
+      return;
+    }
+
+    currentViewport = nextViewport;
+    applyDefaultLayout();
+    applyPositions();
+  };
+
+  window.addEventListener("resize", handleResize, { passive: true });
   const cleanupCallbacks: Array<() => void> = [
-    () => window.removeEventListener("resize", applyPositions),
+    () => window.removeEventListener("resize", handleResize),
   ];
 
   tiles.forEach((tile) => {
@@ -960,7 +1372,7 @@ function upgradeMainMenuToWorkspace(
     const handleWindowPointerUp = (event: PointerEvent) => {
       if (activePointerId !== event.pointerId) return;
       if (dragged) {
-        saveMainMenuButtonLayout(layout);
+        persistLayout();
       }
       endDrag();
     };
@@ -980,7 +1392,7 @@ function upgradeMainMenuToWorkspace(
           minimized: false,
         };
         applyPositions();
-        saveMainMenuButtonLayout(layout);
+        persistLayout();
         return;
       }
       if (tile.dataset.preventClick === "true") {
@@ -1019,7 +1431,7 @@ function upgradeMainMenuToWorkspace(
       resizeBtn.releasePointerCapture(event.pointerId);
       resizePointerId = null;
       tile.classList.remove("mainmenu-action-tile--resizing");
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     const handleColorClick = (event: Event) => {
@@ -1032,7 +1444,7 @@ function upgradeMainMenuToWorkspace(
         themeIndex: (currentLayout.themeIndex + 1) % MAIN_MENU_THEMES.length,
       };
       applyMainMenuTileState(tile, layout[actionId] as MainMenuButtonLayout);
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     const handleMinimizeClick = (event: Event) => {
@@ -1051,7 +1463,7 @@ function upgradeMainMenuToWorkspace(
         };
       }
       applyPositions();
-      saveMainMenuButtonLayout(layout);
+      persistLayout();
     };
 
     tile.addEventListener("pointerdown", handlePointerDown);
@@ -1085,204 +1497,31 @@ function upgradeMainMenuToWorkspace(
 // TERMINAL ANIMATION
 // ----------------------------------------------------------------------------
 
-function getTerminalElements(bodyId: string, outputId: string): TerminalElements | null {
-  const body = document.getElementById(bodyId);
-  const output = document.getElementById(outputId);
-
-  if (!body || !output) {
-    return null;
-  }
-
-  return { body, output };
-}
-
 function isTerminalPromptLine(line: string): boolean {
   return line.startsWith(TERMINAL_PROMPT_PREFIX);
 }
 
-function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): void {
-  const elements = getTerminalElements(bodyId, outputId);
-  if (!elements) return;
-
-  const { body: terminalBody, output: terminalOutput } = elements;
-  
-  let currentLineIndex = 0;
-  
-  // Add initial lines with typing animation
-  const initialLines = flavorLines.slice(0, 8);
-  let initialDelay = 0;
-  initialLines.forEach((line) => {
-    if (line === "") {
-      setTimeout(() => {
-        addEmptyTerminalLine(terminalOutput);
-        autoScrollTerminal(terminalBody);
-      }, initialDelay);
-      initialDelay += 200;
-    } else {
-      setTimeout(() => {
-        typeTerminalLine(terminalOutput, terminalBody, line, () => {
-          autoScrollTerminal(terminalBody);
-        });
-      }, initialDelay);
-      // Estimate delay: prompt + text characters * typing speed
-      const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
-      const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
-      initialDelay += (promptLength + textLength) * 30 + 500; // 30ms per char + 500ms pause
-    }
-  });
-  currentLineIndex = initialLines.length;
-  
-  // Then continuously add new lines with typing
-  const addNextLine = () => {
-    if (currentLineIndex >= flavorLines.length) {
-      currentLineIndex = 0; // Loop back to start
-    }
-    
-    const line = flavorLines[currentLineIndex];
-    if (line === "") {
-      addEmptyTerminalLine(terminalOutput);
-      autoScrollTerminal(terminalBody);
-      setTimeout(addNextLine, 300);
-    } else {
-      typeTerminalLine(terminalOutput, terminalBody, line, () => {
-        autoScrollTerminal(terminalBody);
-        // Schedule next line after typing completes
-        const promptLength = isTerminalPromptLine(line) ? line.split('::')[0].length : 0;
-        const textLength = isTerminalPromptLine(line) ? line.split('::').slice(1).join('::').length : line.length;
-        const typingTime = (promptLength + textLength) * 30;
-        setTimeout(addNextLine, typingTime + 800); // Add pause after line completes
-      });
-    }
-    
-    currentLineIndex++;
-  };
-  
-  // Start continuous output after initial load
-  setTimeout(addNextLine, initialDelay + 1000);
-}
-
-function typeTerminalLine(container: HTMLElement, terminalBody: HTMLElement, line: string, onComplete: () => void): void {
-  if (!container.isConnected || !terminalBody.isConnected) {
-    return;
-  }
-
-  const lineDiv = document.createElement("div");
-  lineDiv.className = "terminal-line";
-  container.appendChild(lineDiv);
-  
-  // Remove existing cursor line
-  const existingCursor = container.querySelector('.terminal-cursor-line');
-  if (existingCursor) {
-    existingCursor.remove();
-  }
-  
-  if (line === "") {
-    lineDiv.innerHTML = "<br>";
-    onComplete();
-    return;
-  }
-  
-  let promptSpan: HTMLSpanElement | null = null;
-  let textSpan: HTMLSpanElement | null = null;
-  
-  if (isTerminalPromptLine(line)) {
-    const parts = line.split('::');
-    const prompt = parts[0];
-    const text = parts.slice(1).join('::');
-    
-    promptSpan = document.createElement("span");
-    promptSpan.className = "terminal-prompt";
-    lineDiv.appendChild(promptSpan);
-    
-    textSpan = document.createElement("span");
-    textSpan.className = "terminal-text";
-    lineDiv.appendChild(textSpan);
-    
-    // Type prompt first
-    typeText(promptSpan, prompt, 30, () => {
-      // Then type text
-      if (textSpan) {
-        typeText(textSpan, text, 30, () => {
-          addCursorLine(container);
-          onComplete();
-        });
-      } else {
-        addCursorLine(container);
-        onComplete();
+function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLines: string[]): () => void {
+  return startTerminalTypingByIds(bodyId, outputId, flavorLines, {
+    cursorPrompt: TERMINAL_PROMPT_PREFIX,
+    baseCharDelayMs: 20,
+    minCharDelayMs: 7,
+    accelerationPerCharMs: 0.65,
+    pauseAfterLineMs: 220,
+    pauseAfterEmptyLineMs: 120,
+    maxLines: 18,
+    loop: true,
+    scrollBehavior: "auto",
+    promptParser: (line) => {
+      if (!isTerminalPromptLine(line)) {
+        return null;
       }
-    });
-  } else {
-    textSpan = document.createElement("span");
-    textSpan.className = "terminal-text";
-    lineDiv.appendChild(textSpan);
-    
-    typeText(textSpan, line, 30, () => {
-      addCursorLine(container);
-      onComplete();
-    });
-  }
-  
-  // Auto-scroll during typing
-  const scrollInterval = setInterval(() => {
-    autoScrollTerminal(terminalBody);
-  }, 100);
-  
-  // Clear interval when done
-  setTimeout(() => clearInterval(scrollInterval), (line.length * 30) + 1000);
-}
-
-function typeText(element: HTMLElement, text: string, delay: number, onComplete: () => void): void {
-  let index = 0;
-  
-  const typeChar = () => {
-    if (!element.isConnected) {
-      return;
-    }
-
-    if (index < text.length) {
-      element.textContent = text.substring(0, index + 1);
-      index++;
-      setTimeout(typeChar, delay);
-    } else {
-      onComplete();
-    }
-  };
-  
-  typeChar();
-}
-
-function addEmptyTerminalLine(container: HTMLElement): void {
-  const lineDiv = document.createElement("div");
-  lineDiv.className = "terminal-line";
-  lineDiv.innerHTML = "<br>";
-  container.appendChild(lineDiv);
-}
-
-function addCursorLine(container: HTMLElement): void {
-  if (!container.isConnected) {
-    return;
-  }
-
-  // Remove existing cursor line
-  const existingCursor = container.querySelector('.terminal-cursor-line');
-  if (existingCursor) {
-    existingCursor.remove();
-  }
-  
-  const cursorLine = document.createElement("div");
-  cursorLine.className = "terminal-line terminal-cursor-line";
-  cursorLine.innerHTML = `
-    <span class="terminal-prompt">S/COM&gt;</span>
-    <span class="terminal-text"><span class="terminal-cursor">_</span></span>
-  `;
-  container.appendChild(cursorLine);
-}
-
-function autoScrollTerminal(terminalBody: HTMLElement): void {
-  // Smooth scroll to bottom
-  terminalBody.scrollTo({
-    top: terminalBody.scrollHeight,
-    behavior: 'smooth'
+      const parts = line.split("::");
+      return {
+        prompt: parts[0],
+        text: parts.slice(1).join("::"),
+      };
+    },
   });
 }
 
@@ -1305,11 +1544,11 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       
       const result = await loadMostRecent();
       if (result.success && result.state) {
-        clearActiveEchoRun();
         saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
         setGameState(result.state);
         enableAutosave(() => getGameState());
-        renderFieldScreen("base_camp");
+        teardownMainMenuWorkspace();
+        void resumeLoadedGame("field");
       } else {
         alert("Failed to load save: " + (result.error ?? "Unknown error"));
         continueBtn.disabled = false;
@@ -1323,7 +1562,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (newOpBtn) {
     newOpBtn.addEventListener("click", async () => {
       if (saves.length > 0) {
-        if (!confirm("Starting a new operation will not delete your existing saves. Continue?")) {
+        if (!(await confirmNewOperationStart())) {
           return;
         }
       }
@@ -1343,7 +1582,14 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       }
 
       enableAutosave(() => getGameState());
-      renderFieldScreen("base_camp");
+      teardownMainMenuWorkspace();
+      const { renderStoryPlaceholderScreen } = await import("./StoryPlaceholderScreen");
+      renderStoryPlaceholderScreen({
+        kind: "opening",
+        onContinue: () => {
+          renderFieldScreen("base_camp");
+        },
+      });
 
       newOpBtn.disabled = false;
       newOpBtn.innerHTML = originalHtml;
@@ -1353,10 +1599,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const echoRunsBtn = root.querySelector<HTMLButtonElement>('button[data-action="echo-runs"]');
   if (echoRunsBtn) {
     echoRunsBtn.addEventListener("click", async () => {
-      clearActiveEchoRun();
-      startEchoRunSession();
-      const { renderEchoRunScreen } = await import("./EchoRunScreen");
-      renderEchoRunScreen();
+      const { renderEchoRunTitleScreen } = await import("./EchoRunTitleScreen");
+      teardownMainMenuWorkspace();
+      renderEchoRunTitleScreen();
     });
   }
 
@@ -1364,6 +1609,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (multiplayerBtn) {
     multiplayerBtn.addEventListener("click", async () => {
       const { renderCommsArrayScreen } = await import("./CommsArrayScreen");
+      teardownMainMenuWorkspace();
       renderCommsArrayScreen("menu");
     });
   }
@@ -1372,6 +1618,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (mapBuilderBtn) {
     mapBuilderBtn.addEventListener("click", async () => {
       const { renderMapBuilderScreen } = await import("./MapBuilderScreen");
+      teardownMainMenuWorkspace();
       renderMapBuilderScreen();
     });
   }
@@ -1388,6 +1635,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const settingsBtn = root.querySelector<HTMLButtonElement>('button[data-action="settings"]');
   if (settingsBtn) {
     settingsBtn.addEventListener("click", () => {
+      teardownMainMenuWorkspace();
       renderSettingsScreen("menu");
     });
   }
@@ -1395,6 +1643,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const importContentBtn = root.querySelector<HTMLButtonElement>('button[data-action="import-content"]');
   if (importContentBtn) {
     importContentBtn.addEventListener("click", () => {
+      teardownMainMenuWorkspace();
       renderImportContentScreen();
     });
   }
@@ -1431,29 +1680,33 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const closeLoadModal = document.getElementById("closeLoadModal");
   if (closeLoadModal) {
     closeLoadModal.addEventListener("click", () => {
-      const modal = document.getElementById("loadModal");
-      if (modal) modal.style.display = "none";
+      hideMainMenuModal("loadModal", 'button[data-action="load"]');
     });
   }
   
   const closeSaveModal = document.getElementById("closeSaveModal");
   if (closeSaveModal) {
     closeSaveModal.addEventListener("click", () => {
-      const modal = document.getElementById("saveModal");
-      if (modal) modal.style.display = "none";
+      hideMainMenuModal("saveModal", 'button[data-action="settings"]');
     });
   }
   
   // Modal backdrop clicks
   document.getElementById("loadModal")?.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
-      (e.target as HTMLElement).style.display = "none";
+      hideMainMenuModal("loadModal", 'button[data-action="load"]');
     }
   });
   
   document.getElementById("saveModal")?.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
-      (e.target as HTMLElement).style.display = "none";
+      hideMainMenuModal("saveModal", 'button[data-action="settings"]');
+    }
+  });
+
+  document.getElementById("saveOverwriteConfirmModal")?.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).classList.contains("mainmenu-modal")) {
+      hideMainMenuModal("saveOverwriteConfirmModal", "#saveModal .save-slot-btn, #closeSaveModal");
     }
   });
 }
@@ -1498,17 +1751,13 @@ function createFloatingTerminalWindow(): void {
   `;
 
   floatingLayer.appendChild(windowEl);
+  enhanceTerminalUiButtons(windowEl);
 
   windowEl.addEventListener("pointerdown", () => {
     windowEl.style.zIndex = String(++floatingTerminalZIndex);
   });
 
   const closeBtn = windowEl.querySelector<HTMLButtonElement>(`button[data-close-terminal="${terminalId}"]`);
-  if (closeBtn) {
-    closeBtn.addEventListener("click", () => {
-      windowEl.remove();
-    });
-  }
 
   const floatingFlavorLines = [
     `${TERMINAL_PROMPT_PREFIX} WINDOW_STATUS   :: Auxiliary console online.`,
@@ -1521,7 +1770,13 @@ function createFloatingTerminalWindow(): void {
     `${TERMINAL_PROMPT_PREFIX} USER_HINT       :: Use ✕ to dismiss the pane.`,
   ];
 
-  startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
+  const cleanupFloatingTerminal = startTerminalAnimationByIds(terminalBodyId, terminalOutputId, floatingFlavorLines);
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      cleanupFloatingTerminal();
+      windowEl.remove();
+    });
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1565,12 +1820,12 @@ function openLoadModal(saves: SaveInfo[]): void {
         if (slot) {
           const result = await loadGame(slot);
           if (result.success && result.state) {
-            clearActiveEchoRun();
             saveCampaignProgress(result.campaignProgress ?? createDefaultCampaignProgress());
             setGameState(result.state);
             enableAutosave(() => getGameState());
-            modal.style.display = "none";
-            renderAllNodesMenuScreen();
+            hideMainMenuModal("loadModal", 'button[data-action="load"]');
+            teardownMainMenuWorkspace();
+            void resumeLoadedGame("esc");
           } else {
             alert("Failed to load save: " + (result.error ?? "Unknown error"));
           }
@@ -1579,8 +1834,7 @@ function openLoadModal(saves: SaveInfo[]): void {
     }
   });
   
-  modal.style.display = "flex";
-  updateFocusableElements();
+  showMainMenuModal("loadModal", "#loadModal .load-save-btn, #closeLoadModal");
 }
 
 // ----------------------------------------------------------------------------
@@ -1637,16 +1891,16 @@ export async function openSaveModal(): Promise<void> {
       saveBtn.addEventListener("click", async () => {
         const slot = (item as HTMLElement).dataset.slot as SaveSlot;
         const isOverwrite = saveBtn.classList.contains("save-slot-btn--overwrite");
-        
-        if (isOverwrite && !confirm("Overwrite this save?")) {
+
+        if (isOverwrite && !(await confirmSaveOverwrite())) {
           return;
         }
-        
+
         const state = getGameState();
         const result = await saveGame(slot, state);
         
         if (result.success) {
-          modal.style.display = "none";
+          hideMainMenuModal("saveModal", 'button[data-action="settings"]');
           alert("Game saved successfully!");
         } else {
           alert("Failed to save: " + (result.error ?? "Unknown error"));
@@ -1655,8 +1909,7 @@ export async function openSaveModal(): Promise<void> {
     }
   });
   
-  modal.style.display = "flex";
-  updateFocusableElements();
+  showMainMenuModal("saveModal", "#saveModal .save-slot-btn, #closeSaveModal");
 }
 
 export { renderMainMenu as default };

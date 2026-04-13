@@ -22,7 +22,17 @@ import {
   getBaseCampNodeLayout,
   isBaseCampNodeUnlocked,
 } from "./baseCampBuild";
-import { getPlacedFieldDecor } from "../core/decorSystem";
+import { getFieldDecorFootprintSize, getPlacedFieldDecor, isFieldDecorBlocking } from "../core/decorSystem";
+import {
+  OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
+  OUTER_DECK_HAVEN_EXIT_OBJECT_TILE,
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  OUTER_DECK_HAVEN_EXIT_ZONE_ID,
+  OUTER_DECK_OVERWORLD_MAP_ID,
+} from "../core/outerDecks";
+import { COUNTERWEIGHT_WORKSHOP_MAP_ID, isWeaponsmithUnlocked } from "../core/weaponsmith";
+import { createOuterDeckFieldMap } from "./outerDeckMaps";
+import { createWeaponsmithWorkshopFieldMap } from "./weaponsmithWorkshopMap";
 
 function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
   for (let y = top; y < top + height; y += 1) {
@@ -35,6 +45,19 @@ function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: num
       if (tile.type === "wall") {
         tile.type = "floor";
       }
+    }
+  }
+}
+
+function setMapAreaBlocked(map: FieldMap, left: number, top: number, width: number, height: number): void {
+  for (let y = top; y < top + height; y += 1) {
+    for (let x = left; x < left + width; x += 1) {
+      const tile = map.tiles[y]?.[x];
+      if (!tile) {
+        continue;
+      }
+      tile.walkable = false;
+      tile.type = "wall";
     }
   }
 }
@@ -8050,27 +8073,40 @@ function applyBaseCampBuildLayout(map: FieldMap): void {
     moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);
   });
 
+  applyPlacedFieldBuildObjects(map);
+}
+
+function applyPlacedFieldBuildObjects(map: FieldMap): void {
+  const state = getGameState();
+
   getPlacedFieldDecor(state, map.id).forEach(({ placement, decor }) => {
+    const footprint = getFieldDecorFootprintSize(decor, placement.rotationQuarterTurns);
     map.objects.push({
       id: `field_decor_${placement.placementId}`,
       x: placement.x,
       y: placement.y,
-      width: decor.tileWidth,
-      height: decor.tileHeight,
+      width: footprint.width,
+      height: footprint.height,
       type: "decoration",
       sprite: decor.spriteKey,
       metadata: {
         name: decor.name,
         decorId: decor.id,
         placementId: placement.placementId,
+        rotationQuarterTurns: placement.rotationQuarterTurns ?? 0,
         spriteKey: decor.spriteKey,
       },
     });
+
+    if (isFieldDecorBlocking(decor.id)) {
+      setMapAreaBlocked(map, placement.x, placement.y, footprint.width, footprint.height);
+    }
   });
 }
 
 function createConfiguredBaseCampMap(): FieldMap {
   const map = cloneFieldMap(createBaseCampMap());
+  const state = getGameState();
 
   map.objects = map.objects.filter((object) => object.id !== "mini_core_station");
   map.interactionZones = map.interactionZones.filter(
@@ -8149,6 +8185,58 @@ function createConfiguredBaseCampMap(): FieldMap {
   }
 
   applyBaseCampBuildLayout(map);
+
+  // Open a south-exit lane from HAVEN into the Outer Deck overworld.
+  fillRect(map, 22, 19, 27, 23, true, "floor");
+  setTile(map, 24, 24, false, "wall");
+  setTile(map, 25, 24, false, "wall");
+
+  map.objects.push({
+    id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
+    x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
+    y: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.y,
+    width: 4,
+    height: 2,
+    type: "station",
+    sprite: "bulkhead",
+    metadata: { name: "Outer Deck Access [Beta]" },
+  });
+  map.interactionZones.unshift({
+    id: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
+    x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
+    y: OUTER_DECK_HAVEN_EXIT_SPAWN_TILE.y + 1,
+    width: 4,
+    height: 2,
+    action: "custom",
+    label: "OUTER DECKS [BETA]",
+    metadata: {
+      handlerId: "outer_deck_enter_overworld",
+      autoTrigger: true,
+    },
+  });
+
+  if (isWeaponsmithUnlocked(state)) {
+    map.objects.push({
+      id: "haven_weaponsmith_station",
+      x: 40,
+      y: 13,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "repair_bench",
+      metadata: { name: "Weaponsmith Bench" },
+    });
+    map.interactionZones.unshift({
+      id: "interact_haven_weaponsmith",
+      x: 40,
+      y: 13,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: "WEAPONSMITH",
+      metadata: { handlerId: "weaponsmith_workshop" },
+    });
+  }
 
   return map;
 }
@@ -8426,16 +8514,6 @@ function createNetworkLobbyMap(): FieldMap {
       metadata: { name: "Operations Table" },
     },
     {
-      id: "lobby_comms_uplink",
-      x: 16,
-      y: 3,
-      width: 3,
-      height: 2,
-      type: "station",
-      sprite: "uplink",
-      metadata: { name: "Comms Uplink" },
-    },
-    {
       id: "lobby_lounge_bench",
       x: 5,
       y: 10,
@@ -8484,15 +8562,6 @@ function createNetworkLobbyMap(): FieldMap {
         action: "custom",
         label: "OPERATIONS TABLE",
         metadata: { handlerId: "lobby_ops_table" },
-      },
-      {
-        id: "network_lobby_comms_uplink",
-        x: 16,
-        y: 3,
-        width: 3,
-        height: 2,
-        action: "comms-array",
-        label: "COMMS UPLINK",
       },
     ],
   };
@@ -8577,13 +8646,32 @@ export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {
     return ensureNodeFootprintsWalkable(createKeyRoomMap(mapId));
   }
+  if (mapId === OUTER_DECK_OVERWORLD_MAP_ID) {
+    const map = createOuterDeckFieldMap(mapId) as FieldMap;
+    applyPlacedFieldBuildObjects(map);
+    return ensureNodeFootprintsWalkable(map);
+  }
+  if (typeof mapId === "string" && mapId.startsWith("outerdeck_")) {
+    const map = createOuterDeckFieldMap(mapId);
+    if (map) {
+      applyPlacedFieldBuildObjects(map);
+      return ensureNodeFootprintsWalkable(map);
+    }
+  }
+  if (mapId === COUNTERWEIGHT_WORKSHOP_MAP_ID) {
+    const map = createWeaponsmithWorkshopFieldMap();
+    applyPlacedFieldBuildObjects(map);
+    return ensureNodeFootprintsWalkable(map);
+  }
   if (mapId === "base_camp" && !isTechnicaContentDisabled("map", "base_camp")) {
     return ensureNodeFootprintsWalkable(createConfiguredBaseCampMap());
   }
-  const map = maps.get(mapId) || getImportedFieldMap(mapId);
-  if (!map) {
+  const sourceMap = maps.get(mapId) || getImportedFieldMap(mapId);
+  if (!sourceMap) {
     throw new Error(`Field map not found: ${mapId}`);
   }
+  const map = cloneFieldMap(sourceMap);
+  applyPlacedFieldBuildObjects(map);
   return ensureNodeFootprintsWalkable(map);
 }
 

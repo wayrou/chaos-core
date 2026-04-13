@@ -5,6 +5,7 @@ import {
 import { AtlasFloorMap, AtlasTheaterSummary, GameState } from "../../core/types";
 import { ensureOperationHasTheater, getTheaterStarterResources } from "../../core/theaterSystem";
 import { getGameState, updateGameState } from "../../state/gameStore";
+import { createEmptyResourceWallet, RESOURCE_KEYS } from "../../core/resources";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import {
   BaseCampReturnTo,
@@ -33,12 +34,11 @@ function mergeTheaterStarterReserve(
   currentResources: GameState["resources"],
 ): GameState["resources"] {
   const reserve = getTheaterStarterResources();
-  return {
-    metalScrap: Math.max(currentResources.metalScrap, reserve.metalScrap),
-    wood: Math.max(currentResources.wood, reserve.wood),
-    chaosShards: Math.max(currentResources.chaosShards, reserve.chaosShards),
-    steamComponents: Math.max(currentResources.steamComponents, reserve.steamComponents),
-  };
+  const merged = createEmptyResourceWallet();
+  RESOURCE_KEYS.forEach((key) => {
+    merged[key] = Math.max(currentResources[key], reserve[key]);
+  });
+  return merged;
 }
 
 function polarToCartesian(radius: number, angleDeg: number): { x: number; y: number } {

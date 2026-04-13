@@ -1,0 +1,33 @@
+{
+  "category": "defense",
+  "description": "Grant Shield to self for 2 turns.",
+  "effectFlow": {
+    "entryNodeId": "action_mnvbrt3a_zebcj4",
+    "nodes": [
+      {
+        "action": "grant_shield",
+        "amount": 1,
+        "duration": 2,
+        "family": "action",
+        "id": "action_mnvbrt3a_zebcj4",
+        "label": "Grant Shield Action"
+      }
+    ],
+    "version": 1
+  },
+  "effects": [
+    {
+      "amount": 1,
+      "duration": 2,
+      "type": "def_up"
+    }
+  ],
+  "id": "guard_self",
+  "name": "Guard Self",
+  "range": 1,
+  "rarity": "common",
+  "sourceEquipmentId": "shield_pattern_shield",
+  "strainCost": 2,
+  "targetType": "self",
+  "type": "equipment"
+}

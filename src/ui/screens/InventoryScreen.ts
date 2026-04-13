@@ -7,6 +7,7 @@ import {
   MULE_CLASS_CAPS,
 } from "../../core/inventory";
 import { InventoryItem, InventoryState } from "../../core/types";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
 import {
   buildOwnedBaseStorageItems,
   moveOwnedItemToBaseStorage,
@@ -25,8 +26,19 @@ import {
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
+import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
+
+function formatInventoryKind(kind: InventoryItem["kind"]): string {
+  return kind.replace(/_/g, " ").toUpperCase();
+}
 
 function formatWadAmount(amount: number): string {
   return new Intl.NumberFormat("en-US").format(Math.max(0, Math.floor(amount)));
@@ -60,26 +72,43 @@ function renderBar(label: string, current: number, cap: number, unit: string): s
 }
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
-  const iconMarkup = item.iconPath
-    ? `<img src="${item.iconPath}" alt="${item.name}" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);" />`
-    : "";
+  const isEquipment = item.kind === "equipment";
+  const iconMarkup = item.kind === "unit" && !item.iconPath
+    ? ""
+    : `<img src="${getInventoryIconPath(item.iconPath)}" alt="" class="inv-item-icon" aria-hidden="true" />`;
+  const transferLabel = bin === "forwardLocker" ? "RETURN TO BASE" : "STAGE FORWARD";
+  const actionMarkup = isEquipment ? `
+    <div class="inv-item-actions">
+      <div class="inv-item-inspect-hint">CLICK CARD TO INSPECT</div>
+      <button
+        type="button"
+        class="inv-item-transfer-btn"
+        data-transfer-id="${item.id}"
+        data-transfer-bin="${bin}"
+      >
+        ${transferLabel}
+      </button>
+    </div>
+  ` : "";
 
   return `
-    <div class="inv-item"
+    <div class="inv-item${isEquipment ? " inv-item--equipment" : ""}"
          draggable="true"
          data-id="${item.id}"
-         data-bin="${bin}">
+         data-bin="${bin}"
+         data-kind="${item.kind}">
       <div class="inv-item-header">
         ${iconMarkup}
         <div class="inv-item-name">${item.name}</div>
         <div class="inv-item-qty">x${item.quantity}</div>
       </div>
-      <div class="inv-item-kind">${item.kind.toUpperCase()}</div>
+      <div class="inv-item-kind">${formatInventoryKind(item.kind)}</div>
       <div class="inv-item-stats">
         <span>${item.massKg}kg</span>
         <span>${item.bulkBu}bu</span>
         <span>${item.powerW}w</span>
       </div>
+      ${actionMarkup}
     </div>
   `;
 }
@@ -122,6 +151,15 @@ function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
 
+  const transferItem = (itemId: string, fromBin: InventoryBin): void => {
+    updateGameState((prev) => (
+      fromBin === "forwardLocker"
+        ? moveOwnedItemToBaseStorage(prev, itemId)
+        : moveOwnedItemToForwardLocker(prev, itemId)
+    ));
+    renderInventoryScreen(returnTo);
+  };
+
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
@@ -145,35 +183,53 @@ function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
       if (!nextClass || cost === null) {
         return;
       }
-      if ((currentState.wad ?? 0) < cost) {
+      if (!canSessionAffordCost(currentState, { wad: cost })) {
         alert(`Insufficient WAD. Need ${formatWadAmount(cost)} to upgrade M.U.L.E. Class ${currentState.inventory.muleClass} to ${nextClass}.`);
         return;
       }
 
-      updateGameState((prev) => ({
-        ...prev,
-        wad: Math.max(0, (prev.wad ?? 0) - cost),
-        inventory: upgradeMuleClass(prev.inventory),
-      }));
+      updateGameState((prev) => {
+        const spendResult = spendSessionCost(prev, { wad: cost });
+        if (!spendResult.success) {
+          return prev;
+        }
+
+        return {
+          ...spendResult.state,
+          inventory: upgradeMuleClass(spendResult.state.inventory),
+        };
+      });
       renderInventoryScreen(returnTo);
     });
   }
 
   const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
   itemEls.forEach((el) => {
-    el.style.cursor = "pointer";
+    const isEquipment = el.dataset.kind === "equipment";
+    el.style.cursor = isEquipment ? "zoom-in" : "pointer";
     el.addEventListener("click", () => {
       const itemId = el.dataset.id;
       const fromBin = el.dataset.bin as InventoryBin | undefined;
       if (!itemId || !fromBin) return;
 
-      updateGameState((prev) => (
-        fromBin === "forwardLocker"
-          ? moveOwnedItemToBaseStorage(prev, itemId)
-          : moveOwnedItemToForwardLocker(prev, itemId)
-      ));
+      if (isEquipment) {
+        showEquipmentDetailModalById(itemId);
+        return;
+      }
 
-      renderInventoryScreen(returnTo);
+      transferItem(itemId, fromBin);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>(".inv-item-transfer-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const itemId = button.dataset.transferId;
+      const fromBin = button.dataset.transferBin as InventoryBin | undefined;
+      if (!itemId || !fromBin) {
+        return;
+      }
+      transferItem(itemId, fromBin);
     });
   });
 
@@ -304,8 +360,9 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
   const muleCaps = MULE_CLASS_CAPS[inv.muleClass];
   const nextMuleClass = getNextMuleClass(inv.muleClass);
   const muleUpgradeWadCost = getMuleUpgradeWadCost(inv.muleClass);
+  const wallet = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
   const canUpgradeMule = Boolean(nextMuleClass && muleUpgradeWadCost !== null);
-  const canAffordMuleUpgrade = canUpgradeMule && (state.wad ?? 0) >= (muleUpgradeWadCost ?? 0);
+  const canAffordMuleUpgrade = canUpgradeMule && canSessionAffordCost(state, { wad: muleUpgradeWadCost ?? 0 });
   const caps = {
     mass: muleCaps.massKg,
     bulk: muleCaps.bulkBu,
@@ -346,8 +403,8 @@ export function renderInventoryScreen(returnTo: BaseCampReturnTo = "basecamp"): 
                 <div class="mule-class-value">CLASS ${inv.muleClass}</div>
                 <div class="inventory-column-subtitle">
                   ${nextMuleClass && muleUpgradeWadCost !== null
-                    ? `Next Class ${nextMuleClass} // Upgrade Cost ${formatWadAmount(muleUpgradeWadCost)} WAD // Current WAD ${formatWadAmount(state.wad ?? 0)}`
-                    : `Maximum M.U.L.E. class reached // Current WAD ${formatWadAmount(state.wad ?? 0)}`}
+                    ? `Next Class ${nextMuleClass} // Upgrade Cost ${formatWadAmount(muleUpgradeWadCost)} WAD // Current WAD ${formatWadAmount(wallet.wad)}`
+                    : `Maximum M.U.L.E. class reached // Current WAD ${formatWadAmount(wallet.wad)}`}
                 </div>
               </div>
               <button class="mule-upgrade-btn" type="button" ${!canUpgradeMule || !canAffordMuleUpgrade ? "disabled" : ""}>

@@ -6,7 +6,7 @@ export const CORE_CARDS: EquipmentCard[] = [
     "name": "Move+",
     "type": "core",
     "strainCost": 6,
-    "description": "Move 2 tiles.",
+    "description": "Move 2 extra tiles this turn.",
     "range": "R(Self)",
   },
     {
@@ -43,11 +43,20 @@ export const CORE_CARDS: EquipmentCard[] = [
         range: "R(0-0)",
     },
     {
+        id: "core_chaos_call",
+        name: "Chaos Call",
+        type: "core",
+        strainCost: 6,
+        description: "create 2 chaos cards",
+        range: "R(Self)",
+        chaosCardsToCreate: ["chaos_placeholder_card", "chaos_placeholder_card"],
+    },
+    {
         id: "core_wait",
         name: "Wait",
         type: "core",
         strainCost: 6,
-        description: "End turn without acting. Reduce strain by 1.",
+        description: "End turn without acting. Reduce strain by 2.",
         range: "R(0-0)",
     },
 ];

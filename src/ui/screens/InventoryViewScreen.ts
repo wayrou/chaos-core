@@ -21,6 +21,7 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
+import { clearControllerContext } from "../../core/controllerSupport";
 
 let selectedCategory: InventoryCategory | "all" = "all";
 let searchQuery = "";
@@ -81,11 +82,11 @@ function getNodeShape(node: WorkspaceNode): Pick<WorkspaceLayout, "colSpan" | "r
   switch (node.entry.category) {
     case "equipment":
       return { colSpan: 3, rowSpan: 4 };
+    case "keyItem":
+      return { colSpan: 2, rowSpan: 2 };
     case "recipe":
       return { colSpan: 1, rowSpan: 2 };
     case "resource":
-      return { colSpan: 1, rowSpan: 2 };
-    case "weaponPart":
       return { colSpan: 1, rowSpan: 2 };
     case "consumable":
     default:
@@ -276,7 +277,7 @@ function getCategoryLabel(category: InventoryCategory): string {
   const labels: Record<InventoryCategory, string> = {
     equipment: "GEAR",
     consumable: "CONS",
-    weaponPart: "PART",
+    keyItem: "KEY",
     recipe: "RECIPE",
     resource: "RESOURCE",
   };
@@ -802,6 +803,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
 export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
+  clearControllerContext();
 
   const state = getGameState();
   const vm = buildInventoryVM(state);
@@ -848,8 +850,8 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
               <button class="inventory-workspace-filter-btn ${selectedCategory === "consumable" ? "inventory-workspace-filter-btn--active" : ""}" data-category="consumable">
                 <span>CONSUMABLES</span><span>${vm.countsByCategory.consumable}</span>
               </button>
-              <button class="inventory-workspace-filter-btn ${selectedCategory === "weaponPart" ? "inventory-workspace-filter-btn--active" : ""}" data-category="weaponPart">
-                <span>WEAPON PARTS</span><span>${vm.countsByCategory.weaponPart}</span>
+              <button class="inventory-workspace-filter-btn ${selectedCategory === "keyItem" ? "inventory-workspace-filter-btn--active" : ""}" data-category="keyItem">
+                <span>KEY ITEMS</span><span>${vm.countsByCategory.keyItem}</span>
               </button>
               <button class="inventory-workspace-filter-btn ${selectedCategory === "recipe" ? "inventory-workspace-filter-btn--active" : ""}" data-category="recipe">
                 <span>RECIPES</span><span>${vm.countsByCategory.recipe}</span>

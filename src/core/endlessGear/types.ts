@@ -53,21 +53,25 @@ export interface EndlessGearProvenance {
   bias: BiasReport;
 }
 
-/**
- * Generated gear extends Equipment with provenance
- */
-export interface GeneratedGear extends Equipment {
-  provenance: EndlessGearProvenance;
-  // Ensure these fields exist (from gear builder)
+export type GeneratedGearBase = Equipment & {
+  id: string;
+  name: string;
   chassisId: string;
   doctrineId: string;
   stability: number;
   builderVersion?: number;
+};
+
+/**
+ * Generated gear extends Equipment with provenance
+ */
+export type GeneratedGear = GeneratedGearBase & {
+  provenance: EndlessGearProvenance;
   // Field mods stored as metadata (if system supports it)
   fieldMods?: string[]; // Field mod IDs
   // Locked cards
   lockedCards?: string[]; // Card IDs that are locked in slots
-}
+};
 
 /**
  * Generation context - provides access to game data
@@ -75,7 +79,7 @@ export interface GeneratedGear extends Equipment {
 export interface GenerationContext {
   chassisRegistry: import("../../data/gearChassis").GearChassis[];
   doctrineRegistry: import("../../data/gearDoctrines").GearDoctrine[];
-  fieldModRegistry: import("../fieldModDefinitions").FieldModDef[];
+  fieldModRegistry: import("../fieldMods").FieldModDef[];
   cardCatalog: string[]; // All available card IDs
 }
 
@@ -89,4 +93,3 @@ export interface EndlessLootParams {
   preferredDoctrineTags?: IntentTag[];
   seed?: number;
 }
-

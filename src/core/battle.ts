@@ -14,10 +14,12 @@ import {
   LoadPenaltyFlags,
   SquadBattleObjectiveState,
   SquadBattleSide,
+  TheaterSignalPosture,
   UnitOwnership,
 } from "./types";
 import { computeLoadPenaltyFlags } from "./inventory";
-import { generateElevationMap } from "./isometric";
+import { generateElevationMap } from "./terrainGeneration";
+import { getShakenStartingStrain } from "./operationStatuses";
 
 import {
   UnitLoadout,
@@ -25,28 +27,31 @@ import {
   buildDeckFromLoadout,
   calculateEquipmentStats,
   getAllStarterEquipment,
-  getAllModules,
   Equipment,
-  Module,
   WeaponEquipment,
 } from "./equipment";
 import {
+  advanceWeaponTurn,
+  addHeat,
   WeaponRuntimeState,
   createWeaponRuntimeState,
-  passiveCooling,
+  getEffectiveMaxHeat,
   rollWeaponHit,
   rollWeaponNodeHit,
   damageNode,
+  triggerWeaponOverheat,
   WEAPON_NODE_NAMES,
 } from "./weaponSystem";
+import type { WeaponOverheatEffect } from "./weaponData";
+import { getResolvedBattleCard } from "./cardCatalog";
 
 // STEP 6 & 7: Import gear workbench functions
 import {
   GearSlotData,
-  getDefaultGearSlots,
   generateBattleRewardCards,
   getLibraryCard,
 } from "./gearWorkbench";
+import { createBattleGearRewardSpec, type GearRewardSpec } from "./gearRewards";
 
 // Mount system imports
 import {
@@ -62,8 +67,17 @@ import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerC
 import { getCoverDamageReduction } from "./coverGenerator";
 import {
   getEchoAttackBonus,
+  getEchoAccuracyBonus,
+  getEchoIncomingAccuracyPenalty,
+  getEchoFirstCardStrainDiscount,
+  getEchoOnHitVulnerable,
   getEchoDefenseBonus,
   getEchoMovementAdjustment,
+  getEchoTurnStartCleanse,
+  getEchoTurnStartDrawBonus,
+  getEchoTurnStartGuarded,
+  getEchoTurnStartHealing,
+  getEchoTurnStartStrainRelief,
   incrementEchoFieldTriggerCount,
   isEchoBattle,
 } from "./echoFieldEffects";
@@ -71,8 +85,10 @@ import {
 // Import unlockable system (for battle rewards)
 import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
+import { getEnemyDefinition, pickEnemyIdsForCampaignFloor } from "./enemies";
 import type {
   TacticalMapObjectDefinition,
+  TacticalMapSurface,
   TacticalMapZoneSet,
   TacticalTraversalLinkDefinition,
 } from "./tacticalMaps";
@@ -117,6 +133,7 @@ export interface Tile {
   pos: Vec2;
   terrain: TerrainType;
   elevation?: number; // Height level for isometric rendering (0 = ground, 1+ = raised)
+  surface?: TacticalMapSurface;
   cover?: CoverState | null; // Only present if terrain is light_cover or heavy_cover
 }
 
@@ -155,11 +172,12 @@ export interface BattleUnitState {
   weaponHeat?: number;
   weaponWear?: number;
   // Local Co-op: Which player controls this unit
-  controller?: "P1" | "P2";
+  controller?: UnitOwnership;
   // Legacy auto-battle toggle kept for battle-state restore compatibility
   autoBattle?: boolean;
   // Tactical per-unit auto-battle mode
   autoBattleMode?: "manual" | "undaring" | "daring";
+  turnCardsPlayed?: number;
   // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
   // Mount System
   mountId?: string;                       // ID of the mount definition (if mounted)
@@ -202,6 +220,7 @@ export interface BattleState {
     cards?: string[];  // NEW: Card IDs won
     recipe?: string | null;  // NEW: Recipe ID won
     unlockable?: string | null;  // NEW: Unlockable ID (chassis, doctrine, or field mod)
+    gearRewards?: GearRewardSpec[];
   };
   loadPenalties?: LoadPenaltyFlags;
   // Placement phase state
@@ -226,6 +245,36 @@ export interface BattleState {
     powerTurretCount: number;
     enemyPreview: string[];
     detailedEnemyIntel: boolean;
+    overheating?: boolean;
+    overheatSeverity?: 0 | 1 | 2;
+    combatInstability?: boolean;
+    heatOnMiss?: 0 | 1 | 2;
+    heatOnAttack?: 0 | 1 | 2;
+    regionId?: string;
+    regionName?: string;
+    regionVariantLabel?: string;
+    regionMechanicLabel?: string;
+    regionRuleSummary?: string;
+    factionTag?: string;
+    enemyIntelScrambled?: boolean;
+    enemyIntelScrambleLabel?: string;
+    allyStartStatusType?: string;
+    allyStartStatusDuration?: number;
+    allyStartStatusLabel?: string;
+    enemyStartStatusType?: string;
+    enemyStartStatusDuration?: number;
+    enemyStartStatusLabel?: string;
+    obscurationActive?: boolean;
+    obscurationSeverity?: 0 | 1 | 2;
+    obscurationLabel?: string;
+    obscurationSuppressesRanged?: boolean;
+    smokeObscured?: boolean;
+    smokeSeverity?: 0 | 1 | 2;
+    burningRoom?: boolean;
+    burnSeverity?: 0 | 1 | 2 | 3;
+    supplyFireRisk?: boolean;
+    signalPosture?: TheaterSignalPosture;
+    signalBloom?: boolean;
   };
   theaterMeta?: {
     operationId: string;
@@ -244,13 +293,22 @@ export interface BattleState {
 // ----------------------------------------------------------------------------
 
 function normalizeBattleLoadout(loadoutLike: Partial<UnitLoadout> & { weapon?: string | null } | undefined): UnitLoadout {
+  const normalizeEquipmentId = (value: string | null | undefined): string | null => {
+    if (typeof value !== "string") {
+      return value ?? null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
   return {
-    primaryWeapon: loadoutLike?.primaryWeapon ?? loadoutLike?.weapon ?? null,
-    secondaryWeapon: loadoutLike?.secondaryWeapon ?? null,
-    helmet: loadoutLike?.helmet ?? null,
-    chestpiece: loadoutLike?.chestpiece ?? null,
-    accessory1: loadoutLike?.accessory1 ?? null,
-    accessory2: loadoutLike?.accessory2 ?? null,
+    primaryWeapon: normalizeEquipmentId(loadoutLike?.primaryWeapon) ?? normalizeEquipmentId(loadoutLike?.weapon) ?? null,
+    secondaryWeapon: normalizeEquipmentId(loadoutLike?.secondaryWeapon) ?? null,
+    helmet: normalizeEquipmentId(loadoutLike?.helmet) ?? null,
+    chestpiece: normalizeEquipmentId(loadoutLike?.chestpiece) ?? null,
+    accessory1: normalizeEquipmentId(loadoutLike?.accessory1) ?? null,
+    accessory2: normalizeEquipmentId(loadoutLike?.accessory2) ?? null,
   };
 }
 
@@ -343,6 +401,74 @@ export function removeAllStatusesFromSource(
   return nextState;
 }
 
+function applyEchoTurnStartEffects(state: BattleState, unitId: UnitId): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+
+  let next = state;
+
+  const healing = getEchoTurnStartHealing(next, unit);
+  if (healing.amount > 0) {
+    const updatedUnit = next.units[unitId];
+    const healedHp = Math.min(updatedUnit.maxHp, updatedUnit.hp + healing.amount);
+    const actualHeal = healedHp - updatedUnit.hp;
+    if (actualHeal > 0) {
+      next = {
+        ...next,
+        units: {
+          ...next.units,
+          [unitId]: {
+            ...updatedUnit,
+            hp: healedHp,
+          },
+        },
+      };
+      next = incrementEchoFieldTriggerCount(next, healing.triggeredPlacements, `SLK//ECHO  :: ${unit.name} restores ${actualHeal} HP from Mender Zone.`);
+    }
+  }
+
+  const strainRelief = getEchoTurnStartStrainRelief(next, unit);
+  if (strainRelief.amount > 0) {
+    const updatedUnit = next.units[unitId];
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...updatedUnit,
+          strain: Math.max(0, updatedUnit.strain - strainRelief.amount),
+        },
+      },
+    };
+    next = incrementEchoFieldTriggerCount(next, strainRelief.triggeredPlacements, `SLK//ECHO  :: ${unit.name} vents ${strainRelief.amount} Strain.`);
+  }
+
+  const cleanse = getEchoTurnStartCleanse(next, unit);
+  if (cleanse.triggeredPlacements.length > 0) {
+    const hadBurning = hasStatus(next.units[unitId], "burning");
+    const hadPoisoned = hasStatus(next.units[unitId], "poisoned");
+    if (cleanse.clearsBurning) {
+      next = removeStatus(next, unitId, "burning");
+    }
+    if (cleanse.clearsPoisoned) {
+      next = removeStatus(next, unitId, "poisoned");
+    }
+    if (hadBurning || hadPoisoned) {
+      next = incrementEchoFieldTriggerCount(next, cleanse.triggeredPlacements, `SLK//ECHO  :: ${unit.name} is cleansed by Null Zone.`);
+    }
+  }
+
+  const guarded = getEchoTurnStartGuarded(next, unit);
+  if (guarded.active) {
+    next = addStatus(next, unitId, "guarded", 1);
+    next = incrementEchoFieldTriggerCount(next, guarded.triggeredPlacements, `SLK//ECHO  :: ${unit.name} enters Guarded stance in Ward Zone.`);
+  }
+
+  return next;
+}
+
 // ----------------------------------------------------------------------------
 // GRID CREATION
 // ----------------------------------------------------------------------------
@@ -357,6 +483,7 @@ export function createGrid(width: number, height: number, elevationMap?: number[
         pos: { x, y },
         terrain,
         elevation,
+        surface: "industrial",
       });
     }
   }
@@ -380,12 +507,10 @@ export function createBattleUnitState(
     gearSlots?: Record<string, GearSlotData>;
     stable?: StableState;  // Mount system: stable state for looking up mounts
   },
-  equipmentById?: Record<string, Equipment>,
-  modulesById?: Record<string, Module>
+  equipmentById?: Record<string, Equipment>
 ): BattleUnitState {
-  // Get equipment and module data
+  // Get equipment data
   const equipment = equipmentById || getAllStarterEquipment();
-  const modules = modulesById || getAllModules();
 
   // Get unit's class and loadout (with fallbacks)
   const unitClass: UnitClass = (base as any).unitClass || "squire";
@@ -410,34 +535,16 @@ export function createBattleUnitState(
       ? [...base.drawPile]
       : ["core_basic_attack", "core_basic_attack", "core_guard", "core_wait"];
   } else {
-    // STEP 6: Player units - build deck from equipment + slotted cards
-    const baseCards = buildDeckFromLoadout(unitClass, loadout, equipment, modules);
-
-    // Get slotted cards from gear workbench
-    const gearSlots = opts.gearSlots ?? {};
-
-    // Collect all equipped gear IDs
-    const equippedGearIds: string[] = [];
-    if (loadout.primaryWeapon) equippedGearIds.push(loadout.primaryWeapon);
-    if (loadout.secondaryWeapon) equippedGearIds.push(loadout.secondaryWeapon);
-    if (loadout.helmet) equippedGearIds.push(loadout.helmet);
-    if (loadout.chestpiece) equippedGearIds.push(loadout.chestpiece);
-    if (loadout.accessory1) equippedGearIds.push(loadout.accessory1);
-    if (loadout.accessory2) equippedGearIds.push(loadout.accessory2);
-
-    // Get slotted cards from each piece of gear
-    const slottedCards: string[] = [];
-    equippedGearIds.forEach(eqId => {
-      const slots = gearSlots[eqId] ?? getDefaultGearSlots(eqId);
-      slottedCards.push(...slots.slottedCards);
-    });
-
-    // Combine base cards + slotted cards
-    deckCards = [...baseCards, ...slottedCards];
+    deckCards = buildDeckFromLoadout(
+      unitClass,
+      loadout,
+      equipment,
+      opts.gearSlots,
+    );
   }
 
   // Calculate equipment stat bonuses
-  const equipStats = calculateEquipmentStats(loadout, equipment, modules);
+  const equipStats = calculateEquipmentStats(loadout, equipment);
 
   // Base stats + equipment bonuses
   const baseAtk = (base as any).atk ?? (base as any).stats?.atk ?? 10;
@@ -541,7 +648,7 @@ export function createBattleUnitState(
     def: finalDef,
     agi: finalAgi,
     acc: finalAcc,
-    strain: 0,
+    strain: getShakenStartingStrain(base),
     drawPile: deck,
     hand,
     discardPile,
@@ -551,9 +658,10 @@ export function createBattleUnitState(
     weaponState,
     clutchActive: false,
     weaponHeat: 0,
-    weaponWear: 0,
+    weaponWear: weaponState?.wear ?? 0,
     controller: base.controller ?? (opts.isEnemy ? undefined : "P1"),
     autoBattleMode: "manual",
+    turnCardsPlayed: 0,
     // Mount fields
     mountId,
     mountPassiveTraits,
@@ -610,7 +718,8 @@ export function applyStrain(
   amount: number
 ): BattleState {
   const oldStrain = unit.strain;
-  const newStrain = Math.max(0, oldStrain + amount);
+  const effectiveAmount = state.theaterBonuses?.overheating && amount > 0 ? amount * 2 : amount;
+  const newStrain = Math.max(0, oldStrain + effectiveAmount);
 
   const updated: BattleUnitState = {
     ...unit,
@@ -659,11 +768,12 @@ export function advanceTurn(state: BattleState): BattleState {
     // Wait, GDD: "Stunned: You can take only 1 action on your turn". We'll handle action limits in the UI/Card Handler.
     // For now, normal discard.
     if (!currentUnit.isEnemy && currentUnit.hand.length > 0) {
+      const discardableHandCards = currentUnit.hand.filter((cardId) => !getResolvedBattleCard(cardId)?.isChaosCard);
       // Move all cards from hand to discard pile
       const newUnits = { ...newState.units };
       newUnits[newState.activeUnitId] = {
         ...currentUnit,
-        discardPile: [...currentUnit.discardPile, ...currentUnit.hand],
+        discardPile: [...currentUnit.discardPile, ...discardableHandCards],
         hand: [], // Clear hand
       };
       newState = {
@@ -780,9 +890,14 @@ export function advanceTurn(state: BattleState): BattleState {
         [nextActiveId]: {
           ...u,
           buffs: updatedBuffs,
+          turnCardsPlayed: 0,
         },
       },
     };
+  }
+
+  if (nextActiveId) {
+    newState = applyEchoTurnStartEffects(newState, nextActiveId);
   }
 
   // Trigger Field Mod: turn_start (for new active unit)
@@ -794,19 +909,18 @@ export function advanceTurn(state: BattleState): BattleState {
   if (nextActiveId && newState.units[nextActiveId]) {
     const u = newState.units[nextActiveId];
     if (u.weaponState && !u.isEnemy) {
-      const cooledWeaponState = passiveCooling(u.weaponState);
-      // Also clear jammed status at start of turn
-      const unjammedState = {
-        ...cooledWeaponState,
-        isJammed: false,
-      };
+      const equippedWeapon = getEquippedWeapon(u);
+      const nextWeaponState = equippedWeapon
+        ? advanceWeaponTurn(u.weaponState, equippedWeapon)
+        : u.weaponState;
       newState = {
         ...newState,
         units: {
           ...newState.units,
           [nextActiveId]: {
             ...newState.units[nextActiveId],
-            weaponState: unjammedState,
+            weaponState: nextWeaponState,
+            weaponHeat: nextWeaponState.currentHeat,
           },
         },
       };
@@ -934,6 +1048,11 @@ export function advanceTurn(state: BattleState): BattleState {
           }
         }
       }
+    }
+
+    if (currentIndex !== -1) {
+      const prevUnitId = state.turnOrder[currentIndex];
+      newState = applyTheaterRoomFireHazard(newState, prevUnitId);
     }
 
     // Clear Stunned at end of NEXT turn - if they are stunned, decrement it now
@@ -1080,6 +1199,19 @@ function isBreakthroughTileForSide(
   return (objective.breachTiles?.[side] ?? []).some((tile) => tile.x === x && tile.y === y);
 }
 
+function isExtractionTile(
+  state: BattleState,
+  objective: SquadBattleObjectiveState,
+  x: number,
+  y: number,
+): boolean {
+  const objectiveTiles = objective.extractionTiles ?? [];
+  if (objectiveTiles.some((tile) => tile.x === x && tile.y === y)) {
+    return true;
+  }
+  return Boolean(state.objectiveZones?.extraction?.some((tile) => tile.x === x && tile.y === y));
+}
+
 function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId | null): BattleState {
   if (!endingUnitId) {
     return state;
@@ -1090,13 +1222,15 @@ function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId |
     return state;
   }
 
-  if (objective.kind !== "breakthrough") {
+  if (objective.kind !== "breakthrough" && objective.kind !== "extraction") {
     return state;
   }
 
   const scoringSide: SquadBattleSide = endingUnit.isEnemy ? "enemy" : "friendly";
-  const targetSide: SquadBattleSide = scoringSide === "friendly" ? "friendly" : "enemy";
-  if (!isBreakthroughTileForSide(objective, targetSide, endingUnit.pos.x, endingUnit.pos.y)) {
+  const canExtract = objective.kind === "breakthrough"
+    ? isBreakthroughTileForSide(objective, scoringSide, endingUnit.pos.x, endingUnit.pos.y)
+    : isExtractionTile(state, objective, endingUnit.pos.x, endingUnit.pos.y);
+  if (!canExtract) {
     return state;
   }
 
@@ -1124,7 +1258,9 @@ function resolveSquadObjectiveEndTurn(state: BattleState, endingUnitId: UnitId |
   nextState = setSquadObjectiveState(nextState, nextObjective);
   return appendBattleLog(
     nextState,
-    `SLK//OBJECTIVE :: ${endingUnit.name} breached the far lane and extracted. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`,
+    objective.kind === "breakthrough"
+      ? `SLK//OBJECTIVE :: ${endingUnit.name} breached the far lane and extracted. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`
+      : `SLK//OBJECTIVE :: ${endingUnit.name} reached the extraction zone and was pulled out. ${scoringSide === "friendly" ? "Host" : "Opposing"} score ${nextObjective.score[scoringSide]}/${nextObjective.targetScore}.`,
   );
 }
 
@@ -1142,16 +1278,36 @@ export function getActiveUnit(state: BattleState): BattleUnitState | null {
 // ----------------------------------------------------------------------------
 
 /**
+ * Resolve a battle unit's equipped weapon id from the primary runtime field,
+ * then fall back to runtime weapon state or legacy loadout data.
+ */
+export function getBattleUnitEquippedWeaponId(
+  unit: BattleUnitState | null | undefined,
+): string | null {
+  if (!unit) {
+    return null;
+  }
+  if (typeof unit.equippedWeaponId === "string" && unit.equippedWeaponId) {
+    return unit.equippedWeaponId;
+  }
+  if (typeof unit.weaponState?.equipmentId === "string" && unit.weaponState.equipmentId) {
+    return unit.weaponState.equipmentId;
+  }
+  return normalizeBattleLoadout(unit.loadout).primaryWeapon;
+}
+
+/**
  * Get the equipped weapon for a battle unit
  */
 export function getEquippedWeapon(
   unit: BattleUnitState,
   equipmentById?: Record<string, Equipment>
 ): WeaponEquipment | null {
-  if (!unit.equippedWeaponId) return null;
+  const equippedWeaponId = getBattleUnitEquippedWeaponId(unit);
+  if (!equippedWeaponId) return null;
 
   const equipment = equipmentById || getAllStarterEquipment();
-  const weapon = equipment[unit.equippedWeaponId];
+  const weapon = equipment[equippedWeaponId];
 
   if (weapon && weapon.slot === "weapon") {
     return weapon as WeaponEquipment;
@@ -1178,9 +1334,300 @@ export function updateUnitWeaponState(
       [unitId]: {
         ...unit,
         weaponState: newWeaponState,
+        weaponHeat: newWeaponState.currentHeat,
+        weaponWear: newWeaponState.wear,
+        clutchActive: newWeaponState.clutchActive,
       },
     },
   };
+}
+
+function removeBattleUnit(state: BattleState, unitId: UnitId): BattleState {
+  const nextUnits = { ...state.units };
+  delete nextUnits[unitId];
+  return {
+    ...state,
+    units: nextUnits,
+    turnOrder: state.turnOrder.filter((id) => id !== unitId),
+    activeUnitId: state.activeUnitId === unitId ? null : state.activeUnitId,
+  };
+}
+
+function setBattleUnitHp(state: BattleState, unitId: UnitId, hp: number): BattleState {
+  const unit = state.units[unitId];
+  if (!unit) {
+    return state;
+  }
+  if (hp <= 0) {
+    return removeBattleUnit(state, unitId);
+  }
+  return {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: {
+        ...unit,
+        hp,
+      },
+    },
+  };
+}
+
+function moveUnitByDeltaIfClear(
+  state: BattleState,
+  unitId: UnitId,
+  dx: number,
+  dy: number,
+  tiles: number,
+): BattleState {
+  const unit = state.units[unitId];
+  if (!unit?.pos || tiles <= 0) {
+    return state;
+  }
+
+  let next = state;
+  let currentPos = unit.pos;
+  for (let step = 0; step < tiles; step += 1) {
+    const candidate = { x: currentPos.x + dx, y: currentPos.y + dy };
+    if (
+      candidate.x < 0 ||
+      candidate.y < 0 ||
+      candidate.x >= state.gridWidth ||
+      candidate.y >= state.gridHeight
+    ) {
+      break;
+    }
+    const tile = getTileAt(state, candidate.x, candidate.y);
+    const occupied = Object.values(next.units).some(
+      (other) => other.id !== unitId && other.pos?.x === candidate.x && other.pos?.y === candidate.y,
+    );
+    if (!tile || tile.terrain === "wall" || occupied) {
+      break;
+    }
+
+    next = {
+      ...next,
+      units: {
+        ...next.units,
+        [unitId]: {
+          ...next.units[unitId],
+          pos: candidate,
+        },
+      },
+    };
+    currentPos = candidate;
+  }
+
+  return next;
+}
+
+function removeRandomWeaponCardFromBattleUnit(unit: BattleUnitState): BattleUnitState {
+  const equippedWeaponId = getBattleUnitEquippedWeaponId(unit);
+  const weaponCards = [
+    ...unit.hand,
+    ...unit.drawPile,
+    ...unit.discardPile,
+    ...unit.exhaustedPile,
+  ].filter((cardId) => getResolvedBattleCard(cardId)?.sourceEquipmentId === equippedWeaponId);
+
+  if (weaponCards.length === 0) {
+    return unit;
+  }
+
+  const removedCardId = weaponCards[Math.floor(Math.random() * weaponCards.length)];
+  const removeFromPile = (pile: string[]) => {
+    const index = pile.indexOf(removedCardId);
+    if (index < 0) return pile;
+    return [...pile.slice(0, index), ...pile.slice(index + 1)];
+  };
+
+  return {
+    ...unit,
+    hand: removeFromPile(unit.hand),
+    drawPile: removeFromPile(unit.drawPile),
+    discardPile: removeFromPile(unit.discardPile),
+    exhaustedPile: removeFromPile(unit.exhaustedPile),
+  };
+}
+
+export function applyWeaponOverheatEffects(
+  state: BattleState,
+  unitId: UnitId,
+  effects: WeaponOverheatEffect[],
+  sourceLabel: string,
+): BattleState {
+  let next = state;
+  let unit = next.units[unitId];
+  if (!unit) {
+    return state;
+  }
+
+  effects.forEach((effect) => {
+    unit = next.units[unitId];
+    if (!unit) {
+      return;
+    }
+
+    switch (effect.kind) {
+      case "self_damage_percent": {
+        const amount = Math.max(1, Math.ceil(unit.maxHp * effect.percent));
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} suffers ${amount} self-damage from ${sourceLabel}.`);
+        next = setBattleUnitHp(next, unitId, unit.hp - amount);
+        break;
+      }
+      case "self_damage_flat":
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} suffers ${effect.amount} self-damage from ${sourceLabel}.`);
+        next = setBattleUnitHp(next, unitId, unit.hp - effect.amount);
+        break;
+      case "self_strain":
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} takes ${effect.amount} Strain from ${sourceLabel}.`);
+        next = applyStrain(next, unit, effect.amount);
+        break;
+      case "apply_status_self":
+        next = addStatus(next, unitId, effect.status, effect.duration);
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} is ${effect.status.toUpperCase()} from ${sourceLabel}.`);
+        break;
+      case "push_self": {
+        const facing = unit.facing ?? "east";
+        const [dx, dy] =
+          facing === "east" ? [-1, 0] :
+          facing === "west" ? [1, 0] :
+          facing === "south" ? [0, -1] :
+          [0, 1];
+        next = moveUnitByDeltaIfClear(next, unitId, dx, dy, effect.tiles);
+        break;
+      }
+      case "remove_random_weapon_card": {
+        const updatedUnit = removeRandomWeaponCardFromBattleUnit(unit);
+        next = {
+          ...next,
+          units: {
+            ...next.units,
+            [unitId]: updatedUnit,
+          },
+        };
+        next = appendBattleLog(next, `SLK//HEAT  :: ${unit.name} loses a random weapon card from ${sourceLabel}.`);
+        break;
+      }
+      default:
+        break;
+    }
+  });
+
+  return next;
+}
+
+export function applyWeaponHitToUnit(
+  state: BattleState,
+  defenderId: UnitId,
+  isCrit = false,
+): BattleState {
+  const defender = state.units[defenderId];
+  if (!defender?.weaponState || rollWeaponHit(isCrit) === false) {
+    return state;
+  }
+
+  const hitNode = rollWeaponNodeHit();
+  const damagedState = damageNode(defender.weaponState, hitNode);
+  let next = updateUnitWeaponState(state, defenderId, damagedState);
+  const nodeName = WEAPON_NODE_NAMES[hitNode].primary;
+  const severity = damagedState.nodes[hitNode].toUpperCase();
+  next = appendBattleLog(next, `SLK//DMG   :: [${defender.name}] ${nodeName} struck. [${severity}]`);
+  return next;
+}
+
+function getLegacyTheaterCombatInstabilityHeatGain(state: BattleState): number {
+  const severity = state.theaterBonuses?.overheatSeverity ?? 0;
+  if (!state.theaterBonuses?.combatInstability || severity <= 0) {
+    return 0;
+  }
+  return severity >= 2 ? 2 : 1;
+}
+
+function getTheaterCombatInstabilityHeatGain(
+  state: BattleState,
+  trigger: "miss" | "attack",
+): number {
+  const legacyHeatGain = getLegacyTheaterCombatInstabilityHeatGain(state);
+  const directHeatGain = trigger === "miss"
+    ? state.theaterBonuses?.heatOnMiss
+    : state.theaterBonuses?.heatOnAttack;
+  if (typeof directHeatGain === "number") {
+    return Math.max(directHeatGain, legacyHeatGain);
+  }
+  return legacyHeatGain;
+}
+
+export function applyTheaterCombatInstability(
+  state: BattleState,
+  unitId: UnitId,
+  trigger: "miss" | "attack" = "attack",
+): BattleState {
+  const heatGain = getTheaterCombatInstabilityHeatGain(state, trigger);
+  if (heatGain <= 0) {
+    return state;
+  }
+
+  const unit = state.units[unitId];
+  if (!unit || !unit.weaponState) {
+    return state;
+  }
+
+  const weapon = getEquippedWeapon(unit);
+  if (!weapon?.isMechanical) {
+    return state;
+  }
+
+  const nextWeaponState = addHeat(unit.weaponState, weapon, heatGain);
+  if (nextWeaponState === unit.weaponState) {
+    return state;
+  }
+
+  let next = updateUnitWeaponState(state, unitId, nextWeaponState);
+  if (nextWeaponState.currentHeat >= getEffectiveMaxHeat(nextWeaponState, weapon)) {
+    const overheatOutcome = triggerWeaponOverheat(nextWeaponState, weapon);
+    next = updateUnitWeaponState(next, unitId, overheatOutcome.state);
+    next = appendBattleLog(next, `SLK//ALERT :: ${unit.name}'s weapon destabilizes under room overheat. ${overheatOutcome.summary}`);
+    next = applyWeaponOverheatEffects(next, unitId, overheatOutcome.effects, "room overheat");
+  }
+  return next;
+}
+
+function applyTheaterRoomFireHazard(
+  state: BattleState,
+  unitId: UnitId,
+): BattleState {
+  const burnSeverity = state.theaterBonuses?.burnSeverity ?? 0;
+  if (!state.theaterBonuses?.burningRoom || burnSeverity <= 0) {
+    return state;
+  }
+
+  const unit = state.units[unitId];
+  if (!unit || unit.hp <= 0) {
+    return state;
+  }
+
+  const fireDamage = burnSeverity >= 3 ? 2 : 1;
+  const nextHp = Math.max(0, unit.hp - fireDamage);
+  let next: BattleState = {
+    ...state,
+    units: {
+      ...state.units,
+      [unitId]: {
+        ...unit,
+        hp: nextHp,
+      },
+    },
+  };
+
+  next = appendBattleLog(next, `SLK//HAZARD :: ${unit.name} is scorched by room fire (${fireDamage}).`);
+  if (burnSeverity >= 2) {
+    next = addStatus(next, unitId, "burning", 1, "theater_room_fire");
+  }
+  if (nextHp <= 0) {
+    next = evaluateBattleOutcome(next);
+  }
+  return next;
 }
 
 // ----------------------------------------------------------------------------
@@ -1218,9 +1665,12 @@ export function getUnitMovementRange(unit: BattleUnitState, battle?: BattleState
   const baseMovement = unit.agi;
   const mountBonus = getMountMovementBonus(unit);
   const echoAdjustment = battle ? getEchoMovementAdjustment(battle, unit).amount : 0;
+  const movementBuffs = (unit.buffs || [])
+    .filter((buff) => buff.type === "move_up" || buff.type === "move_down")
+    .reduce((sum, buff) => sum + buff.amount, 0);
   // Swift trait: +1 movement on first turn (turn 1)
   // This would need turn count context, so we skip it here
-  return Math.max(1, baseMovement + mountBonus + echoAdjustment);
+  return Math.max(1, baseMovement + mountBonus + echoAdjustment + movementBuffs);
 }
 
 /**
@@ -1822,6 +2272,13 @@ export function computeHitChance(
     }
   }
 
+  if (battle) {
+    const echoAccuracyBonus = getEchoAccuracyBonus(battle, attacker);
+    const echoIncomingPenalty = defender ? getEchoIncomingAccuracyPenalty(battle, defender) : { amount: 0 };
+    baseChance += echoAccuracyBonus.amount;
+    baseChance -= echoIncomingPenalty.amount;
+  }
+
   return Math.max(10, Math.min(100, baseChance));
 }
 
@@ -1864,6 +2321,8 @@ export function attackUnit(
   // We'll pass isRanged=false as default. 
   const equipWpn = getEquippedWeapon(attacker);
   const isRanged = equipWpn ? ["gun", "bow", "greatbow"].includes(equipWpn.weaponType) : false;
+  const echoAccuracyBonus = getEchoAccuracyBonus(state, attacker);
+  const echoIncomingPenalty = getEchoIncomingAccuracyPenalty(state, defender);
 
   let hitChance = computeHitChance(attacker, defender, isRanged, state);
   const intimidatePenalty = getIntimidateAccuracyPenalty(attacker, defender);
@@ -1877,8 +2336,17 @@ export function attackUnit(
     const missReason = intimidatePenalty !== 0
       ? "(mount intimidation)"
       : "(strain interference)";
+    const unstableMissState = applyTheaterCombatInstability(state, attackerId, "miss");
+    const echoedMissState = (
+      echoAccuracyBonus.triggeredPlacements.length > 0 || echoIncomingPenalty.triggeredPlacements.length > 0
+    )
+      ? incrementEchoFieldTriggerCount(
+          unstableMissState,
+          [...echoAccuracyBonus.triggeredPlacements, ...echoIncomingPenalty.triggeredPlacements],
+        )
+      : unstableMissState;
     return appendBattleLog(
-      state,
+      echoedMissState,
       `SLK//MISS  :: ${attacker.name} swings at ${defender.name} but the strike goes wide ${missReason}.`
     );
   }
@@ -1981,10 +2449,30 @@ export function attackUnit(
     next = removeStatus(next, defenderId, "guarded");
   }
 
-  if (echoAttackBonus.triggeredPlacements.length > 0 || echoDefenseBonus.triggeredPlacements.length > 0) {
+  if (
+    echoAttackBonus.triggeredPlacements.length > 0
+    || echoDefenseBonus.triggeredPlacements.length > 0
+    || echoAccuracyBonus.triggeredPlacements.length > 0
+    || echoIncomingPenalty.triggeredPlacements.length > 0
+  ) {
     next = incrementEchoFieldTriggerCount(
       next,
-      [...echoAttackBonus.triggeredPlacements, ...echoDefenseBonus.triggeredPlacements],
+      [
+        ...echoAttackBonus.triggeredPlacements,
+        ...echoDefenseBonus.triggeredPlacements,
+        ...echoAccuracyBonus.triggeredPlacements,
+        ...echoIncomingPenalty.triggeredPlacements,
+      ],
+    );
+  }
+
+  const echoHex = getEchoOnHitVulnerable(next, attacker);
+  if (finalDamage > 0 && echoHex.duration > 0 && !isKill) {
+    next = addStatus(next, defenderId, "vulnerable", echoHex.duration, attackerId);
+    next = incrementEchoFieldTriggerCount(
+      next,
+      echoHex.triggeredPlacements,
+      `SLK//ECHO  :: ${defender.name} is exposed by Hex Zone.`,
     );
   }
 
@@ -1994,19 +2482,7 @@ export function attackUnit(
   // --- WEAPON DEGRADATION (Node Damage on Hit) ---
   const currentDefender = next.units[defenderId];
   if (currentDefender && currentDefender.weaponState && !isKill) {
-    if (rollWeaponHit(isCrit)) {
-      const hitNode = rollWeaponNodeHit();
-      const damagedState = damageNode(currentDefender.weaponState, hitNode);
-      next = updateUnitWeaponState(next, defenderId, damagedState);
-
-      const nodeName = WEAPON_NODE_NAMES[hitNode].primary;
-      const severity = damagedState.nodes[hitNode].toUpperCase();
-
-      next = appendBattleLog(
-        next,
-        `SLK//DMG   :: [${currentDefender.name}] ${nodeName} struck. [${severity}]`
-      );
-    }
+    next = applyWeaponHitToUnit(next, defenderId, isCrit);
   }
 
   // Trigger Field Mod: kill (if target died)
@@ -2019,6 +2495,7 @@ export function attackUnit(
     trackMeleeAttackInBattle(attackerId, next);
   }
 
+  next = applyTheaterCombatInstability(next, attackerId, "attack");
   next = evaluateBattleOutcome(next);
   return next;
 }
@@ -2320,6 +2797,8 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
           ...resolvedState.log,
           squadObjective.kind === "breakthrough"
             ? `SLK//OBJECTIVE :: ${winnerLabel} completed the breakthrough ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`
+            : squadObjective.kind === "extraction"
+              ? `SLK//OBJECTIVE :: ${winnerLabel} completed the extraction ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`
             : `SLK//OBJECTIVE :: ${winnerLabel} captured the relay ${resolvedObjective.score[winningSide]}/${resolvedObjective.targetScore}.`,
         ],
       };
@@ -2366,6 +2845,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
           cards: [],
           recipe: null,
           unlockable: null,
+          gearRewards: [],
         },
         log: [
           ...state.log,
@@ -2385,6 +2865,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       cards: [],
       recipe: null,
       unlockable: null,
+      gearRewards: [],
     } : generateBattleRewards(state);
 
     if (isTraining) {
@@ -2451,12 +2932,14 @@ function generateDefenseRewards(_state: BattleState) {
     chaosShards: 1,
     steamComponents: 1,
     cards: [],
+    gearRewards: [],
   };
 }
 
 function generateBattleRewards(state: BattleState) {
   const enemies = Object.values(state.units).filter(isEnemyUnit);
   const enemyCount = enemies.length || 1;
+  const gearRewards = createBattleGearRewardSpec(enemyCount, state.id ?? state.roomId);
 
   // STEP 7: Generate card rewards
   const cardRewards = generateBattleRewardCards(enemyCount);
@@ -2469,7 +2952,7 @@ function generateBattleRewards(state: BattleState) {
     try {
       // Use a lazy import pattern - we'll handle this in the reward claiming code
       // For now, we'll generate the recipe ID here but grant it later
-      recipeReward = "recipe_reward_pending"; // Placeholder, will be resolved when claiming
+      recipeReward = "pending"; // Placeholder, will be resolved when claiming
     } catch (e) {
       // If import fails, no recipe reward
       console.warn("[BATTLE] Could not generate recipe reward:", e);
@@ -2522,6 +3005,7 @@ function generateBattleRewards(state: BattleState) {
     cards: cardRewards,
     recipe: recipeReward,
     unlockable: unlockableReward,
+    gearRewards,
   };
 }
 
@@ -2538,10 +3022,12 @@ export function drawCardsForTurn(
   unit: BattleUnitState,
   handSize: number = 5
 ): BattleState {
+  const drawBonus = getEchoTurnStartDrawBonus(state, unit);
+  const targetHandSize = handSize + drawBonus.amount;
   let u = unit;
 
   // 15c: Reshuffle if deck has fewer than handSize cards remaining
-  if (u.drawPile.length < handSize && u.discardPile.length > 0) {
+  if (u.drawPile.length < targetHandSize && u.discardPile.length > 0) {
     const reshuffled = shuffleArray([...u.discardPile]);
     u = {
       ...u,
@@ -2556,7 +3042,7 @@ export function drawCardsForTurn(
   const newHand: CardId[] = [...u.hand];
   const newDraw = [...u.drawPile];
 
-  while (newHand.length < handSize && newDraw.length > 0) {
+  while (newHand.length < targetHandSize && newDraw.length > 0) {
     newHand.push(newDraw.shift()!);
   }
 
@@ -2566,13 +3052,23 @@ export function drawCardsForTurn(
     drawPile: newDraw,
   };
 
-  return {
+  let nextState = {
     ...state,
     units: {
       ...state.units,
       [updatedUnit.id]: updatedUnit,
     },
   };
+
+  if (drawBonus.amount > 0) {
+    nextState = incrementEchoFieldTriggerCount(
+      nextState,
+      drawBonus.triggeredPlacements,
+      `SLK//ECHO  :: ${unit.name} draws +${drawBonus.amount} from Relay Zone.`,
+    );
+  }
+
+  return nextState;
 }
 
 // ----------------------------------------------------------------------------
@@ -2613,7 +3109,6 @@ export function createTestBattleForCurrentParty(
 
   // Get equipment data from state (or use defaults)
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-  const modulesById = (state as any).modulesById || getAllModules();
 
   const units: Record<UnitId, BattleUnitState> = {};
 
@@ -2631,8 +3126,7 @@ export function createTestBattleForCurrentParty(
         gearSlots: (state as any).gearSlots ?? {},
         stable: state.stable,  // Pass stable state for mount system
       },
-      equipmentById,
-      modulesById
+      equipmentById
     );
   });
 
@@ -2697,33 +3191,72 @@ export function createTestBattleForCurrentParty(
   }
 
   // Place enemies automatically on the right edge
-  const enemyCount = Math.min(2, maxUnitsPerSide); // Limit enemy count
-  const first = state.unitsById[partyIds[0]];
-  if (first) {
+  const activeFloorOrdinal = Math.max(
+    1,
+    state.operation?.theater?.definition.floorOrdinal
+      ?? ((state.operation?.currentFloorIndex ?? 0) + 1),
+  );
+  const enemyCount = Math.min(3, maxUnitsPerSide);
+  const selectedEnemyIds = pickEnemyIdsForCampaignFloor(activeFloorOrdinal, enemyCount);
+  const fallbackEnemyIds = selectedEnemyIds.length > 0 ? selectedEnemyIds : ["gate_sentry"];
+
+  fallbackEnemyIds.forEach((enemyDefinitionId, index) => {
+    const enemyDef = getEnemyDefinition(enemyDefinitionId);
+    if (!enemyDef) {
+      return;
+    }
+
+    const accuracy = enemyDef.role === "ranged" || enemyDef.role === "artillery" ? 80 : 75;
+    const enemyId = `enemy_${enemyDef.id}_${index + 1}`;
+    const pos = {
+      x: gridWidth - 1,
+      y: Math.min(gridHeight - 1, Math.floor((gridHeight / fallbackEnemyIds.length) * index + 1)),
+    };
     const enemyBase = {
-      ...first,
-      id: "enemy_grunt_1",
-      name: "Gate Sentry",
-      deck: ["core_basic_attack", "core_basic_attack", "core_guard"],
-      stats: { maxHp: 15, atk: 4, def: 2, agi: 3, acc: 75 },
+      id: enemyId,
+      name: enemyDef.name,
+      isEnemy: true,
+      hp: enemyDef.baseStats.hp,
+      maxHp: enemyDef.baseStats.hp,
+      agi: enemyDef.baseStats.agi,
+      pos,
+      hand: [],
+      drawPile: [...(enemyDef.deck ?? ["card_strike", "card_guard"])],
+      discardPile: [],
+      strain: 0,
+      atk: enemyDef.baseStats.atk,
+      def: enemyDef.baseStats.def,
+      acc: accuracy,
+      move: enemyDef.baseStats.move,
+      stats: {
+        maxHp: enemyDef.baseStats.hp,
+        atk: enemyDef.baseStats.atk,
+        def: enemyDef.baseStats.def,
+        agi: enemyDef.baseStats.agi,
+        acc: accuracy,
+      },
     };
 
-    for (let i = 0; i < enemyCount; i++) {
-      const enemyId = `enemy_grunt_${i + 1}`;
-      units[enemyId] = createBattleUnitState(
-        { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
-        {
-          isEnemy: true,
-          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) }
-        },
-        equipmentById,
-        modulesById
-      );
-    }
-  }
+    units[enemyId] = createBattleUnitState(
+      enemyBase as any,
+      {
+        isEnemy: true,
+        pos,
+      },
+      equipmentById
+    );
+  });
 
   // Update battle with enemy units
   battle.units = units;
+  if (fallbackEnemyIds.length > 0) {
+    battle.log = [
+      ...battle.log,
+      `SLK//HOSTILE:: ${fallbackEnemyIds
+        .map((enemyId) => getEnemyDefinition(enemyId)?.name ?? enemyId)
+        .join(", ")}`,
+    ];
+  }
 
   // Trigger Field Mod: battle_start
   battle = triggerBattleStart(battle);
@@ -2760,7 +3293,10 @@ export function playCard(
   // Get card info (cards are always string IDs in hand)
   const cardName = cardId.replace(/^(core_|class_|card_|equip_)/, "").replace(/_/g, " ");
   const cardDesc = "";
-  const strainCost = 1;
+  const overdriveDiscount = (unit.turnCardsPlayed ?? 0) === 0
+    ? getEchoFirstCardStrainDiscount(state, unit)
+    : { amount: 0, triggeredPlacements: [] };
+  const strainCost = Math.max(0, 1 - overdriveDiscount.amount);
 
   // Create new hand without the played card
   const newHand = [...unit.hand];
@@ -2778,6 +3314,7 @@ export function playCard(
     hand: newHand,
     discardPile: newDiscard,
     strain: newStrain,
+    turnCardsPlayed: (unit.turnCardsPlayed ?? 0) + 1,
   };
 
   // Start building updated target (may be same as unit for self-target)
@@ -2879,6 +3416,14 @@ export function playCard(
     log: newLog,
   };
 
+  if (overdriveDiscount.amount > 0) {
+    newState = incrementEchoFieldTriggerCount(
+      newState,
+      overdriveDiscount.triggeredPlacements,
+      `SLK//ECHO  :: ${unit.name} overdrives the first card for -${overdriveDiscount.amount} Strain.`,
+    );
+  }
+
   // Trigger Field Mod: card_played
   newState = triggerCardPlayed(newState, unitId, cardId, 0);
 
@@ -2914,6 +3459,29 @@ export function getPlacementTilesForUnit(state: BattleState, unit: BattleUnitSta
     .filter((tile) => tile.pos.x === edgeX)
     .sort((a, b) => a.pos.y - b.pos.y)
     .map((tile) => ({ x: tile.pos.x, y: tile.pos.y }));
+}
+
+export function getEffectivePlacedUnitIds(state: BattleState): UnitId[] {
+  const placementState = state.placementState;
+  if (!placementState) {
+    return [];
+  }
+
+  const placedUnitIds = new Set(placementState.placedUnitIds);
+  Object.values(state.units).forEach((unit) => {
+    if (!unit.pos || unit.hp <= 0 || placedUnitIds.has(unit.id)) {
+      return;
+    }
+
+    const isOnLegalPlacementTile = getPlacementTilesForUnit(state, unit).some(
+      (tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y,
+    );
+    if (isOnLegalPlacementTile) {
+      placedUnitIds.add(unit.id);
+    }
+  });
+
+  return Array.from(placedUnitIds);
 }
 
 // ----------------------------------------------------------------------------
@@ -2988,6 +3556,7 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
 
   const placementState = state.placementState;
   if (!placementState) return state;
+  const effectivePlacedUnitIds = new Set(getEffectivePlacedUnitIds(state));
 
   const placementUnits = Object.values(state.units).filter((unit) => {
     if (state.modeContext?.kind === "squad" && controller) {
@@ -2996,9 +3565,7 @@ export function quickPlaceUnits(state: BattleState, controller?: UnitOwnership):
     return !unit.isEnemy && (!controller || (unit.controller ?? "P1") === controller);
   });
   const unplacedUnits = placementUnits.filter(
-    u =>
-      !placementState.placedUnitIds.includes(u.id) &&
-      !u.pos
+    (unit) => !effectivePlacedUnitIds.has(unit.id)
   );
 
   let newState = state;
@@ -3087,29 +3654,28 @@ export function confirmPlacement(state: BattleState): BattleState {
   const placementState = state.placementState;
   if (!placementState) return state;
 
-  const placedCount = placementState.placedUnitIds.length;
+  const effectivePlacedUnitIds = getEffectivePlacedUnitIds(state);
+  const placedCount = effectivePlacedUnitIds.length;
 
-  // Check if all units are placed or max reached
-  if (placedCount === 0) {
+  let friendlyPlaced = 0;
+  let enemyPlaced = 0;
+  effectivePlacedUnitIds.forEach((unitId) => {
+    const placedUnit = state.units[unitId];
+    if (!placedUnit) {
+      return;
+    }
+    if (placedUnit.isEnemy) {
+      enemyPlaced += 1;
+    } else {
+      friendlyPlaced += 1;
+    }
+  });
+
+  if (placedCount === 0 || friendlyPlaced === 0) {
     return appendBattleLog(state, `SLK//PLACE  :: Please place at least one unit before confirming.`);
   }
 
   if (state.modeContext?.kind === "squad") {
-    let friendlyPlaced = 0;
-    let enemyPlaced = 0;
-
-    placementState.placedUnitIds.forEach((unitId) => {
-      const placedUnit = state.units[unitId];
-      if (!placedUnit) {
-        return;
-      }
-      if (placedUnit.isEnemy) {
-        enemyPlaced += 1;
-      } else {
-        friendlyPlaced += 1;
-      }
-    });
-
     const hasEnemyRoster = Object.values(state.units).some((unit) => unit.isEnemy);
     if (friendlyPlaced === 0 || (hasEnemyRoster && enemyPlaced === 0)) {
       return appendBattleLog(state, "SLK//PLACE  :: Both skirmish lines must deploy before the host can confirm placement.");
@@ -3127,7 +3693,7 @@ export function confirmPlacement(state: BattleState): BattleState {
   });
 
   // Keep ONLY placed player units
-  placementState.placedUnitIds.forEach(id => {
+  effectivePlacedUnitIds.forEach(id => {
     if (state.units[id]) {
       filteredUnits[id] = state.units[id];
     }

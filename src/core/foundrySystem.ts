@@ -8,6 +8,10 @@ import {
   PartitionDefinition,
   PartitionType,
 } from "./types";
+import {
+  hasEnoughResources as hasEnoughResourceValues,
+  subtractResourceWallet,
+} from "./resources";
 
 type ResourceWallet = GameState["resources"];
 
@@ -18,21 +22,11 @@ type FoundryUnlockResult = {
 };
 
 function hasEnoughResources(resources: ResourceWallet, cost?: Partial<ResourceWallet>): boolean {
-  return (
-    resources.metalScrap >= (cost?.metalScrap ?? 0)
-    && resources.wood >= (cost?.wood ?? 0)
-    && resources.chaosShards >= (cost?.chaosShards ?? 0)
-    && resources.steamComponents >= (cost?.steamComponents ?? 0)
-  );
+  return hasEnoughResourceValues(resources, cost);
 }
 
 function subtractResources(resources: ResourceWallet, cost?: Partial<ResourceWallet>): ResourceWallet {
-  return {
-    metalScrap: resources.metalScrap - (cost?.metalScrap ?? 0),
-    wood: resources.wood - (cost?.wood ?? 0),
-    chaosShards: resources.chaosShards - (cost?.chaosShards ?? 0),
-    steamComponents: resources.steamComponents - (cost?.steamComponents ?? 0),
-  };
+  return subtractResourceWallet(resources, cost);
 }
 
 export const ANNEX_FRAME_DEFINITIONS: Record<AnnexFrameType, AnnexFrameDefinition> = {

@@ -2,14 +2,19 @@ import JSZip from "jszip";
 import { importTechnicaEntry, type TechnicaManifest } from "./importer";
 import {
   getAllImportedBattleCards,
+  getAllImportedChatterEntries,
   getAllImportedClassDefinitions,
+  getAllImportedChassis,
   getAllImportedDialogues,
+  getAllImportedDoctrines,
   getAllImportedFieldMaps,
   getAllImportedGear,
   getAllImportedItems,
+  getAllImportedKeyItems,
   getAllImportedOperations,
   getAllImportedQuests,
-  getAllImportedUnitTemplates
+  getAllImportedUnitTemplates,
+  hasTechnicaRegistryEntry,
 } from "./index";
 
 type TechnicaContentType = TechnicaManifest["contentType"];
@@ -85,6 +90,44 @@ function isQuestShape(value: unknown): value is { id: string; title: string } {
   );
 }
 
+function isKeyItemShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "kind" in value &&
+      "quantity" in value &&
+      (value as { kind?: unknown }).kind === "key_item"
+  );
+}
+
+function isFactionShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(value && typeof value === "object" && "id" in value && "name" in value);
+}
+
+function isChassisShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "slotType" in value &&
+      "maxCardSlots" in value
+  );
+}
+
+function isDoctrineShape(value: unknown): value is { id: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "intentTags" in value &&
+      "buildCostModifier" in value
+  );
+}
+
 function isDialogueShape(value: unknown): value is { id: string; title: string } {
   return Boolean(
     value &&
@@ -104,6 +147,17 @@ function isMailShape(value: unknown): value is { id: string; subject: string } {
       "subject" in value &&
       "from" in value &&
       "bodyPages" in value
+  );
+}
+
+function isChatterShape(value: unknown): value is { id: string; location: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "location" in value &&
+      "content" in value &&
+      "aerissResponse" in value
   );
 }
 
@@ -235,6 +289,82 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
     };
   }
 
+  if (isKeyItemShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "key_item",
+      contentType: "key_item",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "key-item.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica key item runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isFactionShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "faction",
+      contentType: "faction",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "faction.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica faction runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isChassisShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "chassis",
+      contentType: "chassis",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "gear-chassis.v2",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica chassis runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isDoctrineShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "doctrine",
+      contentType: "doctrine",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "gear-doctrine.v2",
+      exportedAt,
+      contentId: entryData.id,
+      title: entryData.name,
+      description: "Standalone Technica doctrine runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
   if (isDialogueShape(entryData)) {
     return {
       schemaVersion: "1.0.0",
@@ -267,6 +397,25 @@ function createSyntheticManifest(fileName: string, entryData: unknown): Technica
       contentId: entryData.id,
       title: entryData.subject,
       description: "Standalone Technica mail runtime file.",
+      entryFile: fileName,
+      dependencies: [],
+      files: [fileName]
+    };
+  }
+
+  if (isChatterShape(entryData)) {
+    return {
+      schemaVersion: "1.0.0",
+      sourceApp: "Technica",
+      sourceAppVersion: "runtime-json",
+      exportType: "chatter",
+      contentType: "chatter",
+      targetGame: "chaos-core",
+      targetSchemaVersion: "chatter.v1",
+      exportedAt,
+      contentId: entryData.id,
+      title: `${String(entryData.location)} chatter`,
+      description: "Standalone Technica chatter runtime file.",
       entryFile: fileName,
       dependencies: [],
       files: [fileName]
@@ -439,6 +588,8 @@ function persistInstalledContent(): void {
 function getExistingDependencyBuckets() {
   const mapIds = new Set(getAllImportedFieldMaps().map((entry) => entry.id));
   const questIds = new Set(getAllImportedQuests().map((entry) => entry.id));
+  const chatterIds = new Set(getAllImportedChatterEntries().map((entry) => entry.id));
+  const keyItemIds = new Set(getAllImportedKeyItems().map((entry) => entry.id));
   const dialogueIds = new Set(getAllImportedDialogues().map((entry) => entry.id));
   const gearIds = new Set(getAllImportedGear().map((entry) => entry.id));
   const itemIds = new Set(getAllImportedItems().map((entry) => entry.id));
@@ -446,9 +597,26 @@ function getExistingDependencyBuckets() {
   const unitIds = new Set(getAllImportedUnitTemplates().map((entry) => entry.id));
   const operationIds = new Set(getAllImportedOperations().map((entry) => entry.id ?? entry.codename));
   const classIds = new Set(getAllImportedClassDefinitions().map((entry) => entry.id));
+  const chassisIds = new Set(getAllImportedChassis().map((entry) => entry.id));
+  const doctrineIds = new Set(getAllImportedDoctrines().map((entry) => entry.id));
   const sceneIds = new Set(mapIds);
 
-  return { mapIds, questIds, dialogueIds, gearIds, itemIds, cardIds, unitIds, operationIds, classIds, sceneIds };
+  return {
+    mapIds,
+    questIds,
+    chatterIds,
+    keyItemIds,
+    dialogueIds,
+    gearIds,
+    itemIds,
+    cardIds,
+    unitIds,
+    operationIds,
+    classIds,
+    chassisIds,
+    doctrineIds,
+    sceneIds
+  };
 }
 
 function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
@@ -462,6 +630,10 @@ function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
 
     if (manifest.contentType === "quest") {
       buckets.questIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "key_item") {
+      buckets.keyItemIds.add(manifest.contentId);
     }
 
     if (manifest.contentType === "dialogue") {
@@ -484,6 +656,14 @@ function buildDependencyBuckets(candidates: ParsedTechnicaCandidate[]) {
     }
     if (manifest.contentType === "class") {
       buckets.classIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "chassis") {
+      buckets.chassisIds.add(manifest.contentId);
+    }
+
+    if (manifest.contentType === "doctrine") {
+      buckets.doctrineIds.add(manifest.contentId);
     }
   });
 
@@ -508,6 +688,8 @@ function getDependencyWarnings(
       exists = buckets.mapIds.has(dependency.id);
     } else if (dependency.contentType === "quest") {
       exists = buckets.questIds.has(dependency.id);
+    } else if (dependency.contentType === "key_item") {
+      exists = buckets.keyItemIds.has(dependency.id);
     } else if (dependency.contentType === "dialogue") {
       exists = buckets.dialogueIds.has(dependency.id);
     } else if (dependency.contentType === "item") {
@@ -601,6 +783,10 @@ function restoreInstalledEntry(entry: InstalledTechnicaContent): boolean {
   }
 }
 
+function isShadowedByPublishedContent(entry: InstalledTechnicaContent): boolean {
+  return hasTechnicaRegistryEntry(entry.manifest.contentType, entry.manifest.contentId);
+}
+
 export function initializeTechnicaContentLibrary(): void {
   if (isInitialized) {
     return;
@@ -623,6 +809,15 @@ export function initializeTechnicaContentLibrary(): void {
     parsed.forEach((entry) => {
       if (!entry || typeof entry !== "object" || !entry.manifest || !entry.key) {
         removedInvalidEntries = true;
+        return;
+      }
+
+      if (isShadowedByPublishedContent(entry)) {
+        removedInvalidEntries = true;
+        console.info(
+          "[TECHNICA] Skipping stored import because published content already provides this id:",
+          entry.key,
+        );
         return;
       }
 
@@ -653,7 +848,12 @@ export function getInstalledTechnicaCounts(): Record<TechnicaContentType, number
     {
       map: 0,
       mail: 0,
+      chatter: 0,
       quest: 0,
+      key_item: 0,
+      faction: 0,
+      chassis: 0,
+      doctrine: 0,
       dialogue: 0,
       field_enemy: 0,
       npc: 0,

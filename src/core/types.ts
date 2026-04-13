@@ -1,7 +1,10 @@
 // src/core/types.ts
 import type { EffectFlowDocument } from "./effectFlow";
+import type { WeaponCardRules } from "./weaponData";
+import type { ResourceWallet } from "./resources";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
+export type { ResourceKey, ResourceWallet } from "./resources";
 
 // ---------------------------------------------------------
 //  CORE BATTLE TYPES
@@ -11,8 +14,8 @@ export type UnitId = string;
 export type CardId = string;
 export type RoomId = string;
 export const LOCAL_PLAYER_IDS = ["P1", "P2"] as const;
-export const SESSION_PLAYER_SLOTS = ["P1", "P2", "P3", "P4"] as const;
 export const NETWORK_PLAYER_SLOTS = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"] as const;
+export const SESSION_PLAYER_SLOTS = NETWORK_PLAYER_SLOTS;
 export type PlayerSlot = typeof LOCAL_PLAYER_IDS[number];
 export type SessionPlayerSlot = typeof SESSION_PLAYER_SLOTS[number];
 export type NetworkPlayerSlot = typeof NETWORK_PLAYER_SLOTS[number];
@@ -29,12 +32,12 @@ export type PlayerInputSource =
 export type SessionMode = "singleplayer" | "local_coop" | "squad" | "coop_operations";
 export type PlayerPresence = "inactive" | "local" | "remote" | "disconnected";
 export type AuthorityRole = "local" | "host" | "client";
-export type UnitOwnership = PlayerSlot;
+export type UnitOwnership = SessionPlayerSlot;
 export type EconomyPreset = "shared" | "partitioned";
 export type ResourceTransferKind = "wad" | "resource" | "item";
 export type ReconnectStagingState = "haven" | "staging" | "theater" | "battle" | "disconnected" | "rejoining";
 export type LobbyTransportState = "local_preview" | "hosting" | "joining" | "connected" | "reconnecting" | "closed";
-export type SkirmishObjectiveType = "elimination" | "control_relay" | "breakthrough";
+export type SkirmishObjectiveType = "elimination" | "control_relay" | "breakthrough" | "extraction";
 export type LobbyChallengeStatus = "pending" | "accepted" | "declined" | "cancelled";
 export type LobbySkirmishIntermissionDecision = "redraft" | "reuse";
 export type LobbyCoopOperationsStatus = "staging" | "active";
@@ -43,6 +46,7 @@ export type WeaponType =
   | "sword"
   | "greatsword"
   | "shortsword"
+  | "shield"
   | "bow"
   | "greatbow"
   | "gun"
@@ -75,6 +79,10 @@ export interface Card {
   effects: CardEffect[];
   effectFlow?: EffectFlowDocument;
   artPath?: string;
+  sourceEquipmentId?: string;
+  weaponRules?: WeaponCardRules;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: CardId[];
 }
 
 export interface Unit {
@@ -112,6 +120,17 @@ export interface Unit {
   // Field Mods System - Hardpoints (run-scoped, stored in ActiveRunState)
   // Mount System
   mountInstanceId?: string;  // ID of the OwnedMount instance assigned to this unit
+  operationStatuses?: Array<{
+    id: string;
+    type: string;
+    label?: string;
+    placeholder?: boolean;
+    operationId?: string;
+    theaterId?: string;
+    sourceRoomId?: RoomId;
+    createdAtTick?: number;
+    expiresAtTick?: number;
+  }>;
   operationInjury?: {
     operationId: string;
     theaterId: string;
@@ -137,13 +156,7 @@ export interface BattleState {
   tiles: BattleTile[];
   log: string[];
   phase: "active" | "victory" | "defeat";
-  rewards?: {
-    wad: number;
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  rewards?: { wad: number } & ResourceWallet;
   modeContext?: BattleModeContext;
 
   // 10za addition:
@@ -231,13 +244,6 @@ export interface Player {
   controlledUnitIds: UnitId[];
 }
 
-export interface ResourceWallet {
-  metalScrap: number;
-  wood: number;
-  chaosShards: number;
-  steamComponents: number;
-}
-
 export interface ResourcePool {
   wad: number;
   resources: ResourceWallet;
@@ -281,6 +287,7 @@ export type CoopTheaterCommand =
 
 export interface SessionPlayerState {
   slot: SessionPlayerSlot;
+  callsign: string | null;
   presence: PlayerPresence;
   authorityRole: AuthorityRole;
   connected: boolean;
@@ -289,6 +296,7 @@ export interface SessionPlayerState {
   stagingState: ReconnectStagingState;
   currentTheaterId: string | null;
   assignedSquadId: string | null;
+  activeBattleId: string | null;
   lastSafeRoomId: RoomId | null;
   lastSafeMapId: string | null;
 }
@@ -308,15 +316,40 @@ export interface CampaignState {
   };
 }
 
+export interface TheaterRuntimeContext {
+  theaterId: string;
+  operationId: string | null;
+  snapshot: string;
+  phase: GameState["phase"] | null;
+  battleSnapshot: string | null;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
+  updatedAt: number;
+}
+
+export interface BattleRuntimeContext {
+  battleId: string;
+  theaterId: string | null;
+  roomId: RoomId | null;
+  squadId: string | null;
+  snapshot: string;
+  phase: RuntimeBattleState["phase"] | null;
+  updatedAt: number;
+}
+
 export interface SessionState {
   mode: SessionMode;
   authorityRole: AuthorityRole;
   ownerSlot: SessionPlayerSlot;
   maxPlayers: number;
+  sharedCampaignSlot: string | null;
+  sharedCampaignLabel: string | null;
+  sharedCampaignLastSavedAt: number | null;
   resourceLedger: ResourceLedger;
   pendingTransfers: TradeTransfer[];
   players: Record<SessionPlayerSlot, SessionPlayerState>;
   theaterAssignments: Record<SessionPlayerSlot, TheaterAssignment>;
+  activeTheaterContexts: Record<string, TheaterRuntimeContext>;
+  activeBattleContexts: Record<string, BattleRuntimeContext>;
   pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
   activeBattleId: string | null;
   campaign: CampaignState;
@@ -385,11 +418,20 @@ export interface LobbyCoopParticipantState {
   callsign: string;
   authorityRole: AuthorityRole;
   selected: boolean;
+  standby: boolean;
   connected: boolean;
   presence: PlayerPresence;
   sessionSlot: SessionPlayerSlot | null;
   stagingState: ReconnectStagingState;
   lastSafeMapId: string | null;
+  currentTheaterId: string | null;
+  assignedSquadId: string | null;
+  activeBattleId: string | null;
+  currentRoomId: RoomId | null;
+  operationPhase: GameState["phase"] | null;
+  theaterSnapshot: string | null;
+  battleSnapshot: string | null;
+  pendingTheaterBattleConfirmation: PendingTheaterBattleConfirmationState | null;
 }
 
 export interface LobbyCoopOperationsActivity {
@@ -397,8 +439,16 @@ export interface LobbyCoopOperationsActivity {
   sessionId: string | null;
   status: LobbyCoopOperationsStatus;
   selectedSlots: NetworkPlayerSlot[];
+  standbySlots: NetworkPlayerSlot[];
+  sharedCampaignSlot: string | null;
+  sharedCampaignLabel: string | null;
+  sharedCampaignLastSavedAt: number | null;
   economyPreset: EconomyPreset;
+  resourceLedger: ResourceLedger;
+  pendingTransfers: TradeTransfer[];
   participants: Record<NetworkPlayerSlot, LobbyCoopParticipantState>;
+  theaterContexts: Record<string, TheaterRuntimeContext>;
+  battleContexts: Record<string, BattleRuntimeContext>;
   operationSnapshot: string | null;
   battleSnapshot: string | null;
   operationPhase: GameState["phase"] | null;
@@ -500,6 +550,17 @@ export interface PlayerNoteStickyAnchor {
   colorKey?: string;
 }
 
+export interface BattleCameraViewPreset {
+  orbitYaw: number;
+  orbitPitch: number;
+  orbitDistance: number;
+  zoomFactor: number;
+  focusX: number;
+  focusY: number;
+  focusZ: number;
+  hasManualPan: boolean;
+}
+
 export interface UILayoutState {
   baseCampLayoutVersion?: number;
   baseCampResetPresetIndex?: number;
@@ -513,6 +574,10 @@ export interface UILayoutState {
   baseCampPinnedItemFrames?: Record<string, BaseCampPinnedItemFrame>;
   baseCampFieldNodeLayouts?: Record<string, BaseCampFieldNodeLayout>;
   baseCampLayoutLoadouts?: Record<string, BaseCampLayoutLoadout>;
+  baseCampResourceTrackerShowAdvanced?: boolean;
+  baseCampTheaterAutoTickEnabled?: boolean;
+  battleActiveViewIndex?: number;
+  battleViewPresets?: Record<string, BattleCameraViewPreset>;
   minimapExploredByMap?: Record<string, string[]>;
   inventoryTrayItemLayouts?: Record<string, BaseCampItemSize>;
   inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
@@ -532,8 +597,8 @@ export interface UILayoutState {
     panY: number;
     zoom: number;
   };
-  theaterCommandCoreTab?: "room" | "core" | "fortifications";
-  theaterCommandNodeTab?: "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications";
+  theaterCommandCoreTab?: "room" | "core" | "fortifications" | "tactical";
+  theaterCommandNodeTab?: "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications" | "tactical";
   theaterCommandMapMode?: TheaterMapMode;
   theaterCommandAutomationWindowOpen?: boolean;
   theaterCommandSelectedAnnexId?: string | null;
@@ -544,11 +609,12 @@ export interface UILayoutState {
     panX: number;
     panY: number;
     zoom?: number;
-  };
-  opsTerminalAtlasMapMode?: TheaterMapMode;
-  opsTerminalAtlasWindowFrame?: {
-    x: number;
-    y: number;
+    };
+    opsTerminalAtlasMapMode?: TheaterMapMode;
+    opsTerminalAtlasLayoutVersion?: number;
+    opsTerminalAtlasWindowFrame?: {
+      x: number;
+      y: number;
     width: number;
     height: number;
   };
@@ -592,6 +658,9 @@ export type TheaterSquadStatus = "idle" | "moving" | "pinned" | "threatened" | "
 export type TheaterSquadAutomationMode = "manual" | "undaring" | "daring";
 export type TheaterSquadAutoStatus = "idle" | "intercepting" | "pushing" | "recovering" | "holding";
 export type TheaterRoomClass = "standard" | "mega";
+export type TheaterSignalPosture = "normal" | "masked" | "bait";
+export type TheaterScavengerActivity = "quiet" | "probing" | "raiding";
+export type TheaterContainmentMode = "normal" | "venting" | "lockdown";
 export type TheaterThreatType = "patrol" | "siege";
 export type TheaterObjectiveType =
   | "deliver_supply"
@@ -693,6 +762,7 @@ export type CoreType =
   | "tactics_school"
   | "quartermaster_cell"
   | "stable"
+  | "workshop"
   | "fabrication_bay"
   | "survey_array"
   | "recovery_yard"
@@ -1050,6 +1120,12 @@ export interface CoreAssignment {
   supportRadius: number;
 }
 
+export interface TheaterRoomNaturalStock {
+  metalScrap: number;
+  wood: number;
+  steamComponents: number;
+}
+
 export type FortificationPips = Record<FortificationType, number>;
 
 export interface TheaterRoom {
@@ -1097,9 +1173,32 @@ export interface TheaterRoom {
     consumed?: boolean;
     charges?: number;
   }>;
+  naturalResourceStock?: TheaterRoomNaturalStock;
+  naturalResourceStockMax?: TheaterRoomNaturalStock;
   supplyFlow: number;
   powerFlow: number;
   commsFlow: number;
+  sandboxOverheating?: boolean;
+  sandboxOverheatSeverity?: 0 | 1 | 2;
+  sandboxRouteNoise?: boolean;
+  sandboxPhantomRouteRoomIds?: string[];
+  sandboxCommsAttraction?: number;
+  sandboxScavengerPressure?: number;
+  sandboxScavengerPresence?: number;
+  sandboxScavengerActivity?: TheaterScavengerActivity;
+  sandboxEnemyPresence?: number;
+  sandboxMigrationAnchorRoomId?: string | null;
+  sandboxHeatValue?: number;
+  sandboxSmokeValue?: number;
+  sandboxBurning?: boolean;
+  sandboxBurnSeverity?: 0 | 1 | 2 | 3;
+  sandboxContainmentMode?: TheaterContainmentMode;
+  sandboxEmergencyDumpTicks?: number;
+  sandboxStructuralStress?: number;
+  sandboxSignalPosture?: TheaterSignalPosture;
+  sandboxSignalBloom?: boolean;
+  sandboxSupplyFireRisk?: boolean;
+  sandboxExtractionEfficiency?: number;
   intelLevel: TheaterIntelLevel;
   fortificationPips: FortificationPips;
   tacticalEncounter: string | null;
@@ -1142,13 +1241,7 @@ export interface ThreatState {
 export interface TheaterObjectiveCompletion {
   roomId: RoomId;
   completedAtTick: number;
-  reward: {
-    wad: number;
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  reward: { wad: number } & ResourceWallet;
   recapLines: string[];
 }
 
@@ -1243,12 +1336,32 @@ export interface RecruitmentCandidate {
   };
 }
 
-export type EchoFieldId = "ember_zone" | "bastion_zone" | "flux_zone";
-export type EchoEncounterType = "standard" | "elite" | "checkpoint";
-export type EchoRunStage = "initial_units" | "initial_field" | "reward" | "results";
+export type EchoFieldId =
+  | "ember_zone"
+  | "bastion_zone"
+  | "flux_zone"
+  | "static_zone"
+  | "mender_zone"
+  | "vent_zone"
+  | "ward_zone"
+  | "hex_zone"
+  | "snare_zone"
+  | "shroud_zone"
+  | "relay_zone"
+  | "null_zone"
+  | "overdrive_zone";
+export type EchoEncounterType = "standard" | "elite" | "checkpoint" | "boss" | "boss_chain_a" | "boss_chain_b";
+export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "results";
 export type EchoChallengeType = "no_losses" | "turn_limit" | "field_triggers";
-export type EchoRewardLane = "unit" | "field" | "modifier";
-export type EchoRewardOptionType = "unit_draft" | "field_draft" | "field_upgrade" | "modifier_draft";
+export type EchoRewardLane = "unit" | "field" | "modifier" | "recovery" | "training";
+export type EchoRewardOptionType =
+  | "unit_draft"
+  | "field_draft"
+  | "field_upgrade"
+  | "modifier_draft"
+  | "recovery_draft"
+  | "training_draft";
+export type EchoRunNodeType = "encounter" | "elite" | "support" | "boss" | "boss_chain_a" | "boss_chain_b" | "milestone";
 
 export interface EchoUnitDraftOption {
   id: string;
@@ -1309,6 +1422,26 @@ export interface EchoRewardChoice {
   unitOption?: EchoUnitDraftOption;
   fieldDefinition?: EchoFieldDefinition;
   modifierDefId?: string;
+  recoveryOption?: EchoRecoveryOption;
+  trainingOption?: EchoTrainingPackageOption;
+}
+
+export interface EchoRecoveryOption {
+  id: string;
+  name: string;
+  description: string;
+  healMode: "all_percent" | "lowest_full_all_percent";
+  allHealPercent?: number;
+  otherHealPercent?: number;
+  rerollsGranted?: number;
+}
+
+export interface EchoTrainingPackageOption {
+  id: string;
+  name: string;
+  description: string;
+  stat: "atk" | "def" | "agi" | "acc";
+  amount: number;
 }
 
 export interface EchoChallenge {
@@ -1348,6 +1481,8 @@ export interface EchoEncounterSummary {
 
 export interface EchoBattleContext {
   runId: string;
+  nodeId?: string | null;
+  stratum?: number;
   encounterNumber: number;
   encounterType: EchoEncounterType;
   placementMode: "units" | "fields";
@@ -1359,11 +1494,37 @@ export interface EchoBattleContext {
   startUnitIds: UnitId[];
 }
 
+export interface EchoRunEdge {
+  fromNodeId: string;
+  toNodeId: string;
+}
+
+export interface EchoRunNode {
+  id: string;
+  stratum: number;
+  layer: number;
+  branchIndex: number;
+  nodeType: EchoRunNodeType;
+  encounterType?: EchoEncounterType | null;
+  title: string;
+  subtitle: string;
+  description: string;
+  dangerTier: number;
+  rewardBias: string;
+  choiceCount: number;
+  laneWeights: Partial<Record<EchoRewardLane, number>>;
+  forcedLanes?: EchoRewardLane[];
+  nextNodeIds: string[];
+  resolved: boolean;
+  unlocked: boolean;
+}
+
 export interface SquadBattleTurnState {
   unitId: string | null;
   hasMoved: boolean;
   hasCommittedMove: boolean;
   hasActed: boolean;
+  movementOnlyAfterAttack?: boolean;
   movementRemaining: number;
   originalPosition: { x: number; y: number } | null;
   isFacingSelection: boolean;
@@ -1372,11 +1533,12 @@ export interface SquadBattleTurnState {
 export type SquadBattleSide = "friendly" | "enemy";
 
 export interface SquadBattleObjectiveState {
-  kind: "control_relay" | "breakthrough";
+  kind: "control_relay" | "breakthrough" | "extraction";
   label: string;
   description: string;
   controlTiles: Array<{ x: number; y: number }>;
   breachTiles?: Record<SquadBattleSide, Array<{ x: number; y: number }>>;
+  extractionTiles?: Array<{ x: number; y: number }>;
   targetScore: number;
   score: Record<SquadBattleSide, number>;
   controllingSide: SquadBattleSide | null;
@@ -1398,6 +1560,7 @@ export interface SquadBattleContext {
 
 export interface BattleModeContext {
   kind: "story" | "training" | "endless" | "echo" | "squad";
+  turnState?: SquadBattleTurnState | null;
   echo?: EchoBattleContext;
   squad?: SquadBattleContext;
 }
@@ -1406,6 +1569,16 @@ export interface EchoRunState {
   id: string;
   seed: string;
   stage: EchoRunStage;
+  currentStratum: number;
+  milestonesReached: number;
+  bossChainsCleared: number;
+  currentNodeId: string | null;
+  nodesById: Record<string, EchoRunNode>;
+  edges: EchoRunEdge[];
+  completedNodeIds: string[];
+  availableNodeIds: string[];
+  pendingNodeId: string | null;
+  lastResolvedNodeType: EchoRunNodeType | null;
   encounterNumber: number;
   unitsById: Record<UnitId, Unit>;
   squadUnitIds: UnitId[];
@@ -1529,6 +1702,7 @@ export interface OwnedMount {
 export interface StableState {
   unlockedMountIds: MountId[];        // Which mount types are unlocked
   ownedMounts: OwnedMount[];          // Mount instances the player owns
+  aerissFieldMountInstanceId?: string | null; // Placeholder travel mount used for field-map movement speed
 }
 
 // ---------------------------------------------------------
@@ -1540,7 +1714,7 @@ export type MuleWeightClass = "E" | "D" | "C" | "B" | "A" | "S";
 export interface InventoryItem {
   id: string;
   name: string;
-  kind: "resource" | "equipment" | "consumable" | "unit";
+  kind: "resource" | "equipment" | "consumable" | "unit" | "key_item";
   stackable: boolean;
   quantity: number;
   massKg: number;
@@ -1594,7 +1768,6 @@ export interface GameState {
   gearSlots: Record<string, GearSlotData>;  // equipmentId -> slot config
 
   equipmentById?: Record<string, any>;
-  modulesById?: Record<string, any>;
   equipmentPool?: string[];
 
   wad: number;
@@ -1608,8 +1781,11 @@ export interface GameState {
   foundry?: FoundryUnlockState;
 
   inventory: InventoryState;
+  outerDecks?: import("./outerDecks").OuterDecksState;
+  weaponsmith?: import("./weaponsmith").WeaponsmithState;
 
   currentBattle: RuntimeBattleState | null;
+  echoRun: EchoRunState | null;
 
   // Quest System
   quests?: import("../quests/types").QuestState;
@@ -1667,6 +1843,7 @@ export interface GameState {
   // Tracks one-time Technica content merges into existing saves.
   technicaSync?: {
     starterGearIds?: string[];
+    registryFingerprint?: string;
   };
 }
 

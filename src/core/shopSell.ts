@@ -8,6 +8,13 @@ import { Equipment } from "./equipment";
 import { CONSUMABLE_DATABASE } from "./crafting";
 import { getAllOwnedUnlockableIds } from "./unlockableOwnership";
 import { getUnlockableById } from "./unlockables";
+import { getResourceEntries, RESOURCE_KEYS, type ResourceKey, type ResourceWallet } from "./resources";
+import {
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  grantSessionResources,
+  spendSessionCost,
+} from "./session";
 
 // ----------------------------------------------------------------------------
 // CONSTANTS
@@ -106,6 +113,11 @@ export function getResourceSellPrice(resourceId: string): number {
     wood: 1,
     chaosShards: 5,
     steamComponents: 3,
+    alloy: 6,
+    drawcord: 4,
+    fittings: 5,
+    resin: 4,
+    chargeCells: 7,
   };
   return prices[resourceId] || 1;
 }
@@ -148,6 +160,8 @@ function validateSellLine(
   line: SellLine,
   state: GameState
 ): { valid: boolean; error?: string } {
+  const localResourcePool = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+
   if (line.quantity <= 0) {
     return { valid: false, error: "Quantity must be greater than 0" };
   }
@@ -194,19 +208,12 @@ function validateSellLine(
     }
 
     case "resource": {
-      const resourceMap: Record<string, keyof GameState["resources"]> = {
-        metalScrap: "metalScrap",
-        wood: "wood",
-        chaosShards: "chaosShards",
-        steamComponents: "steamComponents",
-      };
-
-      const resourceKey = resourceMap[line.id];
-      if (!resourceKey) {
+      if (!RESOURCE_KEYS.includes(line.id as ResourceKey)) {
         return { valid: false, error: `Unknown resource: ${line.id}` };
       }
 
-      const owned = state.resources?.[resourceKey] || 0;
+      const resourceKey = line.id as ResourceKey;
+      const owned = localResourcePool.resources[resourceKey] || 0;
       if (line.quantity > owned) {
         return { valid: false, error: `Only ${owned} available, cannot sell ${line.quantity}` };
       }
@@ -241,11 +248,13 @@ export function sellToShop(
 
   // Calculate total WAD
   let totalWad = 0;
+  const resourceCost: Partial<ResourceWallet> = {};
   for (const line of lines) {
     let unitPrice = 0;
 
     if (line.kind === "resource") {
       unitPrice = getResourceSellPrice(line.id);
+      resourceCost[line.id as ResourceKey] = (resourceCost[line.id as ResourceKey] ?? 0) + line.quantity;
     } else {
       // For equipment/consumables/weaponParts, we need to look up buy price
       // For now, use getSellPrice which has fallbacks
@@ -256,7 +265,7 @@ export function sellToShop(
   }
 
   // Create new state with updates
-  const nextState: GameState = JSON.parse(JSON.stringify(state)); // Deep clone
+  let nextState: GameState = JSON.parse(JSON.stringify(state)); // Deep clone
 
   // Apply all changes
   for (const line of lines) {
@@ -300,25 +309,20 @@ export function sellToShop(
       }
 
       case "resource": {
-        const resourceMap: Record<string, keyof GameState["resources"]> = {
-          metalScrap: "metalScrap",
-          wood: "wood",
-          chaosShards: "chaosShards",
-          steamComponents: "steamComponents",
-        };
-
-        const resourceKey = resourceMap[line.id];
-        if (resourceKey && nextState.resources) {
-          const current = nextState.resources[resourceKey] || 0;
-          nextState.resources[resourceKey] = Math.max(0, current - line.quantity);
-        }
         break;
       }
     }
   }
 
-  // Add WAD
-  nextState.wad = (nextState.wad || 0) + totalWad;
+  if (Object.keys(resourceCost).length > 0) {
+    const spendResult = spendSessionCost(nextState, { resources: resourceCost });
+    if (!spendResult.success) {
+      return { error: spendResult.error || "Failed to remove sold resources" };
+    }
+    nextState = spendResult.state;
+  }
+
+  nextState = grantSessionResources(nextState, { wad: totalWad });
 
   return { next: nextState, wadGained: totalWad };
 }
@@ -332,6 +336,7 @@ export function sellToShop(
  */
 export function getSellableEntries(state: GameState): SellableEntry[] {
   const entries: SellableEntry[] = [];
+  const localResources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
 
   // Equipment
   if (state.equipmentById) {
@@ -393,30 +398,21 @@ export function getSellableEntries(state: GameState): SellableEntry[] {
   }
 
   // Resources
-  if (state.resources) {
-    const resources = [
-      { id: "metalScrap", name: "Metal Scrap" },
-      { id: "wood", name: "Wood" },
-      { id: "chaosShards", name: "Chaos Shards" },
-      { id: "steamComponents", name: "Steam Components" },
-    ];
-
-    for (const res of resources) {
-      const quantity = state.resources[res.id as keyof typeof state.resources] as number || 0;
-      if (quantity > 0) {
-        entries.push({
-          key: `resource:${res.id}`,
-          kind: "resource",
-          id: res.id,
-          name: res.name,
-          owned: quantity,
-          unitSellPrice: getResourceSellPrice(res.id),
-          stackable: true,
-        });
-      }
+  for (const resource of getResourceEntries(localResources)) {
+    if (resource.amount <= 0) {
+      continue;
     }
+
+    entries.push({
+      key: `resource:${resource.key}`,
+      kind: "resource",
+      id: resource.key,
+      name: resource.label,
+      owned: resource.amount,
+      unitSellPrice: getResourceSellPrice(resource.key),
+      stackable: true,
+    });
   }
 
   return entries;
 }
-

@@ -2,7 +2,10 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderBattleScreen } from "./BattleScreen";
 import { renderMainMenu } from "./MainMenuScreen";
 import { createBuilderQuickTestBattle } from "../../core/tacticalBattle";
+import { BattleSceneController } from "../battle3d/BattleSceneController";
+import { createMapPreviewBoardSnapshot } from "../battle3d/snapshot";
 import {
+  commitTacticalMapImportReview,
   cloneTacticalMapDefinition,
   createBlankTacticalMap,
   createTacticalMapId,
@@ -11,7 +14,12 @@ import {
   getTacticalMapCatalog,
   getTacticalMapTemplates,
   instantiateTemplateMap,
+  parseImportedTacticalMapPayload,
+  reviewTacticalMapImports,
+  serializeTacticalMapToShareCode,
   type TacticalMapDefinition,
+  type TacticalMapImportAction,
+  type TacticalMapImportReviewItem,
   type TacticalMapObjectType,
   type TacticalMapPoint,
   type TacticalMapSurface,
@@ -59,7 +67,100 @@ let builderObject: TacticalMapObjectType = "barricade_wall";
 let builderTraversalKind: TacticalTraversalKind = "ladder";
 let builderPendingTraversalStart: TacticalMapPoint | null = null;
 let builderZoom = 1;
+let builderSelectedPoint: TacticalMapPoint | null = null;
 let builderMessage: { type: "success" | "error" | "info"; text: string } | null = null;
+let builderImportText = "";
+let builderImportReview:
+  | {
+    items: TacticalMapImportReviewItem[];
+    decisions: Partial<Record<string, TacticalMapImportAction>>;
+    sourceLabel: string;
+  }
+  | null = null;
+let mapBuilderPreviewController: BattleSceneController | null = null;
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatDisplayLabel(value: string): string {
+  return value.replace(/_/g, " ").toUpperCase();
+}
+
+function getImportActionOptions(reviewItem: TacticalMapImportReviewItem): TacticalMapImportAction[] {
+  if (!reviewItem.validation.valid) {
+    return ["skip"];
+  }
+  if (reviewItem.conflictType === "existing_id") {
+    return ["replace_existing", "keep_both", "skip"];
+  }
+  if (reviewItem.conflictType === "existing_name" || reviewItem.conflictType === "reserved_id") {
+    return ["keep_both", "skip"];
+  }
+  return ["import", "skip"];
+}
+
+function describeImportConflict(reviewItem: TacticalMapImportReviewItem): string {
+  switch (reviewItem.conflictType) {
+    case "reserved_id":
+      return `Reserved id conflict with ${reviewItem.existingMap?.name ?? "built-in catalog map"}.`;
+    case "existing_id":
+      return `Existing custom map id conflict with ${reviewItem.existingMap?.name ?? "saved map"}.`;
+    case "existing_name":
+      return `Existing custom map name conflict with ${reviewItem.existingMap?.name ?? "saved map"}.`;
+    case "none":
+    default:
+      return "No import conflict detected.";
+  }
+}
+
+function getImportDecision(reviewItem: TacticalMapImportReviewItem): TacticalMapImportAction {
+  return builderImportReview?.decisions[reviewItem.key] ?? reviewItem.recommendedAction;
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      console.warn("[MAP_BUILDER] Clipboard write failed", error);
+    }
+  }
+
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "true");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  helper.style.pointerEvents = "none";
+  document.body.appendChild(helper);
+  helper.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    console.warn("[MAP_BUILDER] Legacy clipboard copy failed", error);
+  }
+  helper.remove();
+  return copied;
+}
+
+async function readTextFromClipboard(): Promise<string> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+    throw new Error("Clipboard paste is unavailable in this environment.");
+  }
+  return navigator.clipboard.readText();
+}
 
 function getBuilderAuthor(): string {
   return getGameState().profile.callsign?.trim() || "AERISS";
@@ -83,6 +184,43 @@ function setBuilderDraft(nextDraft: TacticalMapDefinition): void {
       author: getBuilderAuthor(),
     },
   };
+  if (builderSelectedPoint && !builderDraft.tiles.some((tile) => tile.x === builderSelectedPoint?.x && tile.y === builderSelectedPoint?.y)) {
+    builderSelectedPoint = null;
+  }
+}
+
+function getMapBuilderPreviewController(): BattleSceneController {
+  if (!mapBuilderPreviewController) {
+    mapBuilderPreviewController = new BattleSceneController();
+  }
+  return mapBuilderPreviewController;
+}
+
+function syncMapBuilderPreview(draft: TacticalMapDefinition): void {
+  const host = document.getElementById("mapBuilderPreviewHost") as HTMLElement | null;
+  if (!host) {
+    return;
+  }
+
+  const controller = getMapBuilderPreviewController();
+  controller.mount(host);
+  controller.setZoomFactor(Math.max(0.8, Math.min(1.5, builderZoom + 0.15)));
+  controller.setInteractionHandlers({
+    onPrimaryPick: (pick) => {
+      builderSelectedPoint = { x: pick.x, y: pick.y };
+      renderMapBuilderScreen();
+    },
+  });
+  controller.sync(createMapPreviewBoardSnapshot(draft, {
+    selectedTile: builderSelectedPoint,
+    traversalSource: builderPendingTraversalStart,
+  }));
+  controller.focusTile(builderSelectedPoint ?? builderPendingTraversalStart ?? draft.zones.relay[0] ?? draft.tiles[0] ?? null);
+}
+
+function teardownMapBuilderPreview(): void {
+  mapBuilderPreviewController?.dispose();
+  mapBuilderPreviewController = null;
 }
 
 function withUpdatedDraft(updater: (draft: TacticalMapDefinition) => TacticalMapDefinition): void {
@@ -120,6 +258,7 @@ function isPlayableTile(draft: TacticalMapDefinition, point: TacticalMapPoint): 
 
 function applyBuilderCellAction(x: number, y: number): void {
   const point = { x, y };
+  builderSelectedPoint = { ...point };
   const draft = ensureBuilderDraft();
   const hasTile = isPlayableTile(draft, point);
 
@@ -311,6 +450,66 @@ function saveDraft(): void {
   renderMapBuilderScreen();
 }
 
+function beginImportReview(raw: string, sourceLabel: string): void {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    builderMessage = { type: "error", text: "Paste a tactical map share code or JSON payload to import." };
+    renderMapBuilderScreen();
+    return;
+  }
+
+  try {
+    const parsed = parseImportedTacticalMapPayload(trimmed, getBuilderAuthor());
+    const reviewItems = reviewTacticalMapImports(parsed.maps, getBuilderAuthor());
+    builderImportText = trimmed;
+    builderImportReview = {
+      items: reviewItems,
+      decisions: Object.fromEntries(reviewItems.map((item) => [item.key, item.recommendedAction])),
+      sourceLabel,
+    };
+    builderMessage = {
+      type: "info",
+      text: `Import review ready for ${reviewItems.length} map${reviewItems.length === 1 ? "" : "s"} from ${sourceLabel}.`,
+    };
+  } catch (error) {
+    builderImportReview = null;
+    builderMessage = {
+      type: "error",
+      text: error instanceof Error ? error.message : "Import review could not be started.",
+    };
+  }
+
+  renderMapBuilderScreen();
+}
+
+function commitImportReview(): void {
+  if (!builderImportReview) {
+    builderMessage = { type: "error", text: "There is no import review to apply." };
+    renderMapBuilderScreen();
+    return;
+  }
+
+  const importedMaps = commitTacticalMapImportReview(
+    builderImportReview.items,
+    builderImportReview.decisions,
+    getBuilderAuthor(),
+  );
+  builderImportReview = null;
+
+  if (importedMaps.length <= 0) {
+    builderMessage = { type: "info", text: "No maps were imported." };
+    renderMapBuilderScreen();
+    return;
+  }
+
+  setBuilderDraft(importedMaps[0]);
+  builderMessage = {
+    type: "success",
+    text: `Imported ${importedMaps.length} map${importedMaps.length === 1 ? "" : "s"} into the custom library.`,
+  };
+  renderMapBuilderScreen();
+}
+
 export function relaunchMapBuilderQuickTest(): void {
   const draft = ensureBuilderDraft();
   const validation = validateTacticalMapDefinition(draft);
@@ -387,6 +586,55 @@ export function renderMapBuilderScreen(): void {
   const catalog = getTacticalMapCatalog();
   const validation = validateTacticalMapDefinition(draft);
   const isCustomDraft = catalog.customMaps.some((map) => map.id === draft.id);
+  const currentShareCode = serializeTacticalMapToShareCode(draft, getBuilderAuthor());
+  const importReviewMarkup = builderImportReview
+    ? `
+      <section class="map-builder-panel">
+        <div class="map-builder-panel__title">Import Review</div>
+        <div class="map-builder-panel__subtitle">Source: ${escapeHtml(builderImportReview.sourceLabel)}</div>
+        <div class="map-builder-import-list">
+          ${builderImportReview.items.map((reviewItem) => {
+            const decision = getImportDecision(reviewItem);
+            const actionOptions = getImportActionOptions(reviewItem);
+            const statusClass = !reviewItem.validation.valid
+              ? "is-invalid"
+              : reviewItem.conflictType === "none"
+                ? "is-clear"
+                : "is-conflicted";
+            return `
+              <div class="map-builder-import-card ${statusClass}">
+                <div class="map-builder-import-card__title">${escapeHtml(reviewItem.map.name)}</div>
+                <div class="map-builder-import-card__meta">
+                  ${escapeHtml(formatDisplayLabel(reviewItem.map.theme))} • ${reviewItem.map.width}x${reviewItem.map.height} • ${escapeHtml(reviewItem.map.metadata.author)}
+                </div>
+                <div class="map-builder-import-card__status">${escapeHtml(describeImportConflict(reviewItem))}</div>
+                <label>
+                  Action
+                  <select data-map-builder-import-action="${escapeHtml(reviewItem.key)}" ${actionOptions.length === 1 ? "disabled" : ""}>
+                    ${actionOptions.map((action) => `
+                      <option value="${action}" ${decision === action ? "selected" : ""}>
+                        ${escapeHtml(formatDisplayLabel(action))}
+                      </option>
+                    `).join("")}
+                  </select>
+                </label>
+                ${reviewItem.validation.errors.map((message) => `
+                  <div class="map-builder-import-card__warning">${escapeHtml(message)}</div>
+                `).join("")}
+                ${reviewItem.validation.warnings.map((message) => `
+                  <div class="map-builder-import-card__warning">${escapeHtml(message)}</div>
+                `).join("")}
+              </div>
+            `;
+          }).join("")}
+        </div>
+        <div class="map-builder-share-actions">
+          <button class="comms-array-btn comms-array-btn--primary" type="button" id="mapBuilderImportApplyBtn">IMPORT SELECTED</button>
+          <button class="comms-array-btn" type="button" id="mapBuilderImportCancelBtn">CANCEL REVIEW</button>
+        </div>
+      </section>
+    `
+    : "";
 
   app.innerHTML = `
     <div class="map-builder-screen">
@@ -408,10 +656,10 @@ export function renderMapBuilderScreen(): void {
         <aside class="map-builder-sidebar">
           <section class="map-builder-panel">
             <div class="map-builder-panel__title">Draft</div>
-            <label>Name <input id="mapBuilderNameInput" value="${draft.name.replace(/"/g, "&quot;")}" /></label>
+            <label>Name <input id="mapBuilderNameInput" value="${escapeHtml(draft.name)}" /></label>
             <label>Theme
               <select id="mapBuilderThemeSelect">
-                ${BUILDER_THEMES.map((theme) => `<option value="${theme}" ${draft.theme === theme ? "selected" : ""}>${theme.replace(/_/g, " ").toUpperCase()}</option>`).join("")}
+                ${BUILDER_THEMES.map((theme) => `<option value="${theme}" ${draft.theme === theme ? "selected" : ""}>${formatDisplayLabel(theme)}</option>`).join("")}
               </select>
             </label>
             <label>Width
@@ -426,23 +674,23 @@ export function renderMapBuilderScreen(): void {
             </label>
             <label>Surface
               <select id="mapBuilderSurfaceSelect">
-                ${BUILDER_SURFACES.map((surface) => `<option value="${surface}" ${builderSurface === surface ? "selected" : ""}>${surface.toUpperCase()}</option>`).join("")}
+                ${BUILDER_SURFACES.map((surface) => `<option value="${surface}" ${builderSurface === surface ? "selected" : ""}>${formatDisplayLabel(surface)}</option>`).join("")}
               </select>
             </label>
             <label>Object
               <select id="mapBuilderObjectSelect">
-                ${BUILDER_OBJECTS.map((objectType) => `<option value="${objectType}" ${builderObject === objectType ? "selected" : ""}>${objectType.replace(/_/g, " ").toUpperCase()}</option>`).join("")}
+                ${BUILDER_OBJECTS.map((objectType) => `<option value="${objectType}" ${builderObject === objectType ? "selected" : ""}>${formatDisplayLabel(objectType)}</option>`).join("")}
               </select>
             </label>
             <label>Traversal
               <select id="mapBuilderTraversalSelect">
-                ${BUILDER_TRAVERSAL_KINDS.map((kind) => `<option value="${kind}" ${builderTraversalKind === kind ? "selected" : ""}>${kind.replace(/_/g, " ").toUpperCase()}</option>`).join("")}
+                ${BUILDER_TRAVERSAL_KINDS.map((kind) => `<option value="${kind}" ${builderTraversalKind === kind ? "selected" : ""}>${formatDisplayLabel(kind)}</option>`).join("")}
               </select>
             </label>
             <label>Zoom <input type="range" min="0.7" max="1.4" step="0.1" id="mapBuilderZoomInput" value="${builderZoom}" /></label>
             <div class="map-builder-mode-grid">
-              ${(["elimination", "control_relay", "breakthrough"] as const).map((mode) => `
-                <label><input type="checkbox" data-map-builder-mode="${mode}" ${draft.supportedModes.includes(mode) ? "checked" : ""} /> ${mode.replace(/_/g, " ").toUpperCase()}</label>
+              ${(["elimination", "control_relay", "breakthrough", "extraction"] as const).map((mode) => `
+                <label><input type="checkbox" data-map-builder-mode="${mode}" ${draft.supportedModes.includes(mode) ? "checked" : ""} /> ${formatDisplayLabel(mode)}</label>
               `).join("")}
             </div>
           </section>
@@ -476,8 +724,28 @@ export function renderMapBuilderScreen(): void {
               ${validation.valid ? "READY" : "BLOCKED"}
             </div>
             <div class="map-builder-validation-list">
-              ${(validation.errors.length > 0 ? validation.errors : ["No blocking validation errors."]).map((message) => `<div class="map-builder-validation-item map-builder-validation-item--error">${message}</div>`).join("")}
-              ${validation.warnings.map((message) => `<div class="map-builder-validation-item map-builder-validation-item--warning">${message}</div>`).join("")}
+              ${(validation.errors.length > 0 ? validation.errors : ["No blocking validation errors."]).map((message) => `<div class="map-builder-validation-item map-builder-validation-item--error">${escapeHtml(message)}</div>`).join("")}
+              ${validation.warnings.map((message) => `<div class="map-builder-validation-item map-builder-validation-item--warning">${escapeHtml(message)}</div>`).join("")}
+            </div>
+          </section>
+
+          <section class="map-builder-panel">
+            <div class="map-builder-panel__title">Share</div>
+            <div class="map-builder-panel__subtitle">Copy the current draft as a share code, or paste shared text and review conflicts before import.</div>
+            <label>Current Draft Share Code
+              <textarea id="mapBuilderShareCodeOutput" class="map-builder-share-code" readonly>${escapeHtml(currentShareCode)}</textarea>
+            </label>
+            <div class="map-builder-share-actions">
+              <button class="comms-array-btn" type="button" id="mapBuilderCopyShareBtn">COPY SHARE CODE</button>
+              <button class="comms-array-btn" type="button" id="mapBuilderPasteShareBtn">PASTE FROM CLIPBOARD</button>
+              <button class="comms-array-btn" type="button" id="mapBuilderReviewImportBtn">REVIEW IMPORT</button>
+            </div>
+            <label>Import Share Code / JSON
+              <textarea id="mapBuilderImportInput" placeholder="Paste a CCMAP1 share code or exported tactical map JSON here.">${escapeHtml(builderImportText)}</textarea>
+            </label>
+            <div class="map-builder-panel__subtitle">Clipboard copy is one-click. Clipboard paste fills the import box and starts review immediately.</div>
+            <div class="map-builder-validation-list">
+              ${builderImportReview ? `<div class="map-builder-validation-item map-builder-validation-item--warning">Import review is active. Apply or cancel it before starting another import.</div>` : ""}
             </div>
           </section>
 
@@ -485,14 +753,14 @@ export function renderMapBuilderScreen(): void {
             <div class="map-builder-panel__title">Templates</div>
             <div class="map-builder-library-list">
               <button class="map-builder-library-item" type="button" id="mapBuilderNewBlankBtn">NEW BLANK</button>
-              ${getTacticalMapTemplates().map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-template="${map.id}">${map.name}</button>`).join("")}
+              ${getTacticalMapTemplates().map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-template="${map.id}">${escapeHtml(map.name)}</button>`).join("")}
             </div>
           </section>
 
           <section class="map-builder-panel">
             <div class="map-builder-panel__title">Built-In Maps</div>
             <div class="map-builder-library-list">
-              ${getBuiltInTacticalMaps().map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-load="${map.id}">${map.name}</button>`).join("")}
+              ${getBuiltInTacticalMaps().map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-load="${map.id}">${escapeHtml(map.name)}</button>`).join("")}
             </div>
           </section>
 
@@ -500,7 +768,7 @@ export function renderMapBuilderScreen(): void {
             <div class="map-builder-panel__title">Custom Library</div>
             <div class="map-builder-library-list">
               ${catalog.customMaps.length > 0
-                ? catalog.customMaps.map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-load="${map.id}">${map.name}</button>`).join("")
+                ? catalog.customMaps.map((map) => `<button class="map-builder-library-item" type="button" data-map-builder-load="${map.id}">${escapeHtml(map.name)}</button>`).join("")
                 : `<div class="map-builder-empty">No custom maps saved yet.</div>`}
             </div>
             ${isCustomDraft ? `<button class="comms-array-btn" id="mapBuilderDeleteBtn">DELETE CURRENT MAP</button>` : ""}
@@ -508,16 +776,28 @@ export function renderMapBuilderScreen(): void {
         </aside>
 
         <main class="map-builder-main">
-          <section class="map-builder-panel">
-            <div class="map-builder-panel__title">Canvas</div>
-            <div class="map-builder-canvas" style="--map-builder-zoom:${builderZoom}; grid-template-columns: repeat(${draft.width}, 1fr);">
-              ${buildGridMarkup(draft)}
-            </div>
-            <div class="map-builder-note">
-              ${builderPendingTraversalStart ? `Traversal start: ${builderPendingTraversalStart.x},${builderPendingTraversalStart.y}` : "Click tiles to paint footprint, zones, objects, and traversal links."}
-            </div>
-          </section>
-          ${builderMessage ? `<div class="map-builder-message map-builder-message--${builderMessage.type}">${builderMessage.text}</div>` : ""}
+          <div class="map-builder-main-grid">
+            <section class="map-builder-panel">
+              <div class="map-builder-panel__title">Canvas</div>
+              <div class="map-builder-canvas" style="--map-builder-zoom:${builderZoom}; grid-template-columns: repeat(${draft.width}, 1fr);">
+                ${buildGridMarkup(draft)}
+              </div>
+              <div class="map-builder-note">
+                ${builderPendingTraversalStart ? `Traversal start: ${builderPendingTraversalStart.x},${builderPendingTraversalStart.y}` : "Click tiles to paint footprint, zones, objects, and traversal links."}
+              </div>
+            </section>
+            <section class="map-builder-panel map-builder-preview-panel">
+            <div class="map-builder-panel__title">PREVIEW</div>
+              <div class="map-builder-preview-shell">
+                <div class="map-builder-preview-host" id="mapBuilderPreviewHost"></div>
+              </div>
+              <div class="map-builder-note">
+                ${builderSelectedPoint ? `Focused tile: ${builderSelectedPoint.x},${builderSelectedPoint.y}` : "Preview uses the live battle board renderer. Click the 2D grid or 3D board to focus a tile."}
+              </div>
+            </section>
+          </div>
+          ${builderMessage ? `<div class="map-builder-message map-builder-message--${builderMessage.type}">${escapeHtml(builderMessage.text)}</div>` : ""}
+          ${importReviewMarkup}
         </main>
       </div>
     </div>
@@ -537,9 +817,15 @@ export function renderMapBuilderScreen(): void {
     }
   };
 
-  attachClick("mapBuilderBackBtn", () => void renderMainMenu());
+  attachClick("mapBuilderBackBtn", () => {
+    teardownMapBuilderPreview();
+    void renderMainMenu();
+  });
   attachClick("mapBuilderSaveBtn", () => saveDraft());
-  attachClick("mapBuilderQuickTestBtn", () => relaunchMapBuilderQuickTest());
+  attachClick("mapBuilderQuickTestBtn", () => {
+    teardownMapBuilderPreview();
+    relaunchMapBuilderQuickTest();
+  });
   attachClick("mapBuilderDuplicateBtn", () => {
     const draftCopy = cloneTacticalMapDefinition(ensureBuilderDraft());
     draftCopy.id = createTacticalMapId("custom");
@@ -556,6 +842,35 @@ export function renderMapBuilderScreen(): void {
     renderMapBuilderScreen();
   });
   attachClick("mapBuilderDeleteBtn", () => deleteCurrentDraft());
+  attachClick("mapBuilderReviewImportBtn", () => beginImportReview(builderImportText, "manual input"));
+  attachClick("mapBuilderImportApplyBtn", () => commitImportReview());
+  attachClick("mapBuilderImportCancelBtn", () => {
+    builderImportReview = null;
+    builderMessage = { type: "info", text: "Import review canceled." };
+    renderMapBuilderScreen();
+  });
+  attachClick("mapBuilderCopyShareBtn", () => {
+    void copyTextToClipboard(currentShareCode).then((copied) => {
+      builderMessage = copied
+        ? { type: "success", text: "Current draft share code copied to the clipboard." }
+        : { type: "error", text: "Clipboard copy failed. The share code is still visible in the text box." };
+      renderMapBuilderScreen();
+    });
+  });
+  attachClick("mapBuilderPasteShareBtn", () => {
+    void readTextFromClipboard()
+      .then((text) => {
+        builderImportText = text;
+        beginImportReview(text, "clipboard");
+      })
+      .catch((error) => {
+        builderMessage = {
+          type: "error",
+          text: error instanceof Error ? error.message : "Clipboard paste failed.",
+        };
+        renderMapBuilderScreen();
+      });
+  });
 
   attachChange<HTMLInputElement>("mapBuilderNameInput", (element) => {
     withUpdatedDraft((draftToUpdate) => ({ ...draftToUpdate, name: element.value.trim() || "Untitled Tactical Map" }));
@@ -614,6 +929,12 @@ export function renderMapBuilderScreen(): void {
     builderZoom = Number(element.value);
     renderMapBuilderScreen();
   });
+  const importInput = document.getElementById("mapBuilderImportInput") as HTMLTextAreaElement | null;
+  if (importInput) {
+    importInput.addEventListener("input", () => {
+      builderImportText = importInput.value;
+    });
+  }
 
   document.querySelectorAll<HTMLElement>("[data-map-builder-tool]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -643,7 +964,7 @@ export function renderMapBuilderScreen(): void {
 
   document.querySelectorAll<HTMLInputElement>("[data-map-builder-mode]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
-      const mode = checkbox.dataset.mapBuilderMode as "elimination" | "control_relay" | "breakthrough";
+      const mode = checkbox.dataset.mapBuilderMode as "elimination" | "control_relay" | "breakthrough" | "extraction";
       withUpdatedDraft((draftToUpdate) => {
         const supportedModes = checkbox.checked
           ? [...draftToUpdate.supportedModes, mode]
@@ -657,6 +978,25 @@ export function renderMapBuilderScreen(): void {
     });
   });
 
+  document.querySelectorAll<HTMLSelectElement>("[data-map-builder-import-action]").forEach((select) => {
+    select.addEventListener("change", () => {
+      if (!builderImportReview) {
+        return;
+      }
+      const key = select.dataset.mapBuilderImportAction;
+      if (!key) {
+        return;
+      }
+      builderImportReview = {
+        ...builderImportReview,
+        decisions: {
+          ...builderImportReview.decisions,
+          [key]: select.value as TacticalMapImportAction,
+        },
+      };
+    });
+  });
+
   document.querySelectorAll<HTMLElement>("[data-map-builder-x][data-map-builder-y]").forEach((button) => {
     button.addEventListener("click", () => {
       const x = Number(button.dataset.mapBuilderX);
@@ -664,4 +1004,6 @@ export function renderMapBuilderScreen(): void {
       applyBuilderCellAction(x, y);
     });
   });
+
+  syncMapBuilderPreview(draft);
 }

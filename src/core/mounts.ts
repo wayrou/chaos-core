@@ -365,6 +365,7 @@ export function createInitialStableState(): StableState {
   return {
     unlockedMountIds: starterMounts.map(m => m.id),
     ownedMounts: starterMounts.map(m => createOwnedMount(m.id)),
+    aerissFieldMountInstanceId: null,
   };
 }
 
@@ -465,6 +466,65 @@ export function unassignMount(stable: StableState, mountInstanceId: string): Sta
       return m;
     }),
   };
+}
+
+/**
+ * Set or clear Aeriss's placeholder field-travel mount.
+ * This does not affect tactical battle mount assignments.
+ */
+export function setAerissFieldMount(
+  stable: StableState,
+  mountInstanceId: string | null,
+): { stable: StableState; error?: string } {
+  if (mountInstanceId === null) {
+    return {
+      stable: {
+        ...stable,
+        aerissFieldMountInstanceId: null,
+      },
+    };
+  }
+
+  const ownedMount = findOwnedMount(stable, mountInstanceId);
+  if (!ownedMount) {
+    return {
+      stable,
+      error: "Mount instance not found",
+    };
+  }
+
+  return {
+    stable: {
+      ...stable,
+      aerissFieldMountInstanceId: mountInstanceId,
+    },
+  };
+}
+
+export function getAerissFieldMount(stable: StableState | null | undefined): { ownedMount: OwnedMount; mount: Mount } | null {
+  if (!stable?.aerissFieldMountInstanceId) {
+    return null;
+  }
+
+  const ownedMount = findOwnedMount(stable, stable.aerissFieldMountInstanceId);
+  if (!ownedMount) {
+    return null;
+  }
+
+  const mount = getMountById(ownedMount.mountId);
+  if (!mount) {
+    return null;
+  }
+
+  return { ownedMount, mount };
+}
+
+export const FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT = 24;
+
+export function getAerissFieldMovementSpeedBonus(stable: StableState | null | undefined): number {
+  const fieldMount = getAerissFieldMount(stable);
+  const movementBonus = fieldMount?.mount.statModifiers.movement ?? 0;
+  return Math.max(0, movementBonus) * FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT;
 }
 
 // ----------------------------------------------------------------------------

@@ -7,14 +7,13 @@ import "../../field/field.css";
 import type { BaseCampItemSize, BaseCampLayoutLoadout, BaseCampPinnedItemFrame, MountId, UnitId } from "../../core/types";
 import { getDispatchState } from "../../core/dispatchSystem";
 import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
-import { getGameState, resetToNewGame, updateGameState } from "../../state/gameStore";
+import { getGameState, resetToNewGame, setGameState, subscribe, updateGameState } from "../../state/gameStore";
 import { getActiveQuests, initializeQuestState } from "../../quests/questManager";
-import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen } from "../../field/FieldScreen";
+import { getCurrentFieldRuntimeMap, getCurrentFieldRuntimeState, renderFieldScreen, setNextFieldSpawnOverrideTile } from "../../field/FieldScreen";
 import { buildFieldMinimapModel, drawFieldMinimapCanvas, MINIMAP_LAYOUT_ID } from "../../field/fieldMinimap";
 import { getBaseCampFieldReturnMap, setBaseCampFieldReturnMap } from "./baseCampReturn";
 import {
   BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
-  DISPATCH_UNLOCK_FLOOR_ORDINAL,
   FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL,
   HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL,
   OPERATION_DEFINITIONS,
@@ -22,7 +21,6 @@ import {
   SCHEMA_UNLOCK_FLOOR_ORDINAL,
   STABLE_UNLOCK_FLOOR_ORDINAL,
   isBlackMarketNodeUnlocked,
-  isDispatchNodeUnlocked,
   isFoundryAnnexUnlocked,
   isHavenBuildModeUnlocked,
   isPortNodeUnlocked,
@@ -32,12 +30,47 @@ import {
   saveCampaignProgress,
 } from "../../core/campaign";
 import type { OperationId } from "../../core/campaign";
-import { setCurrentOpsTerminalAtlasFloorOrdinal } from "../../core/opsTerminalAtlas";
+import {
+  getCurrentOpsTerminalAtlasFloor,
+  getOpsTerminalAtlasWarmEconomySummaries,
+  holdPositionInOpsTerminalAtlas,
+  setCurrentOpsTerminalAtlasFloorOrdinal,
+} from "../../core/opsTerminalAtlas";
+import { BASIC_RESOURCE_KEYS, RESOURCE_SHORT_LABELS, createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
+import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
+import { showAlertDialog } from "../components/confirmDialog";
+import {
+  canCraftMaterialRefineryRecipe,
+  countAdvancedMaterialOwned,
+  craftMaterialRefineryRecipe,
+  getMaterialRefineryEffectiveOutputQuantity,
+  getMaterialRefineryRecipes,
+  getMaterialRefineryShortage,
+  type AdvancedMaterialId,
+  type MaterialRefineryContext,
+} from "../../core/materialRefinery";
 import { attachNotesWidgetHandlers, NOTES_LAYOUT_ID, renderNotesWidget } from "../components/notesWidget";
 import { renderQuestTrackerWidget } from "../components/questTrackerWidget";
 import { setMusicCue } from "../../core/audioSystem";
-import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import {
+  clearControllerContext,
+  type ControllerMode,
+  registerControllerContext,
+  setControllerMode,
+  updateFocusableElements,
+} from "../../core/controllerSupport";
 import { showSystemPing } from "../components/systemPing";
+import {
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  abortOuterDeckExpedition,
+  getOuterDeckFieldContext,
+} from "../../core/outerDecks";
+import {
+  getEscActionAvailability,
+  getEscExpeditionRestrictionMessage,
+  isEscActionEnabled,
+  type EscNodeAction,
+} from "../../core/escAvailability";
 
 let lastFieldMap: string = "base_camp";
 let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
@@ -45,6 +78,11 @@ let suppressNodeClickUntil = 0;
 let allNodesEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let allNodesResizeHandler: (() => void) | null = null;
 let pinnedFrameSyncHandle: number | null = null;
+let cleanupAllNodesControllerContext: (() => void) | null = null;
+let cleanupTheaterAutoTickStateSubscription: (() => void) | null = null;
+let escControllerPreferredMode: ControllerMode = "focus";
+let escControllerActiveItemId = "resource-tracker";
+let theaterAutoTickIntervalId: number | null = null;
 
 type NodeDefinition = {
   action: string;
@@ -90,7 +128,7 @@ const WORKSPACE_ROW_HEIGHT_PX = 24;
 const MIN_ITEM_ROW_SPAN = 4;
 const AUTO_SCROLL_MARGIN_PX = 72;
 const AUTO_SCROLL_STEP_PX = 24;
-const BASE_CAMP_LAYOUT_VERSION = 9;
+const BASE_CAMP_LAYOUT_VERSION = 12;
 const BASE_CAMP_LOADOUT_COUNT = 2;
 const DEFAULT_LOADOUT_PRESET_INDEXES = [0, 2] as const;
 const DEFAULT_NODE_ROW_SPAN = 5;
@@ -100,6 +138,18 @@ const DEFAULT_QUAC_COL_SPAN = 5;
 const DEFAULT_QUAC_ROW_SPAN = 10;
 const DEFAULT_MINIMAP_COL_SPAN = 5;
 const DEFAULT_MINIMAP_ROW_SPAN = 8;
+const MATERIALS_REFINERY_MIN_COL_SPAN = 3;
+const MATERIALS_REFINERY_MIN_ROW_SPAN = 10;
+const MATERIALS_REFINERY_LAYOUT_ID = "materials-refinery";
+const THEATER_AUTO_TICK_LAYOUT_ID = "theater-auto-tick";
+const THEATER_AUTO_TICK_INTERVAL_MS = 10_000;
+const THEATER_AUTO_TICK_PING_CHANNEL = "esc-theater-auto-tick";
+const MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
+  metalScrap: "M",
+  wood: "T",
+  chaosShards: "C",
+  steamComponents: "S",
+};
 
 const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -107,27 +157,27 @@ const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
   { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
   { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
   { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
+  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine advanced field materials" },
   { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
-  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve units on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
   { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
   { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
+  { action: THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Advance active theaters in the background", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
 ];
 
 const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID, MINIMAP_LAYOUT_ID, NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID];
-const ESC_DEBUG_PORT_STABLE_ACTIONS = new Set(["port", "stable", "dispatch"]);
+const ESC_DEBUG_PORT_STABLE_ACTIONS = new Set(["port", "stable"]);
 const SCHEMA_LOCK_MESSAGE = `S.C.H.E.M.A. comes online after Floor ${String(SCHEMA_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const PORT_LOCK_MESSAGE = `PORT unlocks after Floor ${String(PORT_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const STABLE_LOCK_MESSAGE = `STABLE unlocks after Floor ${String(STABLE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
-const DISPATCH_LOCK_MESSAGE = `DISPATCH unlocks after Floor ${String(DISPATCH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const BLACK_MARKET_LOCK_MESSAGE = `BLACK MARKET unlocks after Floor ${String(BLACK_MARKET_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 const FOUNDRY_ANNEX_LOCK_MESSAGE = `FOUNDRY + ANNEX comes online after Floor ${String(FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} is reached through live progression or atlas floor transit.`;
 
@@ -138,6 +188,7 @@ const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   loadout: { gridX: 6, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   inventory: { gridX: 7, gridY: 1, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "gear-workbench": { gridX: 4, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  "materials-refinery": { gridX: 4, gridY: 16, colSpan: 4, rowSpan: 11 },
   shop: { gridX: 5, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   tavern: { gridX: 6, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "quest-board": { gridX: 7, gridY: 6, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
@@ -147,7 +198,7 @@ const DEFAULT_ITEM_LAYOUTS: Record<string, WorkspaceItemLayout> = {
   "black-market": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   schema: { gridX: 1, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "foundry-annex": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
-  dispatch: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
+  [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 7, gridY: 11, colSpan: 1, rowSpan: 6 },
   codex: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   settings: { gridX: 5, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
   "comms-array": { gridX: 6, gridY: 11, colSpan: 1, rowSpan: DEFAULT_NODE_ROW_SPAN },
@@ -187,32 +238,33 @@ function createLayoutPreset(
 
 const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
   createLayoutPreset("COMMAND", {
-    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 7 },
-    inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 8 },
-    "ops-terminal": { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 8 },
-    roster: { gridX: 6, gridY: 8, colSpan: 2, rowSpan: 4 },
-    [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: 5, rowSpan: 8 },
-    [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 9, colSpan: 5, rowSpan: 8 },
-    quarters: { gridX: 2, gridY: 11, colSpan: 1, rowSpan: 4 },
-    tavern: { gridX: 3, gridY: 11, colSpan: 1, rowSpan: 4 },
-    shop: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: 4 },
-    "quest-board": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: 4 },
-    "gear-workbench": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: 4 },
-    loadout: { gridX: 4, gridY: 15, colSpan: 1, rowSpan: 4 },
-    "comms-array": { gridX: 8, gridY: 15, colSpan: 1, rowSpan: 4 },
-    codex: { gridX: 9, gridY: 15, colSpan: 1, rowSpan: 4 },
-    settings: { gridX: 10, gridY: 15, colSpan: 1, rowSpan: 4 },
+    [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 6 },
+    inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 7 },
+    [QUEST_TRACKER_LAYOUT_ID]: { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 13 },
+    "ops-terminal": { gridX: 8, gridY: 1, colSpan: 2, rowSpan: 6 },
+    roster: { gridX: 8, gridY: 7, colSpan: 2, rowSpan: 6 },
+    [MINIMAP_LAYOUT_ID]: { gridX: 10, gridY: 1, colSpan: 3, rowSpan: 11 },
+    quarters: { gridX: 2, gridY: 8, colSpan: 1, rowSpan: 4 },
+    tavern: { gridX: 3, gridY: 8, colSpan: 1, rowSpan: 4 },
+    shop: { gridX: 4, gridY: 8, colSpan: 1, rowSpan: 4 },
+    "quest-board": { gridX: 2, gridY: 12, colSpan: 1, rowSpan: 4 },
+    "gear-workbench": { gridX: 3, gridY: 12, colSpan: 1, rowSpan: 4 },
+    loadout: { gridX: 4, gridY: 12, colSpan: 1, rowSpan: 4 },
+    "comms-array": { gridX: 8, gridY: 13, colSpan: 1, rowSpan: 3 },
+    codex: { gridX: 9, gridY: 13, colSpan: 1, rowSpan: 3 },
+    settings: { gridX: 10, gridY: 13, colSpan: 1, rowSpan: 3 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 4 },
   }, {
-    minimizedItems: [NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID, "port", "dispatch", "stable", "black-market", "schema", "foundry-annex"],
+    minimizedItems: [NOTES_LAYOUT_ID, QUAC_LAYOUT_ID, MATERIALS_REFINERY_LAYOUT_ID, "port", "stable", "black-market", "schema", "foundry-annex"],
     itemColors: {
       [RESOURCE_LAYOUT_ID]: "violet",
       inventory: "steel",
+      [QUEST_TRACKER_LAYOUT_ID]: "steel",
       "ops-terminal": "oxide",
       roster: "oxide",
       [QUAC_LAYOUT_ID]: "verdant",
       [MINIMAP_LAYOUT_ID]: "steel",
-      [NOTES_LAYOUT_ID]: "violet",
-      [QUEST_TRACKER_LAYOUT_ID]: "violet",
+      [NOTES_LAYOUT_ID]: "steel",
       "comms-array": "teal",
       "black-market": "oxide",
       "foundry-annex": "steel",
@@ -238,6 +290,7 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     codex: { gridX: 1, gridY: 18, colSpan: 2, rowSpan: 4 },
     settings: { gridX: 3, gridY: 18, colSpan: 2, rowSpan: 4 },
     "comms-array": { gridX: 5, gridY: 19, colSpan: 3, rowSpan: 4 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 1, gridY: 22, colSpan: 3, rowSpan: 4 },
     [NOTES_LAYOUT_ID]: { gridX: 9, gridY: 14, colSpan: 4, rowSpan: 9 },
     [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 23, colSpan: 4, rowSpan: 7 },
   }),
@@ -250,8 +303,10 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
     loadout: { gridX: 11, gridY: 11, colSpan: 1, rowSpan: 5 },
     codex: { gridX: 12, gridY: 11, colSpan: 1, rowSpan: 4 },
     settings: { gridX: 12, gridY: 15, colSpan: 1, rowSpan: 4 },
+    [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 19, colSpan: 2, rowSpan: 4 },
   }, {
     minimizedItems: [
+      MATERIALS_REFINERY_LAYOUT_ID,
       "ops-terminal",
       "roster",
       "gear-workbench",
@@ -260,7 +315,6 @@ const BASE_CAMP_LAYOUT_PRESETS: WorkspaceLayoutPreset[] = [
       "quest-board",
       "quarters",
       "port",
-      "dispatch",
       "stable",
       "black-market",
       "schema",
@@ -435,23 +489,35 @@ const BASE_CAMP_COLOR_THEMES: BaseCampColorTheme[] = [
 
 const BASE_CAMP_COLOR_THEME_KEYS = BASE_CAMP_COLOR_THEMES.map((theme) => theme.key);
 const BASE_CAMP_COLOR_THEME_MAP = new Map(BASE_CAMP_COLOR_THEMES.map((theme) => [theme.key, theme]));
+const ESC_NODE_ACTION_SET = new Set(DEFAULT_NODE_LAYOUT.map((node) => node.action));
+
+function isEscNodeAction(action: string): action is EscNodeAction {
+  return ESC_NODE_ACTION_SET.has(action);
+}
+
+function getEscAvailabilityContext() {
+  return {
+    expeditionActive: getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch",
+  };
+}
 
 const QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> = [
   { action: "ops-terminal", aliases: ["ops", "ops terminal", "operation", "operations", "deploy", "mission", "missions"] },
   { action: "roster", aliases: ["roster", "unit roster", "units", "party", "manage units"] },
   { action: "loadout", aliases: ["loadout", "gear", "equipment", "equip", "locker"] },
   { action: "inventory", aliases: ["inventory", "items", "assets", "storage", "owned items"] },
-  { action: "gear-workbench", aliases: ["workshop", "workbench", "gear workbench", "craft", "crafting", "upgrade gear"] },
+  { action: "gear-workbench", aliases: ["workshop", "workbench", "gear workbench", "upgrade gear"] },
+  { action: "materials-refinery", aliases: ["crafting", "materials", "refinery", "alloy", "drawcord", "fittings", "resin", "charge cells"] },
   { action: "shop", aliases: ["shop", "store", "quartermaster", "buy", "market"] },
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
-  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "mission board", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "black-market", aliases: ["black market", "black-market", "mods", "field mods", "contraband"] },
   { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
   { action: "foundry-annex", aliases: ["foundry", "annex", "foundry annex", "foundry + annex"] },
+  { action: THEATER_AUTO_TICK_LAYOUT_ID, aliases: ["theater clock", "theater tick", "theater timer", "auto tick", "advance theaters", "background theater"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
@@ -466,10 +532,10 @@ async function grantEverythingToPlayer(): Promise<void> {
     { ALL_CHASSIS },
     { ALL_DOCTRINES },
     { RECIPE_DATABASE },
-    { getAllModules, getAllStarterEquipment },
+    { getAllStarterEquipment },
     { getOrderedFoundryModuleTypes, getOrderedFoundryPartitionTypes },
     { createOwnedMount, getAllMounts },
-    { getOrderedSchemaCoreTypes, getOrderedSchemaFortificationTypes },
+    { getOrderedSchemaCoreTypes, getOrderedSchemaFieldAssetTypes, getOrderedSchemaFortificationTypes },
     { createDefaultClassProgress, getAvailableClasses },
   ] = await Promise.all([
     import("../../core/codexSystem"),
@@ -485,7 +551,6 @@ async function grantEverythingToPlayer(): Promise<void> {
 
   const allEquipment = getAllStarterEquipment();
   const allEquipmentIds = Object.keys(allEquipment);
-  const allModules = getAllModules();
   const allRecipeIds = Object.keys(RECIPE_DATABASE);
   const allChassisIds = ALL_CHASSIS.map((chassis) => chassis.id);
   const allDoctrineIds = ALL_DOCTRINES.map((doctrine) => doctrine.id);
@@ -519,19 +584,20 @@ async function grantEverythingToPlayer(): Promise<void> {
     return {
       ...state,
       wad: 999999,
-      resources: {
+      resources: createEmptyResourceWallet({
         metalScrap: 99999,
         wood: 99999,
         chaosShards: 99999,
         steamComponents: 99999,
-      },
+        alloy: 99999,
+        drawcord: 99999,
+        fittings: 99999,
+        resin: 99999,
+        chargeCells: 99999,
+      }),
       equipmentById: {
         ...allEquipment,
         ...(state.equipmentById ?? {}),
-      },
-      modulesById: {
-        ...allModules,
-        ...(state.modulesById ?? {}),
       },
       equipmentPool: Array.from(new Set([...(state.equipmentPool ?? []), ...allEquipmentIds])),
       knownRecipeIds: allRecipeIds,
@@ -541,7 +607,7 @@ async function grantEverythingToPlayer(): Promise<void> {
       schema: {
         unlockedCoreTypes: getOrderedSchemaCoreTypes(),
         unlockedFortificationPips: getOrderedSchemaFortificationTypes(),
-        unlockedFieldAssetTypes: [],
+        unlockedFieldAssetTypes: getOrderedSchemaFieldAssetTypes(),
       },
       foundry: {
         unlockedModuleTypes: getOrderedFoundryModuleTypes(),
@@ -615,9 +681,6 @@ function isLockedHavenAnnexAction(action: string): boolean {
   if (action === "stable") {
     return !isStableNodeUnlocked();
   }
-  if (action === "dispatch") {
-    return !isDispatchNodeUnlocked();
-  }
   return false;
 }
 
@@ -641,8 +704,6 @@ function getLockedActionMessage(action: string): string | null {
       return PORT_LOCK_MESSAGE;
     case "stable":
       return STABLE_LOCK_MESSAGE;
-    case "dispatch":
-      return DISPATCH_LOCK_MESSAGE;
     case "black-market":
       return BLACK_MARKET_LOCK_MESSAGE;
     case "foundry-annex":
@@ -653,6 +714,10 @@ function getLockedActionMessage(action: string): string | null {
 }
 
 function getAvailableNodeLayout(): NodeDefinition[] {
+  if (getEscAvailabilityContext().expeditionActive) {
+    return [...DEFAULT_NODE_LAYOUT];
+  }
+
   return DEFAULT_NODE_LAYOUT.filter((node) => {
     if (isLockedHavenAnnexAction(node.action)) {
       return false;
@@ -820,6 +885,161 @@ function serializeStoredLoadouts(loadouts: Record<string, ResolvedBaseCampLoadou
       },
     ]),
   ) as Record<string, BaseCampLayoutLoadout>;
+}
+
+function getLegacyDefaultLoadoutV11(index: number): ResolvedBaseCampLoadout | null {
+  if (index === 0) {
+    return {
+      minimizedItems: [NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID, MATERIALS_REFINERY_LAYOUT_ID, "port", "stable", "black-market", "schema", "foundry-annex"],
+      itemSizes: serializeLayoutRecord({
+        ...DEFAULT_ITEM_LAYOUTS,
+        [RESOURCE_LAYOUT_ID]: { gridX: 1, gridY: 1, colSpan: 3, rowSpan: 7 },
+        inventory: { gridX: 4, gridY: 1, colSpan: 2, rowSpan: 8 },
+        "ops-terminal": { gridX: 6, gridY: 1, colSpan: 2, rowSpan: 8 },
+        roster: { gridX: 6, gridY: 8, colSpan: 2, rowSpan: 4 },
+        [QUAC_LAYOUT_ID]: { gridX: 8, gridY: 1, colSpan: 5, rowSpan: 8 },
+        [MINIMAP_LAYOUT_ID]: { gridX: 8, gridY: 9, colSpan: 5, rowSpan: 8 },
+        quarters: { gridX: 2, gridY: 11, colSpan: 1, rowSpan: 4 },
+        tavern: { gridX: 3, gridY: 11, colSpan: 1, rowSpan: 4 },
+        shop: { gridX: 4, gridY: 11, colSpan: 1, rowSpan: 4 },
+        "quest-board": { gridX: 2, gridY: 15, colSpan: 1, rowSpan: 4 },
+        "gear-workbench": { gridX: 3, gridY: 15, colSpan: 1, rowSpan: 4 },
+        loadout: { gridX: 4, gridY: 15, colSpan: 1, rowSpan: 4 },
+        "comms-array": { gridX: 8, gridY: 15, colSpan: 1, rowSpan: 4 },
+        codex: { gridX: 9, gridY: 15, colSpan: 1, rowSpan: 4 },
+        settings: { gridX: 10, gridY: 15, colSpan: 1, rowSpan: 4 },
+        [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 15, colSpan: 2, rowSpan: 4 },
+      }),
+      pinnedItems: [],
+      itemColors: {
+        [RESOURCE_LAYOUT_ID]: "violet",
+        inventory: "steel",
+        "ops-terminal": "oxide",
+        roster: "oxide",
+        [QUAC_LAYOUT_ID]: "verdant",
+        [MINIMAP_LAYOUT_ID]: "steel",
+        [NOTES_LAYOUT_ID]: "violet",
+        [QUEST_TRACKER_LAYOUT_ID]: "violet",
+        "comms-array": "teal",
+        "black-market": "oxide",
+        "foundry-annex": "steel",
+        codex: "steel",
+        settings: "steel",
+      },
+      pinnedItemFrames: {},
+    };
+  }
+
+  if (index === 1) {
+    return {
+      minimizedItems: [
+        MATERIALS_REFINERY_LAYOUT_ID,
+        "ops-terminal",
+        "roster",
+        "gear-workbench",
+        "shop",
+        "tavern",
+        "quest-board",
+        "quarters",
+        "port",
+        "stable",
+        "black-market",
+        "schema",
+        "foundry-annex",
+        "comms-array",
+        QUAC_LAYOUT_ID,
+      ],
+      itemSizes: serializeLayoutRecord({
+        ...DEFAULT_ITEM_LAYOUTS,
+        [NOTES_LAYOUT_ID]: { gridX: 7, gridY: 1, colSpan: 2, rowSpan: 11 },
+        [QUEST_TRACKER_LAYOUT_ID]: { gridX: 9, gridY: 1, colSpan: 2, rowSpan: 11 },
+        [RESOURCE_LAYOUT_ID]: { gridX: 11, gridY: 1, colSpan: 2, rowSpan: 6 },
+        inventory: { gridX: 11, gridY: 7, colSpan: 2, rowSpan: 4 },
+        [MINIMAP_LAYOUT_ID]: { gridX: 7, gridY: 12, colSpan: 4, rowSpan: 8 },
+        loadout: { gridX: 11, gridY: 11, colSpan: 1, rowSpan: 5 },
+        codex: { gridX: 12, gridY: 11, colSpan: 1, rowSpan: 4 },
+        settings: { gridX: 12, gridY: 15, colSpan: 1, rowSpan: 4 },
+        [THEATER_AUTO_TICK_LAYOUT_ID]: { gridX: 11, gridY: 19, colSpan: 2, rowSpan: 4 },
+      }),
+      pinnedItems: [],
+      itemColors: {
+        [NOTES_LAYOUT_ID]: "steel",
+        [QUEST_TRACKER_LAYOUT_ID]: "steel",
+        [RESOURCE_LAYOUT_ID]: "violet",
+        [MINIMAP_LAYOUT_ID]: "steel",
+        inventory: "verdant",
+        loadout: "amber",
+        "black-market": "oxide",
+        "foundry-annex": "steel",
+        codex: "steel",
+        settings: "steel",
+      },
+      pinnedItemFrames: {},
+    };
+  }
+
+  return null;
+}
+
+function areStringArraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areItemSizeRecordsEqual(a: Record<string, BaseCampItemSize>, b: Record<string, BaseCampItemSize>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (!areStringArraysEqual(aKeys, bKeys)) {
+    return false;
+  }
+
+  for (const key of aKeys) {
+    const aLayout = a[key];
+    const bLayout = b[key];
+    if (
+      aLayout.colSpan !== bLayout.colSpan
+      || aLayout.rowSpan !== bLayout.rowSpan
+      || aLayout.gridX !== bLayout.gridX
+      || aLayout.gridY !== bLayout.gridY
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areStringRecordEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (!areStringArraysEqual(aKeys, bKeys)) {
+    return false;
+  }
+
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areLoadoutsEquivalent(a: ResolvedBaseCampLoadout, b: ResolvedBaseCampLoadout): boolean {
+  return areStringArraysEqual(a.minimizedItems, b.minimizedItems)
+    && areItemSizeRecordsEqual(a.itemSizes, b.itemSizes)
+    && areStringArraysEqual(a.pinnedItems, b.pinnedItems)
+    && areStringRecordEqual(a.itemColors, b.itemColors)
+    && arePinnedFramesEqual(a.pinnedItemFrames, b.pinnedItemFrames);
 }
 
 function readActiveLoadout(): ResolvedBaseCampLoadout {
@@ -1026,19 +1246,23 @@ function ensureBaseCampLayoutVersion(): void {
   }
 
   const activeLoadoutIndex = readActiveLoadoutIndex(state);
+  const existingLoadouts = readStoredLoadouts(state);
   const migratedLoadouts = Object.fromEntries(
     Array.from({ length: BASE_CAMP_LOADOUT_COUNT }, (_, index) => {
       const key = getLoadoutStorageKey(index);
-      const baseLoadout = getDefaultLoadout(index);
-
+      const existingLoadout = existingLoadouts[key] ?? getDefaultLoadout(index);
+      const legacyDefaultLoadout = currentVersion === 11 ? getLegacyDefaultLoadoutV11(index) : null;
+      const nextLoadout = legacyDefaultLoadout && areLoadoutsEquivalent(existingLoadout, legacyDefaultLoadout)
+        ? getDefaultLoadout(index)
+        : existingLoadout;
       return [
         key,
         {
-          minimizedItems: [...baseLoadout.minimizedItems],
-          itemSizes: { ...baseLoadout.itemSizes },
-          pinnedItems: [...baseLoadout.pinnedItems],
-          itemColors: { ...baseLoadout.itemColors },
-          pinnedItemFrames: { ...baseLoadout.pinnedItemFrames },
+          minimizedItems: [...nextLoadout.minimizedItems],
+          itemSizes: { ...nextLoadout.itemSizes },
+          pinnedItems: [...nextLoadout.pinnedItems],
+          itemColors: { ...nextLoadout.itemColors },
+          pinnedItemFrames: { ...nextLoadout.pinnedItemFrames },
         },
       ];
     }),
@@ -1064,11 +1288,17 @@ function ensureBaseCampLayoutVersion(): void {
 function normalizeItemLayout(itemId: string, layout: BaseCampItemSize | undefined, columnCount: number): WorkspaceItemLayout {
   const fallback = getDefaultItemLayout(itemId);
   const safeColumns = Math.max(columnCount, 1);
-  const colSpan = clamp(layout?.colSpan ?? fallback.colSpan, 1, safeColumns);
-  const rowSpan = Math.max(
+  const requestedColSpan = clamp(layout?.colSpan ?? fallback.colSpan, 1, safeColumns);
+  const requestedRowSpan = Math.max(
     MIN_ITEM_ROW_SPAN,
     layout?.rowSpan ?? (layout?.minHeight ? minHeightToRowSpan(layout.minHeight) : fallback.rowSpan),
   );
+  const colSpan = itemId === MATERIALS_REFINERY_LAYOUT_ID
+    ? clamp(Math.max(requestedColSpan, MATERIALS_REFINERY_MIN_COL_SPAN), 1, safeColumns)
+    : requestedColSpan;
+  const rowSpan = itemId === MATERIALS_REFINERY_LAYOUT_ID
+    ? Math.max(requestedRowSpan, MATERIALS_REFINERY_MIN_ROW_SPAN)
+    : requestedRowSpan;
   const maxGridX = Math.max(safeColumns - colSpan + 1, 1);
   return {
     colSpan,
@@ -1245,6 +1475,11 @@ function autoScrollGrid(grid: HTMLElement, clientY: number): void {
 }
 
 function cleanupAllNodesWindowListeners(): void {
+  if (cleanupAllNodesControllerContext) {
+    cleanupAllNodesControllerContext();
+    cleanupAllNodesControllerContext = null;
+  }
+
   if (allNodesEscHandler) {
     window.removeEventListener("keydown", allNodesEscHandler);
     allNodesEscHandler = null;
@@ -1428,19 +1663,322 @@ function renderSchemaNodePip(): string {
   `;
 }
 
+function getMaterialRefineryContext(): MaterialRefineryContext {
+  return getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch" ? "expedition" : "haven";
+}
+
+function formatMaterialRefineryCost(recipeId: AdvancedMaterialId): string {
+  const recipe = getMaterialRefineryRecipes().find((entry) => entry.id === recipeId);
+  if (!recipe) {
+    return "";
+  }
+
+  return Object.entries(recipe.cost)
+    .map(([resourceKey, amount]) => `${amount}${MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}`)
+    .join(" + ");
+}
+
+function formatMaterialRefineryShortage(recipeId: AdvancedMaterialId): string {
+  const shortage = getMaterialRefineryShortage(getGameState(), recipeId);
+  if (shortage.length === 0) {
+    return "READY";
+  }
+
+  return shortage
+    .map((entry) => `${MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[entry.resourceKey] ?? entry.resourceKey} ${entry.available}/${entry.required}`)
+    .join(" · ");
+}
+
+function shouldShowExpandedResourceTracker(): boolean {
+  return getGameState().uiLayout?.baseCampResourceTrackerShowAdvanced ?? true;
+}
+
+function setExpandedResourceTrackerVisible(showAdvanced: boolean): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampResourceTrackerShowAdvanced: showAdvanced,
+    },
+  }));
+}
+
+function formatAtlasFloorLabel(floorOrdinal: number): string {
+  return `FLOOR ${String(Math.max(1, Math.floor(floorOrdinal || 1))).padStart(2, "0")}`;
+}
+
+function isBaseCampTheaterAutoTickEnabled(state = getGameState()): boolean {
+  return Boolean(state.uiLayout?.baseCampTheaterAutoTickEnabled);
+}
+
+function getCurrentAtlasFloorOrdinalSafe(): number {
+  try {
+    return getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+  } catch {
+    return Math.max(1, Math.floor(loadCampaignProgress().opsTerminalAtlas?.currentFloorOrdinal ?? 1));
+  }
+}
+
+function describeTheaterAutoTickCoverage(
+  summaries: ReturnType<typeof getOpsTerminalAtlasWarmEconomySummaries>,
+): string {
+  if (summaries.length <= 0) {
+    return "No operational theaters are online on this floor.";
+  }
+
+  const labels = summaries.slice(0, 2).map((summary) => `${summary.sectorLabel} ${summary.zoneName}`);
+  const extraCount = Math.max(0, summaries.length - labels.length);
+  return extraCount > 0 ? `${labels.join(" · ")} · +${extraCount} more` : labels.join(" · ");
+}
+
+function describeTheaterAutoTickEconomyDelta(
+  beforeState: ReturnType<typeof getSessionResourcePool>,
+  afterState: ReturnType<typeof getSessionResourcePool>,
+): string {
+  const parts: string[] = [];
+  const wadDelta = Math.round((afterState.wad ?? 0) - (beforeState.wad ?? 0));
+  if (wadDelta !== 0) {
+    parts.push(`WAD ${wadDelta > 0 ? "+" : ""}${wadDelta}`);
+  }
+
+  for (const { key: resourceKey } of getResourceEntries(afterState.resources)) {
+    const nextValue = Number(afterState.resources?.[resourceKey] ?? 0);
+    const previousValue = Number(beforeState.resources?.[resourceKey] ?? 0);
+    const delta = Math.round(nextValue - previousValue);
+    if (delta !== 0) {
+      parts.push(`${RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey.toUpperCase()} ${delta > 0 ? "+" : ""}${delta}`);
+    }
+  }
+
+  return parts.join(" · ");
+}
+
+function performTheaterAutoTick(): void {
+  const currentState = getGameState();
+  if (!isBaseCampTheaterAutoTickEnabled(currentState)) {
+    return;
+  }
+
+  const floorOrdinal = getCurrentAtlasFloorOrdinalSafe();
+  const beforeSummaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const localPlayerSlot = getLocalSessionPlayerSlot(currentState);
+  const beforePool = getSessionResourcePool(currentState, localPlayerSlot);
+  const nextState = holdPositionInOpsTerminalAtlas(currentState, floorOrdinal, 1);
+  if (nextState === currentState) {
+    return;
+  }
+
+  setGameState(nextState);
+
+  const afterSummaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const afterPool = getSessionResourcePool(nextState, localPlayerSlot);
+  const coverage = describeTheaterAutoTickCoverage(afterSummaries.length > 0 ? afterSummaries : beforeSummaries);
+  const economyDelta = describeTheaterAutoTickEconomyDelta(beforePool, afterPool);
+  const message = `${Math.max(afterSummaries.length, beforeSummaries.length, 1)} theater${Math.max(afterSummaries.length, beforeSummaries.length, 1) === 1 ? "" : "s"} advanced on ${formatAtlasFloorLabel(floorOrdinal)}.`;
+
+  quacLastFeedback = `THEATER CLOCK :: ${message}`;
+  showSystemPing({
+    type: economyDelta ? "success" : "info",
+    title: "THEATER TICK +1",
+    message,
+    detail: [coverage, economyDelta].filter(Boolean).join(" // "),
+    channel: THEATER_AUTO_TICK_PING_CHANNEL,
+    replaceChannel: true,
+    durationMs: 4200,
+  });
+}
+
+function syncTheaterAutoTickInterval(): void {
+  const shouldRun = isBaseCampTheaterAutoTickEnabled();
+  if (!shouldRun) {
+    if (theaterAutoTickIntervalId !== null) {
+      window.clearInterval(theaterAutoTickIntervalId);
+      theaterAutoTickIntervalId = null;
+    }
+    return;
+  }
+
+  if (theaterAutoTickIntervalId !== null) {
+    return;
+  }
+
+  theaterAutoTickIntervalId = window.setInterval(() => {
+    performTheaterAutoTick();
+    if (!isBaseCampTheaterAutoTickEnabled()) {
+      syncTheaterAutoTickInterval();
+    }
+  }, THEATER_AUTO_TICK_INTERVAL_MS);
+}
+
+export function ensureTheaterAutoTickStateSync(): void {
+  if (cleanupTheaterAutoTickStateSubscription) {
+    return;
+  }
+  cleanupTheaterAutoTickStateSubscription = subscribe(() => {
+    syncTheaterAutoTickInterval();
+  });
+  syncTheaterAutoTickInterval();
+}
+
+function setBaseCampTheaterAutoTickEnabled(enabled: boolean): void {
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      baseCampTheaterAutoTickEnabled: enabled,
+    },
+  }));
+
+  quacLastFeedback = enabled
+    ? "THEATER CLOCK :: Background theater ticks engaged."
+    : "THEATER CLOCK :: Background theater ticks halted.";
+  showSystemPing({
+    type: enabled ? "success" : "info",
+    title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+    message: enabled
+      ? "Operational theaters will advance by 1 tick every 10 seconds."
+      : "Background theater advancement has been paused.",
+    detail: `${formatAtlasFloorLabel(getCurrentAtlasFloorOrdinalSafe())} :: ${enabled ? "Live auto-tick engaged." : "Tick loop disengaged."}`,
+    channel: THEATER_AUTO_TICK_PING_CHANNEL,
+    replaceChannel: true,
+    durationMs: 3600,
+  });
+  renderAllNodesMenuScreen(lastFieldMap);
+  requestAnimationFrame(() => focusWorkspaceItem(THEATER_AUTO_TICK_LAYOUT_ID));
+}
+
+function renderMaterialRefineryNodeContent(isPinned: boolean): string {
+  const state = getGameState();
+  const context = getMaterialRefineryContext();
+  const destinationLabel = context === "expedition" ? "FORWARD LOCKER" : "BASE STORAGE";
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--materials-refinery">
+      ${renderItemToolbar(MATERIALS_REFINERY_LAYOUT_ID, "light crafting", { isPinned })}
+      <section class="all-nodes-refinery-panel" aria-label="Light crafting">
+        <div class="all-nodes-refinery-heading">
+          <div class="all-nodes-refinery-title">LIGHT CRAFTING</div>
+          <span class="all-nodes-refinery-destination">${destinationLabel}</span>
+        </div>
+        <div class="all-nodes-refinery-resource-strip">
+          ${BASIC_RESOURCE_KEYS.map((resourceKey) => `
+            <div class="all-nodes-refinery-resource-item">
+              <span>${MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}</span>
+              <strong>${Number(state.resources?.[resourceKey] ?? 0)}</strong>
+            </div>
+          `).join("")}
+        </div>
+        <div class="all-nodes-refinery-grid">
+          ${getMaterialRefineryRecipes().map((recipe) => {
+            const owned = countAdvancedMaterialOwned(state, recipe.id);
+            const canCraft = canCraftMaterialRefineryRecipe(state, recipe.id);
+            const outputQuantity = getMaterialRefineryEffectiveOutputQuantity(state, recipe.id);
+            return `
+              <article class="all-nodes-refinery-card${canCraft ? "" : " all-nodes-refinery-card--locked"}">
+                <div class="all-nodes-refinery-card-header">
+                  <div class="all-nodes-refinery-card-name">${recipe.name}</div>
+                  <span class="all-nodes-refinery-card-owned">x${owned}</span>
+                </div>
+                <div class="all-nodes-refinery-card-meta">
+                  <span class="all-nodes-refinery-card-cost">${formatMaterialRefineryCost(recipe.id)}</span>
+                  <span class="all-nodes-refinery-card-status${canCraft ? "" : " all-nodes-refinery-card-status--short"}">${formatMaterialRefineryShortage(recipe.id)}</span>
+                </div>
+                <button
+                  class="all-nodes-refinery-craft-btn"
+                  type="button"
+                  data-refinery-craft-id="${recipe.id}"
+                  ${canCraft ? "" : "disabled"}
+                >
+                  MAKE x${outputQuantity}
+                </button>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${MATERIALS_REFINERY_LAYOUT_ID}" aria-label="Resize light crafting"></button>
+    </div>
+  `;
+}
+
+function renderTheaterAutoTickNodeContent(isPinned: boolean): string {
+  const enabled = isBaseCampTheaterAutoTickEnabled();
+  const floorOrdinal = getCurrentAtlasFloorOrdinalSafe();
+  const summaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const totalWadUpkeep = summaries.reduce((total, summary) => total + Math.max(0, summary.wadUpkeepPerTick ?? 0), 0);
+  const totalIncome = createEmptyResourceWallet(
+    summaries.reduce((acc, summary) => {
+      for (const { key: resourceKey, amount } of getResourceEntries(summary.incomePerTick)) {
+        acc[resourceKey] = Number(acc[resourceKey] ?? 0) + Number(amount ?? 0);
+      }
+      return acc;
+    }, createEmptyResourceWallet()),
+  );
+  const incomeSummary = getResourceEntries(totalIncome)
+    .filter(({ amount }) => Number(amount ?? 0) > 0)
+    .slice(0, 3)
+    .map(({ key: resourceKey, amount }) => `${RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey.toUpperCase()} +${Math.round(Number(amount ?? 0))}`)
+    .join(" Â· ");
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--theater-clock">
+      ${renderItemToolbar(THEATER_AUTO_TICK_LAYOUT_ID, "theater clock", { isPinned })}
+      <section class="all-nodes-theater-clock-panel" aria-label="Theater clock">
+        <div class="all-nodes-theater-clock-heading">
+          <span class="all-nodes-theater-clock-kicker">BACKGROUND THEATER TICKS</span>
+          <span class="all-nodes-theater-clock-rate">+1 TICK / 10 SEC</span>
+        </div>
+        <div class="all-nodes-theater-clock-meta">
+          <span>${formatAtlasFloorLabel(floorOrdinal)}</span>
+          <span>${summaries.length} ONLINE</span>
+          <span>WAD ${totalWadUpkeep > 0 ? `-${totalWadUpkeep}` : "0"}</span>
+        </div>
+        <button
+          class="all-nodes-theater-clock-toggle${enabled ? " is-active" : ""}"
+          type="button"
+          data-theater-autotick-toggle="${enabled ? "off" : "on"}"
+          aria-pressed="${enabled ? "true" : "false"}"
+        >
+          <span class="all-nodes-theater-clock-toggle-track">
+            <span class="all-nodes-theater-clock-toggle-thumb"></span>
+          </span>
+          <span class="all-nodes-theater-clock-toggle-copy">
+            <span class="all-nodes-theater-clock-toggle-state">${enabled ? "ONLINE" : "OFFLINE"}</span>
+            <span class="all-nodes-theater-clock-toggle-desc">${enabled ? "The current atlas floor advances automatically until switched off." : "Flip the switch to push all online sectors forward in the background."}</span>
+          </span>
+        </button>
+        <div class="all-nodes-theater-clock-status">
+          <div class="all-nodes-theater-clock-line">${describeTheaterAutoTickCoverage(summaries)}</div>
+          <div class="all-nodes-theater-clock-line all-nodes-theater-clock-line--muted">${incomeSummary || "No active income streams are registered on this floor yet."}</div>
+        </div>
+      </section>
+      <button class="all-nodes-item-resize" type="button" data-resize-id="${THEATER_AUTO_TICK_LAYOUT_ID}" aria-label="Resize theater clock"></button>
+    </div>
+  `;
+}
+
 function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
+  if (node.action === MATERIALS_REFINERY_LAYOUT_ID) {
+    return renderMaterialRefineryNodeContent(isPinned);
+  }
+  if (node.action === THEATER_AUTO_TICK_LAYOUT_ID) {
+    return renderTheaterAutoTickNodeContent(isPinned);
+  }
+
+  const availability = isEscNodeAction(node.action)
+    ? getEscActionAvailability(node.action, getEscAvailabilityContext())
+    : "active";
   const variantClass = node.variant ? ` ${node.variant}` : "";
-  const pip = node.action === "dispatch"
-    ? renderDispatchNodePip()
-    : node.action === "roster"
-      ? renderRosterNodePip()
-      : node.action === "schema"
-        ? renderSchemaNodePip()
+  const disabledClass = availability === "disabled" ? " all-nodes-node-btn--disabled" : "";
+  const pip = node.action === "roster"
+    ? renderRosterNodePip()
+    : node.action === "schema"
+      ? renderSchemaNodePip()
       : "";
   return `
     <div class="all-nodes-item-shell">
       ${renderItemToolbar(node.action, node.label, { isPinned })}
-      <button class="all-nodes-node-btn${variantClass}" data-action="${node.action}">
+      <button class="all-nodes-node-btn${variantClass}${disabledClass}" data-action="${node.action}" ${availability === "disabled" ? "disabled aria-disabled=\"true\"" : ""}>
         <span class="node-icon">${node.icon}</span>
         <span class="node-label">${node.label}</span>
         <span class="node-desc">${node.desc}</span>
@@ -1453,15 +1991,25 @@ function renderNodeContent(node: NodeDefinition, isPinned: boolean): string {
 
 function renderResourceTrackerContent(
   wad: number,
-  resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number },
+  resources: ResourceWallet,
   isPinned: boolean,
 ): string {
+  const state = getGameState();
+  const showAdvanced = shouldShowExpandedResourceTracker();
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--resource">
       ${renderItemToolbar(RESOURCE_LAYOUT_ID, "resource tracker", { isPinned })}
       <section class="all-nodes-balance-panel" aria-label="Resource balances">
         <div class="all-nodes-balance-heading">
           <span class="all-nodes-balance-kicker">RESOURCE BALANCE</span>
+          <button
+            class="all-nodes-balance-toggle"
+            type="button"
+            data-resource-tracker-toggle="${showAdvanced ? "core-only" : "advanced"}"
+            aria-pressed="${showAdvanced ? "true" : "false"}"
+          >
+            ${showAdvanced ? "CORE ONLY" : "SHOW ADVANCED"}
+          </button>
         </div>
         <div class="all-nodes-balance-grid">
           <div class="all-nodes-balance-item">
@@ -1469,27 +2017,28 @@ function renderResourceTrackerContent(
             <span class="all-nodes-balance-label">WAD</span>
             <span class="all-nodes-balance-value">${wad.toLocaleString()}</span>
           </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">M</span>
-            <span class="all-nodes-balance-label">METAL</span>
-            <span class="all-nodes-balance-value">${resources.metalScrap}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">T</span>
-            <span class="all-nodes-balance-label">TIMBER</span>
-            <span class="all-nodes-balance-value">${resources.wood}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">C</span>
-            <span class="all-nodes-balance-label">CHAOS</span>
-            <span class="all-nodes-balance-value">${resources.chaosShards}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">S</span>
-            <span class="all-nodes-balance-label">STEAM</span>
-            <span class="all-nodes-balance-value">${resources.steamComponents}</span>
-          </div>
+          ${getResourceEntries(resources, { includeZero: true, keys: BASIC_RESOURCE_KEYS }).map((entry) => `
+            <div class="all-nodes-balance-item">
+              <span class="all-nodes-balance-icon">${entry.abbreviation}</span>
+              <span class="all-nodes-balance-label">${entry.shortLabel}</span>
+              <span class="all-nodes-balance-value">${entry.amount}</span>
+            </div>
+          `).join("")}
         </div>
+        ${showAdvanced ? `
+          <div class="all-nodes-balance-advanced">
+            <div class="all-nodes-balance-section-title">Advanced Materials</div>
+            <div class="all-nodes-balance-grid all-nodes-balance-grid--advanced">
+              ${getMaterialRefineryRecipes().map((recipe) => `
+                <div class="all-nodes-balance-item">
+                  <span class="all-nodes-balance-icon">${recipe.name.slice(0, 2)}</span>
+                  <span class="all-nodes-balance-label">${recipe.name}</span>
+                  <span class="all-nodes-balance-value">${countAdvancedMaterialOwned(state, recipe.id)}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        ` : ""}
       </section>
       <button class="all-nodes-item-resize" type="button" data-resize-id="${RESOURCE_LAYOUT_ID}" aria-label="Resize resource tracker"></button>
     </div>
@@ -1574,6 +2123,199 @@ function resolveEscMinimapModel() {
     runtimeMap,
     runtimeFieldState,
   });
+}
+
+function focusWorkspaceItem(itemId: string): void {
+  const root = document.getElementById("app");
+  const item = root?.querySelector<HTMLElement>(`.all-nodes-grid-item[data-layout-id="${itemId}"]`);
+  if (!item) {
+    return;
+  }
+
+  item.scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+    inline: "nearest",
+  });
+  requestAnimationFrame(() => {
+    const focusTarget = itemId === MATERIALS_REFINERY_LAYOUT_ID
+      ? item.querySelector<HTMLElement>("[data-refinery-craft-id]:not([disabled]), [data-refinery-craft-id]")
+      : item.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
+    focusTarget?.focus();
+  });
+}
+
+function revealWorkspaceItem(itemId: string): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    minimized.delete(itemId);
+    persistMinimizedItems(Array.from(minimized));
+    renderAllNodesMenuScreen(lastFieldMap);
+    requestAnimationFrame(() => focusWorkspaceItem(itemId));
+    return;
+  }
+
+  focusWorkspaceItem(itemId);
+}
+
+function getEscControllerItemOrder(): string[] {
+  return readLayoutOrder();
+}
+
+function getEscControllerActiveItem(): string {
+  const order = getEscControllerItemOrder();
+  if (order.length <= 0) {
+    escControllerActiveItemId = RESOURCE_LAYOUT_ID;
+    return escControllerActiveItemId;
+  }
+
+  if (!order.includes(escControllerActiveItemId)) {
+    const minimized = new Set(readMinimizedItems());
+    escControllerActiveItemId = order.find((itemId) => !minimized.has(itemId)) ?? order[0] ?? RESOURCE_LAYOUT_ID;
+  }
+
+  return escControllerActiveItemId;
+}
+
+function focusEscControllerItem(itemId: string): void {
+  escControllerActiveItemId = itemId;
+  const minimized = new Set(readMinimizedItems());
+  requestAnimationFrame(() => {
+    if (minimized.has(itemId)) {
+      document.querySelector<HTMLElement>(`[data-restore-id="${itemId}"]`)?.focus();
+      updateFocusableElements();
+      return;
+    }
+    focusWorkspaceItem(itemId);
+    updateFocusableElements();
+  });
+}
+
+function cycleEscControllerItem(step: 1 | -1): void {
+  const order = getEscControllerItemOrder();
+  if (order.length <= 0) {
+    return;
+  }
+
+  const currentIndex = Math.max(0, order.indexOf(getEscControllerActiveItem()));
+  escControllerActiveItemId = order[(currentIndex + step + order.length) % order.length] ?? order[0] ?? RESOURCE_LAYOUT_ID;
+  focusEscControllerItem(escControllerActiveItemId);
+}
+
+function toggleEscControllerItemMinimized(itemId: string): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    minimized.delete(itemId);
+  } else {
+    minimized.add(itemId);
+  }
+  persistMinimizedItems(Array.from(minimized));
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function cycleEscControllerItemColor(itemId: string): void {
+  const colors = { ...readItemColorKeys() };
+  const currentKey = getResolvedItemColorKey(itemId, colors);
+  const currentIndex = BASE_CAMP_COLOR_THEME_KEYS.indexOf(currentKey);
+  const nextKey = BASE_CAMP_COLOR_THEME_KEYS[(currentIndex + 1 + BASE_CAMP_COLOR_THEME_KEYS.length) % BASE_CAMP_COLOR_THEME_KEYS.length];
+  colors[itemId] = nextKey;
+  persistItemColorKeys(colors);
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function moveEscControllerItemLayout(
+  itemId: string,
+  delta: { gridX?: number; gridY?: number; colSpan?: number; rowSpan?: number },
+): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    return;
+  }
+
+  const root = document.getElementById("app");
+  const grid = root?.querySelector<HTMLElement>("#allNodesMenuGrid");
+  if (!grid) {
+    return;
+  }
+
+  const order = Array.from(grid.querySelectorAll<HTMLElement>(".all-nodes-grid-item"))
+    .map((item) => item.dataset.layoutId ?? "")
+    .filter(Boolean);
+  const metrics = getGridMetrics(grid);
+  const sizes = readItemSizes();
+  const resolved = buildResolvedWorkspaceLayouts(order, sizes, metrics.columnCount);
+  const currentLayout = resolved.get(itemId) ?? normalizeItemLayout(itemId, sizes[itemId], metrics.columnCount);
+
+  const requestedLayout = normalizeItemLayout(itemId, {
+    ...(sizes[itemId] ?? serializeItemLayout(currentLayout)),
+    gridX: currentLayout.gridX + (delta.gridX ?? 0),
+    gridY: currentLayout.gridY + (delta.gridY ?? 0),
+    colSpan: currentLayout.colSpan + (delta.colSpan ?? 0),
+    rowSpan: currentLayout.rowSpan + (delta.rowSpan ?? 0),
+  }, metrics.columnCount);
+
+  sizes[itemId] = serializeItemLayout(requestedLayout);
+  persistItemSizes(sizes);
+  renderAllNodesMenuScreen(lastFieldMap);
+  focusEscControllerItem(itemId);
+}
+
+function activateEscControllerItem(itemId: string): void {
+  const minimized = new Set(readMinimizedItems());
+  if (minimized.has(itemId)) {
+    minimized.delete(itemId);
+    persistMinimizedItems(Array.from(minimized));
+    renderAllNodesMenuScreen(lastFieldMap);
+  }
+
+  escControllerPreferredMode = "focus";
+  setControllerMode("focus");
+  focusEscControllerItem(itemId);
+}
+
+function handleEscControllerLayoutAction(action: string): boolean {
+  const itemId = getEscControllerActiveItem();
+  switch (action) {
+    case "tabPrev":
+    case "prevUnit":
+      cycleEscControllerItem(-1);
+      return true;
+    case "tabNext":
+    case "nextUnit":
+      cycleEscControllerItem(1);
+      return true;
+    case "moveUp":
+      moveEscControllerItemLayout(itemId, { gridY: -1 });
+      return true;
+    case "moveDown":
+      moveEscControllerItemLayout(itemId, { gridY: 1 });
+      return true;
+    case "moveLeft":
+      moveEscControllerItemLayout(itemId, { gridX: -1 });
+      return true;
+    case "moveRight":
+      moveEscControllerItemLayout(itemId, { gridX: 1 });
+      return true;
+    case "zoomIn":
+      moveEscControllerItemLayout(itemId, { colSpan: 1, rowSpan: 1 });
+      return true;
+    case "zoomOut":
+      moveEscControllerItemLayout(itemId, { colSpan: -1, rowSpan: -1 });
+      return true;
+    case "confirm":
+      activateEscControllerItem(itemId);
+      return true;
+    case "windowPrimary":
+      toggleEscControllerItemMinimized(itemId);
+      return true;
+    case "windowSecondary":
+      cycleEscControllerItemColor(itemId);
+      return true;
+    default:
+      return false;
+  }
 }
 
 function renderMinimapContent(isPinned: boolean): string {
@@ -1680,6 +2422,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
 
   cleanupAllNodesWindowListeners();
   ensureBaseCampLayoutVersion();
+  ensureTheaterAutoTickStateSync();
   initializeQuestState();
 
   if (fromFieldMap) {
@@ -1707,7 +2450,10 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   const activeLoadoutIndex = readActiveLoadoutIndex();
   const atlasFloorBypassEnabled = Boolean(state.uiLayout?.opsTerminalAtlasDebugFloorBypass);
   const campaignProgress = loadCampaignProgress();
-  const buildModeUnlocked = isHavenBuildModeUnlocked(campaignProgress);
+  const outerDeckFieldContext = getOuterDeckFieldContext(lastFieldMap);
+  const expeditionActive = outerDeckFieldContext === "outerDeckBranch";
+  const returnToHavenAvailable = outerDeckFieldContext !== "haven";
+  const buildModeUnlocked = lastFieldMap !== "quarters" && isHavenBuildModeUnlocked(campaignProgress);
   const activeOrder = fullOrder.filter((id) => !minimized.has(id));
   const dockOrder = fullOrder.filter((id) => minimized.has(id));
 
@@ -1808,15 +2554,20 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
         <div class="all-nodes-footer-actions">
           <div class="all-nodes-escape-hint">
             <span class="hint-key">[ESC]</span>
-            <span class="hint-text">Return to Field</span>
+            <span class="hint-text">${expeditionActive ? "Return to Expedition" : "Return to Field"}</span>
           </div>
+          ${returnToHavenAvailable ? `
+            <button class="all-nodes-build-mode-btn" id="allNodesReturnHavenBtn" type="button">
+              RETURN TO HAVEN
+            </button>
+          ` : ""}
           ${buildModeUnlocked ? `
             <button
               class="all-nodes-build-mode-btn"
               id="allNodesBuildModeBtn"
               type="button"
             >
-              HAVEN BUILD MODE
+              FIELD BUILD MODE
             </button>
           ` : ""}
           <button class="all-nodes-quit-title-btn" id="allNodesQuitTitleBtn" type="button">
@@ -1837,6 +2588,42 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
     onStateChange: () => renderAllNodesMenuScreen(lastFieldMap),
   });
   updateFocusableElements();
+  cleanupAllNodesControllerContext = registerControllerContext({
+    id: "esc-all-nodes",
+    defaultMode: escControllerPreferredMode,
+    focusRoot: () => document.querySelector(".all-nodes-menu-screen"),
+    defaultFocusSelector: 'button[data-action="ops-terminal"], .all-nodes-dock-item, #allNodesReturnHavenBtn, #allNodesQuitTitleBtn',
+    onLayoutAction: handleEscControllerLayoutAction,
+    onFocusAction: (action) => {
+      if (action === "cancel") {
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (
+          activeElement instanceof HTMLInputElement
+          || activeElement instanceof HTMLTextAreaElement
+          || activeElement instanceof HTMLSelectElement
+          || activeElement?.isContentEditable
+        ) {
+          activeElement.blur();
+          return true;
+        }
+
+        handleModeSwitch("field");
+        return true;
+      }
+      return false;
+    },
+    onModeChange: (mode) => {
+      escControllerPreferredMode = mode;
+      if (mode === "focus") {
+        focusEscControllerItem(getEscControllerActiveItem());
+      }
+    },
+    getDebugState: () => ({
+      hovered: getEscControllerActiveItem(),
+      window: getEscControllerActiveItem(),
+      focus: getEscControllerActiveItem(),
+    }),
+  });
 }
 
 function attachAllNodesMenuListeners(): void {
@@ -1932,6 +2719,39 @@ function attachAllNodesMenuListeners(): void {
     });
   });
 
+  root.querySelectorAll<HTMLElement>("[data-refinery-craft-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const recipeId = button.dataset.refineryCraftId as AdvancedMaterialId | undefined;
+      if (!recipeId) {
+        return;
+      }
+
+      updateGameState((prev) => craftMaterialRefineryRecipe(prev, recipeId, getMaterialRefineryContext()));
+      renderAllNodesMenuScreen(lastFieldMap);
+      requestAnimationFrame(() => focusWorkspaceItem(MATERIALS_REFINERY_LAYOUT_ID));
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-resource-tracker-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setExpandedResourceTrackerVisible(button.dataset.resourceTrackerToggle === "advanced");
+      renderAllNodesMenuScreen(lastFieldMap);
+      requestAnimationFrame(() => focusWorkspaceItem(RESOURCE_LAYOUT_ID));
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-theater-autotick-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setBaseCampTheaterAutoTickEnabled(button.dataset.theaterAutotickToggle === "on");
+    });
+  });
+
   attachPointerGridDrag(root);
   attachPointerResize(root);
 
@@ -1970,9 +2790,9 @@ function attachAllNodesMenuListeners(): void {
     event.preventDefault();
     if (!isHavenBuildModeUnlocked(loadCampaignProgress())) {
       showSystemPing({
-        type: "warning",
+        type: "info",
         title: "BUILD MODE LOCKED",
-        message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock HAVEN build mode.`,
+        message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock field build mode.`,
         channel: "esc-build-mode",
       });
       return;
@@ -1980,7 +2800,18 @@ function attachAllNodesMenuListeners(): void {
 
     syncPinnedItemFrames(document);
     cleanupAllNodesWindowListeners();
-    renderFieldScreen("base_camp", { openBuildMode: true });
+    renderFieldScreen(lastFieldMap as any, { openBuildMode: true });
+  });
+
+  root.querySelector<HTMLElement>("#allNodesReturnHavenBtn")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch") {
+      const nextState = abortOuterDeckExpedition(getGameState());
+      updateGameState(() => nextState);
+    }
+    setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
+    cleanupAllNodesWindowListeners();
+    renderFieldScreen("base_camp");
   });
 
   root.querySelector<HTMLElement>("#allNodesQuitTitleBtn")?.addEventListener("click", async (event) => {
@@ -2002,6 +2833,14 @@ function attachAllNodesMenuListeners(): void {
 
       if (!resolvedAction) {
         quacLastFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
+        quacStatus.textContent = quacLastFeedback;
+        quacStatus.classList.add("all-nodes-cli-status--error");
+        quacInput.select();
+        return;
+      }
+
+      if (isEscNodeAction(resolvedAction) && !isEscActionEnabled(resolvedAction, getEscAvailabilityContext())) {
+        quacLastFeedback = getEscExpeditionRestrictionMessage(resolvedAction);
         quacStatus.textContent = quacLastFeedback;
         quacStatus.classList.add("all-nodes-cli-status--error");
         quacInput.select();
@@ -2062,11 +2901,13 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label")) {
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label, .all-nodes-refinery-craft-btn, .all-nodes-theater-clock-toggle")) {
         return;
       }
 
-      const pressedAction = target.closest<HTMLElement>(".all-nodes-node-btn[data-action]")?.dataset.action ?? null;
+      const pressedButton = target.closest<HTMLElement>(".all-nodes-node-btn[data-action]");
+      const pressedAction = pressedButton?.dataset.action ?? null;
+      const pressedDisabled = pressedButton?.hasAttribute("disabled") ?? false;
       const pointerId = event.pointerId;
       const startX = event.clientX;
       const startY = event.clientY;
@@ -2177,6 +3018,7 @@ function attachPointerGridDrag(root: HTMLElement): void {
 
         if (
           pressedAction &&
+          !pressedDisabled &&
           Date.now() >= suppressNodeClickUntil &&
           isPointInsideRect(draggedItem.getBoundingClientRect(), upEvent.clientX, upEvent.clientY)
         ) {
@@ -2327,14 +3169,46 @@ function handleModeSwitch(mode: string | undefined): void {
   }
 }
 
-function handleNodeAction(action: string): void {
+async function handleNodeAction(action: string): Promise<void> {
+  if (isEscNodeAction(action) && !isEscActionEnabled(action, getEscAvailabilityContext())) {
+    showSystemPing({
+      type: "info",
+      title: "OUTER DECK EXPEDITION",
+      message: getEscExpeditionRestrictionMessage(action),
+      channel: "outer-deck-esc-lock",
+      replaceChannel: true,
+    });
+    return;
+  }
+
   if (
     isLockedHavenAnnexAction(action)
     || isLockedSchemaAction(action)
     || isLockedBlackMarketAction(action)
     || isLockedFoundryAnnexAction(action)
   ) {
-    alert(getLockedActionMessage(action) ?? "This node is not unlocked yet.");
+    await showAlertDialog({
+      title: "NODE LOCKED",
+      message: getLockedActionMessage(action) ?? "This node is not unlocked yet.",
+      mount: () => document.querySelector(".all-nodes-root"),
+    });
+    return;
+  }
+
+  if (action === MATERIALS_REFINERY_LAYOUT_ID) {
+    revealWorkspaceItem(MATERIALS_REFINERY_LAYOUT_ID);
+    showSystemPing({
+      type: "info",
+      title: "LIGHT CRAFTING",
+      message: "Use the light crafting controls directly from E.S.C.",
+      channel: "materials-refinery-inline",
+      replaceChannel: true,
+    });
+    return;
+  }
+
+  if (action === THEATER_AUTO_TICK_LAYOUT_ID) {
+    setBaseCampTheaterAutoTickEnabled(!isBaseCampTheaterAutoTickEnabled());
     return;
   }
 
@@ -2398,11 +3272,6 @@ function handleNodeAction(action: string): void {
     case "port":
       import("./PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("esc");
-      });
-      break;
-    case "dispatch":
-      import("./DispatchScreen").then(({ renderDispatchScreen }) => {
-        renderDispatchScreen("esc");
       });
       break;
     case "quarters":

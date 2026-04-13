@@ -64,7 +64,7 @@ function createReward(
   wadBonus: number,
   resourceScale = 1,
 ): QuestReward {
-  return {
+  const reward: QuestReward = {
     wad: wadBase + (tier * wadBonus),
     xp: 45 + (tier * 35),
     resources: {
@@ -74,6 +74,23 @@ function createReward(
       steamComponents: tier >= 2 ? Math.max(1, Math.round(resourceScale)) : 0,
     },
   };
+
+  if (tier >= 2) {
+    const slotType = tier >= 4
+      ? "weapon"
+      : tier === 3
+        ? "chestpiece"
+        : "accessory";
+    reward.gearRewards = [
+      {
+        kind: "generated",
+        slotType,
+        minStability: 50 + (tier * 4),
+      },
+    ];
+  }
+
+  return reward;
 }
 
 function getGenerationContext(): GenerationContext {

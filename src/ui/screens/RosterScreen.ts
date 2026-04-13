@@ -1,7 +1,7 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { autoEquipUnit, renderUnitDetailScreen } from "./Unitdetailscreen";
 import { renderLoadoutScreen } from "./LoadoutScreen";
-import { renderOperationMapScreen } from "./OperationMapScreen";
+import { renderActiveOperationSurface } from "./activeOperationFlow";
 import { getPWRBand, getPWRBandColor } from "../../core/pwr";
 import {
   BaseCampReturnTo,
@@ -14,14 +14,11 @@ import {
   UnitLoadout,
   calculateEquipmentStats,
   getAllStarterEquipment,
-  getAllModules,
   buildDeckFromLoadout,
   UnitClass,
-  canEquipWeapon,
 } from "../../core/equipment";
 import { getUnitManagementStandIconPath } from "../../core/portraits";
 import { getBusyDispatchUnitIds } from "../../core/dispatchSystem";
-import { getStatBank, STAT_SHORT_LABEL } from "../../core/statTokens";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import type { TheaterDeploymentPreset, TheaterSquadPreset } from "../../core/types";
 import {
@@ -39,12 +36,7 @@ let rosterOperationEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let selectedDeploymentSquadId: string | null = null;
 
 function returnToActiveOperationScreen(): void {
-  const activeOperation = getGameState().operation;
-  if (activeOperation?.theater) {
-    import("./TheaterCommandScreen").then(({ renderTheaterCommandScreen }) => renderTheaterCommandScreen());
-    return;
-  }
-  renderOperationMapScreen();
+  renderActiveOperationSurface();
 }
 
 function unregisterRosterOperationReturnHotkey(): void {
@@ -115,9 +107,8 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const unitIds = Object.keys(units);
   const partyUnitIds = state.partyUnitIds ?? [];
   const busyDispatchUnitIds = getBusyDispatchUnitIds(state);
-  const statBank = getStatBank(state);
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-  const modulesById = (state as any).modulesById || getAllModules();
+  const gearSlotsById = state.gearSlots ?? {};
   const preset = normalizeTheaterDeploymentPreset(state.theaterDeploymentPreset, state.partyUnitIds ?? []);
   const presetMembership = new Map<string, TheaterSquadPreset>();
   preset.squads.forEach((squad) => squad.unitIds.forEach((unitId) => { if (!presetMembership.has(unitId)) presetMembership.set(unitId, squad); }));
@@ -125,15 +116,14 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
   const isLiveTheaterOperation = returnTo === "operation" && Boolean(state.operation?.theater);
   const partyUnits = unitIds.filter((id) => partyUnitIds.includes(id));
   const reserveUnits = unitIds.filter((id) => !partyUnitIds.includes(id));
-  const portraitPath = getUnitManagementStandIconPath();
-
   const renderUnitCard = (unitId: string, isInParty: boolean) => {
     const unit = units[unitId];
     if (!unit) return "";
     const loadout: UnitLoadout = (unit as any).loadout || { primaryWeapon: null, secondaryWeapon: null, helmet: null, chestpiece: null, accessory1: null, accessory2: null };
-    const equipStats = calculateEquipmentStats(loadout, equipmentById, modulesById);
+    const equipStats = calculateEquipmentStats(loadout, equipmentById);
     const unitClass: UnitClass = (unit as any).unitClass || "squire";
-    const deckSize = buildDeckFromLoadout(unitClass, loadout, equipmentById, modulesById).length;
+    const portraitPath = getUnitManagementStandIconPath(unitClass);
+    const deckSize = buildDeckFromLoadout(unitClass, loadout, equipmentById, gearSlotsById).length;
     const baseStats = (unit as any).stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
     const assignedSquad = presetMembership.get(unitId) ?? null;
     const isDispatched = busyDispatchUnitIds.has(unitId);
@@ -188,9 +178,8 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
         <div class="roster-header town-screen__header">
           <div class="roster-header-left town-screen__titleblock"><h1 class="roster-title">UNIT ROSTER</h1><div class="roster-subtitle">S/COM_OS // UNIT_MANAGEMENT</div></div>
           <div class="roster-header-right town-screen__header-right">
-            <div class="roster-count roster-count--stat"><span class="roster-count-label">${STAT_SHORT_LABEL}</span><span class="roster-count-value">${statBank}</span></div>
             <div class="roster-count"><span class="roster-count-label">UNITS</span><span class="roster-count-value">${unitIds.length} / ${partyUnitIds.length} IN PARTY</span></div>
-            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}" type="button"><span class="btn-icon">â†</span><span class="btn-text">${returnTo === "operation" ? "OPERATION MAP" : returnTo === "field" ? "FIELD MODE" : returnTo === "loadout" ? "LOADOUT" : getBaseCampReturnLabel(returnTo as BaseCampReturnTo)}</span></button>
+            <button class="roster-back-btn town-screen__back-btn" data-return-to="${returnTo}" type="button"><span class="btn-icon">â†</span><span class="btn-text">${returnTo === "operation" ? "THEATER COMMAND" : returnTo === "field" ? "FIELD MODE" : returnTo === "loadout" ? "LOADOUT" : getBaseCampReturnLabel(returnTo as BaseCampReturnTo)}</span></button>
           </div>
         </div>
         <div class="roster-body">
@@ -200,7 +189,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
                 <div><div class="roster-section-title">THEATER DEPLOYMENT</div><div class="roster-section-subtitle">Persistent launch squads for theater operations</div></div>
                 ${isLiveTheaterOperation ? `<span class="roster-deployment-status">LIVE THEATER OPERATION</span>` : `<button class="roster-auto-equip-btn" id="rosterAddDeploymentSquadBtn" type="button">+ NEW SQUAD</button>`}
               </div>
-              <div class="roster-deployment-copy">${isLiveTheaterOperation ? "Saved presets are read-only while a theater operation is active. Use Theater Command for live squad changes." : `Select a squad, then assign units below. ${THEATER_SQUAD_UNIT_LIMIT} units max per squad.`}</div>
+              <div class="roster-deployment-copy">${isLiveTheaterOperation ? "Saved presets are read-only while a theater operation is active. Use Theater Command for live squad changes, and open any unit's Manage screen below to swap equipped gear from the forward locker." : `Select a squad, then assign units below. ${THEATER_SQUAD_UNIT_LIMIT} units max per squad.`}</div>
             </div>
             <div class="roster-deployment-layout">
               <div class="roster-deployment-ledger">
@@ -240,16 +229,25 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
         </div>
         <div class="roster-footer">
           <div class="roster-legend"><span class="roster-legend-item"><span class="roster-legend-dot roster-legend-dot--party"></span>In Party</span><span class="roster-legend-item"><span class="roster-legend-dot roster-legend-dot--reserve"></span>Reserve</span></div>
-          <div class="roster-debug"><button class="roster-debug-btn" id="debugEquipBtn" type="button">ðŸ”§ DEBUG: Give All Equipment</button></div>
         </div>
       </div>
     </div>
   `;
 
+  const rosterBackIcon = root.querySelector<HTMLElement>(".roster-back-btn .btn-icon");
+  if (rosterBackIcon) {
+    rosterBackIcon.innerHTML = "&larr;";
+  }
+
+  const autoEquipPartyBtn = root.querySelector<HTMLButtonElement>("#autoEquipPartyBtn");
+  if (autoEquipPartyBtn) {
+    autoEquipPartyBtn.textContent = "AUTO-EQUIP ALL";
+  }
+
   if (returnTo === "operation") registerRosterOperationReturnHotkey(); else unregisterRosterOperationReturnHotkey();
   if (returnTo !== "loadout" && returnTo !== "operation") registerBaseCampReturnHotkey("roster-screen", returnTo, { allowFieldEKey: true, activeSelector: ".roster-root" }); else unregisterBaseCampReturnHotkey("roster-screen");
 
-  root.onclick = (event) => {
+  root.onclick = async (event) => {
     const target = event.target as HTMLElement;
     const unitId = target.closest<HTMLElement>("[data-unit-id]")?.getAttribute("data-unit-id");
     const actionBtn = target.closest<HTMLElement>(".roster-toggle-party-btn");
@@ -292,22 +290,6 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
       if (deployBtn.getAttribute("data-roster-deploy") === "remove") mutatePreset((current) => ({ squads: current.squads.map((squad) => ({ ...squad, unitIds: squad.unitIds.filter((id) => id !== unitId) })) }));
       else if (focusedSquad.unitIds.length >= THEATER_SQUAD_UNIT_LIMIT) alert(`Deployment squads cap at ${THEATER_SQUAD_UNIT_LIMIT} units.`);
       else mutatePreset((current) => ({ squads: current.squads.map((squad) => squad.squadId === focusedSquad.squadId ? { ...squad, unitIds: [...squad.unitIds.filter((id) => id !== unitId), unitId] } : { ...squad, unitIds: squad.unitIds.filter((id) => id !== unitId) }) }));
-      return renderRosterScreen(returnTo);
-    }
-    if (target.closest("#debugEquipBtn")) {
-      if (!confirm("Give all starter equipment to all units for testing?")) return;
-      updateGameState((prev) => {
-        const allEquipment = getAllStarterEquipment(); const nextUnitsById = { ...prev.unitsById };
-        Object.keys(nextUnitsById).forEach((id) => {
-          const unit = nextUnitsById[id]; const unitClass: UnitClass = (unit as any).unitClass || "squire"; const nextLoadout: UnitLoadout = (unit as any).loadout || { primaryWeapon: null, secondaryWeapon: null, helmet: null, chestpiece: null, accessory1: null, accessory2: null };
-          const compatibleWeapon = Object.values(allEquipment).filter((eq) => eq.slot === "weapon").find((weapon) => canEquipWeapon(unitClass, (weapon as any).weaponType)); if (compatibleWeapon) nextLoadout.primaryWeapon = compatibleWeapon.id;
-          const helmet = Object.values(allEquipment).find((eq) => eq.slot === "helmet"); if (helmet) nextLoadout.helmet = helmet.id;
-          const chestpiece = Object.values(allEquipment).find((eq) => eq.slot === "chestpiece"); if (chestpiece) nextLoadout.chestpiece = chestpiece.id;
-          const accessories = Object.values(allEquipment).filter((eq) => eq.slot === "accessory"); if (accessories[0]) nextLoadout.accessory1 = accessories[0].id; if (accessories[1]) nextLoadout.accessory2 = accessories[1].id;
-          nextUnitsById[id] = { ...unit, loadout: nextLoadout };
-        });
-        return { ...prev, wad: 9999, resources: { metalScrap: 99, wood: 99, chaosShards: 99, steamComponents: 99 }, equipmentById: { ...(prev.equipmentById || {}), ...allEquipment }, unitsById: nextUnitsById };
-      });
       return renderRosterScreen(returnTo);
     }
     const card = target.closest<HTMLElement>(".roster-unit-card");

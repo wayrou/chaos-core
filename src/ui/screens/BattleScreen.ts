@@ -2,23 +2,33 @@
 // Battle screen with unit panel + weapon window alongside hand at bottom
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen, markCurrentRoomVisited } from "./OperationMapScreen";
+import { markCurrentOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { recordBattleVictory, syncCampaignToGameState, getActiveRun } from "../../core/campaignManager";
-const renderOperationMap = renderOperationMapScreen; // Alias for compatibility
+const renderOperationMap = renderActiveOperationSurface; // Alias for compatibility
 import { addCardsToLibrary } from "../../core/gearWorkbench";
 import { getUnlockableById } from "../../core/unlockables";
 import { handleKeyDown as handlePlayerInputKeyDown, handleKeyUp as handlePlayerInputKeyUp, getPlayerInput } from "../../core/playerInput";
-import { EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, SquadBattleTurnState, SessionPlayerSlot } from "../../core/types";
+import { type BattleCameraViewPreset, EchoBattleContext, EchoFieldPlacement, PlayerId, SESSION_PLAYER_SLOTS, SquadBattleTurnState, SessionPlayerSlot } from "../../core/types";
+import {
+  getBattleStateById,
+  getMountedOrActiveBattleState,
+  mountBattleContextById,
+  mountBattleState,
+  replaceBattleStateById,
+} from "../../core/session";
 
 import {
+  applyStrain,
   BattleState,
   advanceTurn,
   canUnitInteract,
   createTestBattleForCurrentParty,
   evaluateBattleOutcome,
+  getEffectivePlacedUnitIds,
   getPlacementTilesForUnit,
   getSquadObjectiveControlSide,
   getUnitInteractionObject,
+  updateUnitWeaponState,
   interactWithMapObject,
   moveUnit,
   performEnemyTurn,
@@ -30,6 +40,7 @@ import {
   confirmPlacement,
   removePlacedUnit as unplaceBattleUnit,
   setPlacementSelectedUnit as selectBattlePlacementUnit,
+  getBattleUnitEquippedWeaponId,
   getEquippedWeapon,
   getMovePath,
   getReachableMovementTiles,
@@ -38,13 +49,23 @@ import {
 } from "../../core/battle";
 import { hasLineOfSight } from "../../core/lineOfSight";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { createTrainingBattle } from "../../core/trainingBattle";
 import { getAllStarterEquipment } from "../../core/equipment";
+import {
+  grantGearRewardSpecsToState,
+  resolveGearRewardSpecs,
+} from "../../core/gearRewards";
 import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
+import { renderWeaponWindow as renderSharedWeaponWindow } from "../components/weaponWindow";
 import { updateQuestProgress } from "../../quests/questManager";
 import { trackBattleSurvival } from "../../core/affinityBattle";
-import { getPlayerControllerLabel } from "../../core/session";
-import { applyTheaterBattleOutcome, hasTheaterOperation } from "../../core/theaterSystem";
+import { getPlayerControllerLabel, grantSessionResources } from "../../core/session";
+import {
+  applyTheaterBattleOutcome,
+  applyTheaterOperationFailure,
+  hasTheaterOperation,
+} from "../../core/theaterSystem";
 import {
   clearControllerContext,
   getControllerActionLabel,
@@ -54,10 +75,20 @@ import {
 } from "../../core/controllerSupport";
 import { returnFromBaseCampScreen, type BaseCampReturnTo } from "./baseCampReturn";
 import { showSystemPing } from "../components/systemPing";
+import { showTutorialCalloutSequence } from "../components/tutorialCallout";
 import { playPlaceholderSfx, setMusicCue } from "../../core/audioSystem";
 import { awardStatTokens, STAT_LONG_LABEL, STAT_SHORT_LABEL } from "../../core/statTokens";
-// Isometric imports removed - using simple grid now
-import { BattleGridRenderer } from "./BattleGridRenderer";
+import { createEmptyResourceWallet } from "../../core/resources";
+import {
+  deriveBattleFeedback,
+  subscribeToFeedback,
+  triggerFeedback,
+  type FeedbackPosition,
+  type FeedbackRequest,
+} from "../../core/feedback";
+import { BattleSceneController } from "../battle3d/BattleSceneController";
+import { createBattleBoardSnapshot } from "../battle3d/snapshot";
+import type { BattleBoardPick, BattleBoardPoint } from "../battle3d/types";
 // Mount system imports
 import { isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
@@ -87,8 +118,10 @@ import {
 import {
   createSquadBattlePayload,
   createSquadBattleCommandPayload,
+  createRuntimeBattleCommandPayload,
   getSquadBattleResultReason,
   getSquadBattleWinnerSlots,
+  parseRuntimeBattleCommandPayload,
   parseSquadBattleCommandPayload,
   type SquadBattleCommand,
 } from "../../core/squadBattle";
@@ -96,6 +129,16 @@ import {
   isTauriSquadTransportAvailable,
   sendSquadTransportMessage,
 } from "../../core/squadOnlineTransport";
+import {
+  fieldPatch,
+  fullReload,
+  getWeaponCardBlockReason,
+  getWeaponCardModifierSnapshot,
+  getWeaponClutches,
+  quickReload,
+  toggleWeaponClutch,
+  ventWeapon,
+} from "../../core/weaponSystem";
 
 let isAnimatingEnemyTurn = false;
 let lastBattleStatPingKey: string | null = null;
@@ -104,8 +147,218 @@ let battleResultInputUnlockAtMs = 0;
 let lastBattleAudioStateKey: string | null = null;
 let pendingAutoBattleStepTimerId: number | null = null;
 let pendingAutoBattleStepDueAtMs = 0;
+let cleanupBattleFeedbackListener: (() => void) | null = null;
+let battleHitStopUntilMs = 0;
+let battleHitStopTimerId: number | null = null;
+let battleSceneController: BattleSceneController | null = null;
+const BATTLE_VIEW_SLOT_COUNT = 2;
+const DEFAULT_BATTLE_VIEW_PRESETS: BattleCameraViewPreset[] = [
+  {
+    orbitYaw: Math.PI / 4,
+    orbitPitch: 0.82,
+    orbitDistance: 13,
+    zoomFactor: 1.3,
+    focusX: 0,
+    focusY: 0.45,
+    focusZ: 0,
+    hasManualPan: false,
+  },
+  {
+    orbitYaw: (Math.PI * 3) / 4,
+    orbitPitch: 0.82,
+    orbitDistance: 13,
+    zoomFactor: 1.3,
+    focusX: 0,
+    focusY: 0.45,
+    focusZ: 0,
+    hasManualPan: false,
+  },
+];
+let battleViewPresetCache: Record<string, BattleCameraViewPreset> | null = null;
+let battleActiveViewIndexCache: number | null = null;
+let battleViewPersistTimerId: number | null = null;
+let battleLastAppliedViewSignature: string | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
+
+function clampBattleViewIndex(index: number): number {
+  return Math.max(0, Math.min(BATTLE_VIEW_SLOT_COUNT - 1, index));
+}
+
+function getBattleViewStorageKey(index: number): string {
+  return String(clampBattleViewIndex(index));
+}
+
+function cloneBattleViewPreset(preset: BattleCameraViewPreset): BattleCameraViewPreset {
+  return { ...preset };
+}
+
+function getDefaultBattleViewPreset(index: number): BattleCameraViewPreset {
+  return cloneBattleViewPreset(DEFAULT_BATTLE_VIEW_PRESETS[clampBattleViewIndex(index)] ?? DEFAULT_BATTLE_VIEW_PRESETS[0]);
+}
+
+function normalizeBattleViewPreset(
+  preset: Partial<BattleCameraViewPreset> | undefined,
+  index: number,
+): BattleCameraViewPreset {
+  const fallback = getDefaultBattleViewPreset(index);
+  const safeNumber = (value: number | undefined, fallbackValue: number): number => (
+    typeof value === "number" && Number.isFinite(value) ? value : fallbackValue
+  );
+
+  return {
+    orbitYaw: safeNumber(preset?.orbitYaw, fallback.orbitYaw),
+    orbitPitch: Math.max(0.35, Math.min(1.25, safeNumber(preset?.orbitPitch, fallback.orbitPitch))),
+    orbitDistance: Math.max(4.5, Math.min(30, safeNumber(preset?.orbitDistance, fallback.orbitDistance))),
+    zoomFactor: Math.max(0.6, Math.min(1.6, safeNumber(preset?.zoomFactor, fallback.zoomFactor))),
+    focusX: safeNumber(preset?.focusX, fallback.focusX),
+    focusY: safeNumber(preset?.focusY, fallback.focusY),
+    focusZ: safeNumber(preset?.focusZ, fallback.focusZ),
+    hasManualPan: typeof preset?.hasManualPan === "boolean" ? preset.hasManualPan : fallback.hasManualPan,
+  };
+}
+
+function readStoredBattleViewPresets(state = getGameState()): Record<string, BattleCameraViewPreset> {
+  const savedPresets = state.uiLayout?.battleViewPresets ?? {};
+  return Object.fromEntries(
+    Array.from({ length: BATTLE_VIEW_SLOT_COUNT }, (_, index) => {
+      const key = getBattleViewStorageKey(index);
+      return [key, normalizeBattleViewPreset(savedPresets[key], index)];
+    }),
+  ) as Record<string, BattleCameraViewPreset>;
+}
+
+function readActiveBattleViewIndex(state = getGameState()): number {
+  return clampBattleViewIndex(state.uiLayout?.battleActiveViewIndex ?? 0);
+}
+
+function ensureBattleViewPresetCache(state = getGameState()): void {
+  if (battleViewPresetCache && battleActiveViewIndexCache !== null) {
+    return;
+  }
+
+  battleViewPresetCache = readStoredBattleViewPresets(state);
+  battleActiveViewIndexCache = readActiveBattleViewIndex(state);
+}
+
+function getCachedBattleViewPresets(state = getGameState()): Record<string, BattleCameraViewPreset> {
+  ensureBattleViewPresetCache(state);
+  return battleViewPresetCache ?? readStoredBattleViewPresets(state);
+}
+
+function getActiveBattleViewIndex(state = getGameState()): number {
+  ensureBattleViewPresetCache(state);
+  return battleActiveViewIndexCache ?? readActiveBattleViewIndex(state);
+}
+
+function getActiveBattleViewPreset(state = getGameState()): BattleCameraViewPreset {
+  const activeIndex = getActiveBattleViewIndex(state);
+  const presets = getCachedBattleViewPresets(state);
+  return cloneBattleViewPreset(presets[getBattleViewStorageKey(activeIndex)] ?? getDefaultBattleViewPreset(activeIndex));
+}
+
+function areBattleViewPresetsEqual(a: BattleCameraViewPreset, b: BattleCameraViewPreset): boolean {
+  return a.orbitYaw === b.orbitYaw
+    && a.orbitPitch === b.orbitPitch
+    && a.orbitDistance === b.orbitDistance
+    && a.zoomFactor === b.zoomFactor
+    && a.focusX === b.focusX
+    && a.focusY === b.focusY
+    && a.focusZ === b.focusZ
+    && a.hasManualPan === b.hasManualPan;
+}
+
+function cloneBattleViewPresetRecord(presets: Record<string, BattleCameraViewPreset>): Record<string, BattleCameraViewPreset> {
+  return Object.fromEntries(
+    Object.entries(presets).map(([key, preset]) => [key, cloneBattleViewPreset(preset)]),
+  ) as Record<string, BattleCameraViewPreset>;
+}
+
+function flushBattleViewPresetState(): void {
+  if (battleViewPersistTimerId !== null) {
+    window.clearTimeout(battleViewPersistTimerId);
+    battleViewPersistTimerId = null;
+  }
+
+  if (!battleViewPresetCache || battleActiveViewIndexCache === null) {
+    return;
+  }
+
+  const currentState = getGameState();
+  const storedActiveIndex = readActiveBattleViewIndex(currentState);
+  const storedPresets = readStoredBattleViewPresets(currentState);
+  const nextPresets = cloneBattleViewPresetRecord(battleViewPresetCache);
+  const isSame =
+    storedActiveIndex === battleActiveViewIndexCache
+    && Array.from({ length: BATTLE_VIEW_SLOT_COUNT }, (_, index) => {
+      const key = getBattleViewStorageKey(index);
+      return areBattleViewPresetsEqual(
+        storedPresets[key] ?? getDefaultBattleViewPreset(index),
+        nextPresets[key] ?? getDefaultBattleViewPreset(index),
+      );
+    }).every(Boolean);
+
+  if (isSame) {
+    return;
+  }
+
+  updateGameState((state) => ({
+    ...state,
+    uiLayout: {
+      ...(state.uiLayout ?? {}),
+      battleActiveViewIndex: battleActiveViewIndexCache ?? 0,
+      battleViewPresets: cloneBattleViewPresetRecord(nextPresets),
+    },
+  }));
+}
+
+function scheduleBattleViewPresetStatePersist(): void {
+  if (battleViewPersistTimerId !== null) {
+    window.clearTimeout(battleViewPersistTimerId);
+  }
+
+  battleViewPersistTimerId = window.setTimeout(() => {
+    battleViewPersistTimerId = null;
+    flushBattleViewPresetState();
+  }, 220);
+}
+
+function captureActiveBattleViewPreset(view: BattleCameraViewPreset, persist = true): void {
+  ensureBattleViewPresetCache();
+  const activeIndex = getActiveBattleViewIndex();
+  const presetKey = getBattleViewStorageKey(activeIndex);
+  const normalizedPreset = normalizeBattleViewPreset(view, activeIndex);
+
+  if (!battleViewPresetCache) {
+    battleViewPresetCache = readStoredBattleViewPresets();
+  }
+
+  battleViewPresetCache[presetKey] = normalizedPreset;
+  battleZoom = normalizedPreset.zoomFactor;
+
+  if (persist) {
+    scheduleBattleViewPresetStatePersist();
+  }
+}
+
+function resetBattleViewPresetSessionState(): void {
+  flushBattleViewPresetState();
+  battleViewPresetCache = null;
+  battleActiveViewIndexCache = null;
+  battleLastAppliedViewSignature = null;
+}
+
+function activateBattleViewPreset(viewIndex: number): void {
+  if (battleSceneController) {
+    captureActiveBattleViewPreset(battleSceneController.getViewState(), false);
+  }
+
+  ensureBattleViewPresetCache();
+  battleActiveViewIndexCache = clampBattleViewIndex(viewIndex);
+  battleLastAppliedViewSignature = null;
+  flushBattleViewPresetState();
+  renderBattleScreen();
+}
 
 type AutoBattleCardOption = {
   cardIndex: number;
@@ -120,6 +373,8 @@ type AutoBattleMoveOption = {
   path: Vec2[];
   score: number;
 };
+
+type BattleExitConfirmState = "abandon-echo" | null;
 
 function getBattleReturnTarget(battle: BattleState | null | undefined): BaseCampReturnTo | "operation" | "menu" | "map_builder" {
   const returnTo = (battle as any)?.returnTo;
@@ -225,6 +480,37 @@ function getSquadObjectiveStatusLabel(battle: BattleState): string {
   if (!objective) {
     return "";
   }
+  if (objective.kind === "extraction") {
+    if (objective.winnerSide === "friendly") {
+      return "HOST EXTRACTION COMPLETE";
+    }
+    if (objective.winnerSide === "enemy") {
+      return "OPPOSITION EXTRACTION COMPLETE";
+    }
+    if (objective.controllingSide === "friendly") {
+      return "HOST EXTRACTION REGISTERED";
+    }
+    if (objective.controllingSide === "enemy") {
+      return "OPPOSITION EXTRACTION REGISTERED";
+    }
+    const extractionTiles = objective.extractionTiles ?? battle.objectiveZones?.extraction ?? [];
+    const anyFriendlyOnExtraction = Object.values(battle.units).some((unit) =>
+      !unit.isEnemy
+      && unit.hp > 0
+      && unit.pos
+      && extractionTiles.some((tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y),
+    );
+    const anyEnemyOnExtraction = Object.values(battle.units).some((unit) =>
+      unit.isEnemy
+      && unit.hp > 0
+      && unit.pos
+      && extractionTiles.some((tile) => tile.x === unit.pos!.x && tile.y === unit.pos!.y),
+    );
+    if (anyFriendlyOnExtraction || anyEnemyOnExtraction) {
+      return "EXTRACTION WINDOW CONTESTED";
+    }
+    return "EXTRACTION WINDOW OPEN";
+  }
   if (objective.kind === "breakthrough") {
     if (objective.winnerSide === "friendly") {
       return "HOST BREACH CONFIRMED";
@@ -286,8 +572,26 @@ function getLocalSquadSlot(battle: BattleState | null | undefined): SessionPlaye
   return getSquadContext(battle)?.hostSlot ?? "P1";
 }
 
+function getLocalCoopOperationsSlot(): SessionPlayerSlot {
+  return SESSION_PLAYER_SLOTS.find((slot) =>
+    getGameState().session.players?.[slot]?.presence === "local"
+    && getGameState().session.players?.[slot]?.connected,
+  ) ?? "P1";
+}
+
+function isCoopOperationsBattle(battle: BattleState | null | undefined): boolean {
+  return Boolean(
+    battle
+    && !isSquadBattle(battle)
+    && getGameState().session.mode === "coop_operations",
+  );
+}
+
 function getBattleInputPlayerId(battle: BattleState | null | undefined, unit: BattleUnitState | null | undefined): PlayerId {
   if (isSquadBattle(battle) && getGameState().session.authorityRole === "client") {
+    return "P1";
+  }
+  if (isCoopOperationsBattle(battle)) {
     return "P1";
   }
   return normalizeSessionPlayerSlot(unit?.controller ?? "P1") === "P2" ? "P2" : "P1";
@@ -308,6 +612,10 @@ function canLocalControlBattleUnit(battle: BattleState | null | undefined, unit:
 
   if (isSquadBattle(battle)) {
     return normalizeSessionPlayerSlot(unit.controller ?? "P1") === getLocalSquadSlot(battle);
+  }
+
+  if (isCoopOperationsBattle(battle)) {
+    return !unit.isEnemy && normalizeSessionPlayerSlot(unit.controller ?? "P1") === getLocalCoopOperationsSlot();
   }
 
   if (unit.isEnemy) {
@@ -343,37 +651,43 @@ function buildSquadTurnStateSnapshot(battle: BattleState): SquadBattleTurnState 
     hasMoved: turnState.hasMoved,
     hasCommittedMove: turnState.hasCommittedMove,
     hasActed: turnState.hasActed,
+    movementOnlyAfterAttack: turnState.movementOnlyAfterAttack,
     movementRemaining: turnState.movementRemaining,
     originalPosition: turnState.originalPosition ? { ...turnState.originalPosition } : null,
     isFacingSelection: turnState.isFacingSelection,
   };
 }
 
-function withSquadTurnStateSnapshot(battle: BattleState): BattleState {
-  const squadContext = getSquadContext(battle);
-  if (!squadContext) {
+function withBattleTurnStateSnapshot(battle: BattleState): BattleState {
+  if (!battle.modeContext) {
     return battle;
   }
 
+  const turnStateSnapshot = buildSquadTurnStateSnapshot(battle);
+  const squadContext = getSquadContext(battle);
   return {
     ...battle,
     modeContext: {
-      kind: "squad",
-      squad: {
-        ...squadContext,
-        turnState: buildSquadTurnStateSnapshot(battle),
-      },
+      ...battle.modeContext,
+      turnState: turnStateSnapshot,
+      squad: squadContext
+        ? {
+            ...squadContext,
+            turnState: turnStateSnapshot,
+          }
+        : battle.modeContext.squad,
     },
   };
 }
 
 function restoreTurnStateFromBattle(battle: BattleState | null | undefined): void {
-  const serialized = getSquadContext(battle)?.turnState ?? null;
+  const serialized = battle?.modeContext?.turnState ?? getSquadContext(battle)?.turnState ?? null;
   if (battle && serialized && serialized.unitId === (battle.activeUnitId ?? null)) {
     turnState = {
       hasMoved: serialized.hasMoved,
       hasCommittedMove: serialized.hasCommittedMove,
       hasActed: serialized.hasActed,
+      movementOnlyAfterAttack: Boolean(serialized.movementOnlyAfterAttack),
       movementRemaining: serialized.movementRemaining,
       originalPosition: serialized.originalPosition ? { ...serialized.originalPosition } : null,
       isFacingSelection: serialized.isFacingSelection,
@@ -394,6 +708,20 @@ function isRemoteSquadClientTurn(battle: BattleState | null | undefined, unit: B
   );
 }
 
+function isRemoteCoopClientTurn(battle: BattleState | null | undefined, unit: BattleUnitState | null | undefined): boolean {
+  return Boolean(
+    battle
+    && unit
+    && isCoopOperationsBattle(battle)
+    && getGameState().session.authorityRole === "client"
+    && isLocalBattleTurn(battle, unit),
+  );
+}
+
+function isRemoteNetworkClientTurn(battle: BattleState | null | undefined, unit: BattleUnitState | null | undefined): boolean {
+  return isRemoteSquadClientTurn(battle, unit) || isRemoteCoopClientTurn(battle, unit);
+}
+
 async function sendLocalSquadBattleCommand(command: SquadBattleCommand): Promise<void> {
   if (!localBattleState || !isRemoteSquadClientTurn(localBattleState, localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null)) {
     return;
@@ -409,6 +737,34 @@ async function sendLocalSquadBattleCommand(command: SquadBattleCommand): Promise
     createSquadBattleCommandPayload(match, localBattleState, command),
     null,
   );
+}
+
+async function sendLocalCoopBattleCommand(command: SquadBattleCommand): Promise<void> {
+  if (
+    !localBattleState
+    || !isCoopOperationsBattle(localBattleState)
+    || getGameState().session.authorityRole !== "client"
+    || !isTauriSquadTransportAvailable()
+  ) {
+    return;
+  }
+
+  await sendSquadTransportMessage(
+    "lobby_command",
+    JSON.stringify({
+      type: "coop_battle_command",
+      payload: createRuntimeBattleCommandPayload(localBattleState, command),
+    }),
+    null,
+  );
+}
+
+async function sendLocalNetworkBattleCommand(command: SquadBattleCommand): Promise<void> {
+  if (localBattleState && isSquadBattle(localBattleState)) {
+    await sendLocalSquadBattleCommand(command);
+    return;
+  }
+  await sendLocalCoopBattleCommand(command);
 }
 
 async function sendLocalSquadPlacementCommand(command: SquadBattleCommand): Promise<void> {
@@ -431,6 +787,35 @@ async function sendLocalSquadPlacementCommand(command: SquadBattleCommand): Prom
     createSquadBattleCommandPayload(match, localBattleState, command),
     null,
   );
+}
+
+async function sendLocalCoopPlacementCommand(command: SquadBattleCommand): Promise<void> {
+  if (
+    !localBattleState
+    || !isCoopOperationsBattle(localBattleState)
+    || localBattleState.phase !== "placement"
+    || getGameState().session.authorityRole !== "client"
+    || !isTauriSquadTransportAvailable()
+  ) {
+    return;
+  }
+
+  await sendSquadTransportMessage(
+    "lobby_command",
+    JSON.stringify({
+      type: "coop_battle_command",
+      payload: createRuntimeBattleCommandPayload(localBattleState, command),
+    }),
+    null,
+  );
+}
+
+async function sendLocalNetworkPlacementCommand(command: SquadBattleCommand): Promise<void> {
+  if (localBattleState && isSquadBattle(localBattleState)) {
+    await sendLocalSquadPlacementCommand(command);
+    return;
+  }
+  await sendLocalCoopPlacementCommand(command);
 }
 
 function escapeBattleText(value: string): string {
@@ -496,12 +881,12 @@ function getLocalPlacementUnits(battle: BattleState): BattleUnitState[] {
 }
 
 function getSkirmishPlacementCounts(battle: BattleState): { friendly: number; enemy: number } {
-  const placementState = battle.placementState;
-  if (!placementState) {
+  const effectivePlacedUnitIds = getEffectivePlacedUnitIds(battle);
+  if (effectivePlacedUnitIds.length <= 0) {
     return { friendly: 0, enemy: 0 };
   }
 
-  return placementState.placedUnitIds.reduce((counts, unitId) => {
+  return effectivePlacedUnitIds.reduce((counts, unitId) => {
     const unit = battle.units[unitId];
     if (!unit) {
       return counts;
@@ -716,6 +1101,10 @@ interface Card {
   defBuff?: number;
   atkBuff?: number;
   effects?: any[];
+  sourceEquipmentId?: string;
+  weaponRules?: import("../../core/weaponData").WeaponCardRules;
+  isChaosCard?: boolean;
+  chaosCardsToCreate?: string[];
 }
 
 // CARD DATABASE - Based on GDD
@@ -726,7 +1115,7 @@ const CARD_DATABASE: Record<string, Card> = {
   "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
   "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 3, range: 0, description: "Attack enemy that enters range." },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
-  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 1." },
+  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 2." },
 
   // ELM RECURVE BOW (Range 3-6)
   "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
@@ -877,120 +1266,94 @@ function fallbackGetCardById(id: string): Card {
 
 function renderWeaponWindow(unit: BattleUnitState | undefined): string {
   try {
-    if (!unit || !unit.equippedWeaponId) {
+    if (!unit) {
       return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
     }
-
-    // Pull weapon data from equipment for accurate mechanical flags and stats
+    const resolvedWeaponId = getBattleUnitEquippedWeaponId(unit);
     const state = getGameState();
     const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
     const weapon = getEquippedWeapon(unit, equipmentById);
 
     if (!weapon) {
-      return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`;
+      return resolvedWeaponId
+        ? `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">UNKNOWN WEAPON</div></div>`
+        : `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
     }
+    const combatInstability = Boolean(localBattleState?.theaterBonuses?.combatInstability);
+    const overheatSeverity = localBattleState?.theaterBonuses?.overheatSeverity ?? 0;
+    const obscurationActive = Boolean(
+      localBattleState?.theaterBonuses?.obscurationActive
+      ?? localBattleState?.theaterBonuses?.smokeObscured,
+    );
+    const obscurationSeverity = localBattleState?.theaterBonuses?.obscurationSeverity
+      ?? localBattleState?.theaterBonuses?.smokeSeverity
+      ?? 0;
+    const obscurationLabel = localBattleState?.theaterBonuses?.obscurationLabel ?? "Smoke Obscuration";
+    const obscurationSuppressesRanged = Boolean(
+      localBattleState?.theaterBonuses?.obscurationSuppressesRanged
+      ?? localBattleState?.theaterBonuses?.smokeObscured,
+    );
+    const enemyIntelScrambled = Boolean(localBattleState?.theaterBonuses?.enemyIntelScrambled);
+    const enemyIntelScrambleLabel = localBattleState?.theaterBonuses?.enemyIntelScrambleLabel ?? "Telemetry Static";
+    const burningRoom = Boolean(localBattleState?.theaterBonuses?.burningRoom);
+    const burnSeverity = localBattleState?.theaterBonuses?.burnSeverity ?? 0;
+    const supplyFireRisk = Boolean(localBattleState?.theaterBonuses?.supplyFireRisk);
+    const instabilityWarning = combatInstability ? `
+      Combat Instability Active // Room Overheat L${overheatSeverity > 0 ? overheatSeverity : 1} // Heat Accelerated
+    ` : null;
+    const obscurationWarning = obscurationActive ? `
+      ${obscurationLabel} Active // Move -${Math.max(1, obscurationSeverity)}${obscurationSuppressesRanged ? " // Ranged Fire Suppressed" : ""}
+    ` : null;
+    const intelWarning = enemyIntelScrambled ? `
+      ${enemyIntelScrambleLabel} Active // Enemy Telemetry Scrambled
+    ` : null;
+    const riskWarning = supplyFireRisk ? `
+      Volatile Supply Load // Fire Risk Elevated
+    ` : null;
+    const fireWarning = burningRoom ? `
+      Room Fire Active // Ambient Thermal Damage Each Turn${burnSeverity >= 2 ? " // Ignition Pressure Rising" : ""}
+    ` : null;
+    const combinedWarning = [instabilityWarning, obscurationWarning, intelWarning, riskWarning, fireWarning]
+      .map((warning) => warning?.replace(/\s+/g, " ").trim() ?? "")
+      .filter(Boolean)
+      .join(" // ");
 
-    const weaponName = weapon.name || unit.equippedWeaponId.replace(/^weapon_/, "").replace(/_/g, " ").toUpperCase();
-    const isMechanical = weapon.isMechanical ?? false;
+    const selectedCard =
+      selectedCardIndex !== null && unit.hand[selectedCardIndex]
+        ? resolveCard(unit.hand[selectedCardIndex])
+        : null;
+    const selectedCardHint =
+      selectedCard && unit.weaponState
+        ? getWeaponCardBlockReason(unit.weaponState, weapon, selectedCard.weaponRules ?? null)
+        : null;
 
-    // Prefer weaponState for runtime values; fall back to legacy fields
-    const heat = unit.weaponState?.currentHeat ?? unit.weaponHeat ?? 0;
-    const maxHeat = weapon.heatCapacity ?? 6;
-    const wear = unit.weaponState?.wear ?? unit.weaponWear ?? 0;
-    const clutchActive = unit.weaponState?.clutchActive ?? unit.clutchActive ?? false;
-    const nodes: Record<number, string> = unit.weaponState?.nodes ?? {
-      1: "ok", 2: "ok", 3: "ok", 4: "ok", 5: "ok", 6: "ok"
-    };
-
-    const nodeNames: Record<number, string> = {
-      1: "BARREL", 2: "TRIGGER", 3: "STOCK", 4: "SCOPE", 5: "COOLING", 6: "CORE"
-    };
-
-    // Build stats HTML
-    let statsHtml = '';
-    if (isMechanical) {
-      const heatPct = (heat / maxHeat) * 100;
-      let heatColor = "#84c1e6";
-      if (heatPct > 80) heatColor = "#c3132c";
-      else if (heatPct > 60) heatColor = "#f06b58";
-      else if (heatPct > 40) heatColor = "#f3a310";
-
-      statsHtml += `
-        <div class="weapon-stat-row">
-          <span class="weapon-stat-label">HEAT</span>
-          <div class="weapon-stat-bar">
-            <div class="weapon-stat-bar-track">
-              <div class="weapon-stat-bar-fill" style="width:${heatPct}%; background:${heatColor}"></div>
-            </div>
-            <span class="weapon-stat-value">${heat}/${maxHeat}</span>
-          </div>
-        </div>
-      `;
-    }
-
-    if (wear > 0) {
-      statsHtml += `
-        <div class="weapon-stat-row">
-          <span class="weapon-stat-label">WEAR</span>
-          <div class="weapon-wear-pips">
-            ${[0, 1, 2, 3, 4].map(i => `<div class="weapon-wear-pip ${i < wear ? 'weapon-wear-pip--filled' : ''}"></div>`).join('')}
-          </div>
-          <span class="weapon-stat-value">${wear}/5</span>
-        </div>
-      `;
-    }
-
-    // Build node diagram
-    const nodeDiagramHtml = `
-      <div class="weapon-node-diagram">
-        <div class="weapon-node-title">SYSTEM STATUS</div>
-        <div class="weapon-node-grid">
-          ${[1, 2, 3, 4, 5, 6].map(id => {
-      const status = nodes[id] ?? "ok";
-      return `
-              <div class="weapon-node weapon-node--${status}" data-node="${id}">
-                <div class="weapon-node-id">${id}</div>
-                <div class="weapon-node-name">${nodeNames[id]}</div>
-                <div class="weapon-node-status">${status.toUpperCase()}</div>
-              </div>
-            `;
-    }).join('')}
-        </div>
-      </div>
-    `;
-
-    return `
-      <div class="weapon-window weapon-window--battle">
-        <div class="weapon-window-header">
-          <span class="weapon-window-title">${weaponName}</span>
-          <span class="weapon-window-type">${isMechanical ? 'MECH' : 'STD'}</span>
-        </div>
-        <div class="weapon-window-body">
-          <div class="weapon-stats-panel">${statsHtml}</div>
-          
-          ${isMechanical ? `
-            <div class="weapon-clutch-section">
-              <button class="weapon-clutch-btn ${clutchActive ? 'weapon-clutch-btn--active' : ''}" id="clutchToggleBtn">
-                <span class="clutch-dot ${clutchActive ? 'clutch-dot--active' : ''}"></span>
-                CLUTCH ${clutchActive ? '[ON]' : '[OFF]'}
-              </button>
-            </div>
-            
-            <div class="weapon-node-scroll">
-              ${nodeDiagramHtml}
-            </div>
-            
-            <div class="weapon-actions">
-              <button class="weapon-action-btn weapon-action-btn--vent" id="ventBtn">VENT</button>
-            </div>
-          ` : `
-            <div class="weapon-window-empty-copy">
-               <div>STANDARD WEAPON</div>
-            </div>
-          `}
-        </div>
-      </div>
-    `;
+    return renderSharedWeaponWindow(
+      weapon,
+      unit.weaponState ?? {
+        equipmentId: weapon.id,
+        currentHeat: unit.weaponHeat ?? 0,
+        currentAmmo: weapon.ammoMax ?? 0,
+        wear: unit.weaponWear ?? 0,
+        nodes: { 1: "ok", 2: "ok", 3: "ok", 4: "ok", 5: "ok", 6: "ok" },
+        activeClutchIds: [],
+        queuedModifier: { strainDelta: 0, accuracyDelta: 0, damageDelta: 0 },
+        jammedTurnsRemaining: 0,
+        disabledTurnsRemaining: 0,
+        weaponCardLockTurnsRemaining: 0,
+        skipAttackTurnsRemaining: 0,
+        maxHeatPenalty: 0,
+        totalHeatRemovedThisTurn: 0,
+        firstWeaponCardPlayedThisTurn: false,
+        allowMoveAfterAttack: false,
+        isJammed: false,
+        clutchActive: Boolean(unit.clutchActive),
+        doubleClutchActive: false,
+      },
+      {
+        instabilityWarning: combinedWarning || null,
+        cardDisabledHint: selectedCardHint ? `SELECTED CARD LOCKED // ${selectedCardHint.toUpperCase()}` : null,
+      },
+    );
   } catch (err) {
     console.error(`[RENDER] Error in renderWeaponWindow:`, err);
     return `<div class="weapon-window-error">ERROR: ${err}</div>`;
@@ -1008,6 +1371,7 @@ let battleControllerCursor: { x: number; y: number } | null = null;
 let cleanupBattleControllerContext: (() => void) | null = null;
 let battleControllerActiveNodeId: BattleHudNodeId = "hand";
 let selectedManageUnitId: string | null = null;
+let battleExitConfirmState: BattleExitConfirmState = null;
 
 function isBattleRootMounted(): boolean {
   return Boolean(document.querySelector(".battle-root"));
@@ -1078,6 +1442,7 @@ export function applyExternalBattleState(
     return;
   }
 
+  updateGameState((state) => mountBattleState(state, battle));
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
   localBattleState = battle;
@@ -1105,7 +1470,7 @@ const ZOOM_STEP = 0.1;
 // ============================================================================
 
 // Debug flag for movement instrumentation
-const DEBUG_MOVEMENT = true; // Enable for debugging
+const DEBUG_MOVEMENT = false;
 const BATTLE_TILE_SIZE_PX = 75;
 const BATTLE_TILE_GAP_PX = 4;
 const BATTLE_GRID_PADDING_PX = 12;
@@ -1142,6 +1507,7 @@ interface AttackBumpAnim {
   dirY: number;
   durationMs: number;
   startTime: number;
+  lastUpdateTime: number;
   active: boolean;
   impactTriggered: boolean;
 }
@@ -1163,7 +1529,7 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
   }
 
   // Find the battle grid container
-  const gridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+  const gridContainer = getBattleGridContainer();
   if (!gridContainer) {
     console.error(`[ANIMATION] Grid container not found for animation container`);
     return null;
@@ -1192,6 +1558,10 @@ function getOrCreateAnimationContainer(): HTMLElement | null {
 }
 
 function getBattleTileCenterPx(pos: Vec2): { x: number; y: number } {
+  const projected = battleSceneController?.projectTileToOverlay(pos.x, pos.y);
+  if (projected) {
+    return projected;
+  }
   return {
     x: BATTLE_GRID_PADDING_PX + pos.x * (BATTLE_TILE_SIZE_PX + BATTLE_TILE_GAP_PX) + BATTLE_TILE_SIZE_PX / 2,
     y: BATTLE_GRID_PADDING_PX + pos.y * (BATTLE_TILE_SIZE_PX + BATTLE_TILE_GAP_PX) + BATTLE_TILE_SIZE_PX / 2,
@@ -1199,27 +1569,262 @@ function getBattleTileCenterPx(pos: Vec2): { x: number; y: number } {
 }
 
 function getBattleGridContainer(): HTMLElement | null {
-  return document.querySelector(".battle-grid-container--simple") as HTMLElement | null;
+  return document.getElementById("battleGridContainer") as HTMLElement | null;
+}
+
+function getBattleBoardHost(): HTMLElement | null {
+  return document.getElementById("battleBoard3dHost") as HTMLElement | null;
+}
+
+function getBattleSceneControllerInstance(): BattleSceneController {
+  if (!battleSceneController) {
+    battleSceneController = new BattleSceneController();
+  }
+  return battleSceneController;
 }
 
 function getOriginalBattleUnitElement(unitId: string): HTMLElement | null {
-  const gridContainer = getBattleGridContainer();
-  if (!gridContainer) {
-    return null;
-  }
-
-  return gridContainer.querySelector(`.battle-unit[data-unit-id="${unitId}"]:not([data-animating="true"])`) as HTMLElement | null;
+  void unitId;
+  return null;
 }
 
 function setOriginalBattleUnitHidden(unitId: string, hidden: boolean): void {
-  const originalUnit = getOriginalBattleUnitElement(unitId);
-  if (!originalUnit) {
+  void unitId;
+  void hidden;
+}
+
+function getBattleFeedbackLayer(): HTMLElement | null {
+  const overlays = document.getElementById("battleBoardOverlay") as HTMLElement | null;
+  if (!overlays) {
+    return null;
+  }
+
+  let layer = overlays.querySelector(".battle-feedback-layer") as HTMLElement | null;
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.className = "battle-feedback-layer";
+    overlays.appendChild(layer);
+  }
+
+  return layer;
+}
+
+function getBattleFeedbackPoint(position: FeedbackPosition | undefined): { x: number; y: number } | null {
+  if (!position || position.space !== "battle-tile") {
+    return null;
+  }
+
+  return battleSceneController?.projectTileToOverlay(position.x, position.y) ?? null;
+}
+
+function queueBattleFeedbackElement(
+  element: HTMLElement,
+  durationMs: number,
+  layer: HTMLElement,
+): void {
+  layer.appendChild(element);
+  window.setTimeout(() => {
+    element.classList.add("battle-feedback-element--exit");
+    window.setTimeout(() => {
+      element.remove();
+    }, 220);
+  }, durationMs);
+}
+
+function applyBattleHitStop(durationMs: number): void {
+  battleHitStopUntilMs = Math.max(battleHitStopUntilMs, performance.now() + durationMs);
+  const root = document.querySelector(".battle-root") as HTMLElement | null;
+  if (!root) {
     return;
   }
 
-  originalUnit.style.opacity = hidden ? "0" : "1";
-  originalUnit.style.visibility = hidden ? "hidden" : "visible";
-  originalUnit.style.pointerEvents = hidden ? "none" : "auto";
+  root.classList.add("battle-root--hitstop");
+  if (battleHitStopTimerId !== null) {
+    window.clearTimeout(battleHitStopTimerId);
+  }
+  battleHitStopTimerId = window.setTimeout(() => {
+    const remainingMs = Math.max(0, battleHitStopUntilMs - performance.now());
+    if (remainingMs > 6) {
+      battleHitStopTimerId = window.setTimeout(() => {
+        root.classList.remove("battle-root--hitstop");
+        battleHitStopTimerId = null;
+      }, remainingMs);
+      return;
+    }
+    root.classList.remove("battle-root--hitstop");
+    battleHitStopTimerId = null;
+  }, durationMs);
+}
+
+function getBattleHitStopRemainingMs(): number {
+  return Math.max(0, battleHitStopUntilMs - performance.now());
+}
+
+function pulseBattleElement(selector: string, className: string, durationMs: number): void {
+  const element = document.querySelector(selector) as HTMLElement | null;
+  if (!element) {
+    return;
+  }
+
+  element.classList.remove(className);
+  void element.offsetWidth;
+  element.classList.add(className);
+  window.setTimeout(() => {
+    element.classList.remove(className);
+  }, durationMs);
+}
+
+function applyBattleWeaponFeedback(request: FeedbackRequest): void {
+  const unitId = String(request.meta?.["unitId"] ?? request.meta?.["actorId"] ?? "");
+  const activeUnit = localBattleState?.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
+  if (!activeUnit || !unitId || activeUnit.id !== unitId) {
+    return;
+  }
+
+  const effectKind = String(request.meta?.["kind"] ?? "");
+  if (request.type === "weapon_heat") {
+    const zone = String(request.meta?.["zone"] ?? "warning");
+    pulseBattleElement(
+      ".battle-weapon-panel .weapon-stat-bar-fill--heat",
+      zone === "critical" ? "weapon-stat-bar-fill--pulse-critical" : "weapon-stat-bar-fill--pulse-warning",
+      zone === "critical" ? 860 : 680,
+    );
+    return;
+  }
+
+  if (request.type === "weapon_overheat") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--overheat-spike", 880);
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
+    return;
+  }
+
+  if (request.type === "weapon_node_damage") {
+    const nodeId = String(request.meta?.["nodeId"] ?? "");
+    if (nodeId) {
+      pulseBattleElement(
+        `.battle-weapon-panel .weapon-node[data-node="${nodeId}"]`,
+        "weapon-node--feedback-hit",
+        780,
+      );
+    }
+    return;
+  }
+
+  if (effectKind === "ammo-tick") {
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
+    return;
+  }
+
+  if (effectKind === "clutch-toggle") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--clutch-pulse", 580);
+    pulseBattleElement(".battle-weapon-panel .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
+    return;
+  }
+
+  if (effectKind === "reload") {
+    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    return;
+  }
+
+  if (effectKind === "patch") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    return;
+  }
+
+  if (effectKind === "vent") {
+    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-warning", 680);
+  }
+}
+
+function renderBattleFeedbackRequest(request: FeedbackRequest): void {
+  const layer = getBattleFeedbackLayer();
+  if (!layer) {
+    return;
+  }
+
+  const point = getBattleFeedbackPoint(request.position);
+  if (!point) {
+    applyBattleWeaponFeedback(request);
+    return;
+  }
+
+  const centerX = point.x;
+  const centerY = point.y;
+
+  if (
+    request.type === "hit"
+    || request.type === "heal"
+    || request.type === "crit"
+    || request.type === "miss"
+    || request.type === "warning"
+    || request.type === "strain"
+  ) {
+    const textFlavor = request.type === "warning" && String(request.meta?.["kind"] ?? "") === "ammo-tick"
+      ? "ammo"
+      : request.type;
+    const textEl = document.createElement("div");
+    textEl.className = `battle-feedback-element floating-combat-text floating-combat-text--${textFlavor}`;
+    textEl.textContent = request.text ?? request.type.toUpperCase();
+    textEl.style.left = `${centerX}px`;
+    textEl.style.top = `${centerY}px`;
+    queueBattleFeedbackElement(textEl, request.type === "strain" ? 980 : 860, layer);
+  }
+
+  if (
+    request.type === "hit"
+    || request.type === "crit"
+    || request.type === "weapon_node_damage"
+    || request.type === "weapon_overheat"
+  ) {
+    const flashFlavor = request.type === "crit"
+      ? "crit"
+      : request.type === "weapon_overheat"
+        ? "overheat"
+        : request.type === "weapon_node_damage"
+          ? "node"
+          : "hit";
+    const flashEl = document.createElement("div");
+    flashEl.className = `battle-feedback-element battle-impact-flash battle-impact-flash--${flashFlavor}`;
+    flashEl.style.left = `${centerX}px`;
+    flashEl.style.top = `${centerY}px`;
+    queueBattleFeedbackElement(flashEl, 220, layer);
+  }
+
+  if (request.type === "hit" || request.type === "crit") {
+    applyBattleHitStop(request.type === "crit" ? 68 : 52);
+    triggerScreenShake(request.type === "crit" ? 2 : request.intensity >= 2 ? 1.5 : 1);
+  } else if (request.type === "weapon_overheat") {
+    triggerScreenShake(2.4);
+  }
+
+  if (request.type === "strain") {
+    const battleUnitId = String(request.meta?.["unitId"] ?? "");
+    if (battleUnitId) {
+      battleSceneController?.triggerUnitPulse(battleUnitId);
+    }
+  }
+
+  applyBattleWeaponFeedback(request);
+}
+
+function ensureBattleFeedbackListener(): void {
+  if (cleanupBattleFeedbackListener) {
+    return;
+  }
+
+  cleanupBattleFeedbackListener = subscribeToFeedback((request) => {
+    if (!document.querySelector(".battle-root")) {
+      return;
+    }
+
+    const battleRelated = request.position?.space === "battle-tile" || request.source === "battle" || request.source === "weapon";
+    if (!battleRelated) {
+      return;
+    }
+
+    renderBattleFeedbackRequest(request);
+  });
 }
 
 function createAnimatedBattleUnitElement(unit: BattleUnitState, extraClass: string): HTMLElement {
@@ -1281,18 +1886,15 @@ function createAnimatedBattleUnitElement(unit: BattleUnitState, extraClass: stri
 
 function hasActiveBattleAnimation(): boolean {
   return Boolean(
-    (activeMovementAnim && activeMovementAnim.active) ||
-    (activeAttackBumpAnim && activeAttackBumpAnim.active)
+    battleSceneController?.hasActiveAnimations()
+    || (activeMovementAnim && activeMovementAnim.active)
+    || (activeAttackBumpAnim && activeAttackBumpAnim.active)
   );
 }
 
 function setBattleZoom(z: number) {
   battleZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
-  const inner = document.querySelector(".battle-grid-zoom-inner") as HTMLElement | null;
-  if (inner) {
-    inner.style.transform = `scale(${battleZoom})`;
-    inner.style.transformOrigin = "center center";
-  }
+  battleSceneController?.setZoomFactor(battleZoom);
 }
 
 function zoomIn() {
@@ -1308,11 +1910,24 @@ interface TurnState {
   hasMoved: boolean;
   hasCommittedMove: boolean; // True after clicking a tile - hides green until undo
   hasActed: boolean; // True after playing a card - ends the turn for this unit
+  movementOnlyAfterAttack: boolean;
   movementRemaining: number;
   originalPosition: { x: number; y: number } | null;
   isFacingSelection: boolean; // True when selecting final facing before ending turn
 }
-let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementRemaining: 0, originalPosition: null, isFacingSelection: false };
+let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementOnlyAfterAttack: false, movementRemaining: 0, originalPosition: null, isFacingSelection: false };
+
+function cloneTurnState(current: TurnState = turnState): TurnState {
+  return {
+    hasMoved: current.hasMoved,
+    hasCommittedMove: current.hasCommittedMove,
+    hasActed: current.hasActed,
+    movementOnlyAfterAttack: current.movementOnlyAfterAttack,
+    movementRemaining: current.movementRemaining,
+    originalPosition: current.originalPosition ? { ...current.originalPosition } : null,
+    isFacingSelection: current.isFacingSelection,
+  };
+}
 
 type BattleHudNodeId = "console" | "intel" | "placement" | "unit" | "weapon" | "manage" | "consumables" | "hand";
 
@@ -1585,7 +2200,7 @@ let uiPanelsMinimized = false;
 let isEndlessBattleMode = false;
 let endlessBattleCount = 0;
 
-const BATTLE_PAN_SPEED = 15;
+const BATTLE_PAN_SPEED = 4;
 const BATTLE_PAN_KEYS = new Set(["w", "a", "s", "d", "W", "A", "S", "D", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 
 function cleanupBattlePanHandlers(): void {
@@ -1618,11 +2233,6 @@ function setupBattlePanHandlers(): void {
     shiftPressed: false,
   };
 
-  const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement | null;
-  if (panWrapper) {
-    panWrapper.style.transform = `translate(${battlePanState.x}px, ${battlePanState.y}px)`;
-  }
-
   battleKeydownHandler = (e: KeyboardEvent) => {
     // Update player input system
     handlePlayerInputKeyDown(e);
@@ -1651,8 +2261,8 @@ function setupBattlePanHandlers(): void {
 
         if (newFacing) {
           e.preventDefault();
-          if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-            void sendLocalSquadBattleCommand({
+          if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+            void sendLocalNetworkBattleCommand({
               type: "end_turn",
               unitId: activeUnit.id,
               facing: newFacing,
@@ -1670,6 +2280,29 @@ function setupBattlePanHandlers(): void {
           finalizeBattleHudEndTurn(newState);
           return;
         }
+      }
+    }
+
+    if (document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+      if (e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(-0.14, 0);
+        return;
+      }
+      if (e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0.14, 0);
+        return;
+      }
+      if (e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0, 0.08);
+        return;
+      }
+      if (e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        battleSceneController?.adjustOrbit(0, -0.08);
+        return;
       }
     }
 
@@ -1727,18 +2360,13 @@ function startBattlePanLoop(): void {
 
     if (battlePanState.keysPressed.has("w") || battlePanState.keysPressed.has("arrowup")) dy += currentSpeed;
     if (battlePanState.keysPressed.has("s") || battlePanState.keysPressed.has("arrowdown")) dy -= currentSpeed;
-    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx += currentSpeed;
-    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx -= currentSpeed;
+    if (battlePanState.keysPressed.has("a") || battlePanState.keysPressed.has("arrowleft")) dx -= currentSpeed;
+    if (battlePanState.keysPressed.has("d") || battlePanState.keysPressed.has("arrowright")) dx += currentSpeed;
 
     if (dx !== 0 || dy !== 0) {
       battlePanState.x += dx;
       battlePanState.y += dy;
-
-      // Apply transform to battle grid pan wrapper
-      const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
-      if (panWrapper) {
-        panWrapper.style.transform = `translate(${battlePanState.x}px, ${battlePanState.y}px)`;
-      }
+      battleSceneController?.panScreen(-dx, -dy);
     }
 
     if (battlePanState.keysPressed.size > 0) {
@@ -1756,14 +2384,13 @@ function resetBattlePan(): void {
   battlePanState.y = 0;
   battlePanState.keysPressed.clear();
   battlePanState.shiftPressed = false;
-  const panWrapper = document.querySelector(".battle-grid-pan-wrapper") as HTMLElement;
-  if (panWrapper) {
-    panWrapper.style.transform = `translate(0px, 0px)`;
-  }
+  const focusUnit = localBattleState?.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : null;
+  battleSceneController?.focusTile(focusUnit?.pos ?? hoveredTile);
 }
 
 function resetBattleUiSessionState(): void {
   clearPendingAutoBattleStep();
+  battleExitConfirmState = null;
   localBattleState = null;
   lastBattleStatPingKey = null;
   selectedCardIndex = null;
@@ -1772,6 +2399,10 @@ function resetBattleUiSessionState(): void {
   resetTurnStateForUnit(null);
   resetBattlePan();
   uiPanelsMinimized = false;
+  battleSceneController?.setViewChangeHandler(null);
+  resetBattleViewPresetSessionState();
+  battleSceneController?.dispose();
+  battleSceneController = null;
 }
 
 function getBattlePartyUnits(battle: BattleState): BattleUnitState[] {
@@ -1897,69 +2528,47 @@ function toggleUiPanels(): void {
   }
 }
 
-function triggerScreenShake() {
-  const container = document.querySelector(".battle-root");
-  if (!container) return;
+function triggerScreenShake(intensity = 1): void {
+  const container = document.querySelector(".battle-root") as HTMLElement | null;
+  if (!container) {
+    return;
+  }
 
+  const normalized = Math.max(0.8, Math.min(2.8, intensity));
+  container.style.setProperty("--battle-shake-scale", normalized.toFixed(2));
   container.classList.remove("screen-shake");
-  // Force browser reflow to restart animation
-  void (container as HTMLElement).offsetWidth;
+  void container.offsetWidth;
   container.classList.add("screen-shake");
 
-  setTimeout(() => {
-    if (container) container.classList.remove("screen-shake");
-  }, 400);
+  window.setTimeout(() => {
+    container.classList.remove("screen-shake");
+  }, 380);
 }
 
 function showFloatingText(text: string, type: "damage" | "heal" | "crit", x: number, y: number) {
-  const grid = document.querySelector(".battle-grid") as HTMLElement;
-  if (!grid) return;
-
-  const tile = grid.querySelector(`.battle-tile[data-x="${x}"][data-y="${y}"]`) as HTMLElement;
-  if (!tile) return;
+  const layer = getBattleFeedbackLayer();
+  const point = battleSceneController?.projectTileToOverlay(x, y);
+  if (!layer || !point) return;
 
   const el = document.createElement("div");
   el.className = `floating-combat-text floating-combat-text--${type}`;
   el.textContent = text;
-
-  // Ensure the grid limits absolute positioning correctly
-  grid.style.position = "relative";
-
-  el.style.left = `${tile.offsetLeft + (tile.offsetWidth / 2)}px`;
-  el.style.top = `${tile.offsetTop + (tile.offsetHeight / 2)}px`;
-
-  grid.appendChild(el);
+  el.style.left = `${point.x}px`;
+  el.style.top = `${point.y}px`;
+  layer.appendChild(el);
 
   setTimeout(() => {
-    if (el.parentNode === grid) {
-      grid.removeChild(el);
+    if (el.parentNode === layer) {
+      layer.removeChild(el);
     }
   }, 1500);
 }
 
 function setBattleState(newState: BattleState) {
+  const previousBattle = localBattleState;
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
-
-  // Visual feedback: compare old state directly with new state to spawn floating numbers
-  if (localBattleState) {
-    for (const [unitId, newUnit] of Object.entries(newState.units)) {
-      const oldUnit = localBattleState.units[unitId];
-      if (oldUnit && newUnit && oldUnit.hp !== newUnit.hp && newUnit.pos) {
-        const hpDiff = newUnit.hp - oldUnit.hp;
-        if (hpDiff < 0) {
-          const dmg = Math.abs(hpDiff);
-          showFloatingText(`-${dmg}`, "damage", newUnit.pos.x, newUnit.pos.y);
-          // Trigger shake on heavy damage (e.g., >= 15)
-          if (dmg >= 15) {
-            triggerScreenShake();
-          }
-        } else if (hpDiff > 0) {
-          showFloatingText(`+${hpDiff}`, "heal", newUnit.pos.x, newUnit.pos.y);
-        }
-      }
-    }
-  }
+  const newLogTail = previousBattle ? newState.log.slice(previousBattle.log.length) : newState.log;
 
   // Validate all unit positions before setting state
   const validatedUnits: Record<string, BattleUnitState> = {};
@@ -2045,20 +2654,25 @@ function setBattleState(newState: BattleState) {
     resetTurnStateForUnit(nextActiveUnitId ? localBattleState.units[nextActiveUnitId] ?? null : null, localBattleState);
   }
 
-  if (isSquadBattle(localBattleState)) {
-    localBattleState = withSquadTurnStateSnapshot(localBattleState);
+  if (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState)) {
+    localBattleState = withBattleTurnStateSnapshot(localBattleState);
   }
 
-  updateGameState((state) => ({
-    ...state,
-    currentBattle: localBattleState,
-    phase: "battle",
-  }));
+  deriveBattleFeedback(previousBattle, localBattleState, newLogTail).forEach((request) => {
+    triggerFeedback(request);
+  });
 
-  if (isSquadBattle(localBattleState)) {
-    void broadcastSquadBattleState(localBattleState);
-    if (localBattleState.phase === "victory" || localBattleState.phase === "defeat") {
-      void finalizeSquadBattleMatchResult(localBattleState);
+  const committedBattleState = localBattleState;
+  if (!committedBattleState) {
+    return;
+  }
+
+  updateGameState((state) => replaceBattleStateById(state, committedBattleState.id, committedBattleState));
+
+  if (isSquadBattle(committedBattleState)) {
+    void broadcastSquadBattleState(committedBattleState);
+    if (committedBattleState.phase === "victory" || committedBattleState.phase === "defeat") {
+      void finalizeSquadBattleMatchResult(committedBattleState);
     }
   }
 }
@@ -2069,6 +2683,7 @@ function resetTurnStateForUnit(unit: BattleUnitState | null, battle: BattleState
     hasMoved: false,
     hasCommittedMove: false,
     hasActed: false,
+    movementOnlyAfterAttack: false,
     movementRemaining: movementRange,
     originalPosition: null,
     isFacingSelection: false,
@@ -2580,8 +3195,7 @@ function moveBattleControllerCursor(
           : direction === "left"
             ? { x: Math.max(0, activeUnit.pos.x - 1), y: activeUnit.pos.y }
             : { x: Math.min(battle.gridWidth - 1, activeUnit.pos.x + 1), y: activeUnit.pos.y };
-    const tile = document.querySelector<HTMLElement>(`.battle-tile[data-x="${nextFacingTile.x}"][data-y="${nextFacingTile.y}"]`);
-    tile?.click();
+    handleBattleBoardActionPick(nextFacingTile, battle, activeUnit, Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)));
     return;
   }
 
@@ -2597,12 +3211,25 @@ function moveBattleControllerCursor(
 }
 
 function clickBattleControllerCursorTile(): void {
-  if (!battleControllerCursor) {
+  if (!battleControllerCursor || !localBattleState) {
     return;
   }
 
-  const tile = document.querySelector<HTMLElement>(`.battle-tile[data-x="${battleControllerCursor.x}"][data-y="${battleControllerCursor.y}"]`);
-  tile?.click();
+  const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
+  if (localBattleState.phase === "placement") {
+    const isClientNetworkPlacement = Boolean(
+      (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState))
+      && getGameState().session.authorityRole === "client",
+    );
+    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement);
+    return;
+  }
+  handleBattleBoardActionPick(
+    battleControllerCursor,
+    localBattleState,
+    activeUnit,
+    Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit)),
+  );
 }
 
 function cycleBattleControllerSelectedCard(step: 1 | -1, activeUnit: BattleUnitState | undefined): boolean {
@@ -2848,7 +3475,7 @@ function renderBattleEnemyIntelNode(battle: BattleState): string {
             </div>
             <div class="battle-intel-card__meta">
               <span>${formatBattlePosition(unit)}</span>
-              <span>${formatBattleEquipmentName(unit.loadout?.primaryWeapon ?? (unit.loadout as any)?.weapon ?? unit.equippedWeaponId ?? null, ((getGameState() as any).equipmentById || getAllStarterEquipment()) as Record<string, any>)}</span>
+              <span>${formatBattleEquipmentName(getBattleUnitEquippedWeaponId(unit), ((getGameState() as any).equipmentById || getAllStarterEquipment()) as Record<string, any>)}</span>
             </div>
           </article>
         `).join("")}
@@ -3127,6 +3754,20 @@ function startMovementAnimation(
   battle: BattleState,
   onComplete: () => void
 ): void {
+  if (battleSceneController) {
+    if (!path || path.length < 2 || !battle.units[unitId]) {
+      onComplete();
+      return;
+    }
+    battleSceneController.animateUnitMove(
+      unitId,
+      path,
+      Math.max(180, (path.length - 1) * 200),
+      onComplete,
+    );
+    return;
+  }
+
   // Validate inputs
   if (!path || path.length < 2) {
     if (DEBUG_MOVEMENT) console.log(`[MOVEMENT] No movement needed for ${unitId}`);
@@ -3271,6 +3912,11 @@ function animateMovement(battle: BattleState, onComplete: () => void): void {
   const now = performance.now();
   const deltaMs = Math.min(now - anim.lastUpdateTime, 100); // Clamp to prevent large jumps
   anim.lastUpdateTime = now;
+
+  if (getBattleHitStopRemainingMs() > 0) {
+    animationFrameId = requestAnimationFrame(() => animateMovement(battle, onComplete));
+    return;
+  }
 
   // Validate path
   if (!anim.path || anim.path.length < 2 || anim.currentStep < 0 || anim.currentStep >= anim.path.length - 1) {
@@ -3436,17 +4082,33 @@ function animateAttackBump(onComplete: () => void): void {
   }
 
   const anim = activeAttackBumpAnim;
-  const elapsedMs = performance.now() - anim.startTime;
+  const now = performance.now();
+  const deltaMs = Math.min(now - anim.lastUpdateTime, 100);
+  anim.lastUpdateTime = now;
+  if (getBattleHitStopRemainingMs() > 0) {
+    anim.startTime += deltaMs;
+    attackAnimationFrameId = requestAnimationFrame(() => animateAttackBump(onComplete));
+    return;
+  }
+
+  const elapsedMs = now - anim.startTime;
   const progress = Math.max(0, Math.min(1, elapsedMs / anim.durationMs));
-  const bumpWave = Math.sin(progress * Math.PI);
+  const impactProgress = Math.min(progress / 0.56, 1);
+  const recoveryProgress = progress <= 0.56 ? 0 : Math.min((progress - 0.56) / 0.44, 1);
+  const forwardWave = Math.sin(impactProgress * Math.PI * 0.5);
+  const recoilWave = recoveryProgress > 0
+    ? Math.sin(recoveryProgress * Math.PI) * 0.28
+    : 0;
 
   if (!anim.impactTriggered && progress >= 0.5) {
     anim.impactTriggered = true;
-    triggerScreenShake();
+    triggerScreenShake(1.3);
+    anim.attackerElement?.classList.add("battle-unit--attack-bump-impact");
+    anim.targetElement?.classList.add("battle-unit--attack-bump-impact");
   }
 
-  const attackerOffset = ATTACK_BUMP_DISTANCE_PX * bumpWave;
-  const targetOffset = ATTACK_TARGET_REACT_DISTANCE_PX * bumpWave;
+  const attackerOffset = ATTACK_BUMP_DISTANCE_PX * forwardWave - ATTACK_BUMP_DISTANCE_PX * 0.55 * recoilWave;
+  const targetOffset = ATTACK_TARGET_REACT_DISTANCE_PX * forwardWave + ATTACK_TARGET_REACT_DISTANCE_PX * 0.4 * recoilWave;
 
   if (anim.attackerElement) {
     anim.attackerElement.style.left = `${anim.attackerBaseX + anim.dirX * attackerOffset}px`;
@@ -3493,6 +4155,11 @@ function startAttackBumpAnimation(
   targetId: string,
   onComplete: () => void
 ): void {
+  if (battleSceneController) {
+    battleSceneController.animateAttackBump(attackerId, targetId, ATTACK_BUMP_DURATION_MS, onComplete);
+    return;
+  }
+
   const attacker = battle.units[attackerId];
   const target = battle.units[targetId];
   if (!attacker || !target || !attacker.pos || !target.pos) {
@@ -3549,6 +4216,7 @@ function startAttackBumpAnimation(
     dirY: deltaY / length,
     durationMs: ATTACK_BUMP_DURATION_MS,
     startTime: performance.now(),
+    lastUpdateTime: performance.now(),
     active: true,
     impactTriggered: false,
   };
@@ -3643,6 +4311,20 @@ function getEffectiveCardRange(card: Card, unit: BattleUnitState): number {
     }
   }
 
+  if (unit.weaponState) {
+    const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
+    const weapon = getEquippedWeapon(unit, equipmentById);
+    if (weapon && card.weaponRules) {
+      const modifiers = getWeaponCardModifierSnapshot(unit.weaponState, weapon, card.weaponRules);
+      if (modifiers.rangeOverride !== null) {
+        range = modifiers.rangeOverride;
+      } else {
+        range += modifiers.rangeDelta;
+      }
+      range += modifiers.moveBeforeAttackTiles;
+    }
+  }
+
   return range;
 }
 
@@ -3654,8 +4336,32 @@ function isStrainLockedCard(card: Card, activeUnit: BattleUnitState | undefined)
   return Boolean(activeUnit && card.type === "core" && isOverStrainThreshold(activeUnit));
 }
 
-function canCardTargetUnit(card: Card, activeUnit: BattleUnitState, targetUnit: BattleUnitState, distance: number): boolean {
+function getBattleCardDisabledReason(card: Card, activeUnit: BattleUnitState | undefined): string | null {
+  if (!activeUnit) {
+    return null;
+  }
   if (isStrainLockedCard(card, activeUnit)) {
+    return "Strain lock";
+  }
+
+  const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
+  const weapon = getEquippedWeapon(activeUnit, equipmentById);
+  if (!activeUnit.weaponState || !weapon || !card.weaponRules) {
+    return null;
+  }
+
+  if (
+    card.weaponRules.sourceWeaponId !== "__equipped_weapon__" &&
+    card.weaponRules.sourceWeaponId !== weapon.id
+  ) {
+    return null;
+  }
+
+  return getWeaponCardBlockReason(activeUnit.weaponState, weapon, card.weaponRules ?? null);
+}
+
+function canCardTargetUnit(card: Card, activeUnit: BattleUnitState, targetUnit: BattleUnitState, distance: number): boolean {
+  if (getBattleCardDisabledReason(card, activeUnit)) {
     return false;
   }
   const effectiveRange = getEffectiveCardRange(card, activeUnit);
@@ -4056,10 +4762,42 @@ function didCardResolve(previousState: BattleState, nextState: BattleState, unit
     return false;
   }
 
-  return nextUnit.hand.length < previousUnit.hand.length;
+  const didHandChange =
+    nextUnit.hand.length !== previousUnit.hand.length ||
+    nextUnit.hand.some((cardId, index) => cardId !== previousUnit.hand[index]);
+
+  return didHandChange || nextUnit.strain !== previousUnit.strain || nextState.activeUnitId !== previousState.activeUnitId;
 }
 
-function updateTurnStateAfterCardPlay(previousState: BattleState, nextState: BattleState, unitId: string): boolean {
+function normalizeBattleCardToken(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isMovementBoostCard(card: Card | null | undefined): boolean {
+  if (!card) {
+    return false;
+  }
+
+  const normalizedId = normalizeBattleCardToken(card.id);
+  const normalizedName = normalizeBattleCardToken(card.name);
+  if (normalizedId === "core_move_plus" || normalizedName === "move") {
+    return true;
+  }
+
+  return card.target === "self"
+    && (card.effects || []).some((effect: any) => effect.type === "move" && Number(effect.tiles ?? effect.amount ?? 0) > 0);
+}
+
+function updateTurnStateAfterCardPlay(
+  previousState: BattleState,
+  nextState: BattleState,
+  unitId: string,
+  playedCard?: Card | null,
+): boolean {
   if (!didCardResolve(previousState, nextState, unitId)) {
     return false;
   }
@@ -4068,7 +4806,19 @@ function updateTurnStateAfterCardPlay(previousState: BattleState, nextState: Bat
     const nextUnit = nextState.units[nextState.activeUnitId] ?? null;
     resetTurnStateForUnit(nextUnit, nextState);
   } else {
-    turnState.hasActed = true;
+    const nextUnit = nextState.units[unitId] ?? null;
+    if (nextUnit && isMovementBoostCard(playedCard) && nextUnit.pos) {
+      const origin = turnState.originalPosition ?? nextUnit.pos;
+      const totalCost = getDistance(origin.x, origin.y, nextUnit.pos.x, nextUnit.pos.y);
+      turnState.hasActed = true;
+      turnState.movementOnlyAfterAttack = true;
+      turnState.hasCommittedMove = false;
+      turnState.hasMoved = totalCost > 0;
+      turnState.movementRemaining = Math.max(0, getUnitMovementRange(nextUnit, nextState) - totalCost);
+    } else {
+      turnState.hasActed = true;
+      turnState.movementOnlyAfterAttack = Boolean(nextState.units[unitId]?.weaponState?.allowMoveAfterAttack);
+    }
   }
 
   return true;
@@ -4124,7 +4874,7 @@ function executeLocalBattleCardPlay(
     const playedCard = freshActiveUnit.hand[cardIndex] ? resolveCard(freshActiveUnit.hand[cardIndex]) : null;
     const shouldAnimateAttack = shouldUseAttackBumpAnimation(freshActiveUnit, targetUnit, playedCard);
     let nextState = playCardFromScreen(stateWithFacing, freshActiveUnit.id, cardIndex, targetUnitId);
-    updateTurnStateAfterCardPlay(stateWithFacing, nextState, freshActiveUnit.id);
+    updateTurnStateAfterCardPlay(stateWithFacing, nextState, freshActiveUnit.id, playedCard);
     selectedCardIndex = null;
     nextState = evaluateBattleOutcome(nextState);
 
@@ -4163,6 +4913,9 @@ function executeLocalBattleMove(
   autoFollowupDelayMs = 40,
 ): void {
   if (!localBattleState || hasActiveBattleAnimation()) {
+    return;
+  }
+  if (turnState.hasActed && !turnState.movementOnlyAfterAttack) {
     return;
   }
 
@@ -4375,14 +5128,102 @@ function runAutoBattleTurnStep(): void {
   handleAutoBattleEndTurn();
 }
 
-function getCurrentSquadBattleForCommand(): BattleState | null {
-  const currentBattle = localBattleState ?? getGameState().currentBattle ?? null;
-  if (!currentBattle || !isSquadBattle(currentBattle)) {
+function getCurrentBattleForNetworkCommand(): BattleState | null {
+  const state = getGameState();
+  const preferredBattleId =
+    state.session.activeBattleId
+    ?? state.currentBattle?.id
+    ?? localBattleState?.id
+    ?? null;
+  const currentBattle =
+    getMountedOrActiveBattleState(state)
+    ?? getBattleStateById(state, preferredBattleId)
+    ?? localBattleState
+    ?? null;
+  if (!currentBattle) {
     return null;
+  }
+  if (preferredBattleId && (state.currentBattle?.id !== preferredBattleId || state.session.activeBattleId !== preferredBattleId)) {
+    updateGameState((currentState) => mountBattleContextById(currentState, preferredBattleId));
+  } else if (!state.currentBattle || state.currentBattle.id !== currentBattle.id) {
+    updateGameState((currentState) => mountBattleState(currentState, currentBattle));
   }
   localBattleState = currentBattle;
   restoreTurnStateFromBattle(currentBattle);
   return currentBattle;
+}
+
+function getCurrentSquadBattleForCommand(): BattleState | null {
+  const currentBattle = getCurrentBattleForNetworkCommand();
+  if (!currentBattle || !isSquadBattle(currentBattle)) {
+    return null;
+  }
+  return currentBattle;
+}
+
+function shouldRenderBattleAfterCommand(battleId: string): boolean {
+  return isBattleRootMounted() && localBattleState?.id === battleId;
+}
+
+function resolveBattleForCommandTarget(battleId: string | null | undefined): BattleState | null {
+  const state = getGameState();
+  return (battleId ? getBattleStateById(state, battleId) : null)
+    ?? getMountedOrActiveBattleState(state)
+    ?? localBattleState
+    ?? null;
+}
+
+function runEnemyTurnsHeadless(state: BattleState): BattleState {
+  if (state.phase === "victory" || state.phase === "defeat") {
+    return state;
+  }
+  let currentState = state;
+  let safety = 0;
+  while (safety < 20 && shouldAutoResolveBattleState(currentState)) {
+    currentState = performEnemyTurn(currentState);
+    currentState = evaluateBattleOutcome(currentState);
+    safety += 1;
+    if (currentState.phase === "victory" || currentState.phase === "defeat") {
+      break;
+    }
+  }
+  const active = currentState.activeUnitId ? currentState.units[currentState.activeUnitId] ?? null : null;
+  if (active && currentState.phase !== "victory" && currentState.phase !== "defeat") {
+    resetTurnStateForUnit(active, currentState);
+  }
+  return currentState;
+}
+
+function applyCommandToTargetBattle(
+  battleId: string | null | undefined,
+  callback: (battle: BattleState, shouldRender: boolean) => void,
+): void {
+  const targetBattle = resolveBattleForCommandTarget(battleId);
+  if (!targetBattle) {
+    return;
+  }
+  const previousLocalBattleState = localBattleState;
+  const previousTurnState = cloneTurnState();
+  const isMountedTarget = localBattleState?.id === targetBattle.id;
+  if (!isMountedTarget) {
+    localBattleState = targetBattle;
+    restoreTurnStateFromBattle(targetBattle);
+  }
+  try {
+    callback(targetBattle, shouldRenderBattleAfterCommand(targetBattle.id));
+  } finally {
+    if (!isMountedTarget) {
+      localBattleState = previousLocalBattleState;
+      turnState = previousTurnState;
+    }
+  }
+}
+
+function commitRemoteBattleState(nextState: BattleState, shouldRender: boolean): void {
+  setBattleState(nextState);
+  if (shouldRender) {
+    renderBattleScreen();
+  }
 }
 
 function resolveCommandActiveUnit(battle: BattleState, sourceSlot: SessionPlayerSlot, unitId: string): BattleUnitState | null {
@@ -4396,24 +5237,16 @@ function resolveCommandActiveUnit(battle: BattleState, sourceSlot: SessionPlayer
   return normalizeSessionPlayerSlot(activeUnit.controller ?? "P1") === sourceSlot ? activeUnit : null;
 }
 
-export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, payload: string): void {
-  const parsedPayload = parseSquadBattleCommandPayload(payload);
-  const battle = getCurrentSquadBattleForCommand();
-  if (!parsedPayload || !battle) {
-    return;
-  }
-
-  if (parsedPayload.matchId !== getSquadContext(battle)?.matchId || parsedPayload.battleId !== battle.id) {
-    return;
-  }
-
-  const { command } = parsedPayload;
-
+function applyRemoteBattleCommandToCurrentBattle(
+  battle: BattleState,
+  sourceSlot: SessionPlayerSlot,
+  command: SquadBattleCommand,
+  shouldRender = true,
+): void {
   if (battle.phase === "placement") {
-      if (command.type === "quick_place") {
+    if (command.type === "quick_place") {
       const nextState = quickPlaceUnits(battle, toLocalUnitOwnership(sourceSlot));
-      setBattleState(nextState);
-      renderBattleScreen();
+      commitRemoteBattleState(nextState, shouldRender);
       return;
     }
 
@@ -4429,21 +5262,18 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
 
       if (command.type === "select_placement_unit") {
         const nextState = selectBattlePlacementUnit(battle, command.unitId);
-        setBattleState(nextState);
-        renderBattleScreen();
+        commitRemoteBattleState(nextState, shouldRender);
         return;
       }
 
       if (command.type === "remove_placed_unit") {
         const nextState = unplaceBattleUnit(battle, command.unitId);
-        setBattleState(nextState);
-        renderBattleScreen();
+        commitRemoteBattleState(nextState, shouldRender);
         return;
       }
 
       const nextState = placeUnit(battle, command.unitId, { x: command.x, y: command.y });
-      setBattleState(nextState);
-      renderBattleScreen();
+      commitRemoteBattleState(nextState, shouldRender);
       return;
     }
 
@@ -4465,7 +5295,7 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
   }
 
   if (command.type === "move_unit") {
-    if (!activeUnit.pos || turnState.hasActed || turnState.hasCommittedMove || turnState.isFacingSelection) {
+    if (!activeUnit.pos || (turnState.hasActed && !turnState.movementOnlyAfterAttack) || turnState.hasCommittedMove || turnState.isFacingSelection) {
       return;
     }
 
@@ -4536,8 +5366,7 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
       };
     }
     nextState = evaluateBattleOutcome(nextState);
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -4564,8 +5393,7 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
       log: [...battle.log, `SLK//UNDO :: ${activeUnit.name} returns to original position.`],
     };
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -4611,18 +5439,21 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
     }
 
     let nextState = playCardFromScreen(stateWithFacing, activeUnit.id, command.cardIndex, command.targetUnitId);
-    updateTurnStateAfterCardPlay(stateWithFacing, nextState, activeUnit.id);
+    updateTurnStateAfterCardPlay(stateWithFacing, nextState, activeUnit.id, card);
     selectedCardIndex = null;
     nextState = evaluateBattleOutcome(nextState);
 
     if (shouldAutoResolveBattleState(nextState)) {
-      setBattleState(nextState);
-      requestAnimationFrame(() => runEnemyTurnsAnimated(nextState));
+      if (shouldRender) {
+        setBattleState(nextState);
+        requestAnimationFrame(() => runEnemyTurnsAnimated(nextState));
+      } else {
+        commitRemoteBattleState(runEnemyTurnsHeadless(nextState), false);
+      }
       return;
     }
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
     return;
   }
 
@@ -4646,13 +5477,45 @@ export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, pay
 
     const nextState = advanceTurn(stateToAdvance);
     if (shouldAutoResolveBattleState(nextState)) {
-      runEnemyTurnsAnimated(nextState);
+      if (shouldRender) {
+        runEnemyTurnsAnimated(nextState);
+      } else {
+        commitRemoteBattleState(runEnemyTurnsHeadless(nextState), false);
+      }
       return;
     }
 
-    setBattleState(nextState);
-    renderBattleScreen();
+    commitRemoteBattleState(nextState, shouldRender);
   }
+}
+
+export function applyRemoteSquadBattleCommand(sourceSlot: SessionPlayerSlot, payload: string): void {
+  const parsedPayload = parseSquadBattleCommandPayload(payload);
+  if (!parsedPayload) {
+    return;
+  }
+  applyCommandToTargetBattle(parsedPayload.battleId, (battle, shouldRender) => {
+    if (!isSquadBattle(battle)) {
+      return;
+    }
+    if (parsedPayload.matchId !== getSquadContext(battle)?.matchId || parsedPayload.battleId !== battle.id) {
+      return;
+    }
+    applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, parsedPayload.command, shouldRender);
+  });
+}
+
+export function applyRemoteCoopBattleCommand(sourceSlot: SessionPlayerSlot, payload: string): void {
+  const parsedPayload = parseRuntimeBattleCommandPayload(payload);
+  if (!parsedPayload) {
+    return;
+  }
+  applyCommandToTargetBattle(parsedPayload.battleId, (battle, shouldRender) => {
+    if (isSquadBattle(battle) || !isCoopOperationsBattle(battle) || battle.id !== parsedPayload.battleId) {
+      return;
+    }
+    applyRemoteBattleCommandToCurrentBattle(battle, sourceSlot, parsedPayload.command, shouldRender);
+  });
 }
 
 // ============================================================================
@@ -4686,11 +5549,13 @@ export function renderBattleScreen() {
     selectedManageUnitId = null;
     resetBattlePan();
 
-    // PRIORITY: Use currentBattle from state if available (from encounter generator)
-    // This is the proper flow from OperationMapScreen -> createBattleFromEncounter
-    if (state.currentBattle) {
-      localBattleState = state.currentBattle;
-      console.log(`[BATTLE] Using encounter-based battle with ${Object.values(state.currentBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
+    const mountedBattle = getMountedOrActiveBattleState(state);
+    if (mountedBattle) {
+      if (!state.currentBattle || state.currentBattle.id !== mountedBattle.id) {
+        updateGameState((currentState) => mountBattleState(currentState, mountedBattle));
+      }
+      localBattleState = mountedBattle;
+      console.log(`[BATTLE] Using mounted battle with ${Object.values(mountedBattle.units).filter((u: any) => u.isEnemy).length} enemies`);
     } else {
       // Fallback to test battle (legacy/debug path)
       console.warn("[BATTLE] No currentBattle in state, falling back to test battle with 2 enemies");
@@ -4733,6 +5598,9 @@ export function renderBattleScreen() {
   const battleControllerPanHint = `${getControllerActionLabel("moveUp")} / ${getControllerActionLabel("moveLeft")}`;
   const battleControllerZoomHint = `${getControllerActionLabel("zoomOut")} / ${getControllerActionLabel("zoomIn")}`;
   const echoContext = getEchoContext(battle);
+  if (battleExitConfirmState && !echoContext) {
+    battleExitConfirmState = null;
+  }
   const squadObjective = getSquadObjective(battle);
   const roomLabelBase = isEndlessBattleMode
     ? `ENDLESS MODE — BATTLE ${endlessBattleCount}`
@@ -4745,6 +5613,12 @@ export function renderBattleScreen() {
     : echoContext
       ? "ABANDON ECHO"
       : "EXIT BATTLE";
+  const showDebugAutoWinButton = !isPlacementPhase
+    && battle.phase !== "victory"
+    && battle.phase !== "defeat"
+    && !isSquadBattle(battle)
+    && !isCoopOperationsBattle(battle);
+  const activeBattleViewIndex = getActiveBattleViewIndex(state);
 
   app.innerHTML = `
     <div class="battle-root battle-root--${phase}">
@@ -4769,39 +5643,64 @@ export function renderBattleScreen() {
               <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
             </div>
           ` : ""}
-          <div class="battle-pan-controls">
-            <div class="battle-pan-hint">
-              <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom
+          <div class="battle-header-top-controls">
+            <div class="battle-pan-controls">
+              <div class="battle-pan-hint">
+                <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
+              </div>
             </div>
+            <div class="battle-view-switcher" aria-label="Battle camera view switcher">
+              <span class="battle-view-switcher-label">VIEW</span>
+              <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
+              <span class="battle-view-switcher-separator">|</span>
+              <button class="battle-view-switcher-btn${activeBattleViewIndex === 1 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="1">2</button>
+            </div>
+          </div>
+          <div class="battle-header-command-row">
             <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
-          </div>
-          <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
-            ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
-          </button>
-          <div class="battle-header-actions">
-            <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
+            <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
+              ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
+            </button>
+            <div class="battle-header-actions">
+              ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
+              <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
+            </div>
           </div>
         </div>
       </div>
-      
-      <!-- Pan controls hint -->
-      <div class="battle-pan-controls">
-        <div class="battle-pan-hint">
-          <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom
-        </div>
-        <button class="battle-pan-reset" id="resetBattlePanBtn">⟲ CENTER</button>
-      </div>
-      
       ${renderBattleResultOverlay(battle)}
+      ${renderBattleExitConfirmModal(battle)}
     </div>
   `;
 
+  if (phase === "placement") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_battle_placement",
+        title: "Deployment Phase",
+        message: "Place your squad before the first live turn starts.",
+        detail: "Use the highlighted placement tiles to set your opener, then confirm deployment to hand initiative over to the battle loop.",
+        channel: "tutorial-battle-placement",
+      },
+    ]);
+  }
+
+  if (phase !== "victory" && phase !== "defeat") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_battle_cards_strain",
+        title: "Cards And Strain",
+        message: "Cards define your unit actions, while strain is the pressure system that keeps turns from spiraling forever.",
+        detail: "Play the hand you need, then watch each unit's strain meter. Pushing beyond the safe threshold is possible, but it carries risk.",
+        channel: "tutorial-battle-cards",
+      },
+    ]);
+  }
+
   // CRITICAL: Restore animation container if it was preserved
   if (preservedAnimationContainer && preservedGridContainer) {
-    // Find the new grid container
-    const newGridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+    const newGridContainer = getBattleGridContainer();
     if (newGridContainer) {
-      // Check if container already exists in new DOM
       let existingContainer = newGridContainer.querySelector('.battle-animation-container') as HTMLElement;
 
       if (existingContainer) {
@@ -4825,8 +5724,7 @@ export function renderBattleScreen() {
       console.warn(`[RENDER] Could not find new grid container to restore animation container`);
     }
   } else {
-    // Initialize animation container reference if it exists
-    const gridContainer = document.querySelector('.battle-grid-container--simple') as HTMLElement;
+    const gridContainer = getBattleGridContainer();
     if (gridContainer) {
       const animContainer = gridContainer.querySelector('.battle-animation-container') as HTMLElement;
       if (animContainer) {
@@ -4834,16 +5732,15 @@ export function renderBattleScreen() {
       }
     }
 
-    // Clear reference if animation is not active and container is empty
     if (!hasActiveBattleAnimation()) {
       const animContainer = getOrCreateAnimationContainer();
       if (animContainer && animContainer.children.length === 0) {
-        // Container is empty, safe to clear reference
-        // But keep it for next animation
+        persistentAnimationContainer = animContainer;
       }
     }
   }
 
+  ensureBattleFeedbackListener();
   syncBattleHudOverlay(battle, activeUnit, isPlayerTurn, isPlacementPhase);
 
   // Setup pan handlers and attach event listeners
@@ -4854,12 +5751,17 @@ export function renderBattleScreen() {
       attachBattleListeners();
       cleanupBattleControllerContext = registerControllerContext({
         id: "battle",
-        defaultMode: "cursor",
+        defaultMode: battleExitConfirmState ? "focus" : "cursor",
         focusRoot: () => document.querySelector(".battle-root"),
-        defaultFocusSelector: "#exitBattleBtn",
-        onCursorAction: (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
-        onLayoutAction: (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
+        focusSelector: battleExitConfirmState ? "#battleExitConfirmModal button:not([disabled])" : undefined,
+        defaultFocusSelector: battleExitConfirmState ? "#battleExitConfirmAcceptBtn" : "#exitBattleBtn",
+        onCursorAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
+        onLayoutAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
         onFocusAction: (action) => {
+          if (battleExitConfirmState && action === "cancel") {
+            closeBattleExitConfirm();
+            return true;
+          }
           if (action === "cancel") {
             setControllerMode("cursor");
             updateFocusableElements();
@@ -5074,7 +5976,8 @@ function renderHandPanel(
   try {
     const hand = resolveHandCards(activeUnit?.hand ?? []);
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
-    const canUndoMove = Boolean(isPlayerTurn && !autoControlled && turnState.hasCommittedMove && !turnState.hasActed);
+    const isFacingSelectionActive = turnState.isFacingSelection;
+    const canUndoMove = Boolean(isPlayerTurn && !autoControlled && !isFacingSelectionActive && turnState.hasCommittedMove && !turnState.hasActed);
     const interactable = localBattleState && activeUnit ? getUnitInteractionObject(localBattleState, activeUnit) : null;
     return `
       <div class="hand-header-floating">
@@ -5094,9 +5997,8 @@ function renderHandPanel(
         </div>
         <div class="hand-actions">
           <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
-          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
-          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>END TURN</button>
-          <button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG: AUTO WIN</button>
+          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || isFacingSelectionActive || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
+          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
         </div>
       </div>
       <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
@@ -5118,22 +6020,57 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
     const step = total > 1 ? maxAngle / (total - 1) : 0;
     const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
     const yOff = Math.abs(angle) * 0.5;
-    const strainLocked = isStrainLockedCard(card, activeUnit);
+    const disabledReason = getBattleCardDisabledReason(card, activeUnit);
+    const strainLocked = disabledReason === "Strain lock";
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
-    const disabledClass = !isPlayerTurn || strainLocked || autoControlled ? "battle-cardui--disabled" : "";
+    const disabledClass = !isPlayerTurn || Boolean(disabledReason) || autoControlled ? "battle-cardui--disabled" : "";
+    const chaosClass = card.isChaosCard ? "battle-cardui--chaos" : "";
 
     // Card type icon
-    const icon = card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
+    const icon = card.isChaosCard ? "✦" : card.type === "core" ? "◆" : card.type === "class" ? "★" : card.type === "gambit" ? "⚡" : "⚔";
 
     // Card type label for badge
-    const typeLabel = card.type === "core" ? "CORE" : card.type === "class" ? "CLASS" : card.type === "gambit" ? "GAMBIT" : "ATK";
+    const typeLabel = card.isChaosCard ? "CHAOS" : card.type === "core" ? "CORE" : card.type === "class" ? "CLASS" : card.type === "gambit" ? "GAMBIT" : "ATK";
 
     // Calculate effective range for display (includes Far Shot bonus)
     const effectiveRange = activeUnit ? getEffectiveCardRange(card, activeUnit) : card.range ?? 1;
+    const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
+    const weapon = activeUnit ? getEquippedWeapon(activeUnit, equipmentById) : null;
+    const weaponMeta: string[] = [];
+    if (weapon && activeUnit?.weaponState && card.weaponRules) {
+      if (
+        card.weaponRules.sourceWeaponId === "__equipped_weapon__" ||
+        card.weaponRules.sourceWeaponId === weapon.id
+      ) {
+        const modifiers = getWeaponCardModifierSnapshot(activeUnit.weaponState, weapon, card.weaponRules);
+        if (card.weaponRules.ammoCost > 0) {
+          weaponMeta.push(`AM ${card.weaponRules.ammoCost}`);
+        }
+        if (card.weaponRules.heatDelta > 0) {
+          weaponMeta.push(`HEAT +${card.weaponRules.heatDelta}`);
+        } else if (card.weaponRules.heatDelta < 0) {
+          weaponMeta.push(`COOL ${Math.abs(card.weaponRules.heatDelta)}`);
+        }
+        if (activeUnit.weaponState.activeClutchIds.length > 0) {
+          const clutchMap = new Map(getWeaponClutches(weapon).map((clutch) => [clutch.id, clutch.label]));
+          const activeLabels = activeUnit.weaponState.activeClutchIds
+            .map((clutchId) => clutchMap.get(clutchId))
+            .filter((label): label is string => Boolean(label));
+          if (activeLabels.length > 0) {
+            weaponMeta.push(`CLUTCH ${activeLabels.join("/")}`);
+          }
+        }
+        if (modifiers.damageDelta !== 0 || modifiers.accuracyDelta !== 0) {
+          weaponMeta.push(
+            `${modifiers.damageDelta !== 0 ? `DMG ${modifiers.damageDelta > 0 ? "+" : ""}${modifiers.damageDelta}` : ""}${modifiers.damageDelta !== 0 && modifiers.accuracyDelta !== 0 ? " // " : ""}${modifiers.accuracyDelta !== 0 ? `ACC ${modifiers.accuracyDelta > 0 ? "+" : ""}${modifiers.accuracyDelta}` : ""}`,
+          );
+        }
+      }
+    }
 
     return `
       <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
-        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
+        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
           <!-- Strain Cost Circle - Top Left -->
           <div class="hs-card-cost">${card.strainCost}</div>
           
@@ -5149,10 +6086,11 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
           <div class="hs-card-name-banner">
             <div class="hs-card-name">${card.name}</div>
           </div>
-          ${strainLocked ? `<div class="hs-card-lock">STRAIN LOCK</div>` : ""}
+          ${disabledReason ? `<div class="hs-card-lock">${disabledReason.toUpperCase()}</div>` : ""}
           
           <!-- Card Description -->
           <div class="hs-card-desc">${card.description}</div>
+          ${weaponMeta.length > 0 ? `<div class="hs-card-desc" style="font-size:0.56rem;color:rgba(187,255,247,0.8);">${weaponMeta.join(" // ")}</div>` : ""}
           
           <!-- Card Footer - Target/Range -->
           <div class="hs-card-footer">
@@ -5305,10 +6243,12 @@ function renderPlacementUI(battle: BattleState): string {
   const echoContext = getEchoContext(battle);
   const isEchoFieldMode = echoContext?.placementMode === "fields";
   const placementUnits = getLocalPlacementUnits(battle);
+  const placedUnitIdSet = new Set(getEffectivePlacedUnitIds(battle));
+  const placementCapacity = Math.min(placementState.maxUnitsPerSide, placementUnits.length);
   const unplacedUnits = placementUnits.filter(
-    u => !placementState.placedUnitIds.includes(u.id) && !u.pos
+    (unit) => !placedUnitIdSet.has(unit.id)
   );
-  const placedCount = placementUnits.filter((unit) => placementState.placedUnitIds.includes(unit.id)).length;
+  const placedCount = placementUnits.filter((unit) => placedUnitIdSet.has(unit.id)).length;
   const unplacedFields = getUnplacedEchoFields(battle);
   const isSkirmishBattle = isSquadBattle(battle);
   const isClientSkirmishView = isSkirmishBattle && getGameState().session.authorityRole === "client";
@@ -5324,15 +6264,49 @@ function renderPlacementUI(battle: BattleState): string {
         && placementCounts.enemy > 0
       : placedCount > 0;
   const theaterBonuses = battle.theaterBonuses;
+  const obscurationActive = Boolean(theaterBonuses?.obscurationActive ?? theaterBonuses?.smokeObscured);
+  const obscurationSeverity = theaterBonuses?.obscurationSeverity
+    ?? theaterBonuses?.smokeSeverity
+    ?? 0;
+  const obscurationLabel = (theaterBonuses?.obscurationLabel ?? "Smoke Obscuration").toUpperCase();
+  const obscurationSuppressesRanged = Boolean(
+    theaterBonuses?.obscurationSuppressesRanged
+    ?? theaterBonuses?.smokeObscured,
+  );
+  const enemyIntelScrambled = Boolean(theaterBonuses?.enemyIntelScrambled);
+  const enemyIntelScrambleLabel = (theaterBonuses?.enemyIntelScrambleLabel ?? "Telemetry Static").toUpperCase();
+  const allyStartStatusType = theaterBonuses?.allyStartStatusType?.toUpperCase() ?? null;
+  const allyStartStatusDuration = theaterBonuses?.allyStartStatusDuration ?? 0;
+  const allyStartStatusLabel = (theaterBonuses?.allyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "DEPLOYMENT").toUpperCase();
+  const enemyStartStatusType = theaterBonuses?.enemyStartStatusType?.toUpperCase() ?? null;
+  const enemyStartStatusDuration = theaterBonuses?.enemyStartStatusDuration ?? 0;
+  const enemyStartStatusLabel = (theaterBonuses?.enemyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "HOSTILES").toUpperCase();
   const theaterBonusBlock = theaterBonuses
     ? `
         <div class="placement-theater-briefing">
           <div class="placement-theater-briefing__title">SQUAD BRIEFING // ${(theaterBonuses.squadDisplayName ?? theaterBonuses.squadId.toUpperCase()).toUpperCase()}</div>
+          ${theaterBonuses.regionName ? `<div class="placement-theater-briefing__row">
+            <span>Region Active</span>
+            <strong>${theaterBonuses.regionName.toUpperCase()} // ${(theaterBonuses.regionVariantLabel ?? "ACTIVE").toUpperCase()}</strong>
+          </div>` : ""}
+          ${theaterBonuses.factionTag ? `<div class="placement-theater-briefing__row">
+            <span>Faction</span>
+            <strong>${theaterBonuses.factionTag.toUpperCase()}</strong>
+          </div>` : ""}
           <div class="placement-theater-briefing__row">
             <span>Hostiles</span>
-            <strong>${theaterBonuses.enemyPreview.length > 0 ? theaterBonuses.enemyPreview.join(", ") : "Telemetry unavailable"}</strong>
+            <strong>${theaterBonuses.enemyPreview.length > 0 ? theaterBonuses.enemyPreview.join(", ") : enemyIntelScrambled ? "Telemetry scrambled" : "Telemetry unavailable"}</strong>
           </div>
+          ${theaterBonuses.regionRuleSummary ? `<div class="placement-theater-briefing__note placement-theater-briefing__note--region">${(theaterBonuses.regionMechanicLabel ?? "REGION RULE").toUpperCase()} // ${theaterBonuses.regionRuleSummary}</div>` : ""}
           ${theaterBonuses.detailedEnemyIntel ? `<div class="placement-theater-briefing__note">Enemy Intel window active for this assault.</div>` : ""}
+          ${enemyIntelScrambled ? `<div class="placement-theater-briefing__note">${enemyIntelScrambleLabel} // HOSTILE TELEMETRY SCRAMBLED</div>` : ""}
+          ${allyStartStatusType ? `<div class="placement-theater-briefing__note">${allyStartStatusLabel} // SQUAD STARTS ${allyStartStatusType} FOR ${allyStartStatusDuration} ROUND${allyStartStatusDuration === 1 ? "" : "S"}</div>` : ""}
+          ${enemyStartStatusType ? `<div class="placement-theater-briefing__note">${enemyStartStatusLabel} // HOSTILES START ${enemyStartStatusType} FOR ${enemyStartStatusDuration} ROUND${enemyStartStatusDuration === 1 ? "" : "S"}</div>` : ""}
+          ${theaterBonuses.overheating ? `<div class="placement-theater-briefing__note">ROOM OVERHEAT ACTIVE // STRAIN x2 // WEAPON HEAT ACCELERATED</div>` : ""}
+          ${!theaterBonuses.overheating && theaterBonuses.combatInstability ? `<div class="placement-theater-briefing__note">COMBAT INSTABILITY ACTIVE // MECHANICAL WEAPONS HEAT FASTER</div>` : ""}
+          ${obscurationActive ? `<div class="placement-theater-briefing__note">${obscurationLabel} ACTIVE // MOVE -${Math.max(1, obscurationSeverity)}${obscurationSuppressesRanged ? " // RANGED FIRE SUPPRESSED" : ""}</div>` : ""}
+          ${theaterBonuses.burningRoom ? `<div class="placement-theater-briefing__note">ROOM FIRE ACTIVE // AMBIENT FIRE DAMAGE EACH TURN${(theaterBonuses.burnSeverity ?? 0) >= 2 ? " // IGNITION PRESSURE RISING" : ""}</div>` : ""}
+          ${theaterBonuses.supplyFireRisk ? `<div class="placement-theater-briefing__note">VOLATILE SUPPLY LOAD // FIRE RISK ELEVATED</div>` : ""}
         </div>
       `
     : "";
@@ -5358,7 +6332,7 @@ function renderPlacementUI(battle: BattleState): string {
         ${echoFieldBlock}
         <div class="placement-info">
           <div class="placement-stats">
-            <span>Placed Units: ${placedCount}/${placementState.maxUnitsPerSide}</span>
+            <span>Placed Units: ${placedCount}/${placementCapacity}</span>
             <span>Fields Remaining: ${unplacedFields.length}</span>
           </div>
           <div class="placement-units-list">
@@ -5398,14 +6372,14 @@ function renderPlacementUI(battle: BattleState): string {
       ${echoFieldBlock}
       <div class="placement-info">
         <div class="placement-stats">
-          <span>Placed: ${placedCount}/${placementState.maxUnitsPerSide}</span>
+          <span>Placed: ${placedCount}/${placementCapacity}</span>
           <span>Unplaced: ${unplacedUnits.length}</span>
           ${isSkirmishBattle ? `<span>Host / Remote: ${placementCounts.friendly} / ${placementCounts.enemy}</span>` : ""}
         </div>
         <div class="placement-units-list">
           <div class="placement-units-label">${isSkirmishBattle ? "Assigned Units (click to select, then place on your edge):" : "Party Units (click to select, then place on grid):"}</div>
           ${placementUnits.map((u) => {
-            const isPlaced = placementState.placedUnitIds.includes(u.id);
+            const isPlaced = placedUnitIdSet.has(u.id);
             const isSelected = placementState.selectedUnitId === u.id;
             return `
               <div class="placement-unit-item ${isPlaced ? "placement-unit-item--placed" : ""} ${isSelected ? "placement-unit-item--selected" : ""}" 
@@ -5513,13 +6487,32 @@ function renderPlacementUI(battle: BattleState): string {
 
 */
 
-function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined, isPlacementPhase: boolean = false): string {
+interface BattleBoardRenderState {
+  moveTiles: Set<string>;
+  attackTiles: Set<string>;
+  facingTiles: Set<string>;
+  placementTiles: Set<string>;
+  hiddenUnitIds: Set<string>;
+  echoPlacements: EchoFieldPlacement[];
+  echoPlacementMode: "units" | "fields" | null;
+  selectedEchoFieldDraftId: string | null;
+  focusTile: { x: number; y: number } | null;
+}
+
+let currentBattleBoardRenderState: BattleBoardRenderState | null = null;
+
+function computeBattleBoardRenderState(
+  battle: BattleState,
+  selectedCardIdx: number | null,
+  activeUnit: BattleUnitState | undefined,
+  isPlacementPhase: boolean,
+): BattleBoardRenderState {
   const units = getUnitsArray(battle);
   const echoContext = getEchoContext(battle);
-
-  // Calculate move/attack tiles if needed
   const moveOpts = new Set<string>();
   const atkOpts = new Set<string>();
+  const facingTiles = new Set<string>();
+  const placementTiles = new Set<string>();
 
   if (
     activeUnit
@@ -5558,33 +6551,91 @@ function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, a
     }
   }
 
-  // Calculate facing selection tiles if in facing selection phase
-  const facingTiles = new Set<string>();
   if (turnState.isFacingSelection && activeUnit && activeUnit.pos) {
     const { x, y } = activeUnit.pos;
-    // Add adjacent tiles for facing selection
-    if (x > 0) facingTiles.add(`${x - 1},${y}`); // west
-    if (x < battle.gridWidth - 1) facingTiles.add(`${x + 1},${y}`); // east
-    if (y > 0) facingTiles.add(`${x},${y - 1}`); // north
-    if (y < battle.gridHeight - 1) facingTiles.add(`${x},${y + 1}`); // south
+    if (x > 0) facingTiles.add(`${x - 1},${y}`);
+    if (x < battle.gridWidth - 1) facingTiles.add(`${x + 1},${y}`);
+    if (y > 0) facingTiles.add(`${x},${y - 1}`);
+    if (y < battle.gridHeight - 1) facingTiles.add(`${x},${y + 1}`);
   }
 
-  // Use the new simple renderer - it uses unit.pos as single source of truth
-  return BattleGridRenderer.render(
-    battle,
-    selectedCardIdx,
-    activeUnit,
-    isPlacementPhase,
-    battleZoom,
-    moveOpts,
-    atkOpts,
+  const hiddenUnitIds = getHiddenAnimatedUnitIds();
+  const echoPlacements = echoContext?.fieldPlacements ?? [];
+  const echoPlacementMode = echoContext?.placementMode ?? null;
+  const selectedEchoFieldDraftId = echoContext?.selectedFieldDraftId ?? null;
+  const isEchoFieldPlacementMode = isPlacementPhase && echoPlacementMode === "fields";
+  const sessionState = getGameState().session;
+  const isSquadPlacement = isPlacementPhase && battle.modeContext?.kind === "squad" && !isEchoFieldPlacementMode;
+  const localSpawnZone = isSquadPlacement && sessionState.authorityRole === "client"
+    ? battle.spawnZones?.enemySpawn ?? []
+    : battle.spawnZones?.friendlySpawn ?? [];
+  const fallbackPlacementColumn = isSquadPlacement && sessionState.authorityRole === "client"
+    ? battle.gridWidth - 1
+    : 0;
+
+  if (isPlacementPhase && battle.placementState && !isEchoFieldPlacementMode) {
+    const placementState = battle.placementState;
+    const placedCount = placementState.placedUnitIds.reduce((count, unitId) => {
+      const placedUnit = battle.units[unitId];
+      if (!placedUnit || !placedUnit.pos) {
+        return count;
+      }
+      const placedPos = placedUnit.pos;
+      if (localSpawnZone.length > 0) {
+        const inLocalSpawnZone = localSpawnZone.some(
+          (point) => point.x === placedPos.x && point.y === placedPos.y,
+        );
+        return inLocalSpawnZone ? count + 1 : count;
+      }
+      const unitPlacementColumn = placedUnit.isEnemy ? battle.gridWidth - 1 : 0;
+      return unitPlacementColumn === fallbackPlacementColumn ? count + 1 : count;
+    }, 0);
+
+    if (placedCount < placementState.maxUnitsPerSide) {
+      if (localSpawnZone.length > 0) {
+        localSpawnZone.forEach((point) => {
+          const occupied = units.some((unit) => unit.pos && unit.pos.x === point.x && unit.pos.y === point.y);
+          if (!occupied) {
+            placementTiles.add(`${point.x},${point.y}`);
+          }
+        });
+      } else {
+        for (let y = 0; y < battle.gridHeight; y += 1) {
+          const occupied = units.some((unit) => unit.pos && unit.pos.x === fallbackPlacementColumn && unit.pos.y === y);
+          if (!occupied) {
+            placementTiles.add(`${fallbackPlacementColumn},${y}`);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    moveTiles: moveOpts,
+    attackTiles: atkOpts,
     facingTiles,
-    hoveredTile,
-    getHiddenAnimatedUnitIds(),
-    echoContext?.fieldPlacements ?? [],
-    echoContext?.placementMode ?? null,
-    echoContext?.selectedFieldDraftId ?? null,
-  );
+    placementTiles,
+    hiddenUnitIds,
+    echoPlacements,
+    echoPlacementMode,
+    selectedEchoFieldDraftId,
+    focusTile: activeUnit?.pos ? { ...activeUnit.pos } : hoveredTile ? { ...hoveredTile } : null,
+  };
+}
+
+function renderBattleGrid(battle: BattleState, selectedCardIdx: number | null, activeUnit: BattleUnitState | undefined, isPlacementPhase: boolean = false): string {
+  currentBattleBoardRenderState = computeBattleBoardRenderState(battle, selectedCardIdx, activeUnit, isPlacementPhase);
+
+  return `
+    <div class="battle-grid-pan-wrapper">
+      <div class="battle-grid-zoom-viewport">
+        <div class="battle-grid-container battle-grid-container--3d" id="battleGridContainer">
+          <div class="battle-3d-host" id="battleBoard3dHost"></div>
+          <div class="battle-grid-overlays battle-grid-overlays--3d" id="battleBoardOverlay"></div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 /**
@@ -5636,6 +6687,74 @@ function renderEchoChallengeHeader(echoContext: EchoBattleContext | null): strin
       <div class="battle-echo-challenge__copy">${echoContext.activeChallenge.description}</div>
     </div>
   `;
+}
+
+function renderBattleExitConfirmModal(battle: BattleState): string {
+  if (battleExitConfirmState !== "abandon-echo" || !isEchoBattle(battle)) {
+    return "";
+  }
+
+  return `
+    <div class="game-confirm-modal-backdrop" id="battleExitConfirmModal">
+      <div class="game-confirm-modal game-confirm-modal--danger" role="dialog" aria-modal="true" aria-labelledby="battleExitConfirmTitle">
+        <div class="game-confirm-modal__header">
+          <div class="game-confirm-modal__kicker">ECHO RUN // CONFIRM ABANDONMENT</div>
+          <h2 class="game-confirm-modal__title" id="battleExitConfirmTitle">ABANDON ECHO RUN</h2>
+        </div>
+        <div class="game-confirm-modal__copy">Abandon this Echo Run battle and move to the Echo results screen?</div>
+        <div class="game-confirm-modal__actions">
+          <button
+            class="game-confirm-modal__btn game-confirm-modal__btn--primary"
+            type="button"
+            id="battleExitConfirmAcceptBtn"
+            data-battle-exit-confirm-action="accept"
+            data-controller-default-focus="true"
+          >
+            ABANDON
+          </button>
+          <button
+            class="game-confirm-modal__btn"
+            type="button"
+            data-battle-exit-confirm-action="cancel"
+          >
+            KEEP FIGHTING
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openBattleExitConfirm(): void {
+  battleExitConfirmState = "abandon-echo";
+  renderBattleScreen();
+}
+
+function closeBattleExitConfirm(): void {
+  if (!battleExitConfirmState) {
+    return;
+  }
+  battleExitConfirmState = null;
+  renderBattleScreen();
+}
+
+function resolveBattleExitConfirm(battle: BattleState): void {
+  if (battleExitConfirmState !== "abandon-echo") {
+    return;
+  }
+  battleExitConfirmState = null;
+  abandonActiveEchoRun();
+  cleanupBattlePanHandlers();
+  teardownBattleHud();
+  resetBattleUiSessionState();
+  updateGameState((prev) => ({
+    ...prev,
+    phase: "echo",
+    currentBattle: null,
+  }));
+  import("./EchoRunScreen").then(({ renderEchoRunScreen }) => {
+    renderEchoRunScreen();
+  });
 }
 
 function renderBattleResultOverlay(battle: BattleState): string {
@@ -5721,8 +6840,52 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
   // Normal battle overlay
   if (battle.phase === "victory") {
-    const r = battle.rewards ?? { wad: 0, metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0, squadXp: 0 };
+    const r = battle.rewards ?? {
+      wad: 0,
+      metalScrap: 0,
+      wood: 0,
+      chaosShards: 0,
+      steamComponents: 0,
+      squadXp: 0,
+    };
+    const advancedRewards = {
+      alloy: Number((battle.rewards as any)?.alloy ?? 0),
+      drawcord: Number((battle.rewards as any)?.drawcord ?? 0),
+      fittings: Number((battle.rewards as any)?.fittings ?? 0),
+      resin: Number((battle.rewards as any)?.resin ?? 0),
+      chargeCells: Number((battle.rewards as any)?.chargeCells ?? 0),
+    };
     const isDefenseBattle = battle.defenseObjective?.type === "survive_turns";
+    const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
+    const survivingFriendlies = Object.values(battle.units).filter((unit) => !unit.isEnemy);
+    const totalFriendlyHp = survivingFriendlies.reduce((sum, unit) => sum + Math.max(0, unit.hp), 0);
+    const totalFriendlyMaxHp = survivingFriendlies.reduce((sum, unit) => sum + Math.max(1, unit.maxHp), 0);
+    const integrityPercent = totalFriendlyMaxHp > 0
+      ? Math.max(0, Math.min(100, Math.round((totalFriendlyHp / totalFriendlyMaxHp) * 100)))
+      : 0;
+    const latestBattleNote = (battle.log[battle.log.length - 1] ?? "")
+      .replace(/^SLK\/\/[A-Z_]+\s*::\s*/i, "")
+      .trim() || "Reward packet ready for transfer.";
+    const resolvedGearRewards = resolveGearRewardSpecs(r.gearRewards ?? [], getGameState());
+    const rewardPacketTypes = [
+      r.wad,
+      r.metalScrap,
+      r.wood,
+      r.chaosShards,
+      r.steamComponents,
+      advancedRewards.alloy,
+      advancedRewards.drawcord,
+      advancedRewards.fittings,
+      advancedRewards.resin,
+      advancedRewards.chargeCells,
+      r.squadXp ?? 0,
+      resolvedGearRewards.length,
+    ].filter((amount) => amount > 0).length;
+    const victoryStatusLabel = isDefenseBattle
+      ? "PERIMETER HELD"
+      : isTheaterOperationBattle
+        ? "ROOM SECURED"
+        : "HOSTILES BROKEN";
 
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
@@ -5750,7 +6913,30 @@ function renderBattleResultOverlay(battle: BattleState): string {
               Hostile resistance broken. Claim the reward package and continue the operation.
             </div>
           `}
-          <div class="battle-result-message">Shared squad bank updated. Reward packet ready for transfer.</div>
+          <div class="battle-result-message">${escapeBattleText(latestBattleNote)}</div>
+          <div class="battle-result-summary">
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">SURVIVORS</div>
+              <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
+              <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">INTEGRITY</div>
+              <div class="battle-result-summary-card__value">${integrityPercent}%</div>
+              <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">TURN COUNT</div>
+              <div class="battle-result-summary-card__value">${battle.turnCount}</div>
+              <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
+            </article>
+            <article class="battle-result-summary-card">
+              <div class="battle-result-summary-card__label">STATUS</div>
+              <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
+              <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
+            </article>
+          </div>
+          <div class="battle-result-section-title">Reward Packet</div>
           <div class="battle-reward-grid">
             <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
             <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
@@ -5758,6 +6944,18 @@ function renderBattleResultOverlay(battle: BattleState): string {
             <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
             <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
             <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
+            ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
+            ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
+            ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
+            ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
+            ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
+            ${resolvedGearRewards.map((reward) => `
+              <div class="battle-reward-item battle-reward-item--gear">
+                <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
+                <div class="reward-value">${escapeBattleText(reward.name)}</div>
+                <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+              </div>
+            `).join("")}
             ${unlockableId && unlockableId !== "pending" && unlockableName ? `
               <div class="battle-reward-item battle-reward-item--unlockable">
                 <div class="reward-label">NEW UNLOCK</div>
@@ -5774,22 +6972,23 @@ function renderBattleResultOverlay(battle: BattleState): string {
   }
 
   if (battle.phase === "defeat") {
+    const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
     // Check if in campaign run (for retry option)
-    const isCampaignRun = (window as any).__isCampaignRun || false;
+    const isCampaignRun = !isTheaterOperationBattle && ((window as any).__isCampaignRun || false);
 
     return `
       <div class="battle-result-overlay battle-result-overlay--defeat">
         <div class="battle-result-card">
           <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT FAILED</div>
           <div class="battle-result-title">DEFEAT</div>
-          <div class="battle-result-message">Combat link severed. Recovery channel standing by.</div>
-          <div class="battle-defeat-text">Your squad has been wiped out.</div>
+          <div class="battle-result-message">${isTheaterOperationBattle ? "Operation force withdrawn. HAVEN recovery channel standing by." : "Combat link severed. Recovery channel standing by."}</div>
+          <div class="battle-defeat-text">${isTheaterOperationBattle ? "The theater remains saved in its current state. Deployed units return shaken." : "Your squad has been wiped out."}</div>
           <div class="battle-result-footer">
             ${isCampaignRun ? `
               <button class="battle-result-btn battle-result-btn--primary" id="retryRoomBtn">RETRY ROOM</button>
               <button class="battle-result-btn" id="abandonRunBtn">ABANDON RUN</button>
             ` : `
-              <button class="battle-result-btn" id="defeatReturnBtn">RETURN TO BASE</button>
+              <button class="battle-result-btn" id="defeatReturnBtn">${isTheaterOperationBattle ? "RETURN TO HAVEN" : "RETURN TO BASE"}</button>
             `}
           </div>
         </div>
@@ -5904,12 +7103,13 @@ function animatePlayedCard(cardIndex: number | null, onComplete: () => void): vo
 
 function handleBattleHudCardSelection(cardIndex: number): void {
   if (!localBattleState) return;
+  if (turnState.hasActed) return;
   const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit));
   if (!isPlayerTurn) return;
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
   const card = activeUnit?.hand?.[cardIndex] ? resolveCard(activeUnit.hand[cardIndex]) : null;
-  if (activeUnit && card && isStrainLockedCard(card, activeUnit)) {
+  if (activeUnit && card && getBattleCardDisabledReason(card, activeUnit)) {
     selectedCardIndex = null;
     renderBattleScreen();
     return;
@@ -5936,8 +7136,8 @@ function handleBattleHudUndoMove(): void {
       return;
     }
 
-    if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-      void sendLocalSquadBattleCommand({
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
         type: "undo_move",
         unitId: activeUnit.id,
       });
@@ -6001,6 +7201,28 @@ function finalizeBattleHudEndTurn(stateToAdvance: BattleState): void {
   completeAdvance();
 }
 
+function beginBattleHudFacingSelection(): void {
+  if (!localBattleState?.activeUnitId) {
+    return;
+  }
+
+  const activeUnit = localBattleState.units[localBattleState.activeUnitId];
+  if (!activeUnit?.pos) {
+    finalizeBattleHudEndTurn(localBattleState);
+    return;
+  }
+
+  turnState.isFacingSelection = true;
+  selectedCardIndex = null;
+  hoveredTile = null;
+
+  if (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState)) {
+    setBattleState(withBattleTurnStateSnapshot(localBattleState));
+  }
+
+  renderBattleScreen();
+}
+
 function handleBattleHudEndTurn(): void {
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
     return;
@@ -6011,21 +7233,9 @@ function handleBattleHudEndTurn(): void {
   if (!isPlayerTurn || !localBattleState || !activeUnit) return;
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
 
-  if (!activeUnit.pos) {
-    if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-      void sendLocalSquadBattleCommand({
-        type: "end_turn",
-        unitId: activeUnit.id,
-      });
-      return;
-    }
-    finalizeBattleHudEndTurn(localBattleState);
-    return;
-  }
-
   if (turnState.isFacingSelection) {
-    if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-      void sendLocalSquadBattleCommand({
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
         type: "end_turn",
         unitId: activeUnit.id,
       });
@@ -6037,23 +7247,13 @@ function handleBattleHudEndTurn(): void {
     return;
   }
 
-  if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-    turnState.isFacingSelection = true;
+  if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
     selectedCardIndex = null;
-    renderBattleScreen();
+    beginBattleHudFacingSelection();
     return;
   }
 
-  turnState.isFacingSelection = true;
-  selectedCardIndex = null;
-  setBattleState({
-    ...localBattleState,
-    log: [
-      ...localBattleState.log,
-      `SLK//FACING :: Select facing direction for ${activeUnit.name}, then the turn will end.`,
-    ],
-  });
-  renderBattleScreen();
+  beginBattleHudFacingSelection();
 }
 
 function handleBattleHudDebugAutoWin(): void {
@@ -6090,6 +7290,7 @@ function handleBattleHudDebugAutoWin(): void {
         wood: 5,
         chaosShards: 2,
         steamComponents: 2,
+        squadXp: 0,
       },
     };
   }
@@ -6097,94 +7298,144 @@ function handleBattleHudDebugAutoWin(): void {
   renderBattleScreen();
 }
 
-function handleBattleHudClutchToggle(): void {
-  if (!localBattleState || !localBattleState.activeUnitId) return;
+function getBattleHudWeaponContext(): { activeUnit: BattleUnitState; weapon: NonNullable<ReturnType<typeof getEquippedWeapon>> } | null {
+  if (!localBattleState || !localBattleState.activeUnitId) return null;
   const activeUnit = localBattleState.units[localBattleState.activeUnitId];
-  if (!activeUnit) return;
+  if (!activeUnit) return null;
 
   const state = getGameState();
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const weapon = getEquippedWeapon(activeUnit, equipmentById);
-  if (!weapon || !weapon.isMechanical || !weapon.clutchToggle) return;
+  if (!weapon) return null;
+  return { activeUnit, weapon };
+}
 
-  const newUnits = { ...localBattleState.units };
-  const unit = newUnits[activeUnit.id];
-  const currentClutch = unit.weaponState?.clutchActive ?? unit.clutchActive ?? false;
-  const newClutchState = !currentClutch;
-
-  if (unit.weaponState) {
-    newUnits[activeUnit.id] = {
-      ...unit,
-      weaponState: {
-        ...unit.weaponState,
-        clutchActive: newClutchState,
-      },
-      clutchActive: newClutchState,
-    };
-  } else {
-    newUnits[activeUnit.id] = {
-      ...unit,
-      clutchActive: newClutchState,
-    };
+function handleBattleHudClutchToggle(clutchId: string): void {
+  const context = getBattleHudWeaponContext();
+  if (!context || !localBattleState || !context.activeUnit.weaponState) {
+    return;
   }
 
-  const action = newClutchState ? "engages" : "disengages";
-  const newLog = [...localBattleState.log, `SLK//CLUTCH :: ${activeUnit.name} ${action} weapon clutch.`];
-  setBattleState({
+  const nextWeaponState = toggleWeaponClutch(context.activeUnit.weaponState, context.weapon, clutchId);
+  const clutch = getWeaponClutches(context.weapon).find((entry) => entry.id === clutchId);
+  const active = nextWeaponState.activeClutchIds.includes(clutchId);
+  const nextState: BattleState = {
     ...localBattleState,
-    units: newUnits,
-    log: newLog,
-  });
+    units: {
+      ...localBattleState.units,
+      [context.activeUnit.id]: {
+        ...context.activeUnit,
+        weaponState: nextWeaponState,
+        clutchActive: nextWeaponState.clutchActive,
+        weaponWear: nextWeaponState.wear,
+      },
+    },
+    log: [
+      ...localBattleState.log,
+      `SLK//CLUTCH :: ${context.activeUnit.name} ${active ? "engages" : "disengages"} ${clutch?.label ?? "weapon clutch"}.`,
+    ],
+  };
+  setBattleState(nextState);
+  renderBattleScreen();
+}
+
+function handleBattleHudQuickReload(): void {
+  const context = getBattleHudWeaponContext();
+  if (!context || !localBattleState || !context.activeUnit.weaponState) {
+    return;
+  }
+  const outcome = quickReload(context.activeUnit.weaponState, context.weapon);
+  let nextState = updateUnitWeaponState(localBattleState, context.activeUnit.id, outcome.state);
+  const refreshedUser = nextState.units[context.activeUnit.id];
+  if (refreshedUser) {
+    nextState = applyStrain(nextState, refreshedUser, outcome.strainCost);
+  }
+  nextState = {
+    ...nextState,
+    log: [...nextState.log, `SLK//RELOAD :: ${context.activeUnit.name} performs a quick reload.`],
+  };
+  setBattleState(nextState);
+  renderBattleScreen();
+}
+
+function handleBattleHudFullReload(): void {
+  const context = getBattleHudWeaponContext();
+  if (!context || !localBattleState || !context.activeUnit.weaponState) {
+    return;
+  }
+  const outcome = fullReload(context.activeUnit.weaponState, context.weapon);
+  let nextState = updateUnitWeaponState(localBattleState, context.activeUnit.id, outcome.state);
+  const refreshedUser = nextState.units[context.activeUnit.id];
+  if (refreshedUser) {
+    nextState = applyStrain(nextState, refreshedUser, outcome.strainCost);
+  }
+  nextState = {
+    ...nextState,
+    log: [...nextState.log, `SLK//RELOAD :: ${context.activeUnit.name} performs a full reload.`],
+  };
+  setBattleState(nextState);
+  renderBattleScreen();
+}
+
+function handleBattleHudFieldPatch(): void {
+  const context = getBattleHudWeaponContext();
+  if (!context || !localBattleState || !context.activeUnit.weaponState) {
+    return;
+  }
+  const outcome = fieldPatch(context.activeUnit.weaponState);
+  let nextState = updateUnitWeaponState(localBattleState, context.activeUnit.id, outcome.state);
+  const refreshedUser = nextState.units[context.activeUnit.id];
+  if (refreshedUser && outcome.strainCost > 0) {
+    nextState = applyStrain(nextState, refreshedUser, outcome.strainCost);
+  }
+  nextState = {
+    ...nextState,
+    log: [
+      ...nextState.log,
+      outcome.repairedNodeId
+        ? `SLK//PATCH :: ${context.activeUnit.name} patches node ${outcome.repairedNodeId}.`
+        : `SLK//PATCH :: ${context.activeUnit.name} finds no patchable damage.`,
+    ],
+  };
+  setBattleState(nextState);
   renderBattleScreen();
 }
 
 function handleBattleHudVent(): void {
-  if (!localBattleState || !localBattleState.activeUnitId) return;
-  const activeUnit = localBattleState.units[localBattleState.activeUnitId];
-  if (!activeUnit) return;
-
-  const state = getGameState();
-  const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-  const weapon = getEquippedWeapon(activeUnit, equipmentById);
-  if (!weapon || !weapon.isMechanical) return;
-
-  const currentHeat = activeUnit.weaponState?.currentHeat ?? activeUnit.weaponHeat ?? 0;
-  if (currentHeat <= 0) {
-    const idleLog = [...localBattleState.log, `SLK//VENT :: ${activeUnit.name}'s weapon is already cool.`];
-    setBattleState({
-      ...localBattleState,
-      log: idleLog,
-    });
-    renderBattleScreen();
+  const context = getBattleHudWeaponContext();
+  if (!context || !localBattleState || !context.activeUnit.weaponState) {
     return;
   }
-
-  const reducedHeat = Math.max(0, currentHeat - 2);
-  const newUnits = { ...localBattleState.units };
-  const unit = newUnits[activeUnit.id];
-  if (unit.weaponState) {
-    newUnits[activeUnit.id] = {
-      ...unit,
-      weaponState: {
-        ...unit.weaponState,
-        currentHeat: reducedHeat,
-      },
-      weaponHeat: reducedHeat,
-    };
-  } else {
-    newUnits[activeUnit.id] = {
-      ...unit,
-      weaponHeat: reducedHeat,
-    };
+  const outcome = ventWeapon(context.activeUnit.weaponState, context.weapon);
+  let nextState = updateUnitWeaponState(localBattleState, context.activeUnit.id, outcome.state);
+  const ventUser = nextState.units[context.activeUnit.id];
+  if (ventUser) {
+    const hpLoss = Math.max(1, Math.ceil(ventUser.maxHp * outcome.hpCostPercent));
+    const remainingHp = ventUser.hp - hpLoss;
+    if (remainingHp <= 0) {
+      const nextUnits = { ...nextState.units };
+      delete nextUnits[ventUser.id];
+      nextState = {
+        ...nextState,
+        units: nextUnits,
+        turnOrder: nextState.turnOrder.filter((id) => id !== ventUser.id),
+        log: [...nextState.log, `SLK//VENT :: ${ventUser.name} vents the weapon core and is destroyed by the backlash.`],
+      };
+    } else {
+      nextState = {
+        ...nextState,
+        units: {
+          ...nextState.units,
+          [ventUser.id]: {
+            ...ventUser,
+            hp: remainingHp,
+          },
+        },
+        log: [...nextState.log, `SLK//VENT :: ${ventUser.name} vents the weapon core and loses ${hpLoss} HP.`],
+      };
+    }
   }
-
-  const newLog = [...localBattleState.log, `SLK//VENT :: ${activeUnit.name} vents weapon heat (${currentHeat} -> ${reducedHeat}).`];
-  setBattleState({
-    ...localBattleState,
-    units: newUnits,
-    log: newLog,
-  });
-  renderBattleScreen();
+  finalizeBattleHudEndTurn(nextState);
 }
 
 function handleBattleHudConsumableUse(consumableId: string, targetId: string): void {
@@ -6223,6 +7474,321 @@ function handleBattleHudConsumableUse(consumableId: string, targetId: string): v
   });
 }
 
+function syncBattleBoardScene(
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  isPlacementPhase: boolean,
+): void {
+  const host = getBattleBoardHost();
+  if (!host) {
+    return;
+  }
+
+  const renderState = currentBattleBoardRenderState ?? computeBattleBoardRenderState(
+    battle,
+    selectedCardIndex,
+    activeUnit,
+    isPlacementPhase,
+  );
+  currentBattleBoardRenderState = renderState;
+
+  const scene = getBattleSceneControllerInstance();
+  scene.mount(host);
+  scene.setViewChangeHandler((view) => {
+    captureActiveBattleViewPreset(view);
+  });
+  scene.sync(createBattleBoardSnapshot(battle, {
+    moveTiles: renderState.moveTiles,
+    attackTiles: renderState.attackTiles,
+    placementTiles: renderState.placementTiles,
+    facingTiles: renderState.facingTiles,
+    hoveredTile,
+    hiddenUnitIds: renderState.hiddenUnitIds,
+    echoFieldPlacements: renderState.echoPlacements,
+    selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
+    focusTile: renderState.focusTile,
+  }));
+
+  const activeViewIndex = getActiveBattleViewIndex();
+  const activeViewSignature = `${battle.id}:${activeViewIndex}`;
+  if (battleLastAppliedViewSignature !== activeViewSignature) {
+    const activeViewPreset = getActiveBattleViewPreset();
+    battleZoom = activeViewPreset.zoomFactor;
+    scene.applyViewState(activeViewPreset, false);
+    battleLastAppliedViewSignature = activeViewSignature;
+  }
+}
+
+function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
+  if (!nextTile && hoveredTile === null) {
+    return;
+  }
+  if (nextTile && hoveredTile && hoveredTile.x === nextTile.x && hoveredTile.y === nextTile.y) {
+    return;
+  }
+  hoveredTile = nextTile ? { ...nextTile } : null;
+  if (!localBattleState || !isBattleRootMounted()) {
+    return;
+  }
+  const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
+  syncBattleBoardScene(localBattleState, activeUnit, localBattleState.phase === "placement");
+}
+
+function battleBoardSetHas(set: Set<string>, point: BattleBoardPoint): boolean {
+  return set.has(`${point.x},${point.y}`);
+}
+
+function handleBattleBoardPlacementPick(
+  pick: BattleBoardPick,
+  battle: BattleState,
+  isClientNetworkPlacement: boolean,
+): void {
+  if (!localBattleState || !localBattleState.placementState) {
+    return;
+  }
+
+  const occupiedUnitId = pick.unitId
+    ?? Object.values(localBattleState.units).find((unit) => unit.pos?.x === pick.x && unit.pos?.y === pick.y && unit.hp > 0)?.id
+    ?? null;
+  if (occupiedUnitId) {
+    const unit = localBattleState.units[occupiedUnitId];
+    if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)) {
+      if (isClientNetworkPlacement) {
+        void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId: occupiedUnitId });
+        return;
+      }
+      const newState = unplaceBattleUnit(localBattleState, occupiedUnitId);
+      setBattleState(newState);
+      renderBattleScreen();
+      return;
+    }
+  }
+
+  if (getEchoContext(localBattleState)?.placementMode === "fields") {
+    const currentEchoContext = getEchoContext(localBattleState);
+    const draftId = currentEchoContext?.selectedFieldDraftId ?? currentEchoContext?.availableFields[0]?.draftId ?? null;
+    if (!draftId) {
+      return;
+    }
+
+    let newState = upsertEchoFieldPlacement(localBattleState, draftId, { x: pick.x, y: pick.y });
+    const remainingFields = getUnplacedEchoFields(newState);
+    if (remainingFields.length > 0) {
+      newState = selectEchoPlacementField(newState, remainingFields[0].draftId);
+    }
+    setBattleState(newState);
+    renderBattleScreen();
+    return;
+  }
+
+  if (!currentBattleBoardRenderState || !battleBoardSetHas(currentBattleBoardRenderState.placementTiles, pick)) {
+    return;
+  }
+
+  const occupied = Object.values(localBattleState.units).some(
+    (unit) => unit.pos && unit.pos.x === pick.x && unit.pos.y === pick.y && unit.hp > 0,
+  );
+  if (occupied) {
+    return;
+  }
+
+  const selectedUnitId = localBattleState.placementState.selectedUnitId;
+  let unitToPlace: BattleUnitState | undefined | null = null;
+  if (selectedUnitId) {
+    const selectedUnit = localBattleState.units[selectedUnitId];
+    if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit)
+      && !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
+      unitToPlace = selectedUnit;
+    }
+  }
+
+  if (!unitToPlace) {
+    unitToPlace = getLocalPlacementUnits(localBattleState).find(
+      (unit) => !localBattleState!.placementState!.placedUnitIds.includes(unit.id) && !unit.pos,
+    );
+  }
+
+  if (!unitToPlace) {
+    return;
+  }
+
+  const validPlacementTiles = getPlacementTilesForUnit(localBattleState, unitToPlace);
+  if (!validPlacementTiles.some((tilePos) => tilePos.x === pick.x && tilePos.y === pick.y)) {
+    return;
+  }
+
+  if (isClientNetworkPlacement) {
+    void sendLocalNetworkPlacementCommand({ type: "place_unit", unitId: unitToPlace.id, x: pick.x, y: pick.y });
+    return;
+  }
+
+  const newState = placeUnit(localBattleState, unitToPlace.id, { x: pick.x, y: pick.y });
+  setBattleState(newState);
+  renderBattleScreen();
+}
+
+function handleBattleBoardActionPick(
+  pick: BattleBoardPick,
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  isPlayerTurn: boolean,
+): void {
+  if (isBattleHudPointerInteraction) return;
+  if (isAnimatingEnemyTurn) return;
+  if (hasActiveBattleAnimation()) return;
+  if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) return;
+  if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
+  if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
+  if (!currentBattleBoardRenderState) return;
+
+  const { x, y } = pick;
+
+  if (turnState.isFacingSelection && battleBoardSetHas(currentBattleBoardRenderState.facingTiles, pick)) {
+    if (!activeUnit.pos) return;
+    const dx = x - activeUnit.pos.x;
+    const dy = y - activeUnit.pos.y;
+    let newFacing: "north" | "south" | "east" | "west";
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      newFacing = dx > 0 ? "east" : "west";
+    } else {
+      newFacing = dy > 0 ? "south" : "north";
+    }
+
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
+        type: "end_turn",
+        unitId: activeUnit.id,
+        facing: newFacing,
+      });
+      turnState.isFacingSelection = false;
+      renderBattleScreen();
+      return;
+    }
+
+    const newUnits = { ...localBattleState.units };
+    newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
+    const newState = { ...localBattleState, units: newUnits };
+    setBattleState(newState);
+    finalizeBattleHudEndTurn(newState);
+    return;
+  }
+
+  if (battleBoardSetHas(currentBattleBoardRenderState.moveTiles, pick)) {
+    if (!turnState.hasMoved && activeUnit.pos) {
+      turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
+    }
+
+    const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
+    const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
+    const currentX = activeUnit.pos?.x ?? 0;
+    const currentY = activeUnit.pos?.y ?? 0;
+    const maxMove = getUnitMovementRange(activeUnit);
+    const path = getMovePath(localBattleState, { x: currentX, y: currentY }, { x, y }, maxMove);
+    if (path.length < 2) {
+      return;
+    }
+
+    const totalCost = getDistance(originX, originY, x, y);
+    if (totalCost > maxMove) {
+      return;
+    }
+
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      if (!turnState.hasMoved && activeUnit.pos) {
+        turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
+      }
+      turnState.movementRemaining = Math.max(0, maxMove - totalCost);
+      turnState.hasMoved = true;
+      turnState.hasCommittedMove = true;
+      void sendLocalNetworkBattleCommand({
+        type: "move_unit",
+        unitId: activeUnit.id,
+        x,
+        y,
+      });
+      renderBattleScreen();
+      return;
+    }
+
+    executeLocalBattleMove(activeUnit.id, path, 40);
+    return;
+  }
+
+  const units = getUnitsArray(localBattleState);
+  const targetUnit = units.find((unit) => unit.pos?.x === x && unit.pos?.y === y && unit.hp > 0);
+  if (targetUnit) {
+    if (turnState.hasActed) {
+      return;
+    }
+
+    const ux = activeUnit.pos?.x ?? 0;
+    const uy = activeUnit.pos?.y ?? 0;
+    const dist = getDistance(ux, uy, x, y);
+
+    let cardToPlay: number | null = selectedCardIndex;
+    let shouldPlay = false;
+    let targetUnitId = "";
+
+    if (cardToPlay === null && activeUnit.hand.length > 0) {
+      for (let index = 0; index < activeUnit.hand.length; index += 1) {
+        const card = resolveCard(activeUnit.hand[index]);
+        if (canCardTargetUnit(card, activeUnit, targetUnit, dist)) {
+          cardToPlay = index;
+          shouldPlay = true;
+          targetUnitId = targetUnit.id;
+          break;
+        }
+      }
+    } else if (cardToPlay !== null) {
+      const card = resolveCard(activeUnit.hand[cardToPlay]);
+      if (canCardTargetUnit(card, activeUnit, targetUnit, dist)) {
+        shouldPlay = true;
+        targetUnitId = targetUnit.id;
+      }
+    }
+
+    if (shouldPlay && cardToPlay !== null) {
+      if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+        selectedCardIndex = null;
+        void sendLocalNetworkBattleCommand({
+          type: "play_card",
+          unitId: activeUnit.id,
+          cardIndex: cardToPlay,
+          targetUnitId,
+        });
+        renderBattleScreen();
+        return;
+      }
+
+      executeLocalBattleCardPlay(activeUnit.id, cardToPlay, targetUnitId, 40);
+      return;
+    }
+  }
+
+  if (battleBoardSetHas(currentBattleBoardRenderState.attackTiles, pick) && selectedCardIndex !== null && targetUnit) {
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      const playedCardIndex = selectedCardIndex;
+      if (playedCardIndex !== null) {
+        selectedCardIndex = null;
+        void sendLocalNetworkBattleCommand({
+          type: "play_card",
+          unitId: activeUnit.id,
+          cardIndex: playedCardIndex,
+          targetUnitId: targetUnit.id,
+        });
+        renderBattleScreen();
+      }
+      return;
+    }
+
+    const playedCardIndex = selectedCardIndex;
+    if (playedCardIndex !== null) {
+      executeLocalBattleCardPlay(activeUnit.id, playedCardIndex, targetUnit.id, 40);
+    }
+  }
+}
+
 function attachBattleListeners() {
   if (!localBattleState) return;
 
@@ -6231,38 +7797,14 @@ function attachBattleListeners() {
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit));
   const isPlacementPhase = battle.phase === "placement";
   setupBattleHudResizeListener();
-
-  // Zoom controls - mouse wheel only
-  const zoomViewport = document.querySelector(".battle-grid-zoom-viewport");
-  if (zoomViewport) {
-    zoomViewport.addEventListener("wheel", (e: Event) => {
-      e.preventDefault();
-      const wheelEvent = e as WheelEvent;
-      if (wheelEvent.deltaY < 0) zoomIn();
-      else zoomOut();
-    }, { passive: false });
-  }
+  syncBattleBoardScene(battle, activeUnit, isPlacementPhase);
 
   // Exit battle button
   const exitBtn = document.getElementById("exitBattleBtn");
   if (exitBtn) {
     exitBtn.onclick = () => {
       if (isEchoBattle(battle)) {
-        if (!confirm("Abandon this Echo Run battle and move to the Echo results screen?")) {
-          return;
-        }
-        abandonActiveEchoRun();
-        cleanupBattlePanHandlers();
-        teardownBattleHud();
-        resetBattleUiSessionState();
-        updateGameState((prev) => ({
-          ...prev,
-          phase: "echo",
-          currentBattle: null,
-        }));
-        import("./EchoRunScreen").then(({ renderEchoRunScreen }) => {
-          renderEchoRunScreen();
-        });
+        openBattleExitConfirm();
         return;
       }
 
@@ -6288,6 +7830,31 @@ function attachBattleListeners() {
     };
   }
 
+  const debugAutoWinBtn = document.getElementById("debugAutoWinBtn");
+  if (debugAutoWinBtn) {
+    debugAutoWinBtn.onclick = () => {
+      handleBattleHudDebugAutoWin();
+    };
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-battle-exit-confirm-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const action = button.getAttribute("data-battle-exit-confirm-action");
+      if (action === "accept") {
+        resolveBattleExitConfirm(battle);
+      } else {
+        closeBattleExitConfirm();
+      }
+    });
+  });
+
+  document.getElementById("battleExitConfirmModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeBattleExitConfirm();
+    }
+  });
+
   // Toggle UI panels button
   const toggleUiBtn = document.getElementById("toggleUiBtn");
   if (toggleUiBtn) {
@@ -6300,6 +7867,17 @@ function attachBattleListeners() {
   document.querySelectorAll<HTMLElement>("#resetBattlePanBtn").forEach((resetPanBtn) => {
     resetPanBtn.onclick = () => {
       resetBattlePan();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-battle-view-index]").forEach((viewBtn) => {
+    viewBtn.onclick = (event) => {
+      event.preventDefault();
+      const nextIndex = Number.parseInt(viewBtn.dataset.battleViewIndex ?? "", 10);
+      if (!Number.isFinite(nextIndex)) {
+        return;
+      }
+      activateBattleViewPreset(nextIndex);
     };
   });
 
@@ -6333,7 +7911,11 @@ function attachBattleListeners() {
     console.log("[BATTLE] Setting up placement phase handlers");
     const echoPlacementContext = getEchoContext(localBattleState);
     const isEchoFieldPlacementMode = echoPlacementContext?.placementMode === "fields";
-    const isClientSkirmishPlacement = Boolean(localBattleState && isSquadBattle(localBattleState) && getGameState().session.authorityRole === "client");
+    const isClientNetworkPlacement = Boolean(
+      localBattleState
+      && (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState))
+      && getGameState().session.authorityRole === "client",
+    );
     // Quick Place button
     const quickPlaceBtn = document.getElementById("quickPlaceBtn");
     if (quickPlaceBtn && !isEchoFieldPlacementMode) {
@@ -6343,8 +7925,8 @@ function attachBattleListeners() {
         e.preventDefault();
         console.log("[BATTLE] Quick Place button clicked");
         if (!localBattleState) return;
-        if (isClientSkirmishPlacement) {
-          await sendLocalSquadPlacementCommand({ type: "quick_place" });
+        if (isClientNetworkPlacement) {
+          await sendLocalNetworkPlacementCommand({ type: "quick_place" });
           return;
         }
         const selectedUnitId = localBattleState.placementState?.selectedUnitId ?? null;
@@ -6371,13 +7953,13 @@ function attachBattleListeners() {
         e.preventDefault();
         console.log("[BATTLE] Confirm button clicked");
         if (!localBattleState) return;
-        if (isClientSkirmishPlacement) {
+        if (isClientNetworkPlacement) {
           showSystemPing({
             type: "info",
             title: "HOST CONTROLS FINAL DEPLOYMENT",
-            message: "Wait for the host to finalize skirmish unit placement.",
+            message: "Wait for the host to finalize network battle deployment.",
             durationMs: 2200,
-            channel: "skirmish-placement-host",
+            channel: "network-placement-host",
             replaceChannel: true,
           });
           return;
@@ -6431,464 +8013,73 @@ function attachBattleListeners() {
       });
     }
 
-    // Simple placement click handler using data attributes
-    const gridContainer = document.getElementById("battleGridContainer") ||
-      document.querySelector(".battle-grid-container--simple");
-    if (gridContainer) {
-      // Remove old handler
-      const oldHandler = (gridContainer as any).__placementHandler;
-      if (oldHandler) {
-        gridContainer.removeEventListener("click", oldHandler);
+    const placementPanel = document.querySelector('.battle-node[data-battle-node-id="placement"] .battle-placement-panel');
+    if (placementPanel) {
+      const oldPanelHandler = (placementPanel as any).__placementPanelHandler;
+      if (oldPanelHandler) {
+        placementPanel.removeEventListener("click", oldPanelHandler);
       }
 
-      // Create new handler
-      const placementHandler = (e: Event) => {
+      const placementPanelHandler = (e: Event) => {
         const mouseEvent = e as MouseEvent;
-        const target = mouseEvent.target as HTMLElement | null;
-        if (target?.closest(".battle-placement-panel")) {
+        mouseEvent.stopPropagation();
+        const fieldItem = (mouseEvent.target as HTMLElement).closest(".placement-field-item") as HTMLElement | null;
+        if (fieldItem && localBattleState) {
+          mouseEvent.preventDefault();
+          const draftId = fieldItem.getAttribute("data-echo-field-draft-id");
+          if (draftId) {
+            const newState = selectEchoPlacementField(localBattleState, draftId);
+            setBattleState(newState);
+            renderBattleScreen();
+          }
           return;
         }
-        // Check if clicking on a placed unit (to remove it) - prioritize unit clicks
-        const placedUnitEl = target?.closest(".battle-unit[data-unit-id]") as HTMLElement | null;
-        if (placedUnitEl && localBattleState && localBattleState.placementState) {
-          const unitId = placedUnitEl.getAttribute("data-unit-id");
+
+        const unitItem = (mouseEvent.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
+        if (unitItem && localBattleState && localBattleState.placementState) {
+          mouseEvent.preventDefault();
+
+          const unitId = unitItem.getAttribute("data-unit-id");
+          const isPlaced = unitItem.getAttribute("data-placed") === "true";
+
           if (unitId) {
-            const unit = localBattleState.units[unitId];
-            if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(unitId)) {
-              // Remove placed unit
-              mouseEvent.preventDefault();
-              mouseEvent.stopPropagation();
-              if (isClientSkirmishPlacement) {
-                void sendLocalSquadPlacementCommand({ type: "remove_placed_unit", unitId });
+            if (isPlaced) {
+              if (isClientNetworkPlacement) {
+                void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId });
                 return;
               }
-              let newState = unplaceBattleUnit(localBattleState, unitId);
+              const newState = unplaceBattleUnit(localBattleState, unitId);
               setBattleState(newState);
               renderBattleScreen();
-              return;
-            }
-          }
-        }
-
-        if (getEchoContext(localBattleState)?.placementMode === "fields") {
-          const tile = target?.closest(".battle-tile") as HTMLElement | null;
-          if (!tile) return;
-          const coords = BattleGridRenderer.getTileCoordinates(tile);
-          if (!coords) return;
-          const currentEchoContext = getEchoContext(localBattleState);
-          const draftId = currentEchoContext?.selectedFieldDraftId ?? currentEchoContext?.availableFields[0]?.draftId ?? null;
-          if (!draftId) return;
-
-          let newState = upsertEchoFieldPlacement(localBattleState!, draftId, coords);
-          const remainingFields = getUnplacedEchoFields(newState);
-          if (remainingFields.length > 0) {
-            newState = selectEchoPlacementField(newState, remainingFields[0].draftId);
-          }
-          setBattleState(newState);
-          renderBattleScreen();
-          return;
-        }
-
-        // Otherwise, try to place selected unit
-        const tile = target?.closest(".battle-tile--placement-option") as HTMLElement | null;
-        if (!tile) return;
-
-        const coords = BattleGridRenderer.getTileCoordinates(tile);
-        if (!coords) return;
-
-        const { x, y } = coords;
-
-        if (!localBattleState || !localBattleState.placementState) return;
-        if (y < 0 || y >= localBattleState.gridHeight) return;
-
-        const occupied = Object.values(localBattleState.units).some(
-          u => u.pos && u.pos.x === x && u.pos.y === y && u.hp > 0
-        );
-        if (occupied) return;
-
-        // Use selected unit if available, otherwise use first unplaced
-        const selectedUnitId = localBattleState.placementState.selectedUnitId;
-        let unitToPlace = null;
-
-        if (selectedUnitId) {
-          const selectedUnit = localBattleState.units[selectedUnitId];
-          if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit) &&
-            !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
-            unitToPlace = selectedUnit;
-          }
-        }
-
-        if (!localBattleState || !localBattleState.placementState) return;
-
-        if (!unitToPlace) {
-          const placementUnits = getLocalPlacementUnits(localBattleState);
-          unitToPlace = placementUnits.find(
-            u => !localBattleState!.placementState!.placedUnitIds.includes(u.id) && !u.pos
-          );
-        }
-
-        if (!unitToPlace || !localBattleState) return;
-
-        const validPlacementTiles = getPlacementTilesForUnit(localBattleState, unitToPlace);
-        if (!validPlacementTiles.some((tilePos) => tilePos.x === x && tilePos.y === y)) {
-          return;
-        }
-
-        if (isClientSkirmishPlacement) {
-          void sendLocalSquadPlacementCommand({ type: "place_unit", unitId: unitToPlace.id, x, y });
-          return;
-        }
-
-        let newState = placeUnit(localBattleState, unitToPlace.id, { x, y });
-        setBattleState(newState);
-        renderBattleScreen();
-      };
-
-      // Add click handler for unit selection in placement panel
-      const placementPanel = document.querySelector('.battle-node[data-battle-node-id="placement"] .battle-placement-panel');
-      if (placementPanel) {
-        // Remove old handler if exists
-        const oldPanelHandler = (placementPanel as any).__placementPanelHandler;
-        if (oldPanelHandler) {
-          placementPanel.removeEventListener("click", oldPanelHandler);
-        }
-
-        const placementPanelHandler = (e: Event) => {
-          const mouseEvent = e as MouseEvent;
-          mouseEvent.stopPropagation();
-          const fieldItem = (mouseEvent.target as HTMLElement).closest(".placement-field-item") as HTMLElement | null;
-          if (fieldItem && localBattleState) {
-            mouseEvent.preventDefault();
-            const draftId = fieldItem.getAttribute("data-echo-field-draft-id");
-            if (draftId) {
-              const newState = selectEchoPlacementField(localBattleState, draftId);
+            } else {
+              const newState = selectBattlePlacementUnit(localBattleState, unitId);
               setBattleState(newState);
               renderBattleScreen();
-            }
-            return;
-          }
-
-          const unitItem = (mouseEvent.target as HTMLElement).closest(".placement-unit-item") as HTMLElement;
-          if (unitItem && localBattleState && localBattleState.placementState) {
-            mouseEvent.preventDefault();
-
-            const unitId = unitItem.getAttribute("data-unit-id");
-            const isPlaced = unitItem.getAttribute("data-placed") === "true";
-
-            if (unitId) {
-              if (isPlaced) {
-                // Clicking a placed unit removes it
-                if (isClientSkirmishPlacement) {
-                  void sendLocalSquadPlacementCommand({ type: "remove_placed_unit", unitId });
-                  return;
-                }
-                let newState = unplaceBattleUnit(localBattleState, unitId);
-                setBattleState(newState);
-                renderBattleScreen();
-              } else {
-                // Clicking an unplaced unit selects it for placement
-                let newState = selectBattlePlacementUnit(localBattleState, unitId);
-                setBattleState(newState);
-                renderBattleScreen();
-                if (isClientSkirmishPlacement) {
-                  void sendLocalSquadPlacementCommand({ type: "select_placement_unit", unitId });
-                }
+              if (isClientNetworkPlacement) {
+                void sendLocalNetworkPlacementCommand({ type: "select_placement_unit", unitId });
               }
             }
           }
-        };
+        }
+      };
 
-        (placementPanel as any).__placementPanelHandler = placementPanelHandler;
-        placementPanel.addEventListener("click", placementPanelHandler);
-      }
-
-      (gridContainer as any).__placementHandler = placementHandler;
-      gridContainer.addEventListener("click", placementHandler);
+      (placementPanel as any).__placementPanelHandler = placementPanelHandler;
+      placementPanel.addEventListener("click", placementPanelHandler);
     }
+
+    getBattleSceneControllerInstance().setInteractionHandlers({
+      onPrimaryPick: (pick) => handleBattleBoardPlacementPick(pick, battle, isClientNetworkPlacement),
+      onHoverTile: (tile) => updateHoveredBattleTile(tile),
+    });
 
     // Don't attach normal battle listeners during placement
     return;
   }
 
-  // Simple click handler for movement and attacks using data attributes
-  const gridContainer = document.getElementById("battleGridContainer") ||
-    document.querySelector(".battle-grid-container--simple");
-  if (gridContainer && !isPlacementPhase) {
-    // Remove old handler
-    const oldHandler = (gridContainer as any).__battleHandler;
-    if (oldHandler) {
-      gridContainer.removeEventListener("click", oldHandler);
-    }
-
-    // Create new handler
-    const battleHandler = (e: Event) => {
-      const mouseEvent = e as MouseEvent;
-      if (isBattleHudPointerInteraction) return;
-      // CRITICAL: Block all actions if battle is over or enemy is acting
-      if (isAnimatingEnemyTurn) return;
-      if (hasActiveBattleAnimation()) return;
-      if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
-        return;
-      }
-
-      const tile = (mouseEvent.target as HTMLElement).closest(".battle-tile") as HTMLElement;
-      if (!tile) return;
-
-      const coords = BattleGridRenderer.getTileCoordinates(tile);
-      if (!coords) return;
-
-      const { x, y } = coords;
-
-      if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
-      if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
-
-      // Handle final facing selection before ending the turn
-      if (turnState.isFacingSelection && tile.classList.contains("battle-tile--facing-option")) {
-        if (!activeUnit.pos) return;
-
-        // Determine facing based on clicked tile position relative to unit
-        const dx = x - activeUnit.pos.x;
-        const dy = y - activeUnit.pos.y;
-        let newFacing: "north" | "south" | "east" | "west";
-
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          newFacing = dx > 0 ? "east" : "west";
-        } else {
-          newFacing = dy > 0 ? "south" : "north";
-        }
-
-        if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-          void sendLocalSquadBattleCommand({
-            type: "end_turn",
-            unitId: activeUnit.id,
-            facing: newFacing,
-          });
-          turnState.isFacingSelection = false;
-          renderBattleScreen();
-          return;
-        }
-
-        // Update facing, then finish the turn with that orientation
-        const newUnits = { ...localBattleState.units };
-        newUnits[activeUnit.id] = { ...newUnits[activeUnit.id], facing: newFacing };
-        const newState = { ...localBattleState, units: newUnits };
-        setBattleState(newState);
-        finalizeBattleHudEndTurn(newState);
-        return;
-      }
-
-      // Handle movement
-      if (tile.classList.contains("battle-tile--move-option")) {
-        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-        if (hasActiveBattleAnimation()) return;
-
-        if (!turnState.hasMoved && activeUnit.pos) {
-          turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
-        }
-
-        const originX = turnState.originalPosition?.x ?? activeUnit.pos?.x ?? 0;
-        const originY = turnState.originalPosition?.y ?? activeUnit.pos?.y ?? 0;
-        const currentX = activeUnit.pos?.x ?? 0;
-        const currentY = activeUnit.pos?.y ?? 0;
-        const maxMove = getUnitMovementRange(activeUnit);
-
-        // Validate destination is within bounds
-        if (x < 0 || x >= localBattleState.gridWidth ||
-          y < 0 || y >= localBattleState.gridHeight) {
-          console.error("[MOVE] Destination out of bounds!", { x, y, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
-          return;
-        }
-
-        // Validate current position
-        if (currentX < 0 || currentX >= localBattleState.gridWidth ||
-          currentY < 0 || currentY >= localBattleState.gridHeight) {
-          console.error("[MOVE] Current position out of bounds!", { currentX, currentY, bounds: { width: localBattleState.gridWidth, height: localBattleState.gridHeight } });
-          return;
-        }
-
-        const path = getMovePath(localBattleState, { x: currentX, y: currentY }, { x, y }, maxMove);
-
-        if (path.length < 2) {
-          console.warn("[MOVE] No valid path found", { from: { x: currentX, y: currentY }, to: { x, y } });
-          return;
-        }
-
-        // CRITICAL: Validate path ends at destination
-        const pathEnd = path[path.length - 1];
-        if (pathEnd.x !== x || pathEnd.y !== y) {
-          console.error("[MOVE] Path does not end at destination!", {
-            expected: { x, y },
-            actual: pathEnd,
-            path
-          });
-          return;
-        }
-
-        const totalCost = getDistance(originX, originY, x, y);
-        if (totalCost > maxMove) {
-          console.warn("[MOVE] Path cost exceeds movement range", { totalCost, movement: maxMove });
-          return;
-        }
-
-        if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-          if (!turnState.hasMoved && activeUnit.pos) {
-            turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
-          }
-          turnState.movementRemaining = Math.max(0, maxMove - totalCost);
-          turnState.hasMoved = true;
-          turnState.hasCommittedMove = true;
-          void sendLocalSquadBattleCommand({
-            type: "move_unit",
-            unitId: activeUnit.id,
-            x,
-            y,
-          });
-          renderBattleScreen();
-          return;
-        }
-
-        executeLocalBattleMove(activeUnit.id, path, 40);
-        return;
-      }
-
-      // Handle attack - check if there's a unit here first, then check card selection
-      const units = getUnitsArray(localBattleState);
-      const tgt = units.find(u => u.pos?.x === x && u.pos?.y === y && u.hp > 0);
-
-      // If clicking on an enemy or ally unit, try to attack
-      if (tgt && isPlayerTurn && activeUnit && localBattleState) {
-        const ux = activeUnit.pos?.x ?? 0;
-        const uy = activeUnit.pos?.y ?? 0;
-        const dist = getDistance(ux, uy, x, y);
-
-        let cardToPlay: number | null = selectedCardIndex;
-        let shouldPlay = false;
-        let targetUnitId = "";
-
-        // If no card is selected, try to auto-select the first valid attack card
-        if (cardToPlay === null && activeUnit.hand.length > 0) {
-          // Find first card that can target this unit
-          for (let i = 0; i < activeUnit.hand.length; i++) {
-            const cardIdOrObj = activeUnit.hand[i];
-            const card = resolveCard(cardIdOrObj);
-            if (canCardTargetUnit(card, activeUnit, tgt, dist)) {
-              cardToPlay = i;
-              shouldPlay = true;
-              targetUnitId = tgt.id;
-              break;
-            }
-          }
-        } else if (cardToPlay !== null) {
-          // Card is already selected, check if it can target this unit
-          const cardIdOrObj = activeUnit.hand[cardToPlay];
-          const card = resolveCard(cardIdOrObj);
-          if (canCardTargetUnit(card, activeUnit, tgt, dist)) {
-            shouldPlay = true;
-            targetUnitId = tgt.id;
-          }
-        }
-
-        if (shouldPlay && cardToPlay !== null) {
-          if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-            selectedCardIndex = null;
-            void sendLocalSquadBattleCommand({
-              type: "play_card",
-              unitId: activeUnit.id,
-              cardIndex: cardToPlay,
-              targetUnitId,
-            });
-            renderBattleScreen();
-            return;
-          }
-
-          executeLocalBattleCardPlay(activeUnit.id, cardToPlay, targetUnitId, 40);
-          return;
-        }
-      }
-
-      // Legacy/Fallback attack logic for specific tile states
-      if (tile.classList.contains("battle-tile--attack-option") && selectedCardIndex !== null) {
-        if (!isPlayerTurn || !activeUnit || !localBattleState) return;
-
-        const cardIdOrObj = activeUnit.hand[selectedCardIndex];
-        const card = resolveCard(cardIdOrObj);
-        const ux = activeUnit.pos?.x ?? 0;
-        const uy = activeUnit.pos?.y ?? 0;
-        const dist = getDistance(ux, uy, x, y);
-
-        let shouldPlay = false;
-        let targetUnitId = "";
-
-        if (tgt && canCardTargetUnit(card, activeUnit, tgt, dist)) {
-          shouldPlay = true;
-          targetUnitId = tgt.id;
-        }
-
-        if (shouldPlay) {
-          if (isRemoteSquadClientTurn(localBattleState, activeUnit)) {
-            const playedCardIndex = selectedCardIndex;
-            if (playedCardIndex !== null) {
-              selectedCardIndex = null;
-              void sendLocalSquadBattleCommand({
-                type: "play_card",
-                unitId: activeUnit.id,
-                cardIndex: playedCardIndex,
-                targetUnitId,
-              });
-              renderBattleScreen();
-            }
-            return;
-          }
-
-          const playedCardIndex = selectedCardIndex;
-          if (playedCardIndex !== null) {
-            executeLocalBattleCardPlay(activeUnit.id, playedCardIndex, targetUnitId, 40);
-          }
-        }
-      }
-    };
-
-    (gridContainer as any).__battleHandler = battleHandler;
-    gridContainer.addEventListener("click", battleHandler);
-
-    // Hover handler for range previews and target indicators
-    const hoverHandler = (e: MouseEvent) => {
-      if (isBattleHudPointerInteraction) return;
-      const tile = (e.target as HTMLElement).closest(".battle-tile") as HTMLElement;
-      if (!tile) {
-        if (hoveredTile !== null) {
-          hoveredTile = null;
-          renderBattleScreen();
-        }
-        return;
-      }
-
-      const coords = BattleGridRenderer.getTileCoordinates(tile);
-      if (!coords) return;
-
-      if (hoveredTile?.x !== coords.x || hoveredTile?.y !== coords.y) {
-        hoveredTile = coords;
-        renderBattleScreen();
-      }
-    };
-
-    const leaveHandler = () => {
-      if (hoveredTile !== null) {
-        hoveredTile = null;
-        renderBattleScreen();
-      }
-    };
-
-    const oldHoverHandler = (gridContainer as any).__hoverHandler;
-    const oldLeaveHandler = (gridContainer as any).__leaveHandler;
-    if (oldHoverHandler) gridContainer.removeEventListener("mousemove", oldHoverHandler);
-    if (oldLeaveHandler) gridContainer.removeEventListener("mouseleave", oldLeaveHandler);
-
-    (gridContainer as any).__hoverHandler = hoverHandler;
-    (gridContainer as any).__leaveHandler = leaveHandler;
-    gridContainer.addEventListener("mousemove", hoverHandler);
-    gridContainer.addEventListener("mouseleave", leaveHandler);
-  }
+  getBattleSceneControllerInstance().setInteractionHandlers({
+    onPrimaryPick: (pick) => handleBattleBoardActionPick(pick, battle, activeUnit, isPlayerTurn),
+    onHoverTile: (tile) => updateHoveredBattleTile(tile),
+  });
 
   // OLD TILE CLICK HANDLER - REMOVED (replaced by new grid click handler system above)
 
@@ -6896,6 +8087,9 @@ function attachBattleListeners() {
   const undoBtn = document.getElementById("undoMoveBtn");
   if (undoBtn) {
     undoBtn.onclick = () => {
+      if (turnState.isFacingSelection) {
+        return;
+      }
       handleBattleHudUndoMove();
     };
   }
@@ -6903,6 +8097,9 @@ function attachBattleListeners() {
   const interactBtn = document.getElementById("interactBtn");
   if (interactBtn) {
     interactBtn.onclick = () => {
+      if (turnState.isFacingSelection) {
+        return;
+      }
       if (!localBattleState?.activeUnitId) {
         return;
       }
@@ -6931,14 +8128,6 @@ function attachBattleListeners() {
   if (endTurnBtn) {
     endTurnBtn.onclick = () => {
       handleBattleHudEndTurn();
-    };
-  }
-
-  // Debug auto-win button
-  const autoWinBtn = document.getElementById("debugAutoWinBtn");
-  if (autoWinBtn) {
-    autoWinBtn.onclick = () => {
-      handleBattleHudDebugAutoWin();
     };
   }
 
@@ -7099,20 +8288,25 @@ function attachBattleListeners() {
         }
 
         updateGameState(s => {
-          // MUST create a new object and RETURN it!
+          const rewardedState = grantSessionResources(s, {
+            wad: r.wad ?? 0,
+            resources: createEmptyResourceWallet({
+              metalScrap: r.metalScrap ?? 0,
+              wood: r.wood ?? 0,
+              chaosShards: r.chaosShards ?? 0,
+              steamComponents: r.steamComponents ?? 0,
+            }),
+          });
+
           const updatedState = awardStatTokens({
-            ...s,
-            wad: (s.wad ?? 0) + (r.wad ?? 0),
-            resources: {
-              metalScrap: (s.resources?.metalScrap ?? 0) + (r.metalScrap ?? 0),
-              wood: (s.resources?.wood ?? 0) + (r.wood ?? 0),
-              chaosShards: (s.resources?.chaosShards ?? 0) + (r.chaosShards ?? 0),
-              steamComponents: (s.resources?.steamComponents ?? 0) + (r.steamComponents ?? 0),
-            },
+            ...rewardedState,
             cardLibrary: r.cards && r.cards.length > 0
-              ? addCardsToLibrary(s.cardLibrary ?? {}, r.cards)
-              : s.cardLibrary,
+              ? addCardsToLibrary(rewardedState.cardLibrary ?? {}, r.cards)
+              : rewardedState.cardLibrary,
           }, r.squadXp ?? 0);
+          const stateWithGear = (r.gearRewards && r.gearRewards.length > 0)
+            ? grantGearRewardSpecsToState(updatedState, r.gearRewards)
+            : updatedState;
 
           // Grant unlockable if present
           if ((r as any).unlockable) {
@@ -7123,7 +8317,7 @@ function attachBattleListeners() {
             });
           }
 
-          return updatedState;
+          return stateWithGear;
         });
 
         // Block quest progress for training battles (isTraining already declared above)
@@ -7173,7 +8367,7 @@ function attachBattleListeners() {
             if (hasTheaterOperation(getGameState().operation)) {
               updateGameState((s) => applyTheaterBattleOutcome(s, localBattleState!));
             } else {
-              markCurrentRoomVisited();
+              markCurrentOperationRoomVisited();
             }
           }
         } else {
@@ -7338,6 +8532,25 @@ function attachBattleListeners() {
         isEndlessBattleMode = false;
         endlessBattleCount = 0;
       }
+      const isTheaterOperationBattle = Boolean(battle.theaterMeta && hasTheaterOperation(getGameState().operation));
+      if (isTheaterOperationBattle) {
+        updateGameState((state) => ({
+          ...applyTheaterOperationFailure(state, battle),
+          phase: "field",
+        }));
+        import("../../field/FieldScreen").then(({ renderFieldScreen }) => {
+          renderFieldScreen("base_camp");
+          showSystemPing({
+            title: "OPERATION FAILED",
+            message: "The deployed team was forced back to HAVEN.",
+            detail: "Theater progress was preserved. Deployed units returned Shaken until they recover.",
+            type: "error",
+            channel: "operation-failure",
+            durationMs: 3600,
+          });
+        });
+        return;
+      }
       if (hasTheaterOperation(getGameState().operation)) {
         updateGameState((s) => applyTheaterBattleOutcome(s, battle));
       }
@@ -7349,28 +8562,28 @@ function attachBattleListeners() {
   const log = document.getElementById("battleLog");
   if (log) log.scrollTop = log.scrollHeight;
 
-  // Clutch toggle button
-  const clutchBtn = document.getElementById("clutchToggleBtn");
-  if (clutchBtn && activeUnit && localBattleState) {
-    // Verify weapon is mechanical before allowing clutch toggle
-    const state = getGameState();
-    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-    const weapon = getEquippedWeapon(activeUnit, equipmentById);
-
-    // Only allow clutch toggle for mechanical weapons
-    if (weapon && weapon.isMechanical && weapon.clutchToggle) {
-      clutchBtn.onclick = () => {
-        handleBattleHudClutchToggle();
-      };
+  document.querySelectorAll<HTMLElement>("[data-clutch-id]").forEach((button) => {
+    const clutchId = button.dataset.clutchId;
+    if (!clutchId || button.hasAttribute("disabled")) {
+      return;
     }
-  }
-
-  const ventBtn = document.getElementById("ventBtn");
-  if (ventBtn) {
-    ventBtn.onclick = () => {
-      handleBattleHudVent();
+    button.onclick = () => {
+      handleBattleHudClutchToggle(clutchId);
     };
-  }
+  });
+
+  document.getElementById("quickReloadBtn")?.addEventListener("click", () => {
+    handleBattleHudQuickReload();
+  });
+  document.getElementById("fullReloadBtn")?.addEventListener("click", () => {
+    handleBattleHudFullReload();
+  });
+  document.getElementById("fieldPatchBtn")?.addEventListener("click", () => {
+    handleBattleHudFieldPatch();
+  });
+  document.getElementById("ventBtn")?.addEventListener("click", () => {
+    handleBattleHudVent();
+  });
 }
 
 // ============================================================================
@@ -7592,31 +8805,19 @@ function handleTrainingBattleComplete(battle: BattleState): void {
       import("./CommsArrayScreen").then(({ getLastTrainingConfig }) => {
         const lastConfig = getLastTrainingConfig();
         if (lastConfig && trainingConfig) {
-          // Start training battle directly with stored config
-          import("../../core/trainingEncounter").then(({ createTrainingEncounter }) => {
-            import("../../core/battleFromEncounter").then(({ createBattleFromEncounter }) => {
-              import("../../state/gameStore").then(({ getGameState, updateGameState }) => {
-                import("./BattleScreen").then(({ renderBattleScreen }) => {
-                  const state = getGameState();
-                  const encounter = createTrainingEncounter(state, lastConfig);
-                  if (encounter) {
-                    const battle = createBattleFromEncounter(state, encounter, `training_${Date.now()}`);
-                    if (battle) {
-                      (battle as any).isTraining = true;
-                      (battle as any).trainingConfig = lastConfig;
-                      (battle as any).returnTo = returnTo;
-                      updateGameState(prev => ({
-                        ...prev,
-                            currentBattle: battle,
-                        phase: "battle",
-                      }));
-                      renderBattleScreen();
-                    }
-                  }
-                });
-              });
-            });
-          });
+          const state = getGameState();
+          const nextBattle = createTrainingBattle(state, lastConfig, `training_${Date.now()}`);
+          if (nextBattle) {
+            (nextBattle as any).returnTo = returnTo;
+            updateGameState((prev) => ({
+              ...prev,
+              currentBattle: nextBattle,
+              phase: "battle",
+            }));
+            renderBattleScreen();
+            return;
+          }
+          renderBattleReturnDestination(returnTo);
         } else {
           renderBattleReturnDestination(returnTo);
         }

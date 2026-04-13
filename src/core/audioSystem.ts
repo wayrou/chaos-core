@@ -12,6 +12,16 @@ export type PlaceholderSfxId =
   | "battle-victory"
   | "battle-defeat";
 
+export type NamedAudioHookId =
+  | "attack_hit"
+  | "attack_crit"
+  | "resource_pickup"
+  | "sable_attack"
+  | "sable_bark"
+  | "ui_click"
+  | "weapon_overheat"
+  | "node_damage";
+
 export type MusicCueId =
   | "splash"
   | "boot"
@@ -72,8 +82,9 @@ const SFX_PATTERNS: Record<PlaceholderSfxId, ToneStep[]> = {
     { at: 0.055, duration: 0.06, from: 760, to: 920, gain: 0.12, type: "triangle" },
   ],
   "ui-move": [
-    { at: 0, duration: 0.03, from: 510, to: 560, gain: 0.08, type: "square" },
-    { at: 0.032, duration: 0.03, from: 650, to: 710, gain: 0.06, type: "triangle" },
+    // Keep footsteps tucked under the mix: softer, lower, and less clicky than menu UI motion.
+    { at: 0, duration: 0.045, from: 240, to: 210, gain: 0.032, type: "sine" },
+    { at: 0.01, duration: 0.05, from: 320, to: 260, gain: 0.018, type: "triangle" },
   ],
   "system-info": [
     { at: 0, duration: 0.05, from: 720, to: 820, gain: 0.09, type: "sine" },
@@ -100,6 +111,44 @@ const SFX_PATTERNS: Record<PlaceholderSfxId, ToneStep[]> = {
     { at: 0, duration: 0.09, from: 360, to: 300, gain: 0.08, type: "sawtooth" },
     { at: 0.1, duration: 0.1, from: 260, to: 190, gain: 0.08, type: "sawtooth" },
     { at: 0.21, duration: 0.14, from: 180, to: 120, gain: 0.06, type: "sine" },
+  ],
+};
+
+const NAMED_AUDIO_HOOK_PATTERNS: Record<NamedAudioHookId, ToneStep[]> = {
+  attack_hit: [
+    { at: 0, duration: 0.024, from: 160, to: 122, gain: 0.14, type: "square" },
+    { at: 0.008, duration: 0.06, from: 760, to: 420, gain: 0.075, type: "triangle" },
+  ],
+  attack_crit: [
+    { at: 0, duration: 0.028, from: 150, to: 110, gain: 0.17, type: "square" },
+    { at: 0.018, duration: 0.08, from: 680, to: 980, gain: 0.1, type: "triangle" },
+    { at: 0.105, duration: 0.07, from: 1040, to: 1360, gain: 0.085, type: "triangle" },
+  ],
+  resource_pickup: [
+    { at: 0, duration: 0.03, from: 600, to: 760, gain: 0.075, type: "triangle" },
+    { at: 0.028, duration: 0.05, from: 840, to: 1180, gain: 0.09, type: "triangle" },
+  ],
+  sable_attack: [
+    // Keep Sable's attack tucked under battle/weapon impacts so it reads like a quick snap, not a loud effect.
+    { at: 0, duration: 0.026, from: 210, to: 176, gain: 0.055, type: "square" },
+    { at: 0.014, duration: 0.05, from: 360, to: 280, gain: 0.04, type: "triangle" },
+  ],
+  sable_bark: [
+    { at: 0, duration: 0.04, from: 470, to: 390, gain: 0.05, type: "sawtooth" },
+    { at: 0.022, duration: 0.055, from: 330, to: 250, gain: 0.038, type: "square" },
+  ],
+  ui_click: [
+    { at: 0, duration: 0.03, from: 820, to: 720, gain: 0.1, type: "triangle" },
+    { at: 0.035, duration: 0.024, from: 610, to: 560, gain: 0.05, type: "triangle" },
+  ],
+  weapon_overheat: [
+    { at: 0, duration: 0.06, from: 220, to: 180, gain: 0.12, type: "sawtooth" },
+    { at: 0.055, duration: 0.08, from: 340, to: 120, gain: 0.1, type: "square" },
+    { at: 0.14, duration: 0.12, from: 720, to: 180, gain: 0.08, type: "triangle" },
+  ],
+  node_damage: [
+    { at: 0, duration: 0.024, from: 210, to: 170, gain: 0.11, type: "square" },
+    { at: 0.02, duration: 0.05, from: 460, to: 300, gain: 0.06, type: "sawtooth" },
   ],
 };
 
@@ -344,8 +393,15 @@ function attachGlobalUiAudioHooks(): void {
         return;
       }
 
-      void unlockAudio();
-      playPlaceholderSfx(inferUiSound(control));
+      void unlockAudio().then(() => {
+        if (control.matches('input[type="range"]')) {
+          return;
+        }
+        if (control.hasAttribute("disabled") || control.getAttribute("aria-disabled") === "true") {
+          return;
+        }
+        playPlaceholderSfx(inferUiSound(control));
+      });
     },
     true,
   );
@@ -353,14 +409,76 @@ function attachGlobalUiAudioHooks(): void {
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        void unlockAudio();
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
       }
+
+      const key = event.key;
+      if (key.length !== 1 && key !== "Enter" && key !== " ") {
+        return;
+      }
+
+      const target = event.target;
+      const control = target instanceof Element
+        ? target.closest<HTMLElement>('button, [role="button"], [data-action], a[href], summary')
+        : null;
+      if (control?.dataset.audioIgnore === "true") {
+        return;
+      }
+
+      void unlockAudio().then(() => {
+        if (!control || (key !== "Enter" && key !== " ")) {
+          return;
+        }
+        if (control.hasAttribute("disabled") || control.getAttribute("aria-disabled") === "true") {
+          return;
+        }
+        playPlaceholderSfx(inferUiSound(control));
+      });
     },
     true,
   );
 
   globalUiHooksAttached = true;
+}
+
+function scheduleTonePatternPlayback(
+  ctx: AudioContext,
+  destination: GainNode,
+  steps: ToneStep[],
+): void {
+  const now = ctx.currentTime + 0.002;
+  steps.forEach((step) => {
+    scheduleTone(ctx, destination, now + step.at, step, 1);
+  });
+}
+
+function playTonePattern(steps: ToneStep[]): void {
+  initializeAudioSystem();
+
+  if (getEffectiveChannelVolume(getSettings().sfxVolume) <= 0) {
+    return;
+  }
+
+  const ctx = ensureAudioGraph();
+  const destination = sfxGainNode;
+  if (!ctx || !destination) {
+    return;
+  }
+
+  if (ctx.state !== "running" || !audioUnlocked) {
+    void unlockAudio().then(() => {
+      const resumedCtx = ensureAudioGraph();
+      const resumedDestination = sfxGainNode;
+      if (!resumedCtx || !resumedDestination || resumedCtx.state !== "running") {
+        return;
+      }
+      scheduleTonePatternPlayback(resumedCtx, resumedDestination, steps);
+    });
+    return;
+  }
+
+  scheduleTonePatternPlayback(ctx, destination, steps);
 }
 
 export function initializeAudioSystem(): void {
@@ -424,29 +542,19 @@ export function getCurrentMusicCue(): MusicCueId | null {
 }
 
 export function playPlaceholderSfx(id: PlaceholderSfxId): void {
-  initializeAudioSystem();
-
-  if (getEffectiveChannelVolume(getSettings().sfxVolume) <= 0) {
-    return;
-  }
-
-  const ctx = ensureAudioGraph();
-  const destination = sfxGainNode;
-  if (!ctx || !destination) {
-    return;
-  }
-
   const steps = SFX_PATTERNS[id];
   if (!steps) {
     return;
   }
+  playTonePattern(steps);
+}
 
-  const now = ctx.currentTime + 0.002;
-  const volumeScalar = 1;
-
-  steps.forEach((step) => {
-    scheduleTone(ctx, destination, now + step.at, step, volumeScalar);
-  });
+export function playNamedAudioHook(id: NamedAudioHookId): void {
+  const steps = NAMED_AUDIO_HOOK_PATTERNS[id];
+  if (!steps) {
+    return;
+  }
+  playTonePattern(steps);
 }
 
 export function playSystemPingSfx(type: "info" | "success" | "error"): void {

@@ -1,4 +1,9 @@
 import { getGameState, updateGameState } from "../state/gameStore";
+import {
+  hasEnoughResources as hasEnoughResourceValues,
+  subtractResourceWallet,
+  type ResourceWallet,
+} from "./resources";
 
 export type DecorAnchorId =
   | "wall_left"
@@ -9,12 +14,8 @@ export type DecorAnchorId =
   | "window_sill"
   | "bedside_table";
 
-export interface DecorResourceCost {
-  metalScrap?: number;
-  wood?: number;
-  chaosShards?: number;
-  steamComponents?: number;
-}
+export type DecorResourceCost = Partial<ResourceWallet>;
+export type FieldDecorRotationQuarterTurns = 0 | 1 | 2 | 3;
 
 export interface DecorItem {
   id: string;
@@ -29,6 +30,13 @@ export interface DecorItem {
   fieldPlaceable?: boolean;
   shopCostWad?: number;
   craftCost?: DecorResourceCost;
+  fieldCollision?: "none" | "blocking";
+  autoTurret?: {
+    damage: number;
+    rangePx: number;
+    cooldownMs: number;
+    projectileSpeed: number;
+  };
   sourceRules?: {
     shopEligible?: boolean;
     rewardEligible?: boolean;
@@ -42,6 +50,7 @@ export interface FieldDecorPlacement {
   mapId: string;
   x: number;
   y: number;
+  rotationQuarterTurns?: FieldDecorRotationQuarterTurns;
 }
 
 export interface DecorState {
@@ -60,6 +69,26 @@ const DEFAULT_ANCHOR_STATE: Record<DecorAnchorId, string | null> = {
   window_sill: null,
   bedside_table: null,
 };
+
+export function normalizeFieldDecorRotationQuarterTurns(
+  rotationQuarterTurns?: number | null,
+): FieldDecorRotationQuarterTurns {
+  const normalized = Math.round(Number(rotationQuarterTurns ?? 0));
+  const wrapped = ((normalized % 4) + 4) % 4;
+  return wrapped as FieldDecorRotationQuarterTurns;
+}
+
+export function getFieldDecorFootprintSize(
+  decor: Pick<DecorItem, "tileWidth" | "tileHeight">,
+  rotationQuarterTurns?: number | null,
+): { width: number; height: number } {
+  const normalized = normalizeFieldDecorRotationQuarterTurns(rotationQuarterTurns);
+  const rotated = normalized === 1 || normalized === 3;
+  return {
+    width: rotated ? decor.tileHeight : decor.tileWidth,
+    height: rotated ? decor.tileWidth : decor.tileHeight,
+  };
+}
 
 const DECOR_ITEMS: DecorItem[] = [
   {
@@ -152,24 +181,78 @@ const DECOR_ITEMS: DecorItem[] = [
     craftCost: { metalScrap: 2, chaosShards: 1 },
     sourceRules: { shopEligible: true, rewardEligible: true, craftEligible: true },
   },
+  {
+    id: "decor_field_barricade",
+    name: "Barricade",
+    description: "Portable barrier plating for sealing a lane or carving a quick chokepoint into the field.",
+    spriteKey: "field_barricade",
+    iconKey: "BARR",
+    rarityTag: "common",
+    allowedAnchors: [],
+    tileWidth: 2,
+    tileHeight: 1,
+    fieldPlaceable: true,
+    craftCost: { wood: 1 },
+    fieldCollision: "blocking",
+    sourceRules: { shopEligible: false, rewardEligible: false, craftEligible: true },
+  },
+  {
+    id: "decor_field_ammo_crate",
+    name: "Ammo Crate",
+    description: "A forward resupply crate stashed wherever you expect a rough lane to turn into a hold.",
+    spriteKey: "field_ammo_crate",
+    iconKey: "AMMO",
+    rarityTag: "common",
+    allowedAnchors: [],
+    tileWidth: 1,
+    tileHeight: 1,
+    fieldPlaceable: true,
+    craftCost: { wood: 1, metalScrap: 1 },
+    sourceRules: { shopEligible: false, rewardEligible: false, craftEligible: true },
+  },
+  {
+    id: "decor_field_med_station",
+    name: "Med Station",
+    description: "Compact treatment stand for patching up a forward position without pulling all the way back.",
+    spriteKey: "field_med_station",
+    iconKey: "MED",
+    rarityTag: "uncommon",
+    allowedAnchors: [],
+    tileWidth: 1,
+    tileHeight: 1,
+    fieldPlaceable: true,
+    craftCost: { wood: 1, chaosShards: 1 },
+    sourceRules: { shopEligible: false, rewardEligible: false, craftEligible: true },
+  },
+  {
+    id: "decor_field_turret",
+    name: "Turret",
+    description: "A light autonomous turret that tracks and peppers nearby hostiles while you work the lane.",
+    spriteKey: "field_turret",
+    iconKey: "TUR",
+    rarityTag: "uncommon",
+    allowedAnchors: [],
+    tileWidth: 1,
+    tileHeight: 1,
+    fieldPlaceable: true,
+    craftCost: { metalScrap: 3, steamComponents: 1 },
+    fieldCollision: "blocking",
+    autoTurret: {
+      damage: 2,
+      rangePx: 320,
+      cooldownMs: 950,
+      projectileSpeed: 560,
+    },
+    sourceRules: { shopEligible: false, rewardEligible: false, craftEligible: true },
+  },
 ];
 
 function hasEnoughResources(resources: DecorResourceCost, cost?: DecorResourceCost): boolean {
-  return (
-    (resources.metalScrap ?? 0) >= (cost?.metalScrap ?? 0)
-    && (resources.wood ?? 0) >= (cost?.wood ?? 0)
-    && (resources.chaosShards ?? 0) >= (cost?.chaosShards ?? 0)
-    && (resources.steamComponents ?? 0) >= (cost?.steamComponents ?? 0)
-  );
+  return hasEnoughResourceValues(resources, cost);
 }
 
 function subtractResources(resources: DecorResourceCost, cost?: DecorResourceCost): DecorResourceCost {
-  return {
-    metalScrap: (resources.metalScrap ?? 0) - (cost?.metalScrap ?? 0),
-    wood: (resources.wood ?? 0) - (cost?.wood ?? 0),
-    chaosShards: (resources.chaosShards ?? 0) - (cost?.chaosShards ?? 0),
-    steamComponents: (resources.steamComponents ?? 0) - (cost?.steamComponents ?? 0),
-  };
+  return subtractResourceWallet(resources, cost);
 }
 
 export function getDecorState(state: { quarters?: { decor?: DecorState } }): DecorState {
@@ -179,7 +262,10 @@ export function getDecorState(state: { quarters?: { decor?: DecorState } }): Dec
       ...DEFAULT_ANCHOR_STATE,
       ...(state.quarters?.decor?.placedDecorByAnchor ?? {}),
     },
-    fieldPlacements: [...(state.quarters?.decor?.fieldPlacements ?? [])],
+    fieldPlacements: (state.quarters?.decor?.fieldPlacements ?? []).map((placement) => ({
+      ...placement,
+      rotationQuarterTurns: normalizeFieldDecorRotationQuarterTurns(placement.rotationQuarterTurns),
+    })),
     nextFieldPlacementOrdinal: Math.max(1, Number(state.quarters?.decor?.nextFieldPlacementOrdinal ?? 1)),
   };
 }
@@ -191,6 +277,14 @@ export function getAllDecorItems(): DecorItem[] {
 export function getDecorItemById(decorId: string): DecorItem | null {
   const item = DECOR_ITEMS.find((decor) => decor.id === decorId);
   return item ? { ...item, allowedAnchors: [...item.allowedAnchors] } : null;
+}
+
+export function isFieldDecorBlocking(decorId: string): boolean {
+  return getDecorItemById(decorId)?.fieldCollision === "blocking";
+}
+
+export function getFieldDecorTurretProfile(decorId: string): DecorItem["autoTurret"] | null {
+  return getDecorItemById(decorId)?.autoTurret ?? null;
 }
 
 export function getPlacedDecor(
@@ -229,18 +323,46 @@ export function getPlacedFieldDecor(
     .filter((entry): entry is { placement: FieldDecorPlacement; decor: DecorItem } => Boolean(entry)) ?? [];
 }
 
-function getAllPlacedDecorIds(state: { quarters?: { decor?: DecorState } }): string[] {
+function incrementDecorCount(counts: Map<string, number>, decorId: string): void {
+  counts.set(decorId, (counts.get(decorId) ?? 0) + 1);
+}
+
+function getOwnedDecorCounts(state: { quarters?: { decor?: DecorState } }): Map<string, number> {
+  const counts = new Map<string, number>();
+  getDecorState(state).owned.forEach((decorId) => incrementDecorCount(counts, decorId));
+  return counts;
+}
+
+function getPlacedDecorCounts(state: { quarters?: { decor?: DecorState } }): Map<string, number> {
   const decorState = getDecorState(state);
-  const anchorIds = Object.values(decorState.placedDecorByAnchor).filter((id): id is string => Boolean(id));
-  const fieldIds = (decorState.fieldPlacements ?? []).map((placement) => placement.decorId);
-  return [...anchorIds, ...fieldIds];
+  const counts = new Map<string, number>();
+  Object.values(decorState.placedDecorByAnchor).forEach((decorId) => {
+    if (decorId) {
+      incrementDecorCount(counts, decorId);
+    }
+  });
+  (decorState.fieldPlacements ?? []).forEach((placement) => incrementDecorCount(counts, placement.decorId));
+  return counts;
+}
+
+function getUnplacedDecorCount(state: { quarters?: { decor?: DecorState } }, decorId: string): number {
+  const ownedCount = getOwnedDecorCounts(state).get(decorId) ?? 0;
+  const placedCount = getPlacedDecorCounts(state).get(decorId) ?? 0;
+  return Math.max(0, ownedCount - placedCount);
 }
 
 export function getUnplacedDecor(state: { quarters?: { decor?: DecorState } }): DecorItem[] {
   const decorState = getDecorState(state);
-  const placedIds = new Set(getAllPlacedDecorIds(state));
+  const remainingPlacedCounts = getPlacedDecorCounts(state);
   return decorState.owned
-    .filter((id) => !placedIds.has(id))
+    .filter((decorId) => {
+      const placedCount = remainingPlacedCounts.get(decorId) ?? 0;
+      if (placedCount <= 0) {
+        return true;
+      }
+      remainingPlacedCounts.set(decorId, placedCount - 1);
+      return false;
+    })
     .map((id) => getDecorItemById(id))
     .filter((item): item is DecorItem => item !== null);
 }
@@ -250,16 +372,12 @@ export function getAvailableFieldDecor(state: { quarters?: { decor?: DecorState 
 }
 
 export function getCraftableDecorItems(state: { quarters?: { decor?: DecorState }; resources?: DecorResourceCost }): DecorItem[] {
-  const owned = new Set(getDecorState(state).owned);
-  return DECOR_ITEMS.filter((decor) => decor.sourceRules?.craftEligible !== false && !owned.has(decor.id));
+  return DECOR_ITEMS.filter((decor) => decor.sourceRules?.craftEligible !== false);
 }
 
 export function canCraftDecorItem(decorId: string, state: { quarters?: { decor?: DecorState }; resources?: DecorResourceCost }): boolean {
   const decor = getDecorItemById(decorId);
   if (!decor || decor.sourceRules?.craftEligible === false) {
-    return false;
-  }
-  if (getDecorState(state).owned.includes(decorId)) {
     return false;
   }
   return hasEnoughResources(state.resources ?? {}, decor.craftCost);
@@ -282,13 +400,18 @@ export function placeDecor(decorId: string, anchorId: DecorAnchorId): boolean {
     return false;
   }
 
-  const currentAnchor = Object.entries(decorState.placedDecorByAnchor).find(([, id]) => id === decorId)?.[0] as DecorAnchorId | undefined;
-  const fieldPlacements = (decorState.fieldPlacements ?? []).filter((placement) => placement.decorId !== decorId);
+  const availableCopies = getUnplacedDecorCount(state, decorId);
+  const currentAnchor = Object.entries(decorState.placedDecorByAnchor)
+    .find(([existingAnchor, id]) => existingAnchor !== anchorId && id === decorId)?.[0] as DecorAnchorId | undefined;
+  if (availableCopies <= 0 && !currentAnchor && decorState.placedDecorByAnchor[anchorId] !== decorId) {
+    console.warn(`[DECOR] Decor item not available to place: ${decorId}`);
+    return false;
+  }
 
   updateGameState((current) => {
     const currentDecorState = getDecorState(current);
     const nextPlaced = { ...currentDecorState.placedDecorByAnchor };
-    if (currentAnchor) {
+    if (availableCopies <= 0 && currentAnchor) {
       nextPlaced[currentAnchor] = null;
     }
     nextPlaced[anchorId] = decorId;
@@ -299,7 +422,6 @@ export function placeDecor(decorId: string, anchorId: DecorAnchorId): boolean {
         decor: {
           ...currentDecorState,
           placedDecorByAnchor: nextPlaced,
-          fieldPlacements,
         },
       },
     };
@@ -327,22 +449,25 @@ export function removeDecor(anchorId: DecorAnchorId): boolean {
   return true;
 }
 
-export function placeFieldDecor(decorId: string, mapId: string, x: number, y: number): boolean {
+export function placeFieldDecor(
+  decorId: string,
+  mapId: string,
+  x: number,
+  y: number,
+  rotationQuarterTurns: number = 0,
+): boolean {
   const state = getGameState();
-  const decorState = getDecorState(state);
   const decor = getDecorItemById(decorId);
   if (!decor || decor.fieldPlaceable === false) {
     console.warn(`[DECOR] Decor item is not field placeable: ${decorId}`);
     return false;
   }
-  if (!decorState.owned.includes(decorId)) {
-    console.warn(`[DECOR] Decor item not owned: ${decorId}`);
+  if (getUnplacedDecorCount(state, decorId) <= 0) {
+    console.warn(`[DECOR] Decor item is not available to place: ${decorId}`);
     return false;
   }
-  if (getAllPlacedDecorIds(state).includes(decorId)) {
-    console.warn(`[DECOR] Decor item is already placed: ${decorId}`);
-    return false;
-  }
+
+  const normalizedRotation = normalizeFieldDecorRotationQuarterTurns(rotationQuarterTurns);
 
   updateGameState((current) => {
     const currentDecorState = getDecorState(current);
@@ -353,6 +478,7 @@ export function placeFieldDecor(decorId: string, mapId: string, x: number, y: nu
       mapId,
       x,
       y,
+      rotationQuarterTurns: normalizedRotation,
     };
     return {
       ...current,
@@ -388,6 +514,36 @@ export function moveFieldDecor(placementId: string, x: number, y: number): boole
           fieldPlacements: (currentDecorState.fieldPlacements ?? []).map((placement) =>
             placement.placementId === placementId
               ? { ...placement, x, y }
+              : placement,
+          ),
+        },
+      },
+    };
+  });
+
+  return true;
+}
+
+export function setFieldDecorRotation(placementId: string, rotationQuarterTurns: number): boolean {
+  const state = getGameState();
+  const decorState = getDecorState(state);
+  if (!(decorState.fieldPlacements ?? []).some((placement) => placement.placementId === placementId)) {
+    return false;
+  }
+
+  const normalizedRotation = normalizeFieldDecorRotationQuarterTurns(rotationQuarterTurns);
+
+  updateGameState((current) => {
+    const currentDecorState = getDecorState(current);
+    return {
+      ...current,
+      quarters: {
+        ...(current.quarters ?? {}),
+        decor: {
+          ...currentDecorState,
+          fieldPlacements: (currentDecorState.fieldPlacements ?? []).map((placement) =>
+            placement.placementId === placementId
+              ? { ...placement, rotationQuarterTurns: normalizedRotation }
               : placement,
           ),
         },
@@ -456,9 +612,6 @@ export function craftDecorItem(decorId: string): boolean {
   const state = getGameState();
   const decor = getDecorItemById(decorId);
   if (!decor || decor.sourceRules?.craftEligible === false) {
-    return false;
-  }
-  if (getDecorState(state).owned.includes(decorId)) {
     return false;
   }
   if (!hasEnoughResources(state.resources ?? {}, decor.craftCost)) {
@@ -568,6 +721,38 @@ export function renderDecorSpriteSvg(decor: DecorItem): string {
           <path d="M14 6 L16 10 L18 6"></path>
           <circle cx="16" cy="19" r="6"></circle>
           <path d="M16 15 L17.6 18.2 L21 18.7 L18.5 21.2 L19.1 24.5 L16 22.9 L12.9 24.5 L13.5 21.2 L11 18.7 L14.4 18.2 Z"></path>
+        </svg>
+      `;
+    case "field_barricade":
+      return `
+        <svg class="decor-sprite-svg decor-sprite-svg--barricade" viewBox="0 0 64 32" aria-hidden="true">
+          <rect x="4" y="12" width="56" height="14" rx="2"></rect>
+          <path d="M10 12 V6 M22 12 V4 M34 12 V6 M46 12 V4 M58 12 V6"></path>
+        </svg>
+      `;
+    case "field_ammo_crate":
+      return `
+        <svg class="decor-sprite-svg decor-sprite-svg--ammo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="6" y="10" width="20" height="14" rx="2"></rect>
+          <path d="M10 10 V7 H22 V10"></path>
+          <path d="M12 17 H20"></path>
+        </svg>
+      `;
+    case "field_med_station":
+      return `
+        <svg class="decor-sprite-svg decor-sprite-svg--med-station" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="7" y="7" width="18" height="18" rx="3"></rect>
+          <path d="M16 11 V21"></path>
+          <path d="M11 16 H21"></path>
+        </svg>
+      `;
+    case "field_turret":
+      return `
+        <svg class="decor-sprite-svg decor-sprite-svg--turret" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="11" y="19" width="10" height="6" rx="1"></rect>
+          <rect x="9" y="12" width="14" height="8" rx="2"></rect>
+          <path d="M23 15 H28"></path>
+          <path d="M16 12 V8"></path>
         </svg>
       `;
     default:

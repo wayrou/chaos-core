@@ -13,9 +13,19 @@ import {
 } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
-import { renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
-import { createCompanion, updateCompanion } from "./companion";
-import { hasLiveFieldEnemies, isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
+import { ensureTheaterAutoTickStateSync, renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
+import { showAlertDialog } from "../ui/components/confirmDialog";
+import {
+  checkCompanionReachedTarget,
+  createCompanion,
+  findNearestEnemy,
+  findNearestResource,
+  updateCompanion,
+  updateCompanionAttack,
+  updateCompanionFetch,
+  updateCompanionFollow,
+} from "./companion";
+import { isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
 import { showDialogue, showNpcDialogue } from "../ui/screens/DialogueScreen";
 import {
@@ -25,12 +35,19 @@ import {
   handleKeyUp as handlePlayerInputKeyUp,
   isPlayerInputActionEvent,
 } from "../core/playerInput";
-import { clearControllerContext, updateFocusableElements } from "../core/controllerSupport";
+import {
+  clearControllerContext,
+  getAssignedGamepad,
+  isGamepadActionActive,
+  registerControllerContext,
+  updateFocusableElements,
+} from "../core/controllerSupport";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
 import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import {
   NETWORK_PLAYER_SLOTS,
+  SESSION_PLAYER_SLOTS,
   type BaseCampLayoutLoadout,
   type BaseCampPinnedItemFrame,
   type LobbyState,
@@ -58,8 +75,41 @@ import {
   isStableNodeUnlocked,
 } from "../core/campaign";
 import {
+  BASIC_RESOURCE_KEYS,
+  RESOURCE_SHORT_LABELS,
+  createEmptyResourceWallet,
+  getResourceEntries,
+  type ResourceKey,
+  type ResourceWallet,
+} from "../core/resources";
+import {
+  canCraftMaterialRefineryRecipe,
+  countAdvancedMaterialOwned,
+  craftMaterialRefineryRecipe,
+  getMaterialRefineryRecipe,
+  getMaterialRefineryRecipes,
+  getMaterialRefineryShortage,
+  type AdvancedMaterialId,
+  type MaterialRefineryContext,
+} from "../core/materialRefinery";
+import {
+  BOWBLADE_BASE_ATTACK_CYCLE_MS,
+  BOWBLADE_BASE_MAX_ENERGY_CELLS,
+  BOWBLADE_BASE_MELEE_CHARGE_GAIN,
+  BOWBLADE_BASE_MELEE_DAMAGE,
+  BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE,
+  BOWBLADE_BASE_PROJECTILE_SPEED,
+  BOWBLADE_BASE_RANGED_DAMAGE,
+  BOWBLADE_BASE_RANGED_RANGE,
+  BOWBLADE_MIN_ATTACK_CYCLE_MS,
+  getBowbladeFieldProfile,
+  getWeaponsmithInstalledUpgradeIds,
+} from "../core/weaponsmith";
+import { getAerissFieldMovementSpeedBonus } from "../core/mounts";
+import {
   canPlayerUseFieldAction,
   getFieldActionRestrictionMessage,
+  grantSessionResources,
   getPlayerControllerLabel,
   isLocalCoopActive,
 } from "../core/session";
@@ -73,7 +123,17 @@ import {
 import { getActiveQuests, initializeQuestState, updateQuestProgress } from "../quests/questManager";
 import { renderQuestTrackerWidget } from "../ui/components/questTrackerWidget";
 import { showSystemPing } from "../ui/components/systemPing";
-import { setMusicCue } from "../core/audioSystem";
+import { showTutorialCallout, showTutorialCalloutSequence } from "../ui/components/tutorialCallout";
+import { playNamedAudioHook, playPlaceholderSfx, setMusicCue } from "../core/audioSystem";
+import {
+  subscribeToFeedback,
+  triggerFeedback,
+  type FeedbackRequest,
+} from "../core/feedback";
+import {
+  enhanceTerminalUiButtons,
+  startTerminalTyping,
+} from "../ui/components/terminalFeedback";
 import { createLobbyPlaylist, shouldRenderLobbyAvatar } from "../core/multiplayerLobby";
 import { getSquadWinConditionLabel } from "../core/squadOnline";
 import {
@@ -83,16 +143,27 @@ import {
   type BaseCampNodeId,
 } from "./baseCampBuild";
 import {
+  getCurrentOpsTerminalAtlasFloor,
+  getOpsTerminalAtlasWarmEconomySummaries,
+} from "../core/opsTerminalAtlas";
+import {
   canCraftDecorItem,
   craftDecorItem,
+  getFieldDecorFootprintSize,
+  getFieldDecorTurretProfile,
   getAvailableFieldDecor,
   getCraftableDecorItems,
   getDecorItemById,
+  getPlacedFieldDecor,
   moveFieldDecor,
+  normalizeFieldDecorRotationQuarterTurns,
   placeFieldDecor,
   removeFieldDecor,
   renderDecorSpriteSvg,
+  setFieldDecorRotation,
   seedInitialDecor,
+  type DecorItem,
+  type FieldDecorRotationQuarterTurns,
 } from "../core/decorSystem";
 import {
   buildFieldMinimapModel,
@@ -101,6 +172,20 @@ import {
   MINIMAP_LAYOUT_ID,
   revealFieldMinimapArea,
 } from "./fieldMinimap";
+import {
+  getEscActionAvailability,
+  getEscExpeditionRestrictionMessage,
+  isEscActionEnabled,
+  type EscNodeAction,
+} from "../core/escAvailability";
+import {
+  getOuterDeckFieldContext,
+  getOuterDeckSubareaByMapId,
+  isOuterDeckBranchMap,
+  isOuterDeckOverworldMap,
+  isOuterDeckSubareaCleared,
+  markOuterDeckSubareaCleared,
+} from "../core/outerDecks";
 
 // ============================================================================
 // STATE
@@ -120,12 +205,36 @@ let movementInput = {
 };
 
 let activeInteractionPrompt: string | null = null;
+let activeAutoInteractionZoneKey: string | null = null;
+let suppressedAutoInteractionZoneKey: string | null = null;
+type FieldControllerActionSnapshot = {
+  interact: boolean;
+  attack: boolean;
+  special1: boolean;
+};
+
+const previousFieldControllerActions: Record<PlayerId, FieldControllerActionSnapshot> = {
+  P1: { interact: false, attack: false, special1: false },
+  P2: { interact: false, attack: false, special1: false },
+};
 
 // Panel state - simple boolean
 let isPanelOpen = false;
 
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
+let fieldFocusableRefreshTimerId: number | null = null;
+
+function scheduleFieldFocusableRefresh(delayMs = 48): void {
+  if (fieldFocusableRefreshTimerId !== null) {
+    window.clearTimeout(fieldFocusableRefreshTimerId);
+  }
+
+  fieldFocusableRefreshTimerId = window.setTimeout(() => {
+    fieldFocusableRefreshTimerId = null;
+    updateFocusableElements();
+  }, delayMs);
+}
 
 function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []): FieldNpc[] {
   const currentNpcById = new Map(currentNpcs.map((npc) => [npc.id, npc]));
@@ -153,18 +262,101 @@ function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []
 }
 
 function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   return {
     isAttacking: false,
     attackCooldown: 0,
     attackAnimTime: 0,
     isRangedMode: false,
     energyCells: 0,
-    maxEnergyCells: 5,
+    maxEnergyCells: Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus),
   };
 }
 
+function normalizeFieldCombatState(
+  combat: FieldState["combat"] | null | undefined,
+): NonNullable<FieldState["combat"]> {
+  const nextCombat = combat ? { ...combat } : createDefaultFieldCombatState();
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  nextCombat.maxEnergyCells = Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus);
+  nextCombat.energyCells = Math.max(0, Math.min(nextCombat.energyCells, nextCombat.maxEnergyCells));
+  return nextCombat;
+}
+
+function normalizeFieldPlayerState(player: PlayerAvatar): PlayerAvatar {
+  const maxHp = Math.max(1, Number(player.maxHp ?? FIELD_PLAYER_MAX_HP));
+  return {
+    ...player,
+    hp: Math.max(0, Math.min(Number(player.hp ?? maxHp), maxHp)),
+    maxHp,
+    invulnerabilityTime: Math.max(0, Number(player.invulnerabilityTime ?? 0)),
+    vx: Number(player.vx ?? 0),
+    vy: Number(player.vy ?? 0),
+  };
+}
+
+function getFieldAttackCooldown(): number {
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  return Math.max(BOWBLADE_MIN_ATTACK_CYCLE_MS, FIELD_ATTACK_COOLDOWN + bowbladeFieldProfile.attackCooldownDelta);
+}
+
+function getLocallyRelevantFieldEnemies(): FieldEnemy[] {
+  const liveEnemies = (fieldState?.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0);
+  if (!currentMap || !isOuterDeckOverworldMap(currentMap.id)) {
+    return liveEnemies;
+  }
+
+  const activeAvatarPositions = (["P1", "P2"] as PlayerId[])
+    .map((playerId) => getGameState().players[playerId])
+    .filter((player) => Boolean(player?.active && player.avatar))
+    .map((player) => player!.avatar!)
+    .map((avatar) => ({ x: avatar.x, y: avatar.y }));
+
+  if (activeAvatarPositions.length === 0 && fieldState?.player) {
+    activeAvatarPositions.push({ x: fieldState.player.x, y: fieldState.player.y });
+  }
+
+  return liveEnemies.filter((enemy) => activeAvatarPositions.some((avatar) => (
+    Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y)
+    <= Math.max(FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS, enemy.aggroRange + 48)
+  )));
+}
+
 function isFieldCombatActive(): boolean {
-  return hasLiveFieldEnemies(fieldState?.fieldEnemies ?? []);
+  return getLocallyRelevantFieldEnemies().length > 0;
+}
+
+function getUncollectedFieldResourceObjects(): Array<FieldMap["objects"][number]> {
+  if (!currentMap || !fieldState) {
+    return [];
+  }
+
+  const collected = new Set(fieldState.collectedResourceObjectIds ?? []);
+  return currentMap.objects.filter((object) => object.type === "resource" && !collected.has(object.id));
+}
+
+function syncP1AvatarPosition(nextX: number, nextY: number): void {
+  updateGameState((state) => {
+    const avatar = state.players.P1.avatar;
+    if (!avatar) {
+      return state;
+    }
+
+    return {
+      ...state,
+      players: {
+        ...state.players,
+        P1: {
+          ...state.players.P1,
+          avatar: {
+            ...avatar,
+            x: nextX,
+            y: nextY,
+          },
+        },
+      },
+    };
+  });
 }
 
 // Store last interaction zone position for returning to field from nodes
@@ -180,6 +372,20 @@ let fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "uni
 let stickyNoteDragResumePending = false;
 let lastNetworkLobbyAvatarSyncKey = "";
 let lastMinimapRevealKey = "";
+let cleanupFieldFeedbackListener: (() => void) | null = null;
+let cleanupFieldControllerContext: (() => void) | null = null;
+let smoothedFieldCameraCenter: { x: number; y: number } | null = null;
+let currentFieldCameraTransform = {
+  offsetX: 0,
+  offsetY: 0,
+  zoom: 1,
+};
+let lastFieldPromptSignature: string | null = null;
+let lastFieldStepSample: { x: number; y: number } | null = null;
+let fieldStepDistanceAccumulator = 0;
+let fieldStepPulseUntilMs = 0;
+let lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
+let lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
 let havenBuildModeActive = false;
 let havenBuildResumePaused = false;
 let havenBuildCameraCenter: { x: number; y: number } | null = null;
@@ -190,7 +396,7 @@ let havenBuildPanInput = {
   right: false,
   fast: false,
 };
-let havenBuildPaletteSelection: { kind: "node"; nodeId: BaseCampNodeId } | { kind: "decor"; decorId: string } | null = null;
+let havenBuildPaletteSelection: { kind: "node"; nodeId: BaseCampNodeId } | HavenBuildDecorSelection | null = null;
 let havenBuildDragState: {
   kind: "node" | "decor";
   itemId: string;
@@ -206,6 +412,33 @@ let havenBuildDragState: {
   latestY: number;
   valid: boolean;
 } | null = null;
+const fieldTurretLastFireAtMs = new Map<string, number>();
+const fieldTileHtmlCache = new WeakMap<FieldMap, string>();
+const FIELD_TILE_BACKGROUND_COLOR = "#23201e";
+const FIELD_TILE_PATTERN_STYLES = {
+  floor: {
+    fill: "#5a4738",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  wall: {
+    fill: "#43434a",
+    stroke: "rgba(86, 86, 95, 0.22)",
+  },
+  grass: {
+    fill: "#525543",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  dirt: {
+    fill: "#5f4a38",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+  stone: {
+    fill: "#5a4738",
+    stroke: "rgba(111, 87, 65, 0.18)",
+  },
+} as const;
+
+type FieldTilePatternKey = keyof typeof FIELD_TILE_PATTERN_STYLES;
 
 type HavenBuildObjectMeta =
   | {
@@ -221,6 +454,12 @@ type HavenBuildObjectMeta =
       width: number;
       height: number;
     };
+
+type HavenBuildDecorSelection = {
+  kind: "decor";
+  decorId: string;
+  rotationQuarterTurns: FieldDecorRotationQuarterTurns;
+};
 
 type NetworkLobbyPlaylistDraftRound = {
   gridWidth: number;
@@ -262,26 +501,85 @@ let pendingFieldSpawnOverride: {
 } | null = null;
 
 const FIELD_TILE_SIZE = 64;
-const FIELD_ATTACK_COOLDOWN = 400;
+const FIELD_ATTACK_COOLDOWN = BOWBLADE_BASE_ATTACK_CYCLE_MS;
 const FIELD_ATTACK_DURATION = 200;
 const FIELD_ATTACK_RANGE = 70;
-const FIELD_RANGED_ATTACK_RANGE = 400;
-const FIELD_ATTACK_DAMAGE = 2;
-const FIELD_RANGED_ATTACK_DAMAGE = 5;
-const FIELD_PROJECTILE_SPEED = 500;
+const FIELD_RANGED_ATTACK_RANGE = BOWBLADE_BASE_RANGED_RANGE;
+const FIELD_ATTACK_DAMAGE = BOWBLADE_BASE_MELEE_DAMAGE;
+const FIELD_RANGED_ATTACK_DAMAGE = BOWBLADE_BASE_RANGED_DAMAGE;
+const FIELD_PROJECTILE_SPEED = BOWBLADE_BASE_PROJECTILE_SPEED;
 const FIELD_PROJECTILE_LIFETIME = 2000;
-const FIELD_ENEMY_KNOCKBACK_FORCE = 600;
+const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
+const FIELD_PLAYER_MAX_HP = 100;
+const FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS = 320;
+const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
+const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
+const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
+const FIELD_COMPANION_ATTACK_RANGE = 56;
+const FIELD_CAMERA_SMOOTHING = 0.2;
+const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
+const FIELD_FOOTSTEP_DISTANCE = 82;
+const FIELD_DASH_FOOTSTEP_DISTANCE = 56;
+const FIELD_STEP_PULSE_DURATION_MS = 150;
+const FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS = 180;
+const FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS = 900;
+const FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS = 520;
 const HAVEN_BUILD_PAN_SPEED = 720;
 const HAVEN_BUILD_PAN_FAST_MULTIPLIER = 2.25;
+
+function getFieldBetaMarkerHtml(mapId: FieldMap["id"]): string {
+  const fieldContext = getOuterDeckFieldContext(String(mapId));
+  if (fieldContext === "haven") {
+    return "";
+  }
+
+  const label = fieldContext === "outerDeckOverworld" ? "OUTER DECKS // BETA FIELD SYSTEM" : "OUTER DECK SUBAREA // BETA FIELD SYSTEM";
+  return `<div class="field-beta-marker">${label}</div>`;
+}
+
+function maybeShowFieldTutorials(mapId: FieldMap["id"]): void {
+  const fieldContext = getOuterDeckFieldContext(String(mapId));
+  if (mapId === "base_camp") {
+    showTutorialCalloutSequence([
+      {
+        id: "tutorial_haven_field",
+        title: "HAVEN Field Hub",
+        message: "Walk the base camp to reach its stations directly instead of driving everything through menus.",
+        detail: "Use the Ops Terminal to deploy, the roster and workshop nodes to prepare your squad, and the field routes to move between HAVEN spaces.",
+        channel: "tutorial-field",
+      },
+    ]);
+    return;
+  }
+
+  if (fieldContext !== "haven") {
+    showTutorialCallout({
+      id: "tutorial_outer_deck_beta",
+      title: "Outer Decks Are In Beta",
+      message: "Everything outside HAVEN is currently a beta field layer tied to expeditions and recovery routes.",
+      detail: "Expect tuning and routing changes here while the beta focuses on Regions 1-2 and the first 6 floors of the campaign.",
+      durationMs: 9000,
+      channel: "tutorial-field",
+    });
+  }
+}
 
 function isHavenBuildMapActive(): boolean {
   return currentMap?.id === "base_camp";
 }
 
+function isFieldBuildModeMapActive(): boolean {
+  return Boolean(currentMap && currentMap.id !== "quarters" && currentMap.id !== "network_lobby");
+}
+
+function canPanDuringBuildMode(): boolean {
+  return isHavenBuildMapActive();
+}
+
 function isHavenBuildModeEnabled(): boolean {
-  return havenBuildModeActive && isHavenBuildMapActive();
+  return havenBuildModeActive && isFieldBuildModeMapActive();
 }
 
 function resetHavenBuildPanState(): void {
@@ -295,6 +593,237 @@ function resetHavenBuildPanState(): void {
   };
 }
 
+function resetFieldFeedbackState(): void {
+  smoothedFieldCameraCenter = null;
+  currentFieldCameraTransform = {
+    offsetX: 0,
+    offsetY: 0,
+    zoom: fieldZoom,
+  };
+  lastFieldPromptSignature = null;
+  lastFieldStepSample = null;
+  fieldStepDistanceAccumulator = 0;
+  fieldStepPulseUntilMs = 0;
+  lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
+  lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
+}
+
+function playSableBark(currentTime: number, reason: "attack" | "pickup"): void {
+  const barkCooldownMs = reason === "pickup"
+    ? FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS
+    : FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS;
+  if (currentTime - lastSableBarkAudioAtMs < barkCooldownMs) {
+    return;
+  }
+
+  lastSableBarkAudioAtMs = currentTime;
+  playNamedAudioHook("sable_bark");
+}
+
+function playSableAttackFeedback(currentTime: number): void {
+  if (currentTime - lastSableAttackAudioAtMs >= FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS) {
+    lastSableAttackAudioAtMs = currentTime;
+    playNamedAudioHook("sable_attack");
+  }
+
+  // Let Sable punctuate her work with a bark without turning rapid field loops into constant chatter.
+  playSableBark(currentTime, "attack");
+}
+
+function getFieldOverlayRoot(): HTMLElement | null {
+  return document.getElementById("app");
+}
+
+function ensureFieldFeedbackOverlay(): HTMLElement | null {
+  const root = getFieldOverlayRoot();
+  if (!root) {
+    return null;
+  }
+
+  // Keep pickup and prompt feedback outside the rerendered map subtree so they do not pop off mid-animation.
+  let overlay = root.querySelector<HTMLElement>("#fieldFeedbackOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "fieldFeedbackOverlay";
+    overlay.className = "field-feedback-overlay";
+    root.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function ensureFieldPromptOverlay(): HTMLElement | null {
+  const root = getFieldOverlayRoot();
+  if (!root) {
+    return null;
+  }
+
+  let overlay = root.querySelector<HTMLElement>("#fieldPromptOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "fieldPromptOverlay";
+    overlay.className = "field-prompt-overlay";
+    root.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function queueFieldFeedbackElement(element: HTMLElement, durationMs: number): void {
+  const overlay = ensureFieldFeedbackOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  overlay.appendChild(element);
+  window.setTimeout(() => {
+    element.classList.add("field-feedback-element--exit");
+    window.setTimeout(() => {
+      element.remove();
+    }, 220);
+  }, durationMs);
+}
+
+function resolveFieldOverlayPoint(position: FeedbackRequest["position"]): { x: number; y: number } | null {
+  if (!position || position.space !== "field-world") {
+    return null;
+  }
+
+  const root = getFieldOverlayRoot();
+  const viewport = document.querySelector(".field-viewport") as HTMLElement | null;
+  if (!root || !viewport) {
+    return null;
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const localX = (position.x - currentFieldCameraTransform.offsetX) * currentFieldCameraTransform.zoom;
+  const localY = (position.y - currentFieldCameraTransform.offsetY) * currentFieldCameraTransform.zoom;
+
+  return {
+    x: viewportRect.left - rootRect.left + localX,
+    y: viewportRect.top - rootRect.top + localY,
+  };
+}
+
+function renderFieldFeedbackRequest(request: FeedbackRequest): void {
+  const overlay = ensureFieldFeedbackOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  const origin = resolveFieldOverlayPoint(request.position);
+  if (!origin) {
+    return;
+  }
+
+  if (request.type === "resource") {
+    const textEl = document.createElement("div");
+    textEl.className = "field-feedback-element field-feedback-text";
+    textEl.textContent = request.text ?? "RESOURCE";
+    textEl.style.left = `${origin.x}px`;
+    textEl.style.top = `${origin.y - 18}px`;
+    queueFieldFeedbackElement(textEl, 760);
+
+    const target = resolveFieldOverlayPoint(request.targetPosition);
+    if (target) {
+      const pickupEl = document.createElement("div");
+      pickupEl.className = "field-feedback-element field-feedback-snap";
+      pickupEl.style.left = `${origin.x}px`;
+      pickupEl.style.top = `${origin.y}px`;
+      pickupEl.style.setProperty("--field-feedback-target-x", `${target.x}px`);
+      pickupEl.style.setProperty("--field-feedback-target-y", `${target.y}px`);
+      overlay.appendChild(pickupEl);
+      requestAnimationFrame(() => {
+        pickupEl.classList.add("field-feedback-snap--active");
+      });
+      window.setTimeout(() => {
+        pickupEl.remove();
+      }, 520);
+    }
+  }
+}
+
+function ensureFieldFeedbackListener(): void {
+  if (cleanupFieldFeedbackListener) {
+    return;
+  }
+
+  cleanupFieldFeedbackListener = subscribeToFeedback((request) => {
+    if (!document.querySelector(".field-root")) {
+      return;
+    }
+
+    const fieldRelated = request.position?.space === "field-world" || request.source === "field";
+    if (!fieldRelated) {
+      return;
+    }
+
+    renderFieldFeedbackRequest(request);
+  });
+}
+
+function syncFieldPromptOverlay(promptText: string | null): void {
+  const overlay = ensureFieldPromptOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  if (!promptText) {
+    overlay.classList.remove("field-prompt-overlay--active");
+    lastFieldPromptSignature = null;
+    return;
+  }
+
+  let promptEl = overlay.querySelector<HTMLElement>(".field-interaction-prompt");
+  if (!promptEl) {
+    promptEl = document.createElement("div");
+    promptEl.className = "field-interaction-prompt";
+    overlay.appendChild(promptEl);
+  }
+
+  promptEl.textContent = promptText;
+  const promptAnchor = getFieldInteractionPromptOverlayPoint(promptEl);
+  if (promptAnchor) {
+    promptEl.style.left = `${promptAnchor.x}px`;
+    promptEl.style.top = `${promptAnchor.y}px`;
+  } else {
+    promptEl.style.removeProperty("left");
+    promptEl.style.removeProperty("top");
+  }
+  overlay.classList.add("field-prompt-overlay--active");
+
+  if (lastFieldPromptSignature !== promptText) {
+    promptEl.classList.remove("field-interaction-prompt--pulse");
+    void promptEl.offsetWidth;
+    promptEl.classList.add("field-interaction-prompt--pulse");
+  }
+
+  lastFieldPromptSignature = promptText;
+}
+
+function updateFieldMovementFeedback(currentTime: number, dashActive: boolean): void {
+  const center = getTrackedFieldCenter();
+  if (!lastFieldStepSample) {
+    lastFieldStepSample = { ...center };
+    return;
+  }
+
+  const distance = Math.hypot(center.x - lastFieldStepSample.x, center.y - lastFieldStepSample.y);
+  lastFieldStepSample = { ...center };
+  if (distance <= 0.05) {
+    return;
+  }
+
+  fieldStepDistanceAccumulator += distance;
+  const triggerDistance = dashActive ? FIELD_DASH_FOOTSTEP_DISTANCE : FIELD_FOOTSTEP_DISTANCE;
+  if (fieldStepDistanceAccumulator < triggerDistance) {
+    return;
+  }
+
+  fieldStepDistanceAccumulator = fieldStepDistanceAccumulator % triggerDistance;
+  fieldStepPulseUntilMs = currentTime + FIELD_STEP_PULSE_DURATION_MS;
+  playPlaceholderSfx("ui-move");
+}
+
 function syncCurrentMapFromState(): void {
   if (!currentMap) {
     return;
@@ -303,7 +832,7 @@ function syncCurrentMapFromState(): void {
 }
 
 function setHavenBuildMode(active: boolean): void {
-  if (!isHavenBuildMapActive()) {
+  if (!isFieldBuildModeMapActive()) {
     havenBuildModeActive = false;
     havenBuildResumePaused = false;
     resetHavenBuildPanState();
@@ -314,9 +843,9 @@ function setHavenBuildMode(active: boolean): void {
 
   if (active && !isHavenBuildModeUnlocked()) {
     showSystemPing({
-      type: "warning",
+      type: "info",
       title: "BUILD MODE LOCKED",
-      message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock HAVEN build mode.`,
+      message: `Discover Floor ${String(HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} to unlock field build mode.`,
       channel: "haven-build",
     });
     havenBuildModeActive = false;
@@ -357,7 +886,7 @@ function getBuildNodeIdForObject(objectId: string): BaseCampNodeId | null {
 }
 
 function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObjectMeta | null {
-  if (!isHavenBuildMapActive()) {
+  if (!isFieldBuildModeMapActive()) {
     return null;
   }
 
@@ -380,6 +909,10 @@ function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObje
     return null;
   }
 
+  if (!isHavenBuildMapActive()) {
+    return null;
+  }
+
   const nodeId = getBuildNodeIdForObject(obj.id);
   if (!nodeId) {
     return null;
@@ -391,6 +924,102 @@ function getBuildMetaForObject(obj: FieldMap["objects"][number]): HavenBuildObje
     width: obj.width,
     height: obj.height,
   };
+}
+
+function getAvailableFieldDecorCountForState(state: ReturnType<typeof getGameState>, decorId: string): number {
+  return getAvailableFieldDecor(state).filter((decor) => decor.id === decorId).length;
+}
+
+function getCurrentAvailableFieldDecorCount(decorId: string): number {
+  return getAvailableFieldDecorCountForState(getGameState(), decorId);
+}
+
+function getAvailableFieldDecorStock(state: ReturnType<typeof getGameState>): Array<{ decor: DecorItem; availableCount: number }> {
+  const stock = new Map<string, { decor: DecorItem; availableCount: number }>();
+  getAvailableFieldDecor(state).forEach((decor) => {
+    const existing = stock.get(decor.id);
+    if (existing) {
+      existing.availableCount += 1;
+      return;
+    }
+    stock.set(decor.id, {
+      decor,
+      availableCount: 1,
+    });
+  });
+  return [...stock.values()];
+}
+
+function createHavenBuildDecorSelection(decorId: string): HavenBuildDecorSelection {
+  const retainedRotation = havenBuildPaletteSelection?.kind === "decor" && havenBuildPaletteSelection.decorId === decorId
+    ? havenBuildPaletteSelection.rotationQuarterTurns
+    : 0;
+  return {
+    kind: "decor",
+    decorId,
+    rotationQuarterTurns: retainedRotation,
+  };
+}
+
+function rotateSelectedBuildDecor(deltaQuarterTurns: number = 1): void {
+  if (havenBuildPaletteSelection?.kind !== "decor") {
+    return;
+  }
+
+  havenBuildPaletteSelection = {
+    ...havenBuildPaletteSelection,
+    rotationQuarterTurns: normalizeFieldDecorRotationQuarterTurns(
+      havenBuildPaletteSelection.rotationQuarterTurns + deltaQuarterTurns,
+    ),
+  };
+  render();
+}
+
+function rotatePlacedBuildDecor(placementId: string): void {
+  if (!currentMap) {
+    return;
+  }
+
+  const placedDecor = getPlacedFieldDecor(getGameState(), currentMap.id)
+    .find(({ placement }) => placement.placementId === placementId);
+  if (!placedDecor) {
+    return;
+  }
+
+  const nextRotation = normalizeFieldDecorRotationQuarterTurns(
+    (placedDecor.placement.rotationQuarterTurns ?? 0) + 1,
+  );
+  const footprint = getFieldDecorFootprintSize(placedDecor.decor, nextRotation);
+  const placement = validateBuildPlacement(
+    placedDecor.placement.x,
+    placedDecor.placement.y,
+    footprint.width,
+    footprint.height,
+    `field_decor_${placementId}`,
+    null,
+  );
+  if (!placement.valid) {
+    showSystemPing({
+      type: "error",
+      title: "CANNOT ROTATE DECOR",
+      message: placement.reason || "That rotation would collide with the current layout.",
+      channel: "haven-build",
+    });
+    return;
+  }
+
+  if (!setFieldDecorRotation(placementId, nextRotation)) {
+    showSystemPing({
+      type: "error",
+      title: "ROTATION FAILED",
+      message: "That decoration could not be reoriented right now.",
+      channel: "haven-build",
+    });
+    return;
+  }
+
+  syncCurrentMapFromState();
+  render();
 }
 
 function getBuildPlacementFromClientPosition(clientX: number, clientY: number): { tileX: number; tileY: number } | null {
@@ -425,6 +1054,7 @@ function validateBuildPlacement(
   width: number,
   height: number,
   excludedObjectId: string | null = null,
+  excludedZoneId: string | null = null,
 ): { valid: boolean; reason?: string } {
   if (!currentMap) {
     return { valid: false, reason: "No active map." };
@@ -434,10 +1064,21 @@ function validateBuildPlacement(
     return { valid: false, reason: "Out of bounds." };
   }
 
+  const excludedObject = excludedObjectId
+    ? currentMap.objects.find((object) => object.id === excludedObjectId) ?? null
+    : null;
+
   for (let tileY = y; tileY < y + height; tileY += 1) {
     for (let tileX = x; tileX < x + width; tileX += 1) {
       const tile = currentMap.tiles[tileY]?.[tileX];
-      if (!tile?.walkable) {
+      const insideExcludedObject = Boolean(
+        excludedObject
+        && tileX >= excludedObject.x
+        && tileX < excludedObject.x + excludedObject.width
+        && tileY >= excludedObject.y
+        && tileY < excludedObject.y + excludedObject.height,
+      );
+      if (!tile?.walkable && !insideExcludedObject) {
         return { valid: false, reason: "Placement must stay on open floor." };
       }
     }
@@ -457,6 +1098,22 @@ function validateBuildPlacement(
 
   if (overlap) {
     return { valid: false, reason: "Another object is already there." };
+  }
+
+  const overlapsZone = currentMap.interactionZones.some((zone) => {
+    if (zone.id === excludedZoneId) {
+      return false;
+    }
+    return (
+      x < zone.x + zone.width
+      && x + width > zone.x
+      && y < zone.y + zone.height
+      && y + height > zone.y
+    );
+  });
+
+  if (overlapsZone) {
+    return { valid: false, reason: "Route controls and interaction gates must stay clear." };
   }
 
   return { valid: true };
@@ -523,13 +1180,14 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
   if (!decor) {
     return;
   }
+  const footprint = getFieldDecorFootprintSize(decor, havenBuildPaletteSelection.rotationQuarterTurns);
   const origin = clampBuildOrigin(
-    tileX - Math.floor(decor.tileWidth / 2),
-    tileY - Math.floor(decor.tileHeight / 2),
-    decor.tileWidth,
-    decor.tileHeight,
+    tileX - Math.floor(footprint.width / 2),
+    tileY - Math.floor(footprint.height / 2),
+    footprint.width,
+    footprint.height,
   );
-  const placement = validateBuildPlacement(origin.x, origin.y, decor.tileWidth, decor.tileHeight, null);
+  const placement = validateBuildPlacement(origin.x, origin.y, footprint.width, footprint.height, null);
   if (!placement.valid) {
     showSystemPing({
       type: "error",
@@ -539,7 +1197,13 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
     });
     return;
   }
-  if (!placeFieldDecor(havenBuildPaletteSelection.decorId, currentMap.id, origin.x, origin.y)) {
+  if (!placeFieldDecor(
+    havenBuildPaletteSelection.decorId,
+    currentMap.id,
+    origin.x,
+    origin.y,
+    havenBuildPaletteSelection.rotationQuarterTurns,
+  )) {
     showSystemPing({
       type: "error",
       title: "DECOR LOCKED",
@@ -548,7 +1212,9 @@ function placeCurrentBuildSelection(tileX: number, tileY: number): void {
     });
     return;
   }
-  havenBuildPaletteSelection = null;
+  havenBuildPaletteSelection = getCurrentAvailableFieldDecorCount(havenBuildPaletteSelection.decorId) > 0
+    ? havenBuildPaletteSelection
+    : null;
   syncCurrentMapFromState();
   render();
 }
@@ -567,6 +1233,55 @@ function isActiveCoopOperationsLobby(lobby: LobbyState | null | undefined): bool
     && lobby.activity.kind === "coop_operations"
     && lobby.activity.coopOperations.status === "active",
   );
+}
+
+function shouldSuppressEscMenuAccess(): boolean {
+  // Keep E.S.C. locked only while the player is physically inside the
+  // dedicated multiplayer lobby field map. Once they're back in any other
+  // field context, Escape should behave like the normal field-to-E.S.C. flow.
+  return isNetworkLobbyMapActive();
+}
+
+function registerFieldControllerContext(): void {
+  cleanupFieldControllerContext?.();
+  cleanupFieldControllerContext = registerControllerContext({
+    id: "field",
+    defaultMode: "cursor",
+    focusRoot: () => document.querySelector(".field-root"),
+    onAction: (action) => {
+      if (!document.querySelector(".field-root")) {
+        return false;
+      }
+
+      if (action === "pause" || action === "menu") {
+        if (shouldSuppressEscMenuAccess()) {
+          return true;
+        }
+        if (isHavenBuildModeEnabled()) {
+          setHavenBuildMode(false);
+          return true;
+        }
+        toggleAllNodesPanel();
+        return true;
+      }
+
+      return false;
+    },
+    getDebugState: () => ({
+      focus: currentMap?.id ? String(currentMap.id) : "field",
+      hovered: activeInteractionPrompt ?? "none",
+      window: isHavenBuildModeEnabled() ? "build" : "field",
+      x: Math.round(fieldState?.player.x ?? 0),
+      y: Math.round(fieldState?.player.y ?? 0),
+    }),
+  });
+}
+
+function suspendFieldForScreenTransition(): void {
+  if (fieldState) {
+    fieldState.isPaused = true;
+  }
+  teardownFieldMode();
 }
 
 function getRenderableLobbyForCurrentField(): LobbyState | null {
@@ -752,7 +1467,7 @@ function cycleNetworkLobbyWindowColor(): void {
   });
 }
 
-function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x: number; y: number; kind: "relay" | "friendly_breach" | "enemy_breach" }> {
+function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x: number; y: number; kind: "relay" | "friendly_breach" | "enemy_breach" | "extraction" }> {
   const width = clampLobbyGridWidth(round.gridWidth);
   const height = clampLobbyGridHeight(round.gridHeight);
   const centerX = Math.floor(width / 2);
@@ -805,6 +1520,19 @@ function getLobbyPreviewCells(round: NetworkLobbyPlaylistDraftRound): Array<{ x:
     ];
   }
 
+  if (round.objectiveType === "extraction") {
+    return [
+      { x: centerX, y: centerY, kind: "extraction" as const },
+      { x: Math.max(1, centerX - 1), y: centerY, kind: "extraction" as const },
+    ].filter((cell, index, all) =>
+      cell.x > 0
+      && cell.x < width - 1
+      && cell.y > 0
+      && cell.y < height - 1
+      && all.findIndex((candidate) => candidate.x === cell.x && candidate.y === cell.y) === index,
+    );
+  }
+
   return [];
 }
 
@@ -821,7 +1549,15 @@ function renderLobbyRoundPreview(round: NetworkLobbyPlaylistDraftRound): string 
         x === width - 1 ? "network-lobby-preview__cell--enemy-deploy" : "",
         previewCell ? `network-lobby-preview__cell--${previewCell.kind}` : "",
       ].filter(Boolean).join(" ");
-      const label = previewCell?.kind === "relay" ? "R" : previewCell?.kind === "friendly_breach" ? "H" : previewCell?.kind === "enemy_breach" ? "O" : "";
+      const label = previewCell?.kind === "relay"
+        ? "R"
+        : previewCell?.kind === "friendly_breach"
+          ? "H"
+          : previewCell?.kind === "enemy_breach"
+            ? "O"
+            : previewCell?.kind === "extraction"
+              ? "X"
+              : "";
       return `<div class="${classes}">${label}</div>`;
     }).join(""),
   ).join("");
@@ -842,14 +1578,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
   const pendingChallenge = lobby.pendingChallenge;
   const isChallengee = Boolean(pendingChallenge && localSlot && pendingChallenge.challengeeSlot === localSlot);
   const isChallenger = Boolean(pendingChallenge && localSlot && pendingChallenge.challengerSlot === localSlot);
-  const connectedSlots = NETWORK_PLAYER_SLOTS.filter((slot) => Boolean(lobby.members[slot]?.connected));
-  const localCanStageCoop = localSlot === lobby.hostSlot;
-  const coopStatus = lobby.activity.kind === "coop_operations"
-    ? lobby.activity.coopOperations.status.toUpperCase()
-    : "IDLE";
-  const canLaunchCoop = localCanStageCoop
-    && lobby.activity.kind === "coop_operations"
-    && lobby.activity.coopOperations.selectedSlots.length > 0;
   const localIsSkirmishFighter = lobby.activity.kind === "skirmish"
     && localSlot
     && (lobby.activity.skirmish.challengerSlot === localSlot || lobby.activity.skirmish.challengeeSlot === localSlot);
@@ -896,51 +1624,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
         </div>
       </section>
 
-      ${lobby.activity.kind === "idle" ? `
-        <section class="network-lobby-panel">
-          <div class="network-lobby-panel__title">Issue Skirmish Challenge</div>
-          <div class="network-lobby-form">
-            <label>
-              <span>Challengee</span>
-              <select id="networkLobbyChallengeeSelect">
-                <option value="">Select operator</option>
-                ${connectedSlots
-                  .filter((slot) => slot !== localSlot)
-                  .map((slot) => `<option value="${slot}" ${networkLobbyUiState.challengeeSlot === slot ? "selected" : ""}>${slot} // ${lobby.members[slot]?.callsign ?? slot}</option>`)
-                  .join("")}
-              </select>
-            </label>
-            <div class="network-lobby-form__playlist">
-              ${networkLobbyUiState.playlistDraft.map((round, index) => `
-                <div class="network-lobby-round-card">
-                  <div class="network-lobby-round-card__header">
-                    <strong>ROUND ${index + 1}</strong>
-                    ${networkLobbyUiState.playlistDraft.length > 1 ? `<button class="network-lobby-shell__btn network-lobby-shell__btn--ghost" type="button" data-lobby-round-remove="${index}">REMOVE</button>` : ""}
-                  </div>
-                  <div class="network-lobby-round-card__controls">
-                    <label><span>Width</span><input type="number" min="4" max="10" value="${round.gridWidth}" data-lobby-round-width="${index}" /></label>
-                    <label><span>Height</span><input type="number" min="3" max="8" value="${round.gridHeight}" data-lobby-round-height="${index}" /></label>
-                    <label>
-                      <span>Objective</span>
-                      <select data-lobby-round-objective="${index}">
-                        ${(["elimination", "control_relay", "breakthrough"] as SkirmishObjectiveType[]).map((objectiveType) => (
-                          `<option value="${objectiveType}" ${round.objectiveType === objectiveType ? "selected" : ""}>${getSquadWinConditionLabel(objectiveType)}</option>`
-                        )).join("")}
-                      </select>
-                    </label>
-                  </div>
-                  ${renderLobbyRoundPreview(round)}
-                </div>
-              `).join("")}
-            </div>
-            <div class="network-lobby-panel__actions">
-              <button class="network-lobby-shell__btn network-lobby-shell__btn--ghost" type="button" id="networkLobbyAddPlaylistRoundBtn">ADD ROUND</button>
-              <button class="network-lobby-shell__btn" type="button" id="networkLobbySendChallengeBtn" ${networkLobbyUiState.challengeeSlot ? "" : "disabled"}>SEND CHALLENGE</button>
-            </div>
-          </div>
-        </section>
-      ` : ""}
-
       ${pendingChallenge ? `
         <section class="network-lobby-panel">
           <div class="network-lobby-panel__title">Pending Challenge</div>
@@ -975,30 +1658,6 @@ function renderNetworkLobbyOverlay(lobby: LobbyState): string {
           </div>
         </section>
       ` : ""}
-
-        <section class="network-lobby-panel">
-          <div class="network-lobby-panel__title">Co-Op Operations</div>
-          <div class="network-lobby-panel__copy">Host-owned staging for up to 8 operators. Current activity: ${coopStatus}.</div>
-          <div class="network-lobby-coop-grid">
-            ${connectedSlots.map((slot) => `
-              <label class="network-lobby-coop-slot">
-                <input type="checkbox" data-lobby-coop-slot="${slot}" ${networkLobbyUiState.coopSelectedSlots.includes(slot) ? "checked" : ""} ${localCanStageCoop ? "" : "disabled"} />
-                <span>${slot} // ${lobby.members[slot]?.callsign ?? slot}</span>
-              </label>
-            `).join("")}
-          </div>
-          <div class="network-lobby-panel__actions">
-            ${localCanStageCoop ? `
-              <button class="network-lobby-shell__btn" type="button" id="networkLobbyStageCoopBtn">${lobby.activity.kind === "coop_operations" ? "UPDATE STAGING" : "STAGE CO-OP OPS"}</button>
-              ${canLaunchCoop ? `<button class="network-lobby-shell__btn" type="button" id="networkLobbyBeginCoopBtn">LAUNCH H.A.V.E.N.</button>` : ""}
-            ` : `<span class="network-lobby-panel__copy">Only the host can stage Co-Op Operations.</span>`}
-          </div>
-        </section>
-
-      <section class="network-lobby-panel">
-        <div class="network-lobby-panel__title">Lobby Link</div>
-        <div class="network-lobby-panel__copy">${connectedSlots.length}/8 operators connected. Share the join code for identification; use the manual host address only when you need direct connect.</div>
-      </section>
 
       <section class="network-lobby-panel">
         <div class="network-lobby-panel__actions">
@@ -1100,6 +1759,17 @@ function attachNetworkLobbyOverlayHandlers(container: HTMLElement): void {
     leaveBtn.onclick = () => {
       import("../ui/screens/CommsArrayScreen").then(async ({ leaveCurrentMultiplayerLobby }) => {
         await leaveCurrentMultiplayerLobby();
+      });
+    };
+  }
+
+  const openSkirmishConsoleBtn = container.querySelector<HTMLElement>("#networkLobbyOpenSkirmishConsoleBtn");
+  if (openSkirmishConsoleBtn) {
+    openSkirmishConsoleBtn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void import("../ui/screens/CommsArrayScreen").then(({ renderLobbySkirmishConsoleScreen }) => {
+        renderLobbySkirmishConsoleScreen("field");
       });
     };
   }
@@ -1234,23 +1904,15 @@ function attachNetworkLobbyOverlayHandlers(container: HTMLElement): void {
       } else {
         networkLobbyUiState.coopSelectedSlots = networkLobbyUiState.coopSelectedSlots.filter((selectedSlot) => selectedSlot !== slot);
       }
+      renderFieldScreen("network_lobby");
     };
   });
 
-  const stageCoopBtn = container.querySelector<HTMLElement>("#networkLobbyStageCoopBtn");
-  if (stageCoopBtn) {
-    stageCoopBtn.onclick = () => {
-      import("../ui/screens/CommsArrayScreen").then(async ({ launchLobbyCoopOperations }) => {
-        await launchLobbyCoopOperations(networkLobbyUiState.coopSelectedSlots);
-      });
-    };
-  }
-
-  const beginCoopBtn = container.querySelector<HTMLElement>("#networkLobbyBeginCoopBtn");
-  if (beginCoopBtn) {
-    beginCoopBtn.onclick = () => {
-      import("../ui/screens/CommsArrayScreen").then(async ({ beginLobbyCoopOperations }) => {
-        await beginLobbyCoopOperations();
+  const startCoopBtn = container.querySelector<HTMLElement>("#networkLobbyStartCoopBtn");
+  if (startCoopBtn) {
+    startCoopBtn.onclick = () => {
+      void import("../ui/screens/CommsArrayScreen").then(async ({ startLobbyCoopOperations }) => {
+        await startLobbyCoopOperations(networkLobbyUiState.coopSelectedSlots);
       });
     };
   }
@@ -1272,6 +1934,13 @@ type PinnedColorTheme = {
 const PINNED_QUAC_LAYOUT_ID = "quac-terminal";
 const PINNED_RESOURCE_LAYOUT_ID = "resource-tracker";
 const PINNED_QUEST_TRACKER_LAYOUT_ID = "quest-tracker";
+const PINNED_THEATER_AUTO_TICK_LAYOUT_ID = "theater-auto-tick";
+const PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
+  metalScrap: "M",
+  wood: "T",
+  chaosShards: "C",
+  steamComponents: "S",
+};
 
 const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
@@ -1279,16 +1948,17 @@ const PINNED_NODE_LAYOUT: PinnedNodeDefinition[] = [
   { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
   { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
   { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
+  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine advanced field materials" },
   { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
   { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
   { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
   { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
-  { action: "dispatch", icon: "DSP", label: "DISPATCH", desc: "Send reserve teams on expeditions" },
   { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
   { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
   { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
   { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
   { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
+  { action: PINNED_THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Advance active theaters in the background", variant: "all-nodes-node-btn--utility" },
   { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
   { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
   { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
@@ -1438,23 +2108,30 @@ const PINNED_QUAC_COMMAND_ALIASES: Array<{ action: string; aliases: string[] }> 
   { action: "roster", aliases: ["roster", "unit roster", "units", "party", "manage units"] },
   { action: "loadout", aliases: ["loadout", "gear", "equipment", "equip", "locker"] },
   { action: "inventory", aliases: ["inventory", "items", "assets", "storage", "owned items"] },
-  { action: "gear-workbench", aliases: ["workshop", "workbench", "gear workbench", "craft", "crafting", "upgrade gear"] },
+  { action: "gear-workbench", aliases: ["workshop", "workbench", "gear workbench", "upgrade gear"] },
+  { action: "materials-refinery", aliases: ["crafting", "materials", "refinery", "alloy", "drawcord", "fittings", "resin", "charge cells"] },
   { action: "shop", aliases: ["shop", "store", "quartermaster", "buy", "market"] },
   { action: "tavern", aliases: ["tavern", "recruit", "recruitment", "hire"] },
   { action: "quest-board", aliases: ["quest", "quests", "quest board", "board", "jobs"] },
   { action: "port", aliases: ["port", "trade", "trading", "manifest", "supply"] },
-  { action: "dispatch", aliases: ["dispatch", "expedition", "expeditions", "send team"] },
   { action: "quarters", aliases: ["quarters", "rest", "barracks", "heal"] },
   { action: "stable", aliases: ["stable", "mounts", "mount", "mounted units"] },
   { action: "black-market", aliases: ["black market", "black-market", "mods", "field mods", "contraband"] },
   { action: "schema", aliases: ["schema", "s c h e m a", "core housing", "core engineering", "core authorization", "core unlocks"] },
   { action: "foundry-annex", aliases: ["foundry", "annex", "foundry annex", "foundry + annex"] },
+  { action: PINNED_THEATER_AUTO_TICK_LAYOUT_ID, aliases: ["theater clock", "theater tick", "theater timer", "auto tick", "advance theaters", "background theater"] },
   { action: "codex", aliases: ["codex", "archive", "archives", "bestiary"] },
   { action: "settings", aliases: ["settings", "config", "configuration", "options"] },
   { action: "comms-array", aliases: ["comms", "comms array", "multiplayer", "training"] },
   { action: "endless-field-nodes", aliases: ["endless rooms", "debug endless rooms"] },
   { action: "endless-battles", aliases: ["endless battles", "debug endless battles"] },
 ];
+
+const FIELD_ESC_NODE_ACTION_SET = new Set(PINNED_NODE_LAYOUT.map((node) => node.action));
+
+function isFieldEscNodeAction(action: string): action is EscNodeAction {
+  return FIELD_ESC_NODE_ACTION_SET.has(action);
+}
 
 // ============================================================================
 // GETTERS
@@ -1485,6 +2162,18 @@ export function setNextFieldSpawnOverride(
     y: position.y,
     facing: position.facing,
   };
+}
+
+export function setNextFieldSpawnOverrideTile(
+  mapId: FieldMap["id"],
+  position: { x: number; y: number; facing?: "north" | "south" | "east" | "west" },
+): void {
+  const tileSize = 64;
+  setNextFieldSpawnOverride(mapId, {
+    x: position.x * tileSize + tileSize / 2,
+    y: position.y * tileSize + tileSize / 2,
+    facing: position.facing,
+  });
 }
 
 /**
@@ -1539,7 +2228,74 @@ function drawPinnedMinimapOverlay(): void {
 }
 
 function getPlayerInteractLabel(playerId: PlayerId): string {
-  return getPlayerActionLabel(playerId, "interact");
+  const interactLabel = getPlayerActionLabel(playerId, "interact");
+  if (!getAssignedGamepad(playerId)) {
+    return interactLabel;
+  }
+
+  const confirmLabel = getPlayerActionLabel(playerId, "confirm");
+  return confirmLabel !== interactLabel ? `${interactLabel} / ${confirmLabel}` : interactLabel;
+}
+
+function resetFieldControllerActionTracking(): void {
+  previousFieldControllerActions.P1 = { interact: false, attack: false, special1: false };
+  previousFieldControllerActions.P2 = { interact: false, attack: false, special1: false };
+}
+
+function getFieldControllerActionSnapshot(playerId: PlayerId): FieldControllerActionSnapshot {
+  if (!getAssignedGamepad(playerId)) {
+    return {
+      interact: false,
+      attack: false,
+      special1: false,
+    };
+  }
+
+  return {
+    interact: isGamepadActionActive(playerId, "interact")
+      || isGamepadActionActive(playerId, "confirm"),
+    attack: isGamepadActionActive(playerId, "attack"),
+    special1: isGamepadActionActive(playerId, "dash")
+      || isGamepadActionActive(playerId, "tabPrev")
+      || isGamepadActionActive(playerId, "tabNext"),
+  };
+}
+
+function processFieldControllerActions(): void {
+  if (!fieldState || !currentMap || fieldState.isPaused) {
+    resetFieldControllerActionTracking();
+    return;
+  }
+
+  const combatActive = isFieldCombatActive();
+  const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+
+  for (const playerId of activePlayers) {
+    const previous = previousFieldControllerActions[playerId];
+    const next = getFieldControllerActionSnapshot(playerId);
+
+    const interactPressed = next.interact && !previous.interact;
+    const attackPressed = next.attack && !previous.attack;
+    const specialPressed = next.special1 && !previous.special1;
+
+    previousFieldControllerActions[playerId] = next;
+
+    if (combatActive) {
+      if (playerId === "P1" && specialPressed) {
+        toggleFieldCombatRangedMode();
+      }
+
+      if (playerId === "P1" && attackPressed) {
+        triggerFieldCombatAttack();
+      }
+      continue;
+    }
+
+    if (interactPressed) {
+      handleInteractKey(playerId);
+      break;
+    }
+  }
 }
 
 function createRuntimeAvatar(playerId: PlayerId): PlayerAvatar | null {
@@ -1615,16 +2371,35 @@ function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
   return candidates[0]?.playerId ?? null;
 }
 
+function isAutoTriggerZone(zone: InteractionZone | null | undefined): boolean {
+  return Boolean(zone?.metadata?.autoTrigger);
+}
+
+function buildAutoInteractionZoneKey(
+  mapId: string,
+  playerId: PlayerId,
+  zoneId: string,
+): string {
+  return `${mapId}:${playerId}:${zoneId}`;
+}
+
 function getCombinedInteractionPrompt(): string | null {
   const state = getGameState();
   if (!isLocalCoopActive(state)) {
     const soloContext = getPlayerInteractionContext("P1");
-    return soloContext ? `${getPlayerInteractLabel("P1")} :: ${soloContext.zone.label}` : null;
+    return soloContext && !isAutoTriggerZone(soloContext.zone)
+      ? `${getPlayerInteractLabel("P1")} :: ${soloContext.zone.label}`
+      : null;
   }
 
   const contexts = (["P1", "P2"] as PlayerId[])
     .map((playerId) => getPlayerInteractionContext(playerId))
-    .filter(Boolean) as InteractionActorContext[];
+    .filter((context): context is InteractionActorContext => {
+      if (!context) {
+        return false;
+      }
+      return !isAutoTriggerZone(context.zone);
+    });
 
   if (contexts.length === 0) {
     return null;
@@ -1645,6 +2420,131 @@ function getCombinedInteractionPrompt(): string | null {
   });
 
   return promptParts.join(" | ");
+}
+
+function getFieldInteractionPromptOverlayPoint(promptEl: HTMLElement): { x: number; y: number } | null {
+  const state = getGameState();
+  const contexts = !isLocalCoopActive(state)
+    ? [getPlayerInteractionContext("P1")].filter((context): context is InteractionActorContext => {
+        if (!context) {
+          return false;
+        }
+        return !isAutoTriggerZone(context.zone);
+      })
+    : (["P1", "P2"] as PlayerId[])
+        .map((playerId) => getPlayerInteractionContext(playerId))
+        .filter((context): context is InteractionActorContext => {
+          if (!context) {
+            return false;
+          }
+          return !isAutoTriggerZone(context.zone);
+        });
+
+  if (contexts.length === 0) {
+    return null;
+  }
+
+  const averageAnchor = contexts.reduce(
+    (totals, context) => ({
+      x: totals.x + context.avatar.x,
+      y: totals.y + context.avatar.y - (context.avatar.height / 2) - 12,
+    }),
+    { x: 0, y: 0 },
+  );
+
+  const rawPoint = resolveFieldOverlayPoint({
+    space: "field-world",
+    x: averageAnchor.x / contexts.length,
+    y: averageAnchor.y / contexts.length,
+  } as any);
+
+  if (!rawPoint) {
+    return null;
+  }
+
+  const root = getFieldOverlayRoot();
+  const viewport = document.querySelector<HTMLElement>(".field-viewport");
+  if (!root || !viewport) {
+    return rawPoint;
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const viewportRect = viewport.getBoundingClientRect();
+  const promptRect = promptEl.getBoundingClientRect();
+  const promptWidth = promptRect.width || promptEl.offsetWidth || 0;
+  const promptHeight = promptRect.height || promptEl.offsetHeight || 0;
+  const edgePadding = 18;
+
+  const minX = viewportRect.left - rootRect.left + (promptWidth / 2) + edgePadding;
+  const maxX = viewportRect.right - rootRect.left - (promptWidth / 2) - edgePadding;
+  const minY = viewportRect.top - rootRect.top + promptHeight + edgePadding;
+  const maxY = viewportRect.bottom - rootRect.top - edgePadding;
+
+  return {
+    x: Math.max(minX, Math.min(maxX, rawPoint.x)),
+    y: Math.max(minY, Math.min(maxY, rawPoint.y)),
+  };
+}
+
+function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avatar: PlayerAvatar): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  if (!canPlayerUseFieldAction(getGameState(), playerId, zone.action)) {
+    showFieldAuthorityPing(playerId, zone);
+    return;
+  }
+
+  const savedPlayerPos = { x: avatar.x, y: avatar.y };
+  const interactionKey = buildAutoInteractionZoneKey(String(currentMap.id), playerId, zone.id);
+  fieldState.isPaused = true;
+
+  void handleInteraction(zone, currentMap, () => {
+    resumeFieldAfterInteraction(playerId, savedPlayerPos, zone, interactionKey);
+  }, suspendFieldForScreenTransition).catch((error) => {
+    console.error("[FIELD] Error handling interaction:", error);
+    if (fieldState) {
+      fieldState.isPaused = false;
+      renderFieldScreen(fieldState.currentMap);
+    }
+  });
+}
+
+function maybeTriggerAutoInteraction(): void {
+  if (!fieldState || !currentMap || fieldState.isPaused || isFieldCombatActive() || isHavenBuildModeEnabled()) {
+    if (!fieldState || !fieldState.isPaused) {
+      activeAutoInteractionZoneKey = null;
+    }
+    return;
+  }
+
+  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const autoContext = orderedPlayers
+    .map((playerId) => getPlayerInteractionContext(playerId))
+    .find((context): context is InteractionActorContext => {
+      if (!context) {
+        return false;
+      }
+      return isAutoTriggerZone(context.zone);
+    });
+
+  if (!autoContext) {
+    activeAutoInteractionZoneKey = null;
+    suppressedAutoInteractionZoneKey = null;
+    return;
+  }
+
+  const interactionKey = buildAutoInteractionZoneKey(String(currentMap.id), autoContext.playerId, autoContext.zone.id);
+  if (suppressedAutoInteractionZoneKey === interactionKey) {
+    return;
+  }
+  if (activeAutoInteractionZoneKey === interactionKey) {
+    return;
+  }
+
+  activeAutoInteractionZoneKey = interactionKey;
+  triggerZoneInteraction(autoContext.playerId, autoContext.zone, autoContext.avatar);
 }
 
 function showFieldAuthorityPing(playerId: PlayerId, zone: InteractionZone): void {
@@ -1670,17 +2570,48 @@ function showFieldCombatLockPing(): void {
 function resumeFieldAfterInteraction(
   playerId: PlayerId,
   savedPlayerPos: { x: number; y: number },
+  zone?: InteractionZone,
+  interactionKey?: string,
 ): void {
-  if (!fieldState) {
+  if (!fieldState || !currentMap) {
     return;
   }
 
   fieldState.isPaused = false;
   const tileSize = 64;
-  const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
-  const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
-  const nextX = savedPlayerPos.x + offsetX;
-  const nextY = savedPlayerPos.y + offsetY;
+  let nextX = savedPlayerPos.x;
+  let nextY = savedPlayerPos.y;
+
+  if (zone && isAutoTriggerZone(zone)) {
+    const zoneLeft = zone.x * tileSize;
+    const zoneTop = zone.y * tileSize;
+    const zoneRight = (zone.x + zone.width) * tileSize;
+    const zoneBottom = (zone.y + zone.height) * tileSize;
+    const pushPadding = 28;
+    const nearestBoundary = [
+      { axis: "x" as const, value: zoneLeft - pushPadding, distance: Math.abs(savedPlayerPos.x - zoneLeft) },
+      { axis: "x" as const, value: zoneRight + pushPadding, distance: Math.abs(savedPlayerPos.x - zoneRight) },
+      { axis: "y" as const, value: zoneTop - pushPadding, distance: Math.abs(savedPlayerPos.y - zoneTop) },
+      { axis: "y" as const, value: zoneBottom + pushPadding, distance: Math.abs(savedPlayerPos.y - zoneBottom) },
+    ].sort((left, right) => left.distance - right.distance)[0];
+
+    if (nearestBoundary?.axis === "x") {
+      nextX = nearestBoundary.value;
+      nextY = Math.max(zoneTop - tileSize, Math.min(zoneBottom + tileSize, savedPlayerPos.y));
+    } else if (nearestBoundary?.axis === "y") {
+      nextY = nearestBoundary.value;
+      nextX = Math.max(zoneLeft - tileSize, Math.min(zoneRight + tileSize, savedPlayerPos.x));
+    }
+
+    nextX = Math.max(32, Math.min((currentMap.width * tileSize) - 32, nextX));
+    nextY = Math.max(32, Math.min((currentMap.height * tileSize) - 32, nextY));
+    suppressedAutoInteractionZoneKey = interactionKey ?? null;
+  } else {
+    const offsetX = savedPlayerPos.x % tileSize < tileSize / 2 ? -8 : 8;
+    const offsetY = savedPlayerPos.y % tileSize < tileSize / 2 ? -8 : 8;
+    nextX = savedPlayerPos.x + offsetX;
+    nextY = savedPlayerPos.y + offsetY;
+  }
 
   updateGameState((state) => {
     const avatar = state.players[playerId].avatar;
@@ -1709,11 +2640,22 @@ function resumeFieldAfterInteraction(
     fieldState.player.y = nextY;
   }
 
+  if (zone && isAutoTriggerZone(zone)) {
+    render();
+    return;
+  }
+
   renderFieldScreen(fieldState.currentMap);
 }
 
 function normalizePinnedQuacCommand(value: string): string {
   return value.toLowerCase().trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ");
+}
+
+function getFieldEscAvailabilityContext() {
+  return {
+    expeditionActive: Boolean(currentMap && isOuterDeckBranchMap(String(currentMap.id))),
+  };
 }
 
 function isLockedHavenAnnexAction(action: string): boolean {
@@ -1780,6 +2722,10 @@ function readPinnedOverlayItems(): string[] {
   const pinnedItems = getGameState().uiLayout?.baseCampPinnedItems ?? [];
   return pinnedItems.filter((itemId) => {
     if (!PINNED_VALID_ITEM_IDS.has(itemId)) {
+      return false;
+    }
+
+    if (isFieldEscNodeAction(itemId) && getEscActionAvailability(itemId, getFieldEscAvailabilityContext()) !== "active") {
       return false;
     }
 
@@ -1893,16 +2839,24 @@ export function renderFieldScreen(
   mapId: FieldMap["id"] = "base_camp",
   options?: { openBuildMode?: boolean },
 ): void {
+  teardownFieldMode();
   setMusicCue(mapId === "base_camp" || mapId === "quarters" ? "haven-field" : "quiet");
   const root = document.getElementById("app");
   if (!root) return;
   document.body.setAttribute("data-screen", mapId === "base_camp" ? "field-base-camp" : `field-${String(mapId)}`);
   clearControllerContext();
+  const previousMapId = currentMap?.id ?? null;
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
   resetHavenBuildPanState();
+  resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
+  if (previousMapId !== mapId) {
+    activeAutoInteractionZoneKey = null;
+    suppressedAutoInteractionZoneKey = null;
+    fieldTurretLastFireAtMs.clear();
+  }
 
   setBaseCampFieldReturnMap(mapId);
 
@@ -2089,19 +3043,20 @@ export function renderFieldScreen(
     fieldState = {
       ...fieldState,
       currentMap: mapId,
-      player: {
+      player: normalizeFieldPlayerState({
         ...fieldState.player,
         x: playerX,
         y: playerY,
         facing: fieldSpawnOverride?.facing ?? fieldState.player.facing,
-      },
+      }),
       isPaused: false,
       activeInteraction: null,
       companion,
       npcs: syncFieldNpcsForMap(mapId, fieldState.npcs ?? []),
       fieldEnemies: nextFieldEnemies,
-      combat: fieldState.combat ?? createDefaultFieldCombatState(),
+      combat: normalizeFieldCombatState(fieldState.combat ?? createDefaultFieldCombatState()),
       projectiles: fieldState.projectiles ?? [],
+      collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
     };
   } else {
     // Initialize Sable near player
@@ -2110,17 +3065,18 @@ export function renderFieldScreen(
 
     fieldState = {
       currentMap: mapId,
-      player: {
+      player: normalizeFieldPlayerState({
         ...createPlayerAvatar(playerX, playerY),
         facing: fieldSpawnOverride?.facing ?? "south",
-      },
+      }),
       isPaused: false,
       activeInteraction: null,
       companion,
       npcs: syncFieldNpcsForMap(mapId),
       fieldEnemies: nextFieldEnemies,
-      combat: createDefaultFieldCombatState(),
+      combat: normalizeFieldCombatState(createDefaultFieldCombatState()),
       projectiles: [],
+      collectedResourceObjectIds: [],
     };
   }
 
@@ -2142,17 +3098,21 @@ export function renderFieldScreen(
     right: false,
     dash: false,
   };
+  resetFieldControllerActionTracking();
 
   // Create panel first (outside field-root)
   createAllNodesPanel();
 
   startGameLoop();
   render();
-  if (mapId === "base_camp" && options?.openBuildMode) {
+  if (options?.openBuildMode) {
     setHavenBuildMode(true);
   }
   createPinnedNodesOverlay();
   requestAnimationFrame(() => drawPinnedMinimapOverlay());
+  if (previousMapId !== mapId) {
+    maybeShowFieldTutorials(mapId);
+  }
 }
 
 function formatBuildResourceCost(cost?: { metalScrap?: number; wood?: number; chaosShards?: number; steamComponents?: number }): string {
@@ -2168,8 +3128,10 @@ function formatBuildResourceCost(cost?: { metalScrap?: number; wood?: number; ch
 function renderFieldObjectContents(obj: FieldMap["objects"][number]): string {
   if (obj.type === "decoration") {
     const decor = getDecorItemById(String(obj.metadata?.decorId ?? ""));
+    const rotationQuarterTurns = normalizeFieldDecorRotationQuarterTurns(Number(obj.metadata?.rotationQuarterTurns ?? 0));
+    const rotationDegrees = rotationQuarterTurns * 90;
     return `
-      <div class="field-decor-visual">
+      <div class="field-decor-visual"${rotationDegrees !== 0 ? ` style="transform: rotate(${rotationDegrees}deg);"` : ""}>
         ${decor ? renderDecorSpriteSvg(decor) : `<div class="field-object-placeholder">${obj.metadata?.name || "DECOR"}</div>`}
       </div>
       ${isHavenBuildModeEnabled() ? `<div class="field-build-object-label">${decor?.name ?? obj.metadata?.name ?? "DECOR"}</div>` : ""}
@@ -2236,19 +3198,20 @@ function clampBuildCameraCenter(centerX: number, centerY: number): { x: number; 
 }
 
 function updateHavenBuildPan(deltaTime: number): boolean {
-  if (!isHavenBuildModeEnabled() || !currentMap || deltaTime <= 0) {
+  if (!isHavenBuildModeEnabled() || !canPanDuringBuildMode() || !currentMap || deltaTime <= 0) {
     return false;
   }
 
-  const horizontal = (havenBuildPanInput.right ? 1 : 0) - (havenBuildPanInput.left ? 1 : 0);
-  const vertical = (havenBuildPanInput.down ? 1 : 0) - (havenBuildPanInput.up ? 1 : 0);
+  const controllerInput = getPlayerInput("P1");
+  const horizontal = ((havenBuildPanInput.right || controllerInput.right) ? 1 : 0) - ((havenBuildPanInput.left || controllerInput.left) ? 1 : 0);
+  const vertical = ((havenBuildPanInput.down || controllerInput.down) ? 1 : 0) - ((havenBuildPanInput.up || controllerInput.up) ? 1 : 0);
 
   if (horizontal === 0 && vertical === 0) {
     return false;
   }
 
   const magnitude = Math.hypot(horizontal, vertical) || 1;
-  const speed = HAVEN_BUILD_PAN_SPEED * (havenBuildPanInput.fast ? HAVEN_BUILD_PAN_FAST_MULTIPLIER : 1);
+  const speed = HAVEN_BUILD_PAN_SPEED * ((havenBuildPanInput.fast || controllerInput.special1) ? HAVEN_BUILD_PAN_FAST_MULTIPLIER : 1);
   const step = speed * (deltaTime / 1000);
   const cameraCenter = havenBuildCameraCenter ?? clampBuildCameraCenter(
     getTrackedFieldCenter().x,
@@ -2264,16 +3227,37 @@ function updateHavenBuildPan(deltaTime: number): boolean {
   return changed;
 }
 
+function placeCurrentBuildSelectionAtViewCenter(): void {
+  const center = havenBuildCameraCenter ?? getTrackedFieldCenter();
+  const tileX = Math.round(center.x / FIELD_TILE_SIZE);
+  const tileY = Math.round(center.y / FIELD_TILE_SIZE);
+  placeCurrentBuildSelection(tileX, tileY);
+}
+
 function renderHavenBuildPanel(): string {
   if (!isHavenBuildModeEnabled()) {
     return "";
   }
 
   const state = getGameState();
-  const storedNodes = getBaseCampNodeDefinitions()
-    .filter((definition) => getBaseCampNodeLayout(state.uiLayout, definition.id).hidden);
-  const availableDecor = getAvailableFieldDecor(state);
+  const buildPanLabel = getPlayerActionLabel("P1", "up") === "W"
+    ? "WASD / ARROWS"
+    : `${getPlayerActionLabel("P1", "up")} / ${getPlayerActionLabel("P1", "left")}`;
+  const buildFastLabel = getPlayerActionLabel("P1", "special1");
+  const buildInHaven = isHavenBuildMapActive();
+  const storedNodes = buildInHaven
+    ? getBaseCampNodeDefinitions()
+      .filter((definition) => getBaseCampNodeLayout(state.uiLayout, definition.id).hidden)
+    : [];
+  const availableDecorStock = getAvailableFieldDecorStock(state);
+  const availableDecorCounts = new Map(availableDecorStock.map(({ decor, availableCount }) => [decor.id, availableCount]));
   const craftableDecor = getCraftableDecorItems(state);
+  const selectedDecor = havenBuildPaletteSelection?.kind === "decor"
+    ? getDecorItemById(havenBuildPaletteSelection.decorId)
+    : null;
+  const selectedFootprint = selectedDecor && havenBuildPaletteSelection?.kind === "decor"
+    ? getFieldDecorFootprintSize(selectedDecor, havenBuildPaletteSelection.rotationQuarterTurns)
+    : null;
   const selectedLabel = havenBuildPaletteSelection
     ? havenBuildPaletteSelection.kind === "node"
       ? getBaseCampNodeDefinition(havenBuildPaletteSelection.nodeId)?.label ?? havenBuildPaletteSelection.nodeId
@@ -2284,18 +3268,26 @@ function renderHavenBuildPanel(): string {
     <aside class="field-build-panel" data-build-panel="true">
       <div class="field-build-panel__header">
         <div>
-          <div class="field-build-panel__eyebrow">HAVEN // BUILD MODE</div>
-          <div class="field-build-panel__title">FIELD LAYOUT</div>
+          <div class="field-build-panel__eyebrow">${buildInHaven ? "HAVEN // BUILD MODE" : "FIELD // BUILD MODE"}</div>
+          <div class="field-build-panel__title">${buildInHaven ? "FIELD LAYOUT" : "FORWARD FABRICATION"}</div>
         </div>
         <button class="field-build-panel__close" type="button" data-build-close="true">DONE</button>
       </div>
       <div class="field-build-panel__copy">
-        Drag visible nodes and decor on the map. Stored items can be selected here, then placed with a click on open floor.
+        ${buildInHaven
+          ? "Drag visible nodes and place stored field items on open floor."
+          : "Place and reposition fabricated field items in the current zone. HAVEN node layout stays locked here."}
       </div>
-      <div class="field-build-panel__copy">PAN :: WASD / ARROWS // HOLD SHIFT TO SPEED PAN</div>
+      <div class="field-build-panel__copy">${buildInHaven ? `PAN :: ${buildPanLabel} // HOLD ${buildFastLabel} TO SPEED PAN` : "CAMERA :: LOCKED OUTSIDE HAVEN"}</div>
       <div class="field-build-panel__selection">SELECTED :: ${selectedLabel}</div>
+      ${selectedDecor && selectedFootprint
+        ? `<div class="field-build-panel__copy">ROTATE :: R // FOOTPRINT :: ${selectedFootprint.width}x${selectedFootprint.height} // READY :: ${availableDecorCounts.get(selectedDecor.id) ?? 0}</div>`
+        : ""}
+      ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-place-center="true">PLACE AT VIEW CENTER</button>` : ""}
+      ${havenBuildPaletteSelection?.kind === "decor" ? `<button class="field-build-panel__clear" type="button" data-build-rotate-selection="true">ROTATE SELECTED</button>` : ""}
       ${havenBuildPaletteSelection ? `<button class="field-build-panel__clear" type="button" data-build-clear="true">CLEAR SELECTION</button>` : ""}
 
+      ${buildInHaven ? `
       <section class="field-build-panel__section">
         <div class="field-build-panel__section-title">STORED NODES</div>
         <div class="field-build-panel__grid">
@@ -2310,28 +3302,29 @@ function renderHavenBuildPanel(): string {
             : `<div class="field-build-panel__empty">No stored nodes.</div>`}
         </div>
       </section>
+      ` : ""}
 
       <section class="field-build-panel__section">
-        <div class="field-build-panel__section-title">DECOR LOCKER</div>
+        <div class="field-build-panel__section-title">FIELD LOCKER</div>
         <div class="field-build-decor-list">
-          ${availableDecor.length > 0
-            ? availableDecor.map((decor) => `
+          ${availableDecorStock.length > 0
+            ? availableDecorStock.map(({ decor, availableCount }) => `
               <button class="field-build-decor-card ${havenBuildPaletteSelection?.kind === "decor" && havenBuildPaletteSelection.decorId === decor.id ? "field-build-decor-card--active" : ""}"
                       type="button"
                       data-build-select-decor="${decor.id}">
                 <div class="field-build-decor-card__sprite">${renderDecorSpriteSvg(decor)}</div>
                 <div class="field-build-decor-card__copy">
                   <div class="field-build-decor-card__name">${decor.name}</div>
-                  <div class="field-build-decor-card__meta">${decor.tileWidth}x${decor.tileHeight} TILE${decor.tileWidth * decor.tileHeight > 1 ? "S" : ""}</div>
+                  <div class="field-build-decor-card__meta">${decor.tileWidth}x${decor.tileHeight} TILE${decor.tileWidth * decor.tileHeight > 1 ? "S" : ""} // READY ${availableCount}</div>
                 </div>
               </button>
             `).join("")
-            : `<div class="field-build-panel__empty">No unplaced decor in storage.</div>`}
+            : `<div class="field-build-panel__empty">No unplaced field items in storage.</div>`}
         </div>
       </section>
 
       <section class="field-build-panel__section">
-        <div class="field-build-panel__section-title">FABRICATE DECOR</div>
+        <div class="field-build-panel__section-title">FABRICATE FIELD KIT</div>
         <div class="field-build-decor-list">
           ${craftableDecor.length > 0
             ? craftableDecor.map((decor) => `
@@ -2339,18 +3332,113 @@ function renderHavenBuildPanel(): string {
                 <div class="field-build-decor-card__sprite">${renderDecorSpriteSvg(decor)}</div>
                 <div class="field-build-decor-card__copy">
                   <div class="field-build-decor-card__name">${decor.name}</div>
-                  <div class="field-build-decor-card__meta">${formatBuildResourceCost(decor.craftCost)}</div>
+                  <div class="field-build-decor-card__meta">${formatBuildResourceCost(decor.craftCost)} // READY ${availableDecorCounts.get(decor.id) ?? 0}</div>
                 </div>
                 <button class="field-build-craft-btn" type="button" data-build-craft-decor="${decor.id}" ${canCraftDecorItem(decor.id, state) ? "" : "disabled"}>
                   FABRICATE
                 </button>
               </div>
             `).join("")
-            : `<div class="field-build-panel__empty">All current decor pieces are already owned.</div>`}
+            : `<div class="field-build-panel__empty">No field fabrication recipes are online.</div>`}
         </div>
       </section>
     </aside>
   `;
+}
+
+function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
+  const cachedHtml = fieldTileHtmlCache.get(map);
+  if (cachedHtml) {
+    return cachedHtml;
+  }
+
+  const rects: string[] = [];
+  const mapPixelWidth = map.width * tileSize;
+  const mapPixelHeight = map.height * tileSize;
+  const patternDefs = (Object.entries(FIELD_TILE_PATTERN_STYLES) as Array<[FieldTilePatternKey, { fill: string; stroke: string }]>)
+    .map(([key, style]) => `
+      <pattern id="field-tile-pattern-${key}" patternUnits="userSpaceOnUse" width="${tileSize}" height="${tileSize}">
+        <rect width="${tileSize}" height="${tileSize}" fill="${style.fill}"></rect>
+        <path d="M ${tileSize - 0.5} 0 V ${tileSize} M 0 ${tileSize - 0.5} H ${tileSize}" stroke="${style.stroke}" stroke-width="1" shape-rendering="crispEdges"></path>
+      </pattern>
+    `)
+    .join("");
+
+  const getPatternKey = (tile: FieldMap["tiles"][number][number]): FieldTilePatternKey => {
+    if (!tile || !tile.walkable || tile.type === "wall") {
+      return "wall";
+    }
+    if (tile.type === "grass") {
+      return "grass";
+    }
+    if (tile.type === "dirt") {
+      return "dirt";
+    }
+    if (tile.type === "stone") {
+      return "stone";
+    }
+    return "floor";
+  };
+
+  for (let y = 0; y < map.height; y += 1) {
+    const row = map.tiles[y];
+    if (!row || row.length === 0) {
+      continue;
+    }
+
+    let segmentPatternKey: FieldTilePatternKey | null = null;
+    let segmentStartX = 0;
+    let segmentLength = 0;
+    const flushSegment = (): void => {
+      if (!segmentPatternKey || segmentLength <= 0) {
+        return;
+      }
+      rects.push(
+        `<rect x="${segmentStartX * tileSize}" y="${y * tileSize}" width="${segmentLength * tileSize}" height="${tileSize}" fill="url(#field-tile-pattern-${segmentPatternKey})"></rect>`,
+      );
+    };
+
+    for (let x = 0; x < map.width; x += 1) {
+      const tile = row[x];
+      if (!tile) {
+        flushSegment();
+        segmentPatternKey = null;
+        segmentLength = 0;
+        continue;
+      }
+
+      const patternKey = getPatternKey(tile);
+      if (patternKey === segmentPatternKey) {
+        segmentLength += 1;
+        continue;
+      }
+
+      flushSegment();
+      segmentPatternKey = patternKey;
+      segmentStartX = x;
+      segmentLength = 1;
+    }
+
+    flushSegment();
+  }
+
+  const html = `
+    <svg
+      class="field-tile-layer"
+      aria-hidden="true"
+      focusable="false"
+      width="${mapPixelWidth}"
+      height="${mapPixelHeight}"
+      viewBox="0 0 ${mapPixelWidth} ${mapPixelHeight}"
+      preserveAspectRatio="none"
+      shape-rendering="crispEdges">
+      <defs>${patternDefs}</defs>
+      <rect width="${mapPixelWidth}" height="${mapPixelHeight}" fill="${FIELD_TILE_BACKGROUND_COLOR}"></rect>
+      ${rects.join("")}
+    </svg>
+  `;
+  fieldTileHtmlCache.set(map, html);
+  return html;
 }
 
 function render(): void {
@@ -2361,22 +3449,13 @@ function render(): void {
   const mapPixelWidth = currentMap.width * tileSize;
   const mapPixelHeight = currentMap.height * tileSize;
   const combatActive = isFieldCombatActive();
-  const liveEnemyCount = (fieldState.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0).length;
-  const displayObjects = currentMap.objects.filter((obj) => !isEnemyFieldObject(obj));
+  const liveEnemyCount = combatActive
+    ? getLocallyRelevantFieldEnemies().length
+    : (fieldState.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0).length;
+  const collectedResourceIds = new Set(fieldState.collectedResourceObjectIds ?? []);
+  const displayObjects = currentMap.objects.filter((obj) => !isEnemyFieldObject(obj) && !(obj.type === "resource" && collectedResourceIds.has(obj.id)));
 
-  // Build tiles HTML
-  let tilesHtml = "";
-  for (let y = 0; y < currentMap.height; y++) {
-    for (let x = 0; x < currentMap.width; x++) {
-      const tile = currentMap.tiles[y][x];
-      const tileClass = tile.walkable ? "field-tile-walkable" : "field-tile-wall";
-      const tileType = tile.type;
-      tilesHtml += `
-        <div class="field-tile ${tileClass} field-tile-${tileType}" 
-             style="left: ${x * tileSize}px; top: ${y * tileSize}px; width: ${tileSize}px; height: ${tileSize}px;"></div>
-      `;
-    }
-  }
+  const tilesHtml = getFieldTilesHtml(currentMap, tileSize);
 
   // Build objects HTML
   let objectsHtml = "";
@@ -2402,7 +3481,14 @@ function render(): void {
         ? "cursor: pointer;"
         : "";
     const buildControls = isHavenBuildModeEnabled() && buildMeta
-      ? `<button class="field-build-object-remove" type="button" data-build-remove="${buildMeta.itemId}" data-build-remove-kind="${buildMeta.kind}" aria-label="Store item">_</button>`
+      ? `
+        <div class="field-build-object-controls">
+          ${buildMeta.kind === "decor"
+            ? `<button class="field-build-object-rotate" type="button" data-build-rotate-decor="${buildMeta.itemId}" aria-label="Rotate item">R</button>`
+            : ""}
+          <button class="field-build-object-remove" type="button" data-build-remove="${buildMeta.itemId}" data-build-remove-kind="${buildMeta.kind}" aria-label="Store item">_</button>
+        </div>
+      `
       : "";
 
     objectsHtml += `
@@ -2424,11 +3510,15 @@ function render(): void {
   const state = getGameState();
   const fieldLobby = getRenderableLobbyForCurrentField();
   const networkLobby = isNetworkLobbyMapActive() ? fieldLobby : null;
+  const currentTime = performance.now();
   // Ensure players object exists (backward compatibility)
   const players = state.players || {
     P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
     P2: { id: "P2", slot: "P2", active: false, color: "#6849c2", inputSource: "none" as const, presence: "inactive" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
   };
+  const p1DashActive = Boolean(players.P1.active && getPlayerInput("P1").special1);
+  const p2DashActive = Boolean(players.P2.active && getPlayerInput("P2").special1);
+  const stepPulseClass = currentTime < fieldStepPulseUntilMs ? " field-player--step" : "";
   const p1Avatar = players.P1.avatar;
   const p2Avatar = players.P2.active ? players.P2.avatar : null;
 
@@ -2438,22 +3528,25 @@ function render(): void {
   if (p1Avatar) {
     const combatClass = combatActive ? " field-node-player-combat" : "";
     const attackClass = combatActive && fieldState.combat?.isAttacking ? " player-attacking" : "";
+    const invulnerableClass = Number(fieldState.player.invulnerabilityTime ?? 0) > 0 ? " player-invulnerable" : "";
+    const dashClass = p1DashActive ? " field-player--dash" : "";
     playerHtml += `
-      <div class="field-player field-player-p1${combatClass}${attackClass}"
+      <div class="field-player field-player-p1${combatClass}${attackClass}${invulnerableClass}${dashClass}${stepPulseClass}"
            style="left: ${p1Avatar.x - 16}px; top: ${p1Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p1Avatar.facing}">
-        <div class="field-player-sprite">${combatActive ? "⚔" : "A"}</div>
+        <div class="field-player-sprite"></div>
       </div>
     `;
   }
 
   // P2 Avatar (if active)
   if (p2Avatar) {
+    const dashClass = p2DashActive ? " field-player--dash" : "";
     playerHtml += `
-      <div class="field-player field-player-p2" 
+      <div class="field-player field-player-p2${dashClass}${stepPulseClass}" 
            style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p2Avatar.facing}">
-        <div class="field-player-sprite">A</div>
+        <div class="field-player-sprite"></div>
       </div>
     `;
   }
@@ -2521,9 +3614,9 @@ function render(): void {
   const attackLabel = getPlayerActionLabel("P1", "attack");
   const interactLabel = getPlayerActionLabel("P1", "interact");
   const cancelLabel = getPlayerActionLabel("P1", "cancel");
-  const controllerPromptHtml = !combatActive && activeInteractionPrompt
-    ? `<div class="field-interaction-prompt">${activeInteractionPrompt}</div>`
-    : "";
+  const buildModeHudInstructions = canPanDuringBuildMode()
+    ? `BUILD MODE // ${moveLabel} TO PAN // HOLD ${dashLabel} TO SPEED PAN // R TO ROTATE // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.`
+    : "BUILD MODE // CAMERA LOCKED IN FIELD ZONES // R TO ROTATE // SELECT FROM PANEL, THEN PLACE AT VIEW CENTER OR USE POINTER.";
   const buildModeHeaderHtml = isHavenBuildModeEnabled()
     ? `<div class="field-build-mode-header">BUILD MODE ACTIVE</div>`
     : "";
@@ -2539,7 +3632,7 @@ function render(): void {
   void promptHtml;
   void hudInstructions;
   const combatStatusHtml = combatActive
-    ? `<div class="field-hud-combat-status">HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
+    ? `<div class="field-hud-combat-status">HP ${Math.max(0, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP))}/${Math.max(1, Number(fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP))} • HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
     : "";
 
   // Get field-root container or create it
@@ -2575,17 +3668,18 @@ function render(): void {
       </div>
     </div>
 
-    ${controllerPromptHtml}
     ${weaponWindowHtml}
 
     <div class="field-hud">
+      ${getFieldBetaMarkerHtml(currentMap.id)}
       ${combatStatusHtml}
       <div class="field-hud-instructions">
-        ${isHavenBuildModeEnabled() ? "BUILD MODE // WASD OR ARROWS TO PAN // HOLD SHIFT TO SPEED PAN // DRAG OR PLACE ITEMS ON OPEN FLOOR." : controllerHudInstructions}
+        ${isHavenBuildModeEnabled() ? buildModeHudInstructions : controllerHudInstructions}
       </div>
     </div>
     ${renderHavenBuildPanel()}
   `;
+  enhanceTerminalUiButtons(fieldRoot);
 
   const existingLobbyOverlay = root.querySelector(".network-lobby-overlay") as HTMLElement | null;
   if (networkLobby) {
@@ -2612,6 +3706,9 @@ function render(): void {
     existingLobbyOverlay.remove();
   }
 
+  ensureFieldFeedbackListener();
+  ensureFieldFeedbackOverlay();
+  syncFieldPromptOverlay(!combatActive ? activeInteractionPrompt : null);
   centerViewportOnPlayer();
 
   // Re-attach wheel listener if needed (viewport is recreated on each render)
@@ -2640,7 +3737,8 @@ function render(): void {
   });
   attachHavenBuildListeners(fieldRoot);
   drawPinnedMinimapOverlay();
-  updateFocusableElements();
+  registerFieldControllerContext();
+  scheduleFieldFocusableRefresh();
 }
 
 function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
@@ -2661,6 +3759,20 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
     event.stopPropagation();
     havenBuildPaletteSelection = null;
     render();
+  });
+
+  const placeCenterButton = fieldRoot.querySelector<HTMLElement>("[data-build-place-center='true']");
+  placeCenterButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    placeCurrentBuildSelectionAtViewCenter();
+  });
+
+  const rotateSelectionButton = fieldRoot.querySelector<HTMLElement>("[data-build-rotate-selection='true']");
+  rotateSelectionButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    rotateSelectedBuildDecor();
   });
 
   fieldRoot.querySelectorAll<HTMLElement>("[data-build-select-node]").forEach((button) => {
@@ -2684,7 +3796,7 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
       if (!decorId) {
         return;
       }
-      havenBuildPaletteSelection = { kind: "decor", decorId };
+      havenBuildPaletteSelection = createHavenBuildDecorSelection(decorId);
       render();
     });
   });
@@ -2702,12 +3814,12 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
         showSystemPing({
           type: "error",
           title: "FABRICATION FAILED",
-          message: "Resources or ownership rules blocked that decor build.",
+          message: "Resources blocked that decor build.",
           channel: "haven-build",
         });
         return;
       }
-      havenBuildPaletteSelection = { kind: "decor", decorId };
+      havenBuildPaletteSelection = createHavenBuildDecorSelection(decorId);
       showSystemPing({
         type: "success",
         title: "DECOR FABRICATED",
@@ -2716,6 +3828,18 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
       });
       syncCurrentMapFromState();
       render();
+    });
+  });
+
+  fieldRoot.querySelectorAll<HTMLElement>("[data-build-rotate-decor]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const placementId = button.dataset.buildRotateDecor;
+      if (!placementId) {
+        return;
+      }
+      rotatePlacedBuildDecor(placementId);
     });
   });
 
@@ -2764,7 +3888,7 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
   fieldRoot.querySelectorAll<HTMLElement>(".field-object[data-build-kind]").forEach((element) => {
     element.onpointerdown = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest(".field-build-object-remove")) {
+      if (target.closest(".field-build-object-remove") || target.closest(".field-build-object-rotate")) {
         return;
       }
 
@@ -2821,12 +3945,16 @@ function attachHavenBuildListeners(fieldRoot: HTMLElement): void {
         const excludedObjectId = havenBuildDragState.kind === "node"
           ? getBaseCampNodeDefinition(havenBuildDragState.itemId as BaseCampNodeId)?.objectId ?? null
           : `field_decor_${havenBuildDragState.itemId}`;
+        const excludedZoneId = havenBuildDragState.kind === "node"
+          ? getBaseCampNodeDefinition(havenBuildDragState.itemId as BaseCampNodeId)?.zoneId ?? null
+          : null;
         const placement = validateBuildPlacement(
           nextOrigin.x,
           nextOrigin.y,
           havenBuildDragState.width,
           havenBuildDragState.height,
           excludedObjectId,
+          excludedZoneId,
         );
         havenBuildDragState.latestX = nextOrigin.x;
         havenBuildDragState.latestY = nextOrigin.y;
@@ -2917,6 +4045,8 @@ function renderFieldProjectiles(projectiles: FieldProjectile[]): string {
 
 function renderFieldWeaponWindow(combat: NonNullable<FieldState["combat"]>): string {
   const toggleModeLabel = getPlayerActionLabel("P1", "special1");
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const installedUpgradeCount = getWeaponsmithInstalledUpgradeIds(getGameState()).length;
   return `
     <div class="field-node-weapon-window">
       <div class="weapon-window-title">BOWBLADE</div>
@@ -2933,6 +4063,9 @@ function renderFieldWeaponWindow(combat: NonNullable<FieldState["combat"]>): str
       ${combat.isRangedMode && combat.energyCells <= 0 ? `
         <div class="weapon-window-warning">NO ENERGY - USE MELEE TO CHARGE</div>
       ` : ""}
+      <div class="weapon-window-empty-copy">
+        UPGRADES ${installedUpgradeCount} // MELEE +${bowbladeFieldProfile.meleeDamageBonus} // RANGED +${bowbladeFieldProfile.rangedDamageBonus}
+      </div>
       <div class="weapon-window-hint"><span class="key-hint">${toggleModeLabel}</span> Switch Mode</div>
     </div>
   `;
@@ -2984,15 +4117,31 @@ function centerViewportOnPlayer(): void {
     centerX = buildCenter.x;
     centerY = buildCenter.y;
   } else {
-    const trackedCenter = getTrackedFieldCenter();
-    centerX = trackedCenter.x;
-    centerY = trackedCenter.y;
+    const trackedCenter = clampBuildCameraCenter(
+      getTrackedFieldCenter().x,
+      getTrackedFieldCenter().y,
+    );
+    if (!smoothedFieldCameraCenter) {
+      smoothedFieldCameraCenter = trackedCenter;
+    } else {
+      smoothedFieldCameraCenter = {
+        x: smoothedFieldCameraCenter.x + ((trackedCenter.x - smoothedFieldCameraCenter.x) * FIELD_CAMERA_SMOOTHING),
+        y: smoothedFieldCameraCenter.y + ((trackedCenter.y - smoothedFieldCameraCenter.y) * FIELD_CAMERA_SMOOTHING),
+      };
+    }
+    centerX = smoothedFieldCameraCenter.x;
+    centerY = smoothedFieldCameraCenter.y;
   }
 
   // Account for zoom when calculating offset
   const offsetX = centerX - (viewportRect.width / (2 * fieldZoom));
   const offsetY = centerY - (viewportRect.height / (2 * fieldZoom));
 
+  currentFieldCameraTransform = {
+    offsetX,
+    offsetY,
+    zoom: fieldZoom,
+  };
   applyMapTransform(mapElement, offsetX, offsetY, fieldZoom);
 }
 
@@ -3038,12 +4187,7 @@ function updateAllNodesPanelContent(): void {
 
   const state = getGameState();
   const wad = state.wad ?? 0;
-  const res = state.resources ?? {
-    metalScrap: 0,
-    wood: 0,
-    chaosShards: 0,
-    steamComponents: 0,
-  };
+  const res = state.resources ?? createEmptyResourceWallet();
 
   // Check if we're currently in field mode
   const isInFieldMode = document.querySelector(".field-root") !== null;
@@ -3222,6 +4366,10 @@ function updatePanelVisibility(): void {
 }
 
 function toggleAllNodesPanel(): void {
+  if (shouldSuppressEscMenuAccess()) {
+    return;
+  }
+
   // Navigate to the standalone All Nodes Menu Screen
   // This exits field mode and shows the menu as an independent screen
   const currentMapId = fieldState?.currentMap ?? "base_camp";
@@ -3304,8 +4452,72 @@ function renderPinnedRosterNodePip(): string {
   `;
 }
 
+function isPinnedTheaterAutoTickEnabled(): boolean {
+  return Boolean(getGameState().uiLayout?.baseCampTheaterAutoTickEnabled);
+}
+
+function getPinnedAtlasFloorOrdinalSafe(): number {
+  try {
+    return getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+  } catch {
+    return 1;
+  }
+}
+
+function renderPinnedTheaterAutoTickCard(): string {
+  const enabled = isPinnedTheaterAutoTickEnabled();
+  const floorOrdinal = getPinnedAtlasFloorOrdinalSafe();
+  const summaries = getOpsTerminalAtlasWarmEconomySummaries(floorOrdinal);
+  const totalWadUpkeep = summaries.reduce((total, summary) => total + Math.max(0, summary.wadUpkeepPerTick ?? 0), 0);
+  const incomeSummary = summaries
+    .flatMap((summary) => getResourceEntries(summary.incomePerTick))
+    .filter(({ amount }) => Number(amount ?? 0) > 0)
+    .slice(0, 3)
+    .map(({ key, amount }) => `${RESOURCE_SHORT_LABELS[key] ?? key.toUpperCase()} +${Math.round(Number(amount ?? 0))}`)
+    .join(" // ");
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--theater-clock">
+      ${renderPinnedOverlayToolbar(PINNED_THEATER_AUTO_TICK_LAYOUT_ID, "theater clock")}
+      <section class="all-nodes-theater-clock-panel" aria-label="Theater clock">
+        <div class="all-nodes-theater-clock-heading">
+          <span class="all-nodes-theater-clock-kicker">BACKGROUND THEATER TICKS</span>
+          <span class="all-nodes-theater-clock-rate">+1 TICK / 10 SEC</span>
+        </div>
+        <div class="all-nodes-theater-clock-meta">
+          <span>FLOOR ${String(Math.max(1, floorOrdinal)).padStart(2, "0")}</span>
+          <span>${summaries.length} ONLINE</span>
+          <span>WAD ${totalWadUpkeep > 0 ? `-${totalWadUpkeep}` : "0"}</span>
+        </div>
+        <button
+          class="all-nodes-theater-clock-toggle${enabled ? " is-active" : ""}"
+          type="button"
+          data-field-theater-autotick-toggle="${enabled ? "off" : "on"}"
+          aria-pressed="${enabled ? "true" : "false"}"
+        >
+          <span class="all-nodes-theater-clock-toggle-track">
+            <span class="all-nodes-theater-clock-toggle-thumb"></span>
+          </span>
+          <span class="all-nodes-theater-clock-toggle-copy">
+            <span class="all-nodes-theater-clock-toggle-state">${enabled ? "ONLINE" : "OFFLINE"}</span>
+            <span class="all-nodes-theater-clock-toggle-desc">${enabled ? "Atlas sectors keep advancing while you stay in field mode." : "Flip the switch to keep online theaters moving in the background."}</span>
+          </span>
+        </button>
+        <div class="all-nodes-theater-clock-status">
+          <div class="all-nodes-theater-clock-line">${summaries.length > 0 ? `${summaries[0]?.sectorLabel ?? "SECTOR"} ${summaries[0]?.zoneName ?? "ONLINE"}${summaries.length > 1 ? ` // +${summaries.length - 1} more` : ""}` : "No operational theaters are online on this floor."}</div>
+          <div class="all-nodes-theater-clock-line all-nodes-theater-clock-line--muted">${incomeSummary || "No active income streams are registered on this floor yet."}</div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
+  const availability = isFieldEscNodeAction(node.action)
+    ? getEscActionAvailability(node.action, getFieldEscAvailabilityContext())
+    : "active";
   const variantClass = node.variant ? ` ${node.variant}` : "";
+  const disabledClass = availability === "disabled" ? " all-nodes-node-btn--disabled" : "";
   const pip = node.action === "dispatch"
     ? renderPinnedDispatchNodePip()
     : node.action === "roster"
@@ -3314,7 +4526,7 @@ function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
   return `
     <div class="all-nodes-item-shell">
       ${renderPinnedOverlayToolbar(node.action, node.label)}
-      <button class="all-nodes-node-btn${variantClass}" type="button" data-field-node-action="${node.action}">
+      <button class="all-nodes-node-btn${variantClass}${disabledClass}" type="button" data-field-node-action="${node.action}" ${availability === "disabled" ? "disabled aria-disabled=\"true\"" : ""}>
         <span class="node-icon">${node.icon}</span>
         <span class="node-label">${node.label}</span>
         <span class="node-desc">${node.desc}</span>
@@ -3324,7 +4536,7 @@ function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
   `;
 }
 
-function renderPinnedResourceCard(wad: number, resources: { metalScrap: number; wood: number; chaosShards: number; steamComponents: number }): string {
+function renderPinnedResourceCard(wad: number, resources: ResourceWallet): string {
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--resource">
       ${renderPinnedOverlayToolbar(PINNED_RESOURCE_LAYOUT_ID, "resource tracker")}
@@ -3338,26 +4550,88 @@ function renderPinnedResourceCard(wad: number, resources: { metalScrap: number; 
             <span class="all-nodes-balance-label">WAD</span>
             <span class="all-nodes-balance-value">${wad.toLocaleString()}</span>
           </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">M</span>
-            <span class="all-nodes-balance-label">METAL</span>
-            <span class="all-nodes-balance-value">${resources.metalScrap}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">T</span>
-            <span class="all-nodes-balance-label">TIMBER</span>
-            <span class="all-nodes-balance-value">${resources.wood}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">C</span>
-            <span class="all-nodes-balance-label">CHAOS</span>
-            <span class="all-nodes-balance-value">${resources.chaosShards}</span>
-          </div>
-          <div class="all-nodes-balance-item">
-            <span class="all-nodes-balance-icon">S</span>
-            <span class="all-nodes-balance-label">STEAM</span>
-            <span class="all-nodes-balance-value">${resources.steamComponents}</span>
-          </div>
+          ${getResourceEntries(resources, { includeZero: true, keys: BASIC_RESOURCE_KEYS }).map((entry) => `
+            <div class="all-nodes-balance-item">
+              <span class="all-nodes-balance-icon">${entry.abbreviation}</span>
+              <span class="all-nodes-balance-label">${entry.shortLabel}</span>
+              <span class="all-nodes-balance-value">${entry.amount}</span>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function getPinnedMaterialRefineryContext(): MaterialRefineryContext {
+  const mapId = fieldState?.currentMap ?? currentMap?.id ?? "base_camp";
+  return getOuterDeckFieldContext(String(mapId)) === "outerDeckBranch" ? "expedition" : "haven";
+}
+
+function formatPinnedMaterialRefineryCost(recipeId: AdvancedMaterialId): string {
+  const recipe = getMaterialRefineryRecipe(recipeId);
+  return Object.entries(recipe.cost)
+    .map(([resourceKey, amount]) => `${amount}${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}`)
+    .join(" + ");
+}
+
+function formatPinnedMaterialRefineryShortage(recipeId: AdvancedMaterialId): string {
+  const shortage = getMaterialRefineryShortage(getGameState(), recipeId);
+  if (shortage.length === 0) {
+    return "READY";
+  }
+
+  return shortage
+    .map((entry) => `${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[entry.resourceKey] ?? entry.resourceKey} ${entry.available}/${entry.required}`)
+    .join(" · ");
+}
+
+function renderPinnedMaterialsRefineryCard(): string {
+  const state = getGameState();
+  const context = getPinnedMaterialRefineryContext();
+  const destinationLabel = context === "expedition" ? "FORWARD LOCKER" : "BASE STORAGE";
+
+  return `
+    <div class="all-nodes-item-shell all-nodes-item-shell--materials-refinery">
+      ${renderPinnedOverlayToolbar("materials-refinery", "light crafting")}
+      <section class="all-nodes-refinery-panel" aria-label="Light crafting">
+        <div class="all-nodes-refinery-heading">
+          <div class="all-nodes-refinery-title">LIGHT CRAFTING</div>
+          <span class="all-nodes-refinery-destination">${destinationLabel}</span>
+        </div>
+        <div class="all-nodes-refinery-resource-strip">
+          ${BASIC_RESOURCE_KEYS.map((resourceKey) => `
+            <div class="all-nodes-refinery-resource-item">
+              <span>${PINNED_MATERIALS_REFINERY_RESOURCE_SHORT_LABELS[resourceKey] ?? resourceKey}</span>
+              <strong>${Number(state.resources?.[resourceKey] ?? 0)}</strong>
+            </div>
+          `).join("")}
+        </div>
+        <div class="all-nodes-refinery-grid">
+          ${getMaterialRefineryRecipes().map((recipe) => {
+            const owned = countAdvancedMaterialOwned(state, recipe.id);
+            const canCraft = canCraftMaterialRefineryRecipe(state, recipe.id);
+            return `
+              <article class="all-nodes-refinery-card${canCraft ? "" : " all-nodes-refinery-card--locked"}">
+                <div class="all-nodes-refinery-card-header">
+                  <div class="all-nodes-refinery-card-name">${recipe.name}</div>
+                  <span class="all-nodes-refinery-card-owned">x${owned}</span>
+                </div>
+                <div class="all-nodes-refinery-card-meta">
+                  <span class="all-nodes-refinery-card-cost">${formatPinnedMaterialRefineryCost(recipe.id)}</span>
+                  <span class="all-nodes-refinery-card-status${canCraft ? "" : " all-nodes-refinery-card-status--short"}">${formatPinnedMaterialRefineryShortage(recipe.id)}</span>
+                </div>
+                <button
+                  class="all-nodes-refinery-craft-btn"
+                  type="button"
+                  data-refinery-craft-id="${recipe.id}"
+                  ${canCraft ? "" : "disabled"}
+                >
+                  MAKE
+                </button>
+              </article>
+            `;
+          }).join("")}
         </div>
       </section>
     </div>
@@ -3389,6 +4663,33 @@ function renderPinnedQuacCard(): string {
       </section>
     </div>
   `;
+}
+
+function renderPinnedQuacStatus(statusEl: HTMLElement, message: string, isError = false): void {
+  statusEl.classList.toggle("all-nodes-cli-status--error", isError);
+  statusEl.innerHTML = "";
+
+  const output = document.createElement("div");
+  output.className = "all-nodes-cli-status__output";
+  statusEl.appendChild(output);
+
+  startTerminalTyping(statusEl, output, [message], {
+    showCursor: false,
+    loop: false,
+    baseCharDelayMs: 16,
+    minCharDelayMs: 6,
+    accelerationPerCharMs: 0.7,
+    pauseAfterLineMs: 90,
+    maxLines: 1,
+    scrollBehavior: "auto",
+    lineClassName: "all-nodes-cli-status__line",
+    promptClassName: "all-nodes-cli-status__prompt",
+    textClassName: "all-nodes-cli-status__text",
+    promptParser: (line) => ({
+      prompt: "S/COM://QUAC>",
+      text: ` ${line}`,
+    }),
+  });
 }
 
 function renderPinnedNotesCard(): string {
@@ -3476,12 +4777,7 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
 
   if (itemId === PINNED_RESOURCE_LAYOUT_ID) {
     const state = getGameState();
-    const resources = state.resources ?? {
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    };
+    const resources = state.resources ?? createEmptyResourceWallet();
     return `
       <div class="all-nodes-grid-item field-pinned-item field-pinned-item--resource" data-pinned-item-id="${itemId}" style="${style}">
         ${renderPinnedResourceCard(state.wad ?? 0, resources)}
@@ -3521,6 +4817,22 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
     `;
   }
 
+  if (itemId === "materials-refinery") {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--materials-refinery" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedMaterialsRefineryCard()}
+      </div>
+    `;
+  }
+
+  if (itemId === PINNED_THEATER_AUTO_TICK_LAYOUT_ID) {
+    return `
+      <div class="all-nodes-grid-item field-pinned-item field-pinned-item--theater-clock" data-pinned-item-id="${itemId}" style="${style}">
+        ${renderPinnedTheaterAutoTickCard()}
+      </div>
+    `;
+  }
+
   const node = PINNED_NODE_LAYOUT.find((entry) => entry.action === itemId);
   if (!node) return "";
 
@@ -3549,6 +4861,10 @@ function updatePinnedNodesOverlay(): void {
   overlay.innerHTML = pinnedItems
     .map((itemId) => renderPinnedOverlayItem(itemId, frames[itemId], colors))
     .join("");
+  enhanceTerminalUiButtons(overlay);
+  overlay.querySelectorAll<HTMLElement>("[data-field-quac-status]").forEach((statusEl) => {
+    renderPinnedQuacStatus(statusEl, fieldPinnedQuacFeedback, statusEl.classList.contains("all-nodes-cli-status--error"));
+  });
   attachNotesWidgetHandlers(overlay, {
     onStateChange: () => renderFieldScreen(fieldState?.currentMap ?? "base_camp"),
   });
@@ -3590,6 +4906,48 @@ function handlePinnedOverlayClick(e: MouseEvent): void {
     return;
   }
 
+  const refineryButton = target.closest<HTMLElement>("[data-refinery-craft-id]");
+  if (refineryButton) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const recipeId = refineryButton.dataset.refineryCraftId as AdvancedMaterialId | undefined;
+    if (!recipeId) {
+      return;
+    }
+
+    updateGameState((prev) => craftMaterialRefineryRecipe(prev, recipeId, getPinnedMaterialRefineryContext()));
+    updatePinnedNodesOverlay();
+    return;
+  }
+
+  const theaterAutoTickButton = target.closest<HTMLElement>("[data-field-theater-autotick-toggle]");
+  if (theaterAutoTickButton) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const enabled = theaterAutoTickButton.dataset.fieldTheaterAutotickToggle === "on";
+    updateGameState((state) => ({
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampTheaterAutoTickEnabled: enabled,
+      },
+    }));
+    ensureTheaterAutoTickStateSync();
+    showSystemPing({
+      type: enabled ? "success" : "info",
+      title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+      message: enabled
+        ? "Operational theaters will advance by 1 tick every 10 seconds."
+        : "Background theater advancement has been paused.",
+      channel: "esc-theater-auto-tick",
+      replaceChannel: true,
+    });
+    updatePinnedNodesOverlay();
+    return;
+  }
+
   const nodeButton = target.closest<HTMLElement>("[data-field-node-action]");
   if (!nodeButton) return;
 
@@ -3618,15 +4976,20 @@ function handlePinnedOverlaySubmit(e: SubmitEvent): void {
 
   if (!resolvedAction) {
     fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
-    status.textContent = fieldPinnedQuacFeedback;
-    status.classList.add("all-nodes-cli-status--error");
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
+    input.select();
+    return;
+  }
+
+  if (isFieldEscNodeAction(resolvedAction) && !isEscActionEnabled(resolvedAction, getFieldEscAvailabilityContext())) {
+    fieldPinnedQuacFeedback = getEscExpeditionRestrictionMessage(resolvedAction);
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
     input.select();
     return;
   }
 
   fieldPinnedQuacFeedback = `Executing ${resolvedAction.toUpperCase()}...`;
-  status.textContent = fieldPinnedQuacFeedback;
-  status.classList.remove("all-nodes-cli-status--error");
+  renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
   input.value = "";
   handleNodeAction(resolvedAction);
 }
@@ -3638,14 +5001,15 @@ function handlePinnedOverlayInput(e: Event): void {
   const status = input.closest(".all-nodes-item-shell")?.querySelector<HTMLElement>("[data-field-quac-status]");
   if (!status || !status.classList.contains("all-nodes-cli-status--error")) return;
 
-  status.classList.remove("all-nodes-cli-status--error");
   fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
-  status.textContent = fieldPinnedQuacFeedback;
+  renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
 }
 
 function createPinnedNodesOverlay(): void {
   const root = document.getElementById("app");
   if (!root) return;
+
+  ensureTheaterAutoTickStateSync();
 
   let overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay) {
@@ -3725,7 +5089,7 @@ function triggerFieldCombatAttack(): void {
     performFieldMeleeAttack(player);
   }
 
-  fieldState.combat.attackCooldown = FIELD_ATTACK_COOLDOWN;
+  fieldState.combat.attackCooldown = getFieldAttackCooldown();
   fieldState.combat.isAttacking = true;
   fieldState.combat.attackAnimTime = FIELD_ATTACK_DURATION;
 }
@@ -3745,6 +5109,80 @@ function formatFieldEnemyResourceName(resourceKey: "metalScrap" | "wood" | "chao
   }
 }
 
+function isBasicFieldResourceKey(resourceKey: ResourceKey): resourceKey is (typeof BASIC_RESOURCE_KEYS)[number] {
+  return (BASIC_RESOURCE_KEYS as readonly ResourceKey[]).includes(resourceKey);
+}
+
+function collectFieldResourceObject(resourceObjectId: string, source: "player" | "sable"): void {
+  if (!fieldState) {
+    return;
+  }
+
+  const targetObject = getUncollectedFieldResourceObjects().find((object) => object.id === resourceObjectId);
+  if (!targetObject) {
+    return;
+  }
+
+  const resourceType = String(targetObject.metadata?.resourceType ?? "") as ResourceKey;
+  if (!isBasicFieldResourceKey(resourceType)) {
+    return;
+  }
+
+  const amount = Math.max(1, Math.floor(Number(targetObject.metadata?.amount ?? 1)));
+  const resourceLabel = formatFieldEnemyResourceName(resourceType as "metalScrap" | "wood" | "chaosShards" | "steamComponents");
+  const collectorPosition = source === "sable" && fieldState.companion
+    ? { x: fieldState.companion.x, y: fieldState.companion.y }
+    : { x: fieldState.player.x, y: fieldState.player.y };
+  const resourceCenter = {
+    x: (targetObject.x + (targetObject.width / 2)) * FIELD_TILE_SIZE,
+    y: (targetObject.y + (targetObject.height / 2)) * FIELD_TILE_SIZE,
+  };
+  fieldState.collectedResourceObjectIds = Array.from(new Set([...(fieldState.collectedResourceObjectIds ?? []), resourceObjectId]));
+
+  updateGameState((state) => grantSessionResources(state, {
+    resources: {
+      [resourceType]: amount,
+    } as Partial<ResourceWallet>,
+  }));
+
+  if (source === "sable") {
+    playSableBark(performance.now(), "pickup");
+  }
+
+  triggerFeedback({
+    type: "resource",
+    source: "field",
+    intensity: source === "sable" ? 2 : 1,
+    position: {
+      x: resourceCenter.x,
+      y: resourceCenter.y,
+      space: "field-world",
+    },
+    targetPosition: {
+      x: collectorPosition.x,
+      y: collectorPosition.y,
+      space: "field-world",
+    },
+    text: `+${amount} ${resourceLabel}`,
+    channel: "field-resource-pickup",
+    meta: {
+      resourceType,
+      source,
+      objectId: resourceObjectId,
+    },
+  });
+
+  showSystemPing({
+    type: "success",
+    title: source === "sable" ? "SABLE RECOVERED SALVAGE" : "SALVAGE RECOVERED",
+    message: `${targetObject.metadata?.name ?? resourceLabel} secured.`,
+    detail: `+${amount} ${resourceLabel}`,
+    durationMs: 2600,
+    channel: "field-resource-pickup",
+    replaceChannel: true,
+  });
+}
+
 function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
   const drops = enemy.drops;
   if (!drops) {
@@ -3753,12 +5191,20 @@ function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
 
   const rewardLines: string[] = [];
   const wad = Math.max(0, Math.floor(drops.wad ?? 0));
-  const resources = {
-    metalScrap: Math.max(0, Math.floor(drops.resources?.metalScrap ?? 0)),
-    wood: Math.max(0, Math.floor(drops.resources?.wood ?? 0)),
-    chaosShards: Math.max(0, Math.floor(drops.resources?.chaosShards ?? 0)),
-    steamComponents: Math.max(0, Math.floor(drops.resources?.steamComponents ?? 0)),
+  const resources: {
+    metalScrap: number;
+    wood: number;
+    chaosShards: number;
+    steamComponents: number;
+  } = {
+    metalScrap: 0,
+    wood: 0,
+    chaosShards: 0,
+    steamComponents: 0,
   };
+  BASIC_RESOURCE_KEYS.forEach((key) => {
+    resources[key] = Math.max(0, Math.floor(drops.resources?.[key] ?? 0));
+  });
   const awardedItems = (drops.items ?? []).flatMap((item) => {
     if (!item.id || item.chance <= 0 || Math.random() > item.chance) {
       return [];
@@ -3829,18 +5275,16 @@ function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
       });
     });
 
+    const rewardedState = grantSessionResources(prev, {
+      wad,
+      resources: createEmptyResourceWallet(resources),
+    });
+
     return {
-      ...prev,
-      wad: prev.wad + wad,
-      resources: {
-        metalScrap: prev.resources.metalScrap + resources.metalScrap,
-        wood: prev.resources.wood + resources.wood,
-        chaosShards: prev.resources.chaosShards + resources.chaosShards,
-        steamComponents: prev.resources.steamComponents + resources.steamComponents,
-      },
+      ...rewardedState,
       consumables: nextConsumables,
       inventory: {
-        ...prev.inventory,
+        ...rewardedState.inventory,
         baseStorage: nextBaseStorage,
       },
     };
@@ -3871,12 +5315,32 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
       replaceChannel: true,
     });
   }
+
+  if (currentMap && isOuterDeckBranchMap(String(currentMap.id))) {
+    const subarea = getOuterDeckSubareaByMapId(getGameState(), String(currentMap.id));
+    const roomCleared = Boolean(subarea) && Boolean(fieldState?.fieldEnemies?.every((fieldEnemy) => fieldEnemy.hp <= 0));
+    if (subarea && roomCleared && !isOuterDeckSubareaCleared(getGameState(), subarea.id)) {
+      updateGameState((state) => markOuterDeckSubareaCleared(state, subarea.id));
+      showSystemPing({
+        type: "success",
+        title: "SUBAREA SECURED",
+        message: subarea.title,
+        detail: "Route gate and recovery interactions are now available.",
+        channel: "outer-deck-subarea-clear",
+        replaceChannel: true,
+      });
+    }
+  }
 }
 
 function performFieldMeleeAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {
   if (!fieldState?.fieldEnemies || !fieldState.combat) {
     return;
   }
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const meleeDamage = FIELD_ATTACK_DAMAGE + bowbladeFieldProfile.meleeDamageBonus;
+  const meleeEnergyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
+  const knockbackForce = FIELD_ENEMY_KNOCKBACK_FORCE + bowbladeFieldProfile.meleeKnockbackBonus;
 
   const attackOffset = {
     north: { x: 0, y: -FIELD_ATTACK_RANGE / 2 },
@@ -3898,15 +5362,15 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       continue;
     }
 
-    enemy.hp -= FIELD_ATTACK_DAMAGE;
-    fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + 2);
+    enemy.hp -= meleeDamage;
+    fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + meleeEnergyGain);
 
     const dx = enemy.x - player.x;
     const dy = enemy.y - player.y;
     const distToPlayer = Math.hypot(dx, dy);
     if (distToPlayer > 0) {
-      enemy.vx = (dx / distToPlayer) * FIELD_ENEMY_KNOCKBACK_FORCE;
-      enemy.vy = (dy / distToPlayer) * FIELD_ENEMY_KNOCKBACK_FORCE;
+      enemy.vx = (dx / distToPlayer) * knockbackForce;
+      enemy.vy = (dy / distToPlayer) * knockbackForce;
       enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
     }
 
@@ -3920,11 +5384,15 @@ function performFieldRangedAttack(player: { x: number; y: number; facing: "north
   if (!fieldState?.projectiles || !fieldState.combat || !fieldState.fieldEnemies) {
     return;
   }
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const rangedRange = FIELD_RANGED_ATTACK_RANGE + bowbladeFieldProfile.rangedRangeBonus;
+  const projectileSpeed = FIELD_PROJECTILE_SPEED + bowbladeFieldProfile.rangedProjectileSpeedBonus;
+  const rangedDamage = FIELD_RANGED_ATTACK_DAMAGE + bowbladeFieldProfile.rangedDamageBonus;
 
   fieldState.combat.energyCells -= 1;
 
   let nearestEnemy = null as (typeof fieldState.fieldEnemies)[number] | null;
-  let nearestDistance = FIELD_RANGED_ATTACK_RANGE;
+  let nearestDistance = rangedRange;
 
   for (const enemy of fieldState.fieldEnemies) {
     if (enemy.hp <= 0) {
@@ -3962,11 +5430,72 @@ function performFieldRangedAttack(player: { x: number; y: number; facing: "north
     id: `field_projectile_${Date.now()}_${Math.random()}`,
     x: player.x,
     y: player.y,
-    vx: velocity.x * FIELD_PROJECTILE_SPEED,
-    vy: velocity.y * FIELD_PROJECTILE_SPEED,
-    damage: FIELD_RANGED_ATTACK_DAMAGE,
+    vx: velocity.x * projectileSpeed,
+    vy: velocity.y * projectileSpeed,
+    damage: rangedDamage,
     lifetime: 0,
     maxLifetime: FIELD_PROJECTILE_LIFETIME,
+  });
+}
+
+function updateFieldAutoTurrets(currentTime: number): void {
+  if (!fieldState?.projectiles || !fieldState.fieldEnemies || !currentMap) {
+    return;
+  }
+
+  const fieldEnemies = fieldState.fieldEnemies;
+  const projectiles = fieldState.projectiles;
+  const liveEnemies = fieldEnemies.filter((enemy) => enemy.hp > 0);
+  if (liveEnemies.length === 0) {
+    return;
+  }
+
+  currentMap.objects.forEach((object) => {
+    if (object.type !== "decoration") {
+      return;
+    }
+
+    const decorId = typeof object.metadata?.decorId === "string" ? object.metadata.decorId : "";
+    const turretProfile = decorId ? getFieldDecorTurretProfile(decorId) : null;
+    if (!turretProfile) {
+      return;
+    }
+
+    const lastFiredAt = fieldTurretLastFireAtMs.get(object.id) ?? Number.NEGATIVE_INFINITY;
+    if (currentTime - lastFiredAt < turretProfile.cooldownMs) {
+      return;
+    }
+
+    const turretX = (object.x + (object.width / 2)) * FIELD_TILE_SIZE;
+    const turretY = (object.y + (object.height / 2)) * FIELD_TILE_SIZE;
+    let nearestEnemy: FieldEnemy | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    liveEnemies.forEach((enemy) => {
+      const distance = Math.hypot(enemy.x - turretX, enemy.y - turretY);
+      if (distance > turretProfile.rangePx || distance >= nearestDistance) {
+        return;
+      }
+      nearestEnemy = enemy;
+      nearestDistance = distance;
+    });
+
+    if (!nearestEnemy || nearestDistance <= 0) {
+      return;
+    }
+
+    const targetEnemy = nearestEnemy as FieldEnemy;
+    fieldTurretLastFireAtMs.set(object.id, currentTime);
+    projectiles.push({
+      id: `field_turret_projectile_${object.id}_${currentTime}`,
+      x: turretX,
+      y: turretY,
+      vx: ((targetEnemy.x - turretX) / nearestDistance) * turretProfile.projectileSpeed,
+      vy: ((targetEnemy.y - turretY) / nearestDistance) * turretProfile.projectileSpeed,
+      damage: turretProfile.damage,
+      lifetime: 0,
+      maxLifetime: FIELD_TURRET_PROJECTILE_LIFETIME,
+    });
   });
 }
 
@@ -3987,8 +5516,11 @@ function updateFieldCombat(deltaTime: number, currentTime: number): void {
     }
   }
 
+  updateFieldAutoTurrets(currentTime);
   updateFieldProjectiles(deltaTime);
   updateFieldEnemies(deltaTime, currentTime);
+  updateFieldPlayerPressure(deltaTime);
+  updateFieldCompanionBehavior(deltaTime, currentTime);
 }
 
 function updateFieldProjectiles(deltaTime: number): void {
@@ -4130,6 +5662,211 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
   }
 }
 
+function updateFieldPlayerPressure(deltaTime: number): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  fieldState.player = normalizeFieldPlayerState(fieldState.player);
+
+  if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    fieldState.player.invulnerabilityTime = Math.max(0, Number(fieldState.player.invulnerabilityTime ?? 0) - deltaTime);
+  }
+
+  if ((fieldState.player.vx ?? 0) !== 0 || (fieldState.player.vy ?? 0) !== 0) {
+    const knockbackX = Number(fieldState.player.vx ?? 0) * (deltaTime / 1000);
+    const knockbackY = Number(fieldState.player.vy ?? 0) * (deltaTime / 1000);
+    let nextX = fieldState.player.x;
+    let nextY = fieldState.player.y;
+
+    if (canMoveEntityTo(fieldState.player.x + knockbackX, fieldState.player.y, fieldState.player.width, fieldState.player.height)) {
+      nextX = fieldState.player.x + knockbackX;
+    } else {
+      fieldState.player.vx = 0;
+    }
+
+    if (canMoveEntityTo(nextX, fieldState.player.y + knockbackY, fieldState.player.width, fieldState.player.height)) {
+      nextY = fieldState.player.y + knockbackY;
+    } else {
+      fieldState.player.vy = 0;
+    }
+
+    fieldState.player.x = nextX;
+    fieldState.player.y = nextY;
+    fieldState.player.vx = Number(fieldState.player.vx ?? 0) * Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+    fieldState.player.vy = Number(fieldState.player.vy ?? 0) * Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+
+    if (Math.abs(Number(fieldState.player.vx ?? 0)) < 1) fieldState.player.vx = 0;
+    if (Math.abs(Number(fieldState.player.vy ?? 0)) < 1) fieldState.player.vy = 0;
+
+    syncP1AvatarPosition(fieldState.player.x, fieldState.player.y);
+  }
+
+  for (const resourceObject of getUncollectedFieldResourceObjects()) {
+    const resourceCenterX = (resourceObject.x + (resourceObject.width / 2)) * FIELD_TILE_SIZE;
+    const resourceCenterY = (resourceObject.y + (resourceObject.height / 2)) * FIELD_TILE_SIZE;
+    if (Math.hypot(resourceCenterX - fieldState.player.x, resourceCenterY - fieldState.player.y) <= 36) {
+      collectFieldResourceObject(resourceObject.id, "player");
+    }
+  }
+
+  if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  for (const enemy of fieldState.fieldEnemies ?? []) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const playerLeft = fieldState.player.x - fieldState.player.width / 2;
+    const playerRight = fieldState.player.x + fieldState.player.width / 2;
+    const playerTop = fieldState.player.y - fieldState.player.height / 2;
+    const playerBottom = fieldState.player.y + fieldState.player.height / 2;
+    const enemyLeft = enemy.x - enemy.width / 2;
+    const enemyRight = enemy.x + enemy.width / 2;
+    const enemyTop = enemy.y - enemy.height / 2;
+    const enemyBottom = enemy.y + enemy.height / 2;
+
+    const isColliding =
+      playerRight > enemyLeft
+      && playerLeft < enemyRight
+      && playerBottom > enemyTop
+      && playerTop < enemyBottom;
+
+    if (!isColliding) {
+      continue;
+    }
+
+    fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - FIELD_PLAYER_DAMAGE_ON_CONTACT);
+    fieldState.player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
+
+    const dx = fieldState.player.x - enemy.x;
+    const dy = fieldState.player.y - enemy.y;
+    const distance = Math.max(Math.hypot(dx, dy), 1);
+    fieldState.player.vx = (dx / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
+    fieldState.player.vy = (dy / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
+
+    showSystemPing({
+      type: "error",
+      title: "HOSTILE CONTACT",
+      message: `${enemy.name} struck the lane.`,
+      detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
+      durationMs: 1800,
+      channel: "field-player-damage",
+      replaceChannel: true,
+    });
+    break;
+  }
+}
+
+function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): void {
+  if (!fieldState?.companion || !currentMap) {
+    return;
+  }
+
+  const player = fieldState.player;
+  const companion = fieldState.companion;
+  const availableResources = getUncollectedFieldResourceObjects().map((object) => ({
+    id: object.id,
+    x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
+    y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
+    collected: false,
+  }));
+  const liveEnemies = (fieldState.fieldEnemies ?? [])
+    .filter((enemy) => enemy.hp > 0)
+    .map((enemy) => ({
+      id: enemy.id,
+      x: enemy.x,
+      y: enemy.y,
+      hp: enemy.hp,
+    }));
+
+  if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
+    companion.lastBehaviorTime = currentTime;
+
+    const nearestEnemy = findNearestEnemy(companion, player, liveEnemies, currentMap);
+    if (nearestEnemy) {
+      companion.state = "attack";
+      companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
+    } else {
+      const nearestResource = findNearestResource(companion, player, availableResources, currentMap);
+      if (nearestResource) {
+        companion.state = "fetch";
+        companion.target = { x: nearestResource.x, y: nearestResource.y, id: nearestResource.id };
+      } else {
+        companion.state = "follow";
+        companion.target = undefined;
+      }
+    }
+  }
+
+  if (companion.state === "attack" && companion.target) {
+    const targetEnemy = (fieldState.fieldEnemies ?? []).find((enemy) => enemy.id === companion.target?.id && enemy.hp > 0) ?? null;
+    if (!targetEnemy) {
+      companion.state = "follow";
+      companion.target = undefined;
+    } else {
+      companion.attackCooldown = Math.max(0, Number(companion.attackCooldown ?? 0) - deltaTime);
+      fieldState.companion = updateCompanionAttack(
+        companion,
+        player,
+        { x: targetEnemy.x, y: targetEnemy.y, id: targetEnemy.id },
+        deltaTime,
+        currentMap,
+      );
+
+      const activeCompanion = fieldState.companion;
+      const distance = Math.hypot(targetEnemy.x - activeCompanion.x, targetEnemy.y - activeCompanion.y);
+      if (distance <= FIELD_COMPANION_ATTACK_RANGE && activeCompanion.attackCooldown <= 0) {
+        targetEnemy.hp -= Math.max(1, FIELD_ATTACK_DAMAGE);
+        playSableAttackFeedback(currentTime);
+        if (distance > 0) {
+          targetEnemy.vx = ((targetEnemy.x - activeCompanion.x) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.vy = ((targetEnemy.y - activeCompanion.y) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
+          targetEnemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+        }
+        activeCompanion.attackCooldown = getFieldAttackCooldown();
+        if (targetEnemy.hp <= 0) {
+          handleFieldEnemyDefeat(targetEnemy);
+          activeCompanion.state = "follow";
+          activeCompanion.target = undefined;
+        }
+      }
+      return;
+    }
+  }
+
+  if (companion.state === "fetch" && companion.target) {
+    const targetResource = availableResources.find((resource) => resource.id === companion.target?.id) ?? null;
+    if (!targetResource) {
+      companion.state = "follow";
+      companion.target = undefined;
+    } else {
+      fieldState.companion = updateCompanionFetch(
+        companion,
+        player,
+        { x: targetResource.x, y: targetResource.y, id: targetResource.id },
+        deltaTime,
+        currentMap,
+      );
+      if (checkCompanionReachedTarget(fieldState.companion, targetResource.id, 24)) {
+        collectFieldResourceObject(targetResource.id, "sable");
+        fieldState.companion.state = "follow";
+        fieldState.companion.target = undefined;
+      }
+      return;
+    }
+  }
+
+  fieldState.companion = updateCompanionFollow(
+    companion,
+    player,
+    deltaTime,
+    currentMap,
+  );
+}
+
 function canMoveEntityTo(x: number, y: number, width: number, height: number): boolean {
   if (!currentMap) {
     return false;
@@ -4248,6 +5985,9 @@ function handleKeyDown(e: KeyboardEvent): void {
   if (key === "escape" || e.code === "Escape" || e.keyCode === 27) {
     e.preventDefault();
     e.stopPropagation();
+    if (shouldSuppressEscMenuAccess()) {
+      return;
+    }
     if (isHavenBuildModeEnabled()) {
       setHavenBuildMode(false);
       return;
@@ -4268,7 +6008,14 @@ function handleKeyDown(e: KeyboardEvent): void {
       || key === "arrowleft"
       || key === "arrowright";
 
-    if (isShift || isBuildPanKey) {
+    if (!e.repeat && (key === "r" || e.code === "KeyR") && havenBuildPaletteSelection?.kind === "decor") {
+      e.preventDefault();
+      e.stopPropagation();
+      rotateSelectedBuildDecor();
+      return;
+    }
+
+    if (canPanDuringBuildMode() && (isShift || isBuildPanKey)) {
       e.preventDefault();
       e.stopPropagation();
       if (isShift) {
@@ -4417,7 +6164,7 @@ function handleKeyUp(e: KeyboardEvent): void {
       || key === "arrowleft"
       || key === "arrowright";
 
-    if (isShift || isBuildPanKey) {
+    if (canPanDuringBuildMode() && (isShift || isBuildPanKey)) {
       e.preventDefault();
       e.stopPropagation();
       if (isShift) {
@@ -4492,24 +6239,14 @@ function handleFieldObjectClick(e: MouseEvent): void {
 
   const zone = getInteractionZone(currentMap, zoneId);
   if (!zone) return;
+  if (isAutoTriggerZone(zone)) return;
 
   const actingPlayerId = getNearestPlayerToZone(zone) ?? "P1";
   const actingAvatar = createRuntimeAvatar(actingPlayerId);
   if (!actingAvatar) {
     return;
   }
-
-  if (!canPlayerUseFieldAction(getGameState(), actingPlayerId, zone.action)) {
-    showFieldAuthorityPing(actingPlayerId, zone);
-    return;
-  }
-
-  const savedPlayerPos = { x: actingAvatar.x, y: actingAvatar.y };
-  fieldState.isPaused = true;
-
-  handleInteraction(zone, currentMap, () => {
-    resumeFieldAfterInteraction(actingPlayerId, savedPlayerPos);
-  });
+  triggerZoneInteraction(actingPlayerId, zone, actingAvatar);
 }
 
 function handleInteractKey(playerId: PlayerId): void {
@@ -4561,7 +6298,7 @@ function handleInteractKey(playerId: PlayerId): void {
         if (fieldState) {
           fieldState.isPaused = false;
         }
-      });
+      }, nearbyNpc.id);
 
       return;
     }
@@ -4570,40 +6307,60 @@ function handleInteractKey(playerId: PlayerId): void {
   const interactionContext = getPlayerInteractionContext(playerId);
   if (!interactionContext) return;
   const zone = interactionContext.zone;
-
-  if (!canPlayerUseFieldAction(getGameState(), playerId, zone.action)) {
-    showFieldAuthorityPing(playerId, zone);
-    return;
-  }
-
-  const savedPlayerPos = { x: actorAvatar.x, y: actorAvatar.y };
-  fieldState.isPaused = true;
-
-  try {
-    handleInteraction(zone, currentMap, () => {
-      resumeFieldAfterInteraction(playerId, savedPlayerPos);
-    });
-  } catch (error) {
-    console.error("[FIELD] Error handling interaction:", error);
-    if (fieldState) {
-      fieldState.isPaused = false;
-      renderFieldScreen(fieldState.currentMap);
-    }
-  }
+  if (isAutoTriggerZone(zone)) return;
+  triggerZoneInteraction(playerId, zone, actorAvatar);
 }
 
 // ============================================================================
 // NODE ACTIONS
 // ============================================================================
 
-function handleNodeAction(action: string): void {
+async function handleNodeAction(action: string): Promise<void> {
+  if (isFieldEscNodeAction(action) && !isEscActionEnabled(action, getFieldEscAvailabilityContext())) {
+    showSystemPing({
+      type: "info",
+      title: "OUTER DECK EXPEDITION",
+      message: getEscExpeditionRestrictionMessage(action),
+      channel: "outer-deck-field-esc-lock",
+      replaceChannel: true,
+    });
+    return;
+  }
+
+  if (action === PINNED_THEATER_AUTO_TICK_LAYOUT_ID) {
+    const enabled = !isPinnedTheaterAutoTickEnabled();
+    updateGameState((state) => ({
+      ...state,
+      uiLayout: {
+        ...(state.uiLayout ?? {}),
+        baseCampTheaterAutoTickEnabled: enabled,
+      },
+    }));
+    ensureTheaterAutoTickStateSync();
+    showSystemPing({
+      type: enabled ? "success" : "info",
+      title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
+      message: enabled
+        ? "Operational theaters will advance by 1 tick every 10 seconds."
+        : "Background theater advancement has been paused.",
+      channel: "esc-theater-auto-tick",
+      replaceChannel: true,
+    });
+    updatePinnedNodesOverlay();
+    return;
+  }
+
   if (
     isLockedHavenAnnexAction(action)
     || isLockedSchemaAction(action)
     || isLockedBlackMarketAction(action)
     || isLockedFoundryAnnexAction(action)
   ) {
-    alert(getLockedActionMessage(action) ?? "This node is not unlocked yet.");
+    await showAlertDialog({
+      title: "NODE LOCKED",
+      message: getLockedActionMessage(action) ?? "This node is not unlocked yet.",
+      mount: () => document.querySelector(".field-root"),
+    });
     return;
   }
 
@@ -4611,6 +6368,7 @@ function handleNodeAction(action: string): void {
     fieldState.isPaused = true;
   }
 
+  suspendFieldForScreenTransition();
   closeAllNodesPanel();
 
   switch (action) {
@@ -4663,6 +6421,9 @@ function handleNodeAction(action: string): void {
         }
       });
       break;
+    case "materials-refinery":
+      renderAllNodesMenuScreen(fieldState?.currentMap ?? "base_camp");
+      break;
     case "port":
       import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
         renderPortScreen("field");
@@ -4699,8 +6460,8 @@ function handleNodeAction(action: string): void {
       });
       break;
     case "comms-array":
-      import("../ui/screens/CommsArrayScreen").then(({ renderCommsArrayScreen }) => {
-        renderCommsArrayScreen("field");
+      import("../ui/screens/CommsArrayScreen").then(({ renderHavenCommsArrayScreen }) => {
+        renderHavenCommsArrayScreen("field");
       });
       break;
     case "endless-field-nodes":
@@ -4739,6 +6500,7 @@ function gameLoop(currentTime: number): void {
 
   if (!fieldState.isPaused) {
     const state = getGameState();
+    const aerissFieldSpeedBonus = getAerissFieldMovementSpeedBonus(state.stable);
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
       P1: { id: "P1", slot: "P1", active: true, color: "#ff8a00", inputSource: "keyboard1" as const, presence: "local" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
@@ -4764,7 +6526,7 @@ function gameLoop(currentTime: number): void {
         y: p1.avatar.y,
         width: 32,
         height: 32,
-        speed: 240,
+        speed: 240 + aerissFieldSpeedBonus,
         facing: p1.avatar.facing,
       };
 
@@ -4896,24 +6658,20 @@ function gameLoop(currentTime: number): void {
         lastNetworkLobbyAvatarSyncKey = "";
       }
 
-    // Update Sable companion (Headline 15a) - follows P1
-    if (fieldState.companion && currentMap && updatedState.players.P1.avatar) {
-      const p1Avatar = updatedState.players.P1.avatar;
-      const p1PlayerAvatar = {
-        x: p1Avatar.x,
-        y: p1Avatar.y,
-        width: 32,
-        height: 32,
-        speed: 240,
-        facing: p1Avatar.facing as any,
-      };
-      fieldState.companion = updateCompanion(fieldState.companion, {
-        player: p1PlayerAvatar,
-        map: currentMap,
-        deltaTime,
-        currentTime,
+    // Keep field player state synchronized with the live avatar; combat logic layers on top later.
+    if (fieldState && currentMap && updatedState.players.P1.avatar) {
+      fieldState.player = normalizeFieldPlayerState({
+        ...fieldState.player,
+        x: updatedState.players.P1.avatar.x,
+        y: updatedState.players.P1.avatar.y,
+        facing: updatedState.players.P1.avatar.facing as any,
       });
     }
+
+    updateFieldMovementFeedback(
+      currentTime,
+      Boolean(getPlayerInput("P1").special1 || (p2.active && getPlayerInput("P2").special1)),
+    );
 
     // Update NPCs (Headline 15b)
     if (fieldState.npcs && currentMap) {
@@ -4924,6 +6682,8 @@ function gameLoop(currentTime: number): void {
     }
 
     updateFieldCombat(deltaTime, currentTime);
+    processFieldControllerActions();
+    maybeTriggerAutoInteraction();
 
     activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
 
@@ -4944,17 +6704,32 @@ function stopGameLoop(): void {
 
 export function teardownFieldMode(): void {
   stopGameLoop();
+  resetFieldControllerActionTracking();
   cleanupGlobalListeners();
+  if (fieldFocusableRefreshTimerId !== null) {
+    window.clearTimeout(fieldFocusableRefreshTimerId);
+    fieldFocusableRefreshTimerId = null;
+  }
   document.getElementById("allNodesPanel")?.remove();
   document.getElementById("fieldPinnedOverlay")?.remove();
+  document.getElementById("fieldFeedbackOverlay")?.remove();
+  document.getElementById("fieldPromptOverlay")?.remove();
   document.querySelector(".network-lobby-overlay")?.remove();
   isPanelOpen = false;
   lastMinimapRevealKey = "";
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
   resetHavenBuildPanState();
+  resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
+  activeAutoInteractionZoneKey = null;
+  suppressedAutoInteractionZoneKey = null;
+  fieldTurretLastFireAtMs.clear();
+  cleanupFieldControllerContext?.();
+  cleanupFieldControllerContext = null;
+  cleanupFieldFeedbackListener?.();
+  cleanupFieldFeedbackListener = null;
 }
 
 // ============================================================================

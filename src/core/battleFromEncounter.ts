@@ -9,6 +9,7 @@ import { EncounterDefinition } from "./campaign";
 import { getEnemyDefinition } from "./enemies";
 import { createBattleUnitState } from "./battle";
 import { generateCover } from "./coverGenerator";
+import { generateStructuredBoardLayout } from "./terrainGeneration";
 import { getActiveRunTavernMealBuff } from "./tavernMeals";
 import { getImportedUnit } from "../content/technica";
 
@@ -85,8 +86,7 @@ export function createBattleFromEncounter(
           pos: null, // Will be placed in placement phase
           gearSlots: (gameState as any).gearSlots ?? {},
         },
-        (gameState as any).equipmentById,
-        (gameState as any).modulesById
+        (gameState as any).equipmentById
       );
 
       if (activeRunMealBuff) {
@@ -154,8 +154,7 @@ export function createBattleFromEncounter(
             isEnemy: true,
             pos,
           },
-          (gameState as any).equipmentById,
-          (gameState as any).modulesById
+          (gameState as any).equipmentById
         );
       }
       return;
@@ -204,11 +203,19 @@ export function createBattleFromEncounter(
           isEnemy: true,
           pos: pos,
         },
-        (gameState as any).equipmentById,
-        (gameState as any).modulesById
+        (gameState as any).equipmentById
       );
     }
   });
+
+  const seedForCover = encounterSeed ||
+    `cover_${encounter.gridWidth}x${encounter.gridHeight}_${encounter.enemyUnits.length}_${encounter.enemyUnits.map(e => e.enemyId).join("_")}`;
+  const boardLayout = generateStructuredBoardLayout(
+    encounter.gridWidth,
+    encounter.gridHeight,
+    seedForCover,
+    "encounter",
+  );
 
   // Create tiles
   const tiles: import("./battle").Tile[] = [];
@@ -217,7 +224,8 @@ export function createBattleFromEncounter(
       tiles.push({
         pos: { x, y },
         terrain: "floor" as const,
-        elevation: 0,
+        elevation: boardLayout.elevations[x]?.[y] ?? 0,
+        surface: boardLayout.surfaces[`${x},${y}`] ?? "industrial",
       });
     }
   }
@@ -234,9 +242,6 @@ export function createBattleFromEncounter(
     reservedCells.push({ x: encounter.gridWidth - 1, y });
   }
 
-  // Use provided encounter seed or generate from encounter properties for deterministic generation
-  const seedForCover = encounterSeed ||
-    `cover_${encounter.gridWidth}x${encounter.gridHeight}_${encounter.enemyUnits.length}_${encounter.enemyUnits.map(e => e.enemyId).join('_')}`;
   const tilesWithCover = generateCover(tiles, encounter.gridWidth, encounter.gridHeight, seedForCover, reservedCells);
 
   // Create battle state (will start in placement phase)

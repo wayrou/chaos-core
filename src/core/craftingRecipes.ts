@@ -3,6 +3,8 @@
 // Data-driven recipe system loading from JSON
 // ============================================================================
 
+import recipeData from "../data/chaos_core_gear_crafting_recipes.json";
+
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
@@ -115,60 +117,7 @@ export async function loadCraftingRecipes(): Promise<void> {
   }
 
   try {
-    // Fetch JSON file - Vite serves files from src/ directory
-    // Try multiple paths to handle different environments
-    const urls = [
-      "/src/data/chaos_core_gear_crafting_recipes.json", // Vite dev server
-      "/data/chaos_core_gear_crafting_recipes.json",     // Alternative path
-    ];
-    
-    // Also try URL constructor if available
-    try {
-      const urlFromImport = new URL("../../data/chaos_core_gear_crafting_recipes.json", import.meta.url).href;
-      urls.unshift(urlFromImport);
-    } catch {
-      // URL constructor not available, use fetch paths only
-    }
-    
-    let data: any;
-    let lastError: Error | null = null;
-    
-    for (const url of urls) {
-      try {
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          continue; // Try next URL
-        }
-        
-        const text = await response.text();
-        
-        // Check if response is HTML (error page) instead of JSON
-        if (text.trim().startsWith("<")) {
-          continue; // Try next URL
-        }
-        
-        // Try to parse JSON
-        try {
-          data = JSON.parse(text);
-          // Success! Break out of loop
-          break;
-        } catch (parseError) {
-          const preview = text.substring(0, 200);
-          lastError = new Error(`Failed to parse JSON from ${url}: ${parseError instanceof Error ? parseError.message : 'Unknown error'}. Response preview: ${preview}`);
-          continue; // Try next URL
-        }
-      } catch (fetchError) {
-        // Network error or other fetch issue, try next URL
-        lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
-        continue;
-      }
-    }
-    
-    if (!data) {
-      // All URLs failed
-      throw new Error(`Failed to load crafting recipes from any of the following paths: ${urls.join(", ")}. Last error: ${lastError?.message || "Unknown error"}`);
-    }
+    const data: unknown = recipeData;
 
     if (!validateData(data)) {
       throw new Error("Recipe data validation failed");
@@ -389,4 +338,3 @@ export function debugPrintRecipes(): void {
 if (typeof window !== "undefined") {
   (window as any).debugCraftingRecipes = debugPrintRecipes;
 }
-

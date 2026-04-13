@@ -1,8 +1,10 @@
 // ============================================================================
-// TAVERN MEALS - Queued next-run buffs purchased in the tavern
+// TAVERN MEALS - Queued next-deployment buffs purchased in the tavern
 // ============================================================================
 
 import { GameState } from "./types";
+import { canSessionAffordCost, spendSessionCost } from "./session";
+import { recoverShakenFromTavernMeal } from "./operationStatuses";
 
 export type TavernMealEffect = "hp" | "atk" | "def" | "agi";
 
@@ -20,7 +22,7 @@ export const TAVERN_MEAL_DEFINITIONS: TavernMealBuff[] = [
   {
     id: "meal_iron_stew",
     name: "Iron Stew",
-    description: "+6 max HP in every battle next run.",
+    description: "+6 max HP in every battle next deployment.",
     cost: 30,
     effect: "hp",
     amount: 6,
@@ -29,7 +31,7 @@ export const TAVERN_MEAL_DEFINITIONS: TavernMealBuff[] = [
   {
     id: "meal_charred_skewers",
     name: "Charred Skewers",
-    description: "+1 ATK in every battle next run.",
+    description: "+1 ATK in every battle next deployment.",
     cost: 35,
     effect: "atk",
     amount: 1,
@@ -38,7 +40,7 @@ export const TAVERN_MEAL_DEFINITIONS: TavernMealBuff[] = [
   {
     id: "meal_guardhouse_broth",
     name: "Guardhouse Broth",
-    description: "+1 DEF in every battle next run.",
+    description: "+1 DEF in every battle next deployment.",
     cost: 35,
     effect: "def",
     amount: 1,
@@ -47,7 +49,7 @@ export const TAVERN_MEAL_DEFINITIONS: TavernMealBuff[] = [
   {
     id: "meal_scouts_rations",
     name: "Scout's Rations",
-    description: "+1 AGI in every battle next run.",
+    description: "+1 AGI in every battle next deployment.",
     cost: 40,
     effect: "agi",
     amount: 1,
@@ -74,28 +76,35 @@ export function canQueueTavernMeal(state: GameState): boolean {
 export function queueTavernMeal(
   state: GameState,
   mealId: string,
-): { next: GameState; meal: TavernMealBuff } | { error: string } {
+): { next: GameState; meal: TavernMealBuff; recoveredShakenUnitIds: string[] } | { error: string } {
   const meal = getTavernMealDefinition(mealId);
   if (!meal) {
     return { error: `Unknown meal: ${mealId}` };
   }
 
   if (getQueuedTavernMealBuff(state)) {
-    return { error: "A tavern meal is already queued for your next run." };
+    return { error: "A tavern meal is already queued for your next deployment." };
   }
 
-  const currentWad = state.wad ?? 0;
-  if (currentWad < meal.cost) {
-    return { error: `Insufficient WAD. Need ${meal.cost}, have ${currentWad}.` };
+  const spendPool = canSessionAffordCost(state, { wad: meal.cost });
+  if (!spendPool) {
+    return { error: `Insufficient WAD. Need ${meal.cost}.` };
   }
+
+  const spendResult = spendSessionCost(state, { wad: meal.cost });
+  if (!spendResult.success) {
+    return { error: `Insufficient WAD. Need ${meal.cost}.` };
+  }
+
+  const recovered = recoverShakenFromTavernMeal(spendResult.state);
 
   return {
     meal,
+    recoveredShakenUnitIds: recovered.clearedUnitIds,
     next: {
-      ...state,
-      wad: currentWad - meal.cost,
+      ...recovered.next,
       tavern: {
-        ...(state.tavern ?? {}),
+        ...(recovered.next.tavern ?? {}),
         queuedMealBuff: meal,
       },
     },

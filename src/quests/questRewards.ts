@@ -4,37 +4,32 @@
 
 import { Quest } from "./types";
 import { updateGameState, getGameState } from "../state/gameStore";
-import { addWad, addResources } from "../state/gameStore";
 import { addCardsToLibrary } from "../core/gearWorkbench";
 import { learnRecipe } from "../core/crafting";
+import { grantGearRewardSpecsToState, type GearRewardSpec } from "../core/gearRewards";
+import { grantKeyItemToState, isRegisteredKeyItem } from "../core/keyItems";
+import { grantSessionResources } from "../core/session";
 import type { GameState } from "../core/types";
 
 export function applyQuestRewardsToState(state: GameState, quest: Quest): GameState {
   const rewards = quest.rewards;
   let nextState: GameState = { ...state };
 
-  if (rewards.wad) {
-    nextState = {
-      ...nextState,
-      wad: (nextState.wad ?? 0) + rewards.wad,
-    };
-  }
-
-  if (rewards.resources) {
-    nextState = {
-      ...nextState,
-      resources: {
-        metalScrap: nextState.resources.metalScrap + (rewards.resources.metalScrap ?? 0),
-        wood: nextState.resources.wood + (rewards.resources.wood ?? 0),
-        chaosShards: nextState.resources.chaosShards + (rewards.resources.chaosShards ?? 0),
-        steamComponents: nextState.resources.steamComponents + (rewards.resources.steamComponents ?? 0),
-      },
-    };
+  if (rewards.wad || rewards.resources) {
+    nextState = grantSessionResources(nextState, {
+      wad: rewards.wad,
+      resources: rewards.resources,
+    });
   }
 
   if (rewards.items) {
     const updatedConsumables = { ...nextState.consumables };
     for (const item of rewards.items) {
+      if (isRegisteredKeyItem(item.id)) {
+        nextState = grantKeyItemToState(nextState, item.id, item.quantity);
+        continue;
+      }
+
       updatedConsumables[item.id] = (updatedConsumables[item.id] || 0) + item.quantity;
     }
     nextState = {
@@ -71,8 +66,13 @@ export function applyQuestRewardsToState(state: GameState, quest: Quest): GameSt
     });
   }
 
-  if (rewards.equipment && rewards.equipment.length > 0) {
-    console.log(`[QUEST] Would grant equipment: ${rewards.equipment.join(", ")}`);
+  const gearRewardSpecs: GearRewardSpec[] = [
+    ...(rewards.equipment ?? []),
+    ...(rewards.gearRewards ?? []),
+  ];
+
+  if (gearRewardSpecs.length > 0) {
+    nextState = grantGearRewardSpecsToState(nextState, gearRewardSpecs);
   }
 
   if (rewards.unitRecruit) {
@@ -91,14 +91,11 @@ export function grantQuestRewards(quest: Quest): void {
 
   console.log(`[QUEST] Granting rewards for quest: ${quest.title}`, rewards);
 
-  // Grant WAD
-  if (rewards.wad) {
-    addWad(rewards.wad);
-  }
-
-  // Grant resources
-  if (rewards.resources) {
-    addResources(rewards.resources);
+  if (rewards.wad || rewards.resources) {
+    updateGameState((s) => grantSessionResources(s, {
+      wad: rewards.wad,
+      resources: rewards.resources,
+    }));
   }
 
   // Grant XP to party units
@@ -120,15 +117,12 @@ export function grantQuestRewards(quest: Quest): void {
 
   // Grant items (equipment, consumables, etc.)
   if (rewards.items) {
-    updateGameState(s => {
-      const updatedConsumables = { ...s.consumables };
-      for (const item of rewards.items!) {
-        // For now, treat as consumables
-        // TODO: Integrate with inventory system for equipment
-        updatedConsumables[item.id] = (updatedConsumables[item.id] || 0) + item.quantity;
-      }
-      return { ...s, consumables: updatedConsumables };
-    });
+    updateGameState((s) => applyQuestRewardsToState(s, {
+      ...quest,
+      rewards: {
+        items: rewards.items,
+      },
+    }));
   }
 
   // Grant cards
@@ -140,9 +134,19 @@ export function grantQuestRewards(quest: Quest): void {
   }
 
   // Grant equipment
-  if (rewards.equipment && rewards.equipment.length > 0) {
-    // TODO: Integrate with equipment system
-    console.log(`[QUEST] Would grant equipment: ${rewards.equipment.join(", ")}`);
+  const gearRewardSpecs: GearRewardSpec[] = [
+    ...(rewards.equipment ?? []),
+    ...(rewards.gearRewards ?? []),
+  ];
+
+  if (gearRewardSpecs.length > 0) {
+    updateGameState((s) => applyQuestRewardsToState(s, {
+      ...quest,
+      rewards: {
+        equipment: rewards.equipment,
+        gearRewards: rewards.gearRewards,
+      },
+    }));
   }
 
   // Grant recipes

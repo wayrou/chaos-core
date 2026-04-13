@@ -15,19 +15,17 @@
     "hp": 2
   },
   "cardsGranted": [],
-  "moduleSlots": 1,
-  "attachedModules": [],
   "wear": 0,
   "inventory": {
     "massKg": 4,
     "bulkBu": 2,
     "powerW": 0,
-    "startingOwned": true
+    "startingOwned": false
   },
   "metadata": {
     "source": "Technica sample",
     "role": "frontline"
   },
   "createdAt": "2026-04-03T01:44:01.157Z",
-  "updatedAt": "2026-04-03T01:46:43.264Z"
+  "updatedAt": "2026-04-11T02:54:10.644Z"
 }

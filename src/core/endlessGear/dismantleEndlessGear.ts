@@ -6,6 +6,7 @@
 import { GeneratedGear } from "./types";
 import { getEndlessRecipeCost } from "./craftEndlessGear";
 import { updateGameState } from "../../state/gameStore";
+import { addResourceWallet, createEmptyResourceWallet, type ResourceWallet } from "../resources";
 
 /**
  * Dismantle return rate (50-75% of input materials)
@@ -19,12 +20,7 @@ const DISMANTLE_RETURN_RATE_MAX = 0.75;
 export interface DismantleResult {
   success: boolean;
   error?: string;
-  materialsReturned?: {
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  materialsReturned?: ResourceWallet;
 }
 
 /**
@@ -51,12 +47,12 @@ export function dismantleEndlessGear(gear: GeneratedGear): DismantleResult {
     Math.random() * (DISMANTLE_RETURN_RATE_MAX - DISMANTLE_RETURN_RATE_MIN);
   
   // Calculate returned materials (rounded down)
-  const materialsReturned = {
+  const materialsReturned = createEmptyResourceWallet({
     metalScrap: Math.floor(originalCost.metalScrap * returnRate),
     wood: Math.floor(originalCost.wood * returnRate),
     chaosShards: Math.floor(originalCost.chaosShards * returnRate),
     steamComponents: Math.floor(originalCost.steamComponents * returnRate),
-  };
+  });
   
   return {
     success: true,
@@ -77,12 +73,7 @@ export function dismantleAndReturnMaterials(gear: GeneratedGear): DismantleResul
   // Add materials to inventory
   updateGameState(prev => ({
     ...prev,
-    resources: {
-      metalScrap: prev.resources.metalScrap + result.materialsReturned!.metalScrap,
-      wood: prev.resources.wood + result.materialsReturned!.wood,
-      chaosShards: prev.resources.chaosShards + result.materialsReturned!.chaosShards,
-      steamComponents: prev.resources.steamComponents + result.materialsReturned!.steamComponents,
-    },
+    resources: addResourceWallet(prev.resources, result.materialsReturned!),
   }));
   
   // Remove gear from inventory
@@ -119,4 +110,3 @@ export function dismantleAndReturnMaterials(gear: GeneratedGear): DismantleResul
 export function canDismantleGear(gear: any): boolean {
   return gear?.provenance?.kind === "endless_crafted";
 }
-

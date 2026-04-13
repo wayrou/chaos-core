@@ -28,13 +28,12 @@ import {
   Equipment,
   UnitLoadout,
   UnitClass,
-  Module,
   getAllStarterEquipment,
-  getAllModules,
   getAllEquipmentCards,
   EquipmentCard,
 } from "./equipment";
 import {
+  getAllImportedGear,
   getAllImportedOperations,
   getAllImportedUnits,
   getImportedOperation,
@@ -43,8 +42,11 @@ import {
 import type { ImportedOperationDefinition, ImportedUnitTemplate } from "../content/technica/types";
 import { calculatePWR } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
+import { createEmptyResourceWallet } from "./resources";
 import { createDefaultSessionState } from "./session";
 import { createDefaultTheaterDeploymentPreset } from "./theaterDeploymentPreset";
+import { createDefaultOuterDecksState } from "./outerDecks";
+import { createDefaultWeaponsmithState } from "./weaponsmith";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -312,89 +314,44 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   const baseDeck: CardId[] = [];
 
   const equipmentById = getAllStarterEquipment();
-  const modulesById = getAllModules();
 
   const units: UnitWithEquipment[] = [
     ...(isTechnicaContentDisabled("unit", "unit_aeriss") ? [] : [{
-      id: "unit_aeriss",
-      name: "Aeriss",
-      isEnemy: false,
-      hp: 9,
-      maxHp: 9,
-      agi: 3,
-      pos: null,
-      hand: [],
-      drawPile: [],
-      discardPile: [],
-      strain: 0,
-      classId: "vanguard",
-      unitClass: "squire",
-      stats: {
-        maxHp: 9,
-        atk: 7,
-        def: 3,
-        agi: 3,
-        acc: 90,
+      "id": "unit_aeriss",
+      "name": "Aeriss",
+      "isEnemy": false,
+      "hp": 9,
+      "maxHp": 9,
+      "agi": 3,
+      "pos": null,
+      "hand": [],
+      "drawPile": [],
+      "discardPile": [],
+      "strain": 0,
+      "classId": "squire",
+      "unitClass": "squire",
+      "stats": {
+        "maxHp": 9,
+        "atk": 7,
+        "def": 3,
+        "agi": 3,
+        "acc": 90,
       },
-      deck: baseDeck,
-      loadout: createEmptyLoadout(),
-      affinities: createDefaultAffinities(),
-      startingInRoster: true,
-      deployInParty: true,
-    }]),
-    ...(isTechnicaContentDisabled("unit", "unit_marksman_1") ? [] : [{
-      id: "unit_marksman_1",
-      name: "Mistguard Marksman",
-      isEnemy: false,
-      hp: 13,
-      maxHp: 13,
-      agi: 3,
-      pos: null,
-      hand: [],
-      drawPile: [],
-      discardPile: [],
-      strain: 0,
-      classId: "marksman",
-      unitClass: "ranger",
-      stats: {
-        maxHp: 13,
-        atk: 6,
-        def: 2,
-        agi: 3,
-        acc: 95,
+      "deck": baseDeck,
+      "loadout": {
+        "primaryWeapon": "gear_quill_sword",
+        "secondaryWeapon": null,
+        "helmet": null,
+        "chestpiece": null,
+        "accessory1": null,
+        "accessory2": null,
       },
-      deck: baseDeck,
-      loadout: createEmptyLoadout(),
-      affinities: createDefaultAffinities(),
-      startingInRoster: true,
-      deployInParty: true,
-    }]),
-    ...(isTechnicaContentDisabled("unit", "unit_mage_1") ? [] : [{
-      id: "unit_mage_1",
-      name: "Field Mage",
-      isEnemy: false,
-      hp: 10,
-      maxHp: 10,
-      agi: 2,
-      pos: null,
-      hand: [],
-      drawPile: [],
-      discardPile: [],
-      strain: 0,
-      classId: "caster",
-      unitClass: "magician",
-      stats: {
-        maxHp: 10,
-        atk: 5,
-        def: 1,
-        agi: 2,
-        acc: 85,
-      },
-      deck: baseDeck,
-      loadout: createEmptyLoadout(),
-      affinities: createDefaultAffinities(),
-      startingInRoster: true,
-      deployInParty: true,
+      "affinities": createDefaultAffinities(),
+      "startingInRoster": true,
+      "deployInParty": true,
+      "pwr": 14,
+      "recruitCost": 0,
+      "traits": [],
     }]),
   ];
 
@@ -419,7 +376,6 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       : calculatePWR({
           unit: u,
           equipmentById,
-          modulesById,
         });
     return { ...u, pwr, controller: "P1" as const }; // Default all units to P1
   });
@@ -532,14 +488,41 @@ function createEquipmentPool(): string[] {
   return [];
 }
 
+function createImportedGearState(): {
+  equipmentById: Record<string, Equipment>;
+  equipmentPool: string[];
+} {
+  const runtimeEquipment = getAllStarterEquipment();
+  const equipmentById: Record<string, Equipment> = {};
+  const equipmentPool = new Set<string>();
+
+  getAllImportedGear().forEach((gear) => {
+    const runtimeGear = runtimeEquipment[gear.id];
+    if (!runtimeGear) {
+      return;
+    }
+
+    equipmentById[gear.id] = runtimeGear;
+    if (gear.inventory?.startingOwned !== false) {
+      equipmentPool.add(gear.id);
+    }
+  });
+
+  return {
+    equipmentById,
+    equipmentPool: Array.from(equipmentPool),
+  };
+}
+
 /**
  * Extended GameState with equipment system
  */
 export interface GameStateWithEquipment extends GameState {
   equipmentById: Record<string, Equipment>;
-  modulesById: Record<string, Module>;
   equipmentPool: string[];
 }
+
+const STARTING_WAD = 300;
 
 /** Factory: create a brand new game state for a new run */
 export function createNewGameState(): GameStateWithEquipment {
@@ -557,9 +540,12 @@ export function createNewGameState(): GameStateWithEquipment {
     .map((unit) => unit.id);
 
   // Equipment system data
-  const equipmentById: Record<string, Equipment> = {};
-  const modulesById = getAllModules();
-  const equipmentPool = createEquipmentPool();
+  const importedGearState = createImportedGearState();
+  const equipmentById: Record<string, Equipment> = { ...importedGearState.equipmentById };
+  const equipmentPool = Array.from(new Set([
+    ...createEquipmentPool(),
+    ...importedGearState.equipmentPool,
+  ]));
 
 
 
@@ -570,13 +556,8 @@ export function createNewGameState(): GameStateWithEquipment {
     profile,
     operation,
     session: createDefaultSessionState({
-      wad: 0,
-      resources: {
-        metalScrap: 0,
-        wood: 0,
-        chaosShards: 0,
-        steamComponents: 0,
-      },
+      wad: STARTING_WAD,
+      resources: createEmptyResourceWallet(),
       operation,
       players: {
         P1: {
@@ -609,13 +590,8 @@ export function createNewGameState(): GameStateWithEquipment {
     partyUnitIds,
     theaterDeploymentPreset: createDefaultTheaterDeploymentPreset(partyUnitIds),
 
-    wad: 0,
-    resources: {
-      metalScrap: 0,
-      wood: 0,
-      chaosShards: 0,
-      steamComponents: 0,
-    },
+    wad: STARTING_WAD,
+    resources: createEmptyResourceWallet(),
     schema: createDefaultSchemaUnlockState(),
     foundry: createDefaultFoundryState(),
 
@@ -636,6 +612,7 @@ export function createNewGameState(): GameStateWithEquipment {
     consumables: {},
 
     currentBattle: null,
+    echoRun: null,
 
     inventory: {
       muleClass: "E",
@@ -645,10 +622,11 @@ export function createNewGameState(): GameStateWithEquipment {
       forwardLocker: [],
       baseStorage: importedStarterItems as any,
     },
+    outerDecks: createDefaultOuterDecksState(),
+    weaponsmith: createDefaultWeaponsmithState(),
 
     // 11b/11c Equipment system additions
     equipmentById,
-    modulesById,
     equipmentPool,
 
     // Quest System

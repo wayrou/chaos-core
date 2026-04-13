@@ -14,11 +14,15 @@ import {
   getAvailableQuests, 
   getActiveQuests, 
   acceptQuest,
+  getQuestAcceptanceFailureMessage,
   initializeQuestState,
   abandonQuest,
   getTotalQuestsCompleted,
 } from "../../quests/questManager";
 import { Quest } from "../../quests/types";
+import { describeGearRewardSpec } from "../../core/gearRewards";
+import { getResourceEntries } from "../../core/resources";
+import { showConfirmDialog } from "../components/confirmDialog";
 
 // ----------------------------------------------------------------------------
 // RENDER
@@ -274,11 +278,9 @@ function renderQuestRewards(rewards: Quest["rewards"]): string {
   }
 
   if (rewards.resources) {
-    const res = rewards.resources;
-    if (res.metalScrap) parts.push(`<span class="reward-item"><span class="reward-icon">🔩</span> ${res.metalScrap} Metal</span>`);
-    if (res.wood) parts.push(`<span class="reward-item"><span class="reward-icon">🪵</span> ${res.wood} Wood</span>`);
-    if (res.chaosShards) parts.push(`<span class="reward-item"><span class="reward-icon">💎</span> ${res.chaosShards} Shards</span>`);
-    if (res.steamComponents) parts.push(`<span class="reward-item"><span class="reward-icon">⚙️</span> ${res.steamComponents} Steam</span>`);
+    getResourceEntries(rewards.resources).forEach((entry) => {
+      parts.push(`<span class="reward-item">${entry.amount} ${entry.label}</span>`);
+    });
   }
 
   if (rewards.cards && rewards.cards.length > 0) {
@@ -287,6 +289,11 @@ function renderQuestRewards(rewards: Quest["rewards"]): string {
 
   if (rewards.equipment && rewards.equipment.length > 0) {
     parts.push(`<span class="reward-item"><span class="reward-icon">⚔️</span> Equipment</span>`);
+  }
+
+  if (rewards.gearRewards && rewards.gearRewards.length > 0) {
+    const gearLabels = rewards.gearRewards.map((reward) => describeGearRewardSpec(reward)).join(", ");
+    parts.push(`<span class="reward-item"><span class="reward-icon">âš”ï¸</span> ${gearLabels}</span>`);
   }
 
   if (parts.length === 0) {
@@ -343,7 +350,7 @@ function attachEventListeners(returnTo: BaseCampReturnTo): void {
           // Refresh the screen
           renderQuestBoardScreen(returnTo);
         } else {
-          alert("Failed to accept quest. You may have reached the maximum number of active quests.");
+          alert(getQuestAcceptanceFailureMessage(questId) || "Failed to accept quest.");
         }
       }
     });
@@ -351,12 +358,18 @@ function attachEventListeners(returnTo: BaseCampReturnTo): void {
 
   // Abandon quest buttons (for generated quests only)
   document.querySelectorAll(".quest-abandon-btn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const target = e.currentTarget as HTMLElement;
       const questId = target.getAttribute("data-quest-id");
       if (questId) {
-        if (confirm("Abandon this quest? A new quest will be generated to replace it.")) {
+        if (await showConfirmDialog({
+          title: "ABANDON QUEST",
+          message: "Abandon this quest? A new quest will be generated to replace it.",
+          confirmLabel: "ABANDON",
+          variant: "danger",
+          restoreFocusSelector: `.quest-abandon-btn[data-quest-id="${questId}"]`,
+        })) {
           const success = abandonQuest(questId);
           if (success) {
             // Small delay to let replenishment happen

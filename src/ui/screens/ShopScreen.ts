@@ -11,7 +11,7 @@ import {
   returnFromBaseCampScreen,
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { 
   PAK_DATABASE, 
   openPAK, 
@@ -19,11 +19,19 @@ import {
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
 import { getAllStarterEquipment } from "../../core/equipment";
-import { getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
+import { getUnlockableById, getUnownedUnlockables, type UnlockableType } from "../../core/unlockables";
 import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
+import { getResourceEntries, RESOURCE_KEYS, type ResourceKey } from "../../core/resources";
+import {
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -35,6 +43,7 @@ interface ShopItem {
   description: string;
   price: number;
   category: "pak" | "equipment" | "consumable" | "recipe" | "unlockable";
+  displayCategory?: string;
   rarity?: "common" | "uncommon" | "rare" | "epic";
   stock?: number; // undefined = unlimited
 }
@@ -217,6 +226,43 @@ const RECIPE_ITEMS: ShopItem[] = [
 
 let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell" = "paks";
 
+const SHOP_RESOURCE_PRICE_WEIGHTS: Record<ResourceKey, number> = {
+  metalScrap: 5,
+  wood: 3,
+  chaosShards: 10,
+  steamComponents: 15,
+  alloy: 18,
+  drawcord: 12,
+  fittings: 14,
+  resin: 12,
+  chargeCells: 20,
+};
+
+function estimateUnlockablePrice(cost?: Partial<Record<ResourceKey, number>> & { wad?: number }): number {
+  if (!cost) {
+    return 0;
+  }
+
+  if ((cost.wad ?? 0) > 0) {
+    return cost.wad ?? 0;
+  }
+
+  return RESOURCE_KEYS.reduce((total, key) => total + ((cost[key] ?? 0) * SHOP_RESOURCE_PRICE_WEIGHTS[key]), 0);
+}
+
+function getQuartermasterWallet(state = getGameState()) {
+  return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+}
+
+function formatUnlockableTypeLabel(type: UnlockableType): string {
+  switch (type) {
+    case "field_mod":
+      return "FIELD MOD";
+    default:
+      return type.replace(/_/g, " ").toUpperCase();
+  }
+}
+
 export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -224,20 +270,23 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   clearControllerContext();
   
   const state = getGameState();
-  const backButtonText = returnTo === "operation" ? "DUNGEON MAP" : getBaseCampReturnLabel(returnTo);
+  const wallet = getQuartermasterWallet(state);
+  const resources = wallet.resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
+  const backButtonText = returnTo === "operation" ? "ACTIVE OPERATION" : getBaseCampReturnLabel(returnTo);
   
   app.innerHTML = `
     <div class="shop-root town-screen town-screen--shop">
       <!-- Header -->
-      <div class="shop-header town-screen__header">
+        <div class="shop-header town-screen__header">
         <div class="shop-header-left town-screen__titleblock">
-          <h1 class="shop-title">QUARTERMASTER</h1>
+          <h1 class="shop-title">SHOP</h1>
           <div class="shop-subtitle">S/COM_OS SUPPLY TERMINAL</div>
         </div>
         <div class="shop-header-right town-screen__header-right">
           <div class="shop-wallet">
             <span class="wallet-label">AVAILABLE WAD</span>
-            <span class="wallet-value">${state.wad.toLocaleString()}</span>
+            <span class="wallet-value">${wallet.wad.toLocaleString()}</span>
           </div>
           <button class="shop-back-btn town-screen__back-btn" id="backBtn" data-return-to="${returnTo}">
             <span class="btn-icon">←</span>
@@ -283,25 +332,38 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
       <div class="shop-footer">
         <div class="resource-display">
           <div class="resource-item">
-            <span class="resource-icon">⚙</span>
-            <span class="resource-value">${state.resources?.metalScrap ?? 0}</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+            <span class="resource-value">${resources.metalScrap ?? 0}</span>
             <span class="resource-label">Metal</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon">🪵</span>
-            <span class="resource-value">${state.resources?.wood ?? 0}</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+            <span class="resource-value">${resources.wood ?? 0}</span>
             <span class="resource-label">Wood</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon">💎</span>
-            <span class="resource-value">${state.resources?.chaosShards ?? 0}</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+            <span class="resource-value">${resources.chaosShards ?? 0}</span>
             <span class="resource-label">Shards</span>
           </div>
           <div class="resource-item">
-            <span class="resource-icon"></span>
-            <span class="resource-value">${state.resources?.steamComponents ?? 0}</span>
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+            <span class="resource-value">${resources.steamComponents ?? 0}</span>
             <span class="resource-label">Steam</span>
           </div>
+          ${getResourceEntries(resources, { includeZero: true }).filter((entry) => (
+            entry.key === "alloy"
+            || entry.key === "drawcord"
+            || entry.key === "fittings"
+            || entry.key === "resin"
+            || entry.key === "chargeCells"
+          )).map((entry) => `
+            <div class="resource-item">
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+              <span class="resource-value">${entry.amount}</span>
+              <span class="resource-label">${entry.label}</span>
+            </div>
+          `).join("")}
         </div>
       </div>
     </div>
@@ -342,24 +404,25 @@ function renderShopContent(state: any): string {
     case "unlockables":
       // Generate unlockable items dynamically
       try {
-        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList());
+        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList(), undefined, state);
         
         // Convert to ShopItem format
         items = unowned.map(unlock => ({
           id: unlock.id,
           name: unlock.displayName,
           description: unlock.description,
-          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
-          category: "unlockable" as any,
+          price: estimateUnlockablePrice(unlock.cost),
+          category: "unlockable",
+          displayCategory: formatUnlockableTypeLabel(unlock.type),
           rarity: unlock.rarity,
         }));
         
-        sectionTitle = "UNLOCKABLES";
+        sectionTitle = "OTHER";
         sectionDesc = "Permanent unlocks including chassis, doctrines, tactical mods, and Haven decor pieces.";
       } catch (err) {
         console.warn("[SHOP] Could not load unlockables:", err);
         items = [];
-        sectionTitle = "UNLOCKABLES";
+        sectionTitle = "OTHER";
         sectionDesc = "No unlocks available.";
       }
       break;
@@ -381,7 +444,7 @@ function renderShopContent(state: any): string {
 }
 
 function renderShopItem(item: ShopItem, state: any): string {
-  const canAfford = state.wad >= item.price;
+  const canAfford = canSessionAffordCost(state, { wad: item.price });
   const rarityClass = `shop-item--${item.rarity ?? 'common'}`;
   const isRecipe = item.category === 'recipe';
   const isKnown = isRecipe && state.knownRecipeIds && state.knownRecipeIds.includes(item.id);
@@ -394,6 +457,11 @@ function renderShopItem(item: ShopItem, state: any): string {
       </div>
       <div class="shop-item-body">
         <p class="shop-item-desc">${item.description}</p>
+        ${item.displayCategory ? `
+          <div class="shop-item-meta">
+            <span class="meta-tag">${item.displayCategory}</span>
+          </div>
+        ` : ''}
         ${item.category === 'pak' ? `
           <div class="shop-item-meta">
             <span class="meta-tag">${PAK_DATABASE[item.id]?.cardCount ?? '?'} cards</span>
@@ -437,9 +505,9 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
         // Mark the current room as visited when leaving the shop (uses campaign system)
         const state = getGameState();
         if (state.operation?.currentRoomId) {
-          markRoomVisited(state.operation.currentRoomId);
+          markOperationRoomVisited(state.operation.currentRoomId);
         }
-        renderOperationMapScreen();
+        renderActiveOperationSurface();
       } else {
         returnFromBaseCampScreen(returnDestination as BaseCampReturnTo);
       }
@@ -493,8 +561,9 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
           id: unlock.id,
           name: unlock.displayName,
           description: unlock.description,
-          price: unlock.cost?.wad || (unlock.cost?.metalScrap || 0) * 5 + (unlock.cost?.wood || 0) * 3 + (unlock.cost?.chaosShards || 0) * 10 + (unlock.cost?.steamComponents || 0) * 15,
-          category: "unlockable" as any,
+          price: estimateUnlockablePrice(unlock.cost),
+          category: "unlockable",
+          displayCategory: formatUnlockableTypeLabel(unlock.type),
           rarity: unlock.rarity,
         };
       }
@@ -506,7 +575,7 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
   if (!item) return;
   
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -541,11 +610,17 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
       return;
     }
     
-    updateGameState(s => ({
-      ...s,
-      wad: s.wad - item.price,
-      knownRecipeIds: learnRecipe(s.knownRecipeIds || [], itemId),
-    }));
+    updateGameState((s) => {
+      const spendResult = spendSessionCost(s, { wad: item.price });
+      if (!spendResult.success) {
+        return s;
+      }
+
+      return {
+        ...spendResult.state,
+        knownRecipeIds: learnRecipe(spendResult.state.knownRecipeIds || [], itemId),
+      };
+    });
     
     showNotification(`LEARNED: ${recipe.name}`, "success");
     renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp");
@@ -564,10 +639,10 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
     }
     
     // Deduct WAD and grant unlock
-    updateGameState(s => ({
-      ...s,
-      wad: s.wad - item.price,
-    }));
+    updateGameState((s) => {
+      const spendResult = spendSessionCost(s, { wad: item.price });
+      return spendResult.success ? spendResult.state : s;
+    });
     
     grantUnlock(itemId, "shop_purchase");
     showNotification(`UNLOCKED: ${item.name}`, "success");
@@ -589,10 +664,16 @@ function purchasePAK(pakId: string, item: ShopItem): void {
   const cards = openPAK(pakId);
   
   // Update state
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    draft.cardLibrary = addCardsToLibrary(draft.cardLibrary ?? {}, cards);
-    return draft;
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
+    }
+
+    return {
+      ...spendResult.state,
+      cardLibrary: addCardsToLibrary(spendResult.state.cardLibrary ?? {}, cards),
+    };
   });
 
   showPurchaseModal(item.name, cards, "Recovered card set:");
@@ -603,7 +684,7 @@ function purchasePAK(pakId: string, item: ShopItem): void {
 
 function purchaseEquipment(itemId: string, item: ShopItem): void {
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -615,22 +696,24 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
   // Create equipment entry (basic structure - will need proper equipment data)
   const equipmentData = createEquipmentFromShopItem(itemId, item);
   
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    
-    // Add to equipmentById
-    if (!draft.equipmentById) draft.equipmentById = {};
-    draft.equipmentById[itemId] = equipmentData;
-    
-    // Add to equipmentPool
-    if (!draft.equipmentPool) draft.equipmentPool = [];
-    if (!draft.equipmentPool.includes(itemId)) {
-      draft.equipmentPool.push(itemId);
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
     }
-    
-    // Add to inventory baseStorage as InventoryItem
-    if (!draft.inventory) {
-      draft.inventory = {
+
+    const next = { ...spendResult.state };
+
+    if (!next.equipmentById) next.equipmentById = {};
+    next.equipmentById[itemId] = equipmentData;
+
+    if (!next.equipmentPool) next.equipmentPool = [];
+    if (!next.equipmentPool.includes(itemId)) {
+      next.equipmentPool.push(itemId);
+    }
+
+    if (!next.inventory) {
+      next.inventory = {
         muleClass: "E",
         capacityMassKg: 100,
         capacityBulkBu: 70,
@@ -652,15 +735,14 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
     };
     
     // Check if already in baseStorage
-    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    const existingIndex = next.inventory.baseStorage.findIndex(i => i.id === itemId);
     if (existingIndex >= 0) {
-      // Equipment doesn't stack, but we can increment quantity for tracking
-      draft.inventory.baseStorage[existingIndex].quantity += 1;
+      next.inventory.baseStorage[existingIndex].quantity += 1;
     } else {
-      draft.inventory.baseStorage.push(inventoryItem);
+      next.inventory.baseStorage.push(inventoryItem);
     }
     
-    return draft;
+    return next;
   });
   
   showNotification(`${item.name} added to inventory!`, "success");
@@ -669,7 +751,7 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
 
 function purchaseConsumable(itemId: string, item: ShopItem): void {
   const state = getGameState();
-  if (state.wad < item.price) {
+  if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
   }
@@ -678,17 +760,20 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
   const backBtn = document.getElementById("backBtn");
   const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
 
-  updateGameState(draft => {
-    draft.wad -= item.price;
-    
-    // Add to consumables Record (consumable ID -> quantity)
-    if (!draft.consumables) draft.consumables = {};
-    const newQuantity = (draft.consumables[itemId] || 0) + 1;
-    draft.consumables[itemId] = newQuantity;
-    
-    // Also add to inventory baseStorage as InventoryItem for organization
-    if (!draft.inventory) {
-      draft.inventory = {
+  updateGameState((draft) => {
+    const spendResult = spendSessionCost(draft, { wad: item.price });
+    if (!spendResult.success) {
+      return draft;
+    }
+
+    const next = { ...spendResult.state };
+
+    if (!next.consumables) next.consumables = {};
+    const newQuantity = (next.consumables[itemId] || 0) + 1;
+    next.consumables[itemId] = newQuantity;
+
+    if (!next.inventory) {
+      next.inventory = {
         muleClass: "E",
         capacityMassKg: 100,
         capacityBulkBu: 70,
@@ -710,14 +795,14 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
     };
     
     // Update or add to baseStorage
-    const existingIndex = draft.inventory.baseStorage.findIndex(i => i.id === itemId);
+    const existingIndex = next.inventory.baseStorage.findIndex(i => i.id === itemId);
     if (existingIndex >= 0) {
-      draft.inventory.baseStorage[existingIndex].quantity = newQuantity;
+      next.inventory.baseStorage[existingIndex].quantity = newQuantity;
     } else {
-      draft.inventory.baseStorage.push(inventoryItem);
+      next.inventory.baseStorage.push(inventoryItem);
     }
     
-    return draft;
+    return next;
   });
   
   showNotification(`${item.name} added to supplies!`, "success");
@@ -1025,6 +1110,7 @@ function createEquipmentFromShopItem(itemId: string, item: ShopItem): any {
     else if (itemId.includes("gun")) weaponType = "gun";
     else if (itemId.includes("staff")) weaponType = "staff";
     else if (itemId.includes("dagger")) weaponType = "dagger";
+    else if (itemId.includes("shield")) weaponType = "shield";
     
     return {
       id: itemId,
@@ -1034,8 +1120,6 @@ function createEquipmentFromShopItem(itemId: string, item: ShopItem): any {
       isMechanical: itemId.includes("gun") || itemId.includes("steam"),
       stats: { atk: 2, def: 0, agi: 0, acc: 0, hp: 0 }, // Basic stats
       cardsGranted: [], // Will be empty for shop-bought items
-      moduleSlots: 1,
-      attachedModules: [],
       wear: 0,
     };
   } else if (isArmor) {
@@ -1400,3 +1484,4 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
 }
 
 export { renderShopScreen as default };
+

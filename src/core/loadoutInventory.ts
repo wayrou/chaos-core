@@ -1,5 +1,6 @@
 import type { GameState, InventoryItem, Unit, UnitId } from "./types";
 import type { Equipment } from "./equipment";
+import { getInventoryIconPath } from "./inventoryIcons";
 
 export const PARTY_UNIT_FORWARD_LOCKER_MASS_KG = 5;
 export const PARTY_UNIT_FORWARD_LOCKER_BULK_BU = 2;
@@ -33,7 +34,7 @@ function makeEquipmentInventoryItem(equipment: Equipment, existing?: InventoryIt
     bulkBu: existing?.bulkBu ?? inventoryProfile?.bulkBu ?? 1,
     powerW: existing?.powerW ?? inventoryProfile?.powerW ?? 1,
     description: existing?.description ?? equipment.description,
-    iconPath: existing?.iconPath ?? equipment.iconPath,
+    iconPath: getInventoryIconPath(existing?.iconPath ?? equipment.iconPath),
     metadata: existing?.metadata ?? equipment.metadata,
   };
 }
@@ -232,7 +233,7 @@ function makeConsumableInventoryItem(id: string, quantity: number, existing?: In
     bulkBu: existing?.bulkBu ?? 1,
     powerW: existing?.powerW ?? 0,
     description: existing?.description,
-    iconPath: existing?.iconPath,
+    iconPath: getInventoryIconPath(existing?.iconPath),
     metadata: existing?.metadata,
   };
 }
@@ -277,9 +278,26 @@ export function buildOwnedBaseStorageItems(state: GameState): InventoryItem[] {
   }
 
   for (const legacyItem of state.inventory?.baseStorage ?? []) {
-    if (!addedIds.has(legacyItem.id)) {
-      derivedItems.push(legacyItem);
+    if (addedIds.has(legacyItem.id)) {
+      continue;
     }
+
+    const reservedQty = reservedInForwardLocker.get(legacyItem.id) ?? 0;
+    const legacyQty = Math.max(legacyItem.quantity || 1, 1);
+    const remainingQty = legacyQty - reservedQty;
+    if (remainingQty <= 0) {
+      continue;
+    }
+
+    if (remainingQty === legacyQty) {
+      derivedItems.push(legacyItem);
+      continue;
+    }
+
+    derivedItems.push({
+      ...legacyItem,
+      quantity: remainingQty,
+    });
   }
 
   return derivedItems.sort((a, b) => a.name.localeCompare(b.name));

@@ -12,7 +12,12 @@
   "strainCost": 6,
   "targetType": "tile",
   "range": 0,
-  "effects": [],
+  "effects": [
+    {
+      "type": "move",
+      "tiles": 2
+    }
+  ],
   "metadata": {},
   "artAsset": {
     "fileName": "Move_CA.png",

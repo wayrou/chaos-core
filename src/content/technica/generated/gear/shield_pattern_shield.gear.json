@@ -1,0 +1,25 @@
+{
+  "cardsGranted": [
+    "guard_self"
+  ],
+  "description": "A basic shield used by the Fairhaven military. It has a striped pattern on it, with rivets around the edge for durability.",
+  "id": "shield_pattern_shield",
+  "inventory": {
+    "bulkBu": 2,
+    "massKg": 1,
+    "powerW": 3,
+    "startingOwned": true
+  },
+  "isMechanical": false,
+  "name": "Pattern Shield",
+  "slot": "weapon",
+  "stats": {
+    "acc": 0,
+    "agi": 0,
+    "atk": 0,
+    "def": 4,
+    "hp": 0
+  },
+  "weaponType": "shield",
+  "wear": 0
+}

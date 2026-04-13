@@ -50,6 +50,11 @@ export interface PlayerAvatar {
   height: number;
   speed: number;
   facing: "north" | "south" | "east" | "west";
+  hp?: number;
+  maxHp?: number;
+  invulnerabilityTime?: number;
+  vx?: number;
+  vy?: number;
 }
 
 export interface FieldNpc {
@@ -145,4 +150,5 @@ export interface FieldState {
   fieldEnemies?: FieldEnemy[];
   combat?: FieldCombatState;
   projectiles?: FieldProjectile[];
+  collectedResourceObjectIds?: string[];
 }

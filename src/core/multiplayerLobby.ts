@@ -2,6 +2,7 @@ import {
   NETWORK_PLAYER_SLOTS,
   SESSION_PLAYER_SLOTS,
   type AuthorityRole,
+  type BattleRuntimeContext,
   type EconomyPreset,
   type GameState,
   type LobbyActivity,
@@ -17,6 +18,7 @@ import {
   type LobbySkirmishActivity,
   type LobbySkirmishIntermissionDecision,
   type LobbyState,
+  type ResourceLedger,
   type LobbyTransportState,
   type NetworkPlayerSlot,
   type PlayerPresence,
@@ -24,7 +26,10 @@ import {
   type SkirmishObjectiveType,
   type SkirmishPlaylist,
   type SkirmishRoundSpec,
+  type TheaterRuntimeContext,
+  type TradeTransfer,
 } from "./types";
+import { createEmptyResourceWallet } from "./resources";
 import {
   createSquadOnlineMatch,
   loadSquadMatchState,
@@ -42,6 +47,41 @@ function createNetworkSlotRecord<T>(factory: (slot: NetworkPlayerSlot) => T): Re
     acc[slot] = factory(slot);
     return acc;
   }, {} as Record<NetworkPlayerSlot, T>);
+}
+
+function createResourcePool(
+  wad = 0,
+  resources = createEmptyResourceWallet(),
+): ResourceLedger["shared"] {
+  return {
+    wad,
+    resources: createEmptyResourceWallet(resources),
+  };
+}
+
+function cloneTradeTransfer(transfer: TradeTransfer): TradeTransfer {
+  return {
+    ...transfer,
+    note: transfer.note ?? undefined,
+  };
+}
+
+function clonePendingTransfers(transfers?: TradeTransfer[] | null): TradeTransfer[] {
+  return Array.isArray(transfers) ? transfers.map(cloneTradeTransfer) : [];
+}
+
+function cloneResourceLedger(ledger?: ResourceLedger | null): ResourceLedger {
+  return {
+    preset: ledger?.preset ?? "shared",
+    shared: createResourcePool(ledger?.shared?.wad ?? 0, ledger?.shared?.resources),
+    perPlayer: SESSION_PLAYER_SLOTS.reduce((acc, slot) => {
+      acc[slot] = createResourcePool(
+        ledger?.perPlayer?.[slot]?.wad ?? 0,
+        ledger?.perPlayer?.[slot]?.resources,
+      );
+      return acc;
+    }, {} as ResourceLedger["perPlayer"]),
+  };
 }
 
 function createLobbyMember(
@@ -129,11 +169,22 @@ function cloneCoopParticipant(
     callsign: participant?.callsign ?? slot,
     authorityRole: participant?.authorityRole ?? "client",
     selected: participant?.selected ?? false,
+    standby: participant?.standby ?? false,
     connected: participant?.connected ?? false,
     presence: participant?.presence ?? "inactive",
     sessionSlot: participant?.sessionSlot ?? null,
     stagingState: participant?.stagingState ?? "disconnected",
     lastSafeMapId: participant?.lastSafeMapId ?? null,
+    currentTheaterId: participant?.currentTheaterId ?? null,
+    assignedSquadId: participant?.assignedSquadId ?? null,
+    activeBattleId: participant?.activeBattleId ?? null,
+    currentRoomId: participant?.currentRoomId ?? null,
+    operationPhase: participant?.operationPhase ?? null,
+    theaterSnapshot: participant?.theaterSnapshot ?? null,
+    battleSnapshot: participant?.battleSnapshot ?? null,
+    pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+      participant?.pendingTheaterBattleConfirmation,
+    ),
   };
 }
 
@@ -150,25 +201,100 @@ function clonePendingTheaterBattleConfirmation(
     : null;
 }
 
+function cloneBattleRuntimeContext(
+  context: BattleRuntimeContext | null | undefined,
+): BattleRuntimeContext | null {
+  return context
+    ? {
+        battleId: context.battleId,
+        theaterId: context.theaterId ?? null,
+        roomId: context.roomId ?? null,
+        squadId: context.squadId ?? null,
+        snapshot: context.snapshot,
+        phase: context.phase ?? null,
+        updatedAt: context.updatedAt ?? Date.now(),
+      }
+    : null;
+}
+
+function cloneTheaterRuntimeContext(
+  context: TheaterRuntimeContext | null | undefined,
+): TheaterRuntimeContext | null {
+  return context
+    ? {
+        theaterId: context.theaterId,
+        operationId: context.operationId ?? null,
+        snapshot: context.snapshot,
+        phase: context.phase ?? null,
+        battleSnapshot: context.battleSnapshot ?? null,
+        pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+          context.pendingTheaterBattleConfirmation,
+        ),
+        updatedAt: context.updatedAt ?? Date.now(),
+      }
+    : null;
+}
+
+function cloneTheaterRuntimeContexts(
+  contexts?: Record<string, TheaterRuntimeContext> | null,
+): Record<string, TheaterRuntimeContext> {
+  if (!contexts) {
+    return {};
+  }
+  return Object.entries(contexts).reduce((acc, [theaterId, context]) => {
+    const cloned = cloneTheaterRuntimeContext(context);
+    if (cloned) {
+      acc[theaterId] = cloned;
+    }
+    return acc;
+  }, {} as Record<string, TheaterRuntimeContext>);
+}
+
+function cloneBattleRuntimeContexts(
+  contexts?: Record<string, BattleRuntimeContext> | null,
+): Record<string, BattleRuntimeContext> {
+  if (!contexts) {
+    return {};
+  }
+  return Object.entries(contexts).reduce((acc, [battleId, context]) => {
+    const cloned = cloneBattleRuntimeContext(context);
+    if (cloned) {
+      acc[battleId] = cloned;
+    }
+    return acc;
+  }, {} as Record<string, BattleRuntimeContext>);
+}
+
 function buildCoopParticipants(
   members: Record<NetworkPlayerSlot, LobbyMember | null>,
   hostSlot: NetworkPlayerSlot,
   selectedSlots: NetworkPlayerSlot[],
+  operatorSlots: NetworkPlayerSlot[],
+  standbySlots: NetworkPlayerSlot[],
   status: LobbyCoopOperationsStatus,
   existing?: Partial<Record<NetworkPlayerSlot, LobbyCoopParticipantState>> | null,
 ): Record<NetworkPlayerSlot, LobbyCoopParticipantState> {
   const normalizedSelectedSlots = selectedSlots.filter((slot, index, all) =>
     Boolean(members[slot]) && all.indexOf(slot) === index,
   );
+  const normalizedOperatorSlots = operatorSlots.filter((slot, index, all) =>
+    normalizedSelectedSlots.includes(slot) && all.indexOf(slot) === index,
+  );
+  const normalizedStandbySlots = standbySlots.filter((slot, index, all) =>
+    normalizedSelectedSlots.includes(slot) && !normalizedOperatorSlots.includes(slot) && all.indexOf(slot) === index,
+  );
   return createNetworkSlotRecord((slot) => {
     const member = members[slot];
     const previous = existing?.[slot];
     const selected = normalizedSelectedSlots.includes(slot);
-    const sessionSlot = selected ? getCoopParticipantSessionSlot(normalizedSelectedSlots, slot) : null;
+    const standby = normalizedStandbySlots.includes(slot);
+    const sessionSlot = selected && !standby ? getCoopParticipantSessionSlot(normalizedOperatorSlots, slot) : null;
     let stagingState = previous?.stagingState ?? (member?.connected ? "haven" : "disconnected");
     if (selected) {
       if (!member?.connected) {
         stagingState = status === "active" || previous?.stagingState === "battle" ? "rejoining" : "disconnected";
+      } else if (standby) {
+        stagingState = status === "active" ? "haven" : "staging";
       } else if (status === "active") {
         stagingState = previous?.stagingState === "battle" || previous?.stagingState === "theater"
           ? previous.stagingState
@@ -187,13 +313,43 @@ function buildCoopParticipants(
       callsign: member?.callsign ?? previous?.callsign ?? slot,
       authorityRole: member?.authorityRole ?? previous?.authorityRole ?? (slot === hostSlot ? "host" : "client"),
       selected,
+      standby,
       connected: member?.connected ?? false,
       presence: member?.presence ?? previous?.presence ?? "inactive",
       sessionSlot,
       stagingState,
       lastSafeMapId,
+      currentTheaterId: previous?.currentTheaterId ?? null,
+      assignedSquadId: previous?.assignedSquadId ?? null,
+      activeBattleId: previous?.activeBattleId ?? null,
+      currentRoomId: previous?.currentRoomId ?? null,
+      operationPhase: previous?.operationPhase ?? null,
+      theaterSnapshot: previous?.theaterSnapshot ?? null,
+      battleSnapshot: previous?.battleSnapshot ?? null,
+      pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
+        previous?.pendingTheaterBattleConfirmation,
+      ),
     };
   });
+}
+
+function normalizeCoopSelection(
+  members: Record<NetworkPlayerSlot, LobbyMember | null>,
+  hostSlot: NetworkPlayerSlot,
+  selectedSlots: NetworkPlayerSlot[],
+): {
+  selectedSlots: NetworkPlayerSlot[];
+  operatorSlots: NetworkPlayerSlot[];
+  standbySlots: NetworkPlayerSlot[];
+} {
+  const normalizedSelectedSlots = [hostSlot, ...selectedSlots].filter((slot, index, all) =>
+    Boolean(members[slot]) && all.indexOf(slot) === index,
+  );
+  return {
+    selectedSlots: normalizedSelectedSlots,
+    operatorSlots: normalizedSelectedSlots.slice(0, SESSION_PLAYER_SLOTS.length),
+    standbySlots: normalizedSelectedSlots.slice(SESSION_PLAYER_SLOTS.length),
+  };
 }
 
 function normalizeCoopOperationsActivity(
@@ -201,17 +357,20 @@ function normalizeCoopOperationsActivity(
   members: Record<NetworkPlayerSlot, LobbyMember | null>,
   hostSlot: NetworkPlayerSlot,
 ): LobbyCoopOperationsActivity {
-  const selectedSlots = activity.selectedSlots.filter((slot, index, all) =>
-    Boolean(members[slot]) && all.indexOf(slot) === index,
-  );
-  const normalizedSelectedSlots = selectedSlots.includes(hostSlot)
-    ? selectedSlots
-    : [hostSlot, ...selectedSlots].filter((slot, index, all) => Boolean(members[slot]) && all.indexOf(slot) === index);
+  const selection = normalizeCoopSelection(members, hostSlot, activity.selectedSlots);
   return {
     ...activity,
-    selectedSlots: normalizedSelectedSlots,
+    selectedSlots: selection.selectedSlots,
+    standbySlots: selection.standbySlots,
+    sharedCampaignSlot: activity.sharedCampaignSlot ?? null,
+    sharedCampaignLabel: activity.sharedCampaignLabel ?? null,
+    sharedCampaignLastSavedAt: activity.sharedCampaignLastSavedAt ?? null,
     economyPreset: activity.economyPreset ?? "shared",
+    resourceLedger: cloneResourceLedger(activity.resourceLedger),
+    pendingTransfers: clonePendingTransfers(activity.pendingTransfers),
     sessionId: activity.sessionId ?? null,
+    theaterContexts: cloneTheaterRuntimeContexts(activity.theaterContexts),
+    battleContexts: cloneBattleRuntimeContexts(activity.battleContexts),
     operationSnapshot: activity.operationSnapshot ?? null,
     battleSnapshot: activity.battleSnapshot ?? null,
     operationPhase: activity.operationPhase ?? null,
@@ -222,7 +381,9 @@ function normalizeCoopOperationsActivity(
     participants: buildCoopParticipants(
       members,
       hostSlot,
-      normalizedSelectedSlots,
+      selection.selectedSlots,
+      selection.operatorSlots,
+      selection.standbySlots,
       activity.status,
       activity.participants,
     ),
@@ -255,11 +416,16 @@ function cloneActivity(activity: LobbyActivity | null | undefined): LobbyActivit
     coopOperations: {
       ...activity.coopOperations,
       selectedSlots: [...activity.coopOperations.selectedSlots],
+      standbySlots: [...(activity.coopOperations.standbySlots ?? [])],
       sessionId: activity.coopOperations.sessionId ?? null,
       economyPreset: activity.coopOperations.economyPreset ?? "shared",
+      resourceLedger: cloneResourceLedger(activity.coopOperations.resourceLedger),
+      pendingTransfers: clonePendingTransfers(activity.coopOperations.pendingTransfers),
       participants: createNetworkSlotRecord((slot) =>
         cloneCoopParticipant(activity.coopOperations.participants?.[slot], slot),
       ),
+      theaterContexts: cloneTheaterRuntimeContexts(activity.coopOperations.theaterContexts),
+      battleContexts: cloneBattleRuntimeContexts(activity.coopOperations.battleContexts),
       operationSnapshot: activity.coopOperations.operationSnapshot ?? null,
       battleSnapshot: activity.coopOperations.battleSnapshot ?? null,
       operationPhase: activity.coopOperations.operationPhase ?? null,
@@ -492,13 +658,14 @@ export function updateLobbyAvatar(
   slot: NetworkPlayerSlot,
   avatar: LobbyAvatarState | null,
 ): LobbyState {
-  const nextActivity = lobby.activity.kind === "coop_operations"
+  const coopOperations = lobby.activity.kind === "coop_operations" ? lobby.activity.coopOperations : null;
+  const nextActivity = coopOperations
     ? {
         kind: "coop_operations" as const,
         coopOperations: {
-          ...lobby.activity.coopOperations,
+          ...coopOperations,
           participants: createNetworkSlotRecord((playerSlot) => {
-            const participant = cloneCoopParticipant(lobby.activity.coopOperations.participants?.[playerSlot], playerSlot);
+            const participant = cloneCoopParticipant(coopOperations.participants?.[playerSlot], playerSlot);
             if (playerSlot !== slot || !avatar || !participant.selected) {
               return participant;
             }
@@ -743,6 +910,7 @@ export function startCoopOperationsActivity(
   ].filter((slot, index, all) =>
     Boolean(lobby.members[slot]?.connected) && all.indexOf(slot) === index,
   );
+  const selection = normalizeCoopSelection(lobby.members, lobby.hostSlot, normalizedSlots);
   return {
     ...lobby,
     pendingChallenge: null,
@@ -752,9 +920,24 @@ export function startCoopOperationsActivity(
         activityId: createLobbyId("coop"),
         sessionId: null,
         status: "staging",
-        selectedSlots: normalizedSlots,
+        selectedSlots: selection.selectedSlots,
+        standbySlots: selection.standbySlots,
+        sharedCampaignSlot: null,
+        sharedCampaignLabel: null,
+        sharedCampaignLastSavedAt: null,
         economyPreset: "shared",
-        participants: buildCoopParticipants(lobby.members, lobby.hostSlot, normalizedSlots, "staging"),
+        resourceLedger: cloneResourceLedger(null),
+        pendingTransfers: [],
+        participants: buildCoopParticipants(
+          lobby.members,
+          lobby.hostSlot,
+          selection.selectedSlots,
+          selection.operatorSlots,
+          selection.standbySlots,
+          "staging",
+        ),
+        theaterContexts: {},
+        battleContexts: {},
         operationSnapshot: null,
         battleSnapshot: null,
         operationPhase: null,
@@ -781,26 +964,90 @@ export function updateCoopOperationsSelection(
   ].filter((slot, index, all) =>
     Boolean(lobby.members[slot]?.connected) && all.indexOf(slot) === index,
   );
+  const selection = normalizeCoopSelection(lobby.members, lobby.hostSlot, normalizedSlots);
   return {
     ...lobby,
     activity: {
       kind: "coop_operations",
       coopOperations: {
         ...lobby.activity.coopOperations,
-        selectedSlots: normalizedSlots,
+        selectedSlots: selection.selectedSlots,
+        standbySlots: selection.standbySlots,
+        resourceLedger: cloneResourceLedger(lobby.activity.coopOperations.resourceLedger),
+        pendingTransfers: clonePendingTransfers(lobby.activity.coopOperations.pendingTransfers),
         participants: buildCoopParticipants(
           lobby.members,
           lobby.hostSlot,
-          normalizedSlots,
+          selection.selectedSlots,
+          selection.operatorSlots,
+          selection.standbySlots,
           lobby.activity.coopOperations.status,
           lobby.activity.coopOperations.participants,
         ),
+        theaterContexts: cloneTheaterRuntimeContexts(lobby.activity.coopOperations.theaterContexts),
+        battleContexts: cloneBattleRuntimeContexts(lobby.activity.coopOperations.battleContexts),
         operationSnapshot: lobby.activity.coopOperations.operationSnapshot ?? null,
         battleSnapshot: lobby.activity.coopOperations.battleSnapshot ?? null,
         operationPhase: lobby.activity.coopOperations.operationPhase ?? null,
         pendingTheaterBattleConfirmation: clonePendingTheaterBattleConfirmation(
           lobby.activity.coopOperations.pendingTheaterBattleConfirmation,
         ),
+        updatedAt: Date.now(),
+      },
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+export function setCoopOperationsSharedCampaign(
+  lobby: LobbyState,
+  sharedCampaignSlot: string | null,
+  sharedCampaignLabel: string | null,
+  sharedCampaignLastSavedAt: number | null = null,
+): LobbyState {
+  if (lobby.activity.kind !== "coop_operations") {
+    return lobby;
+  }
+  return {
+    ...lobby,
+    activity: {
+      kind: "coop_operations",
+      coopOperations: {
+        ...lobby.activity.coopOperations,
+        sharedCampaignSlot,
+        sharedCampaignLabel,
+        sharedCampaignLastSavedAt,
+        updatedAt: Date.now(),
+      },
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+export function setCoopOperationsEconomyState(
+  lobby: LobbyState,
+  options: {
+    economyPreset?: EconomyPreset;
+    resourceLedger?: ResourceLedger;
+    pendingTransfers?: TradeTransfer[];
+  },
+): LobbyState {
+  if (lobby.activity.kind !== "coop_operations") {
+    return lobby;
+  }
+  return {
+    ...lobby,
+    activity: {
+      kind: "coop_operations",
+      coopOperations: {
+        ...lobby.activity.coopOperations,
+        economyPreset: options.economyPreset ?? lobby.activity.coopOperations.economyPreset,
+        resourceLedger: options.resourceLedger
+          ? cloneResourceLedger(options.resourceLedger)
+          : cloneResourceLedger(lobby.activity.coopOperations.resourceLedger),
+        pendingTransfers: options.pendingTransfers
+          ? clonePendingTransfers(options.pendingTransfers)
+          : clonePendingTransfers(lobby.activity.coopOperations.pendingTransfers),
         updatedAt: Date.now(),
       },
     },
@@ -827,8 +1074,15 @@ export function launchCoopOperationsActivity(
         {
           ...lobby.activity.coopOperations,
           sessionId: options.sessionId ?? lobby.activity.coopOperations.sessionId ?? createLobbyId("coop_session"),
+          sharedCampaignSlot: lobby.activity.coopOperations.sharedCampaignSlot ?? null,
+          sharedCampaignLabel: lobby.activity.coopOperations.sharedCampaignLabel ?? null,
+          sharedCampaignLastSavedAt: lobby.activity.coopOperations.sharedCampaignLastSavedAt ?? null,
           economyPreset: options.economyPreset ?? lobby.activity.coopOperations.economyPreset ?? "shared",
+          resourceLedger: cloneResourceLedger(lobby.activity.coopOperations.resourceLedger),
+          pendingTransfers: clonePendingTransfers(lobby.activity.coopOperations.pendingTransfers),
           status: "active",
+          theaterContexts: cloneTheaterRuntimeContexts(lobby.activity.coopOperations.theaterContexts),
+          battleContexts: cloneBattleRuntimeContexts(lobby.activity.coopOperations.battleContexts),
           operationSnapshot: lobby.activity.coopOperations.operationSnapshot ?? null,
           battleSnapshot: lobby.activity.coopOperations.battleSnapshot ?? null,
           operationPhase: lobby.activity.coopOperations.operationPhase ?? null,
@@ -862,6 +1116,11 @@ export function syncCoopOperationsRuntime(
     state.session.mode === "coop_operations" && state.currentBattle
       ? JSON.stringify(state.currentBattle)
       : null;
+  const nextBattleContexts = cloneBattleRuntimeContexts(
+    state.session.mode === "coop_operations"
+      ? state.session.activeBattleContexts
+      : activity.battleContexts,
+  );
   const nextOperationPhase =
     state.session.mode === "coop_operations" && (state.operation || state.currentBattle)
       ? state.phase
@@ -870,6 +1129,32 @@ export function syncCoopOperationsRuntime(
     state.session.mode === "coop_operations"
       ? clonePendingTheaterBattleConfirmation(state.session.pendingTheaterBattleConfirmation)
       : null;
+  const nextTheaterContexts = cloneTheaterRuntimeContexts(
+    state.session.mode === "coop_operations"
+      ? state.session.activeTheaterContexts
+      : activity.theaterContexts,
+  );
+  const activeTheater = state.session.mode === "coop_operations" ? state.operation?.theater ?? null : null;
+  const activeBattle = state.session.mode === "coop_operations" ? state.currentBattle ?? null : null;
+  if (activeBattle?.id && nextBattleSnapshot) {
+    nextBattleContexts[activeBattle.id] = {
+      battleId: activeBattle.id,
+      theaterId: activeBattle.theaterMeta?.theaterId ?? null,
+      roomId: activeBattle.theaterMeta?.roomId ?? activeBattle.roomId ?? null,
+      squadId:
+        activeBattle.theaterBonuses?.squadId
+        ?? activeBattle.theaterMeta?.squadId
+        ?? null,
+      snapshot: nextBattleSnapshot,
+      phase: activeBattle.phase ?? null,
+      updatedAt: Date.now(),
+    };
+  }
+  const activeBattleSquadId =
+    activeBattle?.theaterBonuses?.squadId
+    ?? activeBattle?.theaterMeta?.squadId
+    ?? nextPendingTheaterBattleConfirmation?.squadId
+    ?? null;
   const nextParticipants = createNetworkSlotRecord((slot) => {
     const participant = cloneCoopParticipant(activity.participants?.[slot], slot);
     if (!participant.selected || !participant.sessionSlot) {
@@ -879,6 +1164,55 @@ export function syncCoopOperationsRuntime(
     if (!sessionPlayer) {
       return participant;
     }
+    const assignment = state.session.theaterAssignments?.[participant.sessionSlot] ?? null;
+    const theaterContext = assignment?.theaterId ? nextTheaterContexts[assignment.theaterId] ?? null : null;
+    const battleContext = sessionPlayer.activeBattleId
+      ? nextBattleContexts[sessionPlayer.activeBattleId] ?? null
+      : null;
+    const assignmentRoomId =
+      assignment?.roomId
+      ?? sessionPlayer.lastSafeRoomId
+      ?? activeTheater?.currentRoomId
+      ?? null;
+    const assignmentSquadId = assignment?.squadId ?? sessionPlayer.assignedSquadId ?? null;
+    const participantTheaterSnapshot = theaterContext?.snapshot ?? (
+      activeTheater
+        ? JSON.stringify({
+            ...activeTheater,
+            currentRoomId: assignmentRoomId ?? activeTheater.currentRoomId,
+            selectedRoomId: assignmentRoomId ?? activeTheater.selectedRoomId,
+            currentNodeId: assignmentRoomId ?? activeTheater.currentNodeId ?? activeTheater.currentRoomId,
+            selectedNodeId: assignmentRoomId ?? activeTheater.selectedNodeId ?? activeTheater.selectedRoomId,
+            selectedSquadId: assignmentSquadId ?? activeTheater.selectedSquadId,
+          })
+        : null
+    );
+    const participantBattleSnapshot =
+      battleContext?.snapshot
+      ?? theaterContext?.battleSnapshot
+      ?? (activeBattle && assignmentSquadId && activeBattleSquadId === assignmentSquadId
+        ? JSON.stringify(activeBattle)
+        : null);
+    const participantActiveBattleId =
+      sessionPlayer.activeBattleId
+      ?? battleContext?.battleId
+      ?? (activeBattle && assignmentSquadId && activeBattleSquadId === assignmentSquadId
+        ? activeBattle.id
+        : null);
+    const participantPendingTheaterBattleConfirmation =
+      clonePendingTheaterBattleConfirmation(theaterContext?.pendingTheaterBattleConfirmation)
+      ?? (
+        nextPendingTheaterBattleConfirmation
+        && (!nextPendingTheaterBattleConfirmation.squadId || nextPendingTheaterBattleConfirmation.squadId === assignmentSquadId)
+          ? clonePendingTheaterBattleConfirmation(nextPendingTheaterBattleConfirmation)
+          : null
+      );
+    const participantOperationPhase =
+      participantBattleSnapshot
+        ? "battle"
+        : sessionPlayer.stagingState === "theater"
+          ? "operation"
+          : theaterContext?.phase ?? nextOperationPhase;
     return {
       ...participant,
       connected: sessionPlayer.connected,
@@ -886,6 +1220,14 @@ export function syncCoopOperationsRuntime(
       authorityRole: sessionPlayer.authorityRole,
       stagingState: sessionPlayer.stagingState,
       lastSafeMapId: sessionPlayer.lastSafeMapId ?? participant.lastSafeMapId,
+      currentTheaterId: assignment?.theaterId ?? sessionPlayer.currentTheaterId ?? participant.currentTheaterId,
+      assignedSquadId: assignmentSquadId,
+      activeBattleId: participantActiveBattleId,
+      currentRoomId: assignmentRoomId,
+      operationPhase: participantOperationPhase,
+      theaterSnapshot: participantTheaterSnapshot,
+      battleSnapshot: participantBattleSnapshot,
+      pendingTheaterBattleConfirmation: participantPendingTheaterBattleConfirmation,
     };
   });
   const nextLobby: LobbyState = {
@@ -894,6 +1236,21 @@ export function syncCoopOperationsRuntime(
       kind: "coop_operations",
       coopOperations: {
         ...activity,
+        sharedCampaignSlot: state.session.sharedCampaignSlot ?? activity.sharedCampaignSlot ?? null,
+        sharedCampaignLabel: state.session.sharedCampaignLabel ?? activity.sharedCampaignLabel ?? null,
+        sharedCampaignLastSavedAt:
+          state.session.sharedCampaignLastSavedAt ?? activity.sharedCampaignLastSavedAt ?? null,
+        economyPreset: state.session.resourceLedger?.preset ?? activity.economyPreset ?? "shared",
+        resourceLedger:
+          state.session.mode === "coop_operations"
+            ? cloneResourceLedger(state.session.resourceLedger)
+            : cloneResourceLedger(activity.resourceLedger),
+        pendingTransfers:
+          state.session.mode === "coop_operations"
+            ? clonePendingTransfers(state.session.pendingTransfers)
+            : clonePendingTransfers(activity.pendingTransfers),
+        theaterContexts: nextTheaterContexts,
+        battleContexts: nextBattleContexts,
         operationSnapshot: nextOperationSnapshot,
         battleSnapshot: nextBattleSnapshot,
         operationPhase: nextOperationPhase,
@@ -1032,6 +1389,77 @@ export function loadLobbyState(): LobbyState | null {
 
 export function clearLobbyState(): void {
   saveLobbyState(null);
+}
+
+function shouldResumeCoopSessionSlot(state: GameState, slot: SessionPlayerSlot): boolean {
+  const player = state.session.players?.[slot];
+  const assignment = state.session.theaterAssignments?.[slot];
+  if (!player) {
+    return false;
+  }
+  return Boolean(
+    slot === "P1"
+    || player.callsign
+    || player.connected
+    || player.presence === "remote"
+    || player.presence === "local"
+    || player.stagingState !== "disconnected"
+    || assignment?.theaterId
+    || player.currentTheaterId
+    || player.activeBattleId,
+  );
+}
+
+export function createResumableCoopOperationsLobby(
+  state: GameState,
+  returnContext: LobbyReturnContext | null = null,
+): LobbyState | null {
+  if (state.session.mode !== "coop_operations") {
+    return null;
+  }
+
+  const hostCallsign = state.session.players.P1?.callsign ?? state.profile.callsign ?? "HOST";
+  let lobby = createHostedMultiplayerLobby(hostCallsign, returnContext);
+  const selectedSlots = SESSION_PLAYER_SLOTS.filter((slot) => shouldResumeCoopSessionSlot(state, slot)) as NetworkPlayerSlot[];
+  const normalizedSelectedSlots = selectedSlots.includes("P1")
+    ? selectedSlots
+    : (["P1", ...selectedSlots] as NetworkPlayerSlot[]);
+
+  for (const slot of normalizedSelectedSlots) {
+    const sessionPlayer = state.session.players[slot];
+    const presence =
+      slot === "P1"
+        ? "local"
+        : sessionPlayer?.connected
+          ? "disconnected"
+          : sessionPlayer?.presence === "inactive"
+            ? "disconnected"
+            : sessionPlayer?.presence ?? "disconnected";
+    lobby = upsertLobbyMember(
+      lobby,
+      slot,
+      sessionPlayer?.callsign ?? slot,
+      slot === "P1" ? "host" : sessionPlayer?.authorityRole ?? "client",
+      presence,
+    );
+  }
+
+  lobby = startCoopOperationsActivity(lobby, normalizedSelectedSlots);
+  if (lobby.activity.kind !== "coop_operations") {
+    return lobby;
+  }
+
+  lobby = setCoopOperationsSharedCampaign(
+    lobby,
+    state.session.sharedCampaignSlot ?? null,
+    state.session.sharedCampaignLabel ?? null,
+    state.session.sharedCampaignLastSavedAt ?? null,
+  );
+  lobby = launchCoopOperationsActivity(lobby, {
+    sessionId: state.session.sharedCampaignSlot ? `shared_${state.session.sharedCampaignSlot}` : null,
+    economyPreset: state.session.resourceLedger.preset,
+  });
+  return syncCoopOperationsRuntime(lobby, state);
 }
 
 export function withNormalizedLobbyState(state: GameState): GameState {

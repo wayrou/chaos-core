@@ -152,7 +152,7 @@ function clampGridHeight(gridHeight = DEFAULT_SKIRMISH_GRID_HEIGHT): number {
 }
 
 function normalizeSquadWinCondition(winCondition?: SquadWinCondition | "objective"): SquadWinCondition {
-  if (winCondition === "control_relay" || winCondition === "breakthrough") {
+  if (winCondition === "control_relay" || winCondition === "breakthrough" || winCondition === "extraction") {
     return winCondition;
   }
   return winCondition === "objective" ? "control_relay" : "elimination";
@@ -164,6 +164,9 @@ export function getSquadWinConditionLabel(winCondition: SquadWinCondition): stri
   }
   if (winCondition === "breakthrough") {
     return "Breakthrough";
+  }
+  if (winCondition === "extraction") {
+    return "Extraction";
   }
   return "Elimination";
 }

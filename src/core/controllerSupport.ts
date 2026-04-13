@@ -223,6 +223,10 @@ const previousButtonStatesByPad: boolean[][] = [];
 const previousAxisDigitalByPad: Record<number, Record<string, boolean>> = {};
 
 const DEBUG_OVERLAY_ID = "controllerDebugOverlay";
+// Keep manual UI focus/navigation active, but leave the global DOM mutation
+// observer disabled so screen transitions do not trigger the old focus-scan stalls.
+const CONTROLLER_UI_FOCUS_ENABLED = true;
+const CONTROLLER_UI_FOCUS_OBSERVER_ENABLED = false;
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "a[href]",
@@ -251,7 +255,9 @@ export function initControllerSupport(): void {
   window.addEventListener("gamepadconnected", onGamepadConnected);
   window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
   startPolling();
-  ensureFocusObserver();
+  if (CONTROLLER_UI_FOCUS_ENABLED && CONTROLLER_UI_FOCUS_OBSERVER_ENABLED) {
+    ensureFocusObserver();
+  }
   ensureDebugOverlay();
   syncDebugOverlay();
   initialized = true;
@@ -512,16 +518,21 @@ export function getControllerAssignments(): ControllerAssignmentSettings {
 }
 
 export function getControllerActionLabel(action: GameAction): string {
+  return getControllerActionLabelForPlayer(action);
+}
+
+export function getControllerActionLabelForPlayer(action: GameAction, playerId?: PlayerSlot): string {
   const bindings = currentBindings[action] ?? DEFAULT_CONTROLLER_BINDINGS[action];
   if (bindings.length <= 0) {
     return "UNBOUND";
   }
-  return bindings.map(getBindingLabel).join(" / ");
+  const gamepadId = playerId ? getAssignedGamepad(playerId)?.id ?? null : null;
+  return bindings.map((binding) => getBindingLabel(binding, gamepadId)).join(" / ");
 }
 
-export function getBindingLabel(binding: ControllerBindingDescriptor): string {
+export function getBindingLabel(binding: ControllerBindingDescriptor, gamepadId?: string | null): string {
   if (binding.kind === "button") {
-    return getButtonName(binding.code);
+    return getButtonName(binding.code, gamepadId);
   }
 
   const axisName = binding.code === AXIS.LEFT_X
@@ -584,6 +595,10 @@ function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
   markControllerInputActive();
   console.log(`[CONTROLLER] Action: ${action}${playerId ? ` (${playerId})` : ""}`);
 
+  if (handleGlobalModalAction(action)) {
+    return;
+  }
+
   if (handleContextAction(action, playerId)) {
     return;
   }
@@ -597,7 +612,57 @@ function triggerAction(action: GameAction, playerId?: PlayerSlot): void {
   }
 }
 
+function handleGlobalModalAction(action: GameAction): boolean {
+  const modal = document.querySelector<HTMLElement>(".game-confirm-modal-backdrop");
+  if (!modal) {
+    return false;
+  }
+
+  switch (action) {
+    case "moveUp":
+      navigateFocus("up");
+      return true;
+    case "moveDown":
+      navigateFocus("down");
+      return true;
+    case "moveLeft":
+    case "tabPrev":
+    case "prevUnit":
+      navigateFocus("left");
+      return true;
+    case "moveRight":
+    case "tabNext":
+    case "nextUnit":
+      navigateFocus("right");
+      return true;
+    case "confirm":
+      activateFocusedElement();
+      return true;
+    case "cancel": {
+      const dismissTarget = modal.querySelector<HTMLElement>(
+        [
+          "[data-confirm-dialog-action='cancel']",
+          "[data-alert-dialog-action='dismiss']",
+          "[data-opmap-confirm-action='cancel']",
+          "[data-theater-exit-confirm-action='cancel']",
+          "[data-battle-exit-confirm-action='cancel']",
+          ".game-confirm-modal__actions .game-confirm-modal__btn:not(.game-confirm-modal__btn--primary)",
+          ".game-confirm-modal__actions .game-confirm-modal__btn",
+        ].join(", "),
+      );
+      dismissTarget?.click();
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 function handleContextAction(action: GameAction, playerId?: PlayerSlot): boolean {
+  if (!ensureCurrentContextIsMounted()) {
+    return false;
+  }
+
   if (!currentContext) {
     return false;
   }
@@ -727,6 +792,7 @@ export function markControllerInputActive(): void {
 }
 
 export function shouldSuppressGameplayInput(playerId?: PlayerSlot): boolean {
+  ensureCurrentContextIsMounted();
   if (!currentContext) {
     return false;
   }
@@ -807,6 +873,30 @@ function ensureFocusObserver(): void {
     return;
   }
 
+  const nodeMayAffectFocusState = (node: Node | null, selector: string): boolean => {
+    if (!(node instanceof HTMLElement)) {
+      return false;
+    }
+
+    const extendedSelector = `${selector}, [data-controller-default-focus='true']`;
+    return node.matches(extendedSelector) || node.querySelector(extendedSelector) !== null;
+  };
+
+  const isFocusMutationRelevant = (records: MutationRecord[]): boolean => {
+    const selector = currentContext?.focusSelector || FOCUSABLE_SELECTOR;
+    return records.some((record) => {
+      if (record.type === "childList") {
+        return (
+          nodeMayAffectFocusState(record.target, selector)
+          || Array.from(record.addedNodes).some((node) => nodeMayAffectFocusState(node, selector))
+          || Array.from(record.removedNodes).some((node) => nodeMayAffectFocusState(node, selector))
+        );
+      }
+
+      return nodeMayAffectFocusState(record.target, selector);
+    });
+  };
+
   const startObserver = () => {
     const target = document.body;
     if (!target) {
@@ -814,8 +904,11 @@ function ensureFocusObserver(): void {
       return;
     }
 
-    focusObserver = new MutationObserver(() => {
+    focusObserver = new MutationObserver((records) => {
       if (suppressFocusRefresh) {
+        return;
+      }
+      if (!isFocusMutationRelevant(records)) {
         return;
       }
       scheduleFocusRefresh();
@@ -825,7 +918,7 @@ function ensureFocusObserver(): void {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["disabled", "hidden", "class", "style", "data-controller-exclude", "data-controller-focusable"],
+      attributeFilter: ["disabled", "hidden", "aria-hidden", "data-controller-exclude", "data-controller-focusable"],
     });
   };
 
@@ -840,6 +933,12 @@ function clearScheduledFocusRefresh(): void {
 }
 
 function scheduleFocusRefresh(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    clearScheduledFocusRefresh();
+    focusableElements = [];
+    currentFocusIndex = 0;
+    return;
+  }
   clearScheduledFocusRefresh();
   focusRefreshRaf = requestAnimationFrame(() => {
     focusRefreshRaf = null;
@@ -848,6 +947,13 @@ function scheduleFocusRefresh(): void {
 }
 
 export function updateFocusableElements(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    focusableElements = [];
+    currentFocusIndex = 0;
+    syncDebugOverlay();
+    return;
+  }
+
   const root = resolveFocusRoot();
   const nextFocusable = Array.from(
     root.querySelectorAll<HTMLElement>(currentContext?.focusSelector || FOCUSABLE_SELECTOR),
@@ -856,11 +962,17 @@ export function updateFocusableElements(): void {
   const previousFocus = focusableElements[currentFocusIndex]
     ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 
-  focusableElements = nextFocusable;
-  focusableElements.forEach((element, index) => {
-    element.classList.add("controller-focusable");
-    element.dataset.focusIndex = String(index);
-  });
+  const previousSuppressFocusRefresh = suppressFocusRefresh;
+  suppressFocusRefresh = true;
+  try {
+    focusableElements = nextFocusable;
+    focusableElements.forEach((element, index) => {
+      element.classList.add("controller-focusable");
+      element.dataset.focusIndex = String(index);
+    });
+  } finally {
+    suppressFocusRefresh = previousSuppressFocusRefresh;
+  }
 
   if (focusableElements.length <= 0) {
     currentFocusIndex = 0;
@@ -890,10 +1002,35 @@ export function updateFocusableElements(): void {
 }
 
 function resolveFocusRoot(): ParentNode {
+  ensureCurrentContextIsMounted();
   const configuredRoot = typeof currentContext?.focusRoot === "function"
     ? currentContext.focusRoot()
     : currentContext?.focusRoot;
   return configuredRoot ?? document;
+}
+
+function ensureCurrentContextIsMounted(): boolean {
+  if (!currentContext) {
+    return false;
+  }
+
+  const configuredRoot = typeof currentContext.focusRoot === "function"
+    ? currentContext.focusRoot()
+    : currentContext.focusRoot;
+
+  if (!configuredRoot) {
+    return true;
+  }
+
+  if (configuredRoot.isConnected) {
+    return true;
+  }
+
+  currentContext = null;
+  currentMode = "focus";
+  scheduleFocusRefresh();
+  syncDebugOverlay();
+  return false;
 }
 
 function resolveDefaultFocusable(root: ParentNode): HTMLElement | null {
@@ -934,6 +1071,9 @@ function isElementFocusable(element: HTMLElement): boolean {
 type FocusDirection = "up" | "down" | "left" | "right";
 
 function navigateFocus(direction: FocusDirection): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   if (focusableElements.length <= 0) {
     updateFocusableElements();
   }
@@ -991,6 +1131,9 @@ function navigateFocus(direction: FocusDirection): void {
 }
 
 function setFocusByElement(element: HTMLElement): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   const index = focusableElements.findIndex((candidate) => candidate === element);
   if (index >= 0) {
     setFocus(index);
@@ -998,6 +1141,9 @@ function setFocusByElement(element: HTMLElement): void {
 }
 
 function setFocus(index: number): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   if (focusableElements.length <= 0) {
     return;
   }
@@ -1019,6 +1165,9 @@ function setFocus(index: number): void {
 }
 
 function activateFocusedElement(): void {
+  if (!CONTROLLER_UI_FOCUS_ENABLED) {
+    return;
+  }
   const element = focusableElements[currentFocusIndex];
   if (!element) {
     return;
@@ -1160,25 +1309,61 @@ export const VIBRATION_PATTERNS = {
   },
 };
 
-export function getButtonName(buttonIndex: number): string {
-  const names: Record<number, string> = {
-    [BUTTON.A]: "A",
-    [BUTTON.B]: "B",
-    [BUTTON.X]: "X",
-    [BUTTON.Y]: "Y",
-    [BUTTON.LB]: "LB",
-    [BUTTON.RB]: "RB",
-    [BUTTON.LT]: "LT",
-    [BUTTON.RT]: "RT",
-    [BUTTON.SELECT]: "VIEW",
-    [BUTTON.START]: "MENU",
-    [BUTTON.L3]: "L3",
-    [BUTTON.R3]: "R3",
-    [BUTTON.DPAD_UP]: "DPAD UP",
-    [BUTTON.DPAD_DOWN]: "DPAD DOWN",
-    [BUTTON.DPAD_LEFT]: "DPAD LEFT",
-    [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
-  };
+type ControllerGlyphProfile = "generic" | "playstation";
+
+function getControllerGlyphProfile(gamepadId?: string | null): ControllerGlyphProfile {
+  const normalizedId = String(gamepadId ?? "").toLowerCase();
+  if (
+    normalizedId.includes("dualsense")
+    || normalizedId.includes("dualsense edge")
+    || normalizedId.includes("wireless controller")
+    || normalizedId.includes("playstation")
+    || normalizedId.includes("sony")
+  ) {
+    return "playstation";
+  }
+  return "generic";
+}
+
+export function getButtonName(buttonIndex: number, gamepadId?: string | null): string {
+  const profile = getControllerGlyphProfile(gamepadId);
+  const names: Record<number, string> = profile === "playstation"
+    ? {
+        [BUTTON.A]: "CROSS",
+        [BUTTON.B]: "CIRCLE",
+        [BUTTON.X]: "SQUARE",
+        [BUTTON.Y]: "TRIANGLE",
+        [BUTTON.LB]: "L1",
+        [BUTTON.RB]: "R1",
+        [BUTTON.LT]: "L2",
+        [BUTTON.RT]: "R2",
+        [BUTTON.SELECT]: "CREATE",
+        [BUTTON.START]: "OPTIONS",
+        [BUTTON.L3]: "L3",
+        [BUTTON.R3]: "R3",
+        [BUTTON.DPAD_UP]: "DPAD UP",
+        [BUTTON.DPAD_DOWN]: "DPAD DOWN",
+        [BUTTON.DPAD_LEFT]: "DPAD LEFT",
+        [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
+      }
+    : {
+        [BUTTON.A]: "A",
+        [BUTTON.B]: "B",
+        [BUTTON.X]: "X",
+        [BUTTON.Y]: "Y",
+        [BUTTON.LB]: "LB",
+        [BUTTON.RB]: "RB",
+        [BUTTON.LT]: "LT",
+        [BUTTON.RT]: "RT",
+        [BUTTON.SELECT]: "VIEW",
+        [BUTTON.START]: "MENU",
+        [BUTTON.L3]: "L3",
+        [BUTTON.R3]: "R3",
+        [BUTTON.DPAD_UP]: "DPAD UP",
+        [BUTTON.DPAD_DOWN]: "DPAD DOWN",
+        [BUTTON.DPAD_LEFT]: "DPAD LEFT",
+        [BUTTON.DPAD_RIGHT]: "DPAD RIGHT",
+      };
   return names[buttonIndex] ?? `BTN ${buttonIndex}`;
 }
 

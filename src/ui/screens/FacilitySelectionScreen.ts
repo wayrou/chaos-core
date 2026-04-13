@@ -5,8 +5,7 @@
 
 import { FacilityType, getFacilityConfig, getAllFacilityTypes } from "../../core/keyRoomSystem";
 import { captureKeyRoom } from "../../core/keyRoomSystem";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
-import { syncCampaignToGameState } from "../../core/campaignSync";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 
 /**
  * Render facility selection screen
@@ -89,13 +88,10 @@ function selectFacility(nodeId: string, facility: FacilityType): void {
   captureKeyRoom(nodeId, facility);
 
   // Mark the room as visited/cleared
-  markRoomVisited(nodeId);
+  markOperationRoomVisited(nodeId);
 
-  // Sync campaign state
-  syncCampaignToGameState();
-
-  // Return to operation map
-  renderOperationMapScreen();
+  // Return to the active operation surface
+  renderActiveOperationSurface();
 }
 
 /**

@@ -4,9 +4,10 @@
 // ============================================================================
 
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderOperationMapScreen, markRoomVisited } from "./OperationMapScreen";
+import { markOperationRoomVisited, renderActiveOperationSurface } from "./activeOperationFlow";
 import { getEventTemplate, EventRoom, EventChoice } from "../../core/procedural";
 import { GameState } from "../../core/types";
+import { addResourceWallet, createEmptyResourceWallet } from "../../core/resources";
 
 export function renderEventRoomScreen(eventTemplateId: string): void {
   const app = document.getElementById("app");
@@ -120,12 +121,7 @@ function handleChoice(choice: EventChoice, _event: EventRoom): void {
 
     // Apply resources
     if (outcome.resourceGain) {
-      updated.resources = {
-        metalScrap: prev.resources.metalScrap + (outcome.resourceGain.metalScrap || 0),
-        wood: prev.resources.wood + (outcome.resourceGain.wood || 0),
-        chaosShards: prev.resources.chaosShards + (outcome.resourceGain.chaosShards || 0),
-        steamComponents: prev.resources.steamComponents + (outcome.resourceGain.steamComponents || 0),
-      };
+      updated.resources = addResourceWallet(prev.resources ?? createEmptyResourceWallet(), outcome.resourceGain);
     }
 
     // Apply equipment gain
@@ -149,12 +145,12 @@ function handleChoice(choice: EventChoice, _event: EventRoom): void {
   // Mark the room as visited in both game state and campaign system
   const state = getGameState();
   if (state.operation?.currentRoomId) {
-    markRoomVisited(state.operation.currentRoomId);
+    markOperationRoomVisited(state.operation.currentRoomId);
   }
 
-  // Show result message then return to map
+  // Show result message then return to the active operation surface
   showEventResult(choice, () => {
-    renderOperationMapScreen();
+    renderActiveOperationSurface();
   });
 }
 

@@ -18,31 +18,22 @@ import {
   GearSlotData,
   CardLibrary,
   LibraryCard,
-  CompiledDeck,
   LIBRARY_CARD_DATABASE,
   getDefaultGearSlots,
   getLibraryCards,
   filterLibraryCards,
   slotCard,
   unslotCard,
-  compileDeck,
-  getDeckPreview,
   getStarterCardLibrary,
   CardRarity,
   CardCategory,
 } from "../../core/gearWorkbench";
 import {
-  getChassisById,
-  getChassisBySlotType,
   ChassisSlotType,
   GearChassis,
-  ALL_CHASSIS,
 } from "../../data/gearChassis";
-import {
-  ALL_DOCTRINES,
-  getDoctrineById,
-  GearDoctrine
-} from "../../data/gearDoctrines";
+import { GearDoctrine } from "../../data/gearDoctrines";
+import { getAllChassis, getAllDoctrines, getChassisById, getChassisBySlotType, getDoctrineById } from "../../core/gearCatalog";
 import {
   buildChaoticGear,
   buildGear,
@@ -74,12 +65,19 @@ import {
   CONSUMABLE_DATABASE,
 } from "../../core/crafting";
 import { showSystemPing } from "../components/systemPing";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
+import {
+  getLocalSessionPlayerSlot,
+  getSessionResourcePool,
+  spendSessionCost,
+} from "../../core/session";
+import { getResourceEntries } from "../../core/resources";
 
 // ----------------------------------------------------------------------------
 // STATE
 // ----------------------------------------------------------------------------
 
-type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation";
+type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation" | "field-node";
 
 type WorkbenchTab = "build" | "customize" | "endless" | "craft";
 type BuildDoctrineSelection = string | "__chaotic__" | null;
@@ -100,12 +98,23 @@ interface WorkbenchState {
   buildSlotType: "weapon" | "helmet" | "chestpiece" | "accessory" | null;
   buildChassisId: string | null;
   buildDoctrineId: BuildDoctrineSelection;
+  buildCustomName: string;
+  buildNameDirty: boolean;
   endlessChassisId: string | null;
   endlessMaterials: string[];
 
   // Craft Tab State
   craftingCategory: Recipe["category"];
   selectedRecipeId: string | null;
+}
+
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 const CHAOTIC_DOCTRINE_ID = "__chaotic__";
@@ -124,6 +133,8 @@ let workbenchState: WorkbenchState = {
   buildSlotType: null,
   buildChassisId: null,
   buildDoctrineId: null,
+  buildCustomName: "",
+  buildNameDirty: false,
   endlessChassisId: null,
   endlessMaterials: [],
   craftingCategory: "armor",
@@ -148,6 +159,8 @@ function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
     buildSlotType: null,
     buildChassisId: null,
     buildDoctrineId: null,
+    buildCustomName: "",
+    buildNameDirty: false,
     endlessChassisId: null,
     endlessMaterials: [],
     craftingCategory: "armor",
@@ -163,6 +176,13 @@ function returnFromWorkbenchScreen(returnTo: ReturnDestination, unitId = workben
     return;
   }
 
+  if (returnTo === "field-node") {
+    import("./FieldNodeRoomScreen").then(({ resumeCurrentFieldNodeRoom }) => {
+      resumeCurrentFieldNodeRoom();
+    });
+    return;
+  }
+
   returnFromBaseCampScreen(returnTo === "unitdetail" || returnTo === "unitdetail-operation" ? "basecamp" : returnTo);
 }
 
@@ -174,6 +194,8 @@ function attachWorkbenchBackButton(resetTab: WorkbenchTab): void {
     "title",
     workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
       ? "UNIT ROSTER"
+      : workbenchState.returnDestination === "field-node"
+        ? "RETURN TO C.O.R.E."
       : getBaseCampReturnLabel(workbenchState.returnDestination),
   );
 
@@ -242,33 +264,23 @@ export function renderGearWorkbenchScreen(
     search: workbenchState.searchFilter || undefined,
   });
 
-  // Get unit's equipped gear for deck preview and gear selector
   const unitEquipment = getUnitEquippedGear(state, workbenchState.selectedUnitId);
-  const unitGearSlots = unitEquipment.map(eqId => {
-    const eq = equipmentById[eqId];
-    return gearSlots[eqId] ?? getDefaultGearSlots(eqId, eq);
-  });
-  const compiledDeck = compileDeck(unitGearSlots);
-  const deckPreview = getDeckPreview(compiledDeck);
-
-  // equipmentById already retrieved above
 
   const backBtnText = workbenchState.returnDestination === "unitdetail" || workbenchState.returnDestination === "unitdetail-operation"
     ? "← UNIT ROSTER"
+    : workbenchState.returnDestination === "field-node"
+      ? "← RETURN TO C.O.R.E."
     : workbenchState.returnDestination === "field"
       ? "← FIELD MODE"
       : "← BASE CAMP";
 
   app.innerHTML = /*html*/ `
-    <div class="workbench-root town-screen ${workbenchState.isCompiling ? 'workbench-root--compiling' : ''}">
-      <!-- Compile Overlay -->
-      ${workbenchState.isCompiling ? renderCompileOverlay() : ''}
-      
+    <div class="workbench-root town-screen">
       <!-- Header -->
       <div class="workbench-header town-screen__header">
         <div class="workbench-header-left town-screen__titleblock">
           <h1 class="workbench-title">WORKSHOP</h1>
-          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • DECK COMPILER v2.3</div>
+          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • LIVE SLOTTING</div>
         </div>
         <div class="workbench-header-right town-screen__header-right">
           <button class="workbench-back-btn town-screen__back-btn" id="backBtn">${backBtnText}</button>
@@ -309,8 +321,6 @@ export function renderGearWorkbenchScreen(
             filteredCards,
             cardLibrary,
             gearSlots,
-            compiledDeck,
-            deckPreview,
             selectedEquipment
           )
     }
@@ -345,9 +355,26 @@ export function renderGearWorkbenchScreen(
 // BUILD GEAR TAB
 // ----------------------------------------------------------------------------
 
+function getSuggestedBuildName(
+  chassis: GearChassis | null | undefined,
+  doctrine: GearDoctrine | null | undefined,
+  doctrineId: BuildDoctrineSelection,
+): string {
+  if (!chassis || !doctrineId) {
+    return "";
+  }
+
+  if (doctrineId === CHAOTIC_DOCTRINE_ID) {
+    return `Unbound ${chassis.name}`;
+  }
+
+  return doctrine ? `${doctrine.name} ${chassis.name}` : "";
+}
+
 function renderBuildGearTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
   const unlockedDoctrineIds = state.unlockedDoctrineIds || [];
+  const localResources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
 
   // Get available chassis for selected slot type
   const availableChassis = workbenchState.buildSlotType
@@ -355,7 +382,7 @@ function renderBuildGearTab(state: GameState): string {
     : [];
 
   // Get available doctrines
-  const availableDoctrines = ALL_DOCTRINES.filter(d => unlockedDoctrineIds.includes(d.id));
+  const availableDoctrines = getAllDoctrines().filter(d => unlockedDoctrineIds.includes(d.id));
   const usingChaoticBuild = workbenchState.buildDoctrineId === CHAOTIC_DOCTRINE_ID;
 
   // Get selected chassis and doctrine
@@ -400,6 +427,16 @@ function renderBuildGearTab(state: GameState): string {
     itemNamePreview = `${selectedDoctrine.name} ${selectedChassis.name}`;
   }
 
+  const suggestedItemName = getSuggestedBuildName(
+    selectedChassis,
+    selectedDoctrine,
+    workbenchState.buildDoctrineId,
+  );
+
+  if (!workbenchState.buildNameDirty) {
+    workbenchState.buildCustomName = suggestedItemName;
+  }
+
   // Calculate final stability
   let finalStability: number | string = 0;
   if (selectedChassis && selectedDoctrine) {
@@ -413,6 +450,9 @@ function renderBuildGearTab(state: GameState): string {
         ? `${selectedDoctrine.name} ${selectedChassis.name}`
         : "--";
   }
+  const resolvedItemNamePreview = selectedChassis && workbenchState.buildDoctrineId
+    ? workbenchState.buildCustomName || suggestedItemName || itemNamePreview
+    : "--";
   if (!selectedChassis) {
     finalStability = "--";
   } else if (usingChaoticBuild) {
@@ -478,7 +518,14 @@ function renderBuildGearTab(state: GameState): string {
         <div class="summary-content">
           <div class="summary-row">
             <span class="summary-label">Item Name:</span>
-            <span class="summary-value">${itemNamePreview}</span>
+            <input
+              type="text"
+              class="summary-value summary-value-input"
+              id="buildItemNameInput"
+              value="${escapeHtml(resolvedItemNamePreview === "--" ? "" : resolvedItemNamePreview)}"
+              placeholder="${escapeHtml(suggestedItemName || "Select a chassis and doctrine")}"
+              ${selectedChassis && workbenchState.buildDoctrineId ? "" : "disabled"}
+            />
           </div>
           <div class="summary-row">
             <span class="summary-label">Slot Type:</span>
@@ -516,18 +563,11 @@ function renderBuildGearTab(state: GameState): string {
             <div class="summary-cost">
               <div class="summary-label">BUILD COST:</div>
               <div class="cost-items">
-                <span class="cost-item ${state.resources.metalScrap >= buildCost.metalScrap ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.metalScrap} Metal (${state.resources.metalScrap})
-                </span>
-                <span class="cost-item ${state.resources.wood >= buildCost.wood ? '' : 'cost-item--insufficient'}">
-                  🪵 ${buildCost.wood} Wood (${state.resources.wood})
-                </span>
-                <span class="cost-item ${state.resources.chaosShards >= buildCost.chaosShards ? '' : 'cost-item--insufficient'}">
-                  💎 ${buildCost.chaosShards} Shards (${state.resources.chaosShards})
-                </span>
-                <span class="cost-item ${state.resources.steamComponents >= buildCost.steamComponents ? '' : 'cost-item--insufficient'}">
-                  ⚙ ${buildCost.steamComponents} Steam (${state.resources.steamComponents})
-                </span>
+                ${getResourceEntries(buildCost).map((entry) => `
+                  <span class="cost-item ${Number(localResources[entry.key] ?? 0) >= entry.amount ? '' : 'cost-item--insufficient'}">
+                    ${escapeHtml(entry.shortLabel)} ${entry.amount} (${Number(localResources[entry.key] ?? 0)})
+                  </span>
+                `).join("")}
               </div>
             </div>
           ` : ''}
@@ -619,10 +659,11 @@ function renderChaoticDoctrineCard(isSelected: boolean): string {
 
 export function renderEndlessCraftTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
-  const resources = state.resources;
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
 
   // Get available chassis (all slot types)
-  const availableChassis = ALL_CHASSIS.filter(c => unlockedChassisIds.includes(c.id));
+  const availableChassis = getAllChassis().filter(c => unlockedChassisIds.includes(c.id));
 
   // Get selected chassis
   const selectedChassis = workbenchState.endlessChassisId
@@ -630,11 +671,11 @@ export function renderEndlessCraftTab(state: GameState): string {
     : null;
 
   // Material options
-  const materialOptions: Array<{ id: CraftingMaterialId; name: string; icon: string; available: number }> = [
-    { id: "metal_scrap", name: "Metal Scrap", icon: "⚙", available: resources.metalScrap },
-    { id: "wood", name: "Wood", icon: "🪵", available: resources.wood },
-    { id: "chaos_shard", name: "Chaos Shard", icon: "💎", available: resources.chaosShards },
-    { id: "steam_component", name: "Steam Component", icon: "⚡", available: resources.steamComponents },
+  const materialOptions: Array<{ id: CraftingMaterialId; name: string; available: number }> = [
+    { id: "metal_scrap", name: "Metal Scrap", available: resources.metalScrap },
+    { id: "wood", name: "Wood", available: resources.wood },
+    { id: "chaos_shard", name: "Chaos Shard", available: resources.chaosShards },
+    { id: "steam_component", name: "Steam Component", available: resources.steamComponents },
   ];
 
   // Calculate cost
@@ -721,7 +762,9 @@ export function renderEndlessCraftTab(state: GameState): string {
       return `
               <div class="endless-material-card ${!canAdd && count === 0 ? 'endless-material-card--disabled' : ''}" 
                    data-material-id="${mat.id}">
-                <div class="material-card-icon">${mat.icon}</div>
+                <div class="material-card-icon">
+                  <img src="${fallbackInventoryIcon}" alt="" class="material-card-icon-img" aria-hidden="true" />
+                </div>
                 <div class="material-card-name">${mat.name}</div>
                 <div class="material-card-count">Available: ${mat.available}</div>
                 <div class="material-card-selected">Selected: ${count}</div>
@@ -791,10 +834,11 @@ function renderCustomizeGearTab(
   filteredCards: LibraryCard[],
   cardLibrary: CardLibrary,
   _gearSlots: Record<string, GearSlotData>,
-  compiledDeck: CompiledDeck,
-  deckPreview: string[],
   selectedEquipment?: any
 ): string {
+  const compiledDeck = { totalCards: 0 };
+  const deckPreview: string[] = [];
+
   return `
     <!-- Left Panel: Selected Gear -->
     <div class="workbench-gear-panel">
@@ -803,7 +847,62 @@ function renderCustomizeGearTab(
       <!-- Gear Selector -->
       ${renderGearSelector(customizableEquipmentIds, unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
       
-      ${selectedGear ? renderGearEditor(selectedGear, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
+      ${selectedGear ? renderGearEditor(selectedGear!, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
+    </div>
+    
+    <!-- Right Panel: Card Library -->
+    <div class="workbench-library-panel">
+      <div class="panel-section-title">CARD LIBRARY</div>
+      
+      <!-- Filters -->
+      <div class="library-filters">
+        <input type="text" 
+               class="library-search" 
+               id="cardSearch"
+               placeholder="Search cards..." 
+               value="${workbenchState.searchFilter}">
+        
+        <div class="filter-row">
+          <select class="filter-select" id="rarityFilter">
+            <option value="">All Rarities</option>
+            <option value="common" ${workbenchState.rarityFilter === 'common' ? 'selected' : ''}>Common</option>
+            <option value="uncommon" ${workbenchState.rarityFilter === 'uncommon' ? 'selected' : ''}>Uncommon</option>
+            <option value="rare" ${workbenchState.rarityFilter === 'rare' ? 'selected' : ''}>Rare</option>
+            <option value="epic" ${workbenchState.rarityFilter === 'epic' ? 'selected' : ''}>Epic</option>
+          </select>
+          
+          <select class="filter-select" id="categoryFilter">
+            <option value="">All Types</option>
+            <option value="attack" ${workbenchState.categoryFilter === 'attack' ? 'selected' : ''}>Attack</option>
+            <option value="defense" ${workbenchState.categoryFilter === 'defense' ? 'selected' : ''}>Defense</option>
+            <option value="mobility" ${workbenchState.categoryFilter === 'mobility' ? 'selected' : ''}>Mobility</option>
+            <option value="buff" ${workbenchState.categoryFilter === 'buff' ? 'selected' : ''}>Buff</option>
+            <option value="debuff" ${workbenchState.categoryFilter === 'debuff' ? 'selected' : ''}>Debuff</option>
+            <option value="steam" ${workbenchState.categoryFilter === 'steam' ? 'selected' : ''}>Steam</option>
+            <option value="chaos" ${workbenchState.categoryFilter === 'chaos' ? 'selected' : ''}>Chaos</option>
+          </select>
+        </div>
+      </div>
+      
+      <!-- Card List -->
+      <div class="library-card-list" id="cardLibraryList">
+        ${filteredCards.length > 0
+      ? filteredCards.map(card => renderLibraryCard(card, cardLibrary[card.id] ?? 0)).join('')
+      : '<div class="library-empty">No cards match your filters</div>'
+    }
+      </div>
+    </div>
+  `;
+
+  return `
+    <!-- Left Panel: Selected Gear -->
+    <div class="workbench-gear-panel">
+      <div class="panel-section-title">SELECTED GEAR</div>
+      
+      <!-- Gear Selector -->
+      ${renderGearSelector(customizableEquipmentIds, unitEquipment, equipmentById, workbenchState.selectedEquipmentId)}
+      
+      ${selectedGear ? renderGearEditor(selectedGear!, workbenchState.selectedEquipmentId!, selectedEquipment) : renderNoGearSelected()}
       
       <!-- Deck Preview -->
       <div class="deck-preview">
@@ -894,11 +993,14 @@ function renderGearSelector(
   const options = gearIds.map(eqId => {
     const eq = equipmentById[eqId];
     const name = eq?.name ?? formatEquipmentName(eqId);
+    const iconPath = getInventoryIconPath(eq?.iconPath);
     const isSelected = eqId === selectedId;
     return `
       <button class="gear-selector-option ${isSelected ? 'gear-selector-option--selected' : ''}"
               data-equipment-id="${eqId}">
-        <span class="gear-option-icon">${getEquipmentIcon(eqId)}</span>
+        <span class="gear-option-icon">
+          <img src="${iconPath}" alt="" class="gear-option-icon-img" aria-hidden="true" />
+        </span>
         <span class="gear-option-name">${name}</span>
         ${equippedSet.has(eqId) ? '<span class="gear-option-badge">EQUIPPED</span>' : ''}
       </button>
@@ -913,19 +1015,6 @@ function renderGearSelector(
       </div>
     </div>
   `;
-}
-
-function getEquipmentIcon(equipmentId: string): string {
-  if (equipmentId.includes('weapon') || equipmentId.includes('sword') || equipmentId.includes('bow') || equipmentId.includes('staff')) {
-    return '⚔';
-  }
-  if (equipmentId.includes('helm') || equipmentId.includes('hood')) {
-    return '🪖';
-  }
-  if (equipmentId.includes('chest') || equipmentId.includes('armor') || equipmentId.includes('jerkin')) {
-    return '🛡';
-  }
-  return '💎';
 }
 
 function renderGearEditor(gear: GearSlotData, equipmentId: string, equipment?: any): string {
@@ -1223,20 +1312,14 @@ export function attachEndlessCraftListeners(state: any): void {
       const result = craftEndlessGear(recipe, state);
 
       if (result.success && result.equipment) {
-        // Deduct materials
         const cost = getEndlessRecipeCost(recipe.materials);
-        updateGameState(prev => ({
-          ...prev,
-          resources: {
-            metalScrap: prev.resources.metalScrap - cost.metalScrap,
-            wood: prev.resources.wood - cost.wood,
-            chaosShards: prev.resources.chaosShards - cost.chaosShards,
-            steamComponents: prev.resources.steamComponents - cost.steamComponents,
-          },
-        }));
+        updateGameState((prev) => {
+          const spendResult = spendSessionCost(prev, { resources: cost });
+          return spendResult.success ? spendResult.state : prev;
+        });
 
         // Add to inventory
-        addEndlessGearToInventory(result.equipment, state);
+        addEndlessGearToInventory(result.equipment, getGameState());
 
         // Show success message
         addWorkbenchLog(`SLK//ENDLESS_CRAFT :: ${(result.equipment as any).name} generated.`);
@@ -1300,6 +1383,14 @@ function attachBuildGearListeners(state: any): void {
   attachTabListeners();
   attachWorkbenchBackButton("build");
 
+  const buildItemNameInput = document.getElementById("buildItemNameInput") as HTMLInputElement | null;
+  if (buildItemNameInput) {
+    buildItemNameInput.oninput = () => {
+      workbenchState.buildCustomName = buildItemNameInput.value;
+      workbenchState.buildNameDirty = buildItemNameInput.value.trim().length > 0;
+    };
+  }
+
   // Slot type selection
   document.querySelectorAll(".slot-type-btn").forEach(btn => {
     const el = btn as HTMLElement;
@@ -1361,8 +1452,13 @@ function attachBuildGearListeners(state: any): void {
       }
 
       const result = usingChaoticBuild
-        ? buildChaoticGear(workbenchState.buildChassisId, state)
-        : buildGear(workbenchState.buildChassisId, workbenchState.buildDoctrineId, state);
+        ? buildChaoticGear(workbenchState.buildChassisId, state, workbenchState.buildCustomName)
+        : buildGear(
+            workbenchState.buildChassisId,
+            workbenchState.buildDoctrineId,
+            state,
+            workbenchState.buildCustomName,
+          );
 
       if (!result.success || !result.equipment) {
         addWorkbenchLog(`SLK//ERROR :: ${result.error || "Build failed"}`);
@@ -1384,18 +1480,18 @@ function attachBuildGearListeners(state: any): void {
       }
 
       updateGameState(prev => {
-        const equipmentById = (prev as any).equipmentById || {};
-        const equipmentPool = (prev as any).equipmentPool || [];
-        const gearSlots = (prev as any).gearSlots || {};
+        const spendResult = spendSessionCost(prev, { resources: cost });
+        if (!spendResult.success) {
+          return prev;
+        }
+
+        const nextState = spendResult.state;
+        const equipmentById = (nextState as any).equipmentById || {};
+        const equipmentPool = (nextState as any).equipmentPool || [];
+        const gearSlots = (nextState as any).gearSlots || {};
 
         return {
-          ...prev,
-          resources: {
-            metalScrap: prev.resources.metalScrap - cost.metalScrap,
-            wood: prev.resources.wood - cost.wood,
-            chaosShards: prev.resources.chaosShards - cost.chaosShards,
-            steamComponents: prev.resources.steamComponents - cost.steamComponents,
-          },
+          ...nextState,
           equipmentById: {
             ...equipmentById,
             [result.equipment!.id]: result.equipment,
@@ -1433,6 +1529,8 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildCustomName = "";
+      workbenchState.buildNameDirty = false;
       renderGearWorkbenchScreen(
         workbenchState.selectedUnitId ?? undefined,
         result.equipment.id,
@@ -1448,6 +1546,8 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildCustomName = "";
+      workbenchState.buildNameDirty = false;
       renderGearWorkbenchScreen();
     };
   }
@@ -1872,7 +1972,8 @@ function detachGearWorkbenchExitHotkey(): void {
 
 function renderCraftTab(state: GameState): string {
   const knownRecipeIds = state.knownRecipeIds ?? getStarterRecipeIds();
-  const resources = state.resources ?? { metalScrap: 0, wood: 0, chaosShards: 0, steamComponents: 0 };
+  const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+  const fallbackInventoryIcon = getInventoryIconPath();
 
   const knownRecipes = getKnownRecipes(knownRecipeIds);
   const categoryRecipes = getRecipesByCategory(knownRecipes, workbenchState.craftingCategory);
@@ -1893,22 +1994,22 @@ function renderCraftTab(state: GameState): string {
           <div class="panel-section-title">MATERIALS</div>
           <div class="resource-grid">
             <div class="resource-item">
-              <span class="resource-icon">⚙</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Metal</span>
               <span class="resource-value">${resources.metalScrap}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">🪵</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Wood</span>
               <span class="resource-value">${resources.wood}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">💎</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Shards</span>
               <span class="resource-value">${resources.chaosShards}</span>
             </div>
             <div class="resource-item">
-              <span class="resource-icon">⚡</span>
+              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
               <span class="resource-name">Steam</span>
               <span class="resource-value">${resources.steamComponents}</span>
             </div>
@@ -2212,7 +2313,8 @@ function attachCraftTabListeners(state: any): void {
       if (!recipe) return;
 
       const inventoryItemIds = getInventoryItemIds(state);
-      const result = craftItem(recipe, state.resources, inventoryItemIds);
+      const localResources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
+      const result = craftItem(recipe, localResources, inventoryItemIds);
 
       if (!result.success) {
         showSystemPing({
@@ -2228,17 +2330,17 @@ function attachCraftTabListeners(state: any): void {
       const starterEquipmentById = getAllStarterEquipment();
 
       updateGameState(prev => {
-        const newResources = { ...prev.resources };
-        const newEquipmentById = { ...(prev.equipmentById || {}) };
-        const newConsumables = { ...(prev.consumables || {}) };
-        const newEquipmentPool = [...((prev as any).equipmentPool || [])];
-        const newGearSlots = { ...((prev as any).gearSlots || {}) };
-        let newUnitsById = { ...(prev.unitsById || {}) };
+        const spendResult = spendSessionCost(prev, { resources: recipe.cost });
+        if (!spendResult.success) {
+          return prev;
+        }
 
-        if (recipe.cost.metalScrap) newResources.metalScrap -= recipe.cost.metalScrap;
-        if (recipe.cost.wood) newResources.wood -= recipe.cost.wood;
-        if (recipe.cost.chaosShards) newResources.chaosShards -= recipe.cost.chaosShards;
-        if (recipe.cost.steamComponents) newResources.steamComponents -= recipe.cost.steamComponents;
+        const nextState = spendResult.state;
+        const newEquipmentById = { ...(nextState.equipmentById || {}) };
+        const newConsumables = { ...(nextState.consumables || {}) };
+        const newEquipmentPool = [...((nextState as any).equipmentPool || [])];
+        const newGearSlots = { ...((nextState as any).gearSlots || {}) };
+        let newUnitsById = { ...(nextState.unitsById || {}) };
 
         if (result.consumedItemId) {
           delete newEquipmentById[result.consumedItemId];
@@ -2257,7 +2359,7 @@ function attachCraftTabListeners(state: any): void {
         } else {
           const craftedTemplate = starterEquipmentById[result.itemId!];
           const upgradeBase = result.consumedItemId
-            ? (prev.equipmentById || {})[result.consumedItemId] || starterEquipmentById[result.consumedItemId]
+            ? (nextState.equipmentById || {})[result.consumedItemId] || starterEquipmentById[result.consumedItemId]
             : null;
           const craftedEquipment = craftedTemplate
             ? cloneEquipmentForInventory(craftedTemplate)
@@ -2275,8 +2377,7 @@ function attachCraftTabListeners(state: any): void {
         }
 
         return {
-          ...prev,
-          resources: newResources,
+          ...nextState,
           equipmentById: newEquipmentById,
           equipmentPool: newEquipmentPool,
           gearSlots: newGearSlots,
@@ -2316,7 +2417,7 @@ function attachCraftTabListeners(state: any): void {
 function attachGearWorkbenchExitHotkey(returnTo: ReturnDestination): void {
   detachGearWorkbenchExitHotkey();
 
-  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation") {
+  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation" && returnTo !== "field-node") {
     registerBaseCampReturnHotkey(GEAR_WORKBENCH_RETURN_HOTKEY_ID, returnTo, {
       allowFieldEKey: true,
       activeSelector: ".workbench-root",

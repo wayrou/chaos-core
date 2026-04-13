@@ -5,6 +5,12 @@ import {
   completeOperationRun,
 } from "../../core/campaignManager";
 import {
+  CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
+  hasSeenEndingCutscene,
+  markEndingCutsceneSeen,
+  unlockCampaignPostgame,
+} from "../../core/campaign";
+import {
   applyWarmTheaterEconomyToState,
   getOpsTerminalAtlasOtherWarmEconomySummaries,
   isOpsTerminalAtlasOperation,
@@ -27,22 +33,29 @@ import {
   buildCoreInTheaterRoom,
   canManuallyControlTheaterSquad,
   configureTheaterModule,
+  createScopedTheaterStateForSessionSlot,
   createTheaterBattleState,
   destroyTheaterAnnex,
   destroyTheaterCore,
   destroyTheaterFortification,
   ensureOperationHasTheater,
+  fabricateFieldAssetInTheaterRoom,
+  getFieldAssetPlacementError,
   formatTheaterKeyLabel,
   formatResourceCost,
   fortifyTheaterRoom,
   clearCurrentTheaterOperationInjuries,
+  getTheaterRoomBattleMapId,
   getPreparedTheaterOperation,
   getFortificationCost,
+  getTheaterRoomTacticalMap,
   getTheaterCoreRepairCost,
   getTheaterSelectedNode,
   getSelectedTheaterSquad,
   getTheaterPassagePowerRequirement,
   getTheaterObjectiveDefinition,
+  getPendingTheaterBattleConfirmationForSessionSlot,
+  getPreparedTheaterOperationForSessionSlot,
   getTheaterRoomModuleSlotUpgradeCost,
   getMoveTickCost,
   getTheaterCoreOfflineReason,
@@ -53,6 +66,7 @@ import {
   hasCompletedTheaterObjective,
   holdPositionInTheater,
   hasTheaterKey,
+  issueTheaterRoomCommandForSessionSlot,
   isTheaterCoreOperational,
   isTheaterPassagePowered,
   isTheaterRoomLocked,
@@ -60,20 +74,26 @@ import {
   installTheaterPartition,
   mergeTheaterSquads,
   moveToTheaterNode,
+  mergeScopedTheaterStateForSessionSlot,
   renameTheaterSquad,
+  removeFieldAssetFromTheaterRoom,
   removeTheaterModule,
   refuseTheaterDefense,
   repairTheaterCore,
   resetTheaterModuleState,
+  selectTheaterSquadForSessionSlot,
   selectTheaterSquad,
   setTheaterSquadColor,
   setTheaterSquadAutomationMode,
   setTheaterSquadIcon,
   setTheaterCurrentRoom,
+  setTheaterRoomContainmentMode,
+  setTheaterRoomSignalPosture,
   setTheaterSelectedNode,
   setTheaterSelectedRoom,
   splitUnitToNewSquad,
   toggleTheaterPartitionState,
+  triggerTheaterEmergencyDump,
   transferUnitBetweenSquads,
   upgradeTheaterRoomModuleSlots,
   useTheaterConsumable,
@@ -86,25 +106,32 @@ import {
   setControllerMode,
   updateFocusableElements,
 } from "../../core/controllerSupport";
+import { getAllStarterEquipment } from "../../core/equipment";
+import { getBattleUnitPortraitPath } from "../../core/portraits";
 import {
   AnnexAttachmentEdge,
   AnnexFrameType,
   AutomationModuleType,
   CoopTheaterCommand,
   CoreType,
+  FieldAssetType,
   FortificationType,
   GameState,
   ModuleInstance,
   PendingTheaterBattleConfirmationState,
   PartitionType,
   PlayerSlot,
+  SESSION_PLAYER_SLOTS,
   SessionPlayerSlot,
   TheaterMapMode,
+  TheaterContainmentMode,
   TheaterNetworkState,
   TheaterObjectiveCompletion,
   TheaterRoom,
+  TheaterSignalPosture,
   TheaterSquadAutomationMode,
   TheaterSquadState,
+  Unit,
 } from "../../core/types";
 import {
   canAutomationReachTarget,
@@ -117,8 +144,15 @@ import {
   resolveTheaterNode,
 } from "../../core/theaterAutomation";
 import {
+  getResourceEntries,
+} from "../../core/resources";
+import {
   assignLocalPlayerToTheaterSquad,
+  canSessionAffordCost,
+  getLocalSessionPlayerSlot,
   getPlayerControllerLabel,
+  getSessionResourcePool,
+  grantSessionResources,
   getTheaterAssignedPlayerSlots,
   isLocalCoopActive,
 } from "../../core/session";
@@ -126,12 +160,16 @@ import {
   formatResourceWalletInline,
   formatRoomTagLabel,
   getCoreIncomeForRoom,
+  getFieldAssetBuildCost,
   getInstalledFortificationCount as getSchemaInstalledFortificationCount,
   getInstalledFortificationSummary,
   getOrderedSchemaCoreTypes,
+  getOrderedSchemaFieldAssetTypes,
   getOrderedSchemaFortificationTypes,
   isCoreTypeUnlocked,
+  isFieldAssetUnlocked,
   isFortificationUnlocked,
+  SCHEMA_FIELD_ASSET_DEFINITIONS,
   SCHEMA_FORTIFICATION_DEFINITIONS,
 } from "../../core/schemaSystem";
 import {
@@ -139,7 +177,9 @@ import {
   getTheaterConsumableTargetIds,
   isConsumableUsableInTheater,
 } from "../../core/consumableActions";
+import type { TacticalMapDefinition, TacticalMapObjectType } from "../../core/tacticalMaps";
 import { showSystemPing } from "../components/systemPing";
+import { showTutorialCallout } from "../components/tutorialCallout";
 import {
   attachNotesWidgetHandlers,
   attachStuckNoteHandlers,
@@ -156,6 +196,7 @@ import {
 type TheaterWindowKey =
   | "ops"
   | "squads"
+  | "manage"
   | "quests"
   | "room"
   | "automation"
@@ -218,6 +259,8 @@ type PendingBattleConfirmationState = {
   squadId: string | null;
 };
 
+type TheaterExitConfirmState = "return-atlas" | null;
+
 type TheaterWindowDefinition = {
   title: string;
   kicker: string;
@@ -231,7 +274,15 @@ type TheaterWindowColorTheme = {
   vars: Record<string, string>;
 };
 
-type TheaterCorePanelTab = "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications";
+type TheaterManageUnitEntry = {
+  unit: Unit;
+  squad: TheaterSquadState;
+  room: TheaterRoom | null;
+  isSelectedSquad: boolean;
+  isIncapacitated: boolean;
+};
+
+type TheaterCorePanelTab = "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications" | "tactical";
 
 const MAP_WIDTH = 4400;
 const MAP_HEIGHT = 3200;
@@ -246,7 +297,7 @@ const HOLD_POSITION_TICK_MS = 5000;
 const THEATER_MARGIN_X = 14;
 const THEATER_TOP_SAFE = 36;
 const THEATER_BOTTOM_SAFE = 20;
-const THEATER_COMMAND_LAYOUT_VERSION = 3;
+const THEATER_COMMAND_LAYOUT_VERSION = 7;
 const THEATER_MAP_PAN_MARGIN_X = 140;
 const THEATER_MAP_PAN_MARGIN_Y = 120;
 const THEATER_MAP_OVERSCROLL_X = 2400;
@@ -258,6 +309,7 @@ const THEATER_ROUTE_STRONG_THRESHOLD = 100;
 const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
   "ops",
   "squads",
+  "manage",
   "quests",
   "feed",
   "room",
@@ -273,6 +325,7 @@ const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
 const THEATER_WINDOW_DEFS: Record<TheaterWindowKey, TheaterWindowDefinition> = {
   ops: { title: "THEATER COMMAND", kicker: "S/COM_OS // OPS TERMINAL", minWidth: 280, minHeight: 220, restoreLabel: "OPS" },
   squads: { title: "SQUADS", kicker: "SQUAD COMMAND // LOGISTICS ACTIVE", minWidth: 340, minHeight: 260, restoreLabel: "SQUADS" },
+  manage: { title: "UNIT STATUS", kicker: "TACTICAL ROSTER // FIELD TELEMETRY", minWidth: 520, minHeight: 320, restoreLabel: "STATUS" },
   quests: { title: "QUEST TRACKER", kicker: "ACTIVE DIRECTIVES // CONTRACTS", minWidth: 340, minHeight: 240, restoreLabel: "QUESTS" },
   feed: { title: "ACTIVE THEATER FEED", kicker: "LIVE LOGISTICS AND THREAT UPDATES", minWidth: 320, minHeight: 140, restoreLabel: "FEED" },
   room: { title: "SELECTED ROOM", kicker: "ROOM STATUS", minWidth: 320, minHeight: 210, restoreLabel: "ROOM" },
@@ -436,11 +489,21 @@ let theaterMoveButtonClickHandler: ((event: MouseEvent) => void) | null = null;
 let mapPanKeys = new Set<string>();
 let suppressTheaterMapClickUntil = 0;
 let seenThreatIds = new Set<string>();
+let sandboxEventSnapshot: string[] = [];
 let cleanupTheaterControllerContext: (() => void) | null = null;
 let theaterControllerActiveWindowKey: TheaterWindowKey = "ops";
 let pendingBattleConfirmation: PendingBattleConfirmationState | null = null;
+let theaterExitConfirmState: TheaterExitConfirmState = null;
 let holdPositionTimerId: number | null = null;
 let holdPositionActiveRoomId: string | null = null;
+let theaterTacticalPreviewZoom = 1;
+let theaterSelectedTacticalTileKey: string | null = null;
+let theaterSelectedFieldAssetType: FieldAssetType = "barricade_wall";
+let theaterPendingRoomBodyScrollRestore: { top: number; left: number } | null = null;
+let theaterTacticalFullscreenActive = false;
+let theaterRoomFrameBeforeTacticalFullscreen: TheaterWindowFrame | null = null;
+let skipNextTheaterWindowFrameCapture = false;
+let theaterManageSelectedUnitId: string | null = null;
 
 function clonePendingBattleConfirmation(
   pending: PendingTheaterBattleConfirmationState | PendingBattleConfirmationState | null | undefined,
@@ -587,6 +650,28 @@ function getRoomDisplayLabel(room: TheaterRoom): string {
   return room.label;
 }
 
+function getSignalPostureLabel(posture: TheaterSignalPosture): string {
+  switch (posture) {
+    case "masked":
+      return "Masked";
+    case "bait":
+      return "Bait";
+    default:
+      return "Normal";
+  }
+}
+
+function getContainmentModeLabel(mode: TheaterContainmentMode): string {
+  switch (mode) {
+    case "venting":
+      return "Venting";
+    case "lockdown":
+      return "Lockdown";
+    default:
+      return "Normal";
+  }
+}
+
 function formatLayoutStyleLabel(layoutStyle: TheaterNetworkState["definition"]["layoutStyle"]): string {
   switch (layoutStyle) {
     case "vector_lance":
@@ -610,6 +695,15 @@ function getTheaterOriginPoint(theater: TheaterNetworkState): { x: number; y: nu
     ?? Object.values(theater.rooms)[0];
 
   return theater.definition.mapAnchor ?? ingressRoom?.position ?? { x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2 };
+}
+
+function getDefaultFocusRoomId(theater: TheaterNetworkState): string | null {
+  return theater.definition.ingressRoomId
+    ?? theater.definition.uplinkRoomId
+    ?? theater.selectedRoomId
+    ?? theater.currentRoomId
+    ?? Object.keys(theater.rooms)[0]
+    ?? null;
 }
 
 function getRoomContextLabel(room: TheaterRoom, theater: TheaterNetworkState): string {
@@ -879,6 +973,15 @@ function escapeHtmlAttribute(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function getNextSquadIcon(icon: string): string {
   const currentIndex = THEATER_SQUAD_ICON_CHOICES.indexOf(icon as typeof THEATER_SQUAD_ICON_CHOICES[number]);
   return THEATER_SQUAD_ICON_CHOICES[(currentIndex + 1 + THEATER_SQUAD_ICON_CHOICES.length) % THEATER_SQUAD_ICON_CHOICES.length] ?? "◉";
@@ -1075,8 +1178,10 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
   const viewportWidth = window.innerWidth || 1920;
   const viewportHeight = window.innerHeight || 1080;
   const topY = THEATER_TOP_SAFE;
-  const opsWidth = clampNumber(Math.round(viewportWidth * 0.132), 280, 460);
-  const opsHeight = clampNumber(Math.round(viewportHeight * 0.47), 420, 640);
+  const opsWidth = clampNumber(Math.round(viewportWidth * 0.132), 280, 440);
+  const opsHeight = clampNumber(Math.round(viewportHeight * 0.285), 250, 360);
+  const manageWidth = clampNumber(Math.round(viewportWidth * 0.325), 620, 860);
+  const manageHeight = clampNumber(Math.round(viewportHeight * 0.41), 360, 560);
   const feedWidth = clampNumber(Math.round(viewportWidth * 0.165), 420, 580);
   const feedHeight = clampNumber(Math.round(viewportHeight * 0.126), 150, 190);
   const roomWidth = clampNumber(Math.round(viewportWidth * 0.238), 420, 820);
@@ -1089,7 +1194,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
   const resourcesHeight = clampNumber(Math.round(viewportHeight * 0.258), 250, 360);
   const coreWidth = clampNumber(Math.round(viewportWidth * 0.169), 420, 590);
   const coreHeight = clampNumber(Math.round(viewportHeight * 0.188), 240, 290);
-  const opsX = THEATER_MARGIN_X;
+  const opsX = 0;
   const feedX = clampNumber(
     opsX + opsWidth + 14,
     THEATER_MARGIN_X,
@@ -1110,6 +1215,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
     THEATER_TOP_SAFE,
     Math.max(THEATER_TOP_SAFE, viewportHeight - roomHeight - THEATER_BOTTOM_SAFE),
   );
+  const opsY = Math.max(THEATER_TOP_SAFE, viewportHeight - opsHeight);
   const resourcesY = clampNumber(
     topY + upkeepHeight + 12,
     THEATER_TOP_SAFE,
@@ -1125,10 +1231,20 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
     THEATER_TOP_SAFE,
     Math.max(THEATER_TOP_SAFE, viewportHeight - coreHeight - THEATER_BOTTOM_SAFE),
   );
+  const manageX = clampNumber(
+    Math.round((viewportWidth - manageWidth) * 0.53),
+    THEATER_MARGIN_X,
+    Math.max(THEATER_MARGIN_X, viewportWidth - manageWidth - THEATER_MARGIN_X),
+  );
+  const manageY = clampNumber(
+    Math.round(viewportHeight * 0.2),
+    THEATER_TOP_SAFE,
+    Math.max(THEATER_TOP_SAFE, viewportHeight - manageHeight - THEATER_BOTTOM_SAFE),
+  );
   return {
     ops: {
       x: opsX,
-      y: topY,
+      y: opsY,
       width: opsWidth,
       height: opsHeight,
       minimized: false,
@@ -1141,6 +1257,14 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       height: clampNumber(Math.round(viewportHeight * 0.34), 260, 430),
       minimized: true,
       zIndex: 21,
+    },
+    manage: {
+      x: manageX,
+      y: manageY,
+      width: manageWidth,
+      height: manageHeight,
+      minimized: true,
+      zIndex: 22,
     },
     quests: {
       x: clampNumber(Math.round(viewportWidth * 0.17), 320, Math.max(320, viewportWidth - 520)),
@@ -1229,6 +1353,7 @@ function createDefaultTheaterWindowColors(): Record<TheaterWindowKey, string> {
   return {
     ops: getDefaultTheaterWindowColorKey("ops"),
     squads: getDefaultTheaterWindowColorKey("squads"),
+    manage: getDefaultTheaterWindowColorKey("manage"),
     quests: getDefaultTheaterWindowColorKey("quests"),
     feed: getDefaultTheaterWindowColorKey("feed"),
     room: getDefaultTheaterWindowColorKey("room"),
@@ -1247,6 +1372,7 @@ function resetTheaterUiLayoutToDefaults(): void {
   theaterWindowFrames = {
     ops: normalizeTheaterWindowFrame("ops", defaults.ops, defaults.ops),
     squads: normalizeTheaterWindowFrame("squads", defaults.squads, defaults.squads),
+    manage: normalizeTheaterWindowFrame("manage", defaults.manage, defaults.manage),
     quests: normalizeTheaterWindowFrame("quests", defaults.quests, defaults.quests),
     feed: normalizeTheaterWindowFrame("feed", defaults.feed, defaults.feed),
     room: normalizeTheaterWindowFrame("room", defaults.room, defaults.room),
@@ -1261,6 +1387,8 @@ function resetTheaterUiLayoutToDefaults(): void {
   theaterWindowColors = createDefaultTheaterWindowColors();
   theaterZCounter = Math.max(...Object.values(theaterWindowFrames).map((frame) => frame.zIndex), theaterZCounter);
   corePanelTab = "room";
+  theaterTacticalFullscreenActive = false;
+  theaterRoomFrameBeforeTacticalFullscreen = null;
   theaterMapMode = "command";
   mapPanX = 0;
   mapPanY = 0;
@@ -1306,6 +1434,7 @@ function ensureTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWindowFram
     theaterWindowFrames = {
       ops: normalizeTheaterWindowFrame("ops", defaults.ops, defaults.ops),
       squads: normalizeTheaterWindowFrame("squads", defaults.squads, defaults.squads),
+      manage: normalizeTheaterWindowFrame("manage", defaults.manage, defaults.manage),
       quests: normalizeTheaterWindowFrame("quests", defaults.quests, defaults.quests),
       feed: normalizeTheaterWindowFrame("feed", defaults.feed, defaults.feed),
       room: normalizeTheaterWindowFrame("room", defaults.room, defaults.room),
@@ -1343,6 +1472,8 @@ function getDefaultTheaterWindowColorKey(key: TheaterWindowKey): string {
       return "steel";
     case "squads":
       return "amber";
+    case "manage":
+      return "steel";
     case "quests":
       return "teal";
     case "feed":
@@ -1399,18 +1530,30 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
   }
 
   const layout = getGameState().uiLayout;
-  if (!layout || layout.theaterCommandLayoutVersion !== THEATER_COMMAND_LAYOUT_VERSION) {
+  if (!layout) {
     resetTheaterUiLayoutToDefaults();
     hydratedTheaterLayoutSignature = signature;
     return;
   }
 
+  const layoutVersion = Number(layout.theaterCommandLayoutVersion ?? 0);
+  if (layoutVersion > THEATER_COMMAND_LAYOUT_VERSION) {
+    resetTheaterUiLayoutToDefaults();
+    hydratedTheaterLayoutSignature = signature;
+    return;
+  }
+
+  const defaults = createDefaultTheaterWindowFrames();
   if (layout.theaterCommandWindowFrames) {
     const savedFrames = layout.theaterCommandWindowFrames;
-    const defaults = createDefaultTheaterWindowFrames();
     theaterWindowFrames = {
-      ops: normalizeTheaterWindowFrame("ops", savedFrames.ops ?? defaults.ops, defaults.ops),
+      ops: normalizeTheaterWindowFrame(
+        "ops",
+        layoutVersion < THEATER_COMMAND_LAYOUT_VERSION ? defaults.ops : (savedFrames.ops ?? defaults.ops),
+        defaults.ops,
+      ),
       squads: normalizeTheaterWindowFrame("squads", savedFrames.squads ?? defaults.squads, defaults.squads),
+      manage: normalizeTheaterWindowFrame("manage", savedFrames.manage ?? defaults.manage, defaults.manage),
       quests: normalizeTheaterWindowFrame("quests", savedFrames.quests ?? defaults.quests, defaults.quests),
       feed: normalizeTheaterWindowFrame("feed", savedFrames.feed ?? defaults.feed, defaults.feed),
       room: normalizeTheaterWindowFrame("room", savedFrames.room ?? defaults.room, defaults.room),
@@ -1423,12 +1566,30 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
       notes: normalizeTheaterWindowFrame("notes", savedFrames.notes ?? defaults.notes, defaults.notes),
     };
     theaterZCounter = Math.max(...Object.values(theaterWindowFrames).map((frame) => frame.zIndex), theaterZCounter);
+  } else {
+    theaterWindowFrames = {
+      ops: normalizeTheaterWindowFrame("ops", defaults.ops, defaults.ops),
+      squads: normalizeTheaterWindowFrame("squads", defaults.squads, defaults.squads),
+      manage: normalizeTheaterWindowFrame("manage", defaults.manage, defaults.manage),
+      quests: normalizeTheaterWindowFrame("quests", defaults.quests, defaults.quests),
+      feed: normalizeTheaterWindowFrame("feed", defaults.feed, defaults.feed),
+      room: normalizeTheaterWindowFrame("room", defaults.room, defaults.room),
+      automation: normalizeTheaterWindowFrame("automation", defaults.automation, defaults.automation),
+      fortify: normalizeTheaterWindowFrame("fortify", defaults.fortify, defaults.fortify),
+      core: normalizeTheaterWindowFrame("core", defaults.core, defaults.core),
+      resources: normalizeTheaterWindowFrame("resources", defaults.resources, defaults.resources),
+      consumables: normalizeTheaterWindowFrame("consumables", defaults.consumables, defaults.consumables),
+      upkeep: normalizeTheaterWindowFrame("upkeep", defaults.upkeep, defaults.upkeep),
+      notes: normalizeTheaterWindowFrame("notes", defaults.notes, defaults.notes),
+    };
+    theaterZCounter = Math.max(...Object.values(theaterWindowFrames).map((frame) => frame.zIndex), theaterZCounter);
   }
 
   if (layout.theaterCommandWindowColors) {
     theaterWindowColors = {
       ops: layout.theaterCommandWindowColors.ops ?? getDefaultTheaterWindowColorKey("ops"),
       squads: layout.theaterCommandWindowColors.squads ?? getDefaultTheaterWindowColorKey("squads"),
+      manage: layout.theaterCommandWindowColors.manage ?? getDefaultTheaterWindowColorKey("manage"),
       quests: layout.theaterCommandWindowColors.quests ?? getDefaultTheaterWindowColorKey("quests"),
       feed: layout.theaterCommandWindowColors.feed ?? getDefaultTheaterWindowColorKey("feed"),
       room: layout.theaterCommandWindowColors.room ?? getDefaultTheaterWindowColorKey("room"),
@@ -1456,12 +1617,14 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
     || layout.theaterCommandNodeTab === "partitions"
     || layout.theaterCommandNodeTab === "core"
     || layout.theaterCommandNodeTab === "fortifications"
+    || layout.theaterCommandNodeTab === "tactical"
   ) {
     corePanelTab = layout.theaterCommandNodeTab;
   } else if (
     layout.theaterCommandCoreTab === "room"
     || layout.theaterCommandCoreTab === "core"
     || layout.theaterCommandCoreTab === "fortifications"
+    || layout.theaterCommandCoreTab === "tactical"
   ) {
     corePanelTab = layout.theaterCommandCoreTab;
   }
@@ -1498,7 +1661,7 @@ function persistTheaterUiLayoutToState(): void {
         panY: mapPanY,
         zoom: mapZoom,
       },
-      theaterCommandCoreTab: corePanelTab === "core" || corePanelTab === "fortifications" ? corePanelTab : "room",
+      theaterCommandCoreTab: corePanelTab === "core" || corePanelTab === "fortifications" || corePanelTab === "tactical" ? corePanelTab : "room",
       theaterCommandNodeTab: corePanelTab,
       theaterCommandMapMode: theaterMapMode,
       theaterCommandAutomationWindowOpen: isAutomationWindowOpen(),
@@ -1864,7 +2027,7 @@ function renderWindowShell(
   subtitle: string,
   body: string,
   theater: TheaterNetworkState,
-  options: { closable?: boolean } = {},
+  options: { closable?: boolean; className?: string; bodyClassName?: string } = {},
 ): string {
   if (!shouldRenderTheaterWindow(key, theater)) {
     return "";
@@ -1872,8 +2035,10 @@ function renderWindowShell(
 
   const colorKey = ensureTheaterWindowColors()[key];
   const nextSquad = key === "squads" ? getNextSquadInOrder(theater) : null;
+  const windowClassName = ["theater-window", options.className ?? ""].filter(Boolean).join(" ");
+  const bodyClassName = ["theater-window-body", options.bodyClassName ?? ""].filter(Boolean).join(" ");
   return `
-    <section class="theater-window" data-theater-window="${key}" data-color-key="${colorKey}" style="${frameStyle(key)}">
+    <section class="${windowClassName}" data-theater-window="${key}" data-color-key="${colorKey}" style="${frameStyle(key)}">
       ${nextSquad ? `
         <button
           class="theater-window-side-switch"
@@ -1899,7 +2064,7 @@ function renderWindowShell(
           <button class="theater-window-minimize" type="button" data-theater-window-minimize="${key}" aria-label="Minimize ${title}">_</button>
         </div>
       </div>
-      <div class="theater-window-body">${body}</div>
+      <div class="${bodyClassName}">${body}</div>
       <div class="theater-window-resize" data-theater-window-resize="${key}"></div>
     </section>
   `;
@@ -2069,6 +2234,8 @@ function renderConnectionSvg(theater: TheaterNetworkState): string {
   const labels: string[] = [];
   const partitionBadges: string[] = [];
   const threatRouteLines: string[] = [];
+  const phantomRouteLines: string[] = [];
+  const seenPhantomRouteKeys = new Set<string>();
   const selectedEdgeId = getGameState().uiLayout?.theaterCommandSelectedEdgeId ?? null;
 
   Object.values(theater.rooms).forEach((room) => {
@@ -2213,10 +2380,35 @@ function renderConnectionSvg(theater: TheaterNetworkState): string {
       }
     });
 
+  Object.values(theater.rooms).forEach((room) => {
+    if (!isRoomVisible(room)) {
+      return;
+    }
+
+    (room.sandboxPhantomRouteRoomIds ?? []).forEach((targetRoomId, index) => {
+      const targetRoom = theater.rooms[targetRoomId];
+      if (!targetRoom || !isRoomVisible(targetRoom)) {
+        return;
+      }
+      const phantomKey = [room.id, targetRoom.id].sort().join("__");
+      if (seenPhantomRouteKeys.has(phantomKey)) {
+        return;
+      }
+      seenPhantomRouteKeys.add(phantomKey);
+      phantomRouteLines.push(`
+        <path
+          d="${buildTheaterLinkPath(theater, room, targetRoom, 22 + (index * 6))}"
+          class="theater-link theater-link--phantom-route"
+        />
+      `);
+    });
+  });
+
   return `
     <svg class="theater-links" viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT}">
       ${lines.join("")}
       ${threatRouteLines.join("")}
+      ${phantomRouteLines.join("")}
       ${labels.join("")}
       ${partitionBadges.join("")}
     </svg>
@@ -2441,6 +2633,17 @@ function renderRoomNode(theater: TheaterNetworkState, room: TheaterRoom, canDesc
         <span class="theater-chip ${room.powerFlow >= THEATER_CORE_POWER_DISPLAY_THRESHOLD ? "theater-chip--power" : ""}">${room.powerFlow} WATTS</span>
         <span class="theater-chip ${room.commsLinked ? "theater-chip--comms" : ""}">${room.commsFlow} BW</span>
         <span class="theater-chip">${roomCoreAssignments.length}/${Math.max(1, room.coreSlotCapacity ?? 1)} C.O.R.E.</span>
+        ${(room.sandboxBurning ?? false) ? `<span class="theater-chip theater-chip--bad">BURN L${room.sandboxBurnSeverity ?? 1}</span>` : ""}
+        ${room.sandboxOverheating ? `<span class="theater-chip theater-chip--bad">OVERHEAT L${room.sandboxOverheatSeverity ?? 1}</span>` : ""}
+        ${(room.sandboxSmokeValue ?? 0) > 0 ? `<span class="theater-chip theater-chip--power">SMOKE L${room.sandboxSmokeValue}</span>` : ""}
+        ${room.sandboxRouteNoise ? `<span class="theater-chip theater-chip--power">ROUTE NOISE</span>` : ""}
+        ${(room.sandboxCommsAttraction ?? 0) > 0 ? `<span class="theater-chip theater-chip--comms">ATTRACT +${room.sandboxCommsAttraction}</span>` : ""}
+        ${(room.sandboxSignalBloom ?? false) ? `<span class="theater-chip theater-chip--power">BLOOM</span>` : ""}
+        ${(room.sandboxScavengerActivity ?? "quiet") === "raiding" ? `<span class="theater-chip theater-chip--bad">SCAV RAID</span>` : (room.sandboxScavengerActivity ?? "quiet") === "probing" ? `<span class="theater-chip">SCAVENGERS</span>` : ""}
+        ${(room.sandboxContainmentMode ?? "normal") === "venting" ? `<span class="theater-chip theater-chip--power">VENT</span>` : (room.sandboxContainmentMode ?? "normal") === "lockdown" ? `<span class="theater-chip">LOCKDOWN</span>` : ""}
+        ${(room.sandboxEmergencyDumpTicks ?? 0) > 0 ? `<span class="theater-chip theater-chip--bad">DUMP ${room.sandboxEmergencyDumpTicks}</span>` : ""}
+        ${room.sandboxSignalPosture === "masked" ? `<span class="theater-chip">MASKED</span>` : room.sandboxSignalPosture === "bait" ? `<span class="theater-chip theater-chip--bad">BAIT SIG</span>` : ""}
+        ${(room.sandboxSupplyFireRisk ?? false) ? `<span class="theater-chip theater-chip--bad">FIRE RISK</span>` : ""}
         ${room.roomClass === "mega" ? `<span class="theater-chip theater-chip--power">MEGA ROOM</span>` : ""}
         ${room.enemySite && room.commsVisible && !room.secured ? `<span class="theater-chip theater-chip--bad">STAGING</span>` : ""}
         ${patrolHere ? `<span class="theater-chip theater-chip--bad">PATROL</span>` : ""}
@@ -2506,7 +2709,11 @@ function renderRoomNode(theater: TheaterNetworkState, room: TheaterRoom, canDesc
 
 function renderTheaterMap(theater: TheaterNetworkState): string {
   const operation = getPreparedTheaterOperation(getGameState());
-  const canDescend = Boolean(operation && operation.currentFloorIndex < operation.floors.length - 1);
+  const canDescend = Boolean(
+    operation
+    && operation.currentFloorIndex < operation.floors.length - 1
+    && theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
+  );
   return `
     <section class="theater-map-wrap" id="theaterMapWrap">
       <div class="theater-map-zoom-controls">
@@ -2638,13 +2845,13 @@ function getActiveLocalTheaterSlots(state: GameState): PlayerSlot[] {
 function getTheaterSquadOwnerSummary(state: GameState, squad: TheaterSquadState): string {
   const controllerCounts = squad.unitIds.reduce((acc, unitId) => {
     const controller = state.unitsById[unitId]?.controller ?? "P1";
-    acc[controller] += 1;
+    acc[controller] = (acc[controller] ?? 0) + 1;
     return acc;
-  }, { P1: 0, P2: 0 });
+  }, {} as Partial<Record<SessionPlayerSlot, number>>);
 
-  const ownerLabels = (["P1", "P2"] as const)
-    .filter((slot) => controllerCounts[slot] > 0)
-    .map((slot) => `${getPlayerControllerLabel(slot)} ${controllerCounts[slot]}`);
+  const ownerLabels = SESSION_PLAYER_SLOTS
+    .filter((slot) => (controllerCounts[slot] ?? 0) > 0)
+    .map((slot) => `${getPlayerControllerLabel(slot)} ${controllerCounts[slot] ?? 0}`);
 
   return ownerLabels.length > 0 ? ownerLabels.join(" // ") : "UNASSIGNED";
 }
@@ -2655,6 +2862,314 @@ function getTheaterSquadLinkSummary(state: GameState, squadId: string): string {
     return "COMMAND LINK OPEN";
   }
   return assignedSlots.map((slot) => getPlayerControllerLabel(slot)).join(" + ");
+}
+
+function getTheaterManageLoadout(unit: Unit): {
+  primaryWeapon: string | null;
+  secondaryWeapon: string | null;
+  helmet: string | null;
+  chestpiece: string | null;
+  accessory1: string | null;
+  accessory2: string | null;
+} {
+  const rawLoadout = (unit.loadout ?? {}) as Record<string, string | null | undefined>;
+  return {
+    primaryWeapon: rawLoadout.primaryWeapon ?? rawLoadout.weapon ?? null,
+    secondaryWeapon: rawLoadout.secondaryWeapon ?? null,
+    helmet: rawLoadout.helmet ?? null,
+    chestpiece: rawLoadout.chestpiece ?? null,
+    accessory1: rawLoadout.accessory1 ?? null,
+    accessory2: rawLoadout.accessory2 ?? null,
+  };
+}
+
+function formatTheaterManageEquipmentName(
+  equipmentId: string | null | undefined,
+  equipmentById: Record<string, { name?: string }>,
+): string {
+  if (!equipmentId) {
+    return "None";
+  }
+  return equipmentById[equipmentId]?.name ?? equipmentId.replace(/_/g, " ").toUpperCase();
+}
+
+function formatTheaterManageStatValue(value: number | string | null | undefined): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return "--";
+}
+
+function getTheaterManageStatusLabels(entry: TheaterManageUnitEntry): string[] {
+  const labels: string[] = [];
+  if (entry.isIncapacitated) {
+    labels.push("INCAPACITATED");
+  }
+  (entry.unit.operationStatuses ?? [])
+    .filter((status) => !status.placeholder)
+    .forEach((status) => {
+      const baseLabel = (status.label ?? status.type ?? "").trim();
+      if (baseLabel.length <= 0) {
+        return;
+      }
+      const upperLabel = baseLabel.toUpperCase();
+      if (!labels.includes(upperLabel)) {
+        labels.push(upperLabel);
+      }
+    });
+  return labels;
+}
+
+function getTheaterManageUnitEntries(
+  theater: TheaterNetworkState,
+  state: GameState = getGameState(),
+): TheaterManageUnitEntry[] {
+  const selectedSquadId = theater.selectedSquadId;
+  const orderedSquads = [...theater.squads].sort((left, right) => {
+    if (left.squadId === selectedSquadId && right.squadId !== selectedSquadId) {
+      return -1;
+    }
+    if (right.squadId === selectedSquadId && left.squadId !== selectedSquadId) {
+      return 1;
+    }
+    return 0;
+  });
+
+  return orderedSquads.flatMap((squad) => {
+    const room = theater.rooms[squad.currentRoomId] ?? null;
+    return squad.unitIds.flatMap((unitId) => {
+      const unit = state.unitsById[unitId];
+      if (!unit) {
+        return [];
+      }
+      return [{
+        unit,
+        squad,
+        room,
+        isSelectedSquad: squad.squadId === selectedSquadId,
+        isIncapacitated: isTheaterUnitIncapacitated(unitId, theater),
+      }];
+    });
+  });
+}
+
+function getPreferredTheaterManageUnitId(theater: TheaterNetworkState): string | null {
+  const entries = getTheaterManageUnitEntries(theater);
+  if (entries.length <= 0) {
+    theaterManageSelectedUnitId = null;
+    return null;
+  }
+
+  const selectedSquadEntries = entries.filter((entry) => entry.isSelectedSquad);
+  if (
+    theaterManageSelectedUnitId
+    && selectedSquadEntries.some((entry) => entry.unit.id === theaterManageSelectedUnitId)
+  ) {
+    return theaterManageSelectedUnitId;
+  }
+  return selectedSquadEntries[0]?.unit.id ?? entries[0]?.unit.id ?? null;
+}
+
+function getSelectedTheaterManageUnit(theater: TheaterNetworkState): TheaterManageUnitEntry | null {
+  const entries = getTheaterManageUnitEntries(theater);
+  if (entries.length <= 0) {
+    theaterManageSelectedUnitId = null;
+    return null;
+  }
+
+  const selectedEntry = theaterManageSelectedUnitId
+    ? entries.find((entry) => entry.unit.id === theaterManageSelectedUnitId) ?? null
+    : null;
+  if (selectedEntry) {
+    return selectedEntry;
+  }
+
+  const fallbackEntry = entries.find((entry) => entry.isSelectedSquad) ?? entries[0] ?? null;
+  theaterManageSelectedUnitId = fallbackEntry?.unit.id ?? null;
+  return fallbackEntry;
+}
+
+function renderManageUnitsWindow(theater: TheaterNetworkState): string {
+  const state = getGameState();
+  const units = getTheaterManageUnitEntries(theater, state);
+  const selectedEntry = getSelectedTheaterManageUnit(theater);
+  const equipmentById = (state.equipmentById ?? getAllStarterEquipment()) as Record<string, { name?: string }>;
+
+  if (!selectedEntry) {
+    return renderWindowShell(
+      "manage",
+      THEATER_WINDOW_DEFS.manage.title,
+      THEATER_WINDOW_DEFS.manage.kicker,
+      `
+        <div class="battle-manage-node battle-manage-node--empty">
+          <div class="battle-manage-node__intro">Roster telemetry becomes available here as soon as the theater has deployable units.</div>
+          <div class="battle-manage-empty">No units are currently assigned to this theater.</div>
+        </div>
+      `,
+      theater,
+      { bodyClassName: "battle-node__body--manage" },
+    );
+  }
+
+  const selectedUnit = selectedEntry.unit;
+  const selectedSquadLabel = getSquadDisplayName(selectedEntry.squad);
+  const selectedRoomLabel = selectedEntry.room?.label ?? selectedEntry.squad.currentRoomId;
+  const selectedController = getPlayerControllerLabel((selectedUnit.controller ?? "P1") as PlayerSlot);
+  const selectedStatuses = getTheaterManageStatusLabels(selectedEntry);
+  const selectedLoadout = getTheaterManageLoadout(selectedUnit);
+  const classLabel = ((selectedUnit.unitClass ?? "unit") as string).replace(/_/g, " ").toUpperCase();
+  const attackValue = formatTheaterManageStatValue((selectedUnit as any).atk);
+  const defenseValue = formatTheaterManageStatValue((selectedUnit as any).def);
+  const agilityValue = formatTheaterManageStatValue(selectedUnit.agi);
+  const powerValue = formatTheaterManageStatValue(selectedUnit.pwr);
+  const detailNote = selectedEntry.isIncapacitated
+    ? "Incapacitated in this operation. Recover the unit before using it in direct assaults."
+    : `${selectedController} assigned to ${getSquadDisplayIcon(selectedEntry.squad)} ${selectedSquadLabel} inside ${selectedRoomLabel}.`;
+
+  const body = `
+    <div class="battle-manage-node">
+      <div class="battle-manage-node__intro">Live squad, loadout, and readiness telemetry. Use Manage Units to open the full roster and change equipment during the operation.</div>
+      <div class="battle-manage-body">
+        <div class="battle-manage-list">
+          ${units.map((entry) => {
+            const unit = entry.unit;
+            const roomLabel = entry.room?.label ?? entry.squad.currentRoomId;
+            const controllerLabel = getPlayerControllerLabel((unit.controller ?? "P1") as PlayerSlot);
+            const statusLabels = getTheaterManageStatusLabels(entry);
+            const isSelected = unit.id === selectedUnit.id;
+            const rowPowerValue = formatTheaterManageStatValue(unit.pwr);
+            const rowAttackValue = formatTheaterManageStatValue((unit as any).atk);
+            const rowDefenseValue = formatTheaterManageStatValue((unit as any).def);
+            const rowAgilityValue = formatTheaterManageStatValue(unit.agi);
+            const badgeLabel = entry.isIncapacitated
+              ? "INCAPACITATED"
+              : entry.isSelectedSquad
+                ? "SELECTED SQUAD"
+                : "";
+
+            return `
+              <button
+                class="battle-manage-unit-row ${isSelected ? "battle-manage-unit-row--selected" : ""}"
+                data-theater-manage-unit-id="${escapeHtmlAttribute(unit.id)}"
+                type="button"
+              >
+                <div class="battle-manage-unit-portrait">
+                  <img src="${getBattleUnitPortraitPath(unit.id, unit.id)}" alt="${escapeHtmlAttribute(unit.name)}" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
+                </div>
+                <div class="battle-manage-unit-summary">
+                  <div class="battle-manage-unit-row-top">
+                    <span class="battle-manage-unit-name">${escapeHtml(unit.name)}</span>
+                    ${badgeLabel ? `<span class="battle-manage-unit-badge">${escapeHtml(badgeLabel)}</span>` : ""}
+                  </div>
+                  <div class="battle-manage-unit-row-meta">
+                    <span>HP ${unit.hp}/${unit.maxHp}</span>
+                    <span>STRAIN ${unit.strain}</span>
+                    <span>PWR ${rowPowerValue}</span>
+                    <span>ROOM ${escapeHtml(roomLabel.toUpperCase())}</span>
+                  </div>
+                  <div class="battle-manage-unit-row-meta battle-manage-unit-row-meta--minor">
+                    <span>${escapeHtml(getSquadDisplayIcon(entry.squad))} ${escapeHtml(getSquadDisplayName(entry.squad))}</span>
+                    <span>CTRL ${escapeHtml(controllerLabel)}</span>
+                    <span>ATK ${rowAttackValue}</span>
+                    <span>DEF ${rowDefenseValue}</span>
+                    <span>AGI ${rowAgilityValue}</span>
+                  </div>
+                  <div class="battle-manage-unit-statusline">
+                    ${statusLabels.length > 0
+                      ? statusLabels.map((label) => `<span class="battle-manage-status-chip">${escapeHtml(label)}</span>`).join("")
+                      : `<span class="battle-manage-status-chip battle-manage-status-chip--muted">NO ACTIVE STATUS FLAGS</span>`}
+                  </div>
+                </div>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <div class="battle-manage-detail">
+          <div class="battle-manage-detail-hero">
+            <div class="battle-manage-detail-portrait">
+              <img
+                src="${getBattleUnitPortraitPath(selectedUnit.id, selectedUnit.id)}"
+                alt="${escapeHtmlAttribute(selectedUnit.name)}"
+                onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';"
+              />
+            </div>
+            <div class="battle-manage-detail-copy">
+              <div class="battle-manage-detail-name">${escapeHtml(selectedUnit.name)}</div>
+              <div class="battle-manage-detail-class">${escapeHtml(classLabel)}</div>
+              <div class="battle-manage-detail-note">${escapeHtml(detailNote)}</div>
+            </div>
+          </div>
+          <div class="battle-manage-stat-grid">
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Hit Points</div>
+              <div class="battle-manage-stat-value">${selectedUnit.hp} / ${selectedUnit.maxHp}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Strain</div>
+              <div class="battle-manage-stat-value">${selectedUnit.strain}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">PWR</div>
+              <div class="battle-manage-stat-value">${powerValue}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Controller</div>
+              <div class="battle-manage-stat-value">${escapeHtml(selectedController)}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Room</div>
+              <div class="battle-manage-stat-value">${escapeHtml(selectedRoomLabel)}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Attack / Defense</div>
+              <div class="battle-manage-stat-value">${attackValue} / ${defenseValue}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Agility</div>
+              <div class="battle-manage-stat-value">${agilityValue}</div>
+            </div>
+            <div class="battle-manage-stat-card">
+              <div class="battle-manage-stat-label">Squad</div>
+              <div class="battle-manage-stat-value">${escapeHtml(getSquadDisplayIcon(selectedEntry.squad))} ${escapeHtml(selectedSquadLabel)}</div>
+            </div>
+          </div>
+          <div class="battle-manage-detail-section">
+            <div class="battle-manage-detail-section-title">Assigned Loadout</div>
+            <div class="battle-manage-loadout-grid">
+              <div class="battle-manage-loadout-row"><span>Primary Weapon</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.primaryWeapon, equipmentById))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Secondary Weapon</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.secondaryWeapon, equipmentById))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Helmet</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.helmet, equipmentById))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Chestpiece</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.chestpiece, equipmentById))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Accessory 1</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.accessory1, equipmentById))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Accessory 2</span><span>${escapeHtml(formatTheaterManageEquipmentName(selectedLoadout.accessory2, equipmentById))}</span></div>
+            </div>
+          </div>
+          <div class="battle-manage-detail-section">
+            <div class="battle-manage-detail-section-title">Theater Readout</div>
+            <div class="battle-manage-loadout-grid">
+              <div class="battle-manage-loadout-row"><span>Squad</span><span>${escapeHtml(getSquadDisplayIcon(selectedEntry.squad))} ${escapeHtml(selectedSquadLabel)}</span></div>
+              <div class="battle-manage-loadout-row"><span>Room</span><span>${escapeHtml(selectedRoomLabel)}</span></div>
+              <div class="battle-manage-loadout-row"><span>Automation</span><span>${escapeHtml(getSquadAutomationLabel(selectedEntry.squad))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Command Link</span><span>${escapeHtml(getTheaterSquadLinkSummary(state, selectedEntry.squad.squadId))}</span></div>
+              <div class="battle-manage-loadout-row"><span>Status Effects</span><span>${escapeHtml(selectedStatuses.length > 0 ? selectedStatuses.join(", ") : "None")}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  return renderWindowShell(
+    "manage",
+    THEATER_WINDOW_DEFS.manage.title,
+    THEATER_WINDOW_DEFS.manage.kicker,
+    body,
+    theater,
+    { bodyClassName: "battle-node__body--manage" },
+  );
 }
 
 function renderSquadsWindow(theater: TheaterNetworkState): string {
@@ -2846,6 +3361,11 @@ function renderSquadsWindow(theater: TheaterNetworkState): string {
 }
 
 function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): string {
+  const campaignScopeCopy = theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL
+    ? `Campaign progression active // Final floor is ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`
+    : theater.objectiveComplete
+      ? "Final floor complete // postgame floor regeneration is available when you return to A.T.L.A.S."
+      : `Final floor reached // clear this sector objective to finish the campaign on Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`;
   const actionBlock = theater.objectiveComplete
     ? `
       <div class="theater-copy theater-copy--muted">
@@ -2865,6 +3385,7 @@ function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): str
 
   const body = `
     <div class="theater-copy"><strong>Objective:</strong> ${theater.definition.objective}</div>
+    <div class="theater-beta-scope">${campaignScopeCopy}</div>
     <div class="theater-info-grid theater-info-grid--two">
       <div class="theater-stat-card"><span>Operation</span><strong>${theater.definition.operationId.toUpperCase()}</strong></div>
       <div class="theater-stat-card"><span>Theater</span><strong>${theater.definition.name}</strong></div>
@@ -3051,11 +3572,204 @@ function renderSelectedNodeTabControls(): string {
   return `
     <div class="theater-core-tabs">
       <button class="theater-core-tab ${corePanelTab === "room" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="room">Room Info</button>
+      <button class="theater-core-tab ${corePanelTab === "tactical" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="tactical">Tactical Map</button>
       <button class="theater-core-tab ${corePanelTab === "annexes" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="annexes">Annexes</button>
       <button class="theater-core-tab ${corePanelTab === "modules" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="modules">Modules</button>
       <button class="theater-core-tab ${corePanelTab === "partitions" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="partitions">Partitions</button>
       <button class="theater-core-tab ${corePanelTab === "core" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="core">C.O.R.E.</button>
       <button class="theater-core-tab ${corePanelTab === "fortifications" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="fortifications">Fortifications</button>
+    </div>
+  `;
+}
+
+function getTacticalObjectLabel(type: TacticalMapObjectType | FieldAssetType): string {
+  switch (type) {
+    case "med_station":
+      return "MED";
+    case "ammo_crate":
+      return "AMM";
+    case "proximity_mine":
+      return "MINE";
+    case "smoke_emitter":
+      return "SMK";
+    case "portable_ladder":
+      return "LDR";
+    case "light_tower":
+      return "LGT";
+    case "extraction_anchor":
+      return "EXT";
+    case "destructible_cover":
+      return "CVR";
+    case "destructible_wall":
+      return "DWL";
+    case "barricade_wall":
+      return "BAR";
+    default:
+      return "OBJ";
+  }
+}
+
+function parseTheaterTacticalTileKey(key: string | null): { x: number; y: number } | null {
+  if (!key) {
+    return null;
+  }
+  const [xValue, yValue] = key.split(",");
+  const x = Number.parseInt(xValue ?? "", 10);
+  const y = Number.parseInt(yValue ?? "", 10);
+  return Number.isInteger(x) && Number.isInteger(y) ? { x, y } : null;
+}
+
+function getSelectedTheaterTacticalTile(tacticalMap: TacticalMapDefinition | null): { x: number; y: number } | null {
+  if (!tacticalMap || tacticalMap.tiles.length <= 0) {
+    theaterSelectedTacticalTileKey = null;
+    return null;
+  }
+  const selected = parseTheaterTacticalTileKey(theaterSelectedTacticalTileKey);
+  const selectedTile = selected
+    ? tacticalMap.tiles.find((tile) => tile.x === selected.x && tile.y === selected.y) ?? null
+    : null;
+  if (selectedTile) {
+    return { x: selectedTile.x, y: selectedTile.y };
+  }
+  const fallbackTile = tacticalMap.tiles[0] ?? null;
+  theaterSelectedTacticalTileKey = fallbackTile ? `${fallbackTile.x},${fallbackTile.y}` : null;
+  return fallbackTile ? { x: fallbackTile.x, y: fallbackTile.y } : null;
+}
+
+function getTheaterSessionResourceSummary(state: GameState) {
+  return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+}
+
+function canAffordTheaterCost(state: GameState, cost: Partial<GameState["resources"]>): boolean {
+  return canSessionAffordCost(state, { resources: cost });
+}
+
+function captureTheaterWindowBodyScroll(key: TheaterWindowKey): { top: number; left: number } | null {
+  const body = document.querySelector<HTMLElement>(`[data-theater-window="${key}"] .theater-window-body`);
+  if (!body) {
+    return null;
+  }
+  return {
+    top: body.scrollTop,
+    left: body.scrollLeft,
+  };
+}
+
+function queueTheaterRoomBodyScrollRestore(): void {
+  theaterPendingRoomBodyScrollRestore = captureTheaterWindowBodyScroll("room");
+}
+
+function restoreQueuedTheaterRoomBodyScroll(): void {
+  if (!theaterPendingRoomBodyScrollRestore) {
+    return;
+  }
+
+  const body = document.querySelector<HTMLElement>(`[data-theater-window="room"] .theater-window-body`);
+  if (body) {
+    body.scrollTop = theaterPendingRoomBodyScrollRestore.top;
+    body.scrollLeft = theaterPendingRoomBodyScrollRestore.left;
+  }
+  theaterPendingRoomBodyScrollRestore = null;
+}
+
+function rerenderTheaterCommandScreenWithRoomState(options: { preserveRoomScroll?: boolean; skipWindowFrameCapture?: boolean } = {}): void {
+  if (options.preserveRoomScroll) {
+    queueTheaterRoomBodyScrollRestore();
+  }
+  if (options.skipWindowFrameCapture) {
+    skipNextTheaterWindowFrameCapture = true;
+  }
+  renderTheaterCommandScreen();
+}
+
+function setTheaterTacticalFullscreen(enabled: boolean): void {
+  const frames = ensureTheaterWindowFrames();
+  if (enabled) {
+    if (!theaterTacticalFullscreenActive) {
+      theaterRoomFrameBeforeTacticalFullscreen = { ...frames.room };
+    }
+    theaterTacticalFullscreenActive = true;
+    frames.room = clampFrame("room", {
+      ...frames.room,
+      x: THEATER_MARGIN_X,
+      y: THEATER_TOP_SAFE,
+      width: Math.max(THEATER_WINDOW_DEFS.room.minWidth, (window.innerWidth || 1920) - (THEATER_MARGIN_X * 2)),
+      height: Math.max(
+        THEATER_WINDOW_DEFS.room.minHeight,
+        (window.innerHeight || 1080) - THEATER_TOP_SAFE - THEATER_BOTTOM_SAFE,
+      ),
+      minimized: false,
+      zIndex: ++theaterZCounter,
+    });
+    return;
+  }
+
+  theaterTacticalFullscreenActive = false;
+  if (!theaterRoomFrameBeforeTacticalFullscreen) {
+    return;
+  }
+
+  frames.room = clampFrame("room", {
+    ...theaterRoomFrameBeforeTacticalFullscreen,
+    minimized: false,
+    zIndex: ++theaterZCounter,
+  });
+  theaterRoomFrameBeforeTacticalFullscreen = null;
+}
+
+function renderTheaterTacticalMapGrid(
+  tacticalMap: TacticalMapDefinition,
+  installedFieldAssets: TheaterRoom["placedFieldAssets"] = [],
+): string {
+  const tileMap = new Map(tacticalMap.tiles.map((tile) => [`${tile.x},${tile.y}`, tile]));
+  const objectMap = new Map(tacticalMap.objects.map((objectDef) => [`${objectDef.x},${objectDef.y}`, objectDef]));
+  const fieldAssetMap = new Map((installedFieldAssets ?? []).map((asset) => [`${asset.x},${asset.y}`, asset]));
+  const selectedTile = getSelectedTheaterTacticalTile(tacticalMap);
+
+  let html = "";
+  for (let y = 0; y < tacticalMap.height; y += 1) {
+    for (let x = 0; x < tacticalMap.width; x += 1) {
+      const key = `${x},${y}`;
+      const tile = tileMap.get(key);
+      const objectDef = objectMap.get(key);
+      const fieldAsset = fieldAssetMap.get(key);
+      const classes = [
+        "map-builder-cell",
+        tile ? "map-builder-cell--playable" : "map-builder-cell--void",
+        tile ? `map-builder-cell--surface-${tile.surface}` : "",
+        tile && tile.elevation !== 0 ? `map-builder-cell--elevation-${tile.elevation}` : "",
+        tacticalMap.zones.friendlySpawn.some((point) => point.x === x && point.y === y) ? "map-builder-cell--friendly-spawn" : "",
+        tacticalMap.zones.enemySpawn.some((point) => point.x === x && point.y === y) ? "map-builder-cell--enemy-spawn" : "",
+        tacticalMap.zones.relay.some((point) => point.x === x && point.y === y) ? "map-builder-cell--relay" : "",
+        tacticalMap.zones.friendlyBreach.some((point) => point.x === x && point.y === y) ? "map-builder-cell--friendly-breach" : "",
+        tacticalMap.zones.enemyBreach.some((point) => point.x === x && point.y === y) ? "map-builder-cell--enemy-breach" : "",
+        tacticalMap.zones.extraction.some((point) => point.x === x && point.y === y) ? "map-builder-cell--extraction" : "",
+        selectedTile?.x === x && selectedTile?.y === y ? "map-builder-cell--traversal-source" : "",
+      ].filter(Boolean).join(" ");
+
+      html += `
+        <button
+          type="button"
+          class="${classes}"
+          data-theater-tactical-tile="${key}"
+        >
+          <span class="map-builder-cell__coord">${x},${y}</span>
+          ${tile ? `<span class="map-builder-cell__elevation">${tile.elevation}</span>` : ""}
+          ${fieldAsset
+            ? `<span class="map-builder-cell__object">${getTacticalObjectLabel(fieldAsset.type)}</span>`
+            : objectDef
+              ? `<span class="map-builder-cell__object">${getTacticalObjectLabel(objectDef.type)}</span>`
+              : ""}
+        </button>
+      `;
+    }
+  }
+
+  return `
+    <div class="map-builder-canvas ${theaterTacticalFullscreenActive ? "map-builder-canvas--theater-fullscreen" : ""}" style="--map-builder-zoom: ${theaterTacticalPreviewZoom.toFixed(2)};">
+      <div style="display:grid; grid-template-columns: repeat(${tacticalMap.width}, minmax(84px, 1fr)); gap:6px;">
+        ${html}
+      </div>
     </div>
   `;
 }
@@ -3251,6 +3965,51 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
   const commsFlowLabel = hasDetailedIntel
     ? `${room.commsFlow} Bandwidth / Tick`
     : room.commsLinked ? "Linked" : "Unlinked";
+  const thermalStateLabel = hasDetailedIntel
+    ? ((room.sandboxBurning ?? false)
+      ? `BURNING L${room.sandboxBurnSeverity ?? 1}`
+      : room.sandboxOverheating
+      ? `OVERHEATING L${room.sandboxOverheatSeverity ?? 1}`
+      : (room.sandboxHeatValue ?? 0) > 0
+        ? `HOT L${room.sandboxHeatValue}`
+        : "Stable")
+    : room.commsLinked ? "Intermittent" : "No Read";
+  const routeTelemetryLabel = hasDetailedIntel
+    ? (room.sandboxRouteNoise
+      ? ((room.sandboxSignalBloom ?? false) ? "ROUTE INFO UNCERTAIN // BLOOM" : "ROUTE INFO UNCERTAIN")
+      : "Stable")
+    : room.commsLinked ? "Telemetry Partial" : "No Read";
+  const commsAttractionLabel = hasDetailedIntel
+    ? ((room.sandboxCommsAttraction ?? 0) > 0 ? `+${room.sandboxCommsAttraction} PRESSURE` : "Nominal")
+    : room.commsLinked ? "Tracked" : "No Read";
+  const migrationAnchorLabel = hasDetailedIntel
+    ? (room.sandboxMigrationAnchorRoomId ? (theater.rooms[room.sandboxMigrationAnchorRoomId]?.label ?? room.sandboxMigrationAnchorRoomId) : "None")
+    : room.commsLinked ? "Trace Only" : "No Read";
+  const airQualityLabel = hasDetailedIntel
+    ? ((room.sandboxBurning ?? false)
+      ? `FIRE // SMOKE L${room.sandboxSmokeValue ?? room.sandboxBurnSeverity ?? 1}`
+      : (room.sandboxSmokeValue ?? 0) > 0
+        ? `SMOKE L${room.sandboxSmokeValue}`
+        : "Clear")
+    : room.commsLinked ? "Trace Only" : "No Read";
+  const scavengerActivityLabel = hasDetailedIntel
+    ? ((room.sandboxScavengerActivity ?? "quiet") === "raiding"
+      ? "Raiding"
+      : (room.sandboxScavengerActivity ?? "quiet") === "probing"
+        ? "Probing"
+        : "Quiet")
+    : room.commsLinked ? "Trace Only" : "No Read";
+  const signalPostureLabel = selectedNode?.kind === "annex"
+    ? "Inherited"
+    : getSignalPostureLabel(room.sandboxSignalPosture ?? "normal");
+  const containmentLabel = selectedNode?.kind === "annex"
+    ? "Inherited"
+    : hasDetailedIntel
+      ? `${getContainmentModeLabel(room.sandboxContainmentMode ?? "normal")}${(room.sandboxEmergencyDumpTicks ?? 0) > 0 ? ` // Dump ${room.sandboxEmergencyDumpTicks}` : ""}`
+      : room.commsLinked ? "Trace Only" : "No Read";
+  const structuralStressLabel = hasDetailedIntel
+    ? ((room.sandboxStructuralStress ?? 0) > 0 ? `L${room.sandboxStructuralStress}` : "Stable")
+    : room.commsLinked ? "Trace Only" : "No Read";
   const selectedNodeModuleIds = selectedNode
     ? (selectedNode.kind === "room" ? (selectedNode.room?.moduleSlots ?? []) : (selectedNode.annex?.moduleSlots ?? []))
         .filter((moduleId): moduleId is string => Boolean(moduleId))
@@ -3330,6 +4089,156 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
       `;
     })
     .join("");
+  const tacticalMap = getTheaterRoomTacticalMap(room);
+  const selectedTacticalTile = getSelectedTheaterTacticalTile(tacticalMap);
+  const selectedTacticalObject = selectedTacticalTile && tacticalMap
+    ? tacticalMap.objects.find((objectDef) => objectDef.x === selectedTacticalTile.x && objectDef.y === selectedTacticalTile.y) ?? null
+    : null;
+  const installedFieldAssets = room.placedFieldAssets ?? [];
+  const selectedInstalledFieldAsset = selectedTacticalTile
+    ? installedFieldAssets.find((asset) => asset.x === selectedTacticalTile.x && asset.y === selectedTacticalTile.y) ?? null
+    : null;
+  const orderedFieldAssetTypes = orderItemsUnlockedFirst(
+    getOrderedSchemaFieldAssetTypes(),
+    (fieldAssetType) => isFieldAssetUnlocked(state, fieldAssetType),
+  );
+  const fieldAssetButtons = orderedFieldAssetTypes
+    .map((fieldAssetType) => {
+      const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[fieldAssetType];
+      if (!definition) {
+        return "";
+      }
+      const unlocked = isFieldAssetUnlocked(state, fieldAssetType);
+      return `
+        <button
+          class="theater-chip-button ${theaterSelectedFieldAssetType === fieldAssetType ? "theater-chip-button--active" : ""} ${unlocked ? "" : "theater-chip-button--locked"}"
+          type="button"
+          data-theater-field-asset-select="${fieldAssetType}"
+        >
+          ${definition.displayName}
+          <small>${formatResourceCost(getFieldAssetBuildCost(fieldAssetType))}</small>
+          <small>${unlocked ? definition.tacticalRole : "Authorize in S.C.H.E.M.A."}</small>
+        </button>
+      `;
+    })
+    .join("");
+  const activeFieldAssetDefinition = SCHEMA_FIELD_ASSET_DEFINITIONS[theaterSelectedFieldAssetType] ?? null;
+  const activeFieldAssetUnlocked = activeFieldAssetDefinition ? isFieldAssetUnlocked(state, theaterSelectedFieldAssetType) : false;
+  const activeFieldAssetCost = activeFieldAssetDefinition ? getFieldAssetBuildCost(theaterSelectedFieldAssetType) : {};
+  const activeFieldAssetPlacementError = activeFieldAssetDefinition && selectedTacticalTile
+    ? getFieldAssetPlacementError(room, theaterSelectedFieldAssetType, selectedTacticalTile.x, selectedTacticalTile.y)
+    : null;
+  const canAffordActiveFieldAsset = activeFieldAssetDefinition
+    ? canAffordTheaterCost(state, activeFieldAssetCost)
+    : false;
+  const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
+  const fabricateBlockedReason = selectedNode?.kind === "annex"
+    ? `Select ${room.label} itself to fabricate field assets.`
+    : !room.secured
+      ? "Secure the room before fabricating field assets."
+      : !activeFieldAssetDefinition
+        ? "Select a field asset first."
+        : !selectedTacticalTile
+          ? "Select a playable tile first."
+          : !activeFieldAssetUnlocked
+            ? `${activeFieldAssetDefinition.displayName} is still locked in S.C.H.E.M.A.`
+            : !canAffordActiveFieldAsset
+              ? `Insufficient resources. Required: ${formatResourceCost(activeFieldAssetCost)}.`
+              : activeFieldAssetPlacementError;
+  const canFabricateFieldAssets = !fabricateBlockedReason;
+  const tacticalBody = `
+    <div class="theater-tactical-panel ${isTacticalFullscreenMode ? "theater-tactical-panel--fullscreen" : ""}">
+    ${tabControls}
+    <div class="theater-copy">
+      Inspect the persistent battle layout assigned to this room and fabricate field assets directly onto legal tiles before combat begins.
+    </div>
+    <div class="theater-info-grid theater-info-grid--two">
+      <div class="theater-stat-card"><span>Assigned Map</span><strong>${tacticalMap?.name ?? getTheaterRoomBattleMapId(room)}</strong></div>
+      <div class="theater-stat-card"><span>Theme</span><strong>${tacticalMap ? tacticalMap.theme.replace(/_/g, " ").toUpperCase() : "UNASSIGNED"}</strong></div>
+      <div class="theater-stat-card"><span>Footprint</span><strong>${tacticalMap ? `${tacticalMap.tiles.length} tiles` : "0"}</strong></div>
+      <div class="theater-stat-card"><span>Field Assets</span><strong>${installedFieldAssets.length}</strong></div>
+      <div class="theater-stat-card"><span>Preview Zoom</span><strong>${Math.round(theaterTacticalPreviewZoom * 100)}%</strong></div>
+      <div class="theater-stat-card"><span>Selected Tile</span><strong>${selectedTacticalTile ? `${selectedTacticalTile.x},${selectedTacticalTile.y}` : "NONE"}</strong></div>
+    </div>
+    ${selectedNode?.kind === "annex" ? `
+      <div class="theater-copy theater-copy--muted">
+        Tactical fabrication is managed from the parent room. Select ${room.label} itself to place or remove field assets.
+      </div>
+    ` : !room.secured ? `
+      <div class="theater-copy theater-copy--muted">
+        This room can be inspected now, but fabrication stays offline until the room is secured.
+      </div>
+    ` : ""}
+    <div class="theater-inline-actions">
+      <button class="theater-secondary-btn" type="button" data-theater-tactical-zoom="-1">Zoom Out</button>
+      <button class="theater-secondary-btn" type="button" data-theater-tactical-zoom="1">Zoom In</button>
+      <button class="theater-secondary-btn" type="button" data-theater-tactical-fullscreen="${theaterTacticalFullscreenActive ? "off" : "on"}">${theaterTacticalFullscreenActive ? "Exit Full Screen" : "Full Screen"}</button>
+    </div>
+    <div class="theater-tactical-map-region">
+      ${tacticalMap ? renderTheaterTacticalMapGrid(tacticalMap, installedFieldAssets) : `<div class="theater-feed-line">No tactical map catalog entry is assigned to this room yet.</div>`}
+    </div>
+    <div class="theater-copy theater-copy--muted">
+      ${selectedTacticalObject
+        ? `Tile Occupant: ${selectedTacticalObject.id} // ${getTacticalObjectLabel(selectedTacticalObject.type)}`
+        : selectedInstalledFieldAsset
+          ? `Field Asset: ${selectedInstalledFieldAsset.id} // ${SCHEMA_FIELD_ASSET_DEFINITIONS[selectedInstalledFieldAsset.type]?.displayName ?? selectedInstalledFieldAsset.type}`
+        : selectedTacticalTile
+          ? "Open tile selected."
+          : "Select a playable tile to inspect or place assets."}
+    </div>
+    <div class="theater-annex-build-grid">
+      ${fieldAssetButtons}
+    </div>
+    ${activeFieldAssetDefinition ? `
+      <div class="theater-copy theater-copy--muted">
+        Selected Asset: ${activeFieldAssetDefinition.displayName} // ${activeFieldAssetDefinition.description}
+      </div>
+    ` : ""}
+    <div class="theater-copy theater-copy--muted">
+      ${fabricateBlockedReason ?? (selectedTacticalTile
+        ? `Ready to fabricate on tile ${selectedTacticalTile.x},${selectedTacticalTile.y}.`
+        : "Select a playable tile to prepare this room.")}
+    </div>
+    <div class="theater-inline-actions">
+      <button
+        class="theater-action-btn ${!canFabricateFieldAssets && activeFieldAssetDefinition && !activeFieldAssetUnlocked ? "theater-action-btn--locked" : ""}"
+        type="button"
+        data-theater-place-field-asset="${room.id}"
+        ${canFabricateFieldAssets ? "" : "disabled"}
+      >
+        Fabricate ${activeFieldAssetDefinition?.displayName ?? "Field Asset"}
+        <small>${fabricateBlockedReason ?? (activeFieldAssetDefinition ? formatResourceCost(activeFieldAssetCost) : "No asset selected")}</small>
+      </button>
+      ${selectedInstalledFieldAsset ? `
+        <button
+          class="theater-action-btn theater-action-btn--danger"
+          type="button"
+          data-theater-remove-field-asset="${selectedInstalledFieldAsset.id}"
+          data-theater-remove-field-asset-room="${room.id}"
+        >
+          Remove Asset
+          <small>Clear the placed field asset from this room. No materials are returned.</small>
+        </button>
+      ` : ""}
+    </div>
+    <div class="theater-core-list">
+      ${installedFieldAssets.length > 0 ? installedFieldAssets.map((asset) => {
+        const definition = SCHEMA_FIELD_ASSET_DEFINITIONS[asset.type];
+        return `
+          <button
+            class="theater-action-btn theater-action-btn--danger"
+            type="button"
+            data-theater-remove-field-asset="${asset.id}"
+            data-theater-remove-field-asset-room="${room.id}"
+          >
+            ${definition?.displayName ?? asset.type} // ${asset.x},${asset.y}
+            <small>${definition?.tacticalRole ?? "Prepared field asset"}.</small>
+          </button>
+        `;
+      }).join("") : `<div class="theater-feed-line">No field assets are currently fabricated in this room.</div>`}
+    </div>
+    </div>
+  `;
 
   const roomInfoBody = `
     ${tabControls}
@@ -3354,6 +4263,15 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
       <div class="theater-stat-card"><span>Supply Flow</span><strong>${selectedNode?.kind === "annex" ? `${selectedNode.annex?.inheritedSupply ?? 0} Crates` : supplyFlowLabel}</strong></div>
       <div class="theater-stat-card"><span>Power Flow</span><strong>${selectedNode?.kind === "annex" ? `${selectedNode.annex?.inheritedPower ?? 0} Watts` : powerFlowLabel}</strong></div>
       <div class="theater-stat-card"><span>Comms Flow</span><strong>${selectedNode?.kind === "annex" ? `${selectedNode.annex?.inheritedComms ?? 0} BW` : commsFlowLabel}</strong></div>
+      <div class="theater-stat-card"><span>Thermal State</span><strong>${thermalStateLabel}</strong></div>
+      <div class="theater-stat-card"><span>Air Quality</span><strong>${airQualityLabel}</strong></div>
+      <div class="theater-stat-card"><span>Route Telemetry</span><strong>${routeTelemetryLabel}</strong></div>
+      <div class="theater-stat-card"><span>Enemy Attraction</span><strong>${commsAttractionLabel}</strong></div>
+      <div class="theater-stat-card"><span>Scavenger Activity</span><strong>${scavengerActivityLabel}</strong></div>
+      <div class="theater-stat-card"><span>Signal Posture</span><strong>${signalPostureLabel}</strong></div>
+      <div class="theater-stat-card"><span>Containment</span><strong>${containmentLabel}</strong></div>
+      <div class="theater-stat-card"><span>Structural Stress</span><strong>${structuralStressLabel}</strong></div>
+      <div class="theater-stat-card"><span>Collapse Anchor</span><strong>${migrationAnchorLabel}</strong></div>
       <div class="theater-stat-card"><span>Intel</span><strong>${hasDetailedIntel ? "Detailed" : room.intelLevel > 0 ? "Partial" : "Dark"}</strong></div>
       <div class="theater-stat-card"><span>Module Slots</span><strong>${selectedNode?.kind === "annex" ? `${selectedNode.annex?.moduleSlots.filter((slot) => slot !== null).length ?? 0} / ${selectedNode.annex?.moduleSlotCapacity ?? 0}` : `${selectedNodeModules.length} / ${room.moduleSlotCapacity ?? 0}`}</strong></div>
       <div class="theater-stat-card"><span>Selected Squad</span><strong>${selectedSquadLabel} // ${selectedSquad?.unitIds.length ?? 0} UNIT(S)</strong></div>
@@ -3386,6 +4304,94 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
     ${primaryCoreAssignment && (coreOfflineReason === "low_power" || coreOfflineReason === "low_comms") && hasDetailedIntel && selectedNode?.kind !== "annex" ? `
       <div class="theater-copy theater-copy--muted">
         Warning: ${formatCoreType(primaryCoreAssignment.type)} is offline in ${room.label} because the room is not meeting its operational requirements.
+      </div>
+    ` : ""}
+    ${room.sandboxRouteNoise && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Route telemetry is uncertain here because excess power or signal bloom is corrupting local telemetry. Phantom path markers may appear on the theater map.
+      </div>
+    ` : ""}
+    ${(room.sandboxCommsAttraction ?? 0) > 0 && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Comms output in ${room.label} is above 500 BW and is increasing hostile attraction pressure.
+      </div>
+    ` : ""}
+    ${(room.sandboxSmokeValue ?? 0) > 0 && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Smoke is pooling in ${room.label}. Open passages vent it, while closed Blast Doors contain it. Tactical battles here begin with reduced movement and suppressed ranged fire.
+      </div>
+    ` : ""}
+    ${(room.sandboxSupplyFireRisk ?? false) && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Heat and dense supply load are pushing ${room.label} toward ignition. Smoke and combat instability will intensify if the room stays hot.
+      </div>
+    ` : ""}
+    ${(room.sandboxBurning ?? false) && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        ${room.label} is actively burning. Every turn spent fighting here exposes units to ambient thermal damage, and nearby annexes will start taking integrity loss if the fire keeps building.
+      </div>
+    ` : ""}
+    ${selectedNode?.kind !== "annex" && hasDetailedIntel && ((room.sandboxContainmentMode ?? "normal") !== "normal" || (room.sandboxEmergencyDumpTicks ?? 0) > 0) ? `
+      <div class="theater-copy theater-copy--muted">
+        ${(room.sandboxContainmentMode ?? "normal") === "venting"
+          ? `${room.label} is venting heat through open passages.`
+          : (room.sandboxContainmentMode ?? "normal") === "lockdown"
+            ? `${room.label} is sealed under lockdown. Blast doors are closing to contain the branch.`
+            : `${room.label} is holding normal containment flow.`}
+        ${(room.sandboxEmergencyDumpTicks ?? 0) > 0 ? ` Emergency dump remains active for ${room.sandboxEmergencyDumpTicks} more tick(s), temporarily reducing volatile supply load.` : ""}
+      </div>
+    ` : ""}
+    ${(room.sandboxStructuralStress ?? 0) >= 3 && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Structural stress is building in ${room.label}. Repeated fires will damage the room shell and start stripping integrity from attached annexes.
+      </div>
+    ` : ""}
+    ${(room.sandboxScavengerActivity ?? "quiet") !== "quiet" && hasDetailedIntel ? `
+      <div class="theater-copy theater-copy--muted">
+        Scavenger bands are ${room.sandboxScavengerActivity === "raiding" ? "actively raiding" : "probing"} ${room.label}. Unguarded rooms with rich supply flow are easier for them to skim.
+      </div>
+    ` : ""}
+    ${selectedNode?.kind !== "annex" && room.secured && (room.sandboxSignalPosture ?? "normal") !== "normal" ? `
+      <div class="theater-copy theater-copy--muted">
+        ${room.sandboxSignalPosture === "masked"
+          ? `${room.label} is running masked signature discipline. Hostile attraction falls, but enemy telemetry quality also drops.`
+          : `${room.label} is broadcasting bait signatures. Hostile attraction rises and false route confidence bleeds across the theater.`}
+      </div>
+    ` : ""}
+    ${selectedNode?.kind !== "annex" && room.secured ? `
+      <div class="theater-inline-actions">
+        ${(["normal", "masked", "bait"] as TheaterSignalPosture[]).map((posture) => `
+          <button
+            class="theater-chip-button ${(room.sandboxSignalPosture ?? "normal") === posture ? "theater-chip-button--active" : ""}"
+            type="button"
+            data-theater-room-posture="${room.id}"
+            data-theater-room-posture-mode="${posture}"
+          >
+            ${posture === "normal" ? "Normal Signal" : posture === "masked" ? "Mask Signal" : "Bait Signal"}
+            <small>${posture === "normal" ? "Balanced routing and telemetry." : posture === "masked" ? "Lower signature, weaker enemy dossiers." : "Higher lure, more false intel bleed."}</small>
+          </button>
+        `).join("")}
+      </div>
+    ` : ""}
+    ${selectedNode?.kind !== "annex" && room.secured ? `
+      <div class="theater-inline-actions">
+        ${(["normal", "venting", "lockdown"] as TheaterContainmentMode[]).map((mode) => `
+          <button
+            class="theater-chip-button ${(room.sandboxContainmentMode ?? "normal") === mode ? "theater-chip-button--active" : ""}"
+            type="button"
+            data-theater-room-containment="${room.id}"
+            data-theater-room-containment-mode="${mode}"
+          >
+            ${mode === "normal" ? "Normal Flow" : mode === "venting" ? "Vent Room" : "Lock Down"}
+            <small>${mode === "normal" ? "No forced airflow or seal state." : mode === "venting" ? "Bleed heat and smoke faster. Adjacent blast doors open." : "Seal blast doors and contain spread."}</small>
+          </button>
+        `).join("")}
+      </div>
+      <div class="theater-inline-actions">
+        <button class="theater-action-btn ${((room.sandboxEmergencyDumpTicks ?? 0) > 0 || !room.secured) ? "theater-action-btn--locked" : ""}" type="button" data-theater-room-dump="${room.id}" ${((room.sandboxEmergencyDumpTicks ?? 0) > 0 || !room.secured) ? "disabled" : ""}>
+          Emergency Dump
+          <small>${(room.sandboxEmergencyDumpTicks ?? 0) > 0 ? `Dump active for ${room.sandboxEmergencyDumpTicks} more tick(s).` : "Dump volatile stores to suppress fire risk for a short window."}</small>
+        </button>
       </div>
     ` : ""}
     ${selectedNode?.kind !== "annex" && room.secured && (room.underThreat || room.damaged) ? `
@@ -3558,14 +4564,16 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
       : corePanelTab === "partitions"
         ? partitionsBody
         : selectedNode?.kind === "annex"
-          ? (corePanelTab === "room" ? roomInfoBody : facilityLockedBody)
+          ? (corePanelTab === "tactical" ? tacticalBody : (corePanelTab === "room" ? roomInfoBody : facilityLockedBody))
           : !room.secured
-            ? (corePanelTab === "room" ? roomInfoBody : facilityLockedBody)
+            ? (corePanelTab === "tactical" ? tacticalBody : (corePanelTab === "room" ? roomInfoBody : facilityLockedBody))
             : corePanelTab === "core"
               ? coreBody
               : corePanelTab === "fortifications"
                 ? fortificationBody
-                : roomInfoBody;
+                : corePanelTab === "tactical"
+                  ? tacticalBody
+                  : roomInfoBody;
 
   return renderWindowShell(
     "room",
@@ -3573,6 +4581,12 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
     `${THEATER_WINDOW_DEFS.room.kicker} // ${status.toUpperCase()}`,
     body,
     theater,
+    isTacticalFullscreenMode
+      ? {
+          className: "theater-window--tactical-fullscreen",
+          bodyClassName: "theater-window-body--tactical-fullscreen",
+        }
+      : {},
   );
 }
 
@@ -3618,12 +4632,7 @@ function renderCoreLedgerRows(theater: TheaterNetworkState): string {
     const incomeLabel = formatResourceCost(coreAssignment.incomePerTick ?? {});
     const repairCost = room.damaged ? getTheaterCoreRepairCost(room) : null;
     const repairCostLabel = repairCost ? formatResourceCost(repairCost) : "";
-    const canAffordRepair = repairCost
-      ? gameState.resources.metalScrap >= (repairCost.metalScrap ?? 0)
-        && gameState.resources.wood >= (repairCost.wood ?? 0)
-        && gameState.resources.chaosShards >= (repairCost.chaosShards ?? 0)
-        && gameState.resources.steamComponents >= (repairCost.steamComponents ?? 0)
-      : false;
+    const canAffordRepair = repairCost ? canAffordTheaterCost(gameState, repairCost) : false;
     return `
         <article class="theater-core-ledger-row">
         <div class="theater-core-ledger-row__header">
@@ -3737,16 +4746,17 @@ function renderCoreWindow(theater: TheaterNetworkState): string {
 }
 
 function renderFeedWindow(theater: TheaterNetworkState): string {
+  const latestFeedEntry = theater.recentEvents[0] ?? "Awaiting fresh theater activity.";
   const body = `
     <div class="theater-feed-panel">
-      <div class="theater-feed-log">
+      <div class="theater-feed-log" id="theaterFeedLog" data-theater-feed-log="true">
         ${theater.recentEvents
-          .map((entry) => `<div class="theater-feed-line">${entry}</div>`)
+          .map((entry) => `<div class="theater-feed-line">${escapeHtmlAttribute(entry)}</div>`)
           .join("")}
       </div>
-      <div class="theater-feed-cli" aria-label="QUAC command line placeholder">
+      <div class="theater-feed-cli" aria-label="Latest theater activity">
         <span class="theater-feed-cli-prompt">Q.U.A.C.&gt;</span>
-        <span class="theater-feed-cli-text">theater command line placeholder // future routing and ops macros</span>
+        <span class="theater-feed-cli-text">${escapeHtmlAttribute(latestFeedEntry)}</span>
         <span class="theater-feed-cli-caret">_</span>
       </div>
     </div>
@@ -3754,25 +4764,27 @@ function renderFeedWindow(theater: TheaterNetworkState): string {
   return renderWindowShell("feed", THEATER_WINDOW_DEFS.feed.title, THEATER_WINDOW_DEFS.feed.kicker, body, theater);
 }
 
+function syncTheaterFeedWindowToLatest(): void {
+  const feedLog = document.getElementById("theaterFeedLog");
+  if (feedLog) {
+    feedLog.scrollTop = 0;
+  }
+}
+
 function formatAtlasEconomyIncome(summary: OpsTerminalAtlasEconomySummary): string {
-  const parts = [
-    summary.incomePerTick.metalScrap ? `MS +${summary.incomePerTick.metalScrap}` : null,
-    summary.incomePerTick.wood ? `W +${summary.incomePerTick.wood}` : null,
-    summary.incomePerTick.chaosShards ? `CS +${summary.incomePerTick.chaosShards}` : null,
-    summary.incomePerTick.steamComponents ? `SC +${summary.incomePerTick.steamComponents}` : null,
-  ].filter(Boolean);
+  const parts = getResourceEntries(summary.incomePerTick).map((entry) => `${entry.abbreviation} +${entry.amount}`);
 
   return parts.length > 0 ? parts.join(" / ") : "No passive income";
 }
 
 function renderResourcesWindow(state: GameState, theater: TheaterNetworkState): string {
+  const resourcePool = getTheaterSessionResourceSummary(state);
   const body = `
     <div class="theater-resource-grid">
-      <div class="theater-resource-card"><span>Wad</span><strong>${state.wad ?? 0}</strong></div>
-      <div class="theater-resource-card"><span>Metal Scrap</span><strong>${state.resources.metalScrap}</strong></div>
-      <div class="theater-resource-card"><span>Wood</span><strong>${state.resources.wood}</strong></div>
-      <div class="theater-resource-card"><span>Chaos Shards</span><strong>${state.resources.chaosShards}</strong></div>
-      <div class="theater-resource-card"><span>Steam Components</span><strong>${state.resources.steamComponents}</strong></div>
+      <div class="theater-resource-card"><span>Wad</span><strong>${resourcePool.wad ?? 0}</strong></div>
+      ${getResourceEntries(resourcePool.resources, { includeZero: true }).map((entry) => `
+        <div class="theater-resource-card"><span>${entry.label}</span><strong>${entry.amount}</strong></div>
+      `).join("")}
     </div>
   `;
   return renderWindowShell("resources", THEATER_WINDOW_DEFS.resources.title, THEATER_WINDOW_DEFS.resources.kicker, body, theater);
@@ -3832,12 +4844,9 @@ function renderConsumablesWindow(state: GameState, theater: TheaterNetworkState)
 
 function renderUpkeepWindow(theater: TheaterNetworkState): string {
   const economy = getTheaterUpkeepPerTick(theater);
-  const resourceIncomeSummary = [
-    `MS +${economy.incomePerTick.metalScrap} per tick`,
-    `W +${economy.incomePerTick.wood} per tick`,
-    `CS +${economy.incomePerTick.chaosShards} per tick`,
-    `SC +${economy.incomePerTick.steamComponents} per tick`,
-  ].join(" / ");
+  const resourceIncomeSummary = getResourceEntries(economy.incomePerTick)
+    .map((entry) => `${entry.abbreviation} +${entry.amount} per tick`)
+    .join(" / ") || "No passive income";
   const body = `
     <div class="theater-copy">
       C.O.R.E.s consume Wad for maintenance and can generate passive materials each travel tick inside the active theater.
@@ -3987,6 +4996,68 @@ function renderPendingBattleConfirmation(theater: TheaterNetworkState, destinati
   `;
 }
 
+function renderTheaterExitConfirmModal(): string {
+  if (!theaterExitConfirmState) {
+    return "";
+  }
+
+  const operation = getGameState().operation;
+  const message = isOpsTerminalAtlasOperation(operation)
+    ? "Return to A.T.L.A.S.? Sector layout and room status will be preserved in the ops terminal view."
+    : "Return to A.T.L.A.S.? Your current operation will remain active so you can resume it later from the atlas terminal.";
+
+  return `
+    <div class="game-confirm-modal-backdrop" id="theaterExitConfirmModal">
+      <div class="game-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="theaterExitConfirmTitle">
+        <div class="game-confirm-modal__header">
+          <div class="game-confirm-modal__kicker">THEATER COMMAND // CONFIRM EXIT</div>
+          <h2 class="game-confirm-modal__title" id="theaterExitConfirmTitle">RETURN TO A.T.L.A.S.</h2>
+        </div>
+        <div class="game-confirm-modal__copy">${message}</div>
+        <div class="game-confirm-modal__actions">
+          <button
+            class="game-confirm-modal__btn game-confirm-modal__btn--primary"
+            type="button"
+            id="theaterExitConfirmAcceptBtn"
+            data-theater-exit-confirm-action="accept"
+            data-controller-default-focus="true"
+          >
+            RETURN
+          </button>
+          <button
+            class="game-confirm-modal__btn"
+            type="button"
+            data-theater-exit-confirm-action="cancel"
+          >
+            STAY IN THEATER
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openTheaterExitConfirm(): void {
+  theaterExitConfirmState = "return-atlas";
+  renderTheaterCommandScreen();
+}
+
+function closeTheaterExitConfirm(): void {
+  if (!theaterExitConfirmState) {
+    return;
+  }
+  theaterExitConfirmState = null;
+  renderTheaterCommandScreen();
+}
+
+function resolveTheaterExitConfirm(): void {
+  if (!theaterExitConfirmState) {
+    return;
+  }
+  theaterExitConfirmState = null;
+  returnToAtlasScreen();
+}
+
 function renderCompletionCallout(
   theater: TheaterNetworkState,
   completion: TheaterObjectiveCompletion,
@@ -4001,6 +5072,7 @@ function renderCompletionCallout(
     ? "theater-room-completion-popup--left"
     : "theater-room-completion-popup--right";
   const atlasBackedOperation = isOpsTerminalAtlasOperation(getGameState().operation);
+  const finalFloorReached = theater.definition.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
 
   return `
     <div
@@ -4012,6 +5084,8 @@ function renderCompletionCallout(
       <div class="theater-room-completion-copy">
         ${canDescend
           ? "Floor objective complete. Rewards are already secured. Remain in theater as long as you want, then descend when ready."
+          : finalFloorReached && atlasBackedOperation
+            ? "Campaign complete. Rewards are already secured. Remain in theater as long as you want, then proceed to the ending and postgame when you are ready."
           : atlasBackedOperation
             ? "Operation objective complete. Rewards are already secured. Remain in theater as long as you want, then return to A.T.L.A.S. when ready."
             : "Operation objective complete. Rewards are already secured. Remain in theater as long as you want, then return to Base Camp when ready."}
@@ -4021,10 +5095,9 @@ function renderCompletionCallout(
       </div>
       <div class="theater-completion-reward-grid">
         <div class="theater-completion-reward-item"><span>Wad</span><strong>+${completion.reward.wad}</strong></div>
-        <div class="theater-completion-reward-item"><span>Metal Scrap</span><strong>+${completion.reward.metalScrap}</strong></div>
-        <div class="theater-completion-reward-item"><span>Wood</span><strong>+${completion.reward.wood}</strong></div>
-        <div class="theater-completion-reward-item"><span>Chaos Shards</span><strong>+${completion.reward.chaosShards}</strong></div>
-        <div class="theater-completion-reward-item"><span>Steam Components</span><strong>+${completion.reward.steamComponents}</strong></div>
+        ${getResourceEntries(completion.reward, { includeZero: true }).map((entry) => `
+          <div class="theater-completion-reward-item"><span>${entry.label}</span><strong>+${entry.amount}</strong></div>
+        `).join("")}
       </div>
       <div class="theater-room-completion-actions">
         ${canDescend
@@ -4035,7 +5108,7 @@ function renderCompletionCallout(
           `
           : `
             <button class="theater-room-assault-btn theater-room-assault-btn--primary" type="button" id="theaterCompletionReturnBtn">
-              ${atlasBackedOperation ? "Return To A.T.L.A.S." : "Return To Base Camp"}
+              ${finalFloorReached && atlasBackedOperation ? "Proceed To Ending" : atlasBackedOperation ? "Return To A.T.L.A.S." : "Return To Base Camp"}
             </button>
           `}
       </div>
@@ -4169,6 +5242,14 @@ function renderTheaterStyles(): string {
         animation: theater-link-flow 0.9s linear infinite;
       }
 
+      .theater-link--phantom-route {
+        stroke: rgba(255, 204, 110, 0.68);
+        stroke-width: 2.5px;
+        stroke-dasharray: 4 10;
+        opacity: 0.74;
+        animation: theater-link-false-flow 1.4s linear infinite;
+      }
+
       .theater-link--fogged {
         opacity: 0.28;
       }
@@ -4188,6 +5269,16 @@ function renderTheaterStyles(): string {
 
         to {
           stroke-dashoffset: -64;
+        }
+      }
+
+      @keyframes theater-link-false-flow {
+        from {
+          stroke-dashoffset: 0;
+        }
+
+        to {
+          stroke-dashoffset: -28;
         }
       }
 
@@ -5179,6 +6270,79 @@ function renderTheaterStyles(): string {
         cursor: pointer;
       }
 
+      .theater-chip-button--locked {
+        border-color: rgba(152, 168, 180, 0.22);
+        background: rgba(24, 30, 36, 0.94);
+        color: rgba(188, 198, 206, 0.86);
+      }
+
+      .theater-root--tactical-fullscreen [data-theater-window]:not([data-theater-window="room"]),
+      .theater-root--tactical-fullscreen .theater-window-dock {
+        display: none !important;
+      }
+
+      .theater-window--tactical-fullscreen {
+        position: fixed !important;
+        left: 16px !important;
+        right: 16px !important;
+        top: 16px !important;
+        bottom: 16px !important;
+        width: auto !important;
+        height: auto !important;
+        z-index: 999 !important;
+      }
+
+      .theater-window--tactical-fullscreen .theater-window-side-switch,
+      .theater-window--tactical-fullscreen .theater-window-resize,
+      .theater-window--tactical-fullscreen .theater-window-grip {
+        display: none;
+      }
+
+      .theater-window--tactical-fullscreen .theater-window-header {
+        cursor: default;
+      }
+
+      .theater-window-body--tactical-fullscreen {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .theater-tactical-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .theater-tactical-panel--fullscreen {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      .theater-tactical-map-region {
+        min-height: 0;
+      }
+
+      .theater-tactical-panel--fullscreen .theater-tactical-map-region {
+        flex: 1 1 auto;
+        display: flex;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .map-builder-canvas--theater-fullscreen {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding-right: 6px;
+      }
+
+      .theater-tactical-panel--fullscreen .theater-annex-build-grid,
+      .theater-tactical-panel--fullscreen .theater-core-list {
+        max-height: 172px;
+        overflow: auto;
+      }
+
       .theater-action-btn:disabled,
       .theater-secondary-btn:disabled {
         opacity: 0.45;
@@ -5222,6 +6386,10 @@ function renderTheaterStyles(): string {
         display: grid;
         gap: 10px;
         margin-top: 12px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        align-content: start;
       }
 
       .theater-core-ledger {
@@ -5417,6 +6585,7 @@ function renderTheaterStyles(): string {
         display: flex;
         flex-direction: column;
         min-height: 100%;
+        gap: 12px;
       }
 
       .theater-feed-line {
@@ -6531,6 +7700,147 @@ function syncThreatPings(theater: TheaterNetworkState, mountSignature: string): 
   seenThreatIds = new Set([...seenThreatIds].filter((id) => nextThreatIds.has(id)));
 }
 
+function isSandboxEventEntry(entry: string): boolean {
+  return (
+    entry.includes("Overheat detected in room(")
+    || entry.includes("overheating severity increased")
+    || entry.includes("Route telemetry in room(")
+    || entry.includes("High comms signature in room(")
+    || entry.includes("Signal bloom in room(")
+    || entry.includes("Smoke buildup detected in room(")
+    || entry.includes("Supply fire risk rising in room(")
+    || entry.includes("Ignition in room(")
+    || entry.includes("fire intensity increased")
+    || entry.includes("Structural stress compromised room(")
+    || entry.includes("Structural stress rising in room(")
+    || entry.includes("Annex(") && (entry.includes("lost integrity under room fire") || entry.includes("collapsed from thermal stress"))
+    || entry.includes("Scavenger activity rising in room(")
+    || entry.includes("Scavenger raiders reached room(")
+    || entry.includes("Scavengers skimmed ")
+    || entry.includes("Scavenger bands shifted from room(")
+    || entry.includes("Supply starvation triggered enemy migration")
+    || entry.includes("Enemy presence collapsed inward from room(")
+  );
+}
+
+function getNewRecentEvents(current: string[], previous: string[]): string[] {
+  for (let offset = 0; offset <= current.length; offset += 1) {
+    let matches = true;
+    const comparableLength = Math.min(previous.length, current.length - offset);
+    for (let index = 0; index < comparableLength; index += 1) {
+      if (current[offset + index] !== previous[index]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      return current.slice(0, offset);
+    }
+  }
+  return current.slice(0, Math.max(0, current.length - previous.length));
+}
+
+function syncSandboxPings(theater: TheaterNetworkState, mountSignature: string): void {
+  const sandboxEvents = theater.recentEvents.filter(isSandboxEventEntry);
+  if (lastMountedTheaterSignature !== mountSignature) {
+    sandboxEventSnapshot = [...sandboxEvents];
+    return;
+  }
+
+  const newEvents = getNewRecentEvents(sandboxEvents, sandboxEventSnapshot);
+  newEvents
+    .slice()
+    .reverse()
+    .forEach((entry) => {
+      let title = "System Alert";
+      let type: "info" | "error" = "info";
+      let detail = "Theater conditions have shifted.";
+
+      if (entry.includes("Overheat detected")) {
+        title = "Overheat Detected";
+        type = "error";
+        detail = "Power has pushed the room into an unstable thermal state.";
+      } else if (entry.includes("overheating severity increased")) {
+        title = "Overheat Escalating";
+        type = "error";
+        detail = "Combined power and supply load are intensifying room instability.";
+      } else if (entry.includes("Route telemetry in room(")) {
+        title = "Route Noise";
+        detail = "High power is corrupting route telemetry with phantom pathing.";
+      } else if (entry.includes("High comms signature")) {
+        title = "Enemy Attraction Rising";
+        detail = "High-bandwidth output is drawing more hostile attention.";
+      } else if (entry.includes("Signal bloom in room(")) {
+        title = "Signal Bloom";
+        detail = "False telemetry is leaking out of this room's signature bloom.";
+      } else if (entry.includes("Smoke buildup detected")) {
+        title = "Smoke Buildup";
+        type = "error";
+        detail = "Environmental smoke is spreading through open passages.";
+      } else if (entry.includes("Supply fire risk rising")) {
+        title = "Fire Risk Rising";
+        type = "error";
+        detail = "Heat and dense supply are making the room volatile.";
+      } else if (entry.includes("Ignition in room(")) {
+        title = "Room Fire";
+        type = "error";
+        detail = "The room has ignited. Containment and emergency dumping may limit the spread.";
+      } else if (entry.includes("fire intensity increased")) {
+        title = "Fire Intensifying";
+        type = "error";
+        detail = "Thermal conditions in the room are worsening.";
+      } else if (entry.includes("Structural stress rising")) {
+        title = "Structural Stress";
+        type = "error";
+        detail = "Heat and annex load are starting to compromise the room shell.";
+      } else if (entry.includes("Structural stress compromised room(")) {
+        title = "Room Shell Damaged";
+        type = "error";
+        detail = "The room has taken structural damage from sustained thermal stress.";
+      } else if (entry.includes("lost integrity under room fire")) {
+        title = "Annex Integrity Lost";
+        type = "error";
+        detail = "A child annex is taking heat damage from the burning room.";
+      } else if (entry.includes("collapsed from thermal stress")) {
+        title = "Annex Collapse";
+        type = "error";
+        detail = "A heated annex branch has failed structurally.";
+      } else if (entry.includes("Scavenger activity rising")) {
+        title = "Scavengers Sighted";
+        detail = "Loose bands are moving toward a rich room.";
+      } else if (entry.includes("Scavenger raiders reached")) {
+        title = "Scavenger Raid";
+        type = "error";
+        detail = "Scavengers are now actively stripping the room.";
+      } else if (entry.includes("Scavengers skimmed")) {
+        title = "Resources Skimmed";
+        type = "error";
+        detail = "Ungarded supply flow is being stolen out of the network.";
+      } else if (entry.includes("Scavenger bands shifted")) {
+        title = "Scavenger Migration";
+        detail = "Scavenger bands have relocated toward a richer room.";
+      } else if (entry.includes("Supply starvation triggered enemy migration")) {
+        title = "Enemy Migration";
+        detail = "Starved hostile presence is collapsing inward toward better support.";
+      } else if (entry.includes("Enemy presence collapsed inward")) {
+        title = "Enemy Relocation";
+        detail = "Hostile pressure has been reassigned to a better-supported room.";
+      }
+
+      showSystemPing({
+        type,
+        title,
+        message: entry,
+        detail,
+        channel: "theater-sandbox",
+        replaceChannel: true,
+        durationMs: 4600,
+      });
+    });
+
+  sandboxEventSnapshot = [...sandboxEvents];
+}
+
 function cleanupTheaterMapControls(): void {
   clearTheaterSquadUnitDragSession();
   activeMapPanSession = null;
@@ -6666,6 +7976,7 @@ function returnToBaseCamp(clearOperation: boolean): void {
   cleanupTheaterMapControls();
   travelAnimation = null;
   pendingBattleConfirmation = null;
+  theaterExitConfirmState = null;
   lastMountedTheaterSignature = null;
   hydratedTheaterLayoutSignature = null;
   seenThreatIds = new Set();
@@ -6692,15 +8003,65 @@ function returnToBaseCamp(clearOperation: boolean): void {
   });
 }
 
-function returnToAtlasScreen(): void {
+function teardownTheaterSurfaceState(): void {
   clearTravelTimer();
   stopHoldPositionWait();
   cleanupTheaterMapControls();
   travelAnimation = null;
   pendingBattleConfirmation = null;
+  theaterExitConfirmState = null;
   lastMountedTheaterSignature = null;
   hydratedTheaterLayoutSignature = null;
   seenThreatIds = new Set();
+}
+
+function isFinalAtlasFloorCompletion(operation: GameState["operation"]): boolean {
+  if (!isOpsTerminalAtlasOperation(operation)) {
+    return false;
+  }
+
+  const preparedOperation = ensureOperationHasTheater(operation);
+  const theater = preparedOperation?.theater;
+  return Boolean(
+    theater
+    && theater.objectiveComplete
+    && theater.completion
+    && theater.definition.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
+  );
+}
+
+function maybeShowEndingPlaceholderBeforePostgame(
+  operation: GameState["operation"],
+  onContinue: () => void,
+): void {
+  if (!isFinalAtlasFloorCompletion(operation)) {
+    onContinue();
+    return;
+  }
+
+  if (operation) {
+    syncOpsTerminalOperationState(operation);
+  }
+  unlockCampaignPostgame();
+  if (hasSeenEndingCutscene()) {
+    onContinue();
+    return;
+  }
+
+  teardownTheaterSurfaceState();
+  import("./StoryPlaceholderScreen").then(({ renderStoryPlaceholderScreen }) => {
+    renderStoryPlaceholderScreen({
+      kind: "ending",
+      onContinue: () => {
+        markEndingCutsceneSeen();
+        onContinue();
+      },
+    });
+  });
+}
+
+function finalizeReturnToAtlasScreen(): void {
+  teardownTheaterSurfaceState();
 
   const activeOperation = getGameState().operation;
   const isOpsAtlasSector = isOpsTerminalAtlasOperation(activeOperation);
@@ -6715,6 +8076,29 @@ function returnToAtlasScreen(): void {
     operation: isOpsTerminalAtlasOperation(state.operation) ? null : state.operation,
   }, null));
 
+  import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
+    renderOperationSelectScreen("basecamp");
+  });
+}
+
+function returnToAtlasScreen(): void {
+  maybeShowEndingPlaceholderBeforePostgame(getGameState().operation, () => {
+    finalizeReturnToAtlasScreen();
+  });
+}
+
+function finalizeCompletedAtlasOperationReturn(): void {
+  teardownTheaterSurfaceState();
+  const operation = getGameState().operation;
+  if (operation) {
+    syncOpsTerminalOperationState(operation);
+  }
+  updateGameState((state) => withPendingBattleConfirmationInState({
+    ...clearCurrentTheaterOperationInjuries(state),
+    phase: "field",
+    operation: null,
+    currentBattle: null,
+  }, null));
   import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
     renderOperationSelectScreen("basecamp");
   });
@@ -6738,21 +8122,31 @@ function getAssignedCoopTheaterSquadId(sourceSlot: SessionPlayerSlot | null | un
     ?? null;
 }
 
-function prepareActingCoopTheaterSquad(sourceSlot: SessionPlayerSlot | null | undefined): void {
-  const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
-  if (!assignedSquadId || getGameState().operation?.theater?.selectedSquadId === assignedSquadId) {
-    return;
-  }
-  updateGameState((state) => selectTheaterSquad(state, assignedSquadId).state);
+function getPreparedActiveTheater(state: GameState): TheaterNetworkState | null {
+  return getPreparedTheaterOperation(state)?.theater ?? state.operation?.theater ?? null;
 }
 
-function canSourceSlotResolvePendingBattle(sourceSlot: SessionPlayerSlot | null | undefined): boolean {
+function getPendingBattleConfirmationForSourceSlot(
+  sourceSlot: SessionPlayerSlot | null | undefined,
+): PendingBattleConfirmationState | null {
+  if (!sourceSlot) {
+    return pendingBattleConfirmation
+      ?? clonePendingBattleConfirmation(getGameState().session.pendingTheaterBattleConfirmation);
+  }
+  return clonePendingBattleConfirmation(
+    getPendingTheaterBattleConfirmationForSessionSlot(getGameState(), sourceSlot),
+  );
+}
+
+function canSourceSlotResolvePendingBattle(
+  sourceSlot: SessionPlayerSlot | null | undefined,
+  pendingOverride?: PendingBattleConfirmationState | null,
+): boolean {
   if (!sourceSlot) {
     return true;
   }
   const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
-  const activePending = pendingBattleConfirmation
-    ?? clonePendingBattleConfirmation(getGameState().session.pendingTheaterBattleConfirmation);
+  const activePending = pendingOverride ?? getPendingBattleConfirmationForSourceSlot(sourceSlot);
   return !activePending?.squadId || !assignedSquadId || activePending.squadId === assignedSquadId;
 }
 
@@ -6765,7 +8159,7 @@ function launchTheaterBattle(roomId: string): void {
   cleanupTheaterMapControls();
   const battle = createTheaterBattleState(state, roomId, pending?.squadId ?? null);
   if (!battle) {
-    const theater = state.operation?.theater;
+    const theater = getPreparedActiveTheater(state);
     const initiatingSquad = theater
       ? (
         pending?.squadId
@@ -6784,9 +8178,10 @@ function launchTheaterBattle(roomId: string): void {
   }
 
   updateGameState((state) => {
-    const squadId = battle.theaterBonuses?.squadId ?? state.operation?.theater?.selectedSquadId ?? null;
+    const activeTheater = getPreparedActiveTheater(state);
+    const squadId = battle.theaterBonuses?.squadId ?? activeTheater?.selectedSquadId ?? null;
     const squad = squadId
-      ? state.operation?.theater?.squads.find((entry) => entry.squadId === squadId) ?? null
+      ? activeTheater?.squads.find((entry) => entry.squadId === squadId) ?? null
       : null;
     const nextUnitsById = { ...state.unitsById };
     squad?.unitIds.forEach((unitId) => {
@@ -6881,17 +8276,11 @@ function scheduleHoldPositionTick(): void {
     const holdOutcome = holdPositionInTheater(getGameState(), 1);
     const nextState =
       holdOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(holdOutcome.state.operation)
-        ? {
-            ...holdOutcome.state,
-            ...applyWarmTheaterEconomyToState(
-              {
-                wad: holdOutcome.state.wad,
-                resources: holdOutcome.state.resources,
-              },
-              activeTheater.definition.id,
-              holdOutcome.tickCost,
-            ),
-          }
+        ? applyWarmTheaterEconomyToState(
+            holdOutcome.state,
+            activeTheater.definition.id,
+            holdOutcome.tickCost,
+          )
         : holdOutcome.state;
     updateGameState(() => withPendingBattleConfirmationInState(nextState, null));
 
@@ -6969,17 +8358,11 @@ function handleMoveToNode(nodeId: string): void {
   const moveOutcome = moveToTheaterNode(getGameState(), nodeId);
   const nextState =
     moveOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(moveOutcome.state.operation)
-      ? {
-          ...moveOutcome.state,
-          ...applyWarmTheaterEconomyToState(
-            {
-              wad: moveOutcome.state.wad,
-              resources: moveOutcome.state.resources,
-            },
-            activeTheater.definition.id,
-            moveOutcome.tickCost,
-          ),
-        }
+      ? applyWarmTheaterEconomyToState(
+          moveOutcome.state,
+          activeTheater.definition.id,
+          moveOutcome.tickCost,
+        )
       : moveOutcome.state;
   updateGameState(() => withPendingBattleConfirmationInState(nextState, null));
 
@@ -7072,22 +8455,8 @@ function completeTheaterOperationAndReturn(): void {
   pendingBattleConfirmation = null;
   const operation = getGameState().operation;
   if (isOpsTerminalAtlasOperation(operation)) {
-    clearTravelTimer();
-    stopHoldPositionWait();
-    cleanupTheaterMapControls();
-    travelAnimation = null;
-    lastMountedTheaterSignature = null;
-    hydratedTheaterLayoutSignature = null;
-    seenThreatIds = new Set();
-    syncOpsTerminalOperationState(operation);
-    updateGameState((state) => withPendingBattleConfirmationInState({
-      ...clearCurrentTheaterOperationInjuries(state),
-      phase: "field",
-      operation: null,
-      currentBattle: null,
-    }, null));
-    import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
-      renderOperationSelectScreen("basecamp");
+    maybeShowEndingPlaceholderBeforePostgame(operation, () => {
+      finalizeCompletedAtlasOperationReturn();
     });
     return;
   }
@@ -7192,35 +8561,148 @@ export function applyRemoteCoopTheaterCommand(
 
   switch (command.type) {
     case "move_to_room": {
-      prepareActingCoopTheaterSquad(sourceSlot);
-      handleMoveToRoom(command.roomId);
+      if (!sourceSlot) {
+        return;
+      }
+      const assignedSquadId = getAssignedCoopTheaterSquadId(sourceSlot);
+      const stateWithAssignedSquad = assignedSquadId
+        ? selectTheaterSquadForSessionSlot(state, sourceSlot, assignedSquadId).state
+        : state;
+      const sourceTheater = getPreparedTheaterOperationForSessionSlot(stateWithAssignedSquad, sourceSlot)?.theater ?? null;
+      const fromRoomId = sourceTheater?.currentRoomId ?? command.roomId;
+      const moveOutcome = issueTheaterRoomCommandForSessionSlot(stateWithAssignedSquad, sourceSlot, command.roomId);
+      const scopedTheaterId =
+        getPreparedTheaterOperationForSessionSlot(moveOutcome.state, sourceSlot)?.theater?.definition.id
+        ?? sourceTheater?.definition.id
+        ?? null;
+      let nextState =
+        scopedTheaterId && moveOutcome.tickCost > 0 && isOpsTerminalAtlasOperation(moveOutcome.state.operation)
+          ? applyWarmTheaterEconomyToState(
+              moveOutcome.state,
+              scopedTheaterId,
+              moveOutcome.tickCost,
+            )
+          : moveOutcome.state;
+
+      if (moveOutcome.requiresBattle) {
+        const pending: PendingBattleConfirmationState = {
+          roomId: moveOutcome.roomId,
+          previousRoomId: fromRoomId,
+          roomLabel:
+            getPreparedTheaterOperationForSessionSlot(nextState, sourceSlot)?.theater?.rooms[moveOutcome.roomId]?.label
+            ?? moveOutcome.roomId,
+          squadId: moveOutcome.squadId,
+        };
+        const scopedState = createScopedTheaterStateForSessionSlot(nextState, sourceSlot);
+        if (scopedState) {
+          nextState = mergeScopedTheaterStateForSessionSlot(
+            nextState,
+            withPendingBattleConfirmationInState(scopedState, pending),
+            sourceSlot,
+          );
+        }
+      }
+
+      updateGameState(() => nextState);
+      syncPendingBattleConfirmationFromSession(getGameState());
+      if (document.body.getAttribute("data-screen") === "theater-command") {
+        renderTheaterCommandScreen();
+      }
       return;
     }
     case "confirm_pending_battle": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (!pending || !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
-      launchTheaterBattle(pending.roomId);
+      if (!sourceSlot) {
+        launchTheaterBattle(pending.roomId);
+        return;
+      }
+      const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+      if (!scopedState) {
+        return;
+      }
+      const clearedScopedState = withPendingBattleConfirmationInState(scopedState, null);
+      const battle = createTheaterBattleState(clearedScopedState, pending.roomId, pending.squadId ?? null);
+      if (!battle) {
+        const restoredState = mergeScopedTheaterStateForSessionSlot(getGameState(), clearedScopedState, sourceSlot);
+        updateGameState(() => restoredState);
+        syncPendingBattleConfirmationFromSession(getGameState());
+        if (document.body.getAttribute("data-screen") === "theater-command") {
+          renderTheaterCommandScreen();
+        }
+        return;
+      }
+
+      const activeTheater = getPreparedTheaterOperationForSessionSlot(clearedScopedState, sourceSlot)?.theater ?? null;
+      const squadId = battle.theaterBonuses?.squadId ?? activeTheater?.selectedSquadId ?? null;
+      const squad = squadId
+        ? activeTheater?.squads.find((entry) => entry.squadId === squadId) ?? null
+        : null;
+      const nextUnitsById = { ...clearedScopedState.unitsById };
+      squad?.unitIds.forEach((unitId) => {
+        const unit = nextUnitsById[unitId];
+        if (!unit?.buffs?.length) {
+          return;
+        }
+        nextUnitsById[unitId] = {
+          ...unit,
+          buffs: [],
+        };
+      });
+
+      const launchedScopedState: GameState = {
+        ...clearedScopedState,
+        phase: "battle",
+        unitsById: nextUnitsById,
+        currentBattle: battle,
+        session: {
+          ...clearedScopedState.session,
+          pendingTheaterBattleConfirmation: null,
+        },
+      };
+      const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), launchedScopedState, sourceSlot);
+      updateGameState(() => mergedState);
+      syncPendingBattleConfirmationFromSession(getGameState());
+      if (mergedState.currentBattle?.id === battle.id) {
+        import("./BattleScreen").then(({ renderBattleScreen }) => renderBattleScreen());
+      } else if (document.body.getAttribute("data-screen") === "theater-command") {
+        renderTheaterCommandScreen();
+      }
       return;
     }
     case "fallback_pending_battle": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (!pending || !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
-      pendingBattleConfirmation = null;
-      updateGameState((current) => withPendingBattleConfirmationInState(
-        setTheaterCurrentRoom(current, pending.previousRoomId),
-        null,
-      ));
+      if (!sourceSlot) {
+        pendingBattleConfirmation = null;
+        updateGameState((current) => withPendingBattleConfirmationInState(
+          setTheaterCurrentRoom(current, pending.previousRoomId),
+          null,
+        ));
+      } else {
+        const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+        if (!scopedState) {
+          return;
+        }
+        const nextScopedState = withPendingBattleConfirmationInState(
+          setTheaterCurrentRoom(scopedState, pending.previousRoomId),
+          null,
+        );
+        const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), nextScopedState, sourceSlot);
+        updateGameState(() => mergedState);
+      }
+      syncPendingBattleConfirmationFromSession(getGameState());
       if (document.body.getAttribute("data-screen") === "theater-command") {
         renderTheaterCommandScreen();
       }
       return;
     }
     case "refuse_defense": {
-      const pending = pendingBattleConfirmation;
+      const pending = getPendingBattleConfirmationForSourceSlot(sourceSlot);
       if (pending && !canSourceSlotResolvePendingBattle(sourceSlot)) {
         return;
       }
@@ -7228,12 +8710,26 @@ export function applyRemoteCoopTheaterCommand(
       if (!targetRoomId) {
         return;
       }
-      const outcome = refuseTheaterDefense(getGameState(), targetRoomId);
-      pendingBattleConfirmation = pending?.roomId === targetRoomId ? null : pendingBattleConfirmation;
-      updateGameState(() => withPendingBattleConfirmationInState(
-        outcome.state,
-        pendingBattleConfirmation,
-      ));
+      if (!sourceSlot) {
+        const outcome = refuseTheaterDefense(getGameState(), targetRoomId);
+        pendingBattleConfirmation = pending?.roomId === targetRoomId ? null : pendingBattleConfirmation;
+        updateGameState(() => withPendingBattleConfirmationInState(
+          outcome.state,
+          pendingBattleConfirmation,
+        ));
+      } else {
+        const scopedState = createScopedTheaterStateForSessionSlot(getGameState(), sourceSlot);
+        if (!scopedState) {
+          return;
+        }
+        const outcome = refuseTheaterDefense(scopedState, targetRoomId);
+        const nextScopedState = pending?.roomId === targetRoomId
+          ? withPendingBattleConfirmationInState(outcome.state, null)
+          : outcome.state;
+        const mergedState = mergeScopedTheaterStateForSessionSlot(getGameState(), nextScopedState, sourceSlot);
+        updateGameState(() => mergedState);
+      }
+      syncPendingBattleConfirmationFromSession(getGameState());
       if (document.body.getAttribute("data-screen") === "theater-command") {
         renderTheaterCommandScreen();
       }
@@ -7386,6 +8882,10 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
         }
     }
 
+    if (theaterTacticalFullscreenActive) {
+      setTheaterTacticalFullscreen(false);
+      skipNextTheaterWindowFrameCapture = true;
+    }
     corePanelTab = "room";
     persistTheaterUiLayoutToState();
     updateGameState((state) => setTheaterSelectedNode(state, nodeId));
@@ -7457,15 +8957,37 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
     openTheaterManageUnits();
   });
 
+  document.querySelectorAll<HTMLElement>("[data-theater-manage-unit-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const unitId = button.getAttribute("data-theater-manage-unit-id");
+      if (!unitId) {
+        return;
+      }
+      theaterManageSelectedUnitId = unitId;
+      renderTheaterCommandScreen();
+    });
+  });
+
   document.getElementById("theaterReturnToBaseBtn")?.addEventListener("click", () => {
-    const operation = getGameState().operation;
-    const message = isOpsTerminalAtlasOperation(operation)
-      ? "Return to A.T.L.A.S.? Sector layout and room status will be preserved in the ops terminal view."
-      : "Return to A.T.L.A.S.? Your current operation will remain active so you can resume it later from the atlas terminal.";
-    if (!confirm(message)) {
-      return;
+    openTheaterExitConfirm();
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-exit-confirm-action]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const action = button.getAttribute("data-theater-exit-confirm-action");
+      if (action === "accept") {
+        resolveTheaterExitConfirm();
+      } else {
+        closeTheaterExitConfirm();
+      }
+    });
+  });
+
+  document.getElementById("theaterExitConfirmModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeTheaterExitConfirm();
     }
-    returnToAtlasScreen();
   });
 
   document.querySelectorAll<HTMLElement>("[data-theater-consumable-use]").forEach((button) => {
@@ -7603,6 +9125,10 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
       const nodeId = button.getAttribute("data-theater-select-node");
       if (!nodeId) {
         return;
+      }
+      if (theaterTacticalFullscreenActive) {
+        setTheaterTacticalFullscreen(false);
+        skipNextTheaterWindowFrameCapture = true;
       }
       corePanelTab = "room";
       persistTheaterUiLayoutToState();
@@ -7843,15 +9369,184 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
     });
   });
 
-  document.querySelectorAll<HTMLElement>("[data-theater-core-tab]").forEach((button) => {
+  document.querySelectorAll<HTMLElement>("[data-theater-room-posture]").forEach((button) => {
     button.addEventListener("click", () => {
-      const nextTab = button.getAttribute("data-theater-core-tab");
-      if (nextTab !== "room" && nextTab !== "annexes" && nextTab !== "modules" && nextTab !== "partitions" && nextTab !== "core" && nextTab !== "fortifications") {
+      const roomId = button.getAttribute("data-theater-room-posture");
+      const posture = button.getAttribute("data-theater-room-posture-mode") as TheaterSignalPosture | null;
+      if (!roomId || (posture !== "normal" && posture !== "masked" && posture !== "bait")) {
         return;
+      }
+      const outcome = setTheaterRoomSignalPosture(getGameState(), roomId, posture);
+      updateGameState(() => outcome.state);
+      if (!outcome.success) {
+        alert(outcome.message);
+      }
+      renderTheaterCommandScreen();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-room-containment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const roomId = button.getAttribute("data-theater-room-containment");
+      const mode = button.getAttribute("data-theater-room-containment-mode") as TheaterContainmentMode | null;
+      if (!roomId || (mode !== "normal" && mode !== "venting" && mode !== "lockdown")) {
+        return;
+      }
+      const outcome = setTheaterRoomContainmentMode(getGameState(), roomId, mode);
+      updateGameState(() => outcome.state);
+      if (!outcome.success) {
+        alert(outcome.message);
+      }
+      renderTheaterCommandScreen();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-room-dump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const roomId = button.getAttribute("data-theater-room-dump");
+      if (!roomId) {
+        return;
+      }
+      const outcome = triggerTheaterEmergencyDump(getGameState(), roomId);
+      updateGameState(() => outcome.state);
+      if (!outcome.success) {
+        alert(outcome.message);
+      }
+      renderTheaterCommandScreen();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-core-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const nextTab = button.getAttribute("data-theater-core-tab");
+      if (
+        nextTab !== "room"
+        && nextTab !== "annexes"
+        && nextTab !== "modules"
+        && nextTab !== "partitions"
+        && nextTab !== "core"
+        && nextTab !== "fortifications"
+        && nextTab !== "tactical"
+      ) {
+        return;
+      }
+      if (nextTab !== "tactical" && theaterTacticalFullscreenActive) {
+        setTheaterTacticalFullscreen(false);
+        skipNextTheaterWindowFrameCapture = true;
       }
       corePanelTab = nextTab;
       persistTheaterUiLayoutToState();
       renderTheaterCommandScreen();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-field-asset-select]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const fieldAssetType = button.getAttribute("data-theater-field-asset-select") as FieldAssetType | null;
+      if (!fieldAssetType) {
+        return;
+      }
+      theaterSelectedFieldAssetType = fieldAssetType;
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true });
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-tactical-tile]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const tileKey = button.getAttribute("data-theater-tactical-tile");
+      if (!tileKey) {
+        return;
+      }
+      theaterSelectedTacticalTileKey = tileKey;
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true });
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-tactical-zoom]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const direction = Number.parseInt(button.getAttribute("data-theater-tactical-zoom") ?? "0", 10);
+      if (!Number.isInteger(direction) || direction === 0) {
+        return;
+      }
+      theaterTacticalPreviewZoom = Math.max(0.7, Math.min(1.8, theaterTacticalPreviewZoom + direction * 0.15));
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true });
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-tactical-fullscreen]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const mode = button.getAttribute("data-theater-tactical-fullscreen");
+      if (mode !== "on" && mode !== "off") {
+        return;
+      }
+      setTheaterTacticalFullscreen(mode === "on");
+      persistTheaterUiLayoutToState();
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true, skipWindowFrameCapture: true });
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-place-field-asset]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const roomId = button.getAttribute("data-theater-place-field-asset");
+      const selectedTile = parseTheaterTacticalTileKey(theaterSelectedTacticalTileKey);
+      if (!roomId || !selectedTile) {
+        return;
+      }
+      if (isRemoteCoopOperationsClient()) {
+        showSystemPing({
+          type: "info",
+          title: "Host Action Required",
+          message: "Room tactical fabrication is currently host-only in co-op sessions.",
+          channel: "theater-tactical-fabrication",
+          replaceChannel: true,
+        });
+        return;
+      }
+      const outcome = fabricateFieldAssetInTheaterRoom(
+        getGameState(),
+        roomId,
+        theaterSelectedFieldAssetType,
+        selectedTile.x,
+        selectedTile.y,
+      );
+      updateGameState(() => outcome.state);
+      if (!outcome.success) {
+        alert(outcome.message);
+      }
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true });
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-remove-field-asset]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const assetId = button.getAttribute("data-theater-remove-field-asset");
+      const roomId = button.getAttribute("data-theater-remove-field-asset-room");
+      if (!assetId || !roomId) {
+        return;
+      }
+      if (isRemoteCoopOperationsClient()) {
+        showSystemPing({
+          type: "info",
+          title: "Host Action Required",
+          message: "Room tactical fabrication is currently host-only in co-op sessions.",
+          channel: "theater-tactical-fabrication",
+          replaceChannel: true,
+        });
+        return;
+      }
+      const outcome = removeFieldAssetFromTheaterRoom(getGameState(), roomId, assetId);
+      updateGameState(() => outcome.state);
+      if (!outcome.success) {
+        alert(outcome.message);
+      }
+      rerenderTheaterCommandScreenWithRoomState({ preserveRoomScroll: true });
     });
   });
 
@@ -8141,16 +9836,21 @@ export function renderTheaterCommandScreen(): void {
   if (!root) {
     return;
   }
+  const previousScreen = document.body.getAttribute("data-screen");
   document.body.setAttribute("data-screen", "theater-command");
   cleanupTheaterControllerContext?.();
   cleanupTheaterControllerContext = null;
 
-  captureWindowFramesFromDom();
+  if (!skipNextTheaterWindowFrameCapture) {
+    captureWindowFramesFromDom();
+  }
+  skipNextTheaterWindowFrameCapture = false;
   const currentState = getGameState();
   syncPendingBattleConfirmationFromSession(currentState);
+  const preparedCurrentTheater = getPreparedActiveTheater(currentState);
   const hadCompletedBeforeSync =
-    currentState.operation?.theater
-      ? hasCompletedTheaterObjective(currentState.operation.theater)
+    preparedCurrentTheater
+      ? hasCompletedTheaterObjective(preparedCurrentTheater)
       : false;
   const ensuredOperation = getPreparedTheaterOperation(currentState);
   if (!ensuredOperation?.theater) {
@@ -8164,10 +9864,11 @@ export function renderTheaterCommandScreen(): void {
   }
   hydrateTheaterUiLayoutFromState(mountSignature);
   normalizeAllTheaterWindowFrames();
-  if (lastMountedTheaterSignature !== mountSignature) {
+  if (previousScreen !== "theater-command" || lastMountedTheaterSignature !== mountSignature) {
     mapZoom = clampNumber(getDefaultMapZoom(ensuredOperation.theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
-    if (ensuredOperation.theater.currentRoomId) {
-      focusMapOnRoom(ensuredOperation.theater, ensuredOperation.theater.currentRoomId);
+    const defaultFocusRoomId = getDefaultFocusRoomId(ensuredOperation.theater);
+    if (defaultFocusRoomId) {
+      focusMapOnRoom(ensuredOperation.theater, defaultFocusRoomId);
     } else {
       focusMapOnTheater(ensuredOperation.theater);
     }
@@ -8179,39 +9880,43 @@ export function renderTheaterCommandScreen(): void {
     hasCompletedTheaterObjective(ensuredOperation.theater) &&
     !hadCompletedBeforeSync;
 
-  updateGameState((state) => ({
-    ...state,
-    phase: "operation",
-    wad: shouldGrantCompletionReward ? state.wad + (syncedCompletion?.reward.wad ?? 0) : state.wad,
-    resources: shouldGrantCompletionReward && syncedCompletion
-      ? {
-          metalScrap: state.resources.metalScrap + syncedCompletion.reward.metalScrap,
-          wood: state.resources.wood + syncedCompletion.reward.wood,
-          chaosShards: state.resources.chaosShards + syncedCompletion.reward.chaosShards,
-          steamComponents: state.resources.steamComponents + syncedCompletion.reward.steamComponents,
-        }
-      : state.resources,
-    operation: ensuredOperation,
-  }));
+  updateGameState((state) => {
+    const nextState = shouldGrantCompletionReward && syncedCompletion
+      ? grantSessionResources(state, {
+          wad: syncedCompletion.reward.wad ?? 0,
+          resources: syncedCompletion.reward,
+        })
+      : state;
+    return {
+      ...nextState,
+      phase: "operation",
+      operation: ensuredOperation,
+    };
+  });
 
   const state = getGameState();
   const theater = ensuredOperation.theater;
   syncThreatPings(theater, mountSignature);
+  syncSandboxPings(theater, mountSignature);
   if (lastMountedTheaterSignature !== mountSignature) {
     console.log("[THEATER] screen mounted", theater.definition.id, theater.definition.name);
     lastMountedTheaterSignature = mountSignature;
   }
 
   const completion = theater.completion;
-  const canDescend = ensuredOperation.currentFloorIndex < ensuredOperation.floors.length - 1;
+  const canDescend =
+    ensuredOperation.currentFloorIndex < ensuredOperation.floors.length - 1
+    && theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
   const hasCompletionPopup = Boolean(hasCompletedTheaterObjective(theater) && completion);
+  const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
 
   root.innerHTML = `
     ${renderTheaterStyles()}
-    <div class="theater-root">
+    <div class="theater-root ${isTacticalFullscreenMode ? "theater-root--tactical-fullscreen" : ""}">
       ${renderTheaterMap(theater)}
       ${renderOpsWindow(theater, ensuredOperation.floors.length)}
       ${renderSquadsWindow(theater)}
+      ${renderManageUnitsWindow(theater)}
       ${renderQuestTrackerWindow(theater)}
       ${renderSelectedRoomWindow(theater)}
       ${renderAutomationWindow(theater)}
@@ -8222,10 +9927,12 @@ export function renderTheaterCommandScreen(): void {
       ${renderUpkeepWindow(theater)}
       ${renderNotesWindow(theater)}
       ${renderTheaterWindowDock(theater)}
+      ${renderTheaterExitConfirmModal()}
     </div>
   `;
 
   attachTheaterHandlers(theater);
+  syncTheaterFeedWindowToLatest();
   attachNotesWidgetHandlers(root, {
     onStateChange: () => renderTheaterCommandScreen(),
   });
@@ -8233,20 +9940,36 @@ export function renderTheaterCommandScreen(): void {
     onStateChange: () => renderTheaterCommandScreen(),
     getStickyZoom: () => mapZoom,
   });
+  showTutorialCallout({
+    id: "tutorial_theater_command",
+    title: "Theater Command",
+    message: "Each theater is one live operation space inside the current floor of the campaign.",
+    detail: `Secure the objective, stabilize your routes and squads, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} is the current campaign ending point and unlocks postgame regeneration.`,
+    durationMs: 9000,
+    channel: "tutorial-theater",
+  });
   if (pendingBattleConfirmation) {
     attachPendingBattleHandlers();
   }
   if (hasCompletionPopup) {
     attachCompletionHandlers(canDescend);
   }
+  restoreQueuedTheaterRoomBodyScroll();
   cleanupTheaterControllerContext = registerControllerContext({
     id: "theater-command",
-    defaultMode: "cursor",
+    defaultMode: theaterExitConfirmState ? "focus" : "cursor",
     focusRoot: () => document.querySelector(".theater-root"),
-    defaultFocusSelector: "[data-theater-window='ops'] button, [data-theater-window-restore]",
-    onCursorAction: (action) => handleTheaterControllerAction(action, theater, "cursor"),
-    onLayoutAction: (action) => handleTheaterControllerAction(action, theater, "layout"),
+    focusSelector: theaterExitConfirmState ? "#theaterExitConfirmModal button:not([disabled])" : undefined,
+    defaultFocusSelector: theaterExitConfirmState
+      ? "#theaterExitConfirmAcceptBtn"
+      : "[data-theater-window='ops'] button, [data-theater-window-restore]",
+    onCursorAction: theaterExitConfirmState ? undefined : (action) => handleTheaterControllerAction(action, theater, "cursor"),
+    onLayoutAction: theaterExitConfirmState ? undefined : (action) => handleTheaterControllerAction(action, theater, "layout"),
     onFocusAction: (action) => {
+      if (theaterExitConfirmState && action === "cancel") {
+        closeTheaterExitConfirm();
+        return true;
+      }
       if (action === "cancel") {
         setControllerMode("cursor");
         updateFocusableElements();
