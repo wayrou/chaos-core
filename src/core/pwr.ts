@@ -12,7 +12,7 @@
 import { Unit, UnitId } from "./types";
 import { UnitClassProgress, getClassDefinition, ClassId } from "./classes";
 import { calculateEquipmentStats } from "./equipment";
-import { getAllStarterEquipment, getAllModules, Equipment } from "./equipment";
+import { getAllStarterEquipment, Equipment } from "./equipment";
 
 // ============================================================================
 // TYPES
@@ -24,7 +24,6 @@ export interface PWRCalculationInput {
   unit: Unit;
   unitClassProgress?: UnitClassProgress;
   equipmentById?: Record<string, Equipment>;
-  modulesById?: Record<string, any>;
 }
 
 // ============================================================================
@@ -54,7 +53,7 @@ export const PWR_BANDS: Record<PWRBand, { min: number; max: number; color?: stri
  * - Promotions: 5% (bonus for advanced classes)
  */
 export function calculatePWR(input: PWRCalculationInput): number {
-  const { unit, unitClassProgress, equipmentById, modulesById } = input;
+  const { unit, unitClassProgress, equipmentById } = input;
 
   // Get base stats (from unit.stats or defaults)
   const baseStats = (unit as any).stats || {
@@ -75,8 +74,7 @@ export function calculatePWR(input: PWRCalculationInput): number {
   };
 
   const equip = equipmentById || getAllStarterEquipment();
-  const mods = modulesById || getAllModules();
-  const equipStats = calculateEquipmentStats(loadout, equip, mods);
+  const equipStats = calculateEquipmentStats(loadout, equip);
 
   // 1. Base Stats Component (35% weight)
   // Normalize stats to 0-100 scale
@@ -211,7 +209,6 @@ export function updateUnitPWR(
     unit,
     unitClassProgress,
     equipmentById: state.equipmentById,
-    modulesById: state.modulesById,
   });
 
   // Update unit with new PWR

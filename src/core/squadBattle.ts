@@ -1,6 +1,6 @@
 import { createBattleUnitState, type BattleState, type Tile } from "./battle";
 import { generateCover } from "./coverGenerator";
-import { getAllModules, getAllStarterEquipment, type UnitClass } from "./equipment";
+import { getAllStarterEquipment, type UnitClass } from "./equipment";
 import {
   SESSION_PLAYER_SLOTS,
   type AuthorityRole,
@@ -552,7 +552,6 @@ function createArenaTiles(match: SquadMatchState): Tile[] {
 
 export function createSquadBattleState(match: SquadMatchState, gameState: GameState): BattleState {
   const equipmentById = gameState.equipmentById ?? getAllStarterEquipment();
-  const modulesById = gameState.modulesById ?? getAllModules();
   const connectedSlots = getConnectedSlots(match);
   const units: BattleState["units"] = {};
   const friendlyUnitIds: string[] = [];
@@ -579,7 +578,6 @@ export function createSquadBattleState(match: SquadMatchState, gameState: GameSt
           stable: gameState.stable,
         },
         equipmentById,
-        modulesById,
       );
 
       units[battleUnit.id] = battleUnit;

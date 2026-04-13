@@ -6,6 +6,7 @@ import { Quest } from "./types";
 import { updateGameState, getGameState } from "../state/gameStore";
 import { addCardsToLibrary } from "../core/gearWorkbench";
 import { learnRecipe } from "../core/crafting";
+import { grantGearRewardSpecsToState, type GearRewardSpec } from "../core/gearRewards";
 import { grantKeyItemToState, isRegisteredKeyItem } from "../core/keyItems";
 import { grantSessionResources } from "../core/session";
 import type { GameState } from "../core/types";
@@ -65,8 +66,13 @@ export function applyQuestRewardsToState(state: GameState, quest: Quest): GameSt
     });
   }
 
-  if (rewards.equipment && rewards.equipment.length > 0) {
-    console.log(`[QUEST] Would grant equipment: ${rewards.equipment.join(", ")}`);
+  const gearRewardSpecs: GearRewardSpec[] = [
+    ...(rewards.equipment ?? []),
+    ...(rewards.gearRewards ?? []),
+  ];
+
+  if (gearRewardSpecs.length > 0) {
+    nextState = grantGearRewardSpecsToState(nextState, gearRewardSpecs);
   }
 
   if (rewards.unitRecruit) {
@@ -128,9 +134,19 @@ export function grantQuestRewards(quest: Quest): void {
   }
 
   // Grant equipment
-  if (rewards.equipment && rewards.equipment.length > 0) {
-    // TODO: Integrate with equipment system
-    console.log(`[QUEST] Would grant equipment: ${rewards.equipment.join(", ")}`);
+  const gearRewardSpecs: GearRewardSpec[] = [
+    ...(rewards.equipment ?? []),
+    ...(rewards.gearRewards ?? []),
+  ];
+
+  if (gearRewardSpecs.length > 0) {
+    updateGameState((s) => applyQuestRewardsToState(s, {
+      ...quest,
+      rewards: {
+        equipment: rewards.equipment,
+        gearRewards: rewards.gearRewards,
+      },
+    }));
   }
 
   // Grant recipes

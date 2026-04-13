@@ -5,7 +5,7 @@
 
 import { GameState } from "./types";
 import { BattleState, BattleUnitState, createGrid, createBattleUnitState, calculateMaxUnitsPerSide } from "./battle";
-import { getAllStarterEquipment, getAllModules } from "./equipment";
+import { getAllStarterEquipment } from "./equipment";
 import { generateStructuredBoardLayout } from "./terrainGeneration";
 import { computeLoadPenaltyFlags } from "./inventory";
 import { triggerBattleStart } from "./fieldModBattleIntegration";
@@ -164,7 +164,6 @@ export function createDefenseBattle(
 
   // Equipment data
   const equipmentById = (gameState as any).equipmentById || getAllStarterEquipment();
-  const modulesById = (gameState as any).modulesById || getAllModules();
 
   const units: Record<string, BattleUnitState> = {};
 
@@ -180,8 +179,7 @@ export function createDefenseBattle(
         pos: null,
         gearSlots: (gameState as any).gearSlots ?? {},
       },
-      equipmentById,
-      modulesById
+      equipmentById
     );
   });
 
@@ -228,8 +226,7 @@ export function createDefenseBattle(
           isEnemy: true,
           pos: { x: gridWidth - 1, y: Math.min(yPos, gridHeight - 1) },
         },
-        equipmentById,
-        modulesById
+        equipmentById
       );
     }
   }

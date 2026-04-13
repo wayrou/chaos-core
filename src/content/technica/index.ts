@@ -6,9 +6,11 @@ import { DEFAULT_FACTIONS } from "./defaultFactions";
 import type {
   DisabledTechnicaContent,
   ImportedCard,
+  ImportedChassis,
   ImportedChatterEntry,
   ImportedClassDefinition,
   ImportedCodexEntry,
+  ImportedDoctrine,
   ImportedDialogue,
   ImportedFieldEnemyDefinition,
   ImportedFieldMod,
@@ -51,6 +53,8 @@ const importedMailEntries = new Map<string, ImportedMailEntry>();
 const importedChatterEntries = new Map<string, ImportedChatterEntry>();
 const importedKeyItems = new Map<string, ImportedKeyItem>();
 const importedFactions = new Map<string, ImportedFaction>();
+const importedChassis = new Map<string, ImportedChassis>();
+const importedDoctrines = new Map<string, ImportedDoctrine>();
 const importedItems = new Map<string, ImportedItem>();
 const importedFieldEnemies = new Map<string, ImportedFieldEnemyDefinition>();
 const importedNpcs = new Map<string, ImportedNpcTemplate>();
@@ -70,6 +74,8 @@ const disabledContentIds = new Map<TechnicaContentType, Set<string>>([
   ["quest", new Set()],
   ["key_item", new Set()],
   ["faction", new Set()],
+  ["chassis", new Set()],
+  ["doctrine", new Set()],
   ["map", new Set()],
   ["field_enemy", new Set()],
   ["npc", new Set()],
@@ -90,6 +96,8 @@ const GENERATED_RUNTIME_FILE_EXTENSIONS: Record<TechnicaContentType, string> = {
   quest: ".quest.json",
   key_item: ".key_item.json",
   faction: ".faction.json",
+  chassis: ".chassis.json",
+  doctrine: ".doctrine.json",
   map: ".fieldmap.json",
   field_enemy: ".field_enemy.json",
   npc: ".npc.json",
@@ -110,6 +118,8 @@ const HYDRATABLE_GENERATED_CONTENT_TYPES: TechnicaContentType[] = [
   "quest",
   "key_item",
   "faction",
+  "chassis",
+  "doctrine",
   "map",
   "field_enemy",
   "npc",
@@ -367,6 +377,22 @@ if (typeof (import.meta as ImportMetaWithOptionalGlob).glob === "function") {
   );
 
   loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedChassis>>("./generated/chassis/*.chassis.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedChassis>
+    >,
+    registerImportedChassis
+  );
+
+  loadGeneratedRegistry(
+    import.meta.glob<JsonModule<ImportedDoctrine>>("./generated/doctrine/*.doctrine.json", { eager: true }) as Record<
+      string,
+      JsonModule<ImportedDoctrine>
+    >,
+    registerImportedDoctrine
+  );
+
+  loadGeneratedRegistry(
     import.meta.glob<JsonModule<ImportedKeyItem>>("./generated/key_item/*.key_item.json", { eager: true }) as Record<
       string,
       JsonModule<ImportedKeyItem>
@@ -556,6 +582,32 @@ export function getImportedFaction(factionId: string): ImportedFaction | null {
 
 export function getAllImportedFactions(): ImportedFaction[] {
   return Array.from(importedFactions.values());
+}
+
+export function registerImportedChassis(chassis: ImportedChassis): void {
+  importedChassis.set(chassis.id, chassis);
+  recordTechnicaRegistrySnapshot("chassis", chassis.id, chassis);
+}
+
+export function getImportedChassis(chassisId: string): ImportedChassis | null {
+  return importedChassis.get(chassisId) || null;
+}
+
+export function getAllImportedChassis(): ImportedChassis[] {
+  return Array.from(importedChassis.values()).filter((entry) => !isTechnicaContentDisabled("chassis", entry.id));
+}
+
+export function registerImportedDoctrine(doctrine: ImportedDoctrine): void {
+  importedDoctrines.set(doctrine.id, doctrine);
+  recordTechnicaRegistrySnapshot("doctrine", doctrine.id, doctrine);
+}
+
+export function getImportedDoctrine(doctrineId: string): ImportedDoctrine | null {
+  return importedDoctrines.get(doctrineId) || null;
+}
+
+export function getAllImportedDoctrines(): ImportedDoctrine[] {
+  return Array.from(importedDoctrines.values()).filter((entry) => !isTechnicaContentDisabled("doctrine", entry.id));
 }
 
 export function registerImportedItem(item: ImportedItem): void {
@@ -768,6 +820,10 @@ function getTechnicaRegistry(contentType: TechnicaContentType): Map<string, unkn
       return importedKeyItems;
     case "faction":
       return importedFactions;
+    case "chassis":
+      return importedChassis;
+    case "doctrine":
+      return importedDoctrines;
     case "field_enemy":
       return importedFieldEnemies;
     case "npc":

@@ -5,6 +5,12 @@ import {
   completeOperationRun,
 } from "../../core/campaignManager";
 import {
+  CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
+  hasSeenEndingCutscene,
+  markEndingCutsceneSeen,
+  unlockCampaignPostgame,
+} from "../../core/campaign";
+import {
   applyWarmTheaterEconomyToState,
   getOpsTerminalAtlasOtherWarmEconomySummaries,
   isOpsTerminalAtlasOperation,
@@ -291,12 +297,11 @@ const HOLD_POSITION_TICK_MS = 5000;
 const THEATER_MARGIN_X = 14;
 const THEATER_TOP_SAFE = 36;
 const THEATER_BOTTOM_SAFE = 20;
-const THEATER_COMMAND_LAYOUT_VERSION = 6;
+const THEATER_COMMAND_LAYOUT_VERSION = 7;
 const THEATER_MAP_PAN_MARGIN_X = 140;
 const THEATER_MAP_PAN_MARGIN_Y = 120;
 const THEATER_MAP_OVERSCROLL_X = 2400;
 const THEATER_MAP_OVERSCROLL_Y = 2200;
-const BETA_CAMPAIGN_MAX_FLOOR = 6;
 const THEATER_CORE_POWER_DISPLAY_THRESHOLD = 50;
 const THEATER_ROUTE_GOOD_THRESHOLD = 25;
 const THEATER_ROUTE_STRONG_THRESHOLD = 100;
@@ -1173,8 +1178,8 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
   const viewportWidth = window.innerWidth || 1920;
   const viewportHeight = window.innerHeight || 1080;
   const topY = THEATER_TOP_SAFE;
-  const opsWidth = clampNumber(Math.round(viewportWidth * 0.132), 280, 460);
-  const opsHeight = clampNumber(Math.round(viewportHeight * 0.39), 340, 560);
+  const opsWidth = clampNumber(Math.round(viewportWidth * 0.132), 280, 440);
+  const opsHeight = clampNumber(Math.round(viewportHeight * 0.285), 250, 360);
   const manageWidth = clampNumber(Math.round(viewportWidth * 0.325), 620, 860);
   const manageHeight = clampNumber(Math.round(viewportHeight * 0.41), 360, 560);
   const feedWidth = clampNumber(Math.round(viewportWidth * 0.165), 420, 580);
@@ -1189,7 +1194,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
   const resourcesHeight = clampNumber(Math.round(viewportHeight * 0.258), 250, 360);
   const coreWidth = clampNumber(Math.round(viewportWidth * 0.169), 420, 590);
   const coreHeight = clampNumber(Math.round(viewportHeight * 0.188), 240, 290);
-  const opsX = THEATER_MARGIN_X;
+  const opsX = 0;
   const feedX = clampNumber(
     opsX + opsWidth + 14,
     THEATER_MARGIN_X,
@@ -1210,11 +1215,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
     THEATER_TOP_SAFE,
     Math.max(THEATER_TOP_SAFE, viewportHeight - roomHeight - THEATER_BOTTOM_SAFE),
   );
-  const opsY = clampNumber(
-    viewportHeight - opsHeight - THEATER_BOTTOM_SAFE,
-    THEATER_TOP_SAFE,
-    Math.max(THEATER_TOP_SAFE, viewportHeight - opsHeight - THEATER_BOTTOM_SAFE),
-  );
+  const opsY = Math.max(THEATER_TOP_SAFE, viewportHeight - opsHeight);
   const resourcesY = clampNumber(
     topY + upkeepHeight + 12,
     THEATER_TOP_SAFE,
@@ -2711,7 +2712,7 @@ function renderTheaterMap(theater: TheaterNetworkState): string {
   const canDescend = Boolean(
     operation
     && operation.currentFloorIndex < operation.floors.length - 1
-    && theater.definition.floorOrdinal < BETA_CAMPAIGN_MAX_FLOOR,
+    && theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
   );
   return `
     <section class="theater-map-wrap" id="theaterMapWrap">
@@ -3360,9 +3361,11 @@ function renderSquadsWindow(theater: TheaterNetworkState): string {
 }
 
 function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): string {
-  const betaScopeCopy = theater.definition.floorOrdinal <= BETA_CAMPAIGN_MAX_FLOOR
-    ? "Within the current beta balance target: Regions 1-2 // Floors 01-06."
-    : "Beyond the current beta balance target. This floor remains visible for future campaign work.";
+  const campaignScopeCopy = theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL
+    ? `Campaign progression active // Final floor is ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`
+    : theater.objectiveComplete
+      ? "Final floor complete // postgame floor regeneration is available when you return to A.T.L.A.S."
+      : `Final floor reached // clear this sector objective to finish the campaign on Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`;
   const actionBlock = theater.objectiveComplete
     ? `
       <div class="theater-copy theater-copy--muted">
@@ -3382,7 +3385,7 @@ function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): str
 
   const body = `
     <div class="theater-copy"><strong>Objective:</strong> ${theater.definition.objective}</div>
-    <div class="theater-beta-scope">${betaScopeCopy}</div>
+    <div class="theater-beta-scope">${campaignScopeCopy}</div>
     <div class="theater-info-grid theater-info-grid--two">
       <div class="theater-stat-card"><span>Operation</span><strong>${theater.definition.operationId.toUpperCase()}</strong></div>
       <div class="theater-stat-card"><span>Theater</span><strong>${theater.definition.name}</strong></div>
@@ -5069,7 +5072,7 @@ function renderCompletionCallout(
     ? "theater-room-completion-popup--left"
     : "theater-room-completion-popup--right";
   const atlasBackedOperation = isOpsTerminalAtlasOperation(getGameState().operation);
-  const betaFloorCapReached = theater.definition.floorOrdinal >= BETA_CAMPAIGN_MAX_FLOOR;
+  const finalFloorReached = theater.definition.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
 
   return `
     <div
@@ -5081,8 +5084,8 @@ function renderCompletionCallout(
       <div class="theater-room-completion-copy">
         ${canDescend
           ? "Floor objective complete. Rewards are already secured. Remain in theater as long as you want, then descend when ready."
-          : betaFloorCapReached
-            ? "Floor objective complete. Rewards are already secured. Beta support currently stops at Floor 06, so return to A.T.L.A.S. when you are ready."
+          : finalFloorReached && atlasBackedOperation
+            ? "Campaign complete. Rewards are already secured. Remain in theater as long as you want, then proceed to the ending and postgame when you are ready."
           : atlasBackedOperation
             ? "Operation objective complete. Rewards are already secured. Remain in theater as long as you want, then return to A.T.L.A.S. when ready."
             : "Operation objective complete. Rewards are already secured. Remain in theater as long as you want, then return to Base Camp when ready."}
@@ -5105,7 +5108,7 @@ function renderCompletionCallout(
           `
           : `
             <button class="theater-room-assault-btn theater-room-assault-btn--primary" type="button" id="theaterCompletionReturnBtn">
-              ${atlasBackedOperation ? "Return To A.T.L.A.S." : "Return To Base Camp"}
+              ${finalFloorReached && atlasBackedOperation ? "Proceed To Ending" : atlasBackedOperation ? "Return To A.T.L.A.S." : "Return To Base Camp"}
             </button>
           `}
       </div>
@@ -8000,7 +8003,7 @@ function returnToBaseCamp(clearOperation: boolean): void {
   });
 }
 
-function returnToAtlasScreen(): void {
+function teardownTheaterSurfaceState(): void {
   clearTravelTimer();
   stopHoldPositionWait();
   cleanupTheaterMapControls();
@@ -8010,6 +8013,55 @@ function returnToAtlasScreen(): void {
   lastMountedTheaterSignature = null;
   hydratedTheaterLayoutSignature = null;
   seenThreatIds = new Set();
+}
+
+function isFinalAtlasFloorCompletion(operation: GameState["operation"]): boolean {
+  if (!isOpsTerminalAtlasOperation(operation)) {
+    return false;
+  }
+
+  const preparedOperation = ensureOperationHasTheater(operation);
+  const theater = preparedOperation?.theater;
+  return Boolean(
+    theater
+    && theater.objectiveComplete
+    && theater.completion
+    && theater.definition.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
+  );
+}
+
+function maybeShowEndingPlaceholderBeforePostgame(
+  operation: GameState["operation"],
+  onContinue: () => void,
+): void {
+  if (!isFinalAtlasFloorCompletion(operation)) {
+    onContinue();
+    return;
+  }
+
+  if (operation) {
+    syncOpsTerminalOperationState(operation);
+  }
+  unlockCampaignPostgame();
+  if (hasSeenEndingCutscene()) {
+    onContinue();
+    return;
+  }
+
+  teardownTheaterSurfaceState();
+  import("./StoryPlaceholderScreen").then(({ renderStoryPlaceholderScreen }) => {
+    renderStoryPlaceholderScreen({
+      kind: "ending",
+      onContinue: () => {
+        markEndingCutsceneSeen();
+        onContinue();
+      },
+    });
+  });
+}
+
+function finalizeReturnToAtlasScreen(): void {
+  teardownTheaterSurfaceState();
 
   const activeOperation = getGameState().operation;
   const isOpsAtlasSector = isOpsTerminalAtlasOperation(activeOperation);
@@ -8024,6 +8076,29 @@ function returnToAtlasScreen(): void {
     operation: isOpsTerminalAtlasOperation(state.operation) ? null : state.operation,
   }, null));
 
+  import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
+    renderOperationSelectScreen("basecamp");
+  });
+}
+
+function returnToAtlasScreen(): void {
+  maybeShowEndingPlaceholderBeforePostgame(getGameState().operation, () => {
+    finalizeReturnToAtlasScreen();
+  });
+}
+
+function finalizeCompletedAtlasOperationReturn(): void {
+  teardownTheaterSurfaceState();
+  const operation = getGameState().operation;
+  if (operation) {
+    syncOpsTerminalOperationState(operation);
+  }
+  updateGameState((state) => withPendingBattleConfirmationInState({
+    ...clearCurrentTheaterOperationInjuries(state),
+    phase: "field",
+    operation: null,
+    currentBattle: null,
+  }, null));
   import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
     renderOperationSelectScreen("basecamp");
   });
@@ -8380,22 +8455,8 @@ function completeTheaterOperationAndReturn(): void {
   pendingBattleConfirmation = null;
   const operation = getGameState().operation;
   if (isOpsTerminalAtlasOperation(operation)) {
-    clearTravelTimer();
-    stopHoldPositionWait();
-    cleanupTheaterMapControls();
-    travelAnimation = null;
-    lastMountedTheaterSignature = null;
-    hydratedTheaterLayoutSignature = null;
-    seenThreatIds = new Set();
-    syncOpsTerminalOperationState(operation);
-    updateGameState((state) => withPendingBattleConfirmationInState({
-      ...clearCurrentTheaterOperationInjuries(state),
-      phase: "field",
-      operation: null,
-      currentBattle: null,
-    }, null));
-    import("./OperationSelectScreen").then(({ renderOperationSelectScreen }) => {
-      renderOperationSelectScreen("basecamp");
+    maybeShowEndingPlaceholderBeforePostgame(operation, () => {
+      finalizeCompletedAtlasOperationReturn();
     });
     return;
   }
@@ -9845,7 +9906,7 @@ export function renderTheaterCommandScreen(): void {
   const completion = theater.completion;
   const canDescend =
     ensuredOperation.currentFloorIndex < ensuredOperation.floors.length - 1
-    && theater.definition.floorOrdinal < BETA_CAMPAIGN_MAX_FLOOR;
+    && theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
   const hasCompletionPopup = Boolean(hasCompletedTheaterObjective(theater) && completion);
   const isTacticalFullscreenMode = theaterTacticalFullscreenActive && corePanelTab === "tactical";
 
@@ -9883,7 +9944,7 @@ export function renderTheaterCommandScreen(): void {
     id: "tutorial_theater_command",
     title: "Theater Command",
     message: "Each theater is one live operation space inside the current floor of the campaign.",
-    detail: "Secure the objective, stabilize your routes and squads, then descend. Beta balance is currently centered on Regions 1-2 and Floors 01-06.",
+    detail: `Secure the objective, stabilize your routes and squads, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} is the current campaign ending point and unlocks postgame regeneration.`,
     durationMs: 9000,
     channel: "tutorial-theater",
   });

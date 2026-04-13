@@ -55,6 +55,8 @@ export interface BattleBoardTraversalVisual {
 
 export interface BattleBoardUnitVisual extends BattleBoardPoint {
   id: string;
+  baseUnitId?: string;
+  classId?: string;
   name: string;
   portraitPath: string;
   isEnemy: boolean;

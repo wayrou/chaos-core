@@ -384,7 +384,7 @@ export async function renderMainMenu(): Promise<void> {
 
               <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
                 <span class="btn-icon">⚔</span>
-                <span class="btn-text">NEW OPERATION</span>
+                <span class="btn-text">NEW GAME</span>
               </button>
 
               ${saves.length > 0 ? `
@@ -480,11 +480,11 @@ export async function renderMainMenu(): Promise<void> {
       <div class="mainmenu-modal" id="newOpConfirmModal" style="display: none;">
         <div class="mainmenu-modal-content mainmenu-modal-content--confirm">
           <div class="mainmenu-modal-header">
-            <span class="modal-title">NEW OPERATION</span>
-            <button class="modal-close" id="closeNewOpConfirmModal" type="button" aria-label="Close new operation confirmation">âœ•</button>
+            <span class="modal-title">NEW GAME</span>
+            <button class="modal-close" id="closeNewOpConfirmModal" type="button" aria-label="Close new game confirmation">âœ•</button>
           </div>
           <div class="mainmenu-modal-body">
-            <p class="mainmenu-confirm-copy">Starting a new operation will not delete your existing saves. Continue?</p>
+            <p class="mainmenu-confirm-copy">Starting a new game will not delete your existing saves. Continue?</p>
             <div class="mainmenu-confirm-actions">
               <button class="mainmenu-btn mainmenu-btn-primary" id="confirmNewOpContinueBtn" type="button" data-controller-default-focus="true">
                 <span class="btn-text">OK</span>
@@ -637,8 +637,8 @@ function confirmNewOperationStart(): Promise<boolean> {
 
   if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
     return showConfirmDialog({
-      title: "START NEW OPERATION",
-      message: "Starting a new operation will not delete your existing saves. Continue?",
+      title: "START NEW GAME",
+      message: "Starting a new game will not delete your existing saves. Continue?",
       confirmLabel: "CONTINUE",
       cancelLabel: "CANCEL",
       mount: () => document.querySelector(".mainmenu-root"),
@@ -777,7 +777,7 @@ function buildMainMenuButtonTiles(
       </div>
       <button class="mainmenu-btn ${hasContinue ? "mainmenu-btn-secondary" : "mainmenu-btn-primary"} all-nodes-node-btn all-nodes-node-btn--primary" data-action="new-op" type="button">
         <span class="btn-icon node-icon">⚔</span>
-        <span class="btn-text node-label">NEW OPERATION</span>
+        <span class="btn-text node-label">NEW GAME</span>
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="new-op" aria-label="Resize new operation"></button>
     </div>
@@ -1583,7 +1583,13 @@ function attachMenuListeners(saves: SaveInfo[]): void {
 
       enableAutosave(() => getGameState());
       teardownMainMenuWorkspace();
-      renderFieldScreen("base_camp");
+      const { renderStoryPlaceholderScreen } = await import("./StoryPlaceholderScreen");
+      renderStoryPlaceholderScreen({
+        kind: "opening",
+        onContinue: () => {
+          renderFieldScreen("base_camp");
+        },
+      });
 
       newOpBtn.disabled = false;
       newOpBtn.innerHTML = originalHtml;

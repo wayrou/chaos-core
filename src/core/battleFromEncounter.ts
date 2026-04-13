@@ -86,8 +86,7 @@ export function createBattleFromEncounter(
           pos: null, // Will be placed in placement phase
           gearSlots: (gameState as any).gearSlots ?? {},
         },
-        (gameState as any).equipmentById,
-        (gameState as any).modulesById
+        (gameState as any).equipmentById
       );
 
       if (activeRunMealBuff) {
@@ -155,8 +154,7 @@ export function createBattleFromEncounter(
             isEnemy: true,
             pos,
           },
-          (gameState as any).equipmentById,
-          (gameState as any).modulesById
+          (gameState as any).equipmentById
         );
       }
       return;
@@ -205,8 +203,7 @@ export function createBattleFromEncounter(
           isEnemy: true,
           pos: pos,
         },
-        (gameState as any).equipmentById,
-        (gameState as any).modulesById
+        (gameState as any).equipmentById
       );
     }
   });

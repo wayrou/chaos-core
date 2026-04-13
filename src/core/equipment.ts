@@ -1,6 +1,6 @@
 // ============================================================================
 // EQUIPMENT SYSTEM - Core Types and Data
-// Headline 11b & 11c: Equipment, Cards, Modules, Deck Building
+// Headline 11b & 11c: Equipment, Cards, Deck Building
 // ============================================================================
 
 import { GameState } from "./types";
@@ -139,24 +139,6 @@ export interface EquipmentCard {
 }
 
 // ----------------------------------------------------------------------------
-// MODULE DEFINITION (Weapon upgrades)
-// ----------------------------------------------------------------------------
-
-export interface Module {
-  id: string;
-  name: string;
-  description: string;
-  cardsGranted: string[];
-  statBonus?: {
-    atk?: number;
-    def?: number;
-    agi?: number;
-    acc?: number;
-    hp?: number;
-  };
-}
-
-// ----------------------------------------------------------------------------
 // EQUIPMENT DEFINITIONS
 // ----------------------------------------------------------------------------
 
@@ -193,8 +175,6 @@ export interface WeaponEquipment {
   heatProfile?: WeaponHeatProfile;
   ammoProfile?: WeaponAmmoProfile;
   cardsGranted: string[];
-  moduleSlots: number;
-  attachedModules: string[];
   clutchToggle?: string;
   doubleClutch?: string;
   wear: number;
@@ -285,7 +265,6 @@ export { CLASS_CARDS } from "../data/cards/classCards";
 export { EQUIPMENT_CARDS } from "../data/cards/equipmentCards";
 export { STARTER_WEAPONS } from "../data/weapons";
 export { STARTER_HELMETS, STARTER_CHESTPIECES, STARTER_ACCESSORIES } from "../data/armor";
-export { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 
 // Import them locally as well so the helper functions below can still use them
 import { CORE_CARDS } from "../data/cards/coreCards";
@@ -294,7 +273,6 @@ import { CLASS_CARDS } from "../data/cards/classCards";
 import { EQUIPMENT_CARDS } from "../data/cards/equipmentCards";
 import { STARTER_WEAPONS } from "../data/weapons";
 import { STARTER_HELMETS, STARTER_CHESTPIECES, STARTER_ACCESSORIES } from "../data/armor";
-import { STARTER_MODULES, MODULE_CARDS } from "../data/modules";
 
 // ----------------------------------------------------------------------------
 // HELPER FUNCTIONS
@@ -351,14 +329,15 @@ function toLibraryEquipmentCard(card: LibraryCard): EquipmentCard {
 
 function toRuntimeEquipment(gear: ImportedGear): Equipment {
   if (gear.slot === "weapon") {
+    const runtimeGear = { ...gear } as ImportedGear & Record<string, unknown>;
+    delete runtimeGear.moduleSlots;
+    delete runtimeGear.attachedModules;
     return {
-      ...gear,
+      ...runtimeGear,
       slot: "weapon",
       weaponType: gear.weaponType ?? "sword",
       isMechanical: gear.isMechanical ?? false,
       cardsGranted: gear.cardsGranted ?? [],
-      moduleSlots: gear.moduleSlots ?? 0,
-      attachedModules: gear.attachedModules ?? [],
       wear: gear.wear ?? 0
     };
   }
@@ -401,9 +380,6 @@ export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   for (const c of EQUIPMENT_CARDS) {
     if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
   }
-  for (const c of MODULE_CARDS) {
-    if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
-  }
   for (const unitClass of Object.keys(CLASS_CARDS) as UnitClass[]) {
     for (const c of CLASS_CARDS[unitClass]) {
       if (!isTechnicaContentDisabled("card", c.id)) all[c.id] = c;
@@ -429,13 +405,6 @@ function getClassCardsForUnitClass(unitClass: UnitClass): EquipmentCard[] {
 
   return [...builtInCards, ...importedCards];
 }
-
-export function getAllModules(): Record<string, Module> {
-  const all: Record<string, Module> = {};
-  for (const m of STARTER_MODULES) all[m.id] = m;
-  return all;
-}
-
 function getEquipmentDeckCards(
   equipment: Equipment,
   gearSlots?: GearSlotData
@@ -458,7 +427,6 @@ export function buildDeckFromLoadout(
   unitClass: UnitClass,
   loadout: UnitLoadout,
   equipmentById: Record<string, Equipment>,
-  modulesById: Record<string, Module>,
   gearSlotsById?: Record<string, GearSlotData>
 ): string[] {
   const deck: string[] = [];
@@ -498,19 +466,6 @@ export function buildDeckFromLoadout(
       if (isTechnicaContentDisabled("card", cardId)) continue;
       deck.push(cardId);
     }
-
-    if (equip.slot === "weapon") {
-      const weapon = equip as WeaponEquipment;
-      for (const modId of weapon.attachedModules) {
-        const mod = modulesById[modId];
-        if (mod) {
-          for (const cardId of mod.cardsGranted) {
-            if (isTechnicaContentDisabled("card", cardId)) continue;
-            deck.push(cardId);
-          }
-        }
-      }
-    }
   }
 
   return deck;
@@ -518,8 +473,7 @@ export function buildDeckFromLoadout(
 
 export function calculateEquipmentStats(
   loadout: UnitLoadout,
-  equipmentById: Record<string, Equipment>,
-  modulesById: Record<string, Module>
+  equipmentById: Record<string, Equipment>
 ): EquipmentStats {
   const total: EquipmentStats = { atk: 0, def: 0, agi: 0, acc: 0, hp: 0 };
 
@@ -544,20 +498,6 @@ export function calculateEquipmentStats(
     total.agi += equip.stats.agi;
     total.acc += equip.stats.acc;
     total.hp += equip.stats.hp;
-
-    if (equip.slot === "weapon") {
-      const weapon = equip as WeaponEquipment;
-      for (const modId of weapon.attachedModules) {
-        const mod = modulesById[modId];
-        if (mod?.statBonus) {
-          total.atk += mod.statBonus.atk || 0;
-          total.def += mod.statBonus.def || 0;
-          total.agi += mod.statBonus.agi || 0;
-          total.acc += mod.statBonus.acc || 0;
-          total.hp += mod.statBonus.hp || 0;
-        }
-      }
-    }
   }
 
   return total;

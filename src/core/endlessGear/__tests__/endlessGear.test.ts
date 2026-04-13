@@ -3,7 +3,7 @@
 // Unit tests for reproducibility and bias validation
 // ============================================================================
 
-import { describe, it, expect } from "@jest/globals";
+import { describe, expect, it } from "vitest";
 import { generateEndlessGearFromRecipe, createGenerationContext } from "../generateEndlessGear";
 import { EndlessRecipe } from "../types";
 
@@ -144,4 +144,3 @@ describe("Endless Gear Generation", () => {
     });
   });
 });
-

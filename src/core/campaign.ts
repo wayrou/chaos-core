@@ -37,6 +37,8 @@ export interface CampaignProgress {
   opsTerminalAtlas?: OpsTerminalAtlasState;
   schemaNodeUnlocked?: boolean;
   highestReachedFloorOrdinal?: number;
+  postgameUnlocked?: boolean;
+  endingCutsceneSeen?: boolean;
   // Field Mods System - Black Market queue
   queuedFieldModsForNextRun?: import("./fieldMods").FieldModInstance[];
 }
@@ -266,6 +268,7 @@ export const PROTOTYPE_CORE_TIER_UNLOCK_FLOOR_ORDINAL = 8;
 export const FOUNDRY_ANNEX_UNLOCK_FLOOR_ORDINAL = 9;
 export const HAVEN_BUILD_MODE_UNLOCK_FLOOR_ORDINAL = 10;
 export const FINAL_RESET_UNLOCK_FLOOR_ORDINAL = 12;
+export const CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL = 12;
 
 export const ADVANCED_SCHEMA_CORE_TYPES: CoreType[] = [
   "logistics_hub",
@@ -350,6 +353,8 @@ function normalizeCampaignProgress(progress: CampaignProgress): CampaignProgress
     unlockedOperations: Array.from(new Set([...(progress.unlockedOperations ?? []), ...getDefaultUnlockedOperationIds()])),
     schemaNodeUnlocked: Boolean(progress.schemaNodeUnlocked || getHighestReachedFloorOrdinal(progress) >= SCHEMA_UNLOCK_FLOOR_ORDINAL),
     highestReachedFloorOrdinal: getHighestReachedFloorOrdinal(progress),
+    postgameUnlocked: Boolean(progress.postgameUnlocked || getHighestReachedFloorOrdinal(progress) >= FINAL_RESET_UNLOCK_FLOOR_ORDINAL),
+    endingCutsceneSeen: Boolean(progress.endingCutsceneSeen),
   };
 }
 
@@ -402,6 +407,8 @@ export function createDefaultCampaignProgress(): CampaignProgress {
     activeRun: null,
     schemaNodeUnlocked: false,
     highestReachedFloorOrdinal: 1,
+    postgameUnlocked: false,
+    endingCutsceneSeen: false,
   };
 }
 
@@ -526,7 +533,43 @@ export function isHavenBuildModeUnlocked(
 export function isFinalResetUnlocked(
   progress: CampaignProgress = loadCampaignProgress(),
 ): boolean {
-  return hasReachedFloorOrdinal(FINAL_RESET_UNLOCK_FLOOR_ORDINAL, progress);
+  return Boolean(progress.postgameUnlocked || hasReachedFloorOrdinal(FINAL_RESET_UNLOCK_FLOOR_ORDINAL, progress));
+}
+
+export function unlockCampaignPostgame(
+  progress: CampaignProgress = loadCampaignProgress(),
+): CampaignProgress {
+  if (progress.postgameUnlocked) {
+    return progress;
+  }
+
+  const updated = normalizeCampaignProgress({
+    ...progress,
+    postgameUnlocked: true,
+  });
+  saveCampaignProgress(updated);
+  return updated;
+}
+
+export function hasSeenEndingCutscene(
+  progress: CampaignProgress = loadCampaignProgress(),
+): boolean {
+  return Boolean(progress.endingCutsceneSeen);
+}
+
+export function markEndingCutsceneSeen(
+  progress: CampaignProgress = loadCampaignProgress(),
+): CampaignProgress {
+  if (progress.endingCutsceneSeen) {
+    return progress;
+  }
+
+  const updated = normalizeCampaignProgress({
+    ...progress,
+    endingCutsceneSeen: true,
+  });
+  saveCampaignProgress(updated);
+  return updated;
 }
 
 /**

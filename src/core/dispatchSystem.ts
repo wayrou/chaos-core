@@ -21,7 +21,7 @@ import {
 import { calculatePWR } from "./pwr";
 import { generateCandidates } from "./recruitment";
 import { CODEX_DATABASE } from "./codexSystem";
-import { getAllStarterEquipment, getAllModules } from "./equipment";
+import { getAllStarterEquipment } from "./equipment";
 import { createEmptyResourceWallet, type ResourceWallet } from "./resources";
 import { grantSessionResources } from "./session";
 
@@ -592,7 +592,6 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
   const nextUnitClassProgress = { ...(state.unitClassProgress || {}) };
   const nextUnitsById = { ...state.unitsById };
   const equipmentById = state.equipmentById || getAllStarterEquipment();
-  const modulesById = state.modulesById || getAllModules();
 
   if (rewards.codexEntryId && !nextUnlockedCodexEntries.includes(rewards.codexEntryId)) {
     nextUnlockedCodexEntries.push(rewards.codexEntryId);
@@ -630,7 +629,6 @@ export function claimDispatchReport(state: GameState, reportId: string): GameSta
         unit,
         unitClassProgress: updatedProgress,
         equipmentById,
-        modulesById,
       }),
     };
   }

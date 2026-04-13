@@ -6,13 +6,23 @@
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { getActiveRun, completeOperationRun } from "../../core/campaignManager";
 import { OPERATION_DEFINITIONS } from "../../core/campaign";
-import { updateGameState } from "../../state/gameStore";
+import { getGameState, updateGameState } from "../../state/gameStore";
+import { createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
+import { addCardsToLibrary, generateBattleRewardCards, getLibraryCard } from "../../core/gearWorkbench";
 import {
-  addResourceWallet,
-  createEmptyResourceWallet,
-  getResourceEntries,
-  type ResourceWallet,
-} from "../../core/resources";
+  createOperationGearRewardSpecs,
+  grantResolvedGearRewardToState,
+  resolveGearRewardSpecs,
+  type GrantedGearReward,
+} from "../../core/gearRewards";
+import { grantSessionResources } from "../../core/session";
+
+interface OperationClearRewards {
+  cards: Array<{ id: string; name: string; description: string }>;
+  wad: number;
+  resources: ResourceWallet;
+  gearChoices: GrantedGearReward[];
+}
 
 export function renderOperationClearScreen(): void {
   const root = document.getElementById("app");
@@ -20,7 +30,6 @@ export function renderOperationClearScreen(): void {
 
   const activeRun = getActiveRun();
   if (!activeRun) {
-    // No active run, go back to operation select
     renderOperationSelectScreen();
     return;
   }
@@ -33,19 +42,17 @@ export function renderOperationClearScreen(): void {
     nodesCleared: activeRun.nodesCleared,
   };
 
-  // Generate rewards (placeholder - can be enhanced)
   const rewards = generateOperationRewards(activeRun);
 
   root.innerHTML = `
     <div class="opclear-root">
       <div class="opclear-card">
         <div class="opclear-header">
-          <div class="opclear-title">🎉 OPERATION CLEAR</div>
+          <div class="opclear-title">ðŸŽ‰ OPERATION CLEAR</div>
           <div class="opclear-subtitle">${opDef.name}</div>
         </div>
 
         <div class="opclear-body">
-          <!-- Summary Panel -->
           <div class="opclear-summary">
             <div class="opclear-summary-title">OPERATION SUMMARY</div>
             <div class="opclear-summary-stats">
@@ -68,24 +75,21 @@ export function renderOperationClearScreen(): void {
             </div>
           </div>
 
-          <!-- Rewards Section -->
           <div class="opclear-rewards">
             <div class="opclear-rewards-title">REWARDS</div>
-            
-            <!-- Card Choice -->
+
             <div class="opclear-reward-section">
               <div class="opclear-reward-label">Choose 1 Card:</div>
               <div class="opclear-card-choices" id="cardChoices">
-                ${rewards.cards.map((card, i) => `
-                  <div class="opclear-card-choice" data-card-id="${card.id}" data-index="${i}">
+                ${rewards.cards.map((card, index) => `
+                  <div class="opclear-card-choice" data-card-id="${card.id}" data-index="${index}">
                     <div class="opclear-card-name">${card.name}</div>
                     <div class="opclear-card-desc">${card.description}</div>
                   </div>
-                `).join('')}
+                `).join("")}
               </div>
             </div>
 
-            <!-- Resource Bundle -->
             <div class="opclear-reward-section">
               <div class="opclear-reward-label">Resource Bundle:</div>
               <div class="opclear-resources">
@@ -102,23 +106,22 @@ export function renderOperationClearScreen(): void {
               </div>
             </div>
 
-            <!-- Gear Choice (placeholder) -->
             <div class="opclear-reward-section">
               <div class="opclear-reward-label">Choose 1 Gear Item:</div>
               <div class="opclear-gear-choices" id="gearChoices">
-                ${rewards.gear.map((gear, i) => `
-                  <div class="opclear-gear-choice" data-gear-id="${gear.id}" data-index="${i}">
+                ${rewards.gearChoices.map((gear, index) => `
+                  <div class="opclear-gear-choice" data-gear-reward-id="${gear.rewardId}" data-index="${index}">
                     <div class="opclear-gear-name">${gear.name}</div>
                     <div class="opclear-gear-desc">${gear.description}</div>
                   </div>
-                `).join('')}
+                `).join("")}
               </div>
             </div>
           </div>
 
           <div class="opclear-actions">
             <button class="opclear-continue-btn" id="continueBtn" disabled>
-              CONTINUE →
+              CONTINUE â†’
             </button>
           </div>
         </div>
@@ -126,91 +129,99 @@ export function renderOperationClearScreen(): void {
     </div>
   `;
 
-  // Card choice handlers
   let selectedCardId: string | null = null;
-  let selectedGearId: string | null = null;
+  let selectedGearRewardId: string | null = null;
 
-  document.querySelectorAll(".opclear-card-choice").forEach(choice => {
+  document.querySelectorAll(".opclear-card-choice").forEach((choice) => {
     choice.addEventListener("click", () => {
-      document.querySelectorAll(".opclear-card-choice").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".opclear-card-choice").forEach((candidate) => candidate.classList.remove("selected"));
       choice.classList.add("selected");
       selectedCardId = choice.getAttribute("data-card-id");
-      checkContinueEnabled();
+      syncContinueEnabled();
     });
   });
 
-  // Gear choice handlers
-  document.querySelectorAll(".opclear-gear-choice").forEach(choice => {
+  document.querySelectorAll(".opclear-gear-choice").forEach((choice) => {
     choice.addEventListener("click", () => {
-      document.querySelectorAll(".opclear-gear-choice").forEach(c => c.classList.remove("selected"));
+      document.querySelectorAll(".opclear-gear-choice").forEach((candidate) => candidate.classList.remove("selected"));
       choice.classList.add("selected");
-      selectedGearId = choice.getAttribute("data-gear-id");
-      checkContinueEnabled();
+      selectedGearRewardId = choice.getAttribute("data-gear-reward-id");
+      syncContinueEnabled();
     });
   });
 
-  function checkContinueEnabled(): void {
+  function syncContinueEnabled(): void {
     const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
     if (continueBtn) {
-      continueBtn.disabled = !(selectedCardId && selectedGearId);
+      continueBtn.disabled = !(selectedCardId && selectedGearRewardId);
     }
   }
 
-  // Continue button
   const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
   if (continueBtn) {
     continueBtn.addEventListener("click", () => {
-      if (!selectedCardId || !selectedGearId) return;
+      if (!selectedCardId || !selectedGearRewardId) {
+        return;
+      }
 
-      // Apply rewards
-      updateGameState(prev => {
-        const newCardLibrary = { ...prev.cardLibrary };
-        if (selectedCardId) {
-          newCardLibrary[selectedCardId] = (newCardLibrary[selectedCardId] || 0) + 1;
-        }
+      const resolvedSelectedCardId = selectedCardId;
+      const resolvedSelectedGearRewardId = selectedGearRewardId;
+      const selectedGearReward = rewards.gearChoices.find(
+        (reward) => reward.rewardId === resolvedSelectedGearRewardId,
+      ) ?? null;
+      updateGameState((prev) => {
+        let nextState = grantSessionResources(prev, {
+          wad: rewards.wad,
+          resources: rewards.resources,
+        });
 
-        return {
-          ...prev,
-          wad: (prev.wad || 0) + rewards.wad,
-          resources: addResourceWallet(prev.resources, rewards.resources),
-          cardLibrary: newCardLibrary,
-          // TODO: Add gear to inventory
+        nextState = {
+          ...nextState,
+          cardLibrary: addCardsToLibrary(nextState.cardLibrary || {}, [resolvedSelectedCardId]),
         };
+
+        return selectedGearReward
+          ? grantResolvedGearRewardToState(nextState, selectedGearReward)
+          : nextState;
       });
 
-      // Complete operation
       completeOperationRun();
 
-      // Trigger mail on operation completion
       import("../../core/mailSystem").then(({ triggerMailOnOperationComplete }) => {
         triggerMailOnOperationComplete(true);
       });
 
-      // Return to operation select
       renderOperationSelectScreen();
     });
   }
 }
 
-/**
- * Generate rewards for operation completion
- */
-function generateOperationRewards(activeRun: import("../../core/campaign").ActiveRunState): {
-  cards: Array<{ id: string; name: string; description: string }>;
-  wad: number;
-  resources: ResourceWallet;
-  gear: Array<{ id: string; name: string; description: string }>;
-} {
-  // Base rewards scale with operation difficulty and floors
+function generateOperationRewards(activeRun: import("../../core/campaign").ActiveRunState): OperationClearRewards {
+  const state = getGameState();
   const baseMultiplier = activeRun.difficulty === "hard" ? 1.5 : activeRun.difficulty === "easy" ? 0.75 : 1.0;
   const floorMultiplier = 1 + (activeRun.floorsTotal * 0.2);
+  const rewardEnemyCount = Math.max(3, activeRun.battlesWon + activeRun.nodesCleared);
+  const cardIds = Array.from(new Set(generateBattleRewardCards(rewardEnemyCount))).slice(0, 3);
+  const fallbackCardIds = ["card_power_strike", "card_guard", "card_focus"];
+
+  while (cardIds.length < 3) {
+    const fallbackCardId = fallbackCardIds[cardIds.length] ?? "card_guard";
+    if (!cardIds.includes(fallbackCardId)) {
+      cardIds.push(fallbackCardId);
+      continue;
+    }
+    break;
+  }
 
   return {
-    cards: [
-      { id: "card_power_strike", name: "Power Strike", description: "Deal increased damage" },
-      { id: "card_guard_plus", name: "Guard+", description: "Enhanced defensive card" },
-      { id: "card_heal", name: "Heal", description: "Restore HP" },
-    ],
+    cards: cardIds.map((cardId) => {
+      const card = getLibraryCard(cardId);
+      return {
+        id: cardId,
+        name: card?.name ?? cardId,
+        description: card?.description ?? "Recovered tactical program.",
+      };
+    }),
     wad: Math.floor(100 * baseMultiplier * floorMultiplier),
     resources: createEmptyResourceWallet({
       metalScrap: Math.floor(50 * baseMultiplier * floorMultiplier),
@@ -218,10 +229,9 @@ function generateOperationRewards(activeRun: import("../../core/campaign").Activ
       chaosShards: Math.floor(20 * baseMultiplier * floorMultiplier),
       steamComponents: Math.floor(15 * baseMultiplier * floorMultiplier),
     }),
-    gear: [
-      { id: "gear_combat_vest", name: "Combat Vest", description: "Increases defense" },
-      { id: "gear_tactical_boots", name: "Tactical Boots", description: "Increases movement" },
-    ],
+    gearChoices: resolveGearRewardSpecs(
+      createOperationGearRewardSpecs(3, `${activeRun.operationId}_${activeRun.floorsTotal}`),
+      state,
+    ),
   };
 }
-

@@ -19,7 +19,7 @@ import {
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
 import { getAllStarterEquipment } from "../../core/equipment";
-import { getUnlockableById, getUnownedUnlockables } from "../../core/unlockables";
+import { getUnlockableById, getUnownedUnlockables, type UnlockableType } from "../../core/unlockables";
 import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
@@ -43,6 +43,7 @@ interface ShopItem {
   description: string;
   price: number;
   category: "pak" | "equipment" | "consumable" | "recipe" | "unlockable";
+  displayCategory?: string;
   rarity?: "common" | "uncommon" | "rare" | "epic";
   stock?: number; // undefined = unlimited
 }
@@ -253,6 +254,15 @@ function getQuartermasterWallet(state = getGameState()) {
   return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
 }
 
+function formatUnlockableTypeLabel(type: UnlockableType): string {
+  switch (type) {
+    case "field_mod":
+      return "FIELD MOD";
+    default:
+      return type.replace(/_/g, " ").toUpperCase();
+  }
+}
+
 export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
   const app = document.getElementById("app");
   if (!app) return;
@@ -268,9 +278,9 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
   app.innerHTML = `
     <div class="shop-root town-screen town-screen--shop">
       <!-- Header -->
-      <div class="shop-header town-screen__header">
+        <div class="shop-header town-screen__header">
         <div class="shop-header-left town-screen__titleblock">
-          <h1 class="shop-title">QUARTERMASTER</h1>
+          <h1 class="shop-title">SHOP</h1>
           <div class="shop-subtitle">S/COM_OS SUPPLY TERMINAL</div>
         </div>
         <div class="shop-header-right town-screen__header-right">
@@ -402,16 +412,17 @@ function renderShopContent(state: any): string {
           name: unlock.displayName,
           description: unlock.description,
           price: estimateUnlockablePrice(unlock.cost),
-          category: "unlockable" as any,
+          category: "unlockable",
+          displayCategory: formatUnlockableTypeLabel(unlock.type),
           rarity: unlock.rarity,
         }));
         
-        sectionTitle = "UNLOCKABLES";
+        sectionTitle = "OTHER";
         sectionDesc = "Permanent unlocks including chassis, doctrines, tactical mods, and Haven decor pieces.";
       } catch (err) {
         console.warn("[SHOP] Could not load unlockables:", err);
         items = [];
-        sectionTitle = "UNLOCKABLES";
+        sectionTitle = "OTHER";
         sectionDesc = "No unlocks available.";
       }
       break;
@@ -446,6 +457,11 @@ function renderShopItem(item: ShopItem, state: any): string {
       </div>
       <div class="shop-item-body">
         <p class="shop-item-desc">${item.description}</p>
+        ${item.displayCategory ? `
+          <div class="shop-item-meta">
+            <span class="meta-tag">${item.displayCategory}</span>
+          </div>
+        ` : ''}
         ${item.category === 'pak' ? `
           <div class="shop-item-meta">
             <span class="meta-tag">${PAK_DATABASE[item.id]?.cardCount ?? '?'} cards</span>
@@ -546,7 +562,8 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
           name: unlock.displayName,
           description: unlock.description,
           price: estimateUnlockablePrice(unlock.cost),
-          category: "unlockable" as any,
+          category: "unlockable",
+          displayCategory: formatUnlockableTypeLabel(unlock.type),
           rarity: unlock.rarity,
         };
       }
@@ -1103,8 +1120,6 @@ function createEquipmentFromShopItem(itemId: string, item: ShopItem): any {
       isMechanical: itemId.includes("gun") || itemId.includes("steam"),
       stats: { atk: 2, def: 0, agi: 0, acc: 0, hp: 0 }, // Basic stats
       cardsGranted: [], // Will be empty for shop-bought items
-      moduleSlots: 1,
-      attachedModules: [],
       wear: 0,
     };
   } else if (isArmor) {
@@ -1469,3 +1484,4 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
 }
 
 export { renderShopScreen as default };
+

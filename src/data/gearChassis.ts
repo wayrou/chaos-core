@@ -3,6 +3,8 @@
 // Foundation layer for gear builder system
 // ============================================================================
 
+import { createEmptyResourceWallet, type ResourceWallet } from "../core/resources";
+
 export type ChassisSlotType = "weapon" | "helmet" | "chestpiece" | "accessory";
 
 export interface GearChassis {
@@ -27,12 +29,9 @@ export interface GearChassis {
   description: string;
   
   // Build cost (base cost, doctrine adds modifier)
-  buildCost: {
-    metalScrap: number;
-    wood: number;
-    chaosShards: number;
-    steamComponents: number;
-  };
+  buildCost: ResourceWallet;
+  unlockAfterFloor?: number;
+  requiredQuestIds?: string[];
 }
 
 // ============================================================================
@@ -51,12 +50,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 70,
     maxCardSlots: 4,
     description: "Reliable baseline weapon platform. Balanced performance and stability.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 15,
       wood: 5,
       chaosShards: 0,
       steamComponents: 2,
-    },
+    }),
   },
   {
     id: "chassis_heavy_cannon",
@@ -68,12 +67,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 50,
     maxCardSlots: 5,
     description: "High-power weapon system. More slots, lower stability, heavy logistics footprint.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 25,
       wood: 8,
       chaosShards: 1,
       steamComponents: 5,
-    },
+    }),
   },
   {
     id: "chassis_precision_rifle",
@@ -85,12 +84,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 85,
     maxCardSlots: 3,
     description: "Lightweight, stable platform. Fewer slots but exceptional reliability.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 20,
       wood: 3,
       chaosShards: 0,
       steamComponents: 3,
-    },
+    }),
   },
   
   // ARMOR CHASSIS (HELMET)
@@ -104,12 +103,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 75,
     maxCardSlots: 3,
     description: "Standard protective headgear. Balanced protection and flexibility.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 10,
       wood: 3,
       chaosShards: 0,
       steamComponents: 1,
-    },
+    }),
   },
   {
     id: "chassis_heavy_helmet",
@@ -121,12 +120,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 60,
     maxCardSlots: 4,
     description: "Reinforced helmet with more card capacity. Heavier but more versatile.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 18,
       wood: 5,
       chaosShards: 0,
       steamComponents: 2,
-    },
+    }),
   },
   
   // ARMOR CHASSIS (CHESTPIECE)
@@ -140,12 +139,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 70,
     maxCardSlots: 4,
     description: "Reliable torso protection. Good balance of defense and utility slots.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 20,
       wood: 6,
       chaosShards: 0,
       steamComponents: 3,
-    },
+    }),
   },
   {
     id: "chassis_mobile_chest",
@@ -157,12 +156,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 80,
     maxCardSlots: 3,
     description: "Lightweight torso armor. Higher stability, fewer slots.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 15,
       wood: 4,
       chaosShards: 0,
       steamComponents: 2,
-    },
+    }),
   },
   
   // ACCESSORY CHASSIS
@@ -176,12 +175,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 75,
     maxCardSlots: 3,
     description: "Versatile accessory platform. High power draw, moderate slots.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 8,
       wood: 2,
       chaosShards: 1,
       steamComponents: 4,
-    },
+    }),
   },
   {
     id: "chassis_power_cell",
@@ -193,12 +192,12 @@ export const ALL_CHASSIS: GearChassis[] = [
     baseStability: 65,
     maxCardSlots: 4,
     description: "High-capacity power system. Excellent power output, lower stability.",
-    buildCost: {
+    buildCost: createEmptyResourceWallet({
       metalScrap: 12,
       wood: 1,
       chaosShards: 2,
       steamComponents: 6,
-    },
+    }),
   },
 ];
 

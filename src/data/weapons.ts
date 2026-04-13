@@ -196,8 +196,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 2, def: 1, agi: 0, acc: 1, hp: 0 },
     cardsGranted: ["card_cleave", "card_parry_readiness", "card_guarded_stance"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Edge Focus - Gain +2 ACC for the attack, but -1 DEF until your next turn.",
     clutches: [
       createClutch("edge_focus", "Edge Focus", "Gain +2 ACC for the attack, but -1 DEF until your next turn.", [
@@ -215,8 +213,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 2, def: 0, agi: 1, acc: 2, hp: -1 },
     cardsGranted: ["card_pinpoint_shot", "card_warning_shot", "card_defensive_draw"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Piercing Arrow - Ignore 2 DEF for this shot, but -1 ACC.",
     clutches: [
       createClutch("piercing_arrow", "Piercing Arrow", "Ignore 2 DEF for this shot, but -1 ACC.", [
@@ -238,8 +234,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 1, def: 2, agi: 0, acc: 1, hp: 1 },
     cardsGranted: ["card_blunt_sweep", "card_deflective_spin", "card_ward_spin"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Channel Power - Next skill costs 1 less strain, but suffer -1 DEF until your next turn.",
     clutches: [
       createClutch("channel_power", "Channel Power", "Next skill costs 1 less strain, but suffer -1 DEF until your next turn.", [
@@ -257,8 +251,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 1, def: 0, agi: 3, acc: 2, hp: -1 },
     cardsGranted: ["card_throat_jab", "card_hamstring", "card_sidestep"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Lunge - Move 2 tiles before striking without provoking attacks, but -2 ACC.",
     clutches: [
       createClutch("lunge", "Lunge", "Move 2 tiles before striking without provoking attacks, but -2 ACC.", [
@@ -276,8 +268,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 3, def: 0, agi: -1, acc: 2, hp: 0 },
     cardsGranted: ["card_piercing_volley", "card_suppressive_spray", "card_cooling_discipline"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Piercing Volley - Ignore target DEF for the next attack.",
     clutches: [
       createClutch("piercing_volley", "Piercing Volley", "Ignore target DEF for the next attack.", [
@@ -302,8 +292,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 3, def: 1, agi: 0, acc: 1, hp: 0 },
     cardsGranted: ["card_searing_slash", "card_molten_mark", "card_heat_parry"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Searing Slash - Inflict Burn on hit.",
     doubleClutch: "Quick Draw - Attack without consuming movement.",
     clutches: [
@@ -328,8 +316,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 1, def: 0, agi: 2, acc: 2, hp: -1 },
     cardsGranted: ["card_rune_strike", "card_spell_parry", "card_phase_step"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Quick Strike - Attack first this round regardless of initiative, but suffer -2 ACC on the attack.",
     clutches: [
       createClutch("quick_strike", "Quick Strike", "Attack first this round regardless of initiative, but suffer -2 ACC on the attack.", [
@@ -347,8 +333,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 3, def: 1, agi: -1, acc: 0, hp: 0 },
     cardsGranted: ["card_scissor_snip", "card_rending_slash", "card_blade_catch"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Overhand Smash - Deal +3 damage, but suffer -3 AGI until your next turn.",
     doubleClutch: "Defensive Guard - Gain +2 DEF until your next turn, but -2 ATK.",
     clutches: [
@@ -371,8 +355,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 4, def: 0, agi: -2, acc: 1, hp: 0 },
     cardsGranted: ["card_heavy_draw", "card_piercing_shot", "card_brace_stance"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Volley - Fire twice at -3 ACC each shot.",
     clutches: [
       createClutch("volley", "Volley", "Fire twice at -3 ACC each shot.", [
@@ -394,8 +376,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 1, def: 0, agi: 3, acc: 2, hp: -2 },
     cardsGranted: ["card_snap_shot", "card_mobile_fire", "card_evasive_roll"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Armor Breaker - Ignore 4 DEF on the attack.",
     doubleClutch: "Heavy Draw - Deal +4 damage but skip your next move action.",
     clutches: [
@@ -421,8 +401,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 2, def: 0, agi: 1, acc: 3, hp: -1 },
     cardsGranted: ["card_mana_bolt", "card_silver_ward", "card_focus_energy"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Focus Shot - +3 ACC to the next skill card this turn, but -1 AGI next turn.",
     clutches: [
       createClutch("focus_shot", "Focus Shot", "+3 ACC to the next skill card this turn, but -1 AGI next turn.", [
@@ -440,8 +418,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 3, def: 1, agi: -1, acc: 2, hp: 0 },
     cardsGranted: ["card_crushing_blow", "card_earth_shatter", "card_wood_bark_barrier"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Ward Pulse - Gain +3 DEF until next turn.",
     doubleClutch: "Crush Swing - Deal +3 damage but -3 ACC.",
     clutches: [
@@ -463,8 +439,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 2, def: 0, agi: 2, acc: 3, hp: -2 },
     cardsGranted: ["card_fang_bite", "card_poison_tip", "card_feral_lunge"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Flurry - Attack twice at -2 damage per hit.",
     clutches: [
       createClutch("flurry", "Flurry", "Attack twice at -2 damage per hit.", [
@@ -482,8 +456,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: false,
     stats: { atk: 2, def: 1, agi: 1, acc: 2, hp: 0 },
     cardsGranted: ["card_hilt_smash", "card_precise_throw", "card_balance_shift"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Precision Cut - Ignore 3 DEF.",
     doubleClutch: "Feint - Cancel the enemy counterattack if the attack misses.",
     clutches: [
@@ -504,8 +476,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 4, def: 0, agi: -1, acc: 0, hp: 0 },
     cardsGranted: ["card_steam_thrust", "card_vent_blast", "card_pike_brace"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Pierce & Pin - Attack prevents target movement next turn.",
     clutches: [
       createClutch("pierce_and_pin", "Pierce & Pin", "Attack prevents target movement next turn.", [
@@ -526,8 +496,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 5, def: -1, agi: -2, acc: 2, hp: 0 },
     cardsGranted: ["card_rail_slug", "card_magnetic_shield", "card_charge_capacitor"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Power Shot - Deal +2 damage.",
     doubleClutch: "Magnetic Pull - Pull target 1 tile closer.",
     clutches: [
@@ -556,8 +524,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 3, def: 0, agi: 0, acc: -1, hp: 0 },
     cardsGranted: ["card_buckshot", "card_shrapnel_blast", "card_brass_plating"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Slug Round - Range 1 but damage doubled.",
     clutches: [
       createClutch("slug_round", "Slug Round", "Range 1 but damage doubled.", [
@@ -585,8 +551,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 3, def: 0, agi: 1, acc: 3, hp: 0 },
     cardsGranted: ["card_silent_bolt", "card_grapple_shot", "card_auto_reload"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Silenced Shot - Cannot be countered or alert enemies.",
     clutches: [
       createClutch("silenced_shot", "Silenced Shot", "Cannot be countered or alert enemies.", [
@@ -611,8 +575,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 4, def: 0, agi: 0, acc: 1, hp: 0 },
     cardsGranted: ["card_chain_lightning", "card_static_field", "card_arc_whip"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Overload Blast - All targets in range take 1 electric damage.",
     clutches: [
       createClutch("overload_blast", "Overload Blast", "All targets in range take 1 electric damage.", [
@@ -633,8 +595,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 6, def: -2, agi: -3, acc: 0, hp: 0 },
     cardsGranted: ["card_lob_shell", "card_shatter_ground", "card_deploy_bipod"],
-    moduleSlots: 1,
-    attachedModules: [],
     clutchToggle: "Bunker Buster - Ignore cover and destroy obstacles.",
     clutches: [
       createClutch("bunker_buster", "Bunker Buster", "Ignore cover and destroy obstacles.", [
@@ -659,8 +619,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 4, def: 0, agi: -1, acc: 1, hp: 0 },
     cardsGranted: ["card_harpoon_shot", "card_drag_target", "card_flame_vent"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Anchor Pull - Pull yourself to the target.",
     clutches: [
       createClutch("anchor_pull", "Anchor Pull", "Pull yourself to the target.", [
@@ -685,8 +643,6 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     isMechanical: true,
     stats: { atk: 7, def: -2, agi: -3, acc: -1, hp: 0 },
     cardsGranted: ["card_cannon_blast", "card_deafening_roar", "card_braced_fire"],
-    moduleSlots: 2,
-    attachedModules: [],
     clutchToggle: "Full Barrage - Extra attack at -2 ACC.",
     doubleClutch: "Suppressive Fire - Targets lose movement next turn.",
     clutches: [
@@ -708,3 +664,4 @@ export const STARTER_WEAPONS: WeaponEquipment[] = [
     wear: 0,
   },
 ];
+

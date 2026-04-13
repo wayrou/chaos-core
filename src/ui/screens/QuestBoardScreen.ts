@@ -20,6 +20,7 @@ import {
   getTotalQuestsCompleted,
 } from "../../quests/questManager";
 import { Quest } from "../../quests/types";
+import { describeGearRewardSpec } from "../../core/gearRewards";
 import { getResourceEntries } from "../../core/resources";
 import { showConfirmDialog } from "../components/confirmDialog";
 
@@ -288,6 +289,11 @@ function renderQuestRewards(rewards: Quest["rewards"]): string {
 
   if (rewards.equipment && rewards.equipment.length > 0) {
     parts.push(`<span class="reward-item"><span class="reward-icon">⚔️</span> Equipment</span>`);
+  }
+
+  if (rewards.gearRewards && rewards.gearRewards.length > 0) {
+    const gearLabels = rewards.gearRewards.map((reward) => describeGearRewardSpec(reward)).join(", ");
+    parts.push(`<span class="reward-item"><span class="reward-icon">âš”ï¸</span> ${gearLabels}</span>`);
   }
 
   if (parts.length === 0) {

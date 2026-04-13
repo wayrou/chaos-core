@@ -103,12 +103,23 @@ interface WorkbenchState {
   buildSlotType: "weapon" | "helmet" | "chestpiece" | "accessory" | null;
   buildChassisId: string | null;
   buildDoctrineId: BuildDoctrineSelection;
+  buildCustomName: string;
+  buildNameDirty: boolean;
   endlessChassisId: string | null;
   endlessMaterials: string[];
 
   // Craft Tab State
   craftingCategory: Recipe["category"];
   selectedRecipeId: string | null;
+}
+
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 const CHAOTIC_DOCTRINE_ID = "__chaotic__";
@@ -127,6 +138,8 @@ let workbenchState: WorkbenchState = {
   buildSlotType: null,
   buildChassisId: null,
   buildDoctrineId: null,
+  buildCustomName: "",
+  buildNameDirty: false,
   endlessChassisId: null,
   endlessMaterials: [],
   craftingCategory: "armor",
@@ -151,6 +164,8 @@ function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
     buildSlotType: null,
     buildChassisId: null,
     buildDoctrineId: null,
+    buildCustomName: "",
+    buildNameDirty: false,
     endlessChassisId: null,
     endlessMaterials: [],
     craftingCategory: "armor",
@@ -345,6 +360,22 @@ export function renderGearWorkbenchScreen(
 // BUILD GEAR TAB
 // ----------------------------------------------------------------------------
 
+function getSuggestedBuildName(
+  chassis: GearChassis | null | undefined,
+  doctrine: GearDoctrine | null | undefined,
+  doctrineId: BuildDoctrineSelection,
+): string {
+  if (!chassis || !doctrineId) {
+    return "";
+  }
+
+  if (doctrineId === CHAOTIC_DOCTRINE_ID) {
+    return `Unbound ${chassis.name}`;
+  }
+
+  return doctrine ? `${doctrine.name} ${chassis.name}` : "";
+}
+
 function renderBuildGearTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
   const unlockedDoctrineIds = state.unlockedDoctrineIds || [];
@@ -401,6 +432,16 @@ function renderBuildGearTab(state: GameState): string {
     itemNamePreview = `${selectedDoctrine.name} ${selectedChassis.name}`;
   }
 
+  const suggestedItemName = getSuggestedBuildName(
+    selectedChassis,
+    selectedDoctrine,
+    workbenchState.buildDoctrineId,
+  );
+
+  if (!workbenchState.buildNameDirty) {
+    workbenchState.buildCustomName = suggestedItemName;
+  }
+
   // Calculate final stability
   let finalStability: number | string = 0;
   if (selectedChassis && selectedDoctrine) {
@@ -414,6 +455,9 @@ function renderBuildGearTab(state: GameState): string {
         ? `${selectedDoctrine.name} ${selectedChassis.name}`
         : "--";
   }
+  const resolvedItemNamePreview = selectedChassis && workbenchState.buildDoctrineId
+    ? workbenchState.buildCustomName || suggestedItemName || itemNamePreview
+    : "--";
   if (!selectedChassis) {
     finalStability = "--";
   } else if (usingChaoticBuild) {
@@ -479,7 +523,14 @@ function renderBuildGearTab(state: GameState): string {
         <div class="summary-content">
           <div class="summary-row">
             <span class="summary-label">Item Name:</span>
-            <span class="summary-value">${itemNamePreview}</span>
+            <input
+              type="text"
+              class="summary-value summary-value-input"
+              id="buildItemNameInput"
+              value="${escapeHtml(resolvedItemNamePreview === "--" ? "" : resolvedItemNamePreview)}"
+              placeholder="${escapeHtml(suggestedItemName || "Select a chassis and doctrine")}"
+              ${selectedChassis && workbenchState.buildDoctrineId ? "" : "disabled"}
+            />
           </div>
           <div class="summary-row">
             <span class="summary-label">Slot Type:</span>
@@ -1344,6 +1395,14 @@ function attachBuildGearListeners(state: any): void {
   attachTabListeners();
   attachWorkbenchBackButton("build");
 
+  const buildItemNameInput = document.getElementById("buildItemNameInput") as HTMLInputElement | null;
+  if (buildItemNameInput) {
+    buildItemNameInput.oninput = () => {
+      workbenchState.buildCustomName = buildItemNameInput.value;
+      workbenchState.buildNameDirty = buildItemNameInput.value.trim().length > 0;
+    };
+  }
+
   // Slot type selection
   document.querySelectorAll(".slot-type-btn").forEach(btn => {
     const el = btn as HTMLElement;
@@ -1405,8 +1464,13 @@ function attachBuildGearListeners(state: any): void {
       }
 
       const result = usingChaoticBuild
-        ? buildChaoticGear(workbenchState.buildChassisId, state)
-        : buildGear(workbenchState.buildChassisId, workbenchState.buildDoctrineId, state);
+        ? buildChaoticGear(workbenchState.buildChassisId, state, workbenchState.buildCustomName)
+        : buildGear(
+            workbenchState.buildChassisId,
+            workbenchState.buildDoctrineId,
+            state,
+            workbenchState.buildCustomName,
+          );
 
       if (!result.success || !result.equipment) {
         addWorkbenchLog(`SLK//ERROR :: ${result.error || "Build failed"}`);
@@ -1477,6 +1541,8 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildCustomName = "";
+      workbenchState.buildNameDirty = false;
       renderGearWorkbenchScreen(
         workbenchState.selectedUnitId ?? undefined,
         result.equipment.id,
@@ -1492,6 +1558,8 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildCustomName = "";
+      workbenchState.buildNameDirty = false;
       renderGearWorkbenchScreen();
     };
   }

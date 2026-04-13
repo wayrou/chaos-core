@@ -28,9 +28,7 @@ import {
   Equipment,
   UnitLoadout,
   UnitClass,
-  Module,
   getAllStarterEquipment,
-  getAllModules,
   getAllEquipmentCards,
   EquipmentCard,
 } from "./equipment";
@@ -316,7 +314,6 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
   const baseDeck: CardId[] = [];
 
   const equipmentById = getAllStarterEquipment();
-  const modulesById = getAllModules();
 
   const units: UnitWithEquipment[] = [
     ...(isTechnicaContentDisabled("unit", "unit_aeriss") ? [] : [{
@@ -379,7 +376,6 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
       : calculatePWR({
           unit: u,
           equipmentById,
-          modulesById,
         });
     return { ...u, pwr, controller: "P1" as const }; // Default all units to P1
   });
@@ -523,7 +519,6 @@ function createImportedGearState(): {
  */
 export interface GameStateWithEquipment extends GameState {
   equipmentById: Record<string, Equipment>;
-  modulesById: Record<string, Module>;
   equipmentPool: string[];
 }
 
@@ -547,7 +542,6 @@ export function createNewGameState(): GameStateWithEquipment {
   // Equipment system data
   const importedGearState = createImportedGearState();
   const equipmentById: Record<string, Equipment> = { ...importedGearState.equipmentById };
-  const modulesById = getAllModules();
   const equipmentPool = Array.from(new Set([
     ...createEquipmentPool(),
     ...importedGearState.equipmentPool,
@@ -633,7 +627,6 @@ export function createNewGameState(): GameStateWithEquipment {
 
     // 11b/11c Equipment system additions
     equipmentById,
-    modulesById,
     equipmentPool,
 
     // Quest System

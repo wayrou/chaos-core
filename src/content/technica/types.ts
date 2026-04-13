@@ -113,6 +113,38 @@ export interface ImportedFaction {
   description?: string;
 }
 
+export interface ImportedChassis {
+  id: string;
+  name: string;
+  slotType: "weapon" | "helmet" | "chestpiece" | "accessory";
+  baseMassKg: number;
+  baseBulkBu: number;
+  basePowerW: number;
+  baseStability: number;
+  maxCardSlots: number;
+  allowedCardTags?: string[];
+  allowedCardFamilies?: string[];
+  description?: string;
+  buildCost?: ResourceWallet;
+  unlockAfterFloor?: number;
+  requiredQuestIds?: string[];
+}
+
+export interface ImportedDoctrine {
+  id: string;
+  name: string;
+  shortDescription?: string;
+  intentTags?: Array<"assault" | "skirmish" | "suppression" | "sustain" | "control" | "mobility">;
+  stabilityModifier?: number;
+  strainBias?: number;
+  procBias?: number;
+  buildCostModifier?: ResourceWallet;
+  doctrineRules?: string;
+  description?: string;
+  unlockAfterFloor?: number;
+  requiredQuestIds?: string[];
+}
+
 export interface ImportedGear {
   id: string;
   name: string;
@@ -122,8 +154,6 @@ export interface ImportedGear {
   isMechanical?: boolean;
   stats: EquipmentStats;
   cardsGranted: string[];
-  moduleSlots?: number;
-  attachedModules?: string[];
   wear?: number;
   inventory?: {
     massKg: number;
@@ -367,6 +397,8 @@ export type TechnicaContentType =
   | "quest"
   | "key_item"
   | "faction"
+  | "chassis"
+  | "doctrine"
   | "map"
   | "field_enemy"
   | "npc"

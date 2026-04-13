@@ -51,6 +51,10 @@ import { hasLineOfSight } from "../../core/lineOfSight";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { createTrainingBattle } from "../../core/trainingBattle";
 import { getAllStarterEquipment } from "../../core/equipment";
+import {
+  grantGearRewardSpecsToState,
+  resolveGearRewardSpecs,
+} from "../../core/gearRewards";
 import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { renderWeaponWindow as renderSharedWeaponWindow } from "../components/weaponWindow";
@@ -5639,24 +5643,28 @@ export function renderBattleScreen() {
               <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
             </div>
           ` : ""}
-          <div class="battle-view-switcher" aria-label="Battle camera view switcher">
-            <span class="battle-view-switcher-label">VIEW</span>
-            <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
-            <span class="battle-view-switcher-separator">|</span>
-            <button class="battle-view-switcher-btn${activeBattleViewIndex === 1 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="1">2</button>
-          </div>
-          <div class="battle-pan-controls">
-            <div class="battle-pan-hint">
-              <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
+          <div class="battle-header-top-controls">
+            <div class="battle-pan-controls">
+              <div class="battle-pan-hint">
+                <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
+              </div>
             </div>
-            <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
+            <div class="battle-view-switcher" aria-label="Battle camera view switcher">
+              <span class="battle-view-switcher-label">VIEW</span>
+              <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
+              <span class="battle-view-switcher-separator">|</span>
+              <button class="battle-view-switcher-btn${activeBattleViewIndex === 1 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="1">2</button>
+            </div>
           </div>
-          <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
-            ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
-          </button>
-          <div class="battle-header-actions">
-            ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
-            <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
+          <div class="battle-header-command-row">
+            <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
+            <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
+              ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
+            </button>
+            <div class="battle-header-actions">
+              ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
+              <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5968,7 +5976,8 @@ function renderHandPanel(
   try {
     const hand = resolveHandCards(activeUnit?.hand ?? []);
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
-    const canUndoMove = Boolean(isPlayerTurn && !autoControlled && turnState.hasCommittedMove && !turnState.hasActed);
+    const isFacingSelectionActive = turnState.isFacingSelection;
+    const canUndoMove = Boolean(isPlayerTurn && !autoControlled && !isFacingSelectionActive && turnState.hasCommittedMove && !turnState.hasActed);
     const interactable = localBattleState && activeUnit ? getUnitInteractionObject(localBattleState, activeUnit) : null;
     return `
       <div class="hand-header-floating">
@@ -5988,8 +5997,8 @@ function renderHandPanel(
         </div>
         <div class="hand-actions">
           <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
-          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
-          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>END TURN</button>
+          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || isFacingSelectionActive || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
+          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
         </div>
       </div>
       <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
@@ -6857,6 +6866,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
     const latestBattleNote = (battle.log[battle.log.length - 1] ?? "")
       .replace(/^SLK\/\/[A-Z_]+\s*::\s*/i, "")
       .trim() || "Reward packet ready for transfer.";
+    const resolvedGearRewards = resolveGearRewardSpecs(r.gearRewards ?? [], getGameState());
     const rewardPacketTypes = [
       r.wad,
       r.metalScrap,
@@ -6869,6 +6879,7 @@ function renderBattleResultOverlay(battle: BattleState): string {
       advancedRewards.resin,
       advancedRewards.chargeCells,
       r.squadXp ?? 0,
+      resolvedGearRewards.length,
     ].filter((amount) => amount > 0).length;
     const victoryStatusLabel = isDefenseBattle
       ? "PERIMETER HELD"
@@ -6938,6 +6949,13 @@ function renderBattleResultOverlay(battle: BattleState): string {
             ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
             ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
             ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
+            ${resolvedGearRewards.map((reward) => `
+              <div class="battle-reward-item battle-reward-item--gear">
+                <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
+                <div class="reward-value">${escapeBattleText(reward.name)}</div>
+                <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+              </div>
+            `).join("")}
             ${unlockableId && unlockableId !== "pending" && unlockableName ? `
               <div class="battle-reward-item battle-reward-item--unlockable">
                 <div class="reward-label">NEW UNLOCK</div>
@@ -7183,6 +7201,28 @@ function finalizeBattleHudEndTurn(stateToAdvance: BattleState): void {
   completeAdvance();
 }
 
+function beginBattleHudFacingSelection(): void {
+  if (!localBattleState?.activeUnitId) {
+    return;
+  }
+
+  const activeUnit = localBattleState.units[localBattleState.activeUnitId];
+  if (!activeUnit?.pos) {
+    finalizeBattleHudEndTurn(localBattleState);
+    return;
+  }
+
+  turnState.isFacingSelection = true;
+  selectedCardIndex = null;
+  hoveredTile = null;
+
+  if (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState)) {
+    setBattleState(withBattleTurnStateSnapshot(localBattleState));
+  }
+
+  renderBattleScreen();
+}
+
 function handleBattleHudEndTurn(): void {
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
     return;
@@ -7192,18 +7232,6 @@ function handleBattleHudEndTurn(): void {
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit));
   if (!isPlayerTurn || !localBattleState || !activeUnit) return;
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
-
-  if (!activeUnit.pos) {
-    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-      void sendLocalNetworkBattleCommand({
-        type: "end_turn",
-        unitId: activeUnit.id,
-      });
-      return;
-    }
-    finalizeBattleHudEndTurn(localBattleState);
-    return;
-  }
 
   if (turnState.isFacingSelection) {
     if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
@@ -7220,22 +7248,12 @@ function handleBattleHudEndTurn(): void {
   }
 
   if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
-    turnState.isFacingSelection = true;
     selectedCardIndex = null;
-    renderBattleScreen();
+    beginBattleHudFacingSelection();
     return;
   }
 
-  turnState.isFacingSelection = true;
-  selectedCardIndex = null;
-  setBattleState({
-    ...localBattleState,
-    log: [
-      ...localBattleState.log,
-      `SLK//FACING :: Select facing direction for ${activeUnit.name}, then the turn will end.`,
-    ],
-  });
-  renderBattleScreen();
+  beginBattleHudFacingSelection();
 }
 
 function handleBattleHudDebugAutoWin(): void {
@@ -7509,7 +7527,11 @@ function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
     return;
   }
   hoveredTile = nextTile ? { ...nextTile } : null;
-  renderBattleScreen();
+  if (!localBattleState || !isBattleRootMounted()) {
+    return;
+  }
+  const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
+  syncBattleBoardScene(localBattleState, activeUnit, localBattleState.phase === "placement");
 }
 
 function battleBoardSetHas(set: Set<string>, point: BattleBoardPoint): boolean {
@@ -8065,6 +8087,9 @@ function attachBattleListeners() {
   const undoBtn = document.getElementById("undoMoveBtn");
   if (undoBtn) {
     undoBtn.onclick = () => {
+      if (turnState.isFacingSelection) {
+        return;
+      }
       handleBattleHudUndoMove();
     };
   }
@@ -8072,6 +8097,9 @@ function attachBattleListeners() {
   const interactBtn = document.getElementById("interactBtn");
   if (interactBtn) {
     interactBtn.onclick = () => {
+      if (turnState.isFacingSelection) {
+        return;
+      }
       if (!localBattleState?.activeUnitId) {
         return;
       }
@@ -8276,6 +8304,9 @@ function attachBattleListeners() {
               ? addCardsToLibrary(rewardedState.cardLibrary ?? {}, r.cards)
               : rewardedState.cardLibrary,
           }, r.squadXp ?? 0);
+          const stateWithGear = (r.gearRewards && r.gearRewards.length > 0)
+            ? grantGearRewardSpecsToState(updatedState, r.gearRewards)
+            : updatedState;
 
           // Grant unlockable if present
           if ((r as any).unlockable) {
@@ -8286,7 +8317,7 @@ function attachBattleListeners() {
             });
           }
 
-          return updatedState;
+          return stateWithGear;
         });
 
         // Block quest progress for training battles (isTraining already declared above)

@@ -23,8 +23,6 @@ describe("Shop Sell System", () => {
         isMechanical: false,
         stats: { atk: 5, def: 0, agi: 0, acc: 80, hp: 0 },
         cardsGranted: [],
-        moduleSlots: 0,
-        attachedModules: [],
         wear: 100,
       } as Equipment,
       "test_armor": {
@@ -144,7 +142,8 @@ describe("Shop Sell System", () => {
         const unit = baseState.unitsById[unitId];
         if (unit) {
           unit.loadout = {
-            weapon: null,
+            primaryWeapon: null,
+            secondaryWeapon: null,
             helmet: "test_armor",
             chestpiece: null,
             accessory1: null,
@@ -319,4 +318,3 @@ describe("Shop Sell System", () => {
     });
   });
 });
-

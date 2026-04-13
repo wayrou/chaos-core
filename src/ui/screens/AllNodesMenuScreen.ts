@@ -532,7 +532,7 @@ async function grantEverythingToPlayer(): Promise<void> {
     { ALL_CHASSIS },
     { ALL_DOCTRINES },
     { RECIPE_DATABASE },
-    { getAllModules, getAllStarterEquipment },
+    { getAllStarterEquipment },
     { getOrderedFoundryModuleTypes, getOrderedFoundryPartitionTypes },
     { createOwnedMount, getAllMounts },
     { getOrderedSchemaCoreTypes, getOrderedSchemaFieldAssetTypes, getOrderedSchemaFortificationTypes },
@@ -551,7 +551,6 @@ async function grantEverythingToPlayer(): Promise<void> {
 
   const allEquipment = getAllStarterEquipment();
   const allEquipmentIds = Object.keys(allEquipment);
-  const allModules = getAllModules();
   const allRecipeIds = Object.keys(RECIPE_DATABASE);
   const allChassisIds = ALL_CHASSIS.map((chassis) => chassis.id);
   const allDoctrineIds = ALL_DOCTRINES.map((doctrine) => doctrine.id);
@@ -599,10 +598,6 @@ async function grantEverythingToPlayer(): Promise<void> {
       equipmentById: {
         ...allEquipment,
         ...(state.equipmentById ?? {}),
-      },
-      modulesById: {
-        ...allModules,
-        ...(state.modulesById ?? {}),
       },
       equipmentPool: Array.from(new Set([...(state.equipmentPool ?? []), ...allEquipmentIds])),
       knownRecipeIds: allRecipeIds,

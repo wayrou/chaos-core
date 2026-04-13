@@ -26,15 +26,17 @@ import { LIBRARY_CARD_DATABASE } from "../gearWorkbench";
 export function generateEndlessGearFromRecipe(
   recipe: EndlessRecipe,
   ctx: GenerationContext,
-  options?: { allowWeapons?: boolean } // For crafting context, set allowWeapons=false
+  options?: { allowWeapons?: boolean }
 ): GeneratedGear {
   const chassis = getChassisById(recipe.chassisId);
   if (!chassis) {
     throw new Error(`Invalid chassis ID: ${recipe.chassisId}`);
   }
   
-  // Prevent weapon generation in crafting context (weapons are built in Gear Builder)
-  if (!options?.allowWeapons && chassis.slotType === "weapon") {
+  const allowWeapons = options?.allowWeapons ?? true;
+
+  // Optional caller-level restriction for non-weapon crafting flows
+  if (!allowWeapons && chassis.slotType === "weapon") {
     throw new Error(`Cannot generate weapons via endless crafting. Weapons must be built in Gear Builder. Chassis: ${chassis.id}`);
   }
   
@@ -83,7 +85,8 @@ export function generateEndlessGearFromRecipe(
     stability,
     fieldMods,
     lockedCards,
-    slotLockResult.slotsLocked
+    slotLockResult.slotsLocked,
+    seed
   );
   
   // Add provenance
@@ -143,7 +146,7 @@ export function generateEndlessLoot(
   };
   
   // Generate gear using recipe
-  const gear = generateEndlessGearFromRecipe(recipe, ctx);
+  const gear = generateEndlessGearFromRecipe(recipe, ctx, { allowWeapons: true });
   
   // Update provenance to indicate loot
   gear.provenance.kind = "endless_loot";
@@ -421,10 +424,11 @@ function createEquipmentFromGeneration(
   stability: number,
   fieldMods: FieldModDef[],
   lockedCards: string[],
-  slotsLocked: number
+  slotsLocked: number,
+  seed: number
 ): GeneratedGearBase {
-  const equipmentId = `endless_${chassis.slotType}_${chassis.id}_${doctrine.id}_${Date.now()}`;
-  const equipmentName = `[Endless] ${doctrine.name} ${chassis.name}`;
+  const equipmentId = `endless_${chassis.slotType}_${chassis.id}_${doctrine.id}_${seed}`;
+  const equipmentName = `${doctrine.name} ${chassis.name}`;
   
   // Base stats (similar to gear builder)
   const baseStats = {
@@ -445,8 +449,6 @@ function createEquipmentFromGeneration(
       isMechanical: true,
       stats: baseStats,
       cardsGranted: [], // Empty - will be filled by slotting
-      moduleSlots: 0,
-      attachedModules: [],
       wear: 100,
       chassisId: chassis.id,
       doctrineId: doctrine.id,
@@ -531,3 +533,4 @@ export function explainEndlessGear(gear: GeneratedGear): string {
   
   return lines.join('\n');
 }
+

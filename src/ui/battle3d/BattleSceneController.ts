@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import type { BattleCameraViewPreset } from "../../core/types";
 import {
+  getBattleBillboardPerspectiveFromOrbitYaw,
+  getBattleUnitBillboardSpriteCandidates,
+  type BattleBillboardPerspective,
+} from "../../core/portraits";
+import {
   BOARD_TILE_BASE_BOTTOM,
   BOARD_TILE_SIZE,
   BOARD_TILE_TOP_THICKNESS,
@@ -22,6 +27,7 @@ type UnitActor = {
   statusGroup: THREE.Group;
   hpFill: THREE.Mesh;
   unitId: string;
+  spriteRequestKey: string | null;
 };
 
 type MovementAnim = {
@@ -43,6 +49,17 @@ type AttackAnim = {
   startTime: number;
   durationMs: number;
   onComplete: () => void;
+};
+
+type BillboardTextureMetrics = {
+  aspect: number;
+  bottomRatio: number;
+  visibleHeightRatio: number;
+};
+
+type LoadedBillboardTexture = {
+  path: string;
+  texture: THREE.Texture;
 };
 
 function createColorMaterial(color: string, opacity = 1): THREE.MeshStandardMaterial {
@@ -201,6 +218,27 @@ function createPlaceholderBillboardTexture(): THREE.Texture {
 }
 
 const PLACEHOLDER_BILLBOARD_TEXTURE = createPlaceholderBillboardTexture();
+const BILLBOARD_BASE_HEIGHT = 1.22;
+const UNIT_TILE_CLEARANCE_Y = 0.002;
+
+function getUnitAnchorY(tileTopY: number): number {
+  return tileTopY + BOARD_TILE_TOP_THICKNESS + UNIT_TILE_CLEARANCE_Y;
+}
+
+function getUnitFacingVector(facing?: "north" | "south" | "east" | "west"): { x: number; z: number } | null {
+  switch (facing) {
+    case "north":
+      return { x: 0, z: -1 };
+    case "south":
+      return { x: 0, z: 1 };
+    case "east":
+      return { x: 1, z: 0 };
+    case "west":
+      return { x: -1, z: 0 };
+    default:
+      return null;
+  }
+}
 
 export class BattleSceneController {
   private readonly scene = new THREE.Scene();
@@ -217,6 +255,12 @@ export class BattleSceneController {
   private readonly tileTopWorld = new Map<string, THREE.Vector3>();
   private readonly unitActors = new Map<string, UnitActor>();
   private readonly fadedMaterials = new Map<THREE.Material, { opacity: number; transparent: boolean }>();
+  private readonly textureLoader = new THREE.TextureLoader();
+  private readonly loadedBillboardTextures = new Map<string, THREE.Texture>();
+  private readonly mirroredBillboardTextures = new Map<string, THREE.Texture>();
+  private readonly pendingBillboardTextures = new Map<string, Promise<LoadedBillboardTexture>>();
+  private readonly missingBillboardTextures = new Set<string>();
+  private readonly billboardTextureMetrics = new Map<string, BillboardTextureMetrics>();
   private host: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private snapshot: BattleBoardSnapshot | null = null;
@@ -239,6 +283,7 @@ export class BattleSceneController {
   private movementAnim: MovementAnim | null = null;
   private attackAnim: AttackAnim | null = null;
   private viewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
+  private currentBillboardPerspective: BattleBillboardPerspective = getBattleBillboardPerspectiveFromOrbitYaw(this.orbitYaw);
 
   constructor() {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -325,6 +370,7 @@ export class BattleSceneController {
   adjustOrbit(deltaYaw: number, deltaPitch: number): void {
     this.orbitYaw += deltaYaw;
     this.orbitPitch = Math.max(0.35, Math.min(1.25, this.orbitPitch + deltaPitch));
+    this.syncBillboardPerspective();
     this.render();
     this.notifyViewChanged();
   }
@@ -370,6 +416,7 @@ export class BattleSceneController {
     );
     this.hasManualPan = Boolean(view.hasManualPan);
     this.clampBoardFocus();
+    this.syncBillboardPerspective(true);
     this.render();
     if (emit) {
       this.notifyViewChanged();
@@ -461,6 +508,8 @@ export class BattleSceneController {
     }
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    Array.from(this.unitActors.values()).forEach((actor) => this.disposeUnitActor(actor));
+    this.unitActors.clear();
     this.renderer.dispose();
     this.host = null;
     this.snapshot = null;
@@ -688,16 +737,18 @@ export class BattleSceneController {
 
   private syncUnits(snapshot: BattleBoardSnapshot): void {
     const seen = new Set<string>();
+    const perspective = this.currentBillboardPerspective;
 
     snapshot.units.forEach((unit) => {
       seen.add(unit.id);
       let actor = this.unitActors.get(unit.id);
       if (!actor) {
-        actor = this.createUnitActor(unit.portraitPath, unit.id);
+        actor = this.createUnitActor(unit.id);
         this.unitActors.set(unit.id, actor);
         this.unitGroup.add(actor.group);
       }
 
+      this.syncUnitActorBillboard(actor, unit, perspective);
       actor.group.visible = !unit.hidden;
       const ringMaterial = actor.ring.material as THREE.MeshBasicMaterial;
       ringMaterial.color.set(unit.active ? "#ffe48f" : unit.isEnemy ? "#f26d6d" : "#61b6ff");
@@ -712,13 +763,14 @@ export class BattleSceneController {
       if (!this.movementAnim || this.movementAnim.actor.unitId !== unit.id) {
         const world = tileToWorld(unit.x, unit.y, unit.elevation, snapshot.width, snapshot.height);
         actor.group.position.copy(world);
-        actor.group.position.y += 0.5 + unit.elevation * 0.05;
+        actor.group.position.y = getUnitAnchorY(world.y);
       }
     });
 
     Array.from(this.unitActors.entries()).forEach(([unitId, actor]) => {
       if (!seen.has(unitId)) {
         this.unitGroup.remove(actor.group);
+        this.disposeUnitActor(actor);
         this.unitActors.delete(unitId);
       }
     });
@@ -743,7 +795,276 @@ export class BattleSceneController {
     }
   }
 
-  private createUnitActor(portraitPath: string, unitId: string): UnitActor {
+  private syncBillboardPerspective(force = false): void {
+    const nextPerspective = getBattleBillboardPerspectiveFromOrbitYaw(this.orbitYaw);
+    if (!force && nextPerspective === this.currentBillboardPerspective) {
+      return;
+    }
+
+    this.currentBillboardPerspective = nextPerspective;
+    if (!this.snapshot) {
+      return;
+    }
+
+    this.snapshot.units.forEach((unit) => {
+      const actor = this.unitActors.get(unit.id);
+      if (actor) {
+        this.syncUnitActorBillboard(actor, unit, nextPerspective);
+      }
+    });
+  }
+
+  private syncUnitActorBillboard(
+    actor: UnitActor,
+    unit: BattleBoardSnapshot["units"][number],
+    perspective: BattleBillboardPerspective,
+  ): void {
+    const candidates = getBattleUnitBillboardSpriteCandidates({
+      unitId: unit.id,
+      baseUnitId: unit.baseUnitId,
+      classId: unit.classId,
+      perspective,
+      fallbackPath: unit.portraitPath,
+    });
+    const requestKey = `${unit.facing ?? "none"}|${candidates.join("|")}`;
+    if (actor.spriteRequestKey === requestKey) {
+      return;
+    }
+
+    actor.spriteRequestKey = requestKey;
+    void this.loadFirstAvailableBillboardTexture(candidates)
+      .then(({ path, texture }) => {
+        if (actor.spriteRequestKey !== requestKey) {
+          return;
+        }
+        this.applyBillboardTexture(
+          actor,
+          texture,
+          this.shouldMirrorBillboardTexture(path, unit.facing),
+        );
+      })
+      .catch(() => {
+        if (actor.spriteRequestKey !== requestKey) {
+          return;
+        }
+        this.applyBillboardTexture(
+          actor,
+          PLACEHOLDER_BILLBOARD_TEXTURE,
+          this.shouldMirrorFallbackBillboardForUnit(unit.facing),
+        );
+      });
+  }
+
+  private loadFirstAvailableBillboardTexture(candidates: string[]): Promise<LoadedBillboardTexture> {
+    const deduped = Array.from(new Set(candidates.filter(Boolean)));
+    if (deduped.length <= 0) {
+      return Promise.resolve({
+        path: "__placeholder__",
+        texture: PLACEHOLDER_BILLBOARD_TEXTURE,
+      });
+    }
+
+    let chain = Promise.reject<LoadedBillboardTexture>(new Error("No billboard sprite candidates resolved."));
+    deduped.forEach((candidate) => {
+      chain = chain.catch(() => this.loadBillboardTexture(candidate));
+    });
+    return chain.catch(() => ({
+      path: "__placeholder__",
+      texture: PLACEHOLDER_BILLBOARD_TEXTURE,
+    }));
+  }
+
+  private loadBillboardTexture(path: string): Promise<LoadedBillboardTexture> {
+    if (this.loadedBillboardTextures.has(path)) {
+      return Promise.resolve({
+        path,
+        texture: this.loadedBillboardTextures.get(path)!,
+      });
+    }
+    if (this.missingBillboardTextures.has(path)) {
+      return Promise.reject(new Error(`Missing billboard texture: ${path}`));
+    }
+    const pending = this.pendingBillboardTextures.get(path);
+    if (pending) {
+      return pending;
+    }
+
+    const promise = new Promise<LoadedBillboardTexture>((resolve, reject) => {
+      this.textureLoader.load(
+        path,
+        (texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.magFilter = THREE.NearestFilter;
+          texture.minFilter = THREE.NearestFilter;
+          texture.generateMipmaps = false;
+          this.loadedBillboardTextures.set(path, texture);
+          resolve({ path, texture });
+        },
+        undefined,
+        (error) => {
+          this.missingBillboardTextures.add(path);
+          reject(error instanceof Error ? error : new Error(`Failed to load billboard texture: ${path}`));
+        },
+      );
+    }).finally(() => {
+      this.pendingBillboardTextures.delete(path);
+    });
+
+    this.pendingBillboardTextures.set(path, promise);
+    return promise;
+  }
+
+  private shouldMirrorFallbackBillboardForUnit(
+    facing?: BattleBoardSnapshot["units"][number]["facing"],
+  ): boolean {
+    const facingVector = getUnitFacingVector(facing);
+    if (!facingVector) {
+      return false;
+    }
+
+    const cameraRightX = Math.sin(this.orbitYaw);
+    const cameraRightZ = -Math.cos(this.orbitYaw);
+    const screenRightDot = (facingVector.x * cameraRightX) + (facingVector.z * cameraRightZ);
+    return screenRightDot > 0.0001;
+  }
+
+  private shouldMirrorBillboardTexture(
+    path: string,
+    facing?: BattleBoardSnapshot["units"][number]["facing"],
+  ): boolean {
+    if (/_Battle_(NW|NE|SE|SW)\.(png|webp|jpg|jpeg)$/i.test(path)) {
+      return false;
+    }
+    return this.shouldMirrorFallbackBillboardForUnit(facing);
+  }
+
+  private applyBillboardTexture(actor: UnitActor, texture: THREE.Texture, mirrored = false): void {
+    const resolvedTexture = mirrored ? this.getMirroredBillboardTexture(texture) : texture;
+    actor.spriteMaterial.map = resolvedTexture;
+    actor.spriteMaterial.needsUpdate = true;
+
+    const metrics = this.getBillboardTextureMetrics(resolvedTexture);
+    const spriteWidth = THREE.MathUtils.clamp(BILLBOARD_BASE_HEIGHT * metrics.aspect, 0.52, 1.6);
+    actor.sprite.scale.set(
+      spriteWidth,
+      BILLBOARD_BASE_HEIGHT,
+      1,
+    );
+    actor.sprite.position.y = -(metrics.bottomRatio * BILLBOARD_BASE_HEIGHT);
+    const visibleTopY = (metrics.bottomRatio + metrics.visibleHeightRatio) * BILLBOARD_BASE_HEIGHT;
+    actor.statusGroup.position.set(0, Math.max(0.72, visibleTopY + 0.08), 0);
+  }
+
+  private getMirroredBillboardTexture(texture: THREE.Texture): THREE.Texture {
+    const cached = this.mirroredBillboardTextures.get(texture.uuid);
+    if (cached) {
+      return cached;
+    }
+
+    const image = texture.image as CanvasImageSource & { width?: number; height?: number } | undefined;
+    const width = image?.width ?? 0;
+    const height = image?.height ?? 0;
+    if (!image || width <= 0 || height <= 0) {
+      return texture;
+    }
+
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return texture;
+      }
+
+      context.translate(width, 0);
+      context.scale(-1, 1);
+      context.drawImage(image, 0, 0, width, height);
+
+      const mirroredTexture = new THREE.CanvasTexture(canvas);
+      mirroredTexture.colorSpace = THREE.SRGBColorSpace;
+      mirroredTexture.magFilter = THREE.NearestFilter;
+      mirroredTexture.minFilter = THREE.NearestFilter;
+      mirroredTexture.generateMipmaps = false;
+      this.mirroredBillboardTextures.set(texture.uuid, mirroredTexture);
+      return mirroredTexture;
+    } catch {
+      return texture;
+    }
+  }
+
+  private getBillboardTextureMetrics(texture: THREE.Texture): BillboardTextureMetrics {
+    const cached = this.billboardTextureMetrics.get(texture.uuid);
+    if (cached) {
+      return cached;
+    }
+
+    const image = texture.image as CanvasImageSource & { width?: number; height?: number } | undefined;
+    const width = image?.width ?? 96;
+    const height = image?.height ?? 128;
+    const fallback: BillboardTextureMetrics = {
+      aspect: width > 0 && height > 0 ? width / height : 0.75,
+      bottomRatio: 0,
+      visibleHeightRatio: 1,
+    };
+
+    if (!image || width <= 0 || height <= 0) {
+      this.billboardTextureMetrics.set(texture.uuid, fallback);
+      return fallback;
+    }
+
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) {
+        this.billboardTextureMetrics.set(texture.uuid, fallback);
+        return fallback;
+      }
+
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height).data;
+      let minY = height;
+      let maxY = -1;
+
+      for (let y = 0; y < height; y += 1) {
+        const rowOffset = y * width * 4;
+        for (let x = 0; x < width; x += 1) {
+          const alpha = data[rowOffset + x * 4 + 3];
+          if (alpha > 8) {
+            if (y < minY) {
+              minY = y;
+            }
+            if (y > maxY) {
+              maxY = y;
+            }
+          }
+        }
+      }
+
+      if (maxY < 0) {
+        this.billboardTextureMetrics.set(texture.uuid, fallback);
+        return fallback;
+      }
+
+      const bottomTransparentRows = Math.max(0, height - 1 - maxY);
+      const visibleHeight = Math.max(1, maxY - minY + 1);
+      const metrics: BillboardTextureMetrics = {
+        aspect: fallback.aspect,
+        bottomRatio: bottomTransparentRows / height,
+        visibleHeightRatio: visibleHeight / height,
+      };
+      this.billboardTextureMetrics.set(texture.uuid, metrics);
+      return metrics;
+    } catch {
+      this.billboardTextureMetrics.set(texture.uuid, fallback);
+      return fallback;
+    }
+  }
+
+  private createUnitActor(unitId: string): UnitActor {
     const group = new THREE.Group();
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.22, 0.33, 36),
@@ -765,13 +1086,12 @@ export class BattleSceneController {
     });
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.center.set(0.5, 0);
-    sprite.scale.set(0.92, 1.22, 1);
-    sprite.position.y = 0.08;
+    sprite.scale.set(0.92, BILLBOARD_BASE_HEIGHT, 1);
     sprite.userData = { unitId };
     group.add(sprite);
 
     const statusGroup = new THREE.Group();
-    statusGroup.position.set(0, 1.08, 0);
+    statusGroup.position.set(0, BILLBOARD_BASE_HEIGHT + 0.08, 0);
     group.add(statusGroup);
 
     const hpBack = new THREE.Mesh(
@@ -787,7 +1107,33 @@ export class BattleSceneController {
     hpFill.position.set(0, 0, 0.001);
     statusGroup.add(hpFill);
 
-    return { group, ring, sprite, spriteMaterial, statusGroup, hpFill, unitId };
+    return {
+      group,
+      ring,
+      sprite,
+      spriteMaterial,
+      statusGroup,
+      hpFill,
+      unitId,
+      spriteRequestKey: null,
+    };
+  }
+
+  private disposeUnitActor(actor: UnitActor): void {
+    actor.ring.geometry.dispose();
+    (actor.ring.material as THREE.Material).dispose();
+    actor.sprite.geometry.dispose();
+    actor.spriteMaterial.dispose();
+    actor.statusGroup.children.forEach((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((material) => material.dispose());
+        } else {
+          child.material.dispose();
+        }
+      }
+    });
   }
 
   private pickAt(clientX: number, clientY: number): BattleBoardPick | null {
@@ -857,7 +1203,7 @@ export class BattleSceneController {
       const start = tileToWorld(from.x, from.y, fromElevation, this.movementAnim.width, this.movementAnim.height);
       const end = tileToWorld(to.x, to.y, toElevation, this.movementAnim.width, this.movementAnim.height);
       const current = start.lerp(end, localProgress);
-      current.y += 0.5 + THREE.MathUtils.lerp(fromElevation, toElevation, localProgress) * 0.05;
+      current.y = getUnitAnchorY(current.y);
       this.movementAnim.actor.group.position.copy(current);
 
       if (progress >= 1) {

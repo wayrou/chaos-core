@@ -787,7 +787,7 @@ export function renderMapBuilderScreen(): void {
               </div>
             </section>
             <section class="map-builder-panel map-builder-preview-panel">
-              <div class="map-builder-panel__title">3D Preview</div>
+            <div class="map-builder-panel__title">PREVIEW</div>
               <div class="map-builder-preview-shell">
                 <div class="map-builder-preview-host" id="mapBuilderPreviewHost"></div>
               </div>

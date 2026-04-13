@@ -47,7 +47,8 @@ const CHAOTIC_MATERIAL_POOL: CraftingMaterialId[] = [
 export function buildGear(
   chassisId: string,
   doctrineId: string,
-  state: GameState
+  state: GameState,
+  customName?: string,
 ): BuildGearResult {
   const chassis = getChassisById(chassisId);
   const doctrine = getDoctrineById(doctrineId);
@@ -71,7 +72,7 @@ export function buildGear(
 
   const finalStability = Math.max(0, Math.min(100, chassis.baseStability + doctrine.stabilityModifier));
   const equipmentId = `built_${chassis.slotType}_${chassisId}_${doctrineId}_${Date.now()}`;
-  const equipmentName = `${doctrine.name} ${chassis.name}`;
+  const equipmentName = customName?.trim() || `${doctrine.name} ${chassis.name}`;
 
   const equipment = createEquipment(
     chassis,
@@ -100,7 +101,8 @@ export function buildGear(
  */
 export function buildChaoticGear(
   chassisId: string,
-  state: GameState
+  state: GameState,
+  customName?: string,
 ): BuildGearResult {
   const chassis = getChassisById(chassisId);
   if (!chassis) {
@@ -137,7 +139,7 @@ export function buildChaoticGear(
     builderVersion?: number;
   };
 
-  generatedGear.name = `Unbound ${chassis.name}`;
+  generatedGear.name = customName?.trim() || `Unbound ${chassis.name}`;
   generatedGear.stats = createChaoticStats(chassis, rng);
   generatedGear.builderVersion = 3;
 
@@ -257,8 +259,6 @@ function createEquipment(
       isMechanical: true,
       stats,
       cardsGranted: [],
-      moduleSlots: 0,
-      attachedModules: [],
       wear: 100,
       chassisId: chassis.id,
       doctrineId,
@@ -293,3 +293,4 @@ function createEquipment(
     builderVersion,
   } as AccessoryEquipment;
 }
+

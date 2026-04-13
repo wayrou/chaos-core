@@ -32,6 +32,7 @@ import {
   getSessionResourcePool,
   spendSessionCost,
 } from "../../core/session";
+import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
@@ -71,15 +72,31 @@ function renderBar(label: string, current: number, cap: number, unit: string): s
 }
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
+  const isEquipment = item.kind === "equipment";
   const iconMarkup = item.kind === "unit" && !item.iconPath
     ? ""
     : `<img src="${getInventoryIconPath(item.iconPath)}" alt="" class="inv-item-icon" aria-hidden="true" />`;
+  const transferLabel = bin === "forwardLocker" ? "RETURN TO BASE" : "STAGE FORWARD";
+  const actionMarkup = isEquipment ? `
+    <div class="inv-item-actions">
+      <div class="inv-item-inspect-hint">CLICK CARD TO INSPECT</div>
+      <button
+        type="button"
+        class="inv-item-transfer-btn"
+        data-transfer-id="${item.id}"
+        data-transfer-bin="${bin}"
+      >
+        ${transferLabel}
+      </button>
+    </div>
+  ` : "";
 
   return `
-    <div class="inv-item"
+    <div class="inv-item${isEquipment ? " inv-item--equipment" : ""}"
          draggable="true"
          data-id="${item.id}"
-         data-bin="${bin}">
+         data-bin="${bin}"
+         data-kind="${item.kind}">
       <div class="inv-item-header">
         ${iconMarkup}
         <div class="inv-item-name">${item.name}</div>
@@ -91,6 +108,7 @@ function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
         <span>${item.bulkBu}bu</span>
         <span>${item.powerW}w</span>
       </div>
+      ${actionMarkup}
     </div>
   `;
 }
@@ -132,6 +150,15 @@ function renderInventoryFolderCard(folder: InventoryFolderTransferSummary, bin: 
 function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
   const root = document.getElementById("app");
   if (!root) return;
+
+  const transferItem = (itemId: string, fromBin: InventoryBin): void => {
+    updateGameState((prev) => (
+      fromBin === "forwardLocker"
+        ? moveOwnedItemToBaseStorage(prev, itemId)
+        : moveOwnedItemToForwardLocker(prev, itemId)
+    ));
+    renderInventoryScreen(returnTo);
+  };
 
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
@@ -178,19 +205,31 @@ function attachInventoryManagementListeners(returnTo: BaseCampReturnTo): void {
 
   const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
   itemEls.forEach((el) => {
-    el.style.cursor = "pointer";
+    const isEquipment = el.dataset.kind === "equipment";
+    el.style.cursor = isEquipment ? "zoom-in" : "pointer";
     el.addEventListener("click", () => {
       const itemId = el.dataset.id;
       const fromBin = el.dataset.bin as InventoryBin | undefined;
       if (!itemId || !fromBin) return;
 
-      updateGameState((prev) => (
-        fromBin === "forwardLocker"
-          ? moveOwnedItemToBaseStorage(prev, itemId)
-          : moveOwnedItemToForwardLocker(prev, itemId)
-      ));
+      if (isEquipment) {
+        showEquipmentDetailModalById(itemId);
+        return;
+      }
 
-      renderInventoryScreen(returnTo);
+      transferItem(itemId, fromBin);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>(".inv-item-transfer-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const itemId = button.dataset.transferId;
+      const fromBin = button.dataset.transferBin as InventoryBin | undefined;
+      if (!itemId || !fromBin) {
+        return;
+      }
+      transferItem(itemId, fromBin);
     });
   });
 

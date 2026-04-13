@@ -27,9 +27,7 @@ import {
   buildDeckFromLoadout,
   calculateEquipmentStats,
   getAllStarterEquipment,
-  getAllModules,
   Equipment,
-  Module,
   WeaponEquipment,
 } from "./equipment";
 import {
@@ -53,6 +51,7 @@ import {
   generateBattleRewardCards,
   getLibraryCard,
 } from "./gearWorkbench";
+import { createBattleGearRewardSpec, type GearRewardSpec } from "./gearRewards";
 
 // Mount system imports
 import {
@@ -86,6 +85,7 @@ import {
 // Import unlockable system (for battle rewards)
 import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
+import { getEnemyDefinition, pickEnemyIdsForCampaignFloor } from "./enemies";
 import type {
   TacticalMapObjectDefinition,
   TacticalMapSurface,
@@ -220,6 +220,7 @@ export interface BattleState {
     cards?: string[];  // NEW: Card IDs won
     recipe?: string | null;  // NEW: Recipe ID won
     unlockable?: string | null;  // NEW: Unlockable ID (chassis, doctrine, or field mod)
+    gearRewards?: GearRewardSpec[];
   };
   loadPenalties?: LoadPenaltyFlags;
   // Placement phase state
@@ -506,12 +507,10 @@ export function createBattleUnitState(
     gearSlots?: Record<string, GearSlotData>;
     stable?: StableState;  // Mount system: stable state for looking up mounts
   },
-  equipmentById?: Record<string, Equipment>,
-  modulesById?: Record<string, Module>
+  equipmentById?: Record<string, Equipment>
 ): BattleUnitState {
-  // Get equipment and module data
+  // Get equipment data
   const equipment = equipmentById || getAllStarterEquipment();
-  const modules = modulesById || getAllModules();
 
   // Get unit's class and loadout (with fallbacks)
   const unitClass: UnitClass = (base as any).unitClass || "squire";
@@ -540,13 +539,12 @@ export function createBattleUnitState(
       unitClass,
       loadout,
       equipment,
-      modules,
       opts.gearSlots,
     );
   }
 
   // Calculate equipment stat bonuses
-  const equipStats = calculateEquipmentStats(loadout, equipment, modules);
+  const equipStats = calculateEquipmentStats(loadout, equipment);
 
   // Base stats + equipment bonuses
   const baseAtk = (base as any).atk ?? (base as any).stats?.atk ?? 10;
@@ -2847,6 +2845,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
           cards: [],
           recipe: null,
           unlockable: null,
+          gearRewards: [],
         },
         log: [
           ...state.log,
@@ -2866,6 +2865,7 @@ export function evaluateBattleOutcome(state: BattleState): BattleState {
       cards: [],
       recipe: null,
       unlockable: null,
+      gearRewards: [],
     } : generateBattleRewards(state);
 
     if (isTraining) {
@@ -2932,12 +2932,14 @@ function generateDefenseRewards(_state: BattleState) {
     chaosShards: 1,
     steamComponents: 1,
     cards: [],
+    gearRewards: [],
   };
 }
 
 function generateBattleRewards(state: BattleState) {
   const enemies = Object.values(state.units).filter(isEnemyUnit);
   const enemyCount = enemies.length || 1;
+  const gearRewards = createBattleGearRewardSpec(enemyCount, state.id ?? state.roomId);
 
   // STEP 7: Generate card rewards
   const cardRewards = generateBattleRewardCards(enemyCount);
@@ -2950,7 +2952,7 @@ function generateBattleRewards(state: BattleState) {
     try {
       // Use a lazy import pattern - we'll handle this in the reward claiming code
       // For now, we'll generate the recipe ID here but grant it later
-      recipeReward = "recipe_reward_pending"; // Placeholder, will be resolved when claiming
+      recipeReward = "pending"; // Placeholder, will be resolved when claiming
     } catch (e) {
       // If import fails, no recipe reward
       console.warn("[BATTLE] Could not generate recipe reward:", e);
@@ -3003,6 +3005,7 @@ function generateBattleRewards(state: BattleState) {
     cards: cardRewards,
     recipe: recipeReward,
     unlockable: unlockableReward,
+    gearRewards,
   };
 }
 
@@ -3106,7 +3109,6 @@ export function createTestBattleForCurrentParty(
 
   // Get equipment data from state (or use defaults)
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
-  const modulesById = (state as any).modulesById || getAllModules();
 
   const units: Record<UnitId, BattleUnitState> = {};
 
@@ -3124,8 +3126,7 @@ export function createTestBattleForCurrentParty(
         gearSlots: (state as any).gearSlots ?? {},
         stable: state.stable,  // Pass stable state for mount system
       },
-      equipmentById,
-      modulesById
+      equipmentById
     );
   });
 
@@ -3190,33 +3191,72 @@ export function createTestBattleForCurrentParty(
   }
 
   // Place enemies automatically on the right edge
-  const enemyCount = Math.min(2, maxUnitsPerSide); // Limit enemy count
-  const first = state.unitsById[partyIds[0]];
-  if (first) {
+  const activeFloorOrdinal = Math.max(
+    1,
+    state.operation?.theater?.definition.floorOrdinal
+      ?? ((state.operation?.currentFloorIndex ?? 0) + 1),
+  );
+  const enemyCount = Math.min(3, maxUnitsPerSide);
+  const selectedEnemyIds = pickEnemyIdsForCampaignFloor(activeFloorOrdinal, enemyCount);
+  const fallbackEnemyIds = selectedEnemyIds.length > 0 ? selectedEnemyIds : ["gate_sentry"];
+
+  fallbackEnemyIds.forEach((enemyDefinitionId, index) => {
+    const enemyDef = getEnemyDefinition(enemyDefinitionId);
+    if (!enemyDef) {
+      return;
+    }
+
+    const accuracy = enemyDef.role === "ranged" || enemyDef.role === "artillery" ? 80 : 75;
+    const enemyId = `enemy_${enemyDef.id}_${index + 1}`;
+    const pos = {
+      x: gridWidth - 1,
+      y: Math.min(gridHeight - 1, Math.floor((gridHeight / fallbackEnemyIds.length) * index + 1)),
+    };
     const enemyBase = {
-      ...first,
-      id: "enemy_grunt_1",
-      name: "Gate Sentry",
-      deck: ["core_basic_attack", "core_basic_attack", "core_guard"],
-      stats: { maxHp: 15, atk: 4, def: 2, agi: 3, acc: 75 },
+      id: enemyId,
+      name: enemyDef.name,
+      isEnemy: true,
+      hp: enemyDef.baseStats.hp,
+      maxHp: enemyDef.baseStats.hp,
+      agi: enemyDef.baseStats.agi,
+      pos,
+      hand: [],
+      drawPile: [...(enemyDef.deck ?? ["card_strike", "card_guard"])],
+      discardPile: [],
+      strain: 0,
+      atk: enemyDef.baseStats.atk,
+      def: enemyDef.baseStats.def,
+      acc: accuracy,
+      move: enemyDef.baseStats.move,
+      stats: {
+        maxHp: enemyDef.baseStats.hp,
+        atk: enemyDef.baseStats.atk,
+        def: enemyDef.baseStats.def,
+        agi: enemyDef.baseStats.agi,
+        acc: accuracy,
+      },
     };
 
-    for (let i = 0; i < enemyCount; i++) {
-      const enemyId = `enemy_grunt_${i + 1}`;
-      units[enemyId] = createBattleUnitState(
-        { ...enemyBase, id: enemyId, name: "Gate Sentry" } as any,
-        {
-          isEnemy: true,
-          pos: { x: gridWidth - 1, y: Math.floor((gridHeight / enemyCount) * i + 1) }
-        },
-        equipmentById,
-        modulesById
-      );
-    }
-  }
+    units[enemyId] = createBattleUnitState(
+      enemyBase as any,
+      {
+        isEnemy: true,
+        pos,
+      },
+      equipmentById
+    );
+  });
 
   // Update battle with enemy units
   battle.units = units;
+  if (fallbackEnemyIds.length > 0) {
+    battle.log = [
+      ...battle.log,
+      `SLK//HOSTILE:: ${fallbackEnemyIds
+        .map((enemyId) => getEnemyDefinition(enemyId)?.name ?? enemyId)
+        .join(", ")}`,
+    ];
+  }
 
   // Trigger Field Mod: battle_start
   battle = triggerBattleStart(battle);

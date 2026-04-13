@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { ResourceWallet } from "../core/resources";
+import type { GearRewardSpec } from "../core/gearRewards";
 
 export type QuestId = string;
 export type QuestStatus = "available" | "active" | "completed" | "failed";
@@ -61,6 +62,7 @@ export interface QuestReward {
   }>;
   cards?: string[]; // Card IDs
   equipment?: string[]; // Equipment IDs
+  gearRewards?: GearRewardSpec[]; // Authored or generated gear rewards
   recipes?: string[]; // Recipe IDs to learn
   unitRecruit?: string; // Unit ID to recruit
 }
@@ -93,4 +95,3 @@ export interface QuestState {
   totalQuestsCompleted?: number;  // Lifetime counter for completed quests
   generatedQuestCount?: number;   // How many generated quests have been created
 }
-

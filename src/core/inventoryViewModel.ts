@@ -13,7 +13,7 @@ import { BASIC_RESOURCE_KEYS, RESOURCE_LABELS, getResourceEntries } from "./reso
 // TYPES
 // ----------------------------------------------------------------------------
 
-export type InventoryCategory = "equipment" | "consumable" | "keyItem" | "weaponPart" | "recipe" | "resource";
+export type InventoryCategory = "equipment" | "consumable" | "keyItem" | "recipe" | "resource";
 
 export interface InventoryEntryVM {
   key: string;              // `${category}:${id}` unique
@@ -39,7 +39,7 @@ export interface InventoryViewModel {
 
 /**
  * Build a normalized inventory view model from game state
- * Aggregates equipment, consumables, weapon parts (modules), recipes, and resources
+ * Aggregates equipment, consumables, key items, recipes, and resources
  */
 export function buildInventoryVM(state: GameState): InventoryViewModel {
   const entries: InventoryEntryVM[] = [];
@@ -47,7 +47,6 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     equipment: 0,
     consumable: 0,
     keyItem: 0,
-    weaponPart: 0,
     recipe: 0,
     resource: 0,
   };
@@ -160,36 +159,7 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     countsByCategory.keyItem++;
   });
 
-  // 4. WEAPON PARTS (Modules) - Only show modules attached to owned weapons
-  if (state.modulesById && state.equipmentById) {
-    const attachedModuleIds = new Set<string>();
-    // Find all modules attached to owned weapons
-    for (const equipment of Object.values(state.equipmentById)) {
-      if (equipment.slot === "weapon" && equipment.attachedModules) {
-        for (const modId of equipment.attachedModules) {
-          attachedModuleIds.add(modId);
-        }
-      }
-    }
-    // Add entries for attached modules
-    for (const modId of attachedModuleIds) {
-      const module = state.modulesById[modId];
-      if (module) {
-        entries.push({
-          key: `weaponPart:${modId}`,
-          category: "weaponPart",
-          id: modId,
-          name: module.name,
-          description: module.description,
-          owned: 1, // Modules are unique items
-          sortGroup: "module",
-        });
-        countsByCategory.weaponPart++;
-      }
-    }
-  }
-
-  // 5. RECIPES
+  // 4. RECIPES
   if (state.knownRecipeIds) {
     for (const recipeId of state.knownRecipeIds) {
       const recipe = getRecipe(recipeId);
@@ -208,7 +178,7 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
     }
   }
 
-  // 6. RESOURCES
+  // 5. RESOURCES
   if (state.resources) {
     getResourceEntries(state.resources, { keys: BASIC_RESOURCE_KEYS }).forEach((resource) => {
       entries.push({
@@ -271,9 +241,8 @@ export function buildInventoryVM(state: GameState): InventoryViewModel {
       equipment: 0,
       consumable: 1,
       keyItem: 2,
-      weaponPart: 3,
-      recipe: 4,
-      resource: 5,
+      recipe: 3,
+      resource: 4,
     };
 
     const catDiff = categoryOrder[a.category] - categoryOrder[b.category];

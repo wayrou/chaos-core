@@ -8,7 +8,7 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { renderActiveOperationSurface } from "./activeOperationFlow";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderRosterScreen } from "./RosterScreen";
-import { getAllStarterEquipment, getAllModules, Equipment } from "../../core/equipment";
+import { getAllStarterEquipment, Equipment } from "../../core/equipment";
 import { computeLoad, computeLoadPenaltyFlags, MULE_CLASS_CAPS } from "../../core/inventory";
 import { InventoryState, InventoryItem } from "../../core/types";
 import { getInventoryIconPath } from "../../core/inventoryIcons";
@@ -34,6 +34,7 @@ import {
 import { abandonRun } from "../../core/campaignManager";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { showTutorialCalloutSequence } from "../components/tutorialCallout";
+import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
 
 type InventoryBin = "forwardLocker" | "baseStorage";
 
@@ -89,8 +90,6 @@ export function renderLoadoutScreen(): void {
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
   const theaterName = operation.theater?.definition.name ?? "THEATER COMMAND";
   const deployUnitIds = theaterPreview?.deployUnitIds ?? state.partyUnitIds;
-  // Future: modulesById can be used for gear slot calculations
-  void getAllModules();
 
   // Build party unit summaries with equipment
   const partyUnits: PartyUnitSummary[] = deployUnitIds.map(unitId => {
@@ -381,7 +380,7 @@ function renderPartyUnit(unit: PartyUnitSummary): string {
         ${equipCount === 0 ? `
           <span class="loadout-screen-unit-noequip">No equipment</span>
         ` : unit.equippedItems.map(eq => `
-          <span class="loadout-screen-unit-equip">${eq.name}</span>
+          <button type="button" class="loadout-screen-unit-equip" data-equipment-id="${eq.id}">${eq.name}</button>
         `).join('')}
       </div>
       <div class="loadout-screen-unit-load">
@@ -467,19 +466,35 @@ function formatClassName(cls: string): string {
 
 function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
   const isLocked = isPartyAutoStagedLockerItem(item);
+  const isEquipment = item.kind === "equipment";
   const iconMarkup = item.kind === "unit" && !item.iconPath
     ? ""
     : `<img src="${getInventoryIconPath(item.iconPath)}" alt="" class="inv-item-icon" aria-hidden="true" />`;
   const noteMarkup = isLocked
     ? `<div class="inv-item-note">${item.kind === "unit" ? "DEPLOY UNIT // AUTO-STAGED" : "EQUIPPED GEAR // AUTO-STAGED"}</div>`
     : "";
+  const actionMarkup = isEquipment ? `
+    <div class="inv-item-actions">
+      <div class="inv-item-inspect-hint">CLICK CARD TO INSPECT</div>
+      <button
+        type="button"
+        class="inv-item-transfer-btn"
+        data-transfer-id="${item.id}"
+        data-transfer-bin="${bin}"
+        ${isLocked ? "disabled" : ""}
+      >
+        ${isLocked ? "AUTO-STAGED" : (bin === "forwardLocker" ? "RETURN TO BASE" : "STAGE FORWARD")}
+      </button>
+    </div>
+  ` : "";
 
   return `
-    <div class="inv-item${isLocked ? " inv-item--locked" : ""}"
+    <div class="inv-item${isLocked ? " inv-item--locked" : ""}${isEquipment ? " inv-item--equipment" : ""}"
          draggable="${isLocked ? "false" : "true"}"
          data-id="${item.id}"
          data-bin="${bin}"
-         data-locked="${isLocked ? "true" : "false"}">
+         data-locked="${isLocked ? "true" : "false"}"
+         data-kind="${item.kind}">
       <div class="inv-item-header">
         ${iconMarkup}
         <div class="inv-item-name">${item.name}</div>
@@ -492,6 +507,7 @@ function renderInventoryItem(item: InventoryItem, bin: InventoryBin): string {
         <span>${item.bulkBu}bu</span>
         <span>${item.powerW}w</span>
       </div>
+      ${actionMarkup}
     </div>
   `;
 }
@@ -537,6 +553,15 @@ function renderInventoryFolderCard(folder: InventoryFolderTransferSummary, bin: 
 function attachLoadoutListeners(): void {
   const root = document.getElementById("app");
   if (!root) return;
+
+  const transferItem = (itemId: string, fromBin: InventoryBin): void => {
+    updateGameState((prev) => (
+      fromBin === "forwardLocker"
+        ? moveOwnedItemToBaseStorage(prev, itemId)
+        : moveOwnedItemToForwardLocker(prev, itemId)
+    ));
+    renderLoadoutScreen();
+  };
 
   // Back button - cancel operation
   root.querySelector("#backBtn")?.addEventListener("click", () => {
@@ -624,25 +649,48 @@ function attachLoadoutListeners(): void {
   const itemEls = root.querySelectorAll<HTMLElement>(".inv-item");
   itemEls.forEach((el) => {
     const isLocked = el.dataset.locked === "true";
-    el.style.cursor = isLocked ? "not-allowed" : "pointer";
-
-    if (isLocked) {
-      return;
-    }
+    const isEquipment = el.dataset.kind === "equipment";
+    el.style.cursor = isEquipment ? "zoom-in" : isLocked ? "not-allowed" : "pointer";
 
     el.addEventListener("click", () => {
       const itemId = el.dataset.id;
       const fromBinRaw = el.dataset.bin as InventoryBin | undefined;
       if (!itemId || !fromBinRaw) return;
 
-      const fromBin = fromBinRaw;
-      updateGameState((prev) => (
-        fromBin === "forwardLocker"
-          ? moveOwnedItemToBaseStorage(prev, itemId)
-          : moveOwnedItemToForwardLocker(prev, itemId)
-      ));
+      if (isEquipment) {
+        showEquipmentDetailModalById(itemId);
+        return;
+      }
 
-      renderLoadoutScreen();
+      if (isLocked) {
+        return;
+      }
+
+      transferItem(itemId, fromBinRaw);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>(".inv-item-transfer-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (button.disabled) {
+        return;
+      }
+      const itemId = button.dataset.transferId;
+      const fromBin = button.dataset.transferBin as InventoryBin | undefined;
+      if (!itemId || !fromBin) {
+        return;
+      }
+      transferItem(itemId, fromBin);
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>(".loadout-screen-unit-equip[data-equipment-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const equipmentId = button.dataset.equipmentId;
+      if (equipmentId) {
+        showEquipmentDetailModalById(equipmentId);
+      }
     });
   });
 

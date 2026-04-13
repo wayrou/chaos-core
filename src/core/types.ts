@@ -609,11 +609,12 @@ export interface UILayoutState {
     panX: number;
     panY: number;
     zoom?: number;
-  };
-  opsTerminalAtlasMapMode?: TheaterMapMode;
-  opsTerminalAtlasWindowFrame?: {
-    x: number;
-    y: number;
+    };
+    opsTerminalAtlasMapMode?: TheaterMapMode;
+    opsTerminalAtlasLayoutVersion?: number;
+    opsTerminalAtlasWindowFrame?: {
+      x: number;
+      y: number;
     width: number;
     height: number;
   };
@@ -1767,7 +1768,6 @@ export interface GameState {
   gearSlots: Record<string, GearSlotData>;  // equipmentId -> slot config
 
   equipmentById?: Record<string, any>;
-  modulesById?: Record<string, any>;
   equipmentPool?: string[];
 
   wad: number;

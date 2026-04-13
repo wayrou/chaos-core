@@ -2097,9 +2097,12 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
   if (!localParticipant?.selected) {
     return;
   }
+  const coopSafeMapId = localParticipant.lastSafeMapId && localParticipant.lastSafeMapId !== "network_lobby"
+    ? localParticipant.lastSafeMapId
+    : "base_camp";
   if (localParticipant.standby || !localParticipant.sessionSlot) {
     const { renderFieldScreen } = await import("../../field/FieldScreen");
-    renderFieldScreen(localParticipant.lastSafeMapId ?? "base_camp");
+    renderFieldScreen(coopSafeMapId);
     return;
   }
   const parsedOperation = hydrateCoopOperationFromLobby(lobby);
@@ -2107,7 +2110,7 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
   const operationPhase = localParticipant.operationPhase ?? lobby.activity.coopOperations.operationPhase ?? null;
   const targetMapId = operationPhase == null
     ? "base_camp"
-    : (localParticipant?.lastSafeMapId ?? "base_camp");
+    : coopSafeMapId;
   if (parsedBattle && operationPhase === "battle") {
     updateGameState((state) => (
       localParticipant.activeBattleId
@@ -2165,6 +2168,106 @@ async function hostBeginLobbyCoopOperations(currentLobby: LobbyState): Promise<v
   commitLobbyState(nextLobby, "Co-Op Operations linked into shared H.A.V.E.N.", "success", false);
   await broadcastLobbySnapshot(nextLobby);
   await enterActiveCoopOperations(nextLobby);
+}
+
+function normalizeSharedCoopHavenEntryLobby(lobby: LobbyState): LobbyState {
+  if (lobby.activity.kind !== "coop_operations" || lobby.activity.coopOperations.status !== "active") {
+    return lobby;
+  }
+
+  let changed = false;
+  const nextParticipants = { ...lobby.activity.coopOperations.participants };
+  for (const slot of lobby.activity.coopOperations.selectedSlots) {
+    const participant = nextParticipants[slot];
+    if (!participant) {
+      continue;
+    }
+    const nextLastSafeMapId = participant.lastSafeMapId && participant.lastSafeMapId !== "network_lobby"
+      ? participant.lastSafeMapId
+      : "base_camp";
+    const nextStagingState = participant.stagingState === "battle"
+      || participant.stagingState === "theater"
+      || participant.stagingState === "rejoining"
+      || participant.stagingState === "disconnected"
+      ? participant.stagingState
+      : "haven";
+    if (nextLastSafeMapId === participant.lastSafeMapId && nextStagingState === participant.stagingState) {
+      continue;
+    }
+    changed = true;
+    nextParticipants[slot] = {
+      ...participant,
+      lastSafeMapId: nextLastSafeMapId,
+      stagingState: nextStagingState,
+    };
+  }
+
+  if (!changed) {
+    return lobby;
+  }
+
+  return {
+    ...lobby,
+    activity: {
+      kind: "coop_operations",
+      coopOperations: {
+        ...lobby.activity.coopOperations,
+        participants: nextParticipants,
+        updatedAt: Date.now(),
+      },
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+async function enterSharedCoopHavenFromComms(lobby: LobbyState): Promise<void> {
+  if (lobby.activity.kind !== "coop_operations" || lobby.activity.coopOperations.status !== "active") {
+    return;
+  }
+
+  const localParticipant = getLocalCoopParticipant(lobby);
+  if (!localParticipant?.selected) {
+    throw new Error("This operator is not assigned to the active shared Co-Op run.");
+  }
+
+  const parsedOperation = hydrateCoopOperationFromLobby(lobby);
+  updateGameState((state) => {
+    const nextState = launchCoopOperationsSessionFromLobby(state, lobby);
+    return {
+      ...nextState,
+      operation: parsedOperation ?? nextState.operation,
+      currentBattle: null,
+      phase: "field",
+    };
+  });
+
+  const { renderFieldScreen } = await import("../../field/FieldScreen");
+  renderFieldScreen("base_camp");
+}
+
+async function startSharedCoopFromComms(): Promise<void> {
+  const lobby = getResolvedLobbyState();
+  if (!lobby || lobby.activity.kind !== "coop_operations") {
+    throw new Error("Stage Co-Op Operations before starting a shared campaign run.");
+  }
+
+  if (lobby.activity.coopOperations.status !== "active") {
+    if (!canLocalHostLobby(lobby)) {
+      throw new Error("Only the lobby host can start shared Co-Op from staging.");
+    }
+    await beginLobbyCoopOperations();
+    return;
+  }
+
+  const sharedHavenLobby = normalizeSharedCoopHavenEntryLobby(lobby);
+  if (canLocalHostLobby(lobby)) {
+    if (sharedHavenLobby !== lobby) {
+      commitLobbyState(sharedHavenLobby, undefined, "info", false);
+    }
+    await broadcastLobbySnapshot(sharedHavenLobby);
+  }
+
+  await enterSharedCoopHavenFromComms(sharedHavenLobby);
 }
 
 async function hostSetCoopEconomyPreset(
@@ -3657,6 +3760,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
   const pendingChallenge = lobby?.pendingChallenge ?? null;
   const canEnterSkirmish = Boolean(lobby && isLocalLobbySkirmishFighter(lobby) && match && match.phase !== "lobby");
   const canEnterLobbyField = Boolean(lobby) && returnTo !== "field";
+  const localCoopParticipant = getLocalCoopParticipant(lobby);
   const coopSelectedParticipants = getSelectedCoopParticipants(lobby);
   const coopActiveOperators = getActiveCoopOperators(lobby);
   const coopStandbyParticipants = getStandbyCoopParticipants(lobby);
@@ -3676,13 +3780,21 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
   const sharedCampaignSummary = activeSharedCampaignSlot
     ? `${activeSharedCampaignLabel ?? getSharedCampaignSlotName(activeSharedCampaignSlot)} // ${activeSharedCampaignSlot}${activeSharedCampaignLastSavedAt ? ` // ${formatSaveTimestamp(activeSharedCampaignLastSavedAt)}` : ""}`
     : null;
-  const canLaunchCoopOperations = Boolean(
+  const canStartSharedCoop = Boolean(
     lobby
-    && canLocalHostLobby(lobby)
     && lobby.activity.kind === "coop_operations"
-    && lobby.activity.coopOperations.status !== "active"
     && activeSharedCampaignSlot
-    && lobby.activity.coopOperations.selectedSlots.length > 0,
+    && (
+      (
+        canLocalHostLobby(lobby)
+        && lobby.activity.coopOperations.status !== "active"
+        && lobby.activity.coopOperations.selectedSlots.length > 0
+      )
+      || (
+        lobby.activity.coopOperations.status === "active"
+        && localCoopParticipant?.selected
+      )
+    ),
   );
   const manualJoinAddress = multiplayerLobbyPreviewConfig.joinAddress.trim();
   const joinCodeCard = lobby ? `
@@ -3813,9 +3925,9 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
               STAGE CO-OP OPS
             </button>
           ` : ""}
-          ${canLaunchCoopOperations ? `
-            <button class="comms-array-btn comms-array-btn--primary" id="launchCoopOperationsBtn">
-              START CO-OP OPERATION
+          ${canStartSharedCoop ? `
+            <button class="comms-array-btn comms-array-btn--primary" id="startSharedCoopBtn">
+              START SHARED CO-OP
             </button>
           ` : ""}
           ${canEnterSkirmish ? `
@@ -4241,6 +4353,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
         return;
       }
       try {
+        selectedSharedCampaignSlot = getActiveSharedCampaignSlot() ?? SHARED_CAMPAIGN_SLOTS.CAMPAIGN_1;
         await hostLaunchLobbyCoopOperations(lobby);
         showNotification("Co-Op Operations staging opened in the lobby.", "success");
       } catch (error) {
@@ -4319,14 +4432,14 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
     });
   }
 
-  const launchCoopOperationsBtn = document.getElementById("launchCoopOperationsBtn");
-  if (launchCoopOperationsBtn) {
-    launchCoopOperationsBtn.onclick = async () => {
+  const startSharedCoopBtn = document.getElementById("startSharedCoopBtn");
+  if (startSharedCoopBtn) {
+    startSharedCoopBtn.onclick = async () => {
       try {
-        await beginLobbyCoopOperations();
+        await startSharedCoopFromComms();
       } catch (error) {
         showNotification(
-          error instanceof Error ? error.message : "Failed to launch Co-Op Operations.",
+          error instanceof Error ? error.message : "Failed to start shared Co-Op.",
           "error",
         );
       }

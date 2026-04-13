@@ -4,9 +4,11 @@ import { hasGameState, updateGameState } from "../../state/gameStore";
 import {
   getTechnicaRegistryFingerprint,
   registerImportedCard,
+  registerImportedChassis,
   registerImportedChatterEntry,
   registerImportedClass,
   registerImportedCodexEntry,
+  registerImportedDoctrine,
   registerImportedDialogue,
   registerImportedFieldEnemyDefinition,
   registerImportedFieldMod,
@@ -26,9 +28,11 @@ import { syncImportedMailUnlocks } from "../../core/mailSystem";
 import { syncPublishedTechnicaContentState } from "./stateSync";
 import type {
   ImportedCard,
+  ImportedChassis,
   ImportedChatterEntry,
   ImportedClassDefinition,
   ImportedCodexEntry,
+  ImportedDoctrine,
   ImportedDialogue,
   ImportedFieldEnemyDefinition,
   ImportedFieldMod,
@@ -50,6 +54,8 @@ export interface TechnicaManifestDependency {
     | "quest"
     | "key_item"
     | "faction"
+    | "chassis"
+    | "doctrine"
     | "dialogue"
     | "field_enemy"
     | "npc"
@@ -70,8 +76,8 @@ export interface TechnicaManifest {
   schemaVersion: string;
   sourceApp: "Technica";
   sourceAppVersion?: string;
-  exportType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
-  contentType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
+  exportType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "chassis" | "doctrine" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
+  contentType: "map" | "mail" | "chatter" | "quest" | "key_item" | "faction" | "chassis" | "doctrine" | "dialogue" | "field_enemy" | "npc" | "item" | "gear" | "card" | "fieldmod" | "unit" | "operation" | "class" | "codex";
   targetGame: string;
   targetSchemaVersion: string;
   exportedAt: string;
@@ -164,6 +170,28 @@ function isKeyItem(value: unknown): value is ImportedKeyItem {
 
 function isFaction(value: unknown): value is ImportedFaction {
   return Boolean(value && typeof value === "object" && "id" in value && "name" in value);
+}
+
+function isChassis(value: unknown): value is ImportedChassis {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "slotType" in value &&
+      "maxCardSlots" in value
+  );
+}
+
+function isDoctrine(value: unknown): value is ImportedDoctrine {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "id" in value &&
+      "name" in value &&
+      "intentTags" in value &&
+      "buildCostModifier" in value
+  );
 }
 
 function isNpcTemplate(value: unknown): value is ImportedNpcTemplate {
@@ -361,6 +389,26 @@ export function importTechnicaRuntimeEntry(
         throw new Error("Entry data does not match the expected Chaos Core faction shape.");
       }
       registerImportedFaction(entryData);
+      if (options?.syncToGameState) {
+        syncPublishedTechnicaGameState();
+      }
+      return entryData.id;
+
+    case "chassis":
+      if (!isChassis(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core chassis shape.");
+      }
+      registerImportedChassis(entryData);
+      if (options?.syncToGameState) {
+        syncPublishedTechnicaGameState();
+      }
+      return entryData.id;
+
+    case "doctrine":
+      if (!isDoctrine(entryData)) {
+        throw new Error("Entry data does not match the expected Chaos Core doctrine shape.");
+      }
+      registerImportedDoctrine(entryData);
       if (options?.syncToGameState) {
         syncPublishedTechnicaGameState();
       }

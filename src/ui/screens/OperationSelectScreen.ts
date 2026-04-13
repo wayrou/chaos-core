@@ -26,6 +26,7 @@ import {
   setCurrentOpsTerminalAtlasFloorOrdinal,
 } from "../../core/opsTerminalAtlas";
 import {
+  CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
   isFinalResetUnlocked,
   loadCampaignProgress,
   saveCampaignProgress,
@@ -156,8 +157,7 @@ const FLOOR_TRANSITION_DURATION_MS = 420;
 const MAP_DRAG_THRESHOLD_PX = 6;
 const ATLAS_STICKY_NOTE_WIDTH = 248;
 const ATLAS_STICKY_NOTE_HEIGHT = 220;
-const BETA_CAMPAIGN_MAX_FLOOR = 6;
-
+const OPS_TERMINAL_ATLAS_LAYOUT_VERSION = 2;
 const SECTOR_COLORS = [
   { color: "#ffbf63", glow: "rgba(255, 191, 99, 0.24)" },
   { color: "#d5c0ff", glow: "rgba(213, 192, 255, 0.22)" },
@@ -746,15 +746,16 @@ function resolveSelectedTheaterId(floor: OpsTerminalAtlasFloorState): string {
 
 function getDefaultWindowFrame(): AtlasWindowFrame {
   const width = Math.min(420, Math.max(WINDOW_MIN_WIDTH, Math.round(window.innerWidth * 0.28)));
-  const topOffset = WINDOW_TOP_SAFE + 176;
-  const height = Math.min(
-    Math.max(WINDOW_MIN_HEIGHT, window.innerHeight - topOffset - WINDOW_BOTTOM_SAFE - 24),
-    Math.round(window.innerHeight * 0.68),
+  const maxHeight = Math.max(WINDOW_MIN_HEIGHT, window.innerHeight - WINDOW_TOP_SAFE);
+  const height = clampNumber(
+    Math.round(window.innerHeight * 0.5),
+    WINDOW_MIN_HEIGHT,
+    maxHeight,
   );
 
   return {
-    x: WINDOW_MARGIN,
-    y: topOffset,
+    x: 0,
+    y: Math.max(WINDOW_TOP_SAFE, window.innerHeight - height),
     width,
     height,
   };
@@ -1186,12 +1187,14 @@ function clampWindowFrame(
       : key === "notes"
         ? NOTES_WINDOW_MIN_HEIGHT
       : WINDOW_MIN_HEIGHT;
-  const maxWidth = Math.max(minWidth, window.innerWidth - (WINDOW_MARGIN * 2));
-  const maxHeight = Math.max(minHeight, window.innerHeight - WINDOW_TOP_SAFE - WINDOW_BOTTOM_SAFE);
+  const horizontalMargin = key === "operations" ? 0 : WINDOW_MARGIN;
+  const bottomSafe = key === "operations" ? 0 : WINDOW_BOTTOM_SAFE;
+  const maxWidth = Math.max(minWidth, window.innerWidth - (horizontalMargin * 2));
+  const maxHeight = Math.max(minHeight, window.innerHeight - WINDOW_TOP_SAFE - bottomSafe);
   const width = clampNumber(frame.width, minWidth, maxWidth);
   const height = clampNumber(frame.height, minHeight, maxHeight);
-  const x = clampNumber(frame.x, WINDOW_MARGIN, Math.max(WINDOW_MARGIN, window.innerWidth - width - WINDOW_MARGIN));
-  const y = clampNumber(frame.y, WINDOW_TOP_SAFE, Math.max(WINDOW_TOP_SAFE, window.innerHeight - height - WINDOW_BOTTOM_SAFE));
+  const x = clampNumber(frame.x, horizontalMargin, Math.max(horizontalMargin, window.innerWidth - width - horizontalMargin));
+  const y = clampNumber(frame.y, WINDOW_TOP_SAFE, Math.max(WINDOW_TOP_SAFE, window.innerHeight - height - bottomSafe));
   return { x, y, width, height };
 }
 
@@ -1249,13 +1252,19 @@ function cycleAtlasNotesWindowColor(): void {
 function hydrateUiLayout(floor: OpsTerminalAtlasFloorState): void {
   const layout = getGameState().uiLayout;
   const viewport = layout?.opsTerminalAtlasViewport;
+  const atlasLayoutVersion = Number(layout?.opsTerminalAtlasLayoutVersion ?? 0);
   atlasViewport = {
     panX: viewport?.panX ?? 0,
     panY: viewport?.panY ?? 0,
     zoom: clampNumber(viewport?.zoom ?? DEFAULT_MAP_ZOOM, MAP_MIN_ZOOM, MAP_MAX_ZOOM),
   };
   atlasMapMode = layout?.opsTerminalAtlasMapMode ?? "comms";
-  atlasWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasWindowFrame ?? getDefaultWindowFrame(), "operations");
+  atlasWindowFrame = clampWindowFrame(
+    atlasLayoutVersion < OPS_TERMINAL_ATLAS_LAYOUT_VERSION
+      ? getDefaultWindowFrame()
+      : (layout?.opsTerminalAtlasWindowFrame ?? getDefaultWindowFrame()),
+    "operations",
+  );
   atlasEconomyWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasEconomyWindowFrame ?? getDefaultEconomyWindowFrame(), "economy");
   atlasCoreWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasCoreWindowFrame ?? getDefaultCoreWindowFrame(), "cores");
   atlasNotesWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasNotesWindowFrame ?? getDefaultNotesWindowFrame(), "notes");
@@ -1279,6 +1288,7 @@ function persistUiLayout(): void {
         zoom: atlasViewport.zoom,
       },
       opsTerminalAtlasMapMode: atlasMapMode,
+      opsTerminalAtlasLayoutVersion: OPS_TERMINAL_ATLAS_LAYOUT_VERSION,
       opsTerminalAtlasWindowFrame: {
         x: atlasWindowFrame.x,
         y: atlasWindowFrame.y,
@@ -1982,10 +1992,12 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   const atlasDebugFloorBypassEnabled = isAtlasDebugFloorBypassEnabled();
   const floorComplete = floor.sectors.every((sector) => sector.theater.objectiveComplete);
   const nextFloorAlreadyGenerated = highestGeneratedFloorOrdinal > floor.floorOrdinal;
-  const betaFloorCapReached = floor.floorOrdinal >= BETA_CAMPAIGN_MAX_FLOOR;
-  const canMoveToNextFloor = !betaFloorCapReached && (floorComplete || nextFloorAlreadyGenerated || atlasDebugFloorBypassEnabled);
-  const floorTransitStatus = betaFloorCapReached
-    ? `Beta Scope Reached // Floor ${String(BETA_CAMPAIGN_MAX_FLOOR).padStart(2, "0")} is the current campaign cap`
+  const finalFloorReached = floor.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
+  const canMoveToNextFloor = !finalFloorReached && (floorComplete || nextFloorAlreadyGenerated || atlasDebugFloorBypassEnabled);
+  const floorTransitStatus = finalFloorReached
+    ? floorComplete
+      ? `Campaign Complete // Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} cleared, postgame redeploy available`
+      : `Final Floor // Clear every sector objective on Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} to finish the campaign`
     : nextFloorAlreadyGenerated
     ? `Archive Transit // Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")} already charted`
     : floorComplete
@@ -1995,8 +2007,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
         : "Descent Locked // Clear every sector objective on this floor";
   const finalResetUnlocked = isFinalResetUnlocked();
   const floorResetStatus = finalResetUnlocked
-    ? "Final completion protocol unlocked // floor reroll and full atlas restart available"
-    : "Final completion protocol locked // reach Floor 12 to unlock manual atlas regeneration";
+    ? "Postgame protocol online // regenerate cleared floors or restart the full atlas at will"
+    : `Postgame protocol locked // clear Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} to unlock manual floor regeneration`;
 
   const sectorViews = floor.sectors.map((sector, index) => (
     buildSectorView(sector, sector.theaterId === selectedTheaterId, index)
@@ -2880,7 +2892,7 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
     id: "tutorial_atlas_regions_and_floors",
     title: "Regions And Floors",
     message: "A.T.L.A.S. is the theater survey layer for the region/floor campaign structure.",
-    detail: "Choose a sector operation on the current floor, complete its objective, then descend. The current beta focus is Regions 1-2 and Floors 01-06.",
+    detail: `Choose a sector operation on the current floor, complete its objective, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} completes the current campaign and unlocks postgame floor regeneration.`,
     durationMs: 9000,
     channel: "tutorial-atlas",
   });

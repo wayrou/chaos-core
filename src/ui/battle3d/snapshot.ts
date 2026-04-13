@@ -107,6 +107,8 @@ export function createBattleBoardSnapshot(
     .filter((unit) => unit.hp > 0 && unit.pos)
     .map((unit) => ({
       id: unit.id,
+      baseUnitId: unit.baseUnitId,
+      classId: unit.classId,
       name: unit.name,
       x: unit.pos!.x,
       y: unit.pos!.y,
