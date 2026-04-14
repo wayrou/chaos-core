@@ -58,6 +58,7 @@ export interface BattleBoardUnitVisual extends BattleBoardPoint {
   baseUnitId?: string;
   classId?: string;
   name: string;
+  standPath: string;
   portraitPath: string;
   isEnemy: boolean;
   active: boolean;

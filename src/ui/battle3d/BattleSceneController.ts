@@ -824,6 +824,7 @@ export class BattleSceneController {
       baseUnitId: unit.baseUnitId,
       classId: unit.classId,
       perspective,
+      standPath: unit.standPath,
       fallbackPath: unit.portraitPath,
     });
     const requestKey = `${unit.facing ?? "none"}|${candidates.join("|")}`;

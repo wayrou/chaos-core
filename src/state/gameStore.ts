@@ -20,6 +20,7 @@ import {
 import { withNormalizedFoundryState } from "../core/foundrySystem";
 import { withNormalizedSchemaState } from "../core/schemaSystem";
 import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
+import { withNormalizedUnitAppearanceState } from "../core/unitAppearance";
 import { withNormalizedWeaponsmithState } from "../core/weaponsmith";
 
 // ----------------------------------------------------------------------------
@@ -45,7 +46,9 @@ function syncSchemaState(state: GameState): GameState {
       withNormalizedNotesState(
         withNormalizedFoundryState(
           withNormalizedSchemaState(
-            withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
+            withNormalizedUnitAppearanceState(
+              withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
+            ),
           ),
         ),
       ),

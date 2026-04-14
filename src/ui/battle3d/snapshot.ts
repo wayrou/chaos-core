@@ -1,5 +1,5 @@
 import type { BattleState, BattleUnitState } from "../../core/battle";
-import { getBattleUnitPortraitPath } from "../../core/portraits";
+import { getBattleUnitPortraitPath, getUnitManagementStandIconPath } from "../../core/portraits";
 import type { EchoFieldPlacement } from "../../core/types";
 import type { TacticalMapDefinition } from "../../core/tacticalMaps";
 import type {
@@ -112,6 +112,7 @@ export function createBattleBoardSnapshot(
       name: unit.name,
       x: unit.pos!.x,
       y: unit.pos!.y,
+      standPath: getUnitManagementStandIconPath(unit.classId, unit.appearance),
       portraitPath: getBattleUnitPortraitPath(unit.id, unit.baseUnitId),
       isEnemy: unit.isEnemy,
       active: unit.id === battle.activeUnitId,

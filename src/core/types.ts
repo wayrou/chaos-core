@@ -2,6 +2,7 @@
 import type { EffectFlowDocument } from "./effectFlow";
 import type { WeaponCardRules } from "./weaponData";
 import type { ResourceWallet } from "./resources";
+import type { UnitAppearance } from "./unitAppearance";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
 export type { ResourceKey, ResourceWallet } from "./resources";
@@ -90,6 +91,8 @@ export interface Card {
 export interface Unit {
   id: UnitId;
   name: string;
+  appearance?: UnitAppearance;
+  notes?: string;
   isEnemy: boolean;
   hp: number;
   maxHp: number;
