@@ -52,6 +52,8 @@ export type WeaponType =
   | "gun"
   | "staff"
   | "greatstaff"
+  | "greatspear"
+  | "hammer"
   | "dagger"
   | "knife"
   | "fist"
@@ -360,8 +362,11 @@ export interface LobbyAvatarState {
   y: number;
   facing: "north" | "south" | "east" | "west";
   mapId: string | null;
+  seatPreference?: LobbySeatPreference | null;
   updatedAt: number;
 }
+
+export type LobbySeatPreference = "ready" | "lounge";
 
 export interface LobbyMember {
   slot: NetworkPlayerSlot;

@@ -1,0 +1,147 @@
+"use strict";
+// ============================================================================
+// AFFINITY BATTLE INTEGRATION - Headline 14a
+// ============================================================================
+// Hooks affinity tracking into battle actions
+// ============================================================================
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.trackMeleeAttackInBattle = trackMeleeAttackInBattle;
+exports.trackRangedSkillInBattle = trackRangedSkillInBattle;
+exports.trackMagicSpellInBattle = trackMagicSpellInBattle;
+exports.trackSupportActionInBattle = trackSupportActionInBattle;
+exports.trackMobilityActionInBattle = trackMobilityActionInBattle;
+exports.trackBattleSurvival = trackBattleSurvival;
+exports.detectCardAffinityType = detectCardAffinityType;
+const affinity_1 = require("./affinity");
+const gameStore_1 = require("../state/gameStore");
+/**
+ * Track affinity for a melee attack
+ */
+function trackMeleeAttackInBattle(attackerId, battle) {
+    const attacker = battle.units[attackerId];
+    if (!attacker || attacker.isEnemy)
+        return;
+    (0, gameStore_1.updateGameState)((state) => {
+        (0, affinity_1.recordMeleeAttack)(attackerId, state);
+        return state;
+    });
+}
+/**
+ * Track affinity for a ranged skill
+ */
+function trackRangedSkillInBattle(unitId, battle) {
+    const unit = battle.units[unitId];
+    if (!unit || unit.isEnemy)
+        return;
+    (0, gameStore_1.updateGameState)((state) => {
+        (0, affinity_1.recordRangedSkill)(unitId, state);
+        return state;
+    });
+}
+/**
+ * Track affinity for a magic spell
+ */
+function trackMagicSpellInBattle(unitId, battle) {
+    const unit = battle.units[unitId];
+    if (!unit || unit.isEnemy)
+        return;
+    (0, gameStore_1.updateGameState)((state) => {
+        (0, affinity_1.recordMagicSpell)(unitId, state);
+        return state;
+    });
+}
+/**
+ * Track affinity for a support action
+ */
+function trackSupportActionInBattle(unitId, battle) {
+    const unit = battle.units[unitId];
+    if (!unit || unit.isEnemy)
+        return;
+    (0, gameStore_1.updateGameState)((state) => {
+        (0, affinity_1.recordSupportAction)(unitId, state);
+        return state;
+    });
+}
+/**
+ * Track affinity for a mobility action
+ */
+function trackMobilityActionInBattle(unitId, battle) {
+    const unit = battle.units[unitId];
+    if (!unit || unit.isEnemy)
+        return;
+    (0, gameStore_1.updateGameState)((state) => {
+        (0, affinity_1.recordMobilityAction)(unitId, state);
+        return state;
+    });
+}
+/**
+ * Track survival for all player units at battle end
+ */
+function trackBattleSurvival(battle, victory) {
+    if (!victory)
+        return; // Only track survival on victory
+    const playerUnits = Object.values(battle.units).filter((u) => !u.isEnemy);
+    (0, gameStore_1.updateGameState)((state) => {
+        for (const battleUnit of playerUnits) {
+            const baseUnit = state.unitsById[battleUnit.id];
+            if (!baseUnit)
+                continue;
+            // Calculate damage taken (estimate from HP difference)
+            const maxHp = battleUnit.maxHp;
+            const currentHp = battleUnit.hp;
+            const damageTaken = Math.max(0, maxHp - currentHp);
+            (0, affinity_1.recordSurvival)(battleUnit.id, damageTaken, true, state);
+        }
+        return state;
+    });
+}
+/**
+ * Detect card type and track appropriate affinity
+ * This is a helper to determine if a card is melee/ranged/magic/support/mobility
+ */
+function detectCardAffinityType(cardName, cardDescription) {
+    const nameLower = cardName.toLowerCase();
+    const descLower = cardDescription.toLowerCase();
+    // Support detection
+    if (descLower.includes("heal") ||
+        descLower.includes("buff") ||
+        descLower.includes("shield") ||
+        descLower.includes("boost") ||
+        descLower.includes("restore")) {
+        return "support";
+    }
+    // Mobility detection
+    if (descLower.includes("move") ||
+        descLower.includes("dash") ||
+        descLower.includes("teleport") ||
+        descLower.includes("jump") ||
+        nameLower.includes("move")) {
+        return "mobility";
+    }
+    // Magic detection
+    if (descLower.includes("spell") ||
+        descLower.includes("magic") ||
+        descLower.includes("arcane") ||
+        descLower.includes("chaos") ||
+        descLower.includes("bolt") ||
+        descLower.includes("fire") ||
+        descLower.includes("ice") ||
+        nameLower.includes("spell") ||
+        nameLower.includes("magic")) {
+        return "magic";
+    }
+    // Ranged detection
+    if (descLower.includes("shot") ||
+        descLower.includes("arrow") ||
+        descLower.includes("bow") ||
+        descLower.includes("range") ||
+        nameLower.includes("shot") ||
+        nameLower.includes("arrow")) {
+        return "ranged";
+    }
+    // Melee detection (default for damage cards)
+    if (descLower.includes("damage") || descLower.includes("attack") || descLower.includes("strike")) {
+        return "melee";
+    }
+    return null;
+}

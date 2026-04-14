@@ -11,6 +11,7 @@ import { getFieldModDef } from "../../core/fieldModDefinitions";
 import type { GeneratedGear } from "../../core/endlessGear/types";
 import { getChassisById } from "../../data/gearChassis";
 import { getDoctrineById } from "../../data/gearDoctrines";
+import { getCraftedGearDescription } from "../../core/craftedGear";
 
 const EQUIPMENT_DETAIL_MODAL_ID = "gearDetailModalRoot";
 
@@ -242,7 +243,10 @@ function getEquipmentDescription(equipment: Equipment): string {
   const chassis = equipment.chassisId ? getChassisById(equipment.chassisId) : null;
   const doctrine = equipment.doctrineId ? getDoctrineById(equipment.doctrineId) : null;
   if (chassis && doctrine) {
-    return `${doctrine.name} doctrine laid over the ${chassis.name} frame for field deployment.`;
+    return getCraftedGearDescription(chassis.name, doctrine.name);
+  }
+  if (chassis) {
+    return getCraftedGearDescription(chassis.name);
   }
 
   return "Recovered equipment package ready for deployment.";

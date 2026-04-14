@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { toBalanceableImportedGear, validateGearBalance } from "../../core/gearBalanceValidation";
 import { importTechnicaEntry, type TechnicaManifest } from "./importer";
 import {
   getAllImportedBattleCards,
@@ -16,6 +17,7 @@ import {
   getAllImportedUnitTemplates,
   hasTechnicaRegistryEntry,
 } from "./index";
+import type { ImportedGear } from "./types";
 
 type TechnicaContentType = TechnicaManifest["contentType"];
 type SourceKind = "zip" | "runtime-json";
@@ -712,6 +714,17 @@ function getDependencyWarnings(
   });
 }
 
+function getBalanceWarnings(candidate: ParsedTechnicaCandidate): string[] {
+  if (candidate.manifest.contentType !== "gear" || !isGearShape(candidate.entryData)) {
+    return [];
+  }
+
+  const report = validateGearBalance(toBalanceableImportedGear(candidate.entryData as unknown as ImportedGear));
+  return report.findings
+    .filter((finding) => finding.severity !== "info")
+    .map((finding) => `Balance: ${finding.message}`);
+}
+
 async function parseZipCandidate(file: File): Promise<ParsedTechnicaCandidate> {
   const archive = await JSZip.loadAsync(await file.arrayBuffer());
   const manifestFile = archive.file("manifest.json");
@@ -897,7 +910,10 @@ export async function installTechnicaFiles(files: File[] | FileList): Promise<Te
   let didImportAnything = false;
 
   candidates.forEach((candidate) => {
-    const warnings = getDependencyWarnings(candidate.manifest, dependencyBuckets);
+    const warnings = [
+      ...getDependencyWarnings(candidate.manifest, dependencyBuckets),
+      ...getBalanceWarnings(candidate),
+    ];
 
     try {
       importTechnicaEntry(candidate.manifest, candidate.entryData, { syncToGameState: true });

@@ -8,6 +8,8 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import { getGameState } from "../state/gameStore";
+import { getAtlasTheaterByOperationId } from "./atlasSystem";
+import { getImportedOperationBriefing } from "./importedOperationTheater";
 import type { ResourceKey } from "./resources";
 import { CoreType, RoomNode, TheaterSprawlDirection } from "./types";
 import type { OpsTerminalAtlasState } from "./opsTerminalAtlas";
@@ -228,14 +230,16 @@ export const OPERATION_DEFINITIONS: Record<string, OperationDefinition> = {
 };
 
 getAllImportedOperations().forEach((operation) => {
+  const briefing = getImportedOperationBriefing(operation);
+  const atlasSummary = getAtlasTheaterByOperationId(operation.id);
   OPERATION_DEFINITIONS[operation.id] = {
     id: operation.id,
     name: operation.codename,
     description: operation.description,
-    objective: operation.description,
-    beginningState: "Imported operation staging complete. Theater initialized on the generated floor-grid.",
-    endState: "Imported objective node secured and theater logistics route stabilized.",
-    theaterId: `${operation.id}_castellan_gateworks`,
+    objective: briefing.objective,
+    beginningState: briefing.beginningState,
+    endState: briefing.endState,
+    theaterId: atlasSummary?.theaterId,
     floors: Math.max(1, operation.floors.length),
     recommendedPower: operation.recommendedPower,
     unlocksNextOperationId:

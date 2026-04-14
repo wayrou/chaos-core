@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "weapon_Iron_Watchblade",
+  "name": "Iron Watchblade",
+  "description": "A sharp and sturdy shortsword, used by military officers as a trusty sidearm. ",
+  "slot": "weapon",
+  "weaponType": "shortsword",
+  "isMechanical": false,
+  "stats": {
+    "atk": 2,
+    "def": 0,
+    "agi": 1,
+    "acc": 1,
+    "hp": 0
+  },
+  "cardsGranted": [],
+  "moduleSlots": 0,
+  "attachedModules": [],
+  "wear": 0,
+  "inventory": {
+    "massKg": 2,
+    "bulkBu": 1,
+    "powerW": 0,
+    "startingOwned": false
+  },
+  "acquisition": {
+    "shop": {
+      "enabled": true,
+      "unlockFloor": 0,
+      "notes": ""
+    },
+    "enemyDrop": {
+      "enabled": false,
+      "enemyUnitIds": [],
+      "notes": ""
+    },
+    "victoryReward": {
+      "enabled": false,
+      "floorOrdinals": [],
+      "regionIds": [],
+      "notes": ""
+    },
+    "otherSourcesNotes": ""
+  },
+  "metadata": {},
+  "createdAt": "2026-04-14T01:56:28.368Z",
+  "updatedAt": "2026-04-14T02:33:10.585Z"
+}

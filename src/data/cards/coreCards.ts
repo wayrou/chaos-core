@@ -5,7 +5,7 @@ export const CORE_CARDS: EquipmentCard[] = [
     "id": "core_move_plus",
     "name": "Move+",
     "type": "core",
-    "strainCost": 6,
+    "strainCost": 1,
     "description": "Move 2 extra tiles this turn.",
     "range": "R(Self)",
   },

@@ -34,6 +34,8 @@ export type WeaponType =
   | "gun"
   | "staff"
   | "greatstaff"
+  | "greatspear"
+  | "hammer"
   | "dagger"
   | "knife"
   | "fist"
@@ -150,6 +152,29 @@ export interface EquipmentStats {
   hp: number;
 }
 
+export interface EquipmentShopSource {
+  unlockFloor?: number;
+  notes?: string;
+}
+
+export interface EquipmentEnemyDropSource {
+  enemyUnitIds?: string[];
+  notes?: string;
+}
+
+export interface EquipmentVictoryRewardSource {
+  floorOrdinals?: number[];
+  regionIds?: string[];
+  notes?: string;
+}
+
+export interface EquipmentAcquisition {
+  shop?: EquipmentShopSource;
+  enemyDrop?: EquipmentEnemyDropSource;
+  victoryReward?: EquipmentVictoryRewardSource;
+  otherSourcesNotes?: string;
+}
+
 export interface HeatZone {
   min: number;
   max: number;
@@ -184,6 +209,7 @@ export interface WeaponEquipment {
     powerW: number;
     startingOwned?: boolean;
   };
+  acquisition?: EquipmentAcquisition;
   iconPath?: string;
   metadata?: Record<string, unknown>;
 
@@ -207,6 +233,7 @@ export interface ArmorEquipment {
     powerW: number;
     startingOwned?: boolean;
   };
+  acquisition?: EquipmentAcquisition;
   iconPath?: string;
   metadata?: Record<string, unknown>;
 
@@ -230,6 +257,7 @@ export interface AccessoryEquipment {
     powerW: number;
     startingOwned?: boolean;
   };
+  acquisition?: EquipmentAcquisition;
   iconPath?: string;
   metadata?: Record<string, unknown>;
 
@@ -255,6 +283,15 @@ export interface UnitLoadout {
   accessory2: string | null;
 }
 
+const EMPTY_UNIT_LOADOUT: UnitLoadout = {
+  primaryWeapon: null,
+  secondaryWeapon: null,
+  helmet: null,
+  chestpiece: null,
+  accessory1: null,
+  accessory2: null,
+};
+
 // ----------------------------------------------------------------------------
 // DATA RE-EXPORTS (Data moved to separate files to maintain manageable file size)
 // ----------------------------------------------------------------------------
@@ -273,23 +310,90 @@ import { CLASS_CARDS } from "../data/cards/classCards";
 import { EQUIPMENT_CARDS } from "../data/cards/equipmentCards";
 import { STARTER_WEAPONS } from "../data/weapons";
 import { STARTER_HELMETS, STARTER_CHESTPIECES, STARTER_ACCESSORIES } from "../data/armor";
+import { normalizeWeaponTypeForRestrictions } from "./craftedGear";
 
 // ----------------------------------------------------------------------------
 // HELPER FUNCTIONS
 // ----------------------------------------------------------------------------
 
 export function canEquipWeapon(unitClass: UnitClass, weaponType: WeaponType): boolean {
+  const resolvedWeaponType = normalizeWeaponTypeForRestrictions(weaponType);
   const allowed = CLASS_WEAPON_RESTRICTIONS[unitClass as BuiltInUnitClass];
   if (allowed) {
-    return allowed.includes(weaponType);
+    return allowed.includes(resolvedWeaponType);
   }
 
   const importedClass = getImportedClass(unitClass);
   if (importedClass) {
-    return importedClass.weaponTypes.includes(weaponType);
+    return importedClass.weaponTypes.includes(resolvedWeaponType);
   }
 
   return false;
+}
+
+function isEquipmentValidForLoadoutSlot(
+  unitClass: UnitClass,
+  slot: keyof UnitLoadout,
+  equipment: Equipment | null | undefined,
+): boolean {
+  if (!equipment) {
+    return false;
+  }
+
+  switch (slot) {
+    case "primaryWeapon":
+    case "secondaryWeapon":
+      return equipment.slot === "weapon" && canEquipWeapon(unitClass, equipment.weaponType);
+    case "helmet":
+      return equipment.slot === "helmet";
+    case "chestpiece":
+      return equipment.slot === "chestpiece";
+    case "accessory1":
+    case "accessory2":
+      return equipment.slot === "accessory";
+    default:
+      return false;
+  }
+}
+
+export function sanitizeLoadoutForUnitClass(
+  unitClass: UnitClass,
+  loadoutLike: Partial<UnitLoadout> | null | undefined,
+  equipmentById: Record<string, Equipment>,
+): UnitLoadout {
+  const normalizedLoadout: UnitLoadout = {
+    ...EMPTY_UNIT_LOADOUT,
+    ...(loadoutLike ?? {}),
+  };
+  const sanitized: UnitLoadout = { ...EMPTY_UNIT_LOADOUT };
+  const usedEquipmentIds = new Set<string>();
+  const slots: (keyof UnitLoadout)[] = [
+    "primaryWeapon",
+    "secondaryWeapon",
+    "helmet",
+    "chestpiece",
+    "accessory1",
+    "accessory2",
+  ];
+
+  for (const slot of slots) {
+    const equipmentId = normalizedLoadout[slot];
+    if (!equipmentId || usedEquipmentIds.has(equipmentId)) {
+      sanitized[slot] = null;
+      continue;
+    }
+
+    const equipment = equipmentById[equipmentId];
+    if (!isEquipmentValidForLoadoutSlot(unitClass, slot, equipment)) {
+      sanitized[slot] = null;
+      continue;
+    }
+
+    sanitized[slot] = equipmentId;
+    usedEquipmentIds.add(equipmentId);
+  }
+
+  return sanitized;
 }
 
 function toEquipmentCardRange(range: number | undefined): string | undefined {

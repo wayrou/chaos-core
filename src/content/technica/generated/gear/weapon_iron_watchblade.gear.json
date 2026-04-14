@@ -1,0 +1,29 @@
+{
+  "acquisition": {
+    "shop": {
+      "notes": "",
+      "unlockFloor": 0
+    }
+  },
+  "description": "A sharp and sturdy shortsword, used by military officers as a trusty sidearm. ",
+  "id": "weapon_iron_watchblade",
+  "inventory": {
+    "bulkBu": 1,
+    "massKg": 2,
+    "powerW": 0,
+    "startingOwned": false
+  },
+  "isMechanical": false,
+  "moduleSlots": 0,
+  "name": "Iron Watchblade",
+  "slot": "weapon",
+  "stats": {
+    "acc": 1,
+    "agi": 1,
+    "atk": 2,
+    "def": 0,
+    "hp": 0
+  },
+  "weaponType": "shortsword",
+  "wear": 0
+}

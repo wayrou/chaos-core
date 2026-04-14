@@ -19,6 +19,11 @@ import { FIELD_MOD_DEFINITIONS, getAllFieldModDefs } from "../fieldModDefinition
 import { FieldModDef } from "../fieldMods";
 import { Equipment, WeaponEquipment, ArmorEquipment, AccessoryEquipment } from "../equipment";
 import { LIBRARY_CARD_DATABASE } from "../gearWorkbench";
+import {
+  getCraftedGearBaseStats,
+  getCraftedGearDescription,
+  getDefaultCraftedWeaponShape,
+} from "../craftedGear";
 
 /**
  * Generate endless gear from a recipe
@@ -429,23 +434,16 @@ function createEquipmentFromGeneration(
 ): GeneratedGearBase {
   const equipmentId = `endless_${chassis.slotType}_${chassis.id}_${doctrine.id}_${seed}`;
   const equipmentName = `${doctrine.name} ${chassis.name}`;
-  
-  // Base stats (similar to gear builder)
-  const baseStats = {
-    atk: chassis.slotType === "weapon" ? 5 : 0,
-    def: (chassis.slotType === "helmet" || chassis.slotType === "chestpiece") ? 3 : 0,
-    agi: chassis.slotType === "accessory" ? 2 : 0,
-    acc: 80,
-    hp: 0,
-  };
+  const baseStats = getCraftedGearBaseStats(chassis.slotType);
   
   // Create equipment based on slot type
   if (chassis.slotType === "weapon") {
     return {
       id: equipmentId,
       name: equipmentName,
+      description: getCraftedGearDescription(chassis.name, doctrine.name),
       slot: "weapon",
-      weaponType: "sword", // Default
+      weaponType: getDefaultCraftedWeaponShape(),
       isMechanical: true,
       stats: baseStats,
       cardsGranted: [], // Empty - will be filled by slotting
@@ -459,6 +457,7 @@ function createEquipmentFromGeneration(
     return {
       id: equipmentId,
       name: equipmentName,
+      description: getCraftedGearDescription(chassis.name, doctrine.name),
       slot: chassis.slotType,
       stats: baseStats,
       cardsGranted: [],
@@ -471,6 +470,7 @@ function createEquipmentFromGeneration(
     return {
       id: equipmentId,
       name: equipmentName,
+      description: getCraftedGearDescription(chassis.name, doctrine.name),
       slot: "accessory",
       stats: baseStats,
       cardsGranted: [],

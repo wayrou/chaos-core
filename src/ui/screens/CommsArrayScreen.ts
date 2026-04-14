@@ -15,6 +15,7 @@ import {
   type CoopTheaterCommand,
   type EconomyPreset,
   type LobbyCoopParticipantState,
+  type LobbySeatPreference,
   NETWORK_PLAYER_SLOTS,
   type OperationRun,
   type ResourceKey,
@@ -86,6 +87,7 @@ import {
   upsertLobbyMember,
 } from "../../core/multiplayerLobby";
 import { getTacticalMapById, getTacticalMapCatalog, type TacticalMapDefinition } from "../../core/tacticalMaps";
+import { getFieldMap } from "../../field/maps";
 import {
   approveSessionTradeTransfer,
   cancelSessionTradeTransfer,
@@ -242,6 +244,8 @@ let shouldAutoResumeRemoteSkirmishBattle = false;
 let shouldAutoResumeRemoteCoopOperations = false;
 let cleanupCoopOperationsStateSync: (() => void) | null = null;
 let lastCoopOperationsSyncSignature = "";
+let lastCommsArrayScrollTop = 0;
+let lastCommsArrayWindowScrollY = 0;
 let selectedSharedCampaignSlot: SharedCampaignSlot = SHARED_CAMPAIGN_SLOTS.CAMPAIGN_1;
 let sharedCampaignSaveInfos: SharedCampaignSaveInfo[] = [];
 let sharedCampaignSavesHydrated = false;
@@ -257,6 +261,8 @@ let coopTransferDraft: {
   resourceKey: RESOURCE_KEYS[0],
   amount: 10,
 };
+
+const NETWORK_LOBBY_TILE_SIZE = 64;
 
 const SKIRMISH_UNIT_LABELS = [
   "Vanguard Core",
@@ -751,8 +757,61 @@ async function openNetworkLobbyField(): Promise<void> {
   renderFieldScreen("network_lobby");
 }
 
+function getCommsArrayScrollContainer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".comms-array-content");
+}
+
+function captureCommsArrayScrollPosition(): void {
+  const scrollContainer = getCommsArrayScrollContainer();
+  lastCommsArrayScrollTop = scrollContainer?.scrollTop ?? 0;
+  lastCommsArrayWindowScrollY = window.scrollY ?? 0;
+}
+
+function restoreCommsArrayScrollPosition(): void {
+  requestAnimationFrame(() => {
+    if (window.scrollY !== lastCommsArrayWindowScrollY) {
+      window.scrollTo(0, lastCommsArrayWindowScrollY);
+    }
+    const scrollContainer = getCommsArrayScrollContainer();
+    if (!scrollContainer) {
+      return;
+    }
+    const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+    scrollContainer.scrollTop = Math.min(lastCommsArrayScrollTop, maxScrollTop);
+  });
+}
+
 function isCommsArrayMounted(): boolean {
   return Boolean(document.querySelector(".comms-array-root, .skirmish-staging-root"));
+}
+
+function resolveLobbySeatPreference(
+  mapId: string,
+  x: number,
+  y: number,
+): LobbySeatPreference | null {
+  if (mapId !== "network_lobby") {
+    return null;
+  }
+
+  const lobbyMap = getFieldMap("network_lobby");
+  const tileX = Math.floor(x / NETWORK_LOBBY_TILE_SIZE);
+  const tileY = Math.floor(y / NETWORK_LOBBY_TILE_SIZE);
+  const benchZone = lobbyMap.interactionZones.find((zone) => (
+    (zone.metadata?.handlerId === "lobby_ready_bench" || zone.metadata?.handlerId === "lobby_lounge_bench")
+    && tileX >= zone.x
+    && tileX < zone.x + zone.width
+    && tileY >= zone.y
+    && tileY < zone.y + zone.height
+  ));
+
+  if (benchZone?.metadata?.handlerId === "lobby_ready_bench") {
+    return "ready";
+  }
+  if (benchZone?.metadata?.handlerId === "lobby_lounge_bench") {
+    return "lounge";
+  }
+  return null;
 }
 
 function shouldRenderSkirmishStaging(match: SquadMatchState | null): boolean {
@@ -1876,13 +1935,15 @@ function captureLobbyReturnContext(): LobbyReturnContext {
   if (activeCommsReturnTo === "operation") {
     return { kind: "operation" };
   }
+  const currentFieldMapId = getBaseCampFieldReturnMap();
+  const safeFieldMapId = currentFieldMapId === "network_lobby" ? "base_camp" : currentFieldMapId;
   const avatar = getGameState().players.P1.avatar;
   return {
     kind: "field",
-    mapId: getBaseCampFieldReturnMap(),
-    x: avatar?.x,
-    y: avatar?.y,
-    facing: avatar?.facing,
+    mapId: safeFieldMapId,
+    x: safeFieldMapId === currentFieldMapId ? avatar?.x : undefined,
+    y: safeFieldMapId === currentFieldMapId ? avatar?.y : undefined,
+    facing: safeFieldMapId === currentFieldMapId ? avatar?.facing : undefined,
   };
 }
 
@@ -1892,8 +1953,14 @@ async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void
   const normalizedReturnContext: LobbyReturnContext =
     returnContext.kind === "esc" && fallbackContext.kind === "field"
       ? fallbackContext
-      : !lobby?.returnContext && returnContext.kind === "field" && returnContext.mapId === "network_lobby"
-        ? { kind: "field", mapId: "base_camp" }
+      : returnContext.kind === "field" && returnContext.mapId === "network_lobby"
+        ? (
+            fallbackContext.kind === "field" && fallbackContext.mapId !== "network_lobby"
+              ? fallbackContext
+              : fallbackContext.kind !== "field"
+                ? fallbackContext
+                : { kind: "field", mapId: "base_camp" }
+          )
         : returnContext;
 
   if (normalizedReturnContext.kind === "menu") {
@@ -1993,13 +2060,34 @@ async function hostAdvanceLobbySkirmishPlaylist(
   maybeEnterLocalLobbySkirmish(nextLobby);
 }
 
+function getReadyBenchLobbySlots(lobby: LobbyState): NetworkPlayerSlot[] {
+  return NETWORK_PLAYER_SLOTS.filter((slot) => (
+    slot !== lobby.hostSlot
+    && Boolean(lobby.members[slot]?.connected)
+    && lobby.avatars[slot]?.mapId === "network_lobby"
+    && lobby.avatars[slot]?.seatPreference === "ready"
+  )) as NetworkPlayerSlot[];
+}
+
+function resolveLobbyCoopLaunchSlots(
+  lobby: LobbyState,
+  selectedSlots?: NetworkPlayerSlot[],
+): NetworkPlayerSlot[] {
+  const explicitSlots = (selectedSlots ?? []).filter((slot, index, all) => (
+    slot !== lobby.hostSlot
+    && Boolean(lobby.members[slot]?.connected)
+    && all.indexOf(slot) === index
+  ));
+  const readyBenchSlots = getReadyBenchLobbySlots(lobby);
+  const launchSlots = [...explicitSlots, ...readyBenchSlots].filter((slot, index, all) => all.indexOf(slot) === index);
+  return launchSlots as NetworkPlayerSlot[];
+}
+
 async function hostLaunchLobbyCoopOperations(currentLobby: LobbyState, selectedSlots?: NetworkPlayerSlot[]): Promise<void> {
   if (currentLobby.activity.kind === "skirmish") {
     throw new Error("Finish the active Skirmish before staging Co-Op Operations.");
   }
-  const normalizedSlots = (selectedSlots?.length
-    ? selectedSlots
-    : NETWORK_PLAYER_SLOTS.filter((slot) => Boolean(currentLobby.members[slot]?.connected))) as NetworkPlayerSlot[];
+  const normalizedSlots = resolveLobbyCoopLaunchSlots(currentLobby, selectedSlots);
   const sharedCampaignSlot = getActiveSharedCampaignSlot();
   const sharedCampaignLabel = getActiveSharedCampaignLabel()
     ?? (sharedCampaignSlot ? getSharedCampaignSlotName(sharedCampaignSlot) : null);
@@ -2543,7 +2631,8 @@ export async function syncLocalLobbyAvatarFromField(
   }
   const roundedX = Math.round(x);
   const roundedY = Math.round(y);
-  const signature = `${localSlot}:${mapId}:${roundedX}:${roundedY}:${facing}`;
+  const seatPreference = resolveLobbySeatPreference(mapId, roundedX, roundedY);
+  const signature = `${localSlot}:${mapId}:${roundedX}:${roundedY}:${facing}:${seatPreference ?? "none"}`;
   const now = performance.now();
   if (signature === lastLobbyAvatarSignature && now - lastLobbyAvatarBroadcastAt < 100) {
     return;
@@ -2556,6 +2645,7 @@ export async function syncLocalLobbyAvatarFromField(
     y: roundedY,
     facing,
     mapId,
+    seatPreference,
     updatedAt: Date.now(),
   });
   commitLobbyState(nextLobby, undefined, "info", false);
@@ -2652,7 +2742,20 @@ export async function beginLobbyCoopOperations(): Promise<void> {
 }
 
 export async function startLobbyCoopOperations(_selectedSlots?: NetworkPlayerSlot[]): Promise<void> {
-  await beginLobbyCoopOperations();
+  const lobby = getResolvedLobbyState();
+  if (!lobby || !canLocalHostLobby(lobby)) {
+    return;
+  }
+
+  if (_selectedSlots?.length) {
+    await hostLaunchLobbyCoopOperations(lobby, _selectedSlots);
+  }
+
+  const stagedLobby = getResolvedLobbyState();
+  if (!stagedLobby || !canLocalHostLobby(stagedLobby)) {
+    return;
+  }
+  await hostBeginLobbyCoopOperations(stagedLobby);
 }
 
 export async function openSharedCoopOperationsEntry(beforeScreenOpen?: () => void): Promise<boolean> {
@@ -2778,6 +2881,7 @@ async function handleRemoteLobbyCommand(sourcePeerId: string, payload: string): 
         x: command.x,
         y: command.y,
         facing: command.facing,
+        seatPreference: resolveLobbySeatPreference(command.mapId, command.x, command.y),
         updatedAt: Date.now(),
       });
       commitLobbyState(nextLobby, undefined, "info", false);
@@ -3750,7 +3854,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
       ? `LOBBY // ${transportRole.toUpperCase()}`
       : lobby.activity.kind === "skirmish"
         ? `SKIRMISH // ${lobby.activity.skirmish.status.toUpperCase()}`
-        : "CO-OP OPS // STAGING"
+        : `CO-OP OPS // ${lobby.activity.coopOperations.status.toUpperCase()}`
     : transportRole === "client"
       ? "CLIENT READY"
       : transportRole === "host"
@@ -3764,14 +3868,6 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
   const coopSelectedParticipants = getSelectedCoopParticipants(lobby);
   const coopActiveOperators = getActiveCoopOperators(lobby);
   const coopStandbyParticipants = getStandbyCoopParticipants(lobby);
-  const coopSelectionSummary = lobby?.activity.kind === "coop_operations"
-    ? `${coopActiveOperators.length} active${coopStandbyParticipants.length > 0 ? ` // ${coopStandbyParticipants.length} standby` : ""}${coopSelectedParticipants.length > 0 ? ` // ${coopSelectedParticipants.map((participant) => participant.callsign).join(", ")}` : " // None selected"}`
-    : "";
-  const coopActivityStatus = lobby?.activity.kind === "coop_operations"
-    ? lobby.activity.coopOperations.status === "active"
-      ? "ACTIVE"
-      : "STAGING"
-    : "IDLE";
   const activeSharedCampaignSlot = getActiveSharedCampaignSlot();
   const activeSharedCampaignLabel = getActiveSharedCampaignLabel();
   const showSharedCampaignControls = Boolean(lobby && canLocalHostLobby(lobby));
@@ -3784,17 +3880,9 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
     lobby
     && lobby.activity.kind === "coop_operations"
     && activeSharedCampaignSlot
-    && (
-      (
-        canLocalHostLobby(lobby)
-        && lobby.activity.coopOperations.status !== "active"
-        && lobby.activity.coopOperations.selectedSlots.length > 0
-      )
-      || (
-        lobby.activity.coopOperations.status === "active"
-        && localCoopParticipant?.selected
-      )
-    ),
+    && canLocalHostLobby(lobby)
+    && lobby.activity.coopOperations.status !== "active"
+    && lobby.activity.coopOperations.selectedSlots.length > 0,
   );
   const manualJoinAddress = multiplayerLobbyPreviewConfig.joinAddress.trim();
   const joinCodeCard = lobby ? `
@@ -3826,7 +3914,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
 
           ${transportAvailable ? `
             <details class="comms-array-manual-join" ${manualJoinAddress ? "open" : ""}>
-              <summary>Manual Direct Join</summary>
+              <summary>Join</summary>
               <div class="config-row">
                 <label class="config-label">Host Address:</label>
                 <input class="config-select" id="multiplayerJoinAddressInput" value="${escapeHtml(multiplayerLobbyPreviewConfig.joinAddress)}" placeholder="192.168.x.x:PORT" />
@@ -3851,10 +3939,6 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
           ` : ""}
 
           ${lobby?.activity.kind === "coop_operations" ? `
-            <div class="config-note">
-              <span class="note-icon">O</span>
-              <span>Co-Op Operations ${escapeHtml(coopActivityStatus.toLowerCase())} // ${escapeHtml(coopSelectionSummary)}${lobby.activity.coopOperations.sharedCampaignLabel ? ` // ${escapeHtml(lobby.activity.coopOperations.sharedCampaignLabel)}` : ""}</span>
-            </div>
             ${coopStandbyParticipants.length > 0 ? `
               <div class="config-note">
                 <span class="note-icon">!</span>
@@ -3912,7 +3996,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
           ` : ""}
           ${!lobby && transportAvailable && transportRole === "idle" ? `
             <button class="comms-array-btn" id="joinRemoteHostBtn" ${manualJoinAddress ? "" : "disabled"}>
-              JOIN VIA ADDRESS
+              JOIN
             </button>
           ` : ""}
           ${canEnterLobbyField ? `
@@ -3927,7 +4011,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
           ` : ""}
           ${canStartSharedCoop ? `
             <button class="comms-array-btn comms-array-btn--primary" id="startSharedCoopBtn">
-              START SHARED CO-OP
+              START CO-OP OPERATION
             </button>
           ` : ""}
           ${canEnterSkirmish ? `
@@ -3956,6 +4040,11 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
                 const coopParticipant = lobby.activity.kind === "coop_operations"
                   ? lobby.activity.coopOperations.participants[slot]
                   : null;
+                const benchStatus = lobby.avatars[slot]?.seatPreference === "ready"
+                  ? " // READY BENCH"
+                  : lobby.avatars[slot]?.seatPreference === "lounge"
+                    ? " // LOUNGE BENCH"
+                    : "";
                 const opsStatus = coopParticipant?.selected
                   ? coopParticipant.standby
                     ? " // OPS STANDBY"
@@ -3964,7 +4053,7 @@ function renderSquadOnlineSection(returnTo: CommsReturnTo = activeCommsReturnTo)
                 return `
                   <div class="binding-item">
                     <span class="binding-action">${slot}${member ? ` // ${escapeHtml(member.callsign)}` : " // OPEN"}</span>
-                    <span class="binding-keys">${member ? `${member.authorityRole.toUpperCase()} // ${member.presence.toUpperCase()}${opsStatus}` : "Awaiting link"}</span>
+                    <span class="binding-keys">${member ? `${member.authorityRole.toUpperCase()} // ${member.presence.toUpperCase()}${benchStatus}${opsStatus}` : "Awaiting link"}</span>
                   </div>
                 `;
               }).join("")}
@@ -4044,7 +4133,8 @@ export function renderCommsArrayScreen(
 ): void {
   const app = document.getElementById("app");
   if (!app) return;
-  
+
+  captureCommsArrayScrollPosition();
   activeCommsContextMode = contextMode;
   ensureSquadTransportIntegration(returnTo);
   ensureSharedCampaignAutosaveSync();
@@ -4229,6 +4319,7 @@ export function renderCommsArrayScreen(
   `;
   
   attachCommsArrayListeners(returnTo);
+  restoreCommsArrayScrollPosition();
 }
 
 export function renderMultiplayerCommsArrayScreen(returnTo: CommsReturnTo = "basecamp"): void {
@@ -4328,7 +4419,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
     joinRemoteHostBtn.onclick = async () => {
       try {
         await joinMultiplayerLobby(multiplayerLobbyPreviewConfig.joinAddress, getPreferredLobbyOperatorCallsign());
-        showNotification(`Joined remote lobby ${multiplayerLobbyPreviewConfig.joinAddress.trim()}.`, "success");
+        showNotification("Joined the multiplayer lobby.", "success");
       } catch (error) {
         showNotification(
           error instanceof Error ? error.message : "Failed to join the multiplayer lobby.",
@@ -4978,6 +5069,7 @@ export function renderLobbySkirmishConsoleScreen(returnTo: CommsReturnTo = "base
   const app = document.getElementById("app");
   if (!app) return;
 
+  captureCommsArrayScrollPosition();
   ensureSquadTransportIntegration(returnTo);
   ensureSharedCampaignAutosaveSync();
   ensureSharedCampaignBrowserHydrated(returnTo);
@@ -5010,6 +5102,7 @@ export function renderLobbySkirmishConsoleScreen(returnTo: CommsReturnTo = "base
   `;
 
   attachCommsArrayListeners(returnTo);
+  restoreCommsArrayScrollPosition();
 }
 
 function startTrainingBattle(returnTo: CommsReturnTo): void {

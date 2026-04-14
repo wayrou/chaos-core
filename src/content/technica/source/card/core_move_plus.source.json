@@ -9,7 +9,7 @@
   "cardType": "core",
   "rarity": "common",
   "category": "utility",
-  "strainCost": 6,
+  "strainCost": 1,
   "targetType": "tile",
   "range": 0,
   "effects": [

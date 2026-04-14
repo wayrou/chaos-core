@@ -31,6 +31,8 @@ export interface GearChassis {
   // Build cost (base cost, doctrine adds modifier)
   buildCost: ResourceWallet;
   unlockAfterFloor?: number;
+  availableInHavenShop?: boolean;
+  havenShopUnlockAfterFloor?: number;
   requiredQuestIds?: string[];
 }
 

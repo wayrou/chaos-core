@@ -361,6 +361,24 @@ export async function handleInteraction(
         break;
       }
 
+      if (zone.metadata?.handlerId === "lobby_ready_bench") {
+        showFieldTravelPing(
+          "READY BENCH",
+          "Operators resting here are auto-added when the host starts a Co-Op operation.",
+        );
+        onResume();
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "lobby_lounge_bench") {
+        showFieldTravelPing(
+          "LOUNGE BENCH",
+          "Operators resting here stay out of automatic Co-Op launch selection.",
+        );
+        onResume();
+        break;
+      }
+
       if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
         const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
         try {

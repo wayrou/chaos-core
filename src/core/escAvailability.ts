@@ -24,6 +24,7 @@ export type EscActionAvailability = "active" | "disabled" | "hidden";
 
 export interface EscAvailabilityContext {
   expeditionActive: boolean;
+  coopOperationsActive: boolean;
 }
 
 const EXPEDITION_ENABLED_ESC_ACTIONS = new Set<EscNodeAction>([
@@ -38,6 +39,10 @@ export function getEscActionAvailability(
   action: EscNodeAction,
   context: EscAvailabilityContext,
 ): EscActionAvailability {
+  if (action === "comms-array" && context.coopOperationsActive) {
+    return "active";
+  }
+
   if (!context.expeditionActive) {
     return "active";
   }

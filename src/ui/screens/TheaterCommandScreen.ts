@@ -1986,6 +1986,32 @@ function focusMapOnRoom(theater: TheaterNetworkState, roomId: string): void {
   clampMapPanToBounds(theater);
 }
 
+function isAnyTheaterRoomVisibleOnScreen(theater: TheaterNetworkState): boolean {
+  const viewportWidth = window.innerWidth || 1920;
+  const viewportHeight = window.innerHeight || 1080;
+  const mapCenterX = MAP_WIDTH / 2;
+  const mapCenterY = MAP_HEIGHT / 2;
+
+  return Object.values(theater.rooms).some((room) => {
+    const left = (viewportWidth / 2) + (((room.position.x - (room.size.width / 2)) - mapCenterX + mapPanX) * mapZoom);
+    const right = (viewportWidth / 2) + (((room.position.x + (room.size.width / 2)) - mapCenterX + mapPanX) * mapZoom);
+    const top = (viewportHeight / 2) + (((room.position.y - (room.size.height / 2)) - mapCenterY + mapPanY) * mapZoom);
+    const bottom = (viewportHeight / 2) + (((room.position.y + (room.size.height / 2)) - mapCenterY + mapPanY) * mapZoom);
+
+    return right >= 0 && left <= viewportWidth && bottom >= 0 && top <= viewportHeight;
+  });
+}
+
+function resetMapViewportForTheaterEntry(theater: TheaterNetworkState): void {
+  mapZoom = clampNumber(getDefaultMapZoom(theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+  const defaultFocusRoomId = getDefaultFocusRoomId(theater);
+  if (defaultFocusRoomId) {
+    focusMapOnRoom(theater, defaultFocusRoomId);
+  } else {
+    focusMapOnTheater(theater);
+  }
+}
+
 function frameStyle(key: TheaterWindowKey): string {
   const frame = ensureTheaterWindowFrames()[key];
   return `left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px;z-index:${frame.zIndex};${getTheaterWindowThemeStyle(key)}`;
@@ -9864,14 +9890,9 @@ export function renderTheaterCommandScreen(): void {
   }
   hydrateTheaterUiLayoutFromState(mountSignature);
   normalizeAllTheaterWindowFrames();
-  if (previousScreen !== "theater-command" || lastMountedTheaterSignature !== mountSignature) {
-    mapZoom = clampNumber(getDefaultMapZoom(ensuredOperation.theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
-    const defaultFocusRoomId = getDefaultFocusRoomId(ensuredOperation.theater);
-    if (defaultFocusRoomId) {
-      focusMapOnRoom(ensuredOperation.theater, defaultFocusRoomId);
-    } else {
-      focusMapOnTheater(ensuredOperation.theater);
-    }
+  const isFreshTheaterEntry = previousScreen !== "theater-command" || lastMountedTheaterSignature !== mountSignature;
+  if (isFreshTheaterEntry || !isAnyTheaterRoomVisibleOnScreen(ensuredOperation.theater)) {
+    resetMapViewportForTheaterEntry(ensuredOperation.theater);
   }
 
   const syncedCompletion = ensuredOperation.theater.completion;

@@ -1756,7 +1756,9 @@ function attachNetworkLobbyOverlayHandlers(container: HTMLElement): void {
 
   const leaveBtn = container.querySelector<HTMLElement>("#networkLobbyLeaveBtn");
   if (leaveBtn) {
-    leaveBtn.onclick = () => {
+    leaveBtn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       import("../ui/screens/CommsArrayScreen").then(async ({ leaveCurrentMultiplayerLobby }) => {
         await leaveCurrentMultiplayerLobby();
       });
@@ -2655,6 +2657,7 @@ function normalizePinnedQuacCommand(value: string): string {
 function getFieldEscAvailabilityContext() {
   return {
     expeditionActive: Boolean(currentMap && isOuterDeckBranchMap(String(currentMap.id))),
+    coopOperationsActive: getGameState().session.mode === "coop_operations",
   };
 }
 
@@ -6460,7 +6463,11 @@ async function handleNodeAction(action: string): Promise<void> {
       });
       break;
     case "comms-array":
-      import("../ui/screens/CommsArrayScreen").then(({ renderHavenCommsArrayScreen }) => {
+      import("../ui/screens/CommsArrayScreen").then(({ renderHavenCommsArrayScreen, renderMultiplayerCommsArrayScreen }) => {
+        if (getGameState().session.mode === "coop_operations") {
+          renderMultiplayerCommsArrayScreen("field");
+          return;
+        }
         renderHavenCommsArrayScreen("field");
       });
       break;

@@ -1,0 +1,781 @@
+import { getAllImportedClasses, isTechnicaContentDisabled, } from "../content/technica";
+import { isQuestCompleted } from "../quests/questManager";
+// ============================================================================
+// CLASS DEFINITIONS
+// ============================================================================
+export const CLASS_DEFINITIONS = {
+    // ==========================================================================
+    // TIER 0 - STARTER JOBS
+    // ==========================================================================
+    "squire": {
+        "id": "squire",
+        "name": "Squire",
+        "description": "Balanced frontline unit, adaptive and reliable.",
+        "tier": 0,
+        "baseStats": {
+            "maxHp": 12,
+            "atk": 8,
+            "def": 6,
+            "agi": 3,
+            "acc": 6,
+        },
+        "weaponTypes": [
+            "sword",
+            "shield",
+        ],
+        "unlockConditions": [
+            {
+                "type": "always_unlocked",
+            },
+        ],
+        "innateAbility": "Gained Ground: +1 DEF when adjacent to ally",
+    },
+    ranger: {
+        id: "ranger",
+        name: "Ranger",
+        description: "Long-range attacker with strong mobility options.",
+        tier: 0,
+        baseStats: { maxHp: 12, atk: 8, def: 4, agi: 4, acc: 8 },
+        weaponTypes: ["bow"],
+        unlockConditions: [{ type: "always_unlocked" }],
+        innateAbility: "Far Shot: +1 range on bow attacks",
+    },
+    // ==========================================================================
+    // TIER 1 - CORE UNLOCKABLE CLASSES
+    // ==========================================================================
+    magician: {
+        id: "magician",
+        name: "Magician",
+        description: "Damage + utility casting. Harnesses chaos energy.",
+        tier: 1,
+        baseStats: { maxHp: 10, atk: 9, def: 3, agi: 3, acc: 7 },
+        weaponTypes: ["staff"],
+        unlockConditions: [
+            { type: "milestone", description: "Bring 5 Chaos Shards to Base Camp" },
+        ],
+        innateAbility: "Mana Flow: -1 strain cost on magic cards",
+    },
+    thief: {
+        id: "thief",
+        name: "Thief",
+        description: "Stealth, mobility, debuffs, and critical strikes.",
+        tier: 1,
+        baseStats: { maxHp: 11, atk: 7, def: 4, agi: 5, acc: 8 },
+        weaponTypes: ["shortsword"],
+        unlockConditions: [
+            { type: "milestone", description: "Successfully steal from an enemy" },
+        ],
+        innateAbility: "Steal: Can pilfer items from enemies",
+    },
+    academic: {
+        id: "academic",
+        name: "Academic",
+        description: "Tactical analysis, buffing, and intel gathering.",
+        tier: 1,
+        baseStats: { maxHp: 10, atk: 6, def: 4, agi: 3, acc: 7 },
+        weaponTypes: ["bow", "shortsword"],
+        unlockConditions: [
+            { type: "milestone", description: "Scan 10 unique enemy types" },
+        ],
+        innateAbility: "Analysis: Reveal enemy HP and weaknesses",
+    },
+    freelancer: {
+        id: "freelancer",
+        name: "Freelancer",
+        description: "Adaptive generalist. Can use any weapon with minor penalties.",
+        tier: 1,
+        baseStats: { maxHp: 12, atk: 7, def: 5, agi: 3, acc: 6 },
+        weaponTypes: ["sword", "shield", "bow", "staff", "shortsword"], // Can use any
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 2 },
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 2 },
+        ],
+        innateAbility: "Versatile: No weapon restrictions",
+    },
+    // ==========================================================================
+    // TIER 2 - SQUIRE BRANCHES
+    // ==========================================================================
+    sentry: {
+        id: "sentry",
+        name: "Sentry",
+        description: "Defensive vanguard. Anti-rush frontline specialist.",
+        tier: 2,
+        baseStats: { maxHp: 130, atk: 9, def: 11, agi: 4, acc: 6 },
+        weaponTypes: ["sword", "greatsword", "shield"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
+            { type: "milestone", description: "Complete 3 battles with no ally KOs" },
+        ],
+        innateAbility: "Guardian: Adjacent allies take -2 damage",
+    },
+    paladin: {
+        id: "paladin",
+        name: "Paladin",
+        description: "Protector with healing and mitigation abilities.",
+        tier: 2,
+        baseStats: { maxHp: 125, atk: 9, def: 10, agi: 4, acc: 7 },
+        weaponTypes: ["sword", "greatsword", "shield"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
+            { type: "milestone", description: "Save an ally from lethal damage 5 times" },
+        ],
+        innateAbility: "Auto-Regen: Heal 5 HP per turn",
+    },
+    watch_guard: {
+        id: "watch_guard",
+        name: "Watch Guard",
+        description: "Hybrid melee-ranged control and overwatch.",
+        tier: 2,
+        baseStats: { maxHp: 110, atk: 8, def: 7, agi: 6, acc: 8 },
+        weaponTypes: ["sword", "bow", "shield"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
+            { type: "milestone", description: "Deal melee and ranged damage in one battle" },
+        ],
+        innateAbility: "Overwatch: Free attack on enemies entering range",
+    },
+    // ==========================================================================
+    // TIER 2 - RANGER BRANCHES
+    // ==========================================================================
+    hunter: {
+        id: "hunter",
+        name: "Hunter",
+        description: "Precision ranged crits and single-target burst.",
+        tier: 2,
+        baseStats: { maxHp: 95, atk: 10, def: 4, agi: 8, acc: 10 },
+        weaponTypes: ["bow", "gun"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 3 },
+            { type: "milestone", description: "Score 3 max-range critical hits" },
+        ],
+        innateAbility: "Sharpshooter: +2 damage at max range",
+    },
+    bowmaster: {
+        id: "bowmaster",
+        name: "Bowmaster",
+        description: "Long-range power shots and piercing attacks.",
+        tier: 2,
+        baseStats: { maxHp: 100, atk: 11, def: 4, agi: 7, acc: 9 },
+        weaponTypes: ["bow", "greatbow"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 3 },
+            { type: "milestone", description: "Fire 50 arrows total" },
+        ],
+        innateAbility: "Pierce: Attacks pass through first target",
+    },
+    trapper: {
+        id: "trapper",
+        name: "Trapper",
+        description: "Battlefield control through traps, snares, and lures.",
+        tier: 2,
+        baseStats: { maxHp: 90, atk: 7, def: 5, agi: 8, acc: 8 },
+        weaponTypes: ["bow", "gun"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 3 },
+            { type: "milestone", description: "Trigger 5 traps in Free Zones" },
+        ],
+        innateAbility: "Set Trap: Place hazards on tiles",
+    },
+    // ==========================================================================
+    // TIER 2 - MAGICIAN BRANCHES
+    // ==========================================================================
+    cleric: {
+        id: "cleric",
+        name: "Cleric",
+        description: "Heals, shields, and purifies corruption.",
+        tier: 2,
+        baseStats: { maxHp: 80, atk: 5, def: 5, agi: 5, acc: 7 },
+        weaponTypes: ["staff"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "milestone", description: "Heal 500 HP cumulatively" },
+        ],
+        innateAbility: "Holy Light: Heals also damage undead",
+    },
+    wizard: {
+        id: "wizard",
+        name: "Wizard",
+        description: "High-damage elemental casting specialist.",
+        tier: 2,
+        baseStats: { maxHp: 70, atk: 12, def: 3, agi: 5, acc: 8 },
+        weaponTypes: ["staff", "greatstaff"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "milestone", description: "Deal 1000 total magic damage" },
+        ],
+        innateAbility: "Arcane Mastery: +3 damage on elemental spells",
+    },
+    chaosmancer: {
+        id: "chaosmancer",
+        name: "Chaosmancer",
+        description: "Chaos-infused hybrid of melee and magic.",
+        tier: 2,
+        baseStats: { maxHp: 90, atk: 10, def: 5, agi: 6, acc: 7 },
+        weaponTypes: ["staff", "sword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "milestone", description: "Survive 3 Chaos Surges" },
+        ],
+        innateAbility: "Chaos Blade: Melee attacks deal magic damage",
+    },
+    // ==========================================================================
+    // TIER 2 - THIEF BRANCHES
+    // ==========================================================================
+    scout: {
+        id: "scout",
+        name: "Scout",
+        description: "Recon specialist. Vision range boosts and picking off stragglers.",
+        tier: 2,
+        baseStats: { maxHp: 85, atk: 8, def: 4, agi: 9, acc: 9 },
+        weaponTypes: ["bow"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "thief", requiredRank: 3 },
+            { type: "milestone", description: "Discover 10 secrets in Free Zones" },
+        ],
+        innateAbility: "Far Sight: +2 vision range",
+    },
+    shadow: {
+        id: "shadow",
+        name: "Shadow",
+        description: "Assassination master with evasion and backstab crits.",
+        tier: 2,
+        baseStats: { maxHp: 80, atk: 11, def: 3, agi: 12, acc: 9 },
+        weaponTypes: ["shortsword", "bow"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "thief", requiredRank: 3 },
+            { type: "milestone", description: "Perform 5 backstab kills" },
+        ],
+        innateAbility: "Backstab: +100% damage from behind",
+    },
+    trickster: {
+        id: "trickster",
+        name: "Trickster",
+        description: "Confusion, displacement, and debuff specialist.",
+        tier: 2,
+        baseStats: { maxHp: 90, atk: 7, def: 5, agi: 10, acc: 8 },
+        weaponTypes: ["sword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "thief", requiredRank: 3 },
+            { type: "milestone", description: "Apply 20+ debuffs across operations" },
+        ],
+        innateAbility: "Misdirection: Enemies have -2 ACC vs this unit",
+    },
+    // ==========================================================================
+    // TIER 3 - PRESTIGE HYBRID CLASSES
+    // ==========================================================================
+    spellblade: {
+        id: "spellblade",
+        name: "Spellblade",
+        description: "Magic-infused melee warrior.",
+        tier: 3,
+        baseStats: { maxHp: 110, atk: 11, def: 7, agi: 6, acc: 8 },
+        weaponTypes: ["sword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "milestone", description: "Wield a magic-infused sword" },
+        ],
+        innateAbility: "Spellstrike: Melee attacks trigger spell effects",
+    },
+    dragoon: {
+        id: "dragoon",
+        name: "Dragoon",
+        description: "Aerial assault specialist with jump attacks.",
+        tier: 3,
+        baseStats: { maxHp: 120, atk: 11, def: 7, agi: 7, acc: 8 },
+        weaponTypes: ["spear"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 4 },
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 3 },
+            { type: "milestone", description: "Kill flying enemy via jump card" },
+        ],
+        innateAbility: "Jump: Leap to distant tiles, avoiding attacks",
+    },
+    gladiator: {
+        id: "gladiator",
+        name: "Gladiator",
+        description: "Stance master with counters and duel-style combat.",
+        tier: 3,
+        baseStats: { maxHp: 125, atk: 12, def: 8, agi: 6, acc: 7 },
+        weaponTypes: ["greatsword", "fist"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "squire", requiredRank: 4 },
+            { type: "class_rank", requiredClass: "freelancer", requiredRank: 3 },
+            { type: "milestone", description: "Win a 1vX duel" },
+        ],
+        innateAbility: "Counter Stance: 30% chance to counter melee attacks",
+    },
+    geomancer: {
+        id: "geomancer",
+        name: "Geomancer",
+        description: "Terrain manipulation and AoE zone specialist.",
+        tier: 3,
+        baseStats: { maxHp: 100, atk: 9, def: 6, agi: 6, acc: 8 },
+        weaponTypes: ["staff", "shortsword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "ranger", requiredRank: 3 },
+            { type: "milestone", description: "Encounter 3 terrain anomalies" },
+        ],
+        innateAbility: "Terrain Mastery: Abilities change based on tile type",
+    },
+    oracle: {
+        id: "oracle",
+        name: "Oracle",
+        description: "Status magic, foresight, and predictive buffs.",
+        tier: 3,
+        baseStats: { maxHp: 85, atk: 7, def: 5, agi: 7, acc: 9 },
+        weaponTypes: ["staff"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "academic", requiredRank: 2 },
+            { type: "milestone", description: "Win with 5+ active debuffs on enemies" },
+        ],
+        innateAbility: "Prescience: See enemy intentions for next turn",
+    },
+    summoner: {
+        id: "summoner",
+        name: "Summoner",
+        description: "Calls forth eidolons, sigils, and temporary allies.",
+        tier: 3,
+        baseStats: { maxHp: 80, atk: 8, def: 4, agi: 5, acc: 7 },
+        weaponTypes: ["greatstaff"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "cleric", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "wizard", requiredRank: 3 },
+            { type: "milestone", description: "Defeat a Sigil Beast in Free Zone" },
+        ],
+        innateAbility: "Summon: Call temporary allied units",
+    },
+    chronomancer: {
+        id: "chronomancer",
+        name: "Chronomancer",
+        description: "Time manipulation: haste, slow, turn order control.",
+        tier: 3,
+        baseStats: { maxHp: 75, atk: 7, def: 4, agi: 9, acc: 8 },
+        weaponTypes: ["staff"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "wizard", requiredRank: 4 },
+            { type: "class_rank", requiredClass: "academic", requiredRank: 3 },
+            { type: "milestone", description: "Defeat miniboss within 5 turns" },
+        ],
+        innateAbility: "Temporal Flux: Can manipulate turn order",
+    },
+    warsmith: {
+        id: "warsmith",
+        name: "Warsmith",
+        description: "Engineer deploying turrets, drones, and gadgets.",
+        tier: 3,
+        baseStats: { maxHp: 105, atk: 9, def: 7, agi: 5, acc: 8 },
+        weaponTypes: ["gun"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "academic", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "freelancer", requiredRank: 3 },
+            { type: "milestone", description: "Craft an advanced Steam Component" },
+        ],
+        innateAbility: "Deploy Turret: Place automated gun emplacement",
+    },
+    necrotec: {
+        id: "necrotec",
+        name: "Necrotec",
+        description: "Reanimates fallen enemies as mechanical husks.",
+        tier: 3,
+        baseStats: { maxHp: 95, atk: 10, def: 6, agi: 5, acc: 7 },
+        weaponTypes: ["staff", "sword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "chaosmancer", requiredRank: 3 },
+            { type: "class_rank", requiredClass: "warsmith", requiredRank: 3 },
+            { type: "milestone", description: "Perform reactivation ritual" },
+        ],
+        innateAbility: "Reanimate: Raise defeated enemies as allies",
+    },
+    battle_alchemist: {
+        id: "battle_alchemist",
+        name: "Battle Alchemist",
+        description: "Grenades, chain reactions, and status payloads.",
+        tier: 3,
+        baseStats: { maxHp: 90, atk: 9, def: 5, agi: 7, acc: 8 },
+        weaponTypes: ["shortsword"],
+        unlockConditions: [
+            { type: "class_rank", requiredClass: "magician", requiredRank: 2 },
+            { type: "class_rank", requiredClass: "thief", requiredRank: 2 },
+            { type: "milestone", description: "Craft 5 alchemical weapons" },
+        ],
+        innateAbility: "Throw Bomb: AoE damage and status effects",
+    },
+};
+function importedClassToDefinition(classDefinition) {
+    if (!classDefinition) {
+        return null;
+    }
+    return {
+        id: classDefinition.id,
+        name: classDefinition.name,
+        description: classDefinition.description,
+        tier: classDefinition.tier,
+        baseStats: { ...classDefinition.baseStats },
+        weaponTypes: [...classDefinition.weaponTypes],
+        unlockConditions: classDefinition.unlockConditions.map((condition) => ({
+            type: condition.type,
+            requiredClass: condition.requiredClassId,
+            requiredQuestId: condition.requiredQuestId,
+            requiredRank: condition.requiredRank,
+            description: condition.description,
+        })),
+        innateAbility: classDefinition.innateAbility,
+        trainingGrid: classDefinition.trainingGrid?.map((node) => ({
+            id: node.id,
+            name: node.name,
+            description: node.description,
+            cost: node.cost,
+            row: node.row,
+            col: node.col,
+            requires: [...(node.requires ?? [])],
+            benefit: node.benefit,
+        })),
+    };
+}
+function getClassCatalog() {
+    const catalog = {};
+    Object.entries(CLASS_DEFINITIONS).forEach(([classId, classDefinition]) => {
+        if (!isTechnicaContentDisabled("class", classId)) {
+            catalog[classId] = classDefinition;
+        }
+    });
+    getAllImportedClasses().forEach((classDefinition) => {
+        const mappedClass = importedClassToDefinition(classDefinition);
+        if (mappedClass) {
+            catalog[mappedClass.id] = mappedClass;
+        }
+    });
+    return catalog;
+}
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+export function getClassDefinition(classId) {
+    return getClassCatalog()[classId] || CLASS_DEFINITIONS.squire;
+}
+export function getAvailableClasses() {
+    return Object.keys(getClassCatalog());
+}
+export function isClassUnlocked(classId, progress) {
+    // Check if already unlocked
+    if (progress.unlockedClasses.includes(classId)) {
+        return true;
+    }
+    const classDef = getClassDefinition(classId);
+    const conditions = classDef.unlockConditions;
+    // Check all conditions
+    return conditions.every(condition => {
+        switch (condition.type) {
+            case "always_unlocked":
+                return true;
+            case "class_rank":
+                if (!condition.requiredClass || condition.requiredRank === undefined) {
+                    return false;
+                }
+                const rank = progress.classRanks[condition.requiredClass] || 0;
+                return rank >= condition.requiredRank;
+            case "quest_completed":
+                if (!condition.requiredQuestId) {
+                    return false;
+                }
+                return isQuestCompleted(condition.requiredQuestId);
+            case "milestone":
+            case "special":
+                // Milestone tracking is only partially wired right now, so these
+                // descriptors are treated as advisory until dedicated hooks land.
+                return true;
+            default:
+                return false;
+        }
+    });
+}
+export function getUnlockableClasses(progress) {
+    const allClasses = getAvailableClasses();
+    return allClasses.filter(classId => {
+        // Not already unlocked
+        if (progress.unlockedClasses.includes(classId)) {
+            return false;
+        }
+        // Check if can be unlocked
+        return isClassUnlocked(classId, progress);
+    });
+}
+export function getClassTier(classId) {
+    return getClassDefinition(classId).tier;
+}
+export function getClassRankLetter(rank) {
+    if (rank >= 5)
+        return "A";
+    if (rank >= 4)
+        return "B";
+    if (rank >= 3)
+        return "C";
+    if (rank >= 2)
+        return "D";
+    return "E";
+}
+export function getClassesByTier(tier) {
+    return getAvailableClasses().filter(classId => getClassDefinition(classId).tier === tier);
+}
+export function getUnlockRequirementsText(classId) {
+    const classDef = getClassDefinition(classId);
+    const texts = [];
+    classDef.unlockConditions.forEach(condition => {
+        switch (condition.type) {
+            case "always_unlocked":
+                texts.push("Always available");
+                break;
+            case "class_rank":
+                if (condition.requiredClass && condition.requiredRank) {
+                    const reqClass = getClassDefinition(condition.requiredClass);
+                    texts.push(`${reqClass.name} Rank ${getClassRankLetter(condition.requiredRank)}`);
+                }
+                break;
+            case "quest_completed":
+                if (condition.description) {
+                    texts.push(condition.description);
+                }
+                else if (condition.requiredQuestId) {
+                    texts.push(`Complete quest ${condition.requiredQuestId}`);
+                }
+                break;
+            case "milestone":
+            case "special":
+                if (condition.description) {
+                    texts.push(condition.description);
+                }
+                break;
+        }
+    });
+    return texts;
+}
+function formatWeaponType(weaponType) {
+    return weaponType
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+function getInnateAbilityTitle(classDef) {
+    return classDef.innateAbility?.split(":")[0]?.trim() || `${classDef.name} Signature`;
+}
+function getInnateAbilityBody(classDef) {
+    const segments = classDef.innateAbility?.split(":");
+    if (!segments || segments.length < 2) {
+        return `Deepen ${classDef.name.toLowerCase()} specialization and steady this role's battlefield identity.`;
+    }
+    return segments.slice(1).join(":").trim();
+}
+export function getClassAbilityGrid(classId) {
+    const classDef = getClassDefinition(classId);
+    if (classDef.trainingGrid && classDef.trainingGrid.length > 0) {
+        return classDef.trainingGrid.map((node) => ({
+            ...node,
+            requires: [...(node.requires ?? [])],
+        }));
+    }
+    const weaponLine = classDef.weaponTypes.map(formatWeaponType).join(" / ");
+    const tierCost = classDef.tier * 10;
+    return [
+        {
+            id: "fundamentals",
+            name: `${classDef.name} Fundamentals`,
+            description: `Establish core ${classDef.name.toLowerCase()} drills and clean up ${weaponLine.toLowerCase()} handling for live operations.`,
+            cost: 20 + tierCost,
+            row: 1,
+            col: 1,
+            benefit: "Stabilizes role foundation",
+        },
+        {
+            id: "armament",
+            name: `${classDef.name} Armament`,
+            description: `Refine ${weaponLine.toLowerCase()} routines so this class can deploy its tools with greater discipline.`,
+            cost: 34 + tierCost,
+            row: 1,
+            col: 2,
+            requires: ["fundamentals"],
+            benefit: "Improves weapon discipline",
+        },
+        {
+            id: "tempo",
+            name: `${classDef.name} Tempo`,
+            description: `Sharpen timing, movement, and action flow around the ${classDef.name.toLowerCase()} combat rhythm.`,
+            cost: 42 + tierCost,
+            row: 1,
+            col: 3,
+            requires: ["fundamentals"],
+            benefit: "Improves combat tempo",
+        },
+        {
+            id: "doctrine",
+            name: `${classDef.name} Doctrine`,
+            description: `Formalize the class doctrine so squadmates can lean on this role with more confidence.`,
+            cost: 56 + tierCost,
+            row: 2,
+            col: 1,
+            requires: ["armament", "tempo"],
+            benefit: "Raises class mastery",
+        },
+        {
+            id: "signature",
+            name: getInnateAbilityTitle(classDef),
+            description: getInnateAbilityBody(classDef),
+            cost: 68 + tierCost,
+            row: 2,
+            col: 2,
+            requires: ["armament", "tempo"],
+            benefit: "Deepens signature identity",
+        },
+        {
+            id: "promotion",
+            name: `${classDef.name} Promotion Lattice`,
+            description: `Lock in advanced ${classDef.name.toLowerCase()} training and prepare this unit for higher-order class paths.`,
+            cost: 88 + tierCost,
+            row: 2,
+            col: 3,
+            requires: ["doctrine", "signature"],
+            benefit: "Pushes promotion readiness",
+        },
+    ];
+}
+export function getUnlockedClassGridNodes(progress, classId) {
+    return [...(progress.gridUnlocks?.[classId] || [])];
+}
+export function isClassGridNodeUnlocked(progress, classId, nodeId) {
+    return getUnlockedClassGridNodes(progress, classId).includes(nodeId);
+}
+export function getClassRankFromGridNodeCount(nodeCount) {
+    if (nodeCount >= 5)
+        return 5;
+    if (nodeCount >= 4)
+        return 4;
+    if (nodeCount >= 3)
+        return 3;
+    if (nodeCount >= 2)
+        return 2;
+    return 1;
+}
+export function getDisplayedClassRank(progress, classId) {
+    const storedRank = progress.classRanks[classId] || 0;
+    const gridRank = getClassRankFromGridNodeCount(getUnlockedClassGridNodes(progress, classId).length);
+    const baseline = progress.unlockedClasses.includes(classId) || progress.currentClass === classId ? 1 : 0;
+    return Math.max(storedRank, gridRank, baseline);
+}
+export function syncClassRanksWithGrid(progress) {
+    const nextRanks = { ...progress.classRanks };
+    for (const classId of getAvailableClasses()) {
+        const displayedRank = getDisplayedClassRank(progress, classId);
+        if (displayedRank > 0) {
+            nextRanks[classId] = Math.max(nextRanks[classId] || 0, displayedRank);
+        }
+    }
+    return {
+        ...progress,
+        classRanks: nextRanks,
+    };
+}
+export function canUnlockClassGridNode(progress, classId, nodeId) {
+    const node = getClassAbilityGrid(classId).find((entry) => entry.id === nodeId);
+    if (!node) {
+        return { ok: false, reason: "Unknown grid node." };
+    }
+    if (isClassGridNodeUnlocked(progress, classId, nodeId)) {
+        return { ok: false, reason: "Node already unlocked.", node };
+    }
+    const unlockedNodes = new Set(getUnlockedClassGridNodes(progress, classId));
+    const missingRequirements = (node.requires || []).filter((requiredId) => !unlockedNodes.has(requiredId));
+    if (missingRequirements.length > 0) {
+        return { ok: false, reason: "Required training nodes are still locked.", node };
+    }
+    return { ok: true, node };
+}
+export function purchaseClassGridNode(progress, classId, nodeId) {
+    const validation = canUnlockClassGridNode(progress, classId, nodeId);
+    if (!validation.ok || !validation.node) {
+        return progress;
+    }
+    const nextUnlockedNodes = [...getUnlockedClassGridNodes(progress, classId), nodeId];
+    const nextProgress = {
+        ...progress,
+        unlockedClasses: progress.unlockedClasses.includes(classId)
+            ? progress.unlockedClasses
+            : [...progress.unlockedClasses, classId],
+        gridUnlocks: {
+            ...(progress.gridUnlocks || {}),
+            [classId]: nextUnlockedNodes,
+        },
+    };
+    return syncClassRanksWithGrid(nextProgress);
+}
+export function unlockEligibleClasses(progress) {
+    let unlockedClasses = [...progress.unlockedClasses];
+    for (const classId of getAvailableClasses()) {
+        if (unlockedClasses.includes(classId))
+            continue;
+        const probe = { ...progress, unlockedClasses };
+        if (isClassUnlocked(classId, probe)) {
+            unlockedClasses.push(classId);
+        }
+    }
+    return {
+        ...progress,
+        unlockedClasses,
+    };
+}
+export function createDefaultClassProgress(unitId) {
+    return {
+        unitId,
+        classRanks: {
+            squire: 1,
+            ranger: 1,
+        },
+        currentClass: "squire",
+        unlockedClasses: ["squire", "ranger"],
+        battlesWon: 0,
+        milestones: [],
+        gridUnlocks: {},
+    };
+}
+export function changeUnitClass(progress, newClass) {
+    // Must be unlocked
+    if (!isClassUnlocked(newClass, progress)) {
+        console.warn("[CLASS] Cannot change to locked class:", newClass);
+        return progress;
+    }
+    // Add to unlocked if not already
+    const unlockedClasses = progress.unlockedClasses.includes(newClass)
+        ? progress.unlockedClasses
+        : [...progress.unlockedClasses, newClass];
+    // Initialize class rank if needed
+    const classRanks = { ...progress.classRanks };
+    if (!classRanks[newClass]) {
+        classRanks[newClass] = 1;
+    }
+    return syncClassRanksWithGrid({
+        ...progress,
+        currentClass: newClass,
+        unlockedClasses,
+        classRanks,
+    });
+}
+export function addClassXP(progress, classId, xp) {
+    const currentRank = progress.classRanks[classId] || 0;
+    const newRank = currentRank + Math.floor(xp / 100); // Simple: 100 XP per rank
+    return syncClassRanksWithGrid({
+        ...progress,
+        classRanks: {
+            ...progress.classRanks,
+            [classId]: Math.min(newRank, 5), // Cap at rank 5
+        },
+    });
+}
+export function addMilestone(progress, milestone) {
+    if (progress.milestones.includes(milestone)) {
+        return progress; // Already have this milestone
+    }
+    return {
+        ...progress,
+        milestones: [...progress.milestones, milestone],
+    };
+}

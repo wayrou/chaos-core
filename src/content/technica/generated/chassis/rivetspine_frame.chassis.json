@@ -1,0 +1,18 @@
+{
+  "availableInHavenShop": true,
+  "baseBulkBu": 15,
+  "baseMassKg": 10,
+  "basePowerW": 7,
+  "baseStability": 55,
+  "buildCost": {
+    "fittings": 2,
+    "metalScrap": 20
+  },
+  "description": "A basic curved piece of metal- it could be used for many different purposes. I've seen a giant pile of them behind the workshop.",
+  "havenShopUnlockAfterFloor": 0,
+  "id": "rivetspine_frame",
+  "maxCardSlots": 4,
+  "name": "Rivetspine Frame",
+  "slotType": "weapon",
+  "unlockAfterFloor": 0
+}

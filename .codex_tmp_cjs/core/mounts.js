@@ -1,0 +1,559 @@
+"use strict";
+// ============================================================================
+// MOUNT SYSTEM - Stable & Mounted Units
+// Data definitions, registry, and helper functions
+// ============================================================================
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT = exports.MOUNT_REGISTRY = exports.MOUNT_CARDS = void 0;
+exports.getMountById = getMountById;
+exports.getAllMounts = getAllMounts;
+exports.getStarterMounts = getStarterMounts;
+exports.getPurchasableMounts = getPurchasableMounts;
+exports.canUnitUseMount = canUnitUseMount;
+exports.getCompatibleMounts = getCompatibleMounts;
+exports.createOwnedMount = createOwnedMount;
+exports.findOwnedMount = findOwnedMount;
+exports.findMountForUnit = findMountForUnit;
+exports.getUnassignedMounts = getUnassignedMounts;
+exports.createInitialStableState = createInitialStableState;
+exports.unlockMount = unlockMount;
+exports.assignMountToUnit = assignMountToUnit;
+exports.unassignMountFromUnit = unassignMountFromUnit;
+exports.unassignMount = unassignMount;
+exports.setAerissFieldMount = setAerissFieldMount;
+exports.getAerissFieldMount = getAerissFieldMount;
+exports.getAerissFieldMovementSpeedBonus = getAerissFieldMovementSpeedBonus;
+exports.getMountStatModifiers = getMountStatModifiers;
+exports.getMountGrantedCards = getMountGrantedCards;
+exports.getMountPassiveTraits = getMountPassiveTraits;
+exports.unitHasMountTrait = unitHasMountTrait;
+exports.getMountCardById = getMountCardById;
+exports.isMountCard = isMountCard;
+exports.validateMountCards = validateMountCards;
+exports.MOUNT_CARDS = [
+    // Horse cards
+    {
+        id: "mount_gallop",
+        name: "Gallop",
+        description: "Move up to 4 additional tiles this turn.",
+        strainCost: 1,
+        mountId: "mount_horse",
+    },
+    {
+        id: "mount_trample_strike",
+        name: "Trample Strike",
+        description: "Deal 2 damage to an enemy and push them 1 tile.",
+        strainCost: 2,
+        mountId: "mount_horse",
+    },
+    // Warhorse cards
+    {
+        id: "mount_cavalry_charge",
+        name: "Cavalry Charge",
+        description: "Move in a straight line and deal 4 damage to the first enemy hit. +2 damage if moved 3+ tiles.",
+        strainCost: 3,
+        mountId: "mount_warhorse",
+    },
+    {
+        id: "mount_armored_stance",
+        name: "Armored Stance",
+        description: "Gain +3 DEF until your next turn. Cannot move.",
+        strainCost: 2,
+        mountId: "mount_warhorse",
+    },
+    // Lizard cards
+    {
+        id: "mount_scale_shield",
+        name: "Scale Shield",
+        description: "Reduce damage from the next attack by 3.",
+        strainCost: 1,
+        mountId: "mount_lizard",
+    },
+    {
+        id: "mount_tail_sweep",
+        name: "Tail Sweep",
+        description: "Deal 2 damage to all adjacent enemies.",
+        strainCost: 2,
+        mountId: "mount_lizard",
+    },
+    // Mechanical mount cards
+    {
+        id: "mount_steam_burst",
+        name: "Steam Burst",
+        description: "Move 3 tiles instantly. Gain +2 heat.",
+        strainCost: 1,
+        mountId: "mount_steamrunner",
+    },
+    {
+        id: "mount_piston_kick",
+        name: "Piston Kick",
+        description: "Deal 5 damage to adjacent enemy. Push them 2 tiles.",
+        strainCost: 3,
+        mountId: "mount_steamrunner",
+    },
+    // Beast mount cards
+    {
+        id: "mount_feral_leap",
+        name: "Feral Leap",
+        description: "Jump to a tile within 3 range. Ignores terrain.",
+        strainCost: 2,
+        mountId: "mount_shadowbeast",
+    },
+    {
+        id: "mount_savage_bite",
+        name: "Savage Bite",
+        description: "Deal 4 damage. If target HP < 50%, deal +2 damage.",
+        strainCost: 2,
+        mountId: "mount_shadowbeast",
+    },
+];
+// ----------------------------------------------------------------------------
+// MOUNT REGISTRY - All available mount definitions
+// ----------------------------------------------------------------------------
+exports.MOUNT_REGISTRY = [
+    // STARTER MOUNTS
+    {
+        id: "mount_horse",
+        name: "Field Horse",
+        description: "A reliable horse bred for tactical operations. Provides balanced mobility bonuses.",
+        mountType: "horse",
+        statModifiers: {
+            agi: 2,
+            movement: 2,
+        },
+        terrainModifiers: [
+            { terrain: "plains", effect: "bonus_movement", value: 1 },
+        ],
+        passiveTraits: [],
+        grantedCards: ["mount_gallop", "mount_trample_strike"],
+        restrictions: [],
+        isStarterMount: true,
+        unlockCost: 0,
+    },
+    {
+        id: "mount_warhorse",
+        name: "Armored Warhorse",
+        description: "A heavily armored destrier. Slower but extremely durable in combat.",
+        mountType: "warhorse",
+        statModifiers: {
+            hp: 10,
+            def: 2,
+            agi: -1,
+            movement: 1,
+        },
+        terrainModifiers: [],
+        passiveTraits: ["surefooted", "armored"],
+        grantedCards: ["mount_cavalry_charge", "mount_armored_stance"],
+        restrictions: [
+            {
+                type: "unit_class",
+                disallowed: ["thief", "scout", "shadow", "trickster"],
+            },
+        ],
+        unlockCost: 150,
+    },
+    {
+        id: "mount_lizard",
+        name: "Desert Lizard",
+        description: "A swift reptilian mount from the Ardycian wastes. Excellent in rough terrain.",
+        mountType: "lizard",
+        statModifiers: {
+            agi: 1,
+            def: 1,
+            movement: 1,
+        },
+        terrainModifiers: [
+            { terrain: "mud", effect: "ignore_penalty" },
+            { terrain: "sand", effect: "bonus_movement", value: 2 },
+            { terrain: "rubble", effect: "ignore_penalty" },
+        ],
+        passiveTraits: ["heat_resistant"],
+        grantedCards: ["mount_scale_shield", "mount_tail_sweep"],
+        restrictions: [],
+        unlockCost: 100,
+    },
+    {
+        id: "mount_steamrunner",
+        name: "Steamrunner MK-II",
+        description: "A mechanical mount powered by pressurized steam. High performance but requires maintenance.",
+        mountType: "mechanical",
+        statModifiers: {
+            atk: 1,
+            agi: 3,
+            acc: 5,
+            movement: 3,
+        },
+        terrainModifiers: [
+            { terrain: "water", effect: "damage_reduction", value: 2 }, // Water damages it
+        ],
+        passiveTraits: ["swift"],
+        grantedCards: ["mount_steam_burst", "mount_piston_kick"],
+        restrictions: [
+            {
+                type: "unit_class",
+                allowed: ["academic", "freelancer", "hunter", "trapper"],
+            },
+        ],
+        unlockCost: 250,
+    },
+    {
+        id: "mount_shadowbeast",
+        name: "Shadowbeast",
+        description: "A mysterious creature from the chaos rifts. Agile and ferocious.",
+        mountType: "beast",
+        statModifiers: {
+            atk: 2,
+            agi: 2,
+            def: -1,
+            movement: 2,
+        },
+        terrainModifiers: [
+            { terrain: "forest", effect: "bonus_movement", value: 1 },
+        ],
+        passiveTraits: ["trample", "intimidate"],
+        grantedCards: ["mount_feral_leap", "mount_savage_bite"],
+        restrictions: [
+            {
+                type: "unit_class",
+                disallowed: ["cleric", "paladin"],
+            },
+        ],
+        unlockCost: 200,
+    },
+];
+// ----------------------------------------------------------------------------
+// MOUNT REGISTRY HELPERS
+// ----------------------------------------------------------------------------
+/**
+ * Get a mount by ID from the registry
+ */
+function getMountById(mountId) {
+    const mount = exports.MOUNT_REGISTRY.find(m => m.id === mountId);
+    if (!mount) {
+        console.warn(`[MOUNTS] Mount not found: ${mountId}`);
+        return null;
+    }
+    return mount;
+}
+/**
+ * Get all mounts as a record for quick lookup
+ */
+function getAllMounts() {
+    const result = {};
+    for (const mount of exports.MOUNT_REGISTRY) {
+        result[mount.id] = mount;
+    }
+    return result;
+}
+/**
+ * Get all starter mounts
+ */
+function getStarterMounts() {
+    return exports.MOUNT_REGISTRY.filter(m => m.isStarterMount);
+}
+/**
+ * Get mounts available for purchase (not starter, not already unlocked)
+ */
+function getPurchasableMounts(stable) {
+    return exports.MOUNT_REGISTRY.filter(m => !m.isStarterMount && !stable.unlockedMountIds.includes(m.id));
+}
+// ----------------------------------------------------------------------------
+// MOUNT RESTRICTION CHECKING
+// ----------------------------------------------------------------------------
+/**
+ * Check if a unit can use a specific mount
+ */
+function canUnitUseMount(unit, mount) {
+    const unitClass = (unit.unitClass || "freelancer");
+    for (const restriction of mount.restrictions) {
+        if (restriction.type === "unit_class") {
+            // Check whitelist
+            if (restriction.allowed && !restriction.allowed.includes(unitClass)) {
+                return {
+                    canUse: false,
+                    reason: `${mount.name} can only be used by: ${restriction.allowed.join(", ")}`,
+                };
+            }
+            // Check blacklist
+            if (restriction.disallowed && restriction.disallowed.includes(unitClass)) {
+                return {
+                    canUse: false,
+                    reason: `${mount.name} cannot be used by ${unitClass} class`,
+                };
+            }
+        }
+        // Additional restriction types can be added here (armor_weight, unit_size, etc.)
+    }
+    return { canUse: true };
+}
+/**
+ * Get all mounts compatible with a specific unit
+ */
+function getCompatibleMounts(unit, stable) {
+    const availableMounts = stable.unlockedMountIds
+        .map(id => getMountById(id))
+        .filter((m) => m !== null);
+    return availableMounts.filter(mount => canUnitUseMount(unit, mount).canUse);
+}
+// ----------------------------------------------------------------------------
+// OWNED MOUNT MANAGEMENT
+// ----------------------------------------------------------------------------
+/**
+ * Generate a unique instance ID for a new mount
+ */
+function generateMountInstanceId() {
+    return `mount_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+/**
+ * Create a new owned mount instance
+ */
+function createOwnedMount(mountId) {
+    const mount = getMountById(mountId);
+    return {
+        mountId,
+        instanceId: generateMountInstanceId(),
+        assignedToUnitId: null,
+        condition: mount?.mountType === "mechanical" ? 100 : undefined,
+    };
+}
+/**
+ * Find an owned mount by its instance ID
+ */
+function findOwnedMount(stable, instanceId) {
+    return stable.ownedMounts.find(m => m.instanceId === instanceId) || null;
+}
+/**
+ * Find the mount assigned to a specific unit
+ */
+function findMountForUnit(stable, unitId) {
+    return stable.ownedMounts.find(m => m.assignedToUnitId === unitId) || null;
+}
+/**
+ * Get all unassigned mounts
+ */
+function getUnassignedMounts(stable) {
+    return stable.ownedMounts.filter(m => m.assignedToUnitId === null);
+}
+// ----------------------------------------------------------------------------
+// STABLE STATE MANAGEMENT
+// ----------------------------------------------------------------------------
+/**
+ * Create initial stable state with starter mounts
+ */
+function createInitialStableState() {
+    const starterMounts = getStarterMounts();
+    return {
+        unlockedMountIds: starterMounts.map(m => m.id),
+        ownedMounts: starterMounts.map(m => createOwnedMount(m.id)),
+        aerissFieldMountInstanceId: null,
+    };
+}
+/**
+ * Unlock a new mount type and add one instance to owned mounts
+ */
+function unlockMount(stable, mountId) {
+    if (stable.unlockedMountIds.includes(mountId)) {
+        return stable; // Already unlocked
+    }
+    return {
+        ...stable,
+        unlockedMountIds: [...stable.unlockedMountIds, mountId],
+        ownedMounts: [...stable.ownedMounts, createOwnedMount(mountId)],
+    };
+}
+/**
+ * Assign a mount to a unit
+ * Returns updated stable state or null if assignment failed
+ */
+function assignMountToUnit(stable, mountInstanceId, unitId, unit) {
+    const mountInstance = findOwnedMount(stable, mountInstanceId);
+    if (!mountInstance) {
+        return { stable, error: "Mount instance not found" };
+    }
+    if (mountInstance.assignedToUnitId !== null) {
+        return { stable, error: "Mount is already assigned to another unit" };
+    }
+    const mount = getMountById(mountInstance.mountId);
+    if (!mount) {
+        return { stable, error: "Mount definition not found" };
+    }
+    // Check compatibility
+    const compatibility = canUnitUseMount(unit, mount);
+    if (!compatibility.canUse) {
+        return { stable, error: compatibility.reason };
+    }
+    // Unassign any existing mount from this unit
+    let updatedMounts = stable.ownedMounts.map(m => {
+        if (m.assignedToUnitId === unitId) {
+            return { ...m, assignedToUnitId: null };
+        }
+        return m;
+    });
+    // Assign the new mount
+    updatedMounts = updatedMounts.map(m => {
+        if (m.instanceId === mountInstanceId) {
+            return { ...m, assignedToUnitId: unitId };
+        }
+        return m;
+    });
+    return {
+        stable: {
+            ...stable,
+            ownedMounts: updatedMounts,
+        },
+    };
+}
+/**
+ * Unassign a mount from a unit
+ */
+function unassignMountFromUnit(stable, unitId) {
+    return {
+        ...stable,
+        ownedMounts: stable.ownedMounts.map(m => {
+            if (m.assignedToUnitId === unitId) {
+                return { ...m, assignedToUnitId: null };
+            }
+            return m;
+        }),
+    };
+}
+/**
+ * Unassign a specific mount instance
+ */
+function unassignMount(stable, mountInstanceId) {
+    return {
+        ...stable,
+        ownedMounts: stable.ownedMounts.map(m => {
+            if (m.instanceId === mountInstanceId) {
+                return { ...m, assignedToUnitId: null };
+            }
+            return m;
+        }),
+    };
+}
+/**
+ * Set or clear Aeriss's placeholder field-travel mount.
+ * This does not affect tactical battle mount assignments.
+ */
+function setAerissFieldMount(stable, mountInstanceId) {
+    if (mountInstanceId === null) {
+        return {
+            stable: {
+                ...stable,
+                aerissFieldMountInstanceId: null,
+            },
+        };
+    }
+    const ownedMount = findOwnedMount(stable, mountInstanceId);
+    if (!ownedMount) {
+        return {
+            stable,
+            error: "Mount instance not found",
+        };
+    }
+    return {
+        stable: {
+            ...stable,
+            aerissFieldMountInstanceId: mountInstanceId,
+        },
+    };
+}
+function getAerissFieldMount(stable) {
+    if (!stable?.aerissFieldMountInstanceId) {
+        return null;
+    }
+    const ownedMount = findOwnedMount(stable, stable.aerissFieldMountInstanceId);
+    if (!ownedMount) {
+        return null;
+    }
+    const mount = getMountById(ownedMount.mountId);
+    if (!mount) {
+        return null;
+    }
+    return { ownedMount, mount };
+}
+exports.FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT = 24;
+function getAerissFieldMovementSpeedBonus(stable) {
+    const fieldMount = getAerissFieldMount(stable);
+    const movementBonus = fieldMount?.mount.statModifiers.movement ?? 0;
+    return Math.max(0, movementBonus) * exports.FIELD_MOVEMENT_SPEED_PER_MOUNT_POINT;
+}
+// ----------------------------------------------------------------------------
+// STAT MODIFIER APPLICATION
+// ----------------------------------------------------------------------------
+/**
+ * Calculate combined stat modifiers from a mount
+ * Used when creating BattleUnitState
+ */
+function getMountStatModifiers(mountId) {
+    const mount = getMountById(mountId);
+    if (!mount) {
+        return {};
+    }
+    return mount.statModifiers;
+}
+/**
+ * Get cards granted by a mount
+ * Returns empty array if mount not found (fail-safe)
+ */
+function getMountGrantedCards(mountId) {
+    const mount = getMountById(mountId);
+    if (!mount) {
+        console.warn(`[MOUNTS] Cannot get cards - mount not found: ${mountId}`);
+        return [];
+    }
+    return mount.grantedCards;
+}
+/**
+ * Get passive traits from a mount
+ */
+function getMountPassiveTraits(mountId) {
+    const mount = getMountById(mountId);
+    if (!mount) {
+        return [];
+    }
+    return mount.passiveTraits;
+}
+/**
+ * Check if a unit has a specific mount trait
+ */
+function unitHasMountTrait(unit, stable, trait) {
+    if (!stable || !unit.mountInstanceId) {
+        return false;
+    }
+    const mountInstance = findOwnedMount(stable, unit.mountInstanceId);
+    if (!mountInstance) {
+        return false;
+    }
+    const traits = getMountPassiveTraits(mountInstance.mountId);
+    return traits.includes(trait);
+}
+// ----------------------------------------------------------------------------
+// MOUNT CARD HELPERS
+// ----------------------------------------------------------------------------
+/**
+ * Get mount card by ID
+ */
+function getMountCardById(cardId) {
+    return exports.MOUNT_CARDS.find(c => c.id === cardId) || null;
+}
+/**
+ * Check if a card ID is a mount card
+ */
+function isMountCard(cardId) {
+    return cardId.startsWith("mount_");
+}
+/**
+ * Validate mount cards before adding to deck
+ * Filters out invalid cards and logs warnings
+ */
+function validateMountCards(cardIds) {
+    return cardIds.filter(id => {
+        const card = getMountCardById(id);
+        if (!card) {
+            console.warn(`[MOUNTS] Invalid mount card skipped: ${id}`);
+            return false;
+        }
+        return true;
+    });
+}

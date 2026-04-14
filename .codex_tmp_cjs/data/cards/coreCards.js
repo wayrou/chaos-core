@@ -1,0 +1,63 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CORE_CARDS = void 0;
+exports.CORE_CARDS = [
+    {
+        "id": "core_move_plus",
+        "name": "Move+",
+        "type": "core",
+        "strainCost": 1,
+        "description": "Move 2 extra tiles this turn.",
+        "range": "R(Self)",
+    },
+    {
+        id: "core_basic_attack",
+        name: "Basic Attack",
+        type: "core",
+        strainCost: 2,
+        description: "Standard attack on enemy.",
+        range: "R(1-1)",
+        damage: 0,
+    },
+    {
+        id: "core_aid",
+        name: "Aid",
+        type: "core",
+        strainCost: 6,
+        description: "Restore small amount of HP to ally.",
+        range: "R(1-2)",
+    },
+    {
+        "id": "core_overwatch",
+        "name": "Overwatch",
+        "type": "core",
+        "strainCost": 6,
+        "description": "Stun an enemy for one turn.",
+        "range": "R(5)",
+    },
+    {
+        id: "core_guard",
+        name: "Guard",
+        type: "core",
+        strainCost: 6,
+        description: "Gain +2 DEF until your next turn.",
+        range: "R(0-0)",
+    },
+    {
+        id: "core_chaos_call",
+        name: "Chaos Call",
+        type: "core",
+        strainCost: 6,
+        description: "create 2 chaos cards",
+        range: "R(Self)",
+        chaosCardsToCreate: ["chaos_placeholder_card", "chaos_placeholder_card"],
+    },
+    {
+        id: "core_wait",
+        name: "Wait",
+        type: "core",
+        strainCost: 6,
+        description: "End turn without acting. Reduce strain by 2.",
+        range: "R(0-0)",
+    },
+];

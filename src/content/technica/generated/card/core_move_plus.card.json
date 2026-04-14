@@ -12,7 +12,7 @@
   ],
   "range": 0,
   "rarity": "common",
-  "strainCost": 6,
+  "strainCost": 1,
   "targetType": "tile",
   "type": "core"
 }

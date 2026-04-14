@@ -1,0 +1,209 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createBattleTilesFromTacticalMap = createBattleTilesFromTacticalMap;
+exports.applyTacticalMapToBattleState = applyTacticalMapToBattleState;
+exports.createSquadObjectiveStateFromTacticalMap = createSquadObjectiveStateFromTacticalMap;
+exports.assignBattleUnitsToSpawnPoints = assignBattleUnitsToSpawnPoints;
+exports.createBuilderQuickTestBattle = createBuilderQuickTestBattle;
+exports.getTacticalMapSpawnCapacity = getTacticalMapSpawnCapacity;
+const battleFromEncounter_1 = require("./battleFromEncounter");
+const trainingEncounter_1 = require("./trainingEncounter");
+const tacticalMaps_1 = require("./tacticalMaps");
+function createTileFromMapPoint(map, point) {
+    const baseTile = map.tiles.find((tile) => tile.x === point.x && tile.y === point.y);
+    if (!baseTile) {
+        return {
+            pos: { x: point.x, y: point.y },
+            terrain: "floor",
+            elevation: 0,
+            surface: "industrial",
+        };
+    }
+    const structuralObject = map.objects.find((objectDef) => objectDef.x === point.x && objectDef.y === point.y);
+    if (structuralObject?.type === "destructible_cover") {
+        return {
+            pos: { x: point.x, y: point.y },
+            terrain: "light_cover",
+            elevation: baseTile.elevation,
+            surface: baseTile.surface,
+            cover: {
+                type: "light_cover",
+                hp: 4,
+                maxHp: 4,
+            },
+        };
+    }
+    if (structuralObject?.type === "barricade_wall" || structuralObject?.type === "destructible_wall") {
+        return {
+            pos: { x: point.x, y: point.y },
+            terrain: "wall",
+            elevation: baseTile.elevation,
+            surface: baseTile.surface,
+        };
+    }
+    return {
+        pos: { x: point.x, y: point.y },
+        terrain: "floor",
+        elevation: baseTile.elevation,
+        surface: baseTile.surface,
+    };
+}
+function createBattleTilesFromTacticalMap(map) {
+    return map.tiles.map((tile) => createTileFromMapPoint(map, tile));
+}
+function applyTacticalMapToBattleState(battle, sourceMap) {
+    const map = (0, tacticalMaps_1.cloneTacticalMapDefinition)(sourceMap);
+    const tiles = createBattleTilesFromTacticalMap(map);
+    return {
+        ...battle,
+        gridWidth: map.width,
+        gridHeight: map.height,
+        mapId: map.id,
+        tiles,
+        mapObjects: map.objects.map((objectDef) => ({ ...objectDef })),
+        spawnZones: {
+            friendlySpawn: map.zones.friendlySpawn.map((point) => ({ ...point })),
+            enemySpawn: map.zones.enemySpawn.map((point) => ({ ...point })),
+        },
+        objectiveZones: {
+            relay: map.zones.relay.map((point) => ({ ...point })),
+            friendlyBreach: map.zones.friendlyBreach.map((point) => ({ ...point })),
+            enemyBreach: map.zones.enemyBreach.map((point) => ({ ...point })),
+            extraction: map.zones.extraction.map((point) => ({ ...point })),
+        },
+        traversalLinks: map.traversalLinks.map((link) => ({
+            ...link,
+            from: { ...link.from },
+            to: { ...link.to },
+        })),
+    };
+}
+function createControlRelayObjective(map) {
+    return {
+        kind: "control_relay",
+        label: "Control Relay",
+        description: "Hold the authored relay tiles uncontested at round end.",
+        controlTiles: map.zones.relay.map((point) => ({ ...point })),
+        targetScore: 3,
+        score: {
+            friendly: 0,
+            enemy: 0,
+        },
+        controllingSide: null,
+        winnerSide: null,
+    };
+}
+function createBreakthroughObjective(map) {
+    return {
+        kind: "breakthrough",
+        label: "Breakthrough",
+        description: "Score by reaching the authored breach lanes.",
+        controlTiles: [],
+        breachTiles: {
+            friendly: map.zones.friendlyBreach.map((point) => ({ ...point })),
+            enemy: map.zones.enemyBreach.map((point) => ({ ...point })),
+        },
+        targetScore: 2,
+        score: {
+            friendly: 0,
+            enemy: 0,
+        },
+        controllingSide: null,
+        winnerSide: null,
+        extractedUnitIds: [],
+    };
+}
+function createExtractionObjective(map) {
+    return {
+        kind: "extraction",
+        label: "Extraction",
+        description: "Reach the authored extraction zone and end your turn there to pull the operator out.",
+        controlTiles: [],
+        extractionTiles: map.zones.extraction.map((point) => ({ ...point })),
+        targetScore: 2,
+        score: {
+            friendly: 0,
+            enemy: 0,
+        },
+        controllingSide: null,
+        winnerSide: null,
+        extractedUnitIds: [],
+    };
+}
+function createSquadObjectiveStateFromTacticalMap(map, objectiveType) {
+    if (objectiveType === "control_relay" && map.zones.relay.length > 0) {
+        return createControlRelayObjective(map);
+    }
+    if (objectiveType === "breakthrough"
+        && map.zones.friendlyBreach.length > 0
+        && map.zones.enemyBreach.length > 0) {
+        return createBreakthroughObjective(map);
+    }
+    if (objectiveType === "extraction"
+        && map.zones.extraction.length > 0
+        && map.objects.some((objectDef) => objectDef.type === "extraction_anchor")) {
+        return createExtractionObjective(map);
+    }
+    return null;
+}
+function assignBattleUnitsToSpawnPoints(battle, side, points) {
+    if (points.length <= 0) {
+        return battle;
+    }
+    const sideUnits = Object.values(battle.units).filter((unit) => unit.hp > 0 && unit.isEnemy === (side === "enemy"));
+    const nextUnits = { ...battle.units };
+    sideUnits.forEach((unit, index) => {
+        const point = points[index % points.length];
+        nextUnits[unit.id] = {
+            ...unit,
+            pos: { x: point.x, y: point.y },
+        };
+    });
+    return {
+        ...battle,
+        units: nextUnits,
+    };
+}
+function createBuilderQuickTestBattle(state, sourceMap, objectiveType = null) {
+    const map = (0, tacticalMaps_1.cloneTacticalMapDefinition)(sourceMap);
+    const trainingConfig = {
+        gridW: map.width,
+        gridH: map.height,
+        mapId: map.id,
+        difficulty: "normal",
+        rules: {
+            noRewards: true,
+        },
+    };
+    const encounter = (0, trainingEncounter_1.createTrainingEncounter)(state, trainingConfig);
+    if (!encounter) {
+        return null;
+    }
+    let battle = (0, battleFromEncounter_1.createBattleFromEncounter)(state, encounter, `builder_${map.id}`);
+    battle = applyTacticalMapToBattleState(battle, map);
+    battle = assignBattleUnitsToSpawnPoints(battle, "enemy", map.zones.enemySpawn);
+    battle.returnTo = "map_builder";
+    battle.isTraining = true;
+    battle.trainingConfig = trainingConfig;
+    battle.log = [
+        ...battle.log,
+        `SLK//MAP    :: Quick test loaded for ${map.name}.`,
+    ];
+    if (objectiveType === "control_relay" || objectiveType === "breakthrough" || objectiveType === "extraction") {
+        battle.objectiveZones = {
+            relay: map.zones.relay.map((point) => ({ ...point })),
+            friendlyBreach: map.zones.friendlyBreach.map((point) => ({ ...point })),
+            enemyBreach: map.zones.enemyBreach.map((point) => ({ ...point })),
+            extraction: map.zones.extraction.map((point) => ({ ...point })),
+        };
+    }
+    return battle;
+}
+function getTacticalMapSpawnCapacity(map) {
+    const uniqueFriendly = new Set(map.zones.friendlySpawn.map(tacticalMaps_1.createPointKey)).size;
+    const uniqueEnemy = new Set(map.zones.enemySpawn.map(tacticalMaps_1.createPointKey)).size;
+    return {
+        friendly: uniqueFriendly,
+        enemy: uniqueEnemy,
+    };
+}

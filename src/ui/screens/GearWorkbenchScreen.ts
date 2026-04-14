@@ -41,6 +41,7 @@ import {
   canAffordChaoticBuild,
   getBuildCost,
   getChaoticBuildCost,
+  previewBuildGear,
 } from "../../core/gearBuilder";
 import {
   craftEndlessGear,
@@ -51,7 +52,7 @@ import {
 import { CraftingMaterialId } from "../../core/endlessGear/types";
 import { createGenerationContext } from "../../core/endlessGear/generateEndlessGear";
 import { generateEndlessGearFromRecipe } from "../../core/endlessGear/generateEndlessGear";
-import { getAllStarterEquipment } from "../../core/equipment";
+import { getAllStarterEquipment, type WeaponType } from "../../core/equipment";
 import {
   Recipe,
   RECIPE_DATABASE,
@@ -72,6 +73,12 @@ import {
   spendSessionCost,
 } from "../../core/session";
 import { getResourceEntries } from "../../core/resources";
+import { type GearBalanceReport, validateGearBalance } from "../../core/gearBalanceValidation";
+import {
+  CRAFTED_WEAPON_SHAPES,
+  formatCraftedWeaponShapeLabel,
+  getDefaultCraftedWeaponShape,
+} from "../../core/craftedGear";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -98,8 +105,11 @@ interface WorkbenchState {
   buildSlotType: "weapon" | "helmet" | "chestpiece" | "accessory" | null;
   buildChassisId: string | null;
   buildDoctrineId: BuildDoctrineSelection;
+  buildWeaponShape: WeaponType | null;
   buildCustomName: string;
   buildNameDirty: boolean;
+  buildValidationReport: GearBalanceReport | null;
+  customizeValidationReport: GearBalanceReport | null;
   endlessChassisId: string | null;
   endlessMaterials: string[];
 
@@ -133,8 +143,11 @@ let workbenchState: WorkbenchState = {
   buildSlotType: null,
   buildChassisId: null,
   buildDoctrineId: null,
+  buildWeaponShape: null,
   buildCustomName: "",
   buildNameDirty: false,
+  buildValidationReport: null,
+  customizeValidationReport: null,
   endlessChassisId: null,
   endlessMaterials: [],
   craftingCategory: "armor",
@@ -159,8 +172,11 @@ function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
     buildSlotType: null,
     buildChassisId: null,
     buildDoctrineId: null,
+    buildWeaponShape: null,
     buildCustomName: "",
     buildNameDirty: false,
+    buildValidationReport: null,
+    customizeValidationReport: null,
     endlessChassisId: null,
     endlessMaterials: [],
     craftingCategory: "armor",
@@ -371,6 +387,40 @@ function getSuggestedBuildName(
   return doctrine ? `${doctrine.name} ${chassis.name}` : "";
 }
 
+function getResolvedBuildWeaponShape(): WeaponType {
+  return workbenchState.buildWeaponShape ?? getDefaultCraftedWeaponShape();
+}
+
+function renderBalanceReport(report: GearBalanceReport): string {
+  const statusLabel = report.status === "pass"
+    ? "PASS"
+    : report.status === "caution"
+      ? "CAUTION"
+      : "FAIL";
+
+  return `
+    <div class="balance-report balance-report--${report.status}">
+      <div class="balance-report__header">
+        <span class="balance-report__status">${statusLabel}</span>
+        <span class="balance-report__summary">${escapeHtml(report.summary)}</span>
+      </div>
+      <div class="balance-report__metrics">
+        <span>Score ${report.metrics.score} / ${report.metrics.targetScoreMin}-${report.metrics.targetScoreMax}</span>
+        <span>Cards ${report.metrics.effectiveCardCount} / ${report.metrics.targetCardCountMin}-${report.metrics.targetCardCountMax}</span>
+      </div>
+      ${report.findings.length > 0 ? `
+        <div class="balance-report__findings">
+          ${report.findings.map((finding) => `
+            <div class="balance-report__finding balance-report__finding--${finding.severity}">
+              ${escapeHtml(finding.message)}
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderBuildGearTab(state: GameState): string {
   const unlockedChassisIds = state.unlockedChassisIds || [];
   const unlockedDoctrineIds = state.unlockedDoctrineIds || [];
@@ -466,6 +516,8 @@ function renderBuildGearTab(state: GameState): string {
     : usingChaoticBuild
       ? `0-${selectedChassis.maxCardSlots}`
       : `${selectedChassis.maxCardSlots}`;
+  const canValidateBuildPreview = Boolean(selectedChassis && selectedDoctrine && !usingChaoticBuild);
+  const resolvedWeaponShape = getResolvedBuildWeaponShape();
 
   return `
     <div class="builder-main">
@@ -531,6 +583,16 @@ function renderBuildGearTab(state: GameState): string {
             <span class="summary-label">Slot Type:</span>
             <span class="summary-value">${workbenchState.buildSlotType ? workbenchState.buildSlotType.toUpperCase() : "—"}</span>
           </div>
+          ${workbenchState.buildSlotType === "weapon" ? `
+            <div class="summary-row">
+              <span class="summary-label">Shape:</span>
+              <select class="summary-value summary-value-input summary-value-select" id="buildWeaponShapeSelect">
+                ${CRAFTED_WEAPON_SHAPES.map((shape) => `
+                  <option value="${shape}" ${resolvedWeaponShape === shape ? "selected" : ""}>${formatCraftedWeaponShapeLabel(shape)}</option>
+                `).join("")}
+              </select>
+            </div>
+          ` : ""}
           <div class="summary-row">
             <span class="summary-label">Doctrine:</span>
             <span class="summary-value">${doctrineLabel}</span>
@@ -571,9 +633,23 @@ function renderBuildGearTab(state: GameState): string {
               </div>
             </div>
           ` : ''}
+          <div class="build-validation-panel">
+            <div class="gear-section-label">AUTOMATED BALANCE CHECK</div>
+            <div class="build-validation-copy">
+              ${usingChaoticBuild
+                ? "Chaotic builds need to be rolled first. Build the item, then validate the finished piece from the gear editor."
+                : "Compare this draft against the current authored gear band before you spend materials."}
+            </div>
+            ${workbenchState.buildValidationReport ? renderBalanceReport(workbenchState.buildValidationReport) : ""}
+          </div>
         </div>
         <div class="builder-actions">
           <button class="builder-btn builder-btn--cancel" id="cancelBuildBtn">CANCEL</button>
+          <button class="builder-btn builder-btn--validate"
+                  id="validateBuildBtn"
+                  ${canValidateBuildPreview ? "" : "disabled"}>
+            RUN BALANCE CHECK
+          </button>
           <button class="builder-btn builder-btn--build" 
                   id="buildBtn" 
                   ${(workbenchState.buildSlotType && selectedChassis && workbenchState.buildDoctrineId && canAfford) ? '' : 'disabled'}>
@@ -1032,6 +1108,15 @@ function renderGearEditor(gear: GearSlotData, equipmentId: string, equipment?: a
           Stability: ${stability}/100
         </div>
       ` : ''}
+
+      <div class="gear-section">
+        <div class="gear-section-label">BALANCE VALIDATION</div>
+        <div class="gear-balance-tools">
+          <div class="gear-balance-copy">Run a quick check against the current authored ${escapeHtml(equipment?.slot ?? "gear")} band.</div>
+          <button class="builder-btn gear-balance-btn" id="validateSelectedGearBtn">RUN BALANCE CHECK</button>
+          ${workbenchState.customizeValidationReport ? renderBalanceReport(workbenchState.customizeValidationReport) : ""}
+        </div>
+      </div>
       
       <!-- Locked Cards -->
       <div class="gear-section">
@@ -1245,6 +1330,75 @@ function getCustomizableEquipmentIds(state: any, unitId: string | null): string[
   });
 }
 
+function clearBuildValidationReport(): void {
+  workbenchState.buildValidationReport = null;
+}
+
+function clearCustomizeValidationReport(): void {
+  workbenchState.customizeValidationReport = null;
+}
+
+function runBuildPreviewValidation(): void {
+  if (!workbenchState.buildChassisId || !workbenchState.buildDoctrineId || workbenchState.buildDoctrineId === CHAOTIC_DOCTRINE_ID) {
+    return;
+  }
+
+  const chassis = getChassisById(workbenchState.buildChassisId);
+  const preview = previewBuildGear(
+    workbenchState.buildChassisId,
+    workbenchState.buildDoctrineId,
+    workbenchState.buildCustomName,
+    getResolvedBuildWeaponShape(),
+  );
+
+  if (!preview || !chassis) {
+    return;
+  }
+
+  workbenchState.buildValidationReport = validateGearBalance({
+    ...preview,
+    cardsGranted: [...(preview.cardsGranted ?? [])],
+    validationSlotCapacity: chassis.maxCardSlots,
+  });
+
+  addWorkbenchLog(`SLK//BALANCE :: ${workbenchState.buildValidationReport.summary}`);
+  renderGearWorkbenchScreen(
+    workbenchState.selectedUnitId ?? undefined,
+    workbenchState.selectedEquipmentId ?? undefined,
+    workbenchState.returnDestination,
+  );
+}
+
+function runSelectedGearValidation(): void {
+  if (!workbenchState.selectedEquipmentId) {
+    return;
+  }
+
+  const state = getGameState();
+  const equipmentById = (state as any).equipmentById ?? getAllStarterEquipment();
+  const equipment = equipmentById[workbenchState.selectedEquipmentId];
+  if (!equipment) {
+    return;
+  }
+
+  const gearSlots: Record<string, GearSlotData> = (state as any).gearSlots ?? {};
+  const slotData = gearSlots[workbenchState.selectedEquipmentId] ?? getDefaultGearSlots(workbenchState.selectedEquipmentId, equipment);
+  const lockedCards = Array.isArray((equipment as any).lockedCards) ? (equipment as any).lockedCards : [];
+
+  workbenchState.customizeValidationReport = validateGearBalance({
+    ...equipment,
+    cardsGranted: [...(equipment.cardsGranted ?? []), ...lockedCards],
+    validationSlotCapacity: equipment.chassisId ? slotData.freeSlots : undefined,
+  });
+
+  addWorkbenchLog(`SLK//BALANCE :: ${workbenchState.customizeValidationReport.summary}`);
+  renderGearWorkbenchScreen(
+    workbenchState.selectedUnitId ?? undefined,
+    workbenchState.selectedEquipmentId ?? undefined,
+    workbenchState.returnDestination,
+  );
+}
+
 // ----------------------------------------------------------------------------
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
@@ -1388,6 +1542,16 @@ function attachBuildGearListeners(state: any): void {
     buildItemNameInput.oninput = () => {
       workbenchState.buildCustomName = buildItemNameInput.value;
       workbenchState.buildNameDirty = buildItemNameInput.value.trim().length > 0;
+      clearBuildValidationReport();
+    };
+  }
+
+  const buildWeaponShapeSelect = document.getElementById("buildWeaponShapeSelect") as HTMLSelectElement | null;
+  if (buildWeaponShapeSelect) {
+    buildWeaponShapeSelect.onchange = () => {
+      workbenchState.buildWeaponShape = buildWeaponShapeSelect.value as WeaponType;
+      clearBuildValidationReport();
+      renderGearWorkbenchScreen();
     };
   }
 
@@ -1398,6 +1562,11 @@ function attachBuildGearListeners(state: any): void {
       const slotType = el.getAttribute("data-slot-type") as ChassisSlotType;
       workbenchState.buildSlotType = slotType;
       workbenchState.buildChassisId = null; // Reset chassis selection when slot type changes
+      workbenchState.buildDoctrineId = null;
+      workbenchState.buildWeaponShape = slotType === "weapon" ? getDefaultCraftedWeaponShape() : null;
+      workbenchState.buildCustomName = "";
+      workbenchState.buildNameDirty = false;
+      clearBuildValidationReport();
       renderGearWorkbenchScreen();
     };
   });
@@ -1409,6 +1578,7 @@ function attachBuildGearListeners(state: any): void {
       const chassisId = el.getAttribute("data-chassis-id");
       if (chassisId) {
         workbenchState.buildChassisId = chassisId;
+        clearBuildValidationReport();
         renderGearWorkbenchScreen();
       }
     };
@@ -1421,10 +1591,18 @@ function attachBuildGearListeners(state: any): void {
       const doctrineId = el.getAttribute("data-doctrine-id");
       if (doctrineId) {
         workbenchState.buildDoctrineId = doctrineId;
+        clearBuildValidationReport();
         renderGearWorkbenchScreen();
       }
     };
   });
+
+  const validateBuildBtn = document.getElementById("validateBuildBtn");
+  if (validateBuildBtn) {
+    validateBuildBtn.onclick = () => {
+      runBuildPreviewValidation();
+    };
+  }
 
   // Build button
   const buildBtn = document.getElementById("buildBtn");
@@ -1452,15 +1630,25 @@ function attachBuildGearListeners(state: any): void {
       }
 
       const result = usingChaoticBuild
-        ? buildChaoticGear(workbenchState.buildChassisId, state, workbenchState.buildCustomName)
+        ? buildChaoticGear(
+            workbenchState.buildChassisId,
+            state,
+            workbenchState.buildCustomName,
+            getResolvedBuildWeaponShape(),
+          )
         : buildGear(
             workbenchState.buildChassisId,
             workbenchState.buildDoctrineId,
             state,
             workbenchState.buildCustomName,
+            getResolvedBuildWeaponShape(),
           );
 
       if (!result.success || !result.equipment) {
+        if (!usingChaoticBuild && result.validationReport) {
+          workbenchState.buildValidationReport = result.validationReport;
+          renderGearWorkbenchScreen();
+        }
         addWorkbenchLog(`SLK//ERROR :: ${result.error || "Build failed"}`);
         showSystemPing({
           title: "FABRICATION ERROR",
@@ -1529,8 +1717,11 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildWeaponShape = null;
       workbenchState.buildCustomName = "";
       workbenchState.buildNameDirty = false;
+      clearBuildValidationReport();
+      clearCustomizeValidationReport();
       renderGearWorkbenchScreen(
         workbenchState.selectedUnitId ?? undefined,
         result.equipment.id,
@@ -1546,8 +1737,10 @@ function attachBuildGearListeners(state: any): void {
       workbenchState.buildSlotType = null;
       workbenchState.buildChassisId = null;
       workbenchState.buildDoctrineId = null;
+      workbenchState.buildWeaponShape = null;
       workbenchState.buildCustomName = "";
       workbenchState.buildNameDirty = false;
+      clearBuildValidationReport();
       renderGearWorkbenchScreen();
     };
   }
@@ -1569,6 +1762,7 @@ function attachWorkbenchListeners(
       const equipmentId = el.getAttribute("data-equipment-id");
       if (equipmentId) {
         workbenchState.selectedEquipmentId = equipmentId;
+        clearCustomizeValidationReport();
         renderGearWorkbenchScreen(
           workbenchState.selectedUnitId ?? undefined,
           equipmentId,
@@ -1577,6 +1771,13 @@ function attachWorkbenchListeners(
       }
     };
   });
+
+  const validateSelectedGearBtn = document.getElementById("validateSelectedGearBtn");
+  if (validateSelectedGearBtn) {
+    validateSelectedGearBtn.onclick = () => {
+      runSelectedGearValidation();
+    };
+  }
 
   // Search filter
   const searchInput = document.getElementById("cardSearch") as HTMLInputElement;
@@ -1739,6 +1940,7 @@ function attachWorkbenchListeners(
 
           // Clear selection
           workbenchState.draggedCardId = null;
+          clearCustomizeValidationReport();
           document.querySelectorAll(".library-card").forEach(c => {
             c.classList.remove("library-card--selected");
           });
@@ -1816,6 +2018,7 @@ function attachWorkbenchListeners(
             } as GameState;
           });
 
+          clearCustomizeValidationReport();
           addWorkbenchLog(`SLK//SLOT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} installed.`);
           renderGearWorkbenchScreen(
             workbenchState.selectedUnitId ?? undefined,
@@ -1862,6 +2065,7 @@ function attachWorkbenchListeners(
           } as GameState;
         });
 
+        clearCustomizeValidationReport();
         addWorkbenchLog(`SLK//UNSLOT :: ${LIBRARY_CARD_DATABASE[removedCardId]?.name ?? removedCardId} removed.`);
         renderGearWorkbenchScreen(
           workbenchState.selectedUnitId ?? undefined,

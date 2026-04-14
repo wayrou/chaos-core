@@ -31555,6 +31555,14 @@ body {
   margin-bottom: 0.9rem !important;
 }
 
+.unitdetail-sample-heading {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.45rem !important;
+  min-width: 0 !important;
+  flex: 1 1 320px !important;
+}
+
 .unitdetail-sample-title,
 .unitdetail-deck-grid-heading {
   color: #f6d28a !important;
@@ -31568,6 +31576,40 @@ body {
   color: rgba(223, 211, 189, 0.78) !important;
   font-size: 0.8rem !important;
   line-height: 1.45 !important;
+}
+
+.unitdetail-sample-strain {
+  display: grid !important;
+  gap: 0.14rem !important;
+  min-width: 144px !important;
+  padding: 0.55rem 0.8rem !important;
+  border: 1px solid rgba(214, 170, 98, 0.42) !important;
+  border-radius: 14px !important;
+  background: linear-gradient(180deg, rgba(58, 41, 20, 0.92) 0%, rgba(31, 23, 14, 0.92) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 228, 171, 0.08) !important;
+}
+
+.unitdetail-sample-strain__label,
+.unitdetail-sample-strain__meta {
+  font-size: 0.66rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+}
+
+.unitdetail-sample-strain__label {
+  color: rgba(255, 229, 175, 0.82) !important;
+}
+
+.unitdetail-sample-strain__value {
+  color: #fff2c8 !important;
+  font-size: 1.5rem !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+}
+
+.unitdetail-sample-strain__meta {
+  color: rgba(214, 225, 248, 0.78) !important;
 }
 
 .unitdetail-deck-grid-heading {
@@ -31631,6 +31673,24 @@ body {
     0 12px 22px rgba(0, 0, 0, 0.48),
     0 0 0 1px rgba(255, 213, 127, 0.18),
     inset 0 1px 0 rgba(255, 227, 164, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.58) !important;
+}
+
+.deck-card--sample-playable {
+  cursor: pointer !important;
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    border-color 0.14s ease !important;
+}
+
+.deck-card--sample-playable:hover {
+  transform: translateY(-3px) !important;
+  border-color: #f1c97d !important;
+  box-shadow:
+    0 16px 28px rgba(0, 0, 0, 0.54),
+    0 0 0 1px rgba(255, 229, 175, 0.22),
+    inset 0 1px 0 rgba(255, 235, 188, 0.18),
     inset 0 -1px 0 rgba(0, 0, 0, 0.58) !important;
 }
 

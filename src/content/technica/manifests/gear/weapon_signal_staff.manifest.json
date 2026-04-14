@@ -1,0 +1,21 @@
+{
+  "contentId": "weapon_signal_staff",
+  "contentType": "gear",
+  "dependencies": [],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "weapon_signal_staff.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-14T02:11:56.733Z",
+  "files": [
+    "manifest.json",
+    "weapon_signal_staff.gear.json",
+    "weapon_signal_staff.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Signal Staff"
+}

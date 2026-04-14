@@ -8,6 +8,10 @@ import { createGenerationContext, generateEndlessLoot } from "./endlessGear/gene
 import type { GeneratedGear } from "./endlessGear/types";
 import { createSeededRNG, deriveSeed, generateSeed, randomInt } from "./rng";
 import type { GameState } from "./types";
+import {
+  clampCraftedAccuracyModifier,
+  getCraftedGearBaseStats,
+} from "./craftedGear";
 
 export interface AuthoredGearRewardSpec {
   kind: "authored";
@@ -189,25 +193,19 @@ function rollGeneratedGearStats(gear: GeneratedGear): EquipmentStats {
   const slotType = chassis?.slotType ?? getEquipmentSlotType(gear) ?? "weapon";
   const doctrineTags = new Set(doctrine?.intentTags ?? []);
 
-  const base: EquipmentStats = {
-    atk: slotType === "weapon" ? 5 : 0,
-    def: slotType === "helmet" || slotType === "chestpiece" ? 3 : 0,
-    agi: slotType === "accessory" ? 2 : 0,
-    acc: 80,
-    hp: 0,
-  };
+  const base = getCraftedGearBaseStats(slotType);
 
   const atkBias = doctrineTags.has("assault") ? 2 : doctrineTags.has("suppression") ? 1 : 0;
   const defBias = doctrineTags.has("sustain") ? 2 : doctrineTags.has("control") ? 1 : 0;
   const agiBias = doctrineTags.has("mobility") || doctrineTags.has("skirmish") ? 2 : 0;
-  const accBias = doctrineTags.has("control") ? 6 : doctrineTags.has("skirmish") ? 4 : 0;
+  const accBias = doctrineTags.has("control") || doctrineTags.has("skirmish") ? 1 : 0;
   const hpBias = doctrineTags.has("sustain") ? 6 : slotType === "chestpiece" ? 4 : 0;
 
   return {
     atk: clampStatValue(base.atk + atkBias + (slotType === "weapon" ? randomInt(rng, -1, 4) : randomInt(rng, 0, 2))),
     def: clampStatValue(base.def + defBias + randomInt(rng, -1, 3)),
     agi: clampStatValue(base.agi + agiBias + randomInt(rng, -1, 3)),
-    acc: Math.max(62, Math.min(99, base.acc + accBias + randomInt(rng, -8, 10))),
+    acc: clampCraftedAccuracyModifier(base.acc + accBias + randomInt(rng, -1, 1)),
     hp: clampStatValue(base.hp + hpBias + randomInt(rng, 0, slotType === "chestpiece" ? 10 : 6)),
   };
 }

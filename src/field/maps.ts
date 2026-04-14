@@ -8563,6 +8563,26 @@ function createNetworkLobbyMap(): FieldMap {
         label: "OPERATIONS TABLE",
         metadata: { handlerId: "lobby_ops_table" },
       },
+      {
+        id: "network_lobby_lounge_bench",
+        x: 5,
+        y: 10,
+        width: 4,
+        height: 1,
+        action: "custom",
+        label: "LOUNGE BENCH",
+        metadata: { handlerId: "lobby_lounge_bench" },
+      },
+      {
+        id: "network_lobby_ready_bench",
+        x: 13,
+        y: 10,
+        width: 4,
+        height: 1,
+        action: "custom",
+        label: "READY BENCH",
+        metadata: { handlerId: "lobby_ready_bench" },
+      },
     ],
   };
 }

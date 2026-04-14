@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "rivetspine_frame",
+  "name": "Rivetspine Frame",
+  "slotType": "weapon",
+  "stability": 55,
+  "kg": 10,
+  "bu": 15,
+  "w": 7,
+  "cardSlots": 4,
+  "description": "A basic curved piece of metal- it could be used for many different purposes. I've seen a giant pile of them behind the workshop.",
+  "buildCost": {
+    "metalScrap": 20,
+    "wood": 0,
+    "chaosShards": 0,
+    "steamComponents": 0,
+    "alloy": 0,
+    "drawcord": 0,
+    "fittings": 2,
+    "resin": 0,
+    "chargeCells": 0
+  },
+  "unlockAfterFloor": 0,
+  "availableInHavenShop": true,
+  "havenShopUnlockAfterFloor": 0,
+  "requiredQuestIds": [],
+  "allowedCardTags": [],
+  "allowedCardFamilies": [],
+  "createdAt": "2026-04-14T00:18:53.869Z",
+  "updatedAt": "2026-04-14T02:16:13.574Z"
+}

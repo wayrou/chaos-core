@@ -16,10 +16,16 @@ import {
 import { createEmptyResourceWallet } from "./resources";
 
 function normalizeChassis(entry: GearChassis): GearChassis {
+  const unlockAfterFloor = Number(entry.unlockAfterFloor ?? 0);
+  const availableInHavenShop = entry.availableInHavenShop !== false;
   return {
     ...entry,
     buildCost: createEmptyResourceWallet(entry.buildCost),
-    unlockAfterFloor: Number(entry.unlockAfterFloor ?? 0),
+    unlockAfterFloor,
+    availableInHavenShop,
+    havenShopUnlockAfterFloor: availableInHavenShop
+      ? Number(entry.havenShopUnlockAfterFloor ?? unlockAfterFloor)
+      : 0,
     requiredQuestIds: Array.isArray(entry.requiredQuestIds)
       ? Array.from(new Set(entry.requiredQuestIds.map(String).map((value) => value.trim()).filter(Boolean)))
       : []

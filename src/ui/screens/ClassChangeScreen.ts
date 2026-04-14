@@ -26,7 +26,7 @@ import {
   unlockEligibleClasses,
 } from "../../core/classes";
 import { calculatePWR } from "../../core/pwr";
-import { getAllStarterEquipment } from "../../core/equipment";
+import { getAllStarterEquipment, sanitizeLoadoutForUnitClass } from "../../core/equipment";
 import { getStatBank, spendStatTokens, STAT_SHORT_LABEL } from "../../core/statTokens";
 
 type ClassChangeReturnTo = "basecamp" | "field" | "esc" | "loadout" | "operation";
@@ -304,6 +304,11 @@ function buildUpdatedUnit(state: GameState, unitId: UnitId, nextProgress: UnitCl
   const unit = state.unitsById[unitId];
   const nextClassDef = getClassDefinition(nextClassId);
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+  const sanitizedLoadout = sanitizeLoadoutForUnitClass(
+    nextClassId,
+    (unit as any).loadout,
+    equipmentById,
+  );
   const nextStats = {
     ...((unit as any).stats || {}),
     maxHp: nextClassDef.baseStats.maxHp,
@@ -315,6 +320,7 @@ function buildUpdatedUnit(state: GameState, unitId: UnitId, nextProgress: UnitCl
   const baseUnit = {
     ...unit,
     unitClass: nextClassId,
+    loadout: sanitizedLoadout,
     stats: nextStats,
     maxHp: nextClassDef.baseStats.maxHp,
     hp: Math.min(unit.hp, nextClassDef.baseStats.maxHp),

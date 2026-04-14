@@ -46,6 +46,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
 
   // Add all chassis
   for (const chassis of getAllChassis()) {
+    const shopEligible = chassis.availableInHavenShop !== false;
     registry[chassis.id] = {
       id: chassis.id,
       type: "chassis",
@@ -54,10 +55,12 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       rarity: determineChassisRarity(chassis),
       tags: [chassis.slotType],
       cost: chassis.buildCost,
-      unlockAfterFloor: Number(chassis.unlockAfterFloor ?? 0),
+      unlockAfterFloor: shopEligible
+        ? Number(chassis.havenShopUnlockAfterFloor ?? chassis.unlockAfterFloor ?? 0)
+        : 0,
       requiredQuestIds: chassis.requiredQuestIds ?? [],
       sourceRules: {
-        shopEligible: true,
+        shopEligible,
         rewardEligible: true,
       },
     };

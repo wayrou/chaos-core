@@ -26,6 +26,7 @@ import { generateNodeMap } from "./nodeMapGenerator";
 import { generateEncounter } from "./encounterGenerator";
 import { OperationRun, Floor, RoomNode, TheaterSprawlDirection } from "./types";
 import { getGameState, updateGameState } from "../state/gameStore";
+import { buildImportedOperationRuntime } from "./importedOperationTheater";
 import {
   activateQueuedTavernMealForRun,
   clearActiveRunTavernMeal,
@@ -702,6 +703,25 @@ export function activeRunToOperationRun(activeRun: ActiveRunState): OperationRun
     });
   }
 
+  if (importedOperation) {
+    return {
+      ...buildImportedOperationRuntime(importedOperation, {
+        currentFloorIndex: activeRun.floorIndex,
+        currentRoomId: activeRun.currentNodeId,
+        clearedRoomIdsByFloor: {
+          [activeRun.floorIndex]: [...activeRun.clearedNodeIds],
+        },
+        floorsOverride: floors,
+        connectionsOverride: activeRun.nodeMapByFloor[activeRun.floorIndex]?.connections || {},
+      }),
+      floors,
+      currentFloorIndex: activeRun.floorIndex,
+      currentRoomId: activeRun.currentNodeId,
+      connections: activeRun.nodeMapByFloor[activeRun.floorIndex]?.connections || {},
+      launchSource: "ops_terminal",
+    };
+  }
+
   return {
     id: activeRun.operationId,
     codename: customProfile?.codename ?? opDef.name,
@@ -828,8 +848,8 @@ function createImportedOperationNodeMaps(operation: ImportedOperationDefinition)
       id: room.id,
       label: room.label,
       type: room.type,
-      position: room.position,
-      connections: [...(room.connections ?? [])],
+      position: room.position ?? room.localPosition,
+      connections: [...(room.connections ?? room.adjacency ?? [])],
       battleTemplate: room.battleTemplate,
       eventTemplate: room.eventTemplate,
       shopInventory: [...(room.shopInventory ?? [])],
@@ -837,7 +857,11 @@ function createImportedOperationNodeMaps(operation: ImportedOperationDefinition)
     const connections = Object.fromEntries(
       nodes.map((node) => [node.id, [...(node.connections ?? [])]])
     );
-    const startNodeId = floor.startingRoomId || nodes[0]?.id || `floor_${floorIndex}_start`;
+    const startNodeId =
+      floor.startingRoomId
+      || floor.rooms.find((room) => room.role === "ingress")?.id
+      || nodes[0]?.id
+      || `floor_${floorIndex}_start`;
     const exitNodeId =
       nodes.find((node) => (node.connections ?? []).length === 0)?.id ||
       nodes[nodes.length - 1]?.id ||

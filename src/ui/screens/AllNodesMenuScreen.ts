@@ -498,6 +498,7 @@ function isEscNodeAction(action: string): action is EscNodeAction {
 function getEscAvailabilityContext() {
   return {
     expeditionActive: getOuterDeckFieldContext(lastFieldMap) === "outerDeckBranch",
+    coopOperationsActive: false,
   };
 }
 

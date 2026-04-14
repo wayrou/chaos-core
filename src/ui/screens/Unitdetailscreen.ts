@@ -25,24 +25,23 @@ import { getPWRBand, getPWRBandColor, calculatePWR } from "../../core/pwr";
 import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign";
 import { HardpointState, FieldModInstance } from "../../core/fieldMods";
 import { getFieldModDef } from "../../core/fieldModDefinitions";
+import {
+  drawNextUnitSampleHand,
+  ensureUnitSampleHandState,
+  playUnitSampleHandCard,
+  resetUnitSampleHandState,
+  SAMPLE_DRAW_HAND_SIZE,
+  SAMPLE_HAND_TURN_STRAIN_RELIEF,
+  type UnitSampleHandState,
+} from "../../core/unitSampleHand";
 import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
 
 type UnitDetailReturnTo = "basecamp" | "field" | "esc" | "loadout" | "operation";
 type LoadoutSlot = keyof UnitLoadout;
-const SAMPLE_DRAW_HAND_SIZE = 5;
-
-interface UnitDetailSampleDrawState {
-  unitId: string;
-  deckSignature: string;
-  drawPile: string[];
-  discardPile: string[];
-  hand: string[];
-  drawCount: number;
-}
 
 let currentUnitDetailReturnTo: UnitDetailReturnTo = "basecamp";
 let unitDetailEscHandler: ((e: KeyboardEvent) => void) | null = null;
-let unitDetailSampleDrawState: UnitDetailSampleDrawState | null = null;
+let unitDetailSampleDrawState: UnitSampleHandState | null = null;
 
 function returnToActiveOperationRoster(): void {
   renderRosterScreen("operation");
@@ -136,76 +135,35 @@ function getDeckCardGlyph(type: EquipmentCard["type"]): string {
   }
 }
 
-function shuffleSampleDeck<T>(items: T[]): T[] {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
-function getSampleDeckSignature(unitId: string, deck: string[]): string {
-  return `${unitId}::${deck.join("|")}`;
-}
-
-function resetUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
-  if (deck.length === 0) {
-    unitDetailSampleDrawState = null;
-    return null;
-  }
-
-  unitDetailSampleDrawState = {
-    unitId,
-    deckSignature: getSampleDeckSignature(unitId, deck),
-    drawPile: shuffleSampleDeck(deck),
-    discardPile: [],
-    hand: [],
-    drawCount: 0,
-  };
-
+function resetUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitSampleHandState | null {
+  unitDetailSampleDrawState = resetUnitSampleHandState(unitId, deck);
   return unitDetailSampleDrawState;
 }
 
-function ensureUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
-  const deckSignature = getSampleDeckSignature(unitId, deck);
-  if (!unitDetailSampleDrawState || unitDetailSampleDrawState.deckSignature !== deckSignature) {
-    return resetUnitDetailSampleDrawState(unitId, deck);
-  }
+function ensureUnitDetailSampleDrawState(unitId: string, deck: string[]): UnitSampleHandState | null {
+  unitDetailSampleDrawState = ensureUnitSampleHandState(unitDetailSampleDrawState, unitId, deck);
   return unitDetailSampleDrawState;
 }
 
-function drawNextUnitDetailSampleHand(unitId: string, deck: string[]): UnitDetailSampleDrawState | null {
-  const state = ensureUnitDetailSampleDrawState(unitId, deck);
-  if (!state) return null;
+function drawNextUnitDetailSampleHand(unitId: string, deck: string[]): UnitSampleHandState | null {
+  unitDetailSampleDrawState = drawNextUnitSampleHand(unitDetailSampleDrawState, unitId, deck);
+  return unitDetailSampleDrawState;
+}
 
-  let drawPile = [...state.drawPile];
-  let discardPile = [...state.discardPile];
-
-  if (state.hand.length > 0) {
-    discardPile.push(...state.hand);
+function getUnitDetailSampleCardStrainDelta(card: EquipmentCard): number {
+  if (card.id === "core_wait") {
+    return -2;
   }
+  return Number(card.strainCost ?? 0);
+}
 
-  const hand: string[] = [];
-  while (hand.length < SAMPLE_DRAW_HAND_SIZE && (drawPile.length > 0 || discardPile.length > 0)) {
-    if (drawPile.length === 0 && discardPile.length > 0) {
-      drawPile = shuffleSampleDeck(discardPile);
-      discardPile = [];
-    }
-
-    const nextCard = drawPile.shift();
-    if (!nextCard) break;
-    hand.push(nextCard);
-  }
-
-  unitDetailSampleDrawState = {
-    ...state,
-    drawPile,
-    discardPile,
-    hand,
-    drawCount: state.drawCount + 1,
-  };
-
+function playUnitDetailSampleCard(unitId: string, deck: string[], handIndex: number, card: EquipmentCard): UnitSampleHandState | null {
+  ensureUnitDetailSampleDrawState(unitId, deck);
+  unitDetailSampleDrawState = playUnitSampleHandCard(
+    unitDetailSampleDrawState,
+    handIndex,
+    getUnitDetailSampleCardStrainDelta(card),
+  );
   return unitDetailSampleDrawState;
 }
 
@@ -214,6 +172,7 @@ function renderDeckCard(
   options: {
     footerStats?: string[];
     extraClasses?: string[];
+    attrs?: string;
   } = {},
 ): string {
   const typeClass = `deck-card--${card.type}`;
@@ -226,7 +185,7 @@ function renderDeckCard(
     .join(" ");
 
   return `
-    <div class="${classes}">
+    <div class="${classes}" ${options.attrs ?? ""}>
       <div class="deck-card-cost">${card.strainCost}</div>
       <div class="deck-card-type">${card.type.toUpperCase()}</div>
       <div class="deck-card-art">
@@ -356,6 +315,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
   const sampleDrawState = ensureUnitDetailSampleDrawState(unitId, deck);
   const uniqueCardCount = new Set(deck).size;
+  const sampleStrain = sampleDrawState?.strain ?? 0;
 
   const deckCardsHtml = deck
     .map((cardId) => {
@@ -370,13 +330,19 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     .join("");
 
   const sampleHandHtml = (sampleDrawState?.hand ?? [])
-    .map((cardId) => {
+    .map((cardId, handIndex) => {
       const card = cardsById[cardId];
       if (!card) return "";
 
+      const sampleStrainDelta = getUnitDetailSampleCardStrainDelta(card);
+      const playPreviewLabel = sampleStrainDelta >= 0
+        ? `PLAY +${sampleStrainDelta} STR`
+        : `PLAY ${sampleStrainDelta} STR`;
+
       return renderDeckCard(card, {
-        footerStats: card.range ? [card.range, "HAND"] : ["HAND"],
-        extraClasses: ["deck-card--sample"],
+        footerStats: card.range ? [card.range, playPreviewLabel] : [playPreviewLabel],
+        extraClasses: ["deck-card--sample", "deck-card--sample-playable"],
+        attrs: `data-sample-hand-index="${handIndex}" title="Play ${card.name} in the sample hand"`,
       });
     })
     .join("");
@@ -469,7 +435,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
               </div>
               <div class="unitdetail-deck-actions">
                 <div class="unitdetail-deck-actions-copy">
-                  Draw ${SAMPLE_DRAW_HAND_SIZE} cards, discard the current hand, and reshuffle automatically to keep testing the deck flow.
+                  Draw ${SAMPLE_DRAW_HAND_SIZE} cards, click sample cards to test strain pressure, and cool ${SAMPLE_HAND_TURN_STRAIN_RELIEF} strain on each new hand.
                 </div>
                 <div class="unitdetail-deck-action-row">
                   <button class="unitdetail-sample-draw-btn" id="unitdetailSampleDrawBtn" ${deck.length === 0 ? "disabled" : ""}>
@@ -484,17 +450,24 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
 
             <div class="unitdetail-sample-panel">
               <div class="unitdetail-sample-header">
-                <div class="unitdetail-sample-title">
-                  SAMPLE HAND ${sampleDrawState?.drawCount ? `#${sampleDrawState.drawCount}` : "READY"}
+                <div class="unitdetail-sample-heading">
+                  <div class="unitdetail-sample-title">
+                    SAMPLE HAND ${sampleDrawState?.drawCount ? `#${sampleDrawState.drawCount}` : "READY"}
+                  </div>
+                  <div class="unitdetail-sample-copy">
+                    ${sampleDrawState?.drawCount
+                      ? `Click a card to test its strain impact. DRAW NEXT HAND discards the rest and cools ${SAMPLE_HAND_TURN_STRAIN_RELIEF} strain.`
+                      : "Press SAMPLE DRAW to preview how this loadout opens before deployment."}
+                  </div>
                 </div>
-                <div class="unitdetail-sample-copy">
-                  ${sampleDrawState?.drawCount
-                    ? "Each new draw discards the current hand and keeps cycling through the compiled deck."
-                    : "Press SAMPLE DRAW to preview how this loadout opens before deployment."}
+                <div class="unitdetail-sample-strain">
+                  <span class="unitdetail-sample-strain__label">TEST STRAIN</span>
+                  <span class="unitdetail-sample-strain__value">${sampleStrain}</span>
+                  <span class="unitdetail-sample-strain__meta">NEXT DRAW -${SAMPLE_HAND_TURN_STRAIN_RELIEF}</span>
                 </div>
               </div>
               <div class="deck-grid deck-grid--sample">
-                ${sampleHandHtml || '<div class="unitdetail-sample-empty">No sample hand yet. Draw to see five live cards from the compiled deck.</div>'}
+                ${sampleHandHtml || `<div class="unitdetail-sample-empty">${sampleDrawState?.drawCount ? "Sample hand exhausted. Draw next hand to keep testing the deck flow." : "No sample hand yet. Draw to see five live cards from the compiled deck."}</div>`}
               </div>
             </div>
 
@@ -638,6 +611,21 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
       renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
     });
   }
+
+  root.querySelectorAll(".deck-card--sample[data-sample-hand-index]").forEach((cardEl) => {
+    cardEl.addEventListener("click", () => {
+      const handIndex = Number((cardEl as HTMLElement).getAttribute("data-sample-hand-index") ?? "-1");
+      if (handIndex < 0 || !sampleDrawState?.hand[handIndex]) {
+        return;
+      }
+      const card = cardsById[sampleDrawState.hand[handIndex]];
+      if (!card) {
+        return;
+      }
+      playUnitDetailSampleCard(unitId, deck, handIndex, card);
+      renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+    });
+  });
 
   // Hardpoint slot buttons
   root.querySelectorAll(".hardpoint-slot-btn").forEach((btn) => {

@@ -5,6 +5,9 @@
       "core_overwatch",
       "guard_self"
     ],
+    "chassis": [
+      "rivetspine_frame"
+    ],
     "chatter": [
       "port_routes_are_tight_this_week_if_the_charter"
     ],
@@ -23,7 +26,9 @@
       "gear_coil_gun",
       "gear_quill_sword",
       "gear_scissor_sword",
-      "shield_pattern_shield"
+      "shield_pattern_shield",
+      "weapon_iron_watchblade",
+      "weapon_signal_staff"
     ],
     "item": [
       "item_phase_battery"
@@ -44,5 +49,5 @@
       "unit_lucien"
     ]
   },
-  "updatedAt": 1775972333535
+  "updatedAt": 1776133998591
 }

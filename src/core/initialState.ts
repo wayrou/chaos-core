@@ -47,6 +47,7 @@ import { createDefaultSessionState } from "./session";
 import { createDefaultTheaterDeploymentPreset } from "./theaterDeploymentPreset";
 import { createDefaultOuterDecksState } from "./outerDecks";
 import { createDefaultWeaponsmithState } from "./weaponsmith";
+import { buildImportedOperationRuntime } from "./importedOperationTheater";
 
 /**
  * Convert EquipmentCard to the game's Card format for battle compatibility
@@ -387,27 +388,7 @@ function createStarterUnits(): Record<UnitId, UnitWithEquipment> {
 }
 
 function importedOperationToRuntimeOperation(operation: ImportedOperationDefinition): OperationRun {
-  return {
-    id: operation.id,
-    codename: operation.codename,
-    description: operation.description,
-    currentFloorIndex: 0,
-    currentRoomId: operation.floors[0]?.startingRoomId ?? operation.floors[0]?.rooms[0]?.id ?? null,
-    floors: operation.floors.map((floor) => ({
-      id: floor.id,
-      name: floor.name,
-      nodes: floor.rooms.map((room) => ({
-        id: room.id,
-        type: room.type,
-        label: room.label,
-        position: { x: room.position.x, y: room.position.y },
-        connections: [...(room.connections ?? [])],
-        battleTemplate: room.battleTemplate,
-        eventTemplate: room.eventTemplate,
-        shopInventory: [...(room.shopInventory ?? [])],
-      })),
-    })),
-  };
+  return buildImportedOperationRuntime(operation);
 }
 
 function createOperationIronGate(): OperationRun {

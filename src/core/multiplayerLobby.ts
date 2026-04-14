@@ -13,6 +13,7 @@ import {
   type LobbyCoopParticipantState,
   type LobbyCoopOperationsStatus,
   type LobbyMember,
+  type LobbySeatPreference,
   type PendingTheaterBattleConfirmationState,
   type LobbyReturnContext,
   type LobbySkirmishActivity,
@@ -186,6 +187,12 @@ function cloneCoopParticipant(
       participant?.pendingTheaterBattleConfirmation,
     ),
   };
+}
+
+function cloneSeatPreference(
+  value: LobbySeatPreference | null | undefined,
+): LobbySeatPreference | null {
+  return value === "ready" || value === "lounge" ? value : null;
 }
 
 function clonePendingTheaterBattleConfirmation(
@@ -681,7 +688,13 @@ export function updateLobbyAvatar(
     ...lobby,
     avatars: {
       ...lobby.avatars,
-      [slot]: avatar,
+      [slot]: avatar
+        ? {
+            ...avatar,
+            mapId: avatar.mapId ?? null,
+            seatPreference: cloneSeatPreference(avatar.seatPreference),
+          }
+        : null,
     },
     activity: nextActivity,
     updatedAt: Date.now(),
@@ -1379,7 +1392,13 @@ export function loadLobbyState(): LobbyState | null {
       members,
       avatars: createNetworkSlotRecord((slot) => {
         const avatar = parsed.avatars?.[slot];
-        return avatar ? { ...avatar, mapId: avatar.mapId ?? null } : null;
+        return avatar
+          ? {
+              ...avatar,
+              mapId: avatar.mapId ?? null,
+              seatPreference: cloneSeatPreference(avatar.seatPreference),
+            }
+          : null;
       }),
     };
   } catch {

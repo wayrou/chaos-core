@@ -1,0 +1,21 @@
+{
+  "contentId": "rivetspine_frame",
+  "contentType": "chassis",
+  "dependencies": [],
+  "description": "Chaos Core runtime chassis export.",
+  "entryFile": "rivetspine_frame.chassis.json",
+  "exportType": "chassis",
+  "exportedAt": "2026-04-14T02:16:16.405Z",
+  "files": [
+    "manifest.json",
+    "rivetspine_frame.chassis.json",
+    "rivetspine_frame.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "gear-chassis.v2",
+  "title": "Rivetspine Frame"
+}

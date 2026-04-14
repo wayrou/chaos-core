@@ -1,0 +1,21 @@
+{
+  "contentId": "weapon_iron_watchblade",
+  "contentType": "gear",
+  "dependencies": [],
+  "description": "Chaos Core runtime equipment export.",
+  "entryFile": "weapon_iron_watchblade.gear.json",
+  "exportType": "gear",
+  "exportedAt": "2026-04-14T02:33:18.580Z",
+  "files": [
+    "manifest.json",
+    "weapon_iron_watchblade.gear.json",
+    "weapon_iron_watchblade.source.json",
+    "README.md"
+  ],
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "sourceAppVersion": "0.1.0",
+  "targetGame": "chaos-core",
+  "targetSchemaVersion": "equipment.v1",
+  "title": "Iron Watchblade"
+}

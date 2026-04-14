@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceApp": "Technica",
+  "id": "weapon_signal_staff",
+  "name": "Signal Staff",
+  "description": "A balanced and sturdy staff- a simple, well-made tool for using Chaos magic without hurting the user's hand.",
+  "slot": "weapon",
+  "weaponType": "staff",
+  "isMechanical": false,
+  "stats": {
+    "atk": 2,
+    "def": 0,
+    "agi": 0,
+    "acc": 1,
+    "hp": 0
+  },
+  "cardsGranted": [],
+  "moduleSlots": 0,
+  "attachedModules": [],
+  "wear": 0,
+  "inventory": {
+    "massKg": 2,
+    "bulkBu": 0,
+    "powerW": 0,
+    "startingOwned": false
+  },
+  "acquisition": {
+    "shop": {
+      "enabled": true,
+      "unlockFloor": 0,
+      "notes": ""
+    },
+    "enemyDrop": {
+      "enabled": false,
+      "enemyUnitIds": [],
+      "notes": ""
+    },
+    "victoryReward": {
+      "enabled": false,
+      "floorOrdinals": [],
+      "regionIds": [],
+      "notes": ""
+    },
+    "otherSourcesNotes": ""
+  },
+  "metadata": {},
+  "createdAt": "2026-04-14T01:56:28.368Z",
+  "updatedAt": "2026-04-14T02:11:39.409Z"
+}

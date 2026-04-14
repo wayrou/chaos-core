@@ -3,7 +3,7 @@
 // Logic for building new gear from chassis + doctrine
 // ============================================================================
 
-import { Equipment, EquipmentStats, WeaponEquipment, ArmorEquipment, AccessoryEquipment } from "./equipment";
+import { Equipment, WeaponEquipment, ArmorEquipment, AccessoryEquipment, type WeaponType } from "./equipment";
 import { GearSlotData } from "./gearWorkbench";
 import { type GearChassis } from "../data/gearChassis";
 import { getChassisById, getDoctrineById } from "./gearCatalog";
@@ -18,12 +18,20 @@ import {
   hasEnoughResources,
   type ResourceWallet,
 } from "./resources";
+import { type GearBalanceReport, validateGearBalance } from "./gearBalanceValidation";
+import {
+  getCraftedGearBaseStats,
+  getCraftedGearDescription,
+  getDefaultCraftedWeaponShape,
+  rollChaoticCraftedGearStats,
+} from "./craftedGear";
 
 export interface BuildGearResult {
   success: boolean;
   error?: string;
   equipment?: Equipment;
   gearSlots?: GearSlotData;
+  validationReport?: GearBalanceReport;
 }
 
 const CHAOTIC_BUILD_SURCHARGE: ResourceWallet = createEmptyResourceWallet({
@@ -46,6 +54,7 @@ export function buildGear(
   doctrineId: string,
   state: GameState,
   customName?: string,
+  weaponType?: WeaponType,
 ): BuildGearResult {
   const chassis = getChassisById(chassisId);
   const doctrine = getDoctrineById(doctrineId);
@@ -77,9 +86,19 @@ export function buildGear(
     equipmentName,
     doctrine.id,
     finalStability,
-    createBaseStats(chassis),
-    1
+    getCraftedGearBaseStats(chassis.slotType),
+    1,
+    weaponType,
+    getCraftedGearDescription(chassis.name, doctrine.name),
   );
+  const validationReport = validateBuiltGear(equipment, chassis.maxCardSlots);
+  if (validationReport.status === "fail") {
+    return {
+      success: false,
+      error: `Balance check failed. ${validationReport.summary}`,
+      validationReport,
+    };
+  }
 
   return {
     success: true,
@@ -89,7 +108,38 @@ export function buildGear(
       freeSlots: chassis.maxCardSlots,
       slottedCards: [],
     },
+    validationReport,
   };
+}
+
+export function previewBuildGear(
+  chassisId: string,
+  doctrineId: string,
+  customName?: string,
+  weaponType?: WeaponType,
+): Equipment | null {
+  const chassis = getChassisById(chassisId);
+  const doctrine = getDoctrineById(doctrineId);
+
+  if (!chassis || !doctrine) {
+    return null;
+  }
+
+  const finalStability = Math.max(0, Math.min(100, chassis.baseStability + doctrine.stabilityModifier));
+  const equipmentId = `preview_${chassis.slotType}_${chassisId}_${doctrineId}`;
+  const equipmentName = customName?.trim() || `${doctrine.name} ${chassis.name}`;
+
+  return createEquipment(
+    chassis,
+    equipmentId,
+    equipmentName,
+    doctrine.id,
+    finalStability,
+    getCraftedGearBaseStats(chassis.slotType),
+    1,
+    weaponType,
+    getCraftedGearDescription(chassis.name, doctrine.name),
+  );
 }
 
 /**
@@ -100,6 +150,7 @@ export function buildChaoticGear(
   chassisId: string,
   state: GameState,
   customName?: string,
+  weaponType?: WeaponType,
 ): BuildGearResult {
   const chassis = getChassisById(chassisId);
   if (!chassis) {
@@ -137,19 +188,36 @@ export function buildChaoticGear(
   };
 
   generatedGear.name = customName?.trim() || `Unbound ${chassis.name}`;
-  generatedGear.stats = createChaoticStats(chassis, rng);
+  generatedGear.stats = rollChaoticCraftedGearStats(chassis.slotType, rng);
   generatedGear.builderVersion = 3;
+  generatedGear.description = getCraftedGearDescription(chassis.name);
+  if (generatedGear.slot === "weapon") {
+    generatedGear.weaponType = weaponType ?? getDefaultCraftedWeaponShape();
+  }
 
   const slotsLocked = generatedGear.provenance?.bias?.slotsLocked ?? 0;
+  const freeSlots = Math.max(0, chassis.maxCardSlots - slotsLocked);
+  const validationReport = validateBuiltGear({
+    ...generatedGear,
+    cardsGranted: [...(generatedGear.cardsGranted ?? []), ...(generatedGear.lockedCards ?? [])],
+  }, freeSlots);
+  if (validationReport.status === "fail") {
+    return {
+      success: false,
+      error: `Balance check failed. ${validationReport.summary}`,
+      validationReport,
+    };
+  }
 
   return {
     success: true,
     equipment: generatedGear,
     gearSlots: {
       lockedCards: generatedGear.lockedCards ?? [],
-      freeSlots: Math.max(0, chassis.maxCardSlots - slotsLocked),
+      freeSlots,
       slottedCards: [],
     },
+    validationReport,
   };
 }
 
@@ -194,52 +262,24 @@ function hasRequiredResources(cost: ResourceWallet, state: GameState): boolean {
   return hasEnoughResources(resources, cost);
 }
 
-function createBaseStats(chassis: GearChassis): EquipmentStats {
-  return {
-    atk: chassis.slotType === "weapon" ? 5 : 0,
-    def: chassis.slotType === "helmet" || chassis.slotType === "chestpiece" ? 3 : 0,
-    agi: chassis.slotType === "accessory" ? 2 : 0,
-    acc: 80,
-    hp: 0,
-  };
-}
-
-function createChaoticStats(chassis: GearChassis, rng: () => number): EquipmentStats {
-  const base = createBaseStats(chassis);
-
-  const atkSwing = chassis.slotType === "weapon" ? randomInt(rng, -2, 4) : randomInt(rng, 0, 3);
-  const defSwing = chassis.slotType === "accessory" ? randomInt(rng, 0, 2) : randomInt(rng, -1, 4);
-  const agiSwing = chassis.slotType === "accessory" ? randomInt(rng, -1, 3) : randomInt(rng, 0, 2);
-  const hpSwing = chassis.slotType === "chestpiece" ? randomInt(rng, 2, 10) : randomInt(rng, 0, 6);
-
-  return {
-    atk: clampStat(base.atk + atkSwing),
-    def: clampStat(base.def + defSwing),
-    agi: clampStat(base.agi + agiSwing),
-    acc: Math.max(60, Math.min(98, base.acc + randomInt(rng, -12, 12))),
-    hp: clampStat(base.hp + hpSwing),
-  };
-}
-
-function clampStat(value: number): number {
-  return Math.max(0, value);
-}
-
 function createEquipment(
   chassis: GearChassis,
   equipmentId: string,
   equipmentName: string,
   doctrineId: string | undefined,
   stability: number,
-  stats: EquipmentStats,
-  builderVersion: number
+  stats: WeaponEquipment["stats"] | ArmorEquipment["stats"] | AccessoryEquipment["stats"],
+  builderVersion: number,
+  weaponType: WeaponType | undefined,
+  description: string,
 ): Equipment {
   if (chassis.slotType === "weapon") {
     return {
       id: equipmentId,
       name: equipmentName,
+      description,
       slot: "weapon",
-      weaponType: "sword",
+      weaponType: weaponType ?? getDefaultCraftedWeaponShape(),
       isMechanical: true,
       stats,
       cardsGranted: [],
@@ -255,6 +295,7 @@ function createEquipment(
     return {
       id: equipmentId,
       name: equipmentName,
+      description,
       slot: chassis.slotType,
       stats,
       cardsGranted: [],
@@ -268,6 +309,7 @@ function createEquipment(
   return {
     id: equipmentId,
     name: equipmentName,
+    description,
     slot: "accessory",
     stats,
     cardsGranted: [],
@@ -276,5 +318,13 @@ function createEquipment(
     stability,
     builderVersion,
   } as AccessoryEquipment;
+}
+
+function validateBuiltGear(equipment: Equipment, slotCapacity: number): GearBalanceReport {
+  return validateGearBalance({
+    ...equipment,
+    cardsGranted: [...(equipment.cardsGranted ?? [])],
+    validationSlotCapacity: slotCapacity,
+  });
 }
 

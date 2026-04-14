@@ -1,4 +1,4 @@
-import type { EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
+import type { EquipmentAcquisition, EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
 import type { EffectFlowDocument } from "../../core/effectFlow";
 import type { FieldModScope, FieldModRarity, FieldModTrigger, FieldModStackMode } from "../../core/fieldMods";
 import type { ResourceWallet } from "../../core/resources";
@@ -127,6 +127,8 @@ export interface ImportedChassis {
   description?: string;
   buildCost?: Partial<ResourceWallet>;
   unlockAfterFloor?: number;
+  availableInHavenShop?: boolean;
+  havenShopUnlockAfterFloor?: number;
   requiredQuestIds?: string[];
 }
 
@@ -161,6 +163,7 @@ export interface ImportedGear {
     powerW: number;
     startingOwned?: boolean;
   };
+  acquisition?: EquipmentAcquisition;
   iconPath?: string;
   metadata?: Record<string, unknown>;
 }
@@ -311,16 +314,38 @@ export interface ImportedUnitTemplate {
 export interface ImportedOperationFloor {
   id: string;
   name: string;
+  floorOrdinal?: number;
+  atlasFloorId?: string;
   startingRoomId: string;
+  sectorLabel?: string;
+  passiveEffectText?: string;
+  threatLevel?: string;
+  layoutStyle?: "vector_lance" | "split_fan" | "central_bloom" | "offset_arc";
+  originLabel?: string;
   rooms: Array<{
     id: string;
     label: string;
     type?: "tavern" | "battle" | "event" | "shop" | "rest" | "boss" | "field_node" | "key_room" | "elite" | "treasure";
     position: { x: number; y: number };
     connections?: string[];
+    localPosition?: { x: number; y: number };
+    adjacency?: string[];
+    role?: "ingress" | "frontline" | "relay" | "field" | "resource_pocket" | "core" | "power" | "elite" | "objective";
+    sectorTag?: string;
+    depthFromUplink?: number;
+    clearMode?: "battle" | "field" | "empty";
+    roomClass?: "standard" | "mega";
+    tags?: string[];
+    battleMapId?: string;
     battleTemplate?: string;
     eventTemplate?: string;
+    tacticalEncounter?: string;
     shopInventory?: string[];
+    coreSlotCapacity?: number;
+    fortificationCapacity?: number;
+    requiredKeyType?: "triangle" | "square" | "circle" | "spade" | "star";
+    grantsKeyType?: "triangle" | "square" | "circle" | "spade" | "star";
+    isPowerSource?: boolean;
     metadata?: Record<string, unknown>;
   }>;
 }
@@ -329,6 +354,11 @@ export interface ImportedOperationDefinition {
   id: string;
   codename: string;
   description: string;
+  objective?: string;
+  beginningState?: string;
+  endState?: string;
+  zoneName?: string;
+  sprawlDirection?: "north" | "northeast" | "east" | "southeast" | "south" | "southwest" | "west" | "northwest";
   recommendedPower?: number;
   floors: ImportedOperationFloor[];
   metadata?: Record<string, unknown>;

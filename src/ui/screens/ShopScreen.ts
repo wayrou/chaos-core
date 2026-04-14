@@ -18,7 +18,8 @@ import {
   addCardsToLibrary,
   LIBRARY_CARD_DATABASE 
 } from "../../core/gearWorkbench";
-import { getAllStarterEquipment } from "../../core/equipment";
+import { type Equipment, getAllStarterEquipment } from "../../core/equipment";
+import { computeGearBalanceScore, getGearBalanceReference } from "../../core/gearBalanceValidation";
 import { getUnlockableById, getUnownedUnlockables, type UnlockableType } from "../../core/unlockables";
 import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
 import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
@@ -32,6 +33,7 @@ import {
   getSessionResourcePool,
   spendSessionCost,
 } from "../../core/session";
+import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "../../core/campaign";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -238,6 +240,140 @@ const SHOP_RESOURCE_PRICE_WEIGHTS: Record<ResourceKey, number> = {
   chargeCells: 20,
 };
 
+function roundShopPrice(value: number): number {
+  return Math.max(10, Math.round(value / 5) * 5);
+}
+
+function inferEquipmentShopRarity(equipment: Equipment): ShopItem["rarity"] {
+  const score = computeGearBalanceScore({
+    slot: equipment.slot,
+    stats: equipment.stats,
+    cardsGranted: equipment.cardsGranted ?? [],
+    weaponType: equipment.slot === "weapon" ? equipment.weaponType : undefined,
+    isMechanical: equipment.slot === "weapon" ? equipment.isMechanical : undefined,
+  });
+  const reference = getGearBalanceReference(equipment.slot);
+
+  if (score >= reference.score.max + 2.5) {
+    return "epic";
+  }
+  if (score >= reference.score.max + 1) {
+    return "rare";
+  }
+  if (score >= reference.score.average || (equipment.slot === "weapon" && equipment.isMechanical)) {
+    return "uncommon";
+  }
+  return "common";
+}
+
+function estimateEquipmentShopPrice(equipment: Equipment, rarity: ShopItem["rarity"]): number {
+  const baseBySlot: Record<Equipment["slot"], number> = {
+    weapon: 70,
+    helmet: 55,
+    chestpiece: 60,
+    accessory: 65,
+  };
+  const rarityBonus: Record<NonNullable<ShopItem["rarity"]>, number> = {
+    common: 0,
+    uncommon: 20,
+    rare: 45,
+    epic: 80,
+  };
+  const score = computeGearBalanceScore({
+    slot: equipment.slot,
+    stats: equipment.stats,
+    cardsGranted: equipment.cardsGranted ?? [],
+    weaponType: equipment.slot === "weapon" ? equipment.weaponType : undefined,
+    isMechanical: equipment.slot === "weapon" ? equipment.isMechanical : undefined,
+  });
+  const cardPackage = Array.isArray(equipment.cardsGranted) ? equipment.cardsGranted.length : 0;
+  const footprintValue =
+    (equipment.inventory?.massKg ?? 0) * 1.5 +
+    (equipment.inventory?.bulkBu ?? 0) * 2 +
+    (equipment.inventory?.powerW ?? 0) * 0.4;
+
+  return roundShopPrice(
+    baseBySlot[equipment.slot] +
+      score * 7 +
+      cardPackage * 5 +
+      footprintValue +
+      rarityBonus[rarity ?? "common"]
+  );
+}
+
+function summarizeEquipmentStats(equipment: Equipment): string {
+  const statParts = Object.entries(equipment.stats)
+    .filter(([, value]) => Number(value) !== 0)
+    .map(([key, value]) => `${Number(value) > 0 ? "+" : ""}${value} ${key.toUpperCase()}`);
+
+  if (statParts.length === 0) {
+    return equipment.slot === "weapon"
+      ? "Reliable baseline weapon profile."
+      : "Stable utility gear profile.";
+  }
+
+  return statParts.join(", ") + ".";
+}
+
+function buildEquipmentShopDescription(equipment: Equipment, legacyItem?: ShopItem): string {
+  const descriptionParts = [
+    equipment.description?.trim() || legacyItem?.description?.trim() || summarizeEquipmentStats(equipment),
+    equipment.acquisition?.shop?.notes?.trim(),
+  ].filter((entry, index, entries) => Boolean(entry) && entries.indexOf(entry) === index);
+
+  return descriptionParts.join(" ");
+}
+
+function buildDynamicEquipmentShopItem(equipment: Equipment, legacyItem?: ShopItem): ShopItem {
+  const rarity = legacyItem?.rarity ?? inferEquipmentShopRarity(equipment);
+
+  return {
+    id: equipment.id,
+    name: equipment.name,
+    description: buildEquipmentShopDescription(equipment, legacyItem),
+    price: legacyItem?.price ?? estimateEquipmentShopPrice(equipment, rarity),
+    category: "equipment",
+    rarity,
+  };
+}
+
+function getEquipmentShopItems(state: any): ShopItem[] {
+  const highestReachedFloorOrdinal = getHighestReachedFloorOrdinal(loadCampaignProgress());
+  const equipmentById = getAllStarterEquipment();
+  const items = new Map<string, ShopItem>();
+  const legacyItemsById = new Map(EQUIPMENT_ITEMS.map((item) => [item.id, item]));
+
+  EQUIPMENT_ITEMS.forEach((item) => {
+    items.set(item.id, item);
+  });
+
+  Object.values(equipmentById).forEach((equipment) => {
+    const shopSource = equipment.acquisition?.shop;
+    const legacyItem = legacyItemsById.get(equipment.id);
+    const isLegacyShopItem = Boolean(legacyItem);
+    const isExplicitlyShopEligible = Boolean(shopSource);
+
+    if (!isLegacyShopItem && !isExplicitlyShopEligible) {
+      return;
+    }
+
+    const unlockFloor = Math.max(0, Number(shopSource?.unlockFloor ?? 0));
+    if (isExplicitlyShopEligible && highestReachedFloorOrdinal < unlockFloor) {
+      return;
+    }
+
+    items.set(equipment.id, buildDynamicEquipmentShopItem(equipment, legacyItem));
+  });
+
+  return Array.from(items.values()).sort((left, right) => {
+    if (left.price !== right.price) {
+      return left.price - right.price;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
 function estimateUnlockablePrice(cost?: Partial<Record<ResourceKey, number>> & { wad?: number }): number {
   if (!cost) {
     return 0;
@@ -385,7 +521,7 @@ function renderShopContent(state: any): string {
       sectionDesc = "Decompress tactical data to add cards to your library.";
       break;
     case "equipment":
-      items = EQUIPMENT_ITEMS;
+      items = getEquipmentShopItems(state);
       sectionTitle = "EQUIPMENT";
       sectionDesc = "Weapons and armor for your squad.";
       break;
@@ -549,7 +685,8 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
 }
 
 function purchaseItem(itemId: string, category: ShopItem["category"]): void {
-  const allItems = [...PAK_ITEMS, ...EQUIPMENT_ITEMS, ...CONSUMABLE_ITEMS, ...RECIPE_ITEMS];
+  const state = getGameState();
+  const allItems = [...PAK_ITEMS, ...getEquipmentShopItems(state), ...CONSUMABLE_ITEMS, ...RECIPE_ITEMS];
   let item = allItems.find(i => i.id === itemId);
   
   // If not found in static items, check if it's an unlockable
@@ -574,7 +711,6 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
   
   if (!item) return;
   
-  const state = getGameState();
   if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
@@ -729,9 +865,11 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
       kind: "equipment",
       stackable: false,
       quantity: 1,
-      massKg: getEquipmentMass(itemId, item),
-      bulkBu: getEquipmentBulk(itemId, item),
-      powerW: getEquipmentPower(itemId, item),
+      massKg: equipmentData.inventory?.massKg ?? getEquipmentMass(itemId, item),
+      bulkBu: equipmentData.inventory?.bulkBu ?? getEquipmentBulk(itemId, item),
+      powerW: equipmentData.inventory?.powerW ?? getEquipmentPower(itemId, item),
+      description: equipmentData.description ?? item.description,
+      iconPath: getInventoryIconPath(equipmentData.iconPath),
     };
     
     // Check if already in baseStorage
