@@ -140,6 +140,64 @@ async function runSmoke() {
   const canvasStats = getCanvasStats(canvasShot);
   assertSmoke(canvasStats.coloredRatio > 0.5, `HAVEN 3D canvas looks blank: ${JSON.stringify(canvasStats)}`);
 
+  const authoredFixtureState = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    return (runtime?.fieldEnemies ?? [])
+      .filter((enemy) => enemy.id.startsWith("field_enemy_haven_") || enemy.id.includes("haven_"))
+      .map((enemy) => ({
+        name: enemy.name,
+        defense: enemy.gearbladeDefense ?? "none",
+        attackStyle: enemy.attackStyle ?? "slash",
+      }));
+  });
+  assertSmoke(
+    authoredFixtureState.some((enemy) => enemy.name === "HAVEN Sparring Bulwark" && enemy.defense === "shield" && enemy.attackStyle === "shield_bash")
+      && authoredFixtureState.some((enemy) => enemy.name === "HAVEN Latchwire Slinger" && enemy.attackStyle === "shot")
+      && authoredFixtureState.some((enemy) => enemy.name === "HAVEN Plate Sentinel" && enemy.defense === "armor" && enemy.attackStyle === "lunge"),
+    `Authored HAVEN enemy fixtures were not present before smoke injection: ${JSON.stringify(authoredFixtureState)}`,
+  );
+
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      throw new Error("No field runtime for blade miss smoke.");
+    }
+    runtime.player.facing = "north";
+    runtime.npcs = [];
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_near_miss",
+      name: "Smoke Near Miss",
+      x: runtime.player.x,
+      y: runtime.player.y + 48,
+      width: 36,
+      height: 36,
+      hp: 20,
+      maxHp: 20,
+      speed: 0,
+      facing: "north",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+    }];
+  });
+  await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
+  await page.keyboard.press("Digit1");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(950);
+  const bladeNearMissResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_near_miss");
+    return { hp: enemy?.hp ?? null, knockbackTime: enemy?.knockbackTime ?? null };
+  });
+  assertSmoke(
+    bladeNearMissResult.hp === 20 && bladeNearMissResult.knockbackTime === 0,
+    `Nearby enemy was hit outside the blade swing segment: ${JSON.stringify(bladeNearMissResult)}`,
+  );
+
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
     const npcs = await import("/src/field/npcs.ts");
@@ -548,6 +606,45 @@ async function runSmoke() {
     armorLauncherResult.broken === true && typeof armorLauncherResult.hp === "number" && armorLauncherResult.hp < armorBladeResult.hp,
     `Launcher mode did not crack the armored enemy: ${JSON.stringify(armorLauncherResult)}`,
   );
+
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      return;
+    }
+    runtime.player.x = 18 * 64 + 32;
+    runtime.player.y = 12 * 64 + 32;
+    runtime.player.invulnerabilityTime = 0;
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_snap_target",
+      name: "Smoke Snap Target",
+      x: runtime.player.x + 76,
+      y: runtime.player.y,
+      width: 36,
+      height: 36,
+      hp: 20,
+      maxHp: 20,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+    }];
+  });
+  await cycleUntilTarget(page, "TARGET :: SMOKE SNAP TARGET");
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (runtime) {
+      runtime.player.x += 780;
+    }
+  });
+  await page.waitForTimeout(300);
+  const snapPrompt = await page.locator("[data-haven3d-prompt]").innerText().catch(() => "");
+  assertSmoke(!snapPrompt.includes("SMOKE SNAP TARGET"), `Z-target lock did not snap out at distance: ${snapPrompt}`);
 
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");

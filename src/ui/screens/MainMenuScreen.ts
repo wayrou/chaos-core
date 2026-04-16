@@ -367,6 +367,9 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-vignette"></div>
         <div class="mainmenu-particles"></div>
       </div>
+      <div class="mainmenu-experimental-tag" aria-label="Experimental build">
+        EXPERIMENTAL BUILD
+      </div>
       
       <!-- Two-column layout: Logo/Menu on left, Terminal on right -->
       <div class="mainmenu-content">

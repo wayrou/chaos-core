@@ -16,6 +16,10 @@ import {
   resolveHaven3DGearbladeDamage,
   type Haven3DEnemyDefense,
 } from "./haven3d/combatRules";
+import {
+  getHaven3DEnemyAttackLabel,
+  getHaven3DEnemyAttackProfile,
+} from "./haven3d/enemyMoves";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { showAlertDialog } from "../ui/components/confirmDialog";
@@ -328,7 +332,7 @@ function getFieldAttackCooldown(): number {
 
 function getLocallyRelevantFieldEnemies(): FieldEnemy[] {
   const liveEnemies = (fieldState?.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0);
-  if (!currentMap || !isOuterDeckOverworldMap(currentMap.id)) {
+  if (!currentMap || (!isOuterDeckOverworldMap(currentMap.id) && currentMap.id !== "base_camp")) {
     return liveEnemies;
   }
 
@@ -657,14 +661,6 @@ const FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS = 320;
 const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
 const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
-const HAVEN3D_ENEMY_ATTACK_TRIGGER_RANGE = 92;
-const HAVEN3D_ENEMY_ATTACK_REACH = 116;
-const HAVEN3D_ENEMY_ATTACK_HALF_WIDTH = 34;
-const HAVEN3D_ENEMY_ATTACK_WINDUP_MS = 760;
-const HAVEN3D_ENEMY_ATTACK_RECOVERY_MS = 680;
-const HAVEN3D_ENEMY_ATTACK_COOLDOWN_MS = 1280;
-const HAVEN3D_ENEMY_ATTACK_DAMAGE = 14;
-const HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE = 520;
 const FIELD_COMPANION_ATTACK_RANGE = 56;
 const FIELD_CAMERA_SMOOTHING = 0.2;
 const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
@@ -5717,24 +5713,56 @@ function showHaven3DDefenseBreakPing(enemy: FieldEnemy, defense: Haven3DEnemyDef
   });
 }
 
+function getDistanceToSegmentPx(
+  pointX: number,
+  pointY: number,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): number {
+  const segmentX = endX - startX;
+  const segmentY = endY - startY;
+  const segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY);
+  if (segmentLengthSquared <= 0.001) {
+    return Math.hypot(pointX - startX, pointY - startY);
+  }
+
+  const rawT = (((pointX - startX) * segmentX) + ((pointY - startY) * segmentY)) / segmentLengthSquared;
+  const t = Math.max(0, Math.min(1, rawT));
+  const closestX = startX + segmentX * t;
+  const closestY = startY + segmentY * t;
+  return Math.hypot(pointX - closestX, pointY - closestY);
+}
+
 function handleHaven3DBladeStrike(strike: {
   playerId: PlayerId;
   x: number;
   y: number;
   facing: "north" | "south" | "east" | "west";
+  directionX: number;
+  directionY: number;
+  hiltX: number;
+  hiltY: number;
+  tipX: number;
+  tipY: number;
+  bladeHalfWidth: number;
   target: { kind: "npc" | "enemy"; id: string; key: string } | null;
   radius: number;
   arcRadians: number;
   damage: number;
   knockback: number;
-}): void {
+}): boolean {
   if (!fieldState?.fieldEnemies || !fieldState.combat) {
-    return;
+    return false;
   }
 
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
-  const forward = getFieldFacingUnitVector(strike.facing);
-  const halfArcCos = Math.cos(strike.arcRadians / 2);
+  const forwardLength = Math.max(0.001, Math.hypot(strike.directionX, strike.directionY));
+  const forward = {
+    x: strike.directionX / forwardLength,
+    y: strike.directionY / forwardLength,
+  };
   const baseDamage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
   const knockback = strike.knockback + bowbladeFieldProfile.meleeKnockbackBonus;
   const energyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
@@ -5749,12 +5777,26 @@ function handleHaven3DBladeStrike(strike: {
     const dy = enemy.y - strike.y;
     const distance = Math.max(0.001, Math.hypot(dx, dy));
     const isLockedTarget = strike.target?.kind === "enemy" && strike.target.id === enemy.id;
-    const isInArc = ((dx / distance) * forward.x) + ((dy / distance) * forward.y) >= halfArcCos;
-    const closeEnough = distance <= Math.max(strike.radius, enemy.width + 42);
-    if (!isLockedTarget && (!closeEnough || !isInArc)) {
+    const forwardDistance = (dx * forward.x) + (dy * forward.y);
+    const bladeDistance = getDistanceToSegmentPx(
+      enemy.x,
+      enemy.y,
+      strike.hiltX,
+      strike.hiltY,
+      strike.tipX,
+      strike.tipY,
+    );
+    const enemyRadius = Math.max(enemy.width, enemy.height) * 0.48;
+    const lockAssistWidth = isLockedTarget ? 8 : 0;
+    const lockAssistReach = isLockedTarget ? 14 : 0;
+    if (bladeDistance > strike.bladeHalfWidth + enemyRadius + lockAssistWidth) {
       continue;
     }
-    if (isLockedTarget && distance > strike.radius * 1.45) {
+    if (
+      forwardDistance < 4
+      || forwardDistance > strike.radius + enemyRadius + lockAssistReach
+      || distance > strike.radius + enemyRadius + lockAssistReach
+    ) {
       continue;
     }
 
@@ -5779,6 +5821,7 @@ function handleHaven3DBladeStrike(strike: {
   }
 
   playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
+  return didHit;
 }
 
 function handleHaven3DLauncherImpact(impact: {
@@ -6085,6 +6128,7 @@ function clearHaven3DEnemyAttack(enemy: FieldEnemy): void {
   delete enemy.attackState;
   delete enemy.attackStartedAt;
   delete enemy.attackDidStrike;
+  delete enemy.attackLungeProgress;
   delete enemy.attackOriginX;
   delete enemy.attackOriginY;
   delete enemy.attackTargetX;
@@ -6094,12 +6138,15 @@ function clearHaven3DEnemyAttack(enemy: FieldEnemy): void {
 }
 
 function startHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): void {
+  const profile = getHaven3DEnemyAttackProfile(enemy);
   const dx = player.x - enemy.x;
   const dy = player.y - enemy.y;
   const distance = Math.max(0.001, Math.hypot(dx, dy));
+  enemy.attackStyle = profile.style;
   enemy.attackState = "windup";
   enemy.attackStartedAt = currentTime;
   enemy.attackDidStrike = false;
+  enemy.attackLungeProgress = 0;
   enemy.attackOriginX = enemy.x;
   enemy.attackOriginY = enemy.y;
   enemy.attackTargetX = player.x;
@@ -6116,6 +6163,7 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
 
   enemy.lastAttackAt = currentTime;
   const player = fieldState.player;
+  const profile = getHaven3DEnemyAttackProfile(enemy);
   if ((player.invulnerabilityTime ?? 0) > 0) {
     return;
   }
@@ -6129,22 +6177,22 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
   const forwardDistance = (dx * directionX) + (dy * directionY);
   const lateralDistance = Math.abs((dx * directionY) - (dy * directionX));
   const wasHit = forwardDistance >= 0
-    && forwardDistance <= HAVEN3D_ENEMY_ATTACK_REACH + (player.height / 2)
-    && lateralDistance <= HAVEN3D_ENEMY_ATTACK_HALF_WIDTH + (player.width / 2);
+    && forwardDistance <= profile.reach + (player.height / 2)
+    && lateralDistance <= profile.halfWidth + (player.width / 2);
 
   if (!wasHit) {
     return;
   }
 
-  fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - HAVEN3D_ENEMY_ATTACK_DAMAGE);
+  fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - profile.damage);
   fieldState.player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
   const knockbackDistance = Math.max(0.001, Math.hypot(dx, dy));
-  fieldState.player.vx = (dx / knockbackDistance) * HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE;
-  fieldState.player.vy = (dy / knockbackDistance) * HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE;
+  fieldState.player.vx = (dx / knockbackDistance) * profile.knockbackForce;
+  fieldState.player.vy = (dy / knockbackDistance) * profile.knockbackForce;
 
   showSystemPing({
     type: "error",
-    title: "HOSTILE STRIKE",
+    title: getHaven3DEnemyAttackLabel(profile.style),
     message: `${enemy.name} committed through the warning zone.`,
     detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
     durationMs: 1800,
@@ -6153,10 +6201,41 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
   });
 }
 
+function updateHaven3DEnemyAttackLunge(enemy: FieldEnemy, profile: ReturnType<typeof getHaven3DEnemyAttackProfile>, elapsed: number): void {
+  if (!profile.lungeDistancePx || !profile.lungeStartMs || !profile.lungeEndMs || profile.lungeEndMs <= profile.lungeStartMs) {
+    return;
+  }
+
+  const rawProgress = (elapsed - profile.lungeStartMs) / (profile.lungeEndMs - profile.lungeStartMs);
+  const clampedProgress = Math.max(0, Math.min(1, rawProgress));
+  const easedProgress = clampedProgress * clampedProgress * (3 - (2 * clampedProgress));
+  const previousProgress = Math.max(0, Math.min(1, Number(enemy.attackLungeProgress ?? 0)));
+  const progressDelta = Math.max(0, easedProgress - previousProgress);
+  if (progressDelta <= 0) {
+    enemy.attackLungeProgress = Math.max(previousProgress, easedProgress);
+    return;
+  }
+
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const moveDistance = profile.lungeDistancePx * progressDelta;
+  const nextX = enemy.x + directionX * moveDistance;
+  const nextY = enemy.y + directionY * moveDistance;
+  if (canMoveEntityTo(nextX, enemy.y, enemy.width, enemy.height)) {
+    enemy.x = nextX;
+  }
+  if (canMoveEntityTo(enemy.x, nextY, enemy.width, enemy.height)) {
+    enemy.y = nextY;
+  }
+  enemy.attackLungeProgress = easedProgress;
+}
+
 function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): boolean {
+  const profile = getHaven3DEnemyAttackProfile(enemy);
   if (enemy.attackState === "windup") {
     const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
-    if (!enemy.attackDidStrike && elapsed >= HAVEN3D_ENEMY_ATTACK_WINDUP_MS) {
+    updateHaven3DEnemyAttackLunge(enemy, profile, elapsed);
+    if (!enemy.attackDidStrike && elapsed >= profile.windupMs) {
       enemy.attackDidStrike = true;
       applyHaven3DEnemyStrike(enemy, currentTime);
       enemy.attackState = "recovery";
@@ -6167,7 +6246,7 @@ function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, 
 
   if (enemy.attackState === "recovery") {
     const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
-    if (elapsed >= HAVEN3D_ENEMY_ATTACK_RECOVERY_MS) {
+    if (elapsed >= profile.recoveryMs) {
       clearHaven3DEnemyAttack(enemy);
     }
     return true;
@@ -6178,8 +6257,8 @@ function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, 
   const distance = Math.hypot(dx, dy);
   const timeSinceLastAttack = currentTime - Number(enemy.lastAttackAt ?? Number.NEGATIVE_INFINITY);
   if (
-    distance <= HAVEN3D_ENEMY_ATTACK_TRIGGER_RANGE
-    && timeSinceLastAttack >= HAVEN3D_ENEMY_ATTACK_COOLDOWN_MS
+    distance <= profile.triggerRange
+    && timeSinceLastAttack >= profile.cooldownMs
   ) {
     startHaven3DEnemyAttack(enemy, player, currentTime);
     return true;
@@ -6388,6 +6467,9 @@ function updateFieldPlayerPressure(deltaTime: number): void {
 
 function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): void {
   if (!fieldState?.companion || !currentMap) {
+    return;
+  }
+  if (isHaven3DFieldRuntimeActive()) {
     return;
   }
 

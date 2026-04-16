@@ -8104,6 +8104,77 @@ function applyPlacedFieldBuildObjects(map: FieldMap): void {
   });
 }
 
+const HAVEN_GEARBLADE_ENEMY_FIXTURES: FieldObject[] = [
+  {
+    id: "haven_sparring_bulwark_fixture",
+    x: 18,
+    y: 14,
+    width: 1,
+    height: 1,
+    type: "enemy",
+    sprite: "field_enemy",
+    metadata: {
+      name: "HAVEN Sparring Bulwark",
+      enemyKind: "haven_shield_bulwark",
+      hp: 76,
+      speed: 78,
+      aggroRange: 210,
+      gearbladeDefense: "shield",
+      attackStyle: "shield_bash",
+    },
+  },
+  {
+    id: "haven_latchwire_slinger_fixture",
+    x: 21,
+    y: 15,
+    width: 1,
+    height: 1,
+    type: "enemy",
+    sprite: "field_enemy",
+    metadata: {
+      name: "HAVEN Latchwire Slinger",
+      enemyKind: "haven_latchwire_slinger",
+      hp: 48,
+      speed: 82,
+      aggroRange: 360,
+      attackStyle: "shot",
+    },
+  },
+  {
+    id: "haven_plate_sentinel_fixture",
+    x: 24,
+    y: 14,
+    width: 1,
+    height: 1,
+    type: "enemy",
+    sprite: "field_enemy",
+    metadata: {
+      name: "HAVEN Plate Sentinel",
+      enemyKind: "haven_plate_sentinel",
+      hp: 82,
+      speed: 68,
+      aggroRange: 230,
+      gearbladeDefense: "armor",
+      attackStyle: "lunge",
+    },
+  },
+];
+
+function appendHavenGearbladeEnemyFixtures(map: FieldMap): void {
+  fillRect(map, 16, 13, 26, 16, true, "floor");
+  const existingObjectIds = new Set(map.objects.map((object) => object.id));
+  HAVEN_GEARBLADE_ENEMY_FIXTURES.forEach((fixture) => {
+    if (existingObjectIds.has(fixture.id)) {
+      return;
+    }
+
+    map.objects.push({
+      ...fixture,
+      metadata: fixture.metadata ? { ...fixture.metadata } : undefined,
+    });
+  });
+}
+
 function createConfiguredBaseCampMap(): FieldMap {
   const map = cloneFieldMap(createBaseCampMap());
   const state = getGameState();
@@ -8190,6 +8261,7 @@ function createConfiguredBaseCampMap(): FieldMap {
   fillRect(map, 22, 19, 27, 23, true, "floor");
   setTile(map, 24, 24, false, "wall");
   setTile(map, 25, 24, false, "wall");
+  appendHavenGearbladeEnemyFixtures(map);
 
   map.objects.push({
     id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,

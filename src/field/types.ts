@@ -100,9 +100,11 @@ export interface FieldEnemy {
   aggroRange: number;
   gearbladeDefense?: "shield" | "armor" | "none";
   gearbladeDefenseBroken?: boolean;
+  attackStyle?: "slash" | "lunge" | "shot" | "shield_bash";
   attackState?: "windup" | "recovery";
   attackStartedAt?: number;
   attackDidStrike?: boolean;
+  attackLungeProgress?: number;
   attackOriginX?: number;
   attackOriginY?: number;
   attackTargetX?: number;

@@ -6,6 +6,7 @@ import { loadCampaignProgress } from "../core/campaign";
 import { createEmptyResourceWallet, RESOURCE_KEYS } from "../core/resources";
 import type { ImportedFieldEnemyDefinition } from "../content/technica/types";
 import type { FieldEnemy, FieldMap, FieldObject } from "./types";
+import { normalizeHaven3DEnemyAttackStyle } from "./haven3d/enemyMoves";
 
 const TILE_SIZE = 64;
 const DEFAULT_ENEMY_WIDTH = 40;
@@ -254,6 +255,10 @@ function coerceGearbladeDefense(value: unknown, fallback: FieldEnemy["gearbladeD
   return value === "shield" || value === "armor" || value === "none" ? value : fallback;
 }
 
+function coerceEnemyAttackStyle(value: unknown, fallback: FieldEnemy["attackStyle"]): FieldEnemy["attackStyle"] {
+  return normalizeHaven3DEnemyAttackStyle(value, fallback) ?? undefined;
+}
+
 function buildObjectEnemyDrops(object: FieldObject): FieldEnemy["drops"] | undefined {
   const rawDrops = object.metadata?.drops as Record<string, unknown> | undefined;
   if (!rawDrops) {
@@ -331,6 +336,7 @@ export function syncFieldEnemiesForMap(
         aggroRange: coercePositiveNumber(object.metadata?.aggroRange, existing?.aggroRange ?? DEFAULT_AGGRO_RANGE),
         gearbladeDefense: coerceGearbladeDefense(object.metadata?.gearbladeDefense, existing?.gearbladeDefense),
         gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
+        attackStyle: coerceEnemyAttackStyle(object.metadata?.attackStyle, existing?.attackStyle),
         sourceObjectId: object.id,
         kind: typeof object.metadata?.enemyKind === "string" ? object.metadata.enemyKind : "light",
         spriteKey:
@@ -400,8 +406,9 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(definition.stats.aggroRange, DEFAULT_AGGRO_RANGE),
-        gearbladeDefense: existing?.gearbladeDefense,
+        gearbladeDefense: coerceGearbladeDefense(definition.metadata?.gearbladeDefense, existing?.gearbladeDefense),
         gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
+        attackStyle: coerceEnemyAttackStyle(definition.metadata?.attackStyle, existing?.attackStyle),
         sourceDefinitionId: definition.id,
         spawnKey,
         kind: definition.kind?.trim() || "light",
