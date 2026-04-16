@@ -284,6 +284,27 @@ type TheaterManageUnitEntry = {
 
 type TheaterCorePanelTab = "room" | "annexes" | "modules" | "partitions" | "core" | "fortifications" | "tactical";
 
+const THEATER_SELECTED_ROOM_PRIMARY_TABS: TheaterCorePanelTab[] = ["room", "core", "fortifications"];
+const THEATER_SELECTED_ROOM_ADVANCED_TABS: TheaterCorePanelTab[] = [
+  "tactical",
+  "annexes",
+  "modules",
+  "partitions",
+];
+const THEATER_SELECTED_ROOM_TAB_LABELS: Record<TheaterCorePanelTab, string> = {
+  room: "Room Info",
+  core: "C.O.R.E.",
+  fortifications: "Fortifications",
+  tactical: "Tactical Map",
+  annexes: "Annexes",
+  modules: "Modules",
+  partitions: "Partitions",
+};
+
+function isTheaterSelectedRoomAdvancedTab(tab: TheaterCorePanelTab): boolean {
+  return THEATER_SELECTED_ROOM_ADVANCED_TABS.includes(tab);
+}
+
 const MAP_WIDTH = 4400;
 const MAP_HEIGHT = 3200;
 const MIN_MAP_ZOOM = 0.24;
@@ -480,6 +501,7 @@ let theaterZCounter = 30;
 let theaterWindowFrames: Record<TheaterWindowKey, TheaterWindowFrame> | null = null;
 let theaterWindowColors: Record<TheaterWindowKey, string> | null = null;
 let corePanelTab: TheaterCorePanelTab = "room";
+let selectedRoomAdvancedOpen = false;
 let theaterMapMode: TheaterMapMode = "command";
 let hydratedTheaterLayoutSignature: string | null = null;
 let mapKeyHandler: ((event: KeyboardEvent) => void) | null = null;
@@ -1101,6 +1123,12 @@ function getRoomNodeClass(room: TheaterRoom, theater: TheaterNetworkState): stri
   if (room.tags.includes("power_source") && detailedIntel) classes.push("theater-room-node--power");
   if (room.tags.includes("elite") && detailedIntel) classes.push("theater-room-node--elite");
   if (room.clearMode === "field" && detailedIntel) classes.push("theater-room-node--field");
+  if ((room.fortificationPips?.barricade ?? 0) > 0 && detailedIntel) {
+    classes.push("theater-room-node--barricaded");
+    if ((room.fortificationPips?.barricade ?? 0) >= 2) {
+      classes.push("theater-room-node--barricaded-heavy");
+    }
+  }
   if (room.tags.includes("core_candidate") && detailedIntel) classes.push("theater-room-node--core-candidate");
   return classes.join(" ");
 }
@@ -1387,6 +1415,7 @@ function resetTheaterUiLayoutToDefaults(): void {
   theaterWindowColors = createDefaultTheaterWindowColors();
   theaterZCounter = Math.max(...Object.values(theaterWindowFrames).map((frame) => frame.zIndex), theaterZCounter);
   corePanelTab = "room";
+  selectedRoomAdvancedOpen = false;
   theaterTacticalFullscreenActive = false;
   theaterRoomFrameBeforeTacticalFullscreen = null;
   theaterMapMode = "command";
@@ -1628,6 +1657,7 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
   ) {
     corePanelTab = layout.theaterCommandCoreTab;
   }
+  selectedRoomAdvancedOpen = isTheaterSelectedRoomAdvancedTab(corePanelTab);
 
   if (
     layout.theaterCommandMapMode === "supply"
@@ -1661,7 +1691,7 @@ function persistTheaterUiLayoutToState(): void {
         panY: mapPanY,
         zoom: mapZoom,
       },
-      theaterCommandCoreTab: corePanelTab === "core" || corePanelTab === "fortifications" || corePanelTab === "tactical" ? corePanelTab : "room",
+      theaterCommandCoreTab: corePanelTab === "core" || corePanelTab === "fortifications" ? corePanelTab : "room",
       theaterCommandNodeTab: corePanelTab,
       theaterCommandMapMode: theaterMapMode,
       theaterCommandAutomationWindowOpen: isAutomationWindowOpen(),
@@ -1986,6 +2016,39 @@ function focusMapOnRoom(theater: TheaterNetworkState, roomId: string): void {
   clampMapPanToBounds(theater);
 }
 
+function focusMapOnTheaterNode(theater: TheaterNetworkState, nodeId: string): boolean {
+  const node = resolveTheaterNode(theater, nodeId);
+  if (!node) {
+    return false;
+  }
+
+  mapPanX = Math.round((MAP_WIDTH / 2) - node.position.x);
+  mapPanY = Math.round((MAP_HEIGHT / 2) - node.position.y);
+  clampMapPanToBounds(theater);
+  return true;
+}
+
+function getTheaterSquadFocusNodeId(theater: TheaterNetworkState): string | null {
+  const selectedSquad = getSelectedTheaterSquad(theater);
+  const candidateSquads = [
+    selectedSquad,
+    ...theater.squads.filter((squad) => squad.squadId !== selectedSquad?.squadId),
+  ].filter((squad): squad is TheaterSquadState => Boolean(squad));
+
+  for (const squad of candidateSquads) {
+    if (squad.unitIds.length <= 0) {
+      continue;
+    }
+    const nodeIds = [squad.currentNodeId, squad.currentRoomId].filter((nodeId): nodeId is string => Boolean(nodeId));
+    const locatedNodeId = nodeIds.find((nodeId) => Boolean(resolveTheaterNode(theater, nodeId)));
+    if (locatedNodeId) {
+      return locatedNodeId;
+    }
+  }
+
+  return null;
+}
+
 function isAnyTheaterRoomVisibleOnScreen(theater: TheaterNetworkState): boolean {
   const viewportWidth = window.innerWidth || 1920;
   const viewportHeight = window.innerHeight || 1080;
@@ -2004,6 +2067,10 @@ function isAnyTheaterRoomVisibleOnScreen(theater: TheaterNetworkState): boolean 
 
 function resetMapViewportForTheaterEntry(theater: TheaterNetworkState): void {
   mapZoom = clampNumber(getDefaultMapZoom(theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+  const squadFocusNodeId = getTheaterSquadFocusNodeId(theater);
+  if (squadFocusNodeId && focusMapOnTheaterNode(theater, squadFocusNodeId)) {
+    return;
+  }
   const defaultFocusRoomId = getDefaultFocusRoomId(theater);
   if (defaultFocusRoomId) {
     focusMapOnRoom(theater, defaultFocusRoomId);
@@ -2486,12 +2553,11 @@ function renderTheaterFortificationMarkers(room: TheaterRoom, hasDetailedIntel: 
   }
 
   const markers = getOrderedSchemaFortificationTypes()
+    .filter((fortificationType) => fortificationType !== "barricade")
     .flatMap((fortificationType) => Array.from({ length: room.fortificationPips[fortificationType] }, (_, index) => {
       const definition = SCHEMA_FORTIFICATION_DEFINITIONS[fortificationType];
       const className =
-        fortificationType === "barricade"
-          ? "theater-room-fort-marker--barricade"
-          : fortificationType === "powerRail"
+        fortificationType === "powerRail"
             ? "theater-room-fort-marker--power"
             : "theater-room-fort-marker--aux";
       return `
@@ -3595,16 +3661,28 @@ function renderModuleConfigCard(theater: TheaterNetworkState, moduleInstance: Mo
 }
 
 function renderSelectedNodeTabControls(): string {
+  const renderTab = (tab: TheaterCorePanelTab): string => `
+    <button class="theater-core-tab ${corePanelTab === tab ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="${tab}">
+      ${THEATER_SELECTED_ROOM_TAB_LABELS[tab]}
+    </button>
+  `;
+  const advancedActive = isTheaterSelectedRoomAdvancedTab(corePanelTab);
+  const advancedOpen = selectedRoomAdvancedOpen || advancedActive;
   return `
-    <div class="theater-core-tabs">
-      <button class="theater-core-tab ${corePanelTab === "room" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="room">Room Info</button>
-      <button class="theater-core-tab ${corePanelTab === "tactical" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="tactical">Tactical Map</button>
-      <button class="theater-core-tab ${corePanelTab === "annexes" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="annexes">Annexes</button>
-      <button class="theater-core-tab ${corePanelTab === "modules" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="modules">Modules</button>
-      <button class="theater-core-tab ${corePanelTab === "partitions" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="partitions">Partitions</button>
-      <button class="theater-core-tab ${corePanelTab === "core" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="core">C.O.R.E.</button>
-      <button class="theater-core-tab ${corePanelTab === "fortifications" ? "theater-core-tab--active" : ""}" type="button" data-theater-core-tab="fortifications">Fortifications</button>
+    <div class="theater-core-tabs theater-core-tabs--primary">
+      ${THEATER_SELECTED_ROOM_PRIMARY_TABS.map(renderTab).join("")}
     </div>
+    <section class="theater-selected-room-advanced ${advancedOpen ? "theater-selected-room-advanced--open" : "theater-selected-room-advanced--collapsed"} ${advancedActive ? "theater-selected-room-advanced--active" : ""}">
+      <button class="theater-selected-room-advanced__toggle" type="button" data-theater-advanced-toggle="${advancedOpen ? "close" : "open"}" aria-expanded="${advancedOpen ? "true" : "false"}">
+        <span>Advanced</span>
+        <small>${advancedOpen ? "Hide tactical map, annexes, modules and partitions" : "Show tactical map, annexes, modules and partitions"}</small>
+      </button>
+      ${advancedOpen ? `
+        <div class="theater-core-tabs theater-core-tabs--advanced">
+          ${THEATER_SELECTED_ROOM_ADVANCED_TABS.map(renderTab).join("")}
+        </div>
+      ` : ""}
+    </section>
   `;
 }
 
@@ -5421,6 +5499,28 @@ function renderTheaterStyles(): string {
         border-style: dashed;
       }
 
+      .theater-room-node--barricaded::after {
+        content: "";
+        position: absolute;
+        inset: -8px;
+        border: 3px solid rgba(232, 216, 161, 0.86);
+        border-radius: 18px;
+        pointer-events: none;
+        box-shadow:
+          0 0 0 1px rgba(92, 61, 28, 0.75),
+          0 0 18px rgba(255, 204, 110, 0.24),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+
+      .theater-room-node--barricaded-heavy::after {
+        inset: -10px;
+        border-width: 4px;
+        box-shadow:
+          0 0 0 2px rgba(92, 61, 28, 0.82),
+          0 0 24px rgba(255, 204, 110, 0.32),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+
       .theater-room-node--core-candidate .theater-room-sector {
         color: rgba(168, 224, 180, 0.92);
       }
@@ -6588,6 +6688,15 @@ function renderTheaterStyles(): string {
         margin-bottom: 12px;
       }
 
+      .theater-core-tabs--primary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .theater-core-tabs--advanced {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin: 8px 0 0;
+      }
+
       .theater-core-tab {
         border-radius: 10px;
         border: 1px solid var(--all-nodes-surface-border, rgba(255, 255, 255, 0.08));
@@ -6605,6 +6714,54 @@ function renderTheaterStyles(): string {
         border-color: var(--all-nodes-border-hover, rgba(255, 204, 110, 0.45));
         background: var(--all-nodes-accent-soft, rgba(255, 204, 110, 0.12));
         color: var(--all-nodes-accent, #ffcc6e);
+      }
+
+      .theater-selected-room-advanced {
+        border: 1px solid var(--all-nodes-surface-border, rgba(255, 255, 255, 0.08));
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.025);
+        margin-bottom: 12px;
+        padding: 8px;
+      }
+
+      .theater-selected-room-advanced--collapsed {
+        background: rgba(0, 0, 0, 0.12);
+      }
+
+      .theater-selected-room-advanced--active {
+        border-color: var(--all-nodes-border-hover, rgba(255, 204, 110, 0.45));
+        box-shadow: inset 0 0 0 1px rgba(255, 204, 110, 0.08);
+      }
+
+      .theater-selected-room-advanced__toggle {
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.18);
+        color: var(--all-nodes-text, #d5e0e8);
+        cursor: pointer;
+        padding: 9px 11px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        text-align: left;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+      }
+
+      .theater-selected-room-advanced__toggle span {
+        color: var(--all-nodes-accent, #ffcc6e);
+        font-size: 0.68rem;
+        font-weight: 900;
+      }
+
+      .theater-selected-room-advanced__toggle small {
+        color: var(--all-nodes-muted, #9aaab5);
+        font-size: 0.54rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-align: right;
       }
 
       .theater-feed-panel {
@@ -8913,6 +9070,7 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
       skipNextTheaterWindowFrameCapture = true;
     }
     corePanelTab = "room";
+    selectedRoomAdvancedOpen = false;
     persistTheaterUiLayoutToState();
     updateGameState((state) => setTheaterSelectedNode(state, nodeId));
     console.log("[THEATER] node selected", nodeId);
@@ -9157,6 +9315,7 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
         skipNextTheaterWindowFrameCapture = true;
       }
       corePanelTab = "room";
+      selectedRoomAdvancedOpen = false;
       persistTheaterUiLayoutToState();
       updateGameState((state) => {
         const nextState = setTheaterSelectedNode(state, nodeId);
@@ -9442,6 +9601,23 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
     });
   });
 
+  document.querySelectorAll<HTMLElement>("[data-theater-advanced-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const shouldOpen = button.getAttribute("data-theater-advanced-toggle") !== "close";
+      selectedRoomAdvancedOpen = shouldOpen;
+      if (!shouldOpen && isTheaterSelectedRoomAdvancedTab(corePanelTab)) {
+        corePanelTab = "room";
+        if (theaterTacticalFullscreenActive) {
+          setTheaterTacticalFullscreen(false);
+          skipNextTheaterWindowFrameCapture = true;
+        }
+      }
+      persistTheaterUiLayoutToState();
+      renderTheaterCommandScreen();
+    });
+  });
+
   document.querySelectorAll<HTMLElement>("[data-theater-core-tab]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -9462,6 +9638,9 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
         skipNextTheaterWindowFrameCapture = true;
       }
       corePanelTab = nextTab;
+      if (isTheaterSelectedRoomAdvancedTab(corePanelTab)) {
+        selectedRoomAdvancedOpen = true;
+      }
       persistTheaterUiLayoutToState();
       renderTheaterCommandScreen();
     });

@@ -16372,6 +16372,7 @@ button {
 /* Base button styles for equipment actions */
 .equip-change-btn,
 .equip-unequip-btn,
+.equip-view-gear-btn,
 .equip-customize-btn {
   padding: 0.35rem 0.6rem;
   font-size: 0.65rem;
@@ -16430,8 +16431,9 @@ button {
   transform: scale(0.98);
 }
 
-/* VIEW WEAPON button */
-.equip-view-weapon-btn {
+/* VIEW / INSPECT button */
+.equip-view-weapon-btn,
+.equip-view-gear-btn {
   padding: 0.35rem 0.6rem;
   font-size: 0.65rem;
   font-family: "Courier New", monospace;
@@ -16448,14 +16450,25 @@ button {
   gap: 0.3rem;
 }
 
-.equip-view-weapon-btn:hover {
+.equip-view-gear-btn {
+  font-size: 0;
+}
+
+.equip-view-gear-btn::after {
+  content: "VIEW";
+  font-size: 0.65rem;
+}
+
+.equip-view-weapon-btn:hover,
+.equip-view-gear-btn:hover {
   background: linear-gradient(135deg, #3a4a5a 0%, #2a3540 100%);
   border-color: #7f9fff;
   color: #afbfff;
   box-shadow: 0 0 8px rgba(127, 159, 255, 0.3);
 }
 
-.equip-view-weapon-btn:active {
+.equip-view-weapon-btn:active,
+.equip-view-gear-btn:active {
   transform: scale(0.98);
 }
 
@@ -33004,6 +33017,16 @@ body {
   background: #050505;
 }
 
+.splash-screen--epigraph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(120, 74, 34, 0.18) 0%, rgba(12, 9, 8, 0) 38%),
+    linear-gradient(180deg, #080707 0%, #11100f 45%, #090807 100%);
+}
+
 .splash-video {
   width: 100vw;
   height: 100vh;
@@ -33012,6 +33035,42 @@ body {
   background: #000;
   transform: scale(0.5);
   transform-origin: center center;
+}
+
+.splash-epigraph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  width: min(46rem, calc(100vw - 4rem));
+  padding: 2rem;
+  text-align: center;
+  color: #f1e9dd;
+}
+
+.splash-epigraph__word {
+  font-family: var(--font-display, "Cinzel", serif);
+  font-size: clamp(3.4rem, 8vw, 5.8rem);
+  line-height: 0.95;
+  letter-spacing: 0.04em;
+  color: #f6ebda;
+  text-transform: none;
+}
+
+.splash-epigraph__part {
+  font-family: var(--font-terminal, "JetBrains Mono", monospace);
+  font-size: clamp(0.9rem, 1.8vw, 1.05rem);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(241, 211, 156, 0.82);
+}
+
+.splash-epigraph__definition {
+  max-width: 34rem;
+  font-family: var(--font-body, "EB Garamond", serif);
+  font-size: clamp(1.15rem, 2.4vw, 1.55rem);
+  line-height: 1.45;
+  color: rgba(240, 231, 216, 0.92);
 }
 
 .splash-skip-btn {

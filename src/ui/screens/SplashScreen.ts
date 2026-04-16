@@ -9,13 +9,31 @@ import { renderScrollLinkBoot } from "./ScrollLinkBoot";
 
 type SplashClip = {
   id: string;
-  src: string;
   fallbackMs: number;
-};
+} & (
+  | {
+      kind: "video";
+      src: string;
+    }
+  | {
+      kind: "epigraph";
+      word: string;
+      partOfSpeech: string;
+      definition: string;
+    }
+);
 
 const SPLASH_SEQUENCE: SplashClip[] = [
-  { id: "mr-planet", src: mpSplashVideo, fallbackMs: 15000 },
-  { id: "ardycia", src: ardyciaSplashVideo, fallbackMs: 15000 },
+  { id: "mr-planet", kind: "video", src: mpSplashVideo, fallbackMs: 15000 },
+  { id: "ardycia", kind: "video", src: ardyciaSplashVideo, fallbackMs: 15000 },
+  {
+    id: "sprawl-epigraph",
+    kind: "epigraph",
+    fallbackMs: 4200,
+    word: "Sprawl",
+    partOfSpeech: "(v.)",
+    definition: "to spread or develop irregularly, without restraint",
+  },
 ];
 
 let activeSplashTimeout: number | null = null;
@@ -162,21 +180,32 @@ function renderSplashClip(index: number): void {
     return;
   }
 
-  root.innerHTML = `
-    <div class="splash-screen splash-screen--video" data-splash-sequence="${clip.id}">
-      <video
-        class="splash-video"
-        id="splashVideo"
-        autoplay
-        muted
-        playsinline
-        preload="auto"
-      >
-        <source src="${clip.src}" type="video/mp4" />
-      </video>
-      <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
-    </div>
-  `;
+  root.innerHTML = clip.kind === "video"
+    ? `
+      <div class="splash-screen splash-screen--video" data-splash-sequence="${clip.id}">
+        <video
+          class="splash-video"
+          id="splashVideo"
+          autoplay
+          muted
+          playsinline
+          preload="auto"
+        >
+          <source src="${clip.src}" type="video/mp4" />
+        </video>
+        <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
+      </div>
+    `
+    : `
+      <div class="splash-screen splash-screen--epigraph" data-splash-sequence="${clip.id}">
+        <div class="splash-epigraph">
+          <div class="splash-epigraph__word">${clip.word}</div>
+          <div class="splash-epigraph__part">${clip.partOfSpeech}</div>
+          <div class="splash-epigraph__definition">${clip.definition}</div>
+        </div>
+        <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
+      </div>
+    `;
 
   const advance = () => {
     if (splashSequenceExiting) {
