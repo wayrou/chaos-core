@@ -86,9 +86,13 @@ export function getFieldObjectCenterPixels(object: FieldMap["objects"][number]):
 function getFieldObjectHeight(object: FieldMap["objects"][number]): number {
   switch (object.type) {
     case "station":
-      return 1.35;
+      return 2.75;
     case "decoration":
-      return 0.86;
+      return 1.12;
+    case "door":
+      return 1.65;
+    case "resource":
+      return 1.22;
     default:
       return 0.7;
   }

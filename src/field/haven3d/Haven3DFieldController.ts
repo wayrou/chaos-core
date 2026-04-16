@@ -71,6 +71,7 @@ type ActorMotionState = {
   lastY: number;
   lastTime: number;
   cycle: number;
+  visualYaw: number;
   speedPxPerSecond: number;
   moving: boolean;
 };
@@ -226,6 +227,8 @@ const ENEMY_TELEGRAPH_RANGE_PX = 118;
 const ENEMY_DANGER_RANGE_PX = 58;
 const TARGET_LOCK_BREAK_DISTANCE_PX = 540;
 const IMPACT_HITSTOP_MS = 64;
+const BLADE_SCABBARD_POSITION = new THREE.Vector3(0.42, 0.58, -0.06);
+const BLADE_SCABBARD_ROTATION = new THREE.Euler(-0.08, Math.PI - 0.18, -0.18);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -350,6 +353,11 @@ function getYawFromFieldDelta(dx: number, dy: number, fallback = 0): number {
   return Math.atan2(dx, dy);
 }
 
+function lerpAngleRadians(from: number, to: number, amount: number): number {
+  const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return from + delta * amount;
+}
+
 function createChibiCapsule(
   radius: number,
   length: number,
@@ -406,7 +414,7 @@ function createChibiAnatomy(options: {
   const leftUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const leftForearm = new THREE.Group();
   leftForearm.position.set(0, -0.3, 0.03);
-  leftForearm.rotation.set(0, 0, -0.16);
+  leftForearm.rotation.set(-0.1, 0, -0.16);
   const leftForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
   const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), headMaterial);
   leftHand.position.set(0, -0.28, 0.04);
@@ -421,7 +429,7 @@ function createChibiAnatomy(options: {
   const rightUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const rightForearm = new THREE.Group();
   rightForearm.position.set(0, -0.3, 0.03);
-  rightForearm.rotation.set(0, 0, 0.16);
+  rightForearm.rotation.set(-0.1, 0, 0.16);
   const rightForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
   const rightHand = leftHand.clone();
   rightHand.position.set(0, -0.28, 0.04);
@@ -942,9 +950,26 @@ export class Haven3DFieldController implements Haven3DModeController {
       headMaterial: skin,
       accentMaterial: brass,
     });
-    const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.2, 0.16), brass);
-    pauldron.position.set(0.18, 1.16, 0.03);
-    pauldron.castShadow = true;
+    const shoulderStrap = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.045, 0.12), leather);
+    shoulderStrap.position.set(0.12, 1.02, -0.03);
+    shoulderStrap.rotation.set(0.08, -0.18, -0.24);
+    shoulderStrap.castShadow = true;
+    const scabbard = new THREE.Group();
+    scabbard.position.copy(BLADE_SCABBARD_POSITION);
+    scabbard.rotation.copy(BLADE_SCABBARD_ROTATION);
+    const scabbardSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 1.18), leather);
+    scabbardSleeve.position.z = 0.82;
+    scabbardSleeve.castShadow = true;
+    const scabbardMouth = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.13, 0.12), brass);
+    scabbardMouth.position.z = 0.18;
+    scabbardMouth.castShadow = true;
+    const scabbardHilt = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.28), leather);
+    scabbardHilt.position.z = -0.02;
+    scabbardHilt.castShadow = true;
+    const scabbardGuard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.065, 0.07), brass);
+    scabbardGuard.position.z = 0.14;
+    scabbardGuard.castShadow = true;
+    scabbard.add(scabbardSleeve, scabbardMouth, scabbardHilt, scabbardGuard);
     const blade = new THREE.Group();
     blade.position.set(0.42, 0.98, 0.22);
 
@@ -1025,7 +1050,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     grappleForm.add(coil, hookBase, hook);
 
     blade.add(bladeForm, launcherForm, grappleForm);
-    anatomy.root.add(pauldron, blade);
+    anatomy.root.add(shoulderStrap, scabbard, blade);
     group.add(anatomy.root);
     this.dynamicGroup.add(group);
     this.playerActors.set(playerId, {
@@ -1417,9 +1442,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const target = this.findEnemyActionTarget(avatar, BLADE_SWING_RANGE_PX * 1.45, -0.18);
-    const direction = target
-      ? { x: target.x - avatar.x, y: target.y - avatar.y }
-      : getFacingVector(avatar.facing);
+    const direction = this.getActionDirection(avatar, target);
     const directionLength = Math.max(0.001, Math.hypot(direction.x, direction.y));
     const side = this.nextBladeSwingSide;
     this.nextBladeSwingSide = side === 1 ? -1 : 1;
@@ -1773,18 +1796,28 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.grappleMove = null;
   }
 
-  private updateActorMotion(actor: Actor, fieldX: number, fieldY: number, intensity = 1): void {
+  private updateActorMotion(
+    actor: Actor,
+    fieldX: number,
+    fieldY: number,
+    intensity = 1,
+    fallbackYaw = 0,
+    lookDirection: { x: number; y: number } | null = null,
+  ): void {
     const currentTime = this.currentFrameTime || performance.now();
     const motion = actor.motion ?? {
       lastX: fieldX,
       lastY: fieldY,
       lastTime: currentTime,
       cycle: (((fieldX * 0.013) + (fieldY * 0.017)) % 1) * Math.PI * 2,
+      visualYaw: fallbackYaw,
       speedPxPerSecond: 0,
       moving: false,
     };
 
     const deltaSeconds = Math.min(0.12, Math.max(0, (currentTime - motion.lastTime) / 1000));
+    const deltaX = fieldX - motion.lastX;
+    const deltaY = fieldY - motion.lastY;
     const distance = Math.hypot(fieldX - motion.lastX, fieldY - motion.lastY);
     const instantSpeed = deltaSeconds > 0 ? distance / deltaSeconds : 0;
     const smoothing = deltaSeconds > 0 ? 1 - Math.pow(0.015, deltaSeconds) : 1;
@@ -1794,6 +1827,17 @@ export class Haven3DFieldController implements Haven3DModeController {
       const cycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 36, 3.6, 10.5);
       motion.cycle += deltaSeconds * cycleRate * intensity;
     }
+
+    const lookLength = lookDirection ? Math.hypot(lookDirection.x, lookDirection.y) : 0;
+    const targetYaw = lookDirection && lookLength > 0.001
+      ? getYawFromFieldDelta(lookDirection.x, lookDirection.y, motion.visualYaw)
+      : distance > 0.05
+        ? getYawFromFieldDelta(deltaX, deltaY, motion.visualYaw)
+        : motion.visualYaw;
+    const yawSmoothing = deltaSeconds > 0 ? 1 - Math.pow(0.0004, deltaSeconds) : 1;
+    motion.visualYaw = lerpAngleRadians(motion.visualYaw, targetYaw, yawSmoothing);
+    actor.group.rotation.y = motion.visualYaw;
+
     motion.lastX = fieldX;
     motion.lastY = fieldY;
     motion.lastTime = currentTime;
@@ -1831,8 +1875,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const rightLegSwing = counterSwing * stride;
     chibi.leftUpperArm.rotation.set(0.56 * leftArmSwing, 0, -0.42 - 0.08 * stride);
     chibi.rightUpperArm.rotation.set(0.56 * rightArmSwing, 0, 0.42 + 0.08 * stride);
-    chibi.leftForearm.rotation.set(0.18 + 0.34 * Math.max(0, -leftArmSwing), 0, -0.14 - 0.04 * stride);
-    chibi.rightForearm.rotation.set(0.18 + 0.34 * Math.max(0, -rightArmSwing), 0, 0.14 + 0.04 * stride);
+    chibi.leftForearm.rotation.set(-0.18 - 0.28 * Math.max(0, -leftArmSwing), 0, -0.14 - 0.04 * stride);
+    chibi.rightForearm.rotation.set(-0.18 - 0.28 * Math.max(0, -rightArmSwing), 0, 0.14 + 0.04 * stride);
 
     chibi.leftThigh.rotation.set(0.06 + 0.64 * leftLegSwing, 0, 0.12 - 0.035 * stride);
     chibi.rightThigh.rotation.set(0.06 + 0.64 * rightLegSwing, 0, -0.12 + 0.035 * stride);
@@ -2017,10 +2061,20 @@ export class Haven3DFieldController implements Haven3DModeController {
     const world = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 0.04);
     const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
     actor.group.position.set(world.x, world.y, world.z);
-    actor.group.rotation.y = lockedTarget
-      ? getYawFromFieldDelta(lockedTarget.x - avatar.x, lockedTarget.y - avatar.y, this.getRotationForFacing(avatar.facing))
-      : this.getRotationForFacing(avatar.facing);
-    this.updateActorMotion(actor, avatar.x, avatar.y, playerId === "P1" ? 1.08 : 1);
+    const bladeLookDirection = playerId === "P1" && this.bladeSwing
+      ? this.bladeSwing.direction
+      : null;
+    const lookDirection = lockedTarget
+      ? { x: lockedTarget.x - avatar.x, y: lockedTarget.y - avatar.y }
+      : bladeLookDirection;
+    this.updateActorMotion(
+      actor,
+      avatar.x,
+      avatar.y,
+      playerId === "P1" ? 1.08 : 1,
+      this.getRotationForFacing(avatar.facing),
+      lookDirection,
+    );
     this.updatePlayerBladePose(actor, playerId);
   }
 
@@ -2032,6 +2086,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const activeMode = playerId === "P1" ? this.activeMode : "blade";
     this.updatePlayerWeaponForm(actor, activeMode);
     if (activeMode !== "blade") {
+      actor.blade.visible = true;
       const recoilElapsed = (this.currentFrameTime || performance.now()) - this.launcherRecoilStartedAt;
       const recoil = activeMode === "launcher" && recoilElapsed >= 0 && recoilElapsed < LAUNCHER_RECOIL_MS
         ? Math.sin((1 - recoilElapsed / LAUNCHER_RECOIL_MS) * Math.PI)
@@ -2049,8 +2104,9 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     const swing = playerId === "P1" ? this.bladeSwing : null;
     if (!swing) {
-      actor.blade.position.set(0.42, 0.98, 0.42);
-      actor.blade.rotation.set(-0.34, 0.26, -0.2);
+      actor.blade.visible = false;
+      actor.blade.position.copy(BLADE_SCABBARD_POSITION);
+      actor.blade.rotation.copy(BLADE_SCABBARD_ROTATION);
       if (actor.bladeTrail) {
         actor.bladeTrail.visible = false;
         const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
@@ -2061,6 +2117,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    actor.blade.visible = true;
     const elapsed = this.currentFrameTime - swing.startedAt;
     const windup = smoothstep(elapsed / BLADE_SWING_WINDUP_MS);
     const strike = smoothstep((elapsed - BLADE_SWING_WINDUP_MS) / (BLADE_LUNGE_END_MS - BLADE_SWING_WINDUP_MS));
@@ -2072,14 +2129,14 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     if (elapsed < BLADE_SWING_WINDUP_MS) {
       actor.blade.position.set(
-        hiltX,
-        hiltY + 0.08 * windup,
-        hiltZ - 0.08 * windup,
+        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.x, hiltX, windup),
+        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.y, hiltY + 0.08, windup),
+        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.z, hiltZ - 0.08, windup),
       );
       actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.34, -0.58, windup),
-        THREE.MathUtils.lerp(0.26 * side, 1.46 * side, windup),
-        THREE.MathUtils.lerp(-0.2 * side, -0.95 * side, windup),
+        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.x, -0.58, windup),
+        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.y, 1.46 * side, windup),
+        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.z, -0.95 * side, windup),
       );
     } else if (elapsed < BLADE_LUNGE_END_MS) {
       actor.blade.position.set(
@@ -2094,14 +2151,14 @@ export class Haven3DFieldController implements Haven3DModeController {
       );
     } else {
       actor.blade.position.set(
-        THREE.MathUtils.lerp(hiltX - 0.06 * side, 0.42, recovery),
-        THREE.MathUtils.lerp(hiltY + 0.04, 0.98, recovery),
-        THREE.MathUtils.lerp(hiltZ + 0.06, 0.42, recovery),
+        THREE.MathUtils.lerp(hiltX - 0.06 * side, BLADE_SCABBARD_POSITION.x, recovery),
+        THREE.MathUtils.lerp(hiltY + 0.04, BLADE_SCABBARD_POSITION.y, recovery),
+        THREE.MathUtils.lerp(hiltZ + 0.06, BLADE_SCABBARD_POSITION.z, recovery),
       );
       actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.2, -0.34, recovery),
-        THREE.MathUtils.lerp(-1.3 * side, 0.26, recovery),
-        THREE.MathUtils.lerp(1.04 * side, -0.2, recovery),
+        THREE.MathUtils.lerp(-0.2, BLADE_SCABBARD_ROTATION.x, recovery),
+        THREE.MathUtils.lerp(-1.3 * side, BLADE_SCABBARD_ROTATION.y, recovery),
+        THREE.MathUtils.lerp(1.04 * side, BLADE_SCABBARD_ROTATION.z, recovery),
       );
     }
 
@@ -2141,8 +2198,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
       const world = fieldToHavenWorld(this.options.map, { x: npc.x, y: npc.y }, 0.04);
       actor.group.position.set(world.x, world.y, world.z);
-      actor.group.rotation.y = this.getRotationForFacing(npc.direction);
-      this.updateActorMotion(actor, npc.x, npc.y, 0.9);
+      this.updateActorMotion(actor, npc.x, npc.y, 0.9, this.getRotationForFacing(npc.direction));
       this.updateActorTargetRing(actor, "npc", npc.id);
     });
   }
@@ -2180,8 +2236,17 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
       this.enemyHpSnapshot.set(enemy.id, enemy.hp);
       actor.group.position.set(world.x, world.y, world.z);
-      actor.group.rotation.y = this.getRotationForFacing(enemy.facing);
-      this.updateActorMotion(actor, enemy.x, enemy.y, enemy.attackState ? 1.22 : 0.96);
+      const attackDirection = enemy.attackDirectionX !== undefined && enemy.attackDirectionY !== undefined
+        ? { x: enemy.attackDirectionX, y: enemy.attackDirectionY }
+        : null;
+      this.updateActorMotion(
+        actor,
+        enemy.x,
+        enemy.y,
+        enemy.attackState ? 1.22 : 0.96,
+        this.getRotationForFacing(enemy.facing),
+        enemy.attackState ? attackDirection : null,
+      );
       this.updateEnemyHitReaction(actor, enemy.id, widthScale, heightScale);
       this.updateEnemyDefenseVisuals(actor, enemy);
       this.updateEnemyTelegraph(actor, enemy);
