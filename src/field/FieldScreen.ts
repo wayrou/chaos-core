@@ -2381,6 +2381,11 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
           <div class="haven3d-field-tag__eyebrow">HAVEN FIELD</div>
           <div class="haven3d-field-tag__title">BASE CAMP</div>
         </div>
+        <div class="haven3d-mode-strip" aria-label="Gearblade modes">
+          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="blade"><span>1</span>Blade</button>
+          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="launcher"><span>2</span>Launcher</button>
+          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="grapple"><span>3</span>Grapple</button>
+        </div>
         <div class="haven3d-prompt" data-haven3d-prompt></div>
       </div>
     </div>
@@ -2425,8 +2430,10 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     onOpenMenu: () => toggleAllNodesPanel(),
     onFrame: (deltaTime, currentTime) => updateHaven3DFieldRuntime(deltaTime, currentTime),
     onBladeStrike: (strike) => handleHaven3DBladeStrike(strike),
+    onLauncherImpact: (impact) => handleHaven3DLauncherImpact(impact),
+    onGrappleImpact: (impact) => handleHaven3DGrappleImpact(impact),
     enableGearbladeModes: true,
-    enabledGearbladeModes: ["blade"],
+    enabledGearbladeModes: ["blade", "launcher", "grapple"],
   });
   haven3DFieldController.start();
 
@@ -5702,6 +5709,89 @@ function handleHaven3DBladeStrike(strike: {
   }
 
   playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
+}
+
+function handleHaven3DLauncherImpact(impact: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: { kind: "npc" | "enemy"; id: string; key: string } | null;
+  radius: number;
+  damage: number;
+  knockback: number;
+}): boolean {
+  if (!fieldState?.fieldEnemies || !fieldState.combat) {
+    return false;
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const damage = impact.damage + bowbladeFieldProfile.rangedDamageBonus;
+  const knockback = impact.knockback;
+  let didHit = false;
+
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - impact.x;
+    const dy = enemy.y - impact.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const isLockedTarget = impact.target?.kind === "enemy" && impact.target.id === enemy.id;
+    if (!isLockedTarget && distance > impact.radius + Math.max(enemy.width, enemy.height) * 0.5) {
+      continue;
+    }
+    if (isLockedTarget && distance > impact.radius * 2.8) {
+      continue;
+    }
+
+    didHit = true;
+    enemy.hp -= damage;
+    enemy.vx = (dx / distance) * knockback;
+    enemy.vy = (dy / distance) * knockback;
+    enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+
+    if (enemy.hp <= 0) {
+      handleFieldEnemyDefeat(enemy);
+    }
+    break;
+  }
+
+  playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
+  return didHit;
+}
+
+function handleHaven3DGrappleImpact(impact: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: { kind: "npc" | "enemy"; id: string; key: string };
+  damage: number;
+  knockback: number;
+}): boolean {
+  if (!fieldState?.fieldEnemies || impact.target.kind !== "enemy") {
+    return false;
+  }
+
+  const enemy = fieldState.fieldEnemies.find((entry) => entry.id === impact.target.id && entry.hp > 0);
+  if (!enemy) {
+    return false;
+  }
+
+  const dx = enemy.x - impact.x;
+  const dy = enemy.y - impact.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  enemy.hp -= impact.damage;
+  enemy.vx = (dx / distance) * impact.knockback;
+  enemy.vy = (dy / distance) * impact.knockback;
+  enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION * 1.35;
+
+  if (enemy.hp <= 0) {
+    handleFieldEnemyDefeat(enemy);
+  }
+
+  playPlaceholderSfx("ui-confirm");
+  return true;
 }
 
 function performFieldRangedAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {

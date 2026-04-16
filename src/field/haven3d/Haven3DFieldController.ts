@@ -38,6 +38,9 @@ type Actor = {
   targetRing?: THREE.Object3D;
   blade?: THREE.Group;
   bladeTrail?: THREE.Object3D;
+  weaponForms?: Partial<Record<Haven3DGearbladeMode, THREE.Object3D>>;
+  telegraph?: THREE.Object3D;
+  hitMaterials?: ReactiveMaterial[];
 };
 
 type Haven3DBladeStrike = {
@@ -52,12 +55,72 @@ type Haven3DBladeStrike = {
   knockback: number;
 };
 
+type Haven3DLauncherImpact = {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  damage: number;
+  knockback: number;
+};
+
+type Haven3DGrappleImpact = {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef;
+  damage: number;
+  knockback: number;
+};
+
 type BladeSwingState = {
   startedAt: number;
   struck: boolean;
   target: Haven3DTargetRef | null;
   direction: { x: number; y: number };
   side: 1 | -1;
+};
+
+type LauncherProjectile = {
+  mesh: THREE.Mesh;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ttlMs: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  damage: number;
+  knockback: number;
+};
+
+type GrappleMoveState = {
+  startedAt: number;
+  target: Haven3DTargetRef;
+  targetPoint: { x: number; y: number };
+  impacted: boolean;
+  line: THREE.Line;
+  hook: THREE.Mesh;
+};
+
+type ReactiveMaterial = {
+  material: THREE.MeshStandardMaterial;
+  baseEmissive: number;
+  baseIntensity: number;
+};
+
+type EnemyHitReaction = {
+  startedAt: number;
+  durationMs: number;
+};
+
+type VisualEffect = {
+  object: THREE.Object3D;
+  startedAt: number;
+  durationMs: number;
+  velocity: THREE.Vector3;
+  spin?: number;
 };
 
 type Haven3DFieldControllerOptions = {
@@ -79,6 +142,8 @@ type Haven3DFieldControllerOptions = {
   onOpenMenu: () => void;
   onFrame: (deltaMs: number, currentTime: number) => void;
   onBladeStrike?: (strike: Haven3DBladeStrike) => void;
+  onLauncherImpact?: (impact: Haven3DLauncherImpact) => boolean;
+  onGrappleImpact?: (impact: Haven3DGrappleImpact) => boolean;
   enableGearbladeModes?: boolean;
   enabledGearbladeModes?: readonly Haven3DGearbladeMode[];
 };
@@ -102,6 +167,23 @@ const BLADE_SWING_KNOCKBACK = 620;
 const BLADE_LUNGE_START_MS = 250;
 const BLADE_LUNGE_END_MS = 430;
 const BLADE_LUNGE_SPEED_PX_PER_SECOND = 148;
+const LAUNCHER_COOLDOWN_MS = 360;
+const LAUNCHER_RECOIL_MS = 160;
+const LAUNCHER_SPEED_PX_PER_SECOND = 780;
+const LAUNCHER_RANGE_PX = 620;
+const LAUNCHER_HIT_RADIUS_PX = 42;
+const LAUNCHER_DAMAGE = 26;
+const LAUNCHER_KNOCKBACK = 440;
+const GRAPPLE_COOLDOWN_MS = 520;
+const GRAPPLE_RANGE_PX = 430;
+const GRAPPLE_STOP_DISTANCE_PX = 54;
+const GRAPPLE_PULL_SPEED_PX_PER_SECOND = 670;
+const GRAPPLE_MAX_DURATION_MS = 860;
+const GRAPPLE_DAMAGE = 14;
+const GRAPPLE_KNOCKBACK = 520;
+const ENEMY_HIT_REACTION_MS = 320;
+const ENEMY_TELEGRAPH_RANGE_PX = 118;
+const ENEMY_DANGER_RANGE_PX = 58;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -130,7 +212,7 @@ function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
 
 function disposeObject(object: THREE.Object3D): void {
   object.traverse((node) => {
-    if (node instanceof THREE.Mesh || node instanceof THREE.Sprite || node instanceof THREE.InstancedMesh) {
+    if (node instanceof THREE.Mesh || node instanceof THREE.Sprite || node instanceof THREE.InstancedMesh || node instanceof THREE.Line) {
       node.geometry?.dispose();
       if ("material" in node && node.material) {
         disposeMaterial(node.material as THREE.Material | THREE.Material[]);
@@ -253,8 +335,17 @@ export class Haven3DFieldController implements Haven3DModeController {
   private disposed = false;
   private targetLock: Haven3DTargetRef | null = null;
   private targetOrbitYawOffset = 0;
+  private activeGearbladeMode: Haven3DGearbladeMode | null = null;
+  private actionCooldownUntil = 0;
+  private launcherRecoilStartedAt = Number.NEGATIVE_INFINITY;
   private bladeSwing: BladeSwingState | null = null;
   private nextBladeSwingSide: 1 | -1 = 1;
+  private grappleMove: GrappleMoveState | null = null;
+  private readonly launcherProjectiles: LauncherProjectile[] = [];
+  private readonly enemyHpSnapshot = new Map<string, number>();
+  private readonly enemyHitReactions = new Map<string, EnemyHitReaction>();
+  private readonly visualEffects: VisualEffect[] = [];
+  private modeElements: HTMLElement[] = [];
   private currentFrameTime = 0;
 
   private readonly handleResize = () => this.resize();
@@ -284,6 +375,21 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.rightMouseDown = false;
     }
   };
+  private readonly handleModeButtonClick = (event: MouseEvent) => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const mode = target.dataset.haven3dMode as Haven3DGearbladeMode | undefined;
+    if (!mode) {
+      return;
+    }
+
+    event.preventDefault();
+    this.setGearbladeMode(mode);
+    this.renderer.domElement.focus();
+  };
   private readonly handleKeyDown = (event: KeyboardEvent) => {
     if (!this.isMounted() || isEditableTarget(event.target) || document.getElementById("dialoguePanel")) {
       return;
@@ -305,14 +411,31 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    const requestedMode = this.getModeForKeyEvent(event);
+    if (requestedMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setGearbladeMode(requestedMode);
+      return;
+    }
+
+    if (event.code === "KeyQ" || event.key === "q" || event.key === "Q") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        this.cycleGearbladeMode();
+      }
+      return;
+    }
+
     if (
-      this.activeMode === "blade"
+      this.activeMode !== null
       && !event.repeat
       && isPlayerInputActionEvent(event, "P1", "attack")
     ) {
       event.preventDefault();
       event.stopPropagation();
-      this.triggerBladeSwing();
+      this.triggerPrimaryAction();
       return;
     }
 
@@ -347,6 +470,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       enabledModes: options.enabledGearbladeModes,
       initialMode: "blade",
     });
+    this.activeGearbladeMode = this.modeController.activeMode;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -359,11 +483,54 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   get activeMode(): Haven3DGearbladeMode | null {
-    return this.modeController.activeMode;
+    return this.activeGearbladeMode;
   }
 
   get enabledModes(): ReadonlySet<Haven3DGearbladeMode> {
     return this.modeController.enabledModes;
+  }
+
+  private getModeForKeyEvent(event: KeyboardEvent): Haven3DGearbladeMode | null {
+    switch (event.code) {
+      case "Digit1":
+      case "Numpad1":
+        return "blade";
+      case "Digit2":
+      case "Numpad2":
+        return "launcher";
+      case "Digit3":
+      case "Numpad3":
+        return "grapple";
+      default:
+        return null;
+    }
+  }
+
+  private setGearbladeMode(mode: Haven3DGearbladeMode): void {
+    if (!this.enabledModes.has(mode) || this.activeGearbladeMode === mode) {
+      return;
+    }
+
+    this.activeGearbladeMode = mode;
+    if (mode !== "blade") {
+      this.bladeSwing = null;
+    }
+    if (mode !== "grapple") {
+      this.finishGrappleMove(false);
+    }
+    this.updateModeHud();
+  }
+
+  private cycleGearbladeMode(): void {
+    const enabledModes = Array.from(this.enabledModes);
+    if (enabledModes.length === 0) {
+      return;
+    }
+
+    const currentIndex = this.activeGearbladeMode
+      ? enabledModes.indexOf(this.activeGearbladeMode)
+      : -1;
+    this.setGearbladeMode(enabledModes[(currentIndex + 1 + enabledModes.length) % enabledModes.length]);
   }
 
   start(): void {
@@ -374,6 +541,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.bindEvents();
     this.resize();
     this.lastFrameTime = performance.now();
+    this.updateModeHud();
     this.animationFrameId = requestAnimationFrame((time) => this.loop(time));
   }
 
@@ -387,6 +555,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.renderer.domElement.removeEventListener("wheel", this.handleWheel);
+    this.modeElements.forEach((element) => element.removeEventListener("click", this.handleModeButtonClick));
+    this.modeElements = [];
     window.removeEventListener("resize", this.handleResize);
     window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("mouseup", this.handleMouseUp);
@@ -416,11 +586,15 @@ export class Haven3DFieldController implements Haven3DModeController {
         if (lockRequest && typeof lockRequest.catch === "function") {
           void lockRequest.catch(() => undefined);
         }
+        this.triggerPrimaryAction();
       } else if (event.button === 2) {
         this.rightMouseDown = true;
       }
     });
     this.renderer.domElement.addEventListener("wheel", this.handleWheel, { passive: false });
+
+    this.modeElements = Array.from(document.querySelectorAll<HTMLElement>("[data-haven3d-mode]"));
+    this.modeElements.forEach((element) => element.addEventListener("click", this.handleModeButtonClick));
 
     window.addEventListener("resize", this.handleResize);
     window.addEventListener("mousemove", this.handleMouseMove);
@@ -591,6 +765,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     pauldron.castShadow = true;
     const blade = new THREE.Group();
     blade.position.set(0.42, 1.05, 0.2);
+
+    const bladeForm = new THREE.Group();
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.42), leather);
     grip.position.z = 0.06;
     grip.castShadow = true;
@@ -622,10 +798,63 @@ export class Haven3DFieldController implements Haven3DModeController {
     bladeTrail.position.set(0.2, 0.02, -0.78);
     bladeTrail.rotation.x = Math.PI / 2;
     bladeTrail.visible = false;
-    blade.add(grip, guard, bladeMesh, bladeTrail);
+    bladeForm.add(grip, guard, bladeMesh, bladeTrail);
+
+    const launcherForm = new THREE.Group();
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 0.86, 14), leather);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.z = -0.42;
+    barrel.castShadow = true;
+    const chamber = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 10), brass);
+    chamber.position.z = 0.02;
+    chamber.castShadow = true;
+    const sight = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.08, 0.28),
+      new THREE.MeshStandardMaterial({
+        color: 0x58c1aa,
+        roughness: 0.38,
+        metalness: 0.35,
+        emissive: 0x123c37,
+        emissiveIntensity: 0.75,
+      }),
+    );
+    sight.position.set(0, 0.16, -0.36);
+    launcherForm.add(barrel, chamber, sight);
+
+    const grappleForm = new THREE.Group();
+    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.045, 8, 18), brass);
+    coil.rotation.y = Math.PI / 2;
+    const hookBase = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 0.56, 10), leather);
+    hookBase.rotation.x = Math.PI / 2;
+    hookBase.position.z = -0.34;
+    hookBase.castShadow = true;
+    const hook = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.03, 8, 16, Math.PI * 1.35),
+      new THREE.MeshStandardMaterial({
+        color: 0x4fb4a4,
+        roughness: 0.35,
+        metalness: 0.35,
+        emissive: 0x123c37,
+        emissiveIntensity: 0.85,
+      }),
+    );
+    hook.position.z = -0.72;
+    hook.rotation.x = Math.PI / 2;
+    grappleForm.add(coil, hookBase, hook);
+
+    blade.add(bladeForm, launcherForm, grappleForm);
     group.add(body, head, pauldron, blade);
     this.dynamicGroup.add(group);
-    this.playerActors.set(playerId, { group, blade, bladeTrail });
+    this.playerActors.set(playerId, {
+      group,
+      blade,
+      bladeTrail,
+      weaponForms: {
+        blade: bladeForm,
+        launcher: launcherForm,
+        grapple: grappleForm,
+      },
+    });
   }
 
   private createNpcActor(npc: FieldNpc): Actor {
@@ -679,9 +908,32 @@ export class Haven3DFieldController implements Haven3DModeController {
     const label = createLabelSprite(enemy.name, { accent: "rgba(242, 112, 74, 0.76)", width: 340 });
     label.position.y = 1.92;
     const targetRing = createTargetRing(0xf2704a);
-    group.add(body, crest, label, targetRing);
+    const telegraph = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.26, 1.85),
+      new THREE.MeshBasicMaterial({
+        color: 0xff4c3e,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.set(0, 0.075, 0.88);
+    telegraph.visible = false;
+    telegraph.renderOrder = 4;
+    group.add(body, crest, label, targetRing, telegraph);
     this.dynamicGroup.add(group);
-    return { group, label, targetRing };
+    return {
+      group,
+      label,
+      targetRing,
+      telegraph,
+      hitMaterials: [
+        { material: hide, baseEmissive: 0x000000, baseIntensity: 0 },
+        { material: core, baseEmissive: 0x3d1208, baseIntensity: 0.35 },
+      ],
+    };
   }
 
   private loop(currentTime: number): void {
@@ -696,6 +948,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (!this.options.isPaused()) {
       this.movePlayers(deltaMs);
       this.updateBladeSwing(deltaMs, currentTime);
+      this.updateGrappleMove(deltaMs, currentTime);
+      this.updateLauncherProjectiles(deltaMs);
+      this.updateVisualEffects(deltaMs, currentTime);
     }
 
     this.options.onFrame(deltaMs, currentTime);
@@ -717,6 +972,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   private movePlayers(deltaMs: number): void {
     (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
       if (!this.options.isPlayerActive(playerId)) {
+        return;
+      }
+      if (playerId === "P1" && this.grappleMove) {
         return;
       }
 
@@ -754,7 +1012,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       moveY /= length;
       const speed = PLAYER_SPEED_PX_PER_SECOND
         * (input.special1 ? DASH_MULTIPLIER : 1)
-        * this.getBladeMovementMultiplier(playerId);
+        * this.getActionMovementMultiplier(playerId);
       const step = speed * (deltaMs / 1000);
       let nextX = avatar.x + moveX * step;
       let nextY = avatar.y + moveY * step;
@@ -780,7 +1038,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
-  private getBladeMovementMultiplier(playerId: PlayerId): number {
+  private getActionMovementMultiplier(playerId: PlayerId): number {
     if (playerId !== "P1" || !this.bladeSwing) {
       return 1;
     }
@@ -793,6 +1051,117 @@ export class Haven3DFieldController implements Haven3DModeController {
       return 0.62;
     }
     return 0.42;
+  }
+
+  private triggerPrimaryAction(): void {
+    if (this.options.isPaused() || !this.activeMode) {
+      return;
+    }
+
+    switch (this.activeMode) {
+      case "blade":
+        this.triggerBladeSwing();
+        break;
+      case "launcher":
+        this.fireLauncher();
+        break;
+      case "grapple":
+        this.fireGrapple();
+        break;
+      default:
+        break;
+    }
+  }
+
+  private getActionDirection(
+    avatar: FieldAvatarView,
+    target: Pick<Haven3DTargetCandidate, "x" | "y"> | null = null,
+  ): { x: number; y: number } {
+    const rawDirection = target
+      ? { x: target.x - avatar.x, y: target.y - avatar.y }
+      : { x: this.clockForward.x, y: this.clockForward.z };
+    const length = Math.hypot(rawDirection.x, rawDirection.y);
+    if (length > 0.001) {
+      return { x: rawDirection.x / length, y: rawDirection.y / length };
+    }
+
+    return getFacingVector(avatar.facing);
+  }
+
+  private findEnemyActionTarget(
+    avatar: FieldAvatarView,
+    rangePx: number,
+    minForwardDot: number,
+  ): Haven3DTargetCandidate | null {
+    const lockedTarget = this.getLockedTargetCandidate();
+    if (lockedTarget?.kind === "enemy" && lockedTarget.distance <= rangePx) {
+      return lockedTarget;
+    }
+
+    const direction = this.getActionDirection(avatar);
+    let best: Haven3DTargetCandidate | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const candidate of this.getTargetCandidates()) {
+      if (candidate.kind !== "enemy" || candidate.distance > rangePx) {
+        continue;
+      }
+
+      const toTarget = { x: candidate.x - avatar.x, y: candidate.y - avatar.y };
+      const length = Math.max(0.001, Math.hypot(toTarget.x, toTarget.y));
+      const dot = ((toTarget.x / length) * direction.x) + ((toTarget.y / length) * direction.y);
+      if (dot < minForwardDot) {
+        continue;
+      }
+
+      const score = candidate.distance * 0.035 + (1 - dot) * 6;
+      if (score < bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private findActionTarget(rangePx: number): Haven3DTargetCandidate | null {
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      return null;
+    }
+
+    const lockedTarget = this.getLockedTargetCandidate();
+    if (lockedTarget && lockedTarget.distance <= rangePx) {
+      return lockedTarget;
+    }
+
+    const direction = this.getActionDirection(avatar);
+    let best: Haven3DTargetCandidate | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const candidate of this.getTargetCandidates()) {
+      if (candidate.distance > rangePx) {
+        continue;
+      }
+
+      const toTarget = { x: candidate.x - avatar.x, y: candidate.y - avatar.y };
+      const length = Math.max(0.001, Math.hypot(toTarget.x, toTarget.y));
+      const dot = ((toTarget.x / length) * direction.x) + ((toTarget.y / length) * direction.y);
+      if (dot < 0.14 && candidate.distance > 110) {
+        continue;
+      }
+
+      const enemyBias = candidate.kind === "enemy" ? -1.2 : 0;
+      const score = candidate.distance * 0.035 + (1 - dot) * 5 + enemyBias;
+      if (score < bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private findTargetForRef(target: Haven3DTargetRef): Haven3DTargetCandidate | null {
+    return this.getTargetCandidates().find((candidate) => candidate.key === target.key) ?? null;
   }
 
   private triggerBladeSwing(): void {
@@ -876,6 +1245,300 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     if (elapsed >= BLADE_SWING_TOTAL_MS) {
       this.bladeSwing = null;
+    }
+  }
+
+  private fireLauncher(): void {
+    const now = this.currentFrameTime || performance.now();
+    if (this.activeMode !== "launcher" || now < this.actionCooldownUntil) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      return;
+    }
+
+    const target = this.findEnemyActionTarget(avatar, LAUNCHER_RANGE_PX, 0.12);
+    const direction = this.getActionDirection(avatar, target);
+    const originX = avatar.x + direction.x * 36;
+    const originY = avatar.y + direction.y * 36;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 14, 10),
+      new THREE.MeshStandardMaterial({
+        color: 0xf2b04d,
+        roughness: 0.35,
+        metalness: 0.15,
+        emissive: 0x8c3f10,
+        emissiveIntensity: 1.8,
+      }),
+    );
+    const world = fieldToHavenWorld(this.options.map, { x: originX, y: originY }, 1.12);
+    mesh.position.set(world.x, world.y, world.z);
+    mesh.castShadow = true;
+    this.dynamicGroup.add(mesh);
+
+    this.launcherProjectiles.push({
+      mesh,
+      x: originX,
+      y: originY,
+      vx: direction.x * LAUNCHER_SPEED_PX_PER_SECOND,
+      vy: direction.y * LAUNCHER_SPEED_PX_PER_SECOND,
+      ttlMs: (LAUNCHER_RANGE_PX / LAUNCHER_SPEED_PX_PER_SECOND) * 1000,
+      target,
+      radius: LAUNCHER_HIT_RADIUS_PX,
+      damage: LAUNCHER_DAMAGE,
+      knockback: LAUNCHER_KNOCKBACK,
+    });
+
+    this.actionCooldownUntil = now + LAUNCHER_COOLDOWN_MS;
+    this.launcherRecoilStartedAt = now;
+    this.options.setPlayerAvatar("P1", avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+  }
+
+  private updateLauncherProjectiles(deltaMs: number): void {
+    for (let index = this.launcherProjectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.launcherProjectiles[index];
+      projectile.ttlMs -= deltaMs;
+
+      const target = projectile.target ? this.findTargetForRef(projectile.target) : null;
+      if (target?.kind === "enemy") {
+        const toTargetX = target.x - projectile.x;
+        const toTargetY = target.y - projectile.y;
+        const length = Math.max(0.001, Math.hypot(toTargetX, toTargetY));
+        const desiredVx = (toTargetX / length) * LAUNCHER_SPEED_PX_PER_SECOND;
+        const desiredVy = (toTargetY / length) * LAUNCHER_SPEED_PX_PER_SECOND;
+        projectile.vx = THREE.MathUtils.lerp(projectile.vx, desiredVx, 0.16);
+        projectile.vy = THREE.MathUtils.lerp(projectile.vy, desiredVy, 0.16);
+      }
+
+      projectile.x += projectile.vx * (deltaMs / 1000);
+      projectile.y += projectile.vy * (deltaMs / 1000);
+      const world = fieldToHavenWorld(this.options.map, { x: projectile.x, y: projectile.y }, 1.12);
+      projectile.mesh.position.set(world.x, world.y, world.z);
+
+      const hitEnemy = this.options.getEnemies()
+        .filter((enemy) => enemy.hp > 0)
+        .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5);
+      if (hitEnemy) {
+        const didHit = this.options.onLauncherImpact?.({
+          playerId: "P1",
+          x: projectile.x,
+          y: projectile.y,
+          target: {
+            kind: "enemy",
+            id: hitEnemy.id,
+            key: `enemy:${hitEnemy.id}`,
+          },
+          radius: projectile.radius,
+          damage: projectile.damage,
+          knockback: projectile.knockback,
+        }) ?? false;
+        this.spawnHitSpark({ x: projectile.x, y: projectile.y }, didHit ? 0xf2b04d : 0x6f6a5d);
+        this.removeLauncherProjectile(index);
+        continue;
+      }
+
+      if (projectile.ttlMs <= 0) {
+        this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0x6f6a5d);
+        this.removeLauncherProjectile(index);
+      }
+    }
+  }
+
+  private removeLauncherProjectile(index: number): void {
+    const projectile = this.launcherProjectiles[index];
+    if (!projectile) {
+      return;
+    }
+
+    this.dynamicGroup.remove(projectile.mesh);
+    disposeObject(projectile.mesh);
+    this.launcherProjectiles.splice(index, 1);
+  }
+
+  private fireGrapple(): void {
+    const now = this.currentFrameTime || performance.now();
+    if (this.activeMode !== "grapple" || now < this.actionCooldownUntil || this.grappleMove) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    const target = this.findActionTarget(GRAPPLE_RANGE_PX);
+    if (!avatar || !target) {
+      this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS * 0.45;
+      return;
+    }
+
+    const direction = this.getActionDirection(avatar, target);
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0x4fb4a4,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+    ]), lineMaterial);
+    line.renderOrder = 20;
+    const hook = new THREE.Mesh(
+      new THREE.TorusGeometry(0.18, 0.035, 8, 16, Math.PI * 1.35),
+      new THREE.MeshBasicMaterial({
+        color: 0x66dbc9,
+        transparent: true,
+        opacity: 0.96,
+        depthWrite: false,
+      }),
+    );
+    hook.rotation.x = Math.PI / 2;
+    this.dynamicGroup.add(line, hook);
+
+    this.grappleMove = {
+      startedAt: now,
+      target,
+      targetPoint: { x: target.x, y: target.y },
+      impacted: false,
+      line,
+      hook,
+    };
+    this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS;
+    this.options.setPlayerAvatar("P1", avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+    this.updateGrappleLine();
+  }
+
+  private updateGrappleMove(deltaMs: number, currentTime: number): void {
+    if (!this.grappleMove) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      this.finishGrappleMove(false);
+      return;
+    }
+
+    const liveTarget = this.findTargetForRef(this.grappleMove.target);
+    if (liveTarget) {
+      this.grappleMove.targetPoint = { x: liveTarget.x, y: liveTarget.y };
+    }
+
+    if (!this.grappleMove.impacted && this.grappleMove.target.kind === "enemy") {
+      this.grappleMove.impacted = true;
+      const didHit = this.options.onGrappleImpact?.({
+        playerId: "P1",
+        x: avatar.x,
+        y: avatar.y,
+        target: this.grappleMove.target,
+        damage: GRAPPLE_DAMAGE,
+        knockback: GRAPPLE_KNOCKBACK,
+      }) ?? false;
+      if (didHit) {
+        this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
+      }
+    }
+
+    const dx = this.grappleMove.targetPoint.x - avatar.x;
+    const dy = this.grappleMove.targetPoint.y - avatar.y;
+    const distance = Math.hypot(dx, dy);
+    const elapsed = currentTime - this.grappleMove.startedAt;
+    if (distance <= GRAPPLE_STOP_DISTANCE_PX || elapsed >= GRAPPLE_MAX_DURATION_MS) {
+      this.finishGrappleMove(true);
+      return;
+    }
+
+    const step = Math.min(distance - GRAPPLE_STOP_DISTANCE_PX, GRAPPLE_PULL_SPEED_PX_PER_SECOND * (deltaMs / 1000));
+    const moveX = (dx / Math.max(0.001, distance)) * step;
+    const moveY = (dy / Math.max(0.001, distance)) * step;
+    let nextX = avatar.x + moveX;
+    let nextY = avatar.y + moveY;
+    if (!canAvatarMoveTo(this.options.map, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      nextX = avatar.x;
+    }
+    if (!canAvatarMoveTo(this.options.map, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      nextY = avatar.y;
+    }
+
+    this.options.setPlayerAvatar("P1", nextX, nextY, fieldFacingFromDelta(dx, dy, avatar.facing));
+    this.updateGrappleLine();
+  }
+
+  private updateGrappleLine(): void {
+    if (!this.grappleMove) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      return;
+    }
+
+    const from = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 1.18);
+    const to = fieldToHavenWorld(this.options.map, this.grappleMove.targetPoint, 1.08);
+    this.grappleMove.line.geometry.setFromPoints([
+      new THREE.Vector3(from.x, from.y, from.z),
+      new THREE.Vector3(to.x, to.y, to.z),
+    ]);
+    this.grappleMove.hook.position.set(to.x, to.y, to.z);
+    this.grappleMove.hook.rotation.z += 0.18;
+  }
+
+  private finishGrappleMove(spawnSpark: boolean): void {
+    if (!this.grappleMove) {
+      return;
+    }
+
+    if (spawnSpark) {
+      this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
+    }
+    this.dynamicGroup.remove(this.grappleMove.line, this.grappleMove.hook);
+    disposeObject(this.grappleMove.line);
+    disposeObject(this.grappleMove.hook);
+    this.grappleMove = null;
+  }
+
+  private spawnHitSpark(point: { x: number; y: number }, color: number): void {
+    const world = fieldToHavenWorld(this.options.map, point, 0.62);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 6, 24), material);
+    ring.position.set(world.x, world.y, world.z);
+    ring.rotation.x = Math.PI / 2;
+    ring.renderOrder = 22;
+    this.dynamicGroup.add(ring);
+    this.visualEffects.push({
+      object: ring,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: 260,
+      velocity: new THREE.Vector3(0, 1.15, 0),
+      spin: 8.5,
+    });
+  }
+
+  private updateVisualEffects(deltaMs: number, currentTime: number): void {
+    for (let index = this.visualEffects.length - 1; index >= 0; index -= 1) {
+      const effect = this.visualEffects[index];
+      const elapsed = currentTime - effect.startedAt;
+      const t = THREE.MathUtils.clamp(elapsed / effect.durationMs, 0, 1);
+      effect.object.position.addScaledVector(effect.velocity, deltaMs / 1000);
+      effect.object.scale.setScalar(1 + t * 1.35);
+      if (effect.spin) {
+        effect.object.rotation.z += effect.spin * (deltaMs / 1000);
+      }
+      effect.object.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
+          node.material.opacity = Math.max(0, 0.82 * (1 - t));
+        }
+      });
+      if (t >= 1) {
+        this.dynamicGroup.remove(effect.object);
+        disposeObject(effect.object);
+        this.visualEffects.splice(index, 1);
+      }
     }
   }
 
@@ -978,6 +1641,24 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    const activeMode = playerId === "P1" ? this.activeMode : "blade";
+    this.updatePlayerWeaponForm(actor, activeMode);
+    if (activeMode !== "blade") {
+      const recoilElapsed = (this.currentFrameTime || performance.now()) - this.launcherRecoilStartedAt;
+      const recoil = activeMode === "launcher" && recoilElapsed >= 0 && recoilElapsed < LAUNCHER_RECOIL_MS
+        ? Math.sin((1 - recoilElapsed / LAUNCHER_RECOIL_MS) * Math.PI)
+        : 0;
+      const grapplePulse = activeMode === "grapple" && this.grappleMove
+        ? Math.sin(((this.currentFrameTime || performance.now()) - this.grappleMove.startedAt) * 0.018) * 0.06
+        : 0;
+      actor.blade.position.set(0.42, 1.03, 0.22 - recoil * 0.18);
+      actor.blade.rotation.set(-0.54 + grapplePulse, 0.18, -0.16);
+      if (actor.bladeTrail) {
+        actor.bladeTrail.visible = false;
+      }
+      return;
+    }
+
     const swing = playerId === "P1" ? this.bladeSwing : null;
     if (!swing) {
       actor.blade.position.set(0.42, 1.02, 0.24);
@@ -1031,6 +1712,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
   }
 
+  private updatePlayerWeaponForm(actor: Actor, activeMode: Haven3DGearbladeMode | null): void {
+    for (const [mode, object] of Object.entries(actor.weaponForms ?? {}) as Array<[Haven3DGearbladeMode, THREE.Object3D]>) {
+      object.visible = activeMode === mode;
+    }
+  }
+
   private syncNpcActors(): void {
     const npcs = this.options.getNpcs();
     const npcIds = new Set(npcs.map((npc) => npc.id));
@@ -1064,6 +1751,8 @@ export class Haven3DFieldController implements Haven3DModeController {
         this.dynamicGroup.remove(actor.group);
         disposeObject(actor.group);
         this.enemyActors.delete(id);
+        this.enemyHpSnapshot.delete(id);
+        this.enemyHitReactions.delete(id);
       }
     });
 
@@ -1077,10 +1766,76 @@ export class Haven3DFieldController implements Haven3DModeController {
       const world = fieldToHavenWorld(this.options.map, { x: enemy.x, y: enemy.y }, 0.04);
       const widthScale = Math.max(0.85, enemy.width / 36);
       const heightScale = Math.max(0.85, enemy.height / 36);
+      const previousHp = this.enemyHpSnapshot.get(enemy.id);
+      if (previousHp !== undefined && enemy.hp < previousHp) {
+        this.enemyHitReactions.set(enemy.id, {
+          startedAt: this.currentFrameTime || performance.now(),
+          durationMs: ENEMY_HIT_REACTION_MS,
+        });
+        this.spawnHitSpark({ x: enemy.x, y: enemy.y }, 0xf2b04d);
+      }
+      this.enemyHpSnapshot.set(enemy.id, enemy.hp);
       actor.group.position.set(world.x, world.y, world.z);
-      actor.group.scale.set(widthScale, heightScale, widthScale);
       actor.group.rotation.y = this.getRotationForFacing(enemy.facing);
+      this.updateEnemyHitReaction(actor, enemy.id, widthScale, heightScale);
+      this.updateEnemyTelegraph(actor, enemy);
       this.updateActorTargetRing(actor, "enemy", enemy.id);
+    });
+  }
+
+  private updateEnemyHitReaction(actor: Actor, enemyId: string, widthScale: number, heightScale: number): void {
+    const reaction = this.enemyHitReactions.get(enemyId);
+    const elapsed = reaction ? (this.currentFrameTime || performance.now()) - reaction.startedAt : Number.POSITIVE_INFINITY;
+    const t = reaction ? THREE.MathUtils.clamp(elapsed / reaction.durationMs, 0, 1) : 1;
+    const pulse = reaction ? Math.sin((1 - t) * Math.PI) : 0;
+
+    actor.group.scale.set(
+      widthScale * (1 + pulse * 0.18),
+      heightScale * (1 - pulse * 0.08),
+      widthScale * (1 + pulse * 0.18),
+    );
+
+    for (const entry of actor.hitMaterials ?? []) {
+      if (reaction && t < 1) {
+        entry.material.emissive.setHex(0xffc38a);
+        entry.material.emissiveIntensity = entry.baseIntensity + (1 - t) * 1.6;
+      } else {
+        entry.material.emissive.setHex(entry.baseEmissive);
+        entry.material.emissiveIntensity = entry.baseIntensity;
+      }
+    }
+
+    if (reaction && t >= 1) {
+      this.enemyHitReactions.delete(enemyId);
+    }
+  }
+
+  private updateEnemyTelegraph(actor: Actor, enemy: FieldEnemy): void {
+    if (!actor.telegraph) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      actor.telegraph.visible = false;
+      return;
+    }
+
+    const distance = Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y);
+    const isLocked = this.targetLock?.kind === "enemy" && this.targetLock.id === enemy.id;
+    const shouldShow = distance <= ENEMY_TELEGRAPH_RANGE_PX || (isLocked && distance <= ENEMY_TELEGRAPH_RANGE_PX * 1.7);
+    actor.telegraph.visible = shouldShow;
+    if (!shouldShow) {
+      return;
+    }
+
+    const danger = 1 - THREE.MathUtils.clamp((distance - ENEMY_DANGER_RANGE_PX) / (ENEMY_TELEGRAPH_RANGE_PX - ENEMY_DANGER_RANGE_PX), 0, 1);
+    const pulse = (Math.sin((this.currentFrameTime || performance.now()) * 0.015) + 1) * 0.5;
+    actor.telegraph.scale.set(0.8 + danger * 0.42 + pulse * 0.06, 1, 0.88 + danger * 0.52);
+    actor.telegraph.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
+        node.material.opacity = 0.08 + danger * 0.28 + pulse * 0.06;
+      }
     });
   }
 
@@ -1134,6 +1889,20 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
   }
 
+  private updateModeHud(): void {
+    this.modeElements.forEach((element) => {
+      const mode = element.dataset.haven3dMode as Haven3DGearbladeMode | undefined;
+      const isEnabled = Boolean(mode && this.enabledModes.has(mode));
+      const isActive = Boolean(mode && this.activeMode === mode);
+      element.hidden = !isEnabled;
+      element.classList.toggle("haven3d-mode-chip--active", isActive);
+      element.setAttribute("aria-pressed", String(isActive));
+      if (element instanceof HTMLButtonElement) {
+        element.disabled = !isEnabled;
+      }
+    });
+  }
+
   private updatePrompt(): void {
     if (!this.promptElement) {
       return;
@@ -1142,7 +1911,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const prompt = this.options.getPrompt();
     const target = this.getLockedTargetCandidate();
     const targetText = target ? `TARGET :: ${target.label.toUpperCase()}` : null;
-    const promptText = [prompt, targetText].filter(Boolean).join(" | ");
+    const modeText = this.activeMode ? `MODE :: ${this.activeMode.toUpperCase()}` : null;
+    const promptText = [prompt, targetText, modeText].filter(Boolean).join(" | ");
     this.promptElement.textContent = promptText;
     this.promptElement.classList.toggle("haven3d-prompt--visible", Boolean(promptText));
   }

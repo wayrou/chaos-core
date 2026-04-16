@@ -94,6 +94,19 @@ function assertSmoke(condition, message) {
   }
 }
 
+async function cycleUntilTarget(page, label, attempts = 8) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await page.keyboard.press("KeyZ");
+    await page.waitForTimeout(120);
+    const promptText = await page.locator("[data-haven3d-prompt]").innerText().catch(() => "");
+    if (promptText.includes(label)) {
+      return;
+    }
+  }
+
+  throw new Error(`Could not Z-target ${label}.`);
+}
+
 async function runSmoke() {
   const browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 }, deviceScaleFactor: 1 });
@@ -155,10 +168,8 @@ async function runSmoke() {
   });
   await page.waitForTimeout(250);
   await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
-  await page.keyboard.press("KeyZ");
-  await page.waitForFunction(() => document.querySelector("[data-haven3d-prompt]")?.textContent?.includes("TARGET :: SMOKE TESTER"));
-  await page.keyboard.press("KeyZ");
-  await page.waitForFunction(() => document.querySelector("[data-haven3d-prompt]")?.textContent?.includes("TARGET :: SMOKE ENEMY"));
+  await cycleUntilTarget(page, "TARGET :: SMOKE TESTER");
+  await cycleUntilTarget(page, "TARGET :: SMOKE ENEMY");
   await page.keyboard.press("Space");
   await page.waitForTimeout(1100);
   const bladeHitResult = await page.evaluate(async () => {
@@ -178,11 +189,109 @@ async function runSmoke() {
     (bladeHitResult.energyCells ?? 0) > 0,
     `Blade swing did not grant melee energy on hit: ${JSON.stringify(bladeHitResult)}`,
   );
+
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
     const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      return;
+    }
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_launcher",
+      name: "Smoke Launcher",
+      x: runtime.player.x + 116,
+      y: runtime.player.y,
+      width: 36,
+      height: 36,
+      hp: 20,
+      maxHp: 20,
+      speed: 0,
+      facing: "south",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+    }];
+  });
+  await page.keyboard.press("Digit2");
+  await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="launcher"]')?.classList.contains("haven3d-mode-chip--active"));
+  await cycleUntilTarget(page, "TARGET :: SMOKE LAUNCHER");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(900);
+  const launcherHitResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const enemy = runtime?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_launcher");
+    return { enemyHp: enemy?.hp ?? null };
+  });
+  assertSmoke(
+    launcherHitResult.enemyHp === null || launcherHitResult.enemyHp <= 0,
+    `Launcher mode did not defeat the smoke enemy: ${JSON.stringify(launcherHitResult)}`,
+  );
+
+  const grappleBefore = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      return null;
+    }
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_grapple",
+      name: "Smoke Grapple",
+      x: runtime.player.x + 190,
+      y: runtime.player.y + 12,
+      width: 36,
+      height: 36,
+      hp: 34,
+      maxHp: 34,
+      speed: 0,
+      facing: "south",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+    }];
+    return {
+      player: { x: runtime.player.x, y: runtime.player.y },
+      enemy: { x: runtime.fieldEnemies[0].x, y: runtime.fieldEnemies[0].y, hp: runtime.fieldEnemies[0].hp },
+    };
+  });
+  await page.keyboard.press("Digit3");
+  await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="grapple"]')?.classList.contains("haven3d-mode-chip--active"));
+  await cycleUntilTarget(page, "TARGET :: SMOKE GRAPPLE");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(900);
+  const grappleAfter = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const enemy = runtime?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_grapple");
+    return runtime && enemy
+      ? {
+        player: { x: runtime.player.x, y: runtime.player.y },
+        enemy: { x: enemy.x, y: enemy.y, hp: enemy.hp, knockbackTime: enemy.knockbackTime },
+      }
+      : null;
+  });
+  const grappleStartDistance = grappleBefore
+    ? Math.hypot(grappleBefore.enemy.x - grappleBefore.player.x, grappleBefore.enemy.y - grappleBefore.player.y)
+    : 0;
+  const grappleEndDistance = grappleAfter
+    ? Math.hypot(grappleAfter.enemy.x - grappleAfter.player.x, grappleAfter.enemy.y - grappleAfter.player.y)
+    : Number.POSITIVE_INFINITY;
+  assertSmoke(
+    grappleAfter && grappleEndDistance < grappleStartDistance - 30 && grappleAfter.enemy.hp < 34,
+    `Grapple mode did not pull and stagger the smoke enemy: ${JSON.stringify({ grappleStartDistance, grappleEndDistance, grappleAfter })}`,
+  );
+
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const npcs = await import("/src/field/npcs.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
     if (runtime) {
       runtime.fieldEnemies = [];
+      runtime.npcs = [npcs.createNpc("npc_smoke_dialogue", "Smoke Tester", runtime.player.x, runtime.player.y + 20, "npc_medic", { routeMode: "none" })];
     }
   });
   await page.waitForTimeout(150);

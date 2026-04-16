@@ -199,6 +199,74 @@
   text-transform: uppercase;
 }
 
+.haven3d-mode-strip {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgba(102, 219, 201, 0.32);
+  border-radius: 8px;
+  background: rgba(15, 19, 18, 0.72);
+  box-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(220, 255, 247, 0.08);
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+
+.haven3d-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(245, 234, 210, 0.18);
+  border-radius: 6px;
+  background: rgba(25, 30, 28, 0.76);
+  color: rgba(245, 234, 210, 0.72);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.haven3d-mode-chip span {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(102, 219, 201, 0.15);
+  color: #8ad8c6;
+  font-size: 0.66rem;
+}
+
+.haven3d-mode-chip:hover {
+  border-color: rgba(102, 219, 201, 0.56);
+  color: #fff2cf;
+  transform: translateY(-1px);
+}
+
+.haven3d-mode-chip--active {
+  border-color: rgba(242, 176, 77, 0.72);
+  background: rgba(75, 51, 28, 0.82);
+  color: #fff2cf;
+}
+
+.haven3d-mode-chip--active span {
+  background: rgba(242, 176, 77, 0.2);
+  color: #f2b04d;
+}
+
 .haven3d-prompt {
   position: absolute;
   left: 50%;
