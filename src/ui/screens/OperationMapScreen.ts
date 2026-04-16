@@ -6,7 +6,6 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { getCurrentOperation, getCurrentFloor } from "../../core/ops";
-import { renderBattleScreen } from "./BattleScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
 import { renderShopScreen } from "./ShopScreen";
@@ -14,6 +13,7 @@ import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
 import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
+import { renderBattleScreenDeferred } from "./battleScreenLoader";
 import {
   markCurrentOperationRoomVisited,
   markOperationRoomVisited,
@@ -2260,7 +2260,7 @@ function enterBattleRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering battle room:", error);
     // Return to operation map on error
@@ -2328,7 +2328,7 @@ function enterKeyRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering key room:", error);
     // Return to operation map on error
@@ -2382,7 +2382,7 @@ function enterEliteRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering elite room:", error);
     renderOperationMapScreen();

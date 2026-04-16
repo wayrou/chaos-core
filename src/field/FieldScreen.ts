@@ -13,7 +13,6 @@ import {
 } from "./player";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
-import { ensureTheaterAutoTickStateSync, renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import {
   checkCompanionReachedTarget,
@@ -27,7 +26,6 @@ import {
 } from "./companion";
 import { isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
-import { showDialogue, showNpcDialogue } from "../ui/screens/DialogueScreen";
 import {
   getPlayerInput,
   getPlayerActionLabel,
@@ -44,12 +42,12 @@ import {
 } from "../core/controllerSupport";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
-import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import {
   NETWORK_PLAYER_SLOTS,
   SESSION_PLAYER_SLOTS,
   type BaseCampLayoutLoadout,
   type BaseCampPinnedItemFrame,
+  type FieldAvatar,
   type LobbyState,
   type NetworkPlayerSlot,
   type PlayerId,
@@ -187,6 +185,24 @@ import {
   markOuterDeckSubareaCleared,
 } from "../core/outerDecks";
 
+function openAllNodesMenuFromField(currentMapId?: FieldMap["id"]): void {
+  void import("../ui/screens/AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+    renderAllNodesMenuScreen(currentMapId);
+  });
+}
+
+function syncFieldTheaterAutoTickState(): void {
+  void import("../ui/screens/AllNodesMenuScreen").then(({ ensureTheaterAutoTickStateSync }) => {
+    ensureTheaterAutoTickStateSync();
+  });
+}
+
+function openOperationMapFromField(): void {
+  void import("../ui/screens/OperationMapScreen").then(({ renderOperationMapScreen }) => {
+    renderOperationMapScreen();
+  });
+}
+
 // ============================================================================
 // STATE
 // ============================================================================
@@ -224,6 +240,10 @@ let isPanelOpen = false;
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
 let fieldFocusableRefreshTimerId: number | null = null;
+let fieldRuntimeP2Avatar: FieldAvatar | null = null;
+let lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
+let lastFieldAvatarSyncKey = "";
+const FIELD_AVATAR_SYNC_INTERVAL_MS = 120;
 
 function scheduleFieldFocusableRefresh(delayMs = 48): void {
   if (fieldFocusableRefreshTimerId !== null) {
@@ -306,10 +326,11 @@ function getLocallyRelevantFieldEnemies(): FieldEnemy[] {
     return liveEnemies;
   }
 
+  const state = getGameState();
   const activeAvatarPositions = (["P1", "P2"] as PlayerId[])
-    .map((playerId) => getGameState().players[playerId])
-    .filter((player) => Boolean(player?.active && player.avatar))
-    .map((player) => player!.avatar!)
+    .filter((playerId) => isFieldPlayerActive(playerId, state))
+    .map((playerId) => getRuntimeFieldAvatar(playerId, state))
+    .filter((avatar): avatar is FieldAvatar => Boolean(avatar))
     .map((avatar) => ({ x: avatar.x, y: avatar.y }));
 
   if (activeAvatarPositions.length === 0 && fieldState?.player) {
@@ -336,24 +357,137 @@ function getUncollectedFieldResourceObjects(): Array<FieldMap["objects"][number]
 }
 
 function syncP1AvatarPosition(nextX: number, nextY: number): void {
-  updateGameState((state) => {
-    const avatar = state.players.P1.avatar;
-    if (!avatar) {
-      return state;
+  if (!fieldState) {
+    return;
+  }
+  fieldState.player.x = nextX;
+  fieldState.player.y = nextY;
+}
+
+function areFieldAvatarsEqual(a: FieldAvatar | null | undefined, b: FieldAvatar | null | undefined): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.x === b.x && a.y === b.y && a.facing === b.facing;
+}
+
+function getRuntimeFieldAvatar(playerId: PlayerId, state = getGameState()): FieldAvatar | null {
+  if (playerId === "P1") {
+    return fieldState
+      ? {
+          x: fieldState.player.x,
+          y: fieldState.player.y,
+          facing: fieldState.player.facing,
+        }
+      : state.players.P1.avatar;
+  }
+
+  if (!state.players.P2.active) {
+    return null;
+  }
+
+  return fieldRuntimeP2Avatar ?? state.players.P2.avatar;
+}
+
+function syncRuntimeFieldAvatarsFromState(state = getGameState()): void {
+  if (!state.players.P2.active) {
+    fieldRuntimeP2Avatar = null;
+    return;
+  }
+
+  if (!fieldRuntimeP2Avatar && state.players.P2.avatar) {
+    fieldRuntimeP2Avatar = { ...state.players.P2.avatar };
+  }
+}
+
+function setRuntimeFieldAvatarPosition(
+  playerId: PlayerId,
+  nextX: number,
+  nextY: number,
+  facing?: FieldAvatar["facing"],
+): void {
+  if (playerId === "P1") {
+    if (!fieldState) {
+      return;
+    }
+    fieldState.player.x = nextX;
+    fieldState.player.y = nextY;
+    if (facing) {
+      fieldState.player.facing = facing;
+    }
+    return;
+  }
+
+  const persistedAvatar = getGameState().players.P2.avatar;
+  fieldRuntimeP2Avatar = {
+    x: nextX,
+    y: nextY,
+    facing: facing ?? fieldRuntimeP2Avatar?.facing ?? persistedAvatar?.facing ?? "south",
+  };
+}
+
+function isFieldPlayerActive(playerId: PlayerId, state = getGameState()): boolean {
+  return Boolean(state.players[playerId]?.active);
+}
+
+function flushFieldAvatarPositionsToGameState(force = false): void {
+  const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
+
+  const p1RuntimeAvatar = getRuntimeFieldAvatar("P1", state);
+  const p2RuntimeAvatar = getRuntimeFieldAvatar("P2", state);
+  const nextSyncKey = [
+    state.players.P1.active ? "1" : "0",
+    p1RuntimeAvatar ? `${p1RuntimeAvatar.x.toFixed(2)}:${p1RuntimeAvatar.y.toFixed(2)}:${p1RuntimeAvatar.facing}` : "null",
+    state.players.P2.active ? "1" : "0",
+    p2RuntimeAvatar ? `${p2RuntimeAvatar.x.toFixed(2)}:${p2RuntimeAvatar.y.toFixed(2)}:${p2RuntimeAvatar.facing}` : "null",
+  ].join("|");
+
+  if (!force) {
+    if (nextSyncKey === lastFieldAvatarSyncKey) {
+      return;
+    }
+
+    const now = performance.now();
+    if (now - lastFieldAvatarSyncAtMs < FIELD_AVATAR_SYNC_INTERVAL_MS) {
+      return;
+    }
+    lastFieldAvatarSyncAtMs = now;
+  } else {
+    lastFieldAvatarSyncAtMs = performance.now();
+  }
+
+  lastFieldAvatarSyncKey = nextSyncKey;
+
+  updateGameState((currentState) => {
+    const currentP1Avatar = currentState.players.P1.avatar;
+    const currentP2Avatar = currentState.players.P2.avatar;
+    const p1Changed = !areFieldAvatarsEqual(currentP1Avatar, p1RuntimeAvatar);
+    const p2Changed = !areFieldAvatarsEqual(currentP2Avatar, p2RuntimeAvatar);
+
+    if (!p1Changed && !p2Changed) {
+      return currentState;
     }
 
     return {
-      ...state,
+      ...currentState,
       players: {
-        ...state.players,
-        P1: {
-          ...state.players.P1,
-          avatar: {
-            ...avatar,
-            x: nextX,
-            y: nextY,
-          },
-        },
+        ...currentState.players,
+        P1: p1Changed
+          ? {
+              ...currentState.players.P1,
+              avatar: p1RuntimeAvatar ? { ...p1RuntimeAvatar } : null,
+            }
+          : currentState.players.P1,
+        P2: p2Changed
+          ? {
+              ...currentState.players.P2,
+              avatar: p2RuntimeAvatar ? { ...p2RuntimeAvatar } : null,
+            }
+          : currentState.players.P2,
       },
     };
   });
@@ -1281,6 +1415,7 @@ function suspendFieldForScreenTransition(): void {
   if (fieldState) {
     fieldState.isPaused = true;
   }
+  flushFieldAvatarPositionsToGameState(true);
   teardownFieldMode();
 }
 
@@ -2270,7 +2405,8 @@ function processFieldControllerActions(): void {
   }
 
   const combatActive = isFieldCombatActive();
-  const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const state = getGameState();
+  const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => isFieldPlayerActive(playerId, state));
 
   for (const playerId of activePlayers) {
     const previous = previousFieldControllerActions[playerId];
@@ -2301,7 +2437,7 @@ function processFieldControllerActions(): void {
 }
 
 function createRuntimeAvatar(playerId: PlayerId): PlayerAvatar | null {
-  const avatar = getGameState().players[playerId]?.avatar;
+  const avatar = getRuntimeFieldAvatar(playerId);
   if (!avatar) {
     return null;
   }
@@ -2351,7 +2487,7 @@ function getPlayerInteractionContext(playerId: PlayerId): InteractionActorContex
 
 function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
   const candidates = (["P1", "P2"] as PlayerId[])
-    .filter((playerId) => getGameState().players[playerId]?.active)
+    .filter((playerId) => isFieldPlayerActive(playerId))
     .map((playerId) => {
       const avatar = createRuntimeAvatar(playerId);
       if (!avatar) {
@@ -2521,7 +2657,8 @@ function maybeTriggerAutoInteraction(): void {
     return;
   }
 
-  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const state = getGameState();
+  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => isFieldPlayerActive(playerId, state));
   const autoContext = orderedPlayers
     .map((playerId) => getPlayerInteractionContext(playerId))
     .find((context): context is InteractionActorContext => {
@@ -2615,32 +2752,9 @@ function resumeFieldAfterInteraction(
     nextY = savedPlayerPos.y + offsetY;
   }
 
-  updateGameState((state) => {
-    const avatar = state.players[playerId].avatar;
-    if (!avatar) {
-      return state;
-    }
-
-    return {
-      ...state,
-      players: {
-        ...state.players,
-        [playerId]: {
-          ...state.players[playerId],
-          avatar: {
-            ...avatar,
-            x: nextX,
-            y: nextY,
-          },
-        },
-      },
-    };
-  });
-
-  if (playerId === "P1") {
-    fieldState.player.x = nextX;
-    fieldState.player.y = nextY;
-  }
+  const currentAvatar = getRuntimeFieldAvatar(playerId);
+  setRuntimeFieldAvatarPosition(playerId, nextX, nextY, currentAvatar?.facing);
+  flushFieldAvatarPositionsToGameState(true);
 
   if (zone && isAutoTriggerZone(zone)) {
     render();
@@ -3083,6 +3197,13 @@ export function renderFieldScreen(
     };
   }
 
+  const persistedPlayers = getGameState().players;
+  fieldRuntimeP2Avatar = persistedPlayers.P2.active && persistedPlayers.P2.avatar
+    ? { ...persistedPlayers.P2.avatar }
+    : null;
+  lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
+  lastFieldAvatarSyncKey = "";
+
   lastMinimapRevealKey = "";
   syncFieldMinimapExploration();
 
@@ -3150,8 +3271,8 @@ function getTrackedFieldCenter(): { x: number; y: number } {
   }
 
   const state = getGameState();
-  const p1Avatar = state.players.P1.avatar;
-  const p2Avatar = state.players.P2.active ? state.players.P2.avatar : null;
+  const p1Avatar = getRuntimeFieldAvatar("P1", state);
+  const p2Avatar = isFieldPlayerActive("P2", state) ? getRuntimeFieldAvatar("P2", state) : null;
 
   if (p1Avatar && p2Avatar) {
     return {
@@ -3511,6 +3632,7 @@ function render(): void {
 
   // Player avatars (P1 and P2)
   const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
   const fieldLobby = getRenderableLobbyForCurrentField();
   const networkLobby = isNetworkLobbyMapActive() ? fieldLobby : null;
   const currentTime = performance.now();
@@ -3522,8 +3644,8 @@ function render(): void {
   const p1DashActive = Boolean(players.P1.active && getPlayerInput("P1").special1);
   const p2DashActive = Boolean(players.P2.active && getPlayerInput("P2").special1);
   const stepPulseClass = currentTime < fieldStepPulseUntilMs ? " field-player--step" : "";
-  const p1Avatar = players.P1.avatar;
-  const p2Avatar = players.P2.active ? players.P2.avatar : null;
+  const p1Avatar = getRuntimeFieldAvatar("P1", state);
+  const p2Avatar = players.P2.active ? getRuntimeFieldAvatar("P2", state) : null;
 
   let playerHtml = "";
 
@@ -4329,7 +4451,7 @@ function updateAllNodesPanelContent(): void {
       const mode = (btn as HTMLElement).dataset.mode;
       if (mode === "basecamp") {
         toggleAllNodesPanel();
-        renderAllNodesMenuScreen();
+        openAllNodesMenuFromField();
       } else if (mode === "field") {
         toggleAllNodesPanel();
         // Use current map if in field mode, otherwise default to base_camp
@@ -4392,7 +4514,7 @@ function toggleAllNodesPanel(): void {
   isPanelOpen = false;
 
   // Navigate to the All Nodes Menu Screen
-  renderAllNodesMenuScreen(currentMapId);
+  openAllNodesMenuFromField(currentMapId);
 }
 
 function closeAllNodesPanel(): void {
@@ -4937,7 +5059,7 @@ function handlePinnedOverlayClick(e: MouseEvent): void {
         baseCampTheaterAutoTickEnabled: enabled,
       },
     }));
-    ensureTheaterAutoTickStateSync();
+    syncFieldTheaterAutoTickState();
     showSystemPing({
       type: enabled ? "success" : "info",
       title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
@@ -5012,7 +5134,7 @@ function createPinnedNodesOverlay(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  ensureTheaterAutoTickStateSync();
+  syncFieldTheaterAutoTickState();
 
   let overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay) {
@@ -5070,7 +5192,7 @@ function triggerFieldCombatAttack(): void {
     return;
   }
 
-  const player = getGameState().players.P1.avatar;
+  const player = getRuntimeFieldAvatar("P1");
   if (!player) {
     return;
   }
@@ -5592,7 +5714,7 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     return currentTime - enemy.deathAnimTime < 500;
   });
 
-  const player = getGameState().players.P1.avatar;
+  const player = getRuntimeFieldAvatar("P1");
   if (!player) {
     return;
   }
@@ -6273,35 +6395,39 @@ function handleInteractKey(playerId: PlayerId): void {
   if (fieldState.npcs) {
     const nearbyNpc = getNpcInRange(actorAvatar, fieldState.npcs);
     if (nearbyNpc && nearbyNpc.dialogueId) {
-      const openedImportedDialogue = showNpcDialogue(
-        nearbyNpc.dialogueId,
-        nearbyNpc.name,
-        nearbyNpc.id,
-        () => {
+      fieldState.isPaused = true;
+      void import("../ui/screens/DialogueScreen").then(({ showDialogue, showNpcDialogue }) => {
+        const openedImportedDialogue = showNpcDialogue(
+          nearbyNpc.dialogueId!,
+          nearbyNpc.name,
+          nearbyNpc.id,
+          () => {
+            if (fieldState) {
+              fieldState.isPaused = false;
+            }
+          },
+        );
+
+        if (openedImportedDialogue) {
+          return;
+        }
+
+        const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId!] || [
+          "Hello there!",
+          "This is placeholder dialogue.",
+        ];
+
+        showDialogue(nearbyNpc.name, dialogueLines, () => {
           if (fieldState) {
             fieldState.isPaused = false;
           }
-        }
-      );
-
-      if (openedImportedDialogue) {
-        return;
-      }
-
-      const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId] || [
-        "Hello there!",
-        "This is placeholder dialogue.",
-      ];
-
-      // Pause field movement while in dialogue
-      fieldState.isPaused = true;
-
-      showDialogue(nearbyNpc.name, dialogueLines, () => {
-        // Resume field movement after dialogue
+        }, nearbyNpc.id);
+      }).catch((error) => {
+        console.error("[FIELD] Failed to load dialogue screen:", error);
         if (fieldState) {
           fieldState.isPaused = false;
         }
-      }, nearbyNpc.id);
+      });
 
       return;
     }
@@ -6339,7 +6465,7 @@ async function handleNodeAction(action: string): Promise<void> {
         baseCampTheaterAutoTickEnabled: enabled,
       },
     }));
-    ensureTheaterAutoTickStateSync();
+    syncFieldTheaterAutoTickState();
     showSystemPing({
       type: enabled ? "success" : "info",
       title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
@@ -6425,7 +6551,7 @@ async function handleNodeAction(action: string): Promise<void> {
       });
       break;
     case "materials-refinery":
-      renderAllNodesMenuScreen(fieldState?.currentMap ?? "base_camp");
+      openAllNodesMenuFromField(fieldState?.currentMap ?? "base_camp");
       break;
     case "port":
       import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
@@ -6507,6 +6633,7 @@ function gameLoop(currentTime: number): void {
 
   if (!fieldState.isPaused) {
     const state = getGameState();
+    syncRuntimeFieldAvatarsFromState(state);
     const aerissFieldSpeedBonus = getAerissFieldMovementSpeedBonus(state.stable);
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
@@ -6515,9 +6642,11 @@ function gameLoop(currentTime: number): void {
     };
     const p1 = players.P1;
     const p2 = players.P2;
+    const p1Avatar = getRuntimeFieldAvatar("P1", state);
+    const p2Avatar = p2.active ? getRuntimeFieldAvatar("P2", state) : null;
 
     // Update P1 avatar movement
-    if (p1.active && p1.avatar) {
+    if (p1.active && p1Avatar) {
       const p1Input = getPlayerInput("P1");
       const p1MovementInput = {
         up: p1Input.up,
@@ -6529,12 +6658,12 @@ function gameLoop(currentTime: number): void {
 
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p1PlayerAvatar = {
-        x: p1.avatar.x,
-        y: p1.avatar.y,
+        x: p1Avatar.x,
+        y: p1Avatar.y,
         width: 32,
         height: 32,
         speed: 240 + aerissFieldSpeedBonus,
-        facing: p1.avatar.facing,
+        facing: p1Avatar.facing,
       };
 
       let newP1Avatar = updatePlayerMovement(
@@ -6545,35 +6674,21 @@ function gameLoop(currentTime: number): void {
       );
 
       // Apply tether constraint if P2 is active
-      if (p2.active && p2.avatar) {
+      if (p2.active && p2Avatar) {
         const constrained = applyTetherConstraint(
           { x: newP1Avatar.x, y: newP1Avatar.y },
           { x: newP1Avatar.x, y: newP1Avatar.y },
-          p2.avatar
+          p2Avatar,
         );
         newP1Avatar.x = constrained.x;
         newP1Avatar.y = constrained.y;
       }
 
-      // Update P1 avatar in game state
-      updateGameState(s => ({
-        ...s,
-        players: {
-          ...s.players,
-          P1: {
-            ...s.players.P1,
-            avatar: {
-              x: newP1Avatar.x,
-              y: newP1Avatar.y,
-              facing: newP1Avatar.facing,
-            },
-          },
-        },
-      }));
+      setRuntimeFieldAvatarPosition("P1", newP1Avatar.x, newP1Avatar.y, newP1Avatar.facing);
     }
 
     // Update P2 avatar movement
-    if (p2.active && p2.avatar) {
+    if (p2.active && p2Avatar) {
       const p2Input = getPlayerInput("P2");
       const p2MovementInput = {
         up: p2Input.up,
@@ -6585,12 +6700,12 @@ function gameLoop(currentTime: number): void {
 
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p2PlayerAvatar = {
-        x: p2.avatar.x,
-        y: p2.avatar.y,
+        x: p2Avatar.x,
+        y: p2Avatar.y,
         width: 32,
         height: 32,
         speed: 240,
-        facing: p2.avatar.facing,
+        facing: p2Avatar.facing,
       };
 
       let newP2Avatar = updatePlayerMovement(
@@ -6601,43 +6716,21 @@ function gameLoop(currentTime: number): void {
       );
 
       // Apply tether constraint (P2 constrained by P1)
-      if (p1.active && p1.avatar) {
+      if (p1.active && p1Avatar) {
         const constrained = applyTetherConstraint(
           { x: newP2Avatar.x, y: newP2Avatar.y },
           { x: newP2Avatar.x, y: newP2Avatar.y },
-          p1.avatar
+          p1Avatar,
         );
         newP2Avatar.x = constrained.x;
         newP2Avatar.y = constrained.y;
       }
 
-      // Update P2 avatar in game state
-      updateGameState(s => ({
-        ...s,
-        players: {
-          ...s.players,
-          P2: {
-            ...s.players.P2,
-            avatar: {
-              x: newP2Avatar.x,
-              y: newP2Avatar.y,
-              facing: newP2Avatar.facing,
-            },
-          },
-        },
-      }));
+      setRuntimeFieldAvatarPosition("P2", newP2Avatar.x, newP2Avatar.y, newP2Avatar.facing);
     }
 
-    // Update legacy fieldState.player for backward compatibility (use P1 position)
-    const updatedState = getGameState();
-    if (updatedState.players.P1.avatar) {
-      fieldState.player = {
-        ...fieldState.player,
-        x: updatedState.players.P1.avatar.x,
-        y: updatedState.players.P1.avatar.y,
-        facing: updatedState.players.P1.avatar.facing as any,
-      };
-    }
+    flushFieldAvatarPositionsToGameState();
+    const updatedP1Avatar = getRuntimeFieldAvatar("P1", state);
     syncFieldMinimapExploration();
 
       const activeLobby = getGameState().lobby;
@@ -6652,8 +6745,8 @@ function gameLoop(currentTime: number): void {
         && localSelectedForCoop
         && (isNetworkLobbyMapActive() || isActiveCoopOperationsLobby(activeLobby)),
       );
-      if (shouldSyncLobbyAvatar && updatedState.players.P1.avatar && currentMap?.id) {
-        const avatar = updatedState.players.P1.avatar;
+      if (shouldSyncLobbyAvatar && updatedP1Avatar && currentMap?.id) {
+        const avatar = updatedP1Avatar;
         const syncKey = `${currentMap.id}:${Math.round(avatar.x)}:${Math.round(avatar.y)}:${avatar.facing}`;
         if (syncKey !== lastNetworkLobbyAvatarSyncKey) {
           lastNetworkLobbyAvatarSyncKey = syncKey;
@@ -6664,16 +6757,6 @@ function gameLoop(currentTime: number): void {
       } else {
         lastNetworkLobbyAvatarSyncKey = "";
       }
-
-    // Keep field player state synchronized with the live avatar; combat logic layers on top later.
-    if (fieldState && currentMap && updatedState.players.P1.avatar) {
-      fieldState.player = normalizeFieldPlayerState({
-        ...fieldState.player,
-        x: updatedState.players.P1.avatar.x,
-        y: updatedState.players.P1.avatar.y,
-        facing: updatedState.players.P1.avatar.facing as any,
-      });
-    }
 
     updateFieldMovementFeedback(
       currentTime,
@@ -6710,6 +6793,7 @@ function stopGameLoop(): void {
 }
 
 export function teardownFieldMode(): void {
+  flushFieldAvatarPositionsToGameState(true);
   stopGameLoop();
   resetFieldControllerActionTracking();
   cleanupGlobalListeners();
@@ -6737,6 +6821,7 @@ export function teardownFieldMode(): void {
   cleanupFieldControllerContext = null;
   cleanupFieldFeedbackListener?.();
   cleanupFieldFeedbackListener = null;
+  fieldRuntimeP2Avatar = null;
 }
 
 // ============================================================================
@@ -6746,8 +6831,8 @@ export function teardownFieldMode(): void {
 export function exitFieldMode(returnToOpMap?: boolean): void {
   teardownFieldMode();
   if (returnToOpMap) {
-    renderOperationMapScreen();
+    openOperationMapFromField();
   } else {
-    renderAllNodesMenuScreen();
+    openAllNodesMenuFromField();
   }
 }

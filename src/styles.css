@@ -17471,6 +17471,30 @@ button {
   pointer-events: none;
 }
 
+.debug-fps-counter {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 39990;
+  min-width: 132px;
+  padding: 7px 12px 6px;
+  border: 1px solid rgba(255, 204, 110, 0.38);
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.82);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  color: #ffdb8a;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+  backdrop-filter: blur(6px);
+}
+
 /* ==========================================================================
    ACCESSIBILITY CLASSES
    ========================================================================== */
@@ -33178,6 +33202,44 @@ body {
   position: relative;
   overflow: hidden;
   background: #050505;
+}
+
+.splash-screen--epigraph {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(34, 34, 40, 0.2) 0, rgba(0, 0, 0, 0) 55%),
+    #000;
+}
+
+.splash-epigraph {
+  width: min(42rem, calc(100vw - 4rem));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  text-align: center;
+  color: #fff;
+  animation: splashFadeIn 0.7s ease-in;
+}
+
+.splash-epigraph-title,
+.splash-epigraph-definition {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 700;
+  color: #fff;
+}
+
+.splash-epigraph-title {
+  font-size: clamp(2.4rem, 6vw, 4.2rem);
+  line-height: 1;
+}
+
+.splash-epigraph-definition {
+  font-size: clamp(1rem, 2vw, 1.35rem);
+  line-height: 1.6;
+  max-width: 34rem;
 }
 
 .splash-video {

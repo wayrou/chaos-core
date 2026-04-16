@@ -13,7 +13,7 @@ import { getActiveRun, prepareDefenseBattle } from "../../core/campaignManager";
 import { createDefenseBattle } from "../../core/defenseBattleGenerator";
 import { syncCampaignToGameState } from "../../core/campaignSync";
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBattleScreen } from "./BattleScreen";
+import { renderBattleScreenDeferred } from "./battleScreenLoader";
 import { showConfirmDialog } from "../components/confirmDialog";
 
 /**
@@ -215,7 +215,7 @@ function startDefenseBattle(keyRoomId: string): void {
     }));
 
     // Render battle screen
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[DEFENSE] Error starting defense battle:", error);
     renderActiveOperationSurface();

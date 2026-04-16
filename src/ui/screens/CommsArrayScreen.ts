@@ -6,7 +6,12 @@
 import { getGameState, setGameState, subscribe, updateGameState } from "../../state/gameStore";
 import { type TrainingConfig } from "../../core/trainingEncounter";
 import { createTrainingBattle } from "../../core/trainingBattle";
-import { applyExternalBattleState, applyRemoteCoopBattleCommand, applyRemoteSquadBattleCommand, renderBattleScreen } from "./BattleScreen";
+import {
+  applyExternalBattleStateDeferred,
+  applyRemoteCoopBattleCommandDeferred,
+  applyRemoteSquadBattleCommandDeferred,
+  renderBattleScreenDeferred,
+} from "./battleScreenLoader";
 import type { BattleState as RuntimeBattleState } from "../../core/battle";
 import { mountBattleContextById, mountBattleState } from "../../core/session";
 import { abandonRun, startOperationRun, syncCampaignToGameState } from "../../core/campaignManager";
@@ -1651,7 +1656,7 @@ function enterSquadBattle(match: SquadMatchState, battlePayload: string, renderM
   updateGameState((state) =>
     applySquadBattleToGameState(state, match, parsedPayload.battle, getSquadBattleAuthorityRole()),
   );
-  applyExternalBattleState(parsedPayload.battle, renderMode);
+  applyExternalBattleStateDeferred(parsedPayload.battle, renderMode);
 }
 
 async function startSquadBattle(match: SquadMatchState): Promise<void> {
@@ -2205,7 +2210,7 @@ async function enterActiveCoopOperations(lobby: LobbyState): Promise<void> {
         ? mountBattleContextById(state, localParticipant.activeBattleId)
         : mountBattleState(state, parsedBattle)
     ));
-    applyExternalBattleState(parsedBattle, "always");
+    applyExternalBattleStateDeferred(parsedBattle, "always");
     return;
   }
   if (parsedOperation && (operationPhase === "loadout" || operationPhase === "operation")) {
@@ -2596,7 +2601,7 @@ export async function disconnectMultiplayerLobby(renderAfterDisconnect = true): 
       lobby: null,
     };
   });
-  applyExternalBattleState(null, "if_mounted");
+  applyExternalBattleStateDeferred(null, "if_mounted");
   if (renderAfterDisconnect) {
     renderCommsArrayScreen(activeCommsReturnTo);
   }
@@ -3029,7 +3034,7 @@ async function handleRemoteLobbyCommand(sourcePeerId: string, payload: string): 
       if (!participant?.selected || !participant.sessionSlot) {
         return;
       }
-      applyRemoteCoopBattleCommand(participant.sessionSlot, command.payload);
+      applyRemoteCoopBattleCommandDeferred(participant.sessionSlot, command.payload);
       return;
     }
     case "request_lobby_snapshot": {
@@ -3109,7 +3114,7 @@ async function handleSquadTransportMessage(event: SquadTransportEvent): Promise<
           currentBattle: null,
           phase: "shell",
         }));
-        applyExternalBattleState(null, "if_mounted");
+        applyExternalBattleStateDeferred(null, "if_mounted");
       }
       if (isCommsArrayMounted() || document.querySelector(".battle-root")) {
         renderCommsArrayScreen(activeCommsReturnTo);
@@ -3205,7 +3210,7 @@ async function handleSquadTransportMessage(event: SquadTransportEvent): Promise<
       if (squadTransportStatus.role === "host" && event.sourcePeerId && event.payload) {
         const sourceSlot = squadRemotePeerSlots.get(event.sourcePeerId);
         if (sourceSlot) {
-          applyRemoteSquadBattleCommand(sourceSlot, event.payload);
+          applyRemoteSquadBattleCommandDeferred(sourceSlot, event.payload);
         }
       }
       return;
@@ -4790,7 +4795,7 @@ function attachCommsArrayListeners(returnTo: CommsReturnTo): void {
         return;
       }
       activeSkirmishSurface = "staging";
-      renderBattleScreen();
+      renderBattleScreenDeferred();
     };
   }
 
@@ -5134,7 +5139,7 @@ function startTrainingBattle(returnTo: CommsReturnTo): void {
   }));
   
   // Render battle screen
-  renderBattleScreen();
+  renderBattleScreenDeferred();
 }
 
 function startCustomOperation(): void {

@@ -28,13 +28,10 @@ import { withNormalizedWeaponsmithState } from "../core/weaponsmith";
 // ----------------------------------------------------------------------------
 
 let _gameState: GameState | null = null;
+let _normalizedTechnicaRegistryFingerprint: string | null = null;
 
 type Listener = (state: GameState) => void;
 const listeners = new Set<Listener>();
-
-function syncPublishedTechnicaContent(state: GameState): GameState {
-  return syncPublishedTechnicaContentState(state, getTechnicaRegistryFingerprint());
-}
 
 function syncSchemaState(state: GameState): GameState {
   const normalizedState = {
@@ -56,6 +53,21 @@ function syncSchemaState(state: GameState): GameState {
   );
 }
 
+function normalizeAndTrackState(state: GameState): GameState {
+  const fingerprint = getTechnicaRegistryFingerprint();
+  _normalizedTechnicaRegistryFingerprint = fingerprint;
+  return syncSchemaState(syncPublishedTechnicaContentState(state, fingerprint));
+}
+
+function syncTechnicaContentIfNeeded(state: GameState): GameState {
+  const fingerprint = getTechnicaRegistryFingerprint();
+  if (_normalizedTechnicaRegistryFingerprint === fingerprint) {
+    return state;
+  }
+  _normalizedTechnicaRegistryFingerprint = fingerprint;
+  return syncSchemaState(syncPublishedTechnicaContentState(state, fingerprint));
+}
+
 // ----------------------------------------------------------------------------
 // CORE API
 // ----------------------------------------------------------------------------
@@ -74,9 +86,9 @@ export function getGameState(): GameState {
     return _gameState!;
   }
   if (!_gameState) {
-    _gameState = syncSchemaState(syncPublishedTechnicaContent(createNewGameState()));
+    _gameState = normalizeAndTrackState(createNewGameState());
   } else {
-    _gameState = syncSchemaState(syncPublishedTechnicaContent(_gameState));
+    _gameState = syncTechnicaContentIfNeeded(_gameState);
   }
   _getGameStateDepth--;
   return _gameState;
@@ -87,12 +99,15 @@ export function getGameState(): GameState {
  * Includes a recursion guard to prevent infinite loops from listeners.
  */
 export function setGameState(newState: GameState): void {
+  if (_gameState === newState) {
+    return;
+  }
   _setGameStateDepth++;
   if (_setGameStateDepth > 5) {
     _setGameStateDepth--;
     return;
   }
-  _gameState = syncSchemaState(syncPublishedTechnicaContent(newState));
+  _gameState = normalizeAndTrackState(newState);
   notifyListeners();
   _setGameStateDepth--;
 }
@@ -105,6 +120,9 @@ export function updateGameState(
 ): GameState {
   const prev = getGameState();
   const next = updater(prev);
+  if (next === prev) {
+    return prev;
+  }
   setGameState(next);
   return next;
 }
@@ -132,7 +150,7 @@ export function resetToNewGame(): void {
 // ----------------------------------------------------------------------------
 
 function notifyListeners(): void {
-  const state = getGameState();
+  const state = _gameState ?? getGameState();
   for (const listener of listeners) {
     listener(state);
   }

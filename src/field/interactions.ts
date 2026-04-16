@@ -3,22 +3,6 @@
 // ============================================================================
 
 import { InteractionZone, FieldMap } from "./types";
-import { renderShopScreen } from "../ui/screens/ShopScreen";
-
-import { renderRosterScreen } from "../ui/screens/RosterScreen";
-import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
-import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
-import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
-import { renderTavernDialogueScreen } from "../ui/screens/TavernDialogueScreen";
-import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
-import { renderPortScreen } from "../ui/screens/PortScreen";
-import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
-import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
-import { renderStableScreen } from "../ui/screens/StableScreen";
-import { renderDispatchScreen } from "../ui/screens/DispatchScreen";
-import { renderSchemaScreen } from "../ui/screens/SchemaScreen";
-import { renderFoundryAnnexScreen } from "../ui/screens/FoundryAnnexScreen";
-import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
 import { getGameState, updateGameState } from "../state/gameStore";
 import {
   BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
@@ -136,6 +120,95 @@ function showFieldTravelPing(title: string, message: string, detail?: string): v
   });
 }
 
+async function renderFieldShopScreen(): Promise<void> {
+  const { renderShopScreen } = await import("../ui/screens/ShopScreen");
+  renderShopScreen("field");
+}
+
+async function renderFieldRosterScreen(): Promise<void> {
+  const { renderRosterScreen } = await import("../ui/screens/RosterScreen");
+  renderRosterScreen("field");
+}
+
+async function renderFieldLoadoutScreen(): Promise<void> {
+  const { renderInventoryScreen } = await import("../ui/screens/InventoryScreen");
+  renderInventoryScreen("field");
+}
+
+async function renderFieldOperationSelectScreen(): Promise<void> {
+  const { renderOperationSelectScreen } = await import("../ui/screens/OperationSelectScreen");
+  renderOperationSelectScreen("field");
+}
+
+async function renderFieldQuestBoardScreen(): Promise<void> {
+  const { renderQuestBoardScreen } = await import("../ui/screens/QuestBoardScreen");
+  renderQuestBoardScreen("field");
+}
+
+async function renderFieldTavernScreen(): Promise<void> {
+  const { renderTavernDialogueScreen } = await import("../ui/screens/TavernDialogueScreen");
+  renderTavernDialogueScreen("base_camp_tavern", "Tavern", "field");
+}
+
+async function renderFieldGearWorkbenchScreen(): Promise<void> {
+  const { renderGearWorkbenchScreen } = await import("../ui/screens/GearWorkbenchScreen");
+  renderGearWorkbenchScreen(undefined, undefined, "field");
+}
+
+async function renderFieldPortScreen(): Promise<void> {
+  const { renderPortScreen } = await import("../ui/screens/PortScreen");
+  renderPortScreen("field");
+}
+
+async function renderFieldDispatchScreen(): Promise<void> {
+  const { renderDispatchScreen } = await import("../ui/screens/DispatchScreen");
+  renderDispatchScreen("field");
+}
+
+async function renderFieldQuartersScreen(action?: string): Promise<void> {
+  const { renderQuartersScreen } = await import("../ui/screens/QuartersScreen");
+  renderQuartersScreen("field", action as any);
+}
+
+async function renderFieldBlackMarketScreen(): Promise<void> {
+  const { renderBlackMarketScreen } = await import("../ui/screens/BlackMarketScreen");
+  renderBlackMarketScreen("field");
+}
+
+async function renderFieldStableScreen(): Promise<void> {
+  const { renderStableScreen } = await import("../ui/screens/StableScreen");
+  renderStableScreen("field");
+}
+
+async function renderFieldSchemaScreen(): Promise<void> {
+  const { renderSchemaScreen } = await import("../ui/screens/SchemaScreen");
+  renderSchemaScreen("field");
+}
+
+async function renderFieldFoundryAnnexScreen(): Promise<void> {
+  const { renderFoundryAnnexScreen } = await import("../ui/screens/FoundryAnnexScreen");
+  renderFoundryAnnexScreen("field");
+}
+
+async function showFieldDialogue(
+  title: string,
+  lines: string[],
+  onResume: () => void,
+  dialogueId?: string,
+): Promise<void> {
+  const { showDialogue } = await import("../ui/screens/DialogueScreen");
+  showDialogue(title, lines, onResume, dialogueId);
+}
+
+async function showImportedFieldDialogue(
+  dialogueId: string,
+  onResume: () => void,
+  label: string,
+): Promise<boolean> {
+  const { showImportedDialogue } = await import("../ui/screens/DialogueScreen");
+  return showImportedDialogue(dialogueId, onResume, label);
+}
+
 export async function handleInteraction(
   zone: InteractionZone,
   map: FieldMap,
@@ -146,20 +219,27 @@ export async function handleInteraction(
     beforeScreenOpen?.();
     renderScreen();
   };
+  const openScreenAsync = (renderScreen: () => Promise<void>): void => {
+    beforeScreenOpen?.();
+    void renderScreen().catch((error) => {
+      console.error("[FIELD] Failed to open field interaction screen:", error);
+      onResume();
+    });
+  };
 
   switch (zone.action) {
     case "shop":
-      openScreen(() => renderShopScreen("field"));
+      openScreenAsync(renderFieldShopScreen);
       break;
 
 
 
     case "roster":
-      openScreen(() => renderRosterScreen("field"));
+      openScreenAsync(renderFieldRosterScreen);
       break;
 
     case "loadout":
-      openScreen(() => renderInventoryScreen("field"));
+      openScreenAsync(renderFieldLoadoutScreen);
       break;
 
     case "ops_terminal":
@@ -169,7 +249,7 @@ export async function handleInteraction(
           if (handledByCoop) {
             return;
           }
-          openScreen(() => renderOperationSelectScreen("field"));
+          openScreenAsync(renderFieldOperationSelectScreen);
         } catch (error) {
           console.error("[FIELD] Ops Terminal failed to open:", error);
           await showFieldInteractionAlert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
@@ -181,7 +261,7 @@ export async function handleInteraction(
     case "quest_board":
       console.log("[FIELD] Quest Board interaction triggered");
       try {
-        openScreen(() => renderQuestBoardScreen("field"));
+        openScreenAsync(renderFieldQuestBoardScreen);
       } catch (error) {
         console.error("[FIELD] Error rendering quest board:", error);
         onResume();
@@ -190,11 +270,11 @@ export async function handleInteraction(
 
     case "tavern":
       // Go directly to recruitment screen (no intro dialogue)
-      openScreen(() => renderTavernDialogueScreen("base_camp_tavern", "Tavern", "field"));
+      openScreenAsync(renderFieldTavernScreen);
       break;
 
     case "gear_workbench":
-      openScreen(() => renderGearWorkbenchScreen(undefined, undefined, "field"));
+      openScreenAsync(renderFieldGearWorkbenchScreen);
       break;
 
     case "port":
@@ -203,7 +283,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderPortScreen("field"));
+      openScreenAsync(renderFieldPortScreen);
       break;
 
     case "dispatch":
@@ -212,7 +292,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderDispatchScreen("field"));
+      openScreenAsync(renderFieldDispatchScreen);
       break;
 
     case "quarters":
@@ -228,7 +308,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderBlackMarketScreen("field"));
+      openScreenAsync(renderFieldBlackMarketScreen);
       break;
 
     case "stable":
@@ -237,7 +317,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderStableScreen("field"));
+      openScreenAsync(renderFieldStableScreen);
       break;
 
     case "schema":
@@ -246,7 +326,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderSchemaScreen("field"));
+      openScreenAsync(renderFieldSchemaScreen);
       break;
 
     case "foundry-annex":
@@ -255,7 +335,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderFoundryAnnexScreen("field"));
+      openScreenAsync(renderFieldFoundryAnnexScreen);
       break;
 
     case "comms-array":
@@ -325,20 +405,20 @@ export async function handleInteraction(
       if (zone.metadata?.dialogueId) {
         const resumeAfterDialogue = () => {
           if (zone.metadata?.handlerId === "open_board") {
-            openScreen(() => renderQuestBoardScreen("field"));
+            openScreenAsync(renderFieldQuestBoardScreen);
             return;
           }
           onResume();
         };
 
-        const opened = showImportedDialogue(String(zone.metadata.dialogueId), resumeAfterDialogue, zone.label);
+        const opened = await showImportedFieldDialogue(String(zone.metadata.dialogueId), resumeAfterDialogue, zone.label);
         if (opened) {
           break;
         }
       }
 
       if (zone.metadata?.handlerId === "open_board") {
-        openScreen(() => renderQuestBoardScreen("field"));
+        openScreenAsync(renderFieldQuestBoardScreen);
         break;
       }
 
@@ -564,7 +644,7 @@ export async function handleInteraction(
 
         const encounter = getOuterDeckNpcEncounterDefinition(encounterId as any);
         updateGameState((prev) => markOuterDeckNpcEncounterSeen(prev, encounter.id));
-        showDialogue(encounter.name, encounter.lines, onResume, encounter.id);
+        await showFieldDialogue(encounter.name, encounter.lines, onResume, encounter.id);
         break;
       }
 
@@ -632,7 +712,7 @@ export async function handleInteraction(
           case "footlocker":
           case "sable":
             // Open quarters screen with specific panel
-            renderQuartersScreen("field", quartersAction as any);
+            openScreenAsync(() => renderFieldQuartersScreen(String(quartersAction)));
             break;
           default:
             onResume();

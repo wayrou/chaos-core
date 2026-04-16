@@ -86,9 +86,12 @@ import {
   type FeedbackPosition,
   type FeedbackRequest,
 } from "../../core/feedback";
-import { BattleSceneController } from "../battle3d/BattleSceneController";
-import { createBattleBoardSnapshot } from "../battle3d/snapshot";
-import type { BattleBoardPick, BattleBoardPoint } from "../battle3d/types";
+import type { BattleSceneController } from "../battle3d/BattleSceneController";
+import type {
+  BattleBoardPick,
+  BattleBoardPoint,
+  BattleSceneInteractionHandlers,
+} from "../battle3d/types";
 // Mount system imports
 import { isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
@@ -151,6 +154,10 @@ let cleanupBattleFeedbackListener: (() => void) | null = null;
 let battleHitStopUntilMs = 0;
 let battleHitStopTimerId: number | null = null;
 let battleSceneController: BattleSceneController | null = null;
+let battle3dModulesPromise: Promise<Battle3dModules> | null = null;
+let pendingBattleSceneInteractionHandlers: BattleSceneInteractionHandlers = {};
+let pendingBattleSceneViewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
+let battleBoardSyncRequestId = 0;
 const BATTLE_VIEW_SLOT_COUNT = 2;
 const DEFAULT_BATTLE_VIEW_PRESETS: BattleCameraViewPreset[] = [
   {
@@ -180,6 +187,63 @@ let battleViewPersistTimerId: number | null = null;
 let battleLastAppliedViewSignature: string | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
+type Battle3dModules = {
+  BattleSceneController: typeof import("../battle3d/BattleSceneController").BattleSceneController;
+  createBattleBoardSnapshot: typeof import("../battle3d/snapshot").createBattleBoardSnapshot;
+};
+
+type BattleSceneTools = {
+  scene: BattleSceneController;
+  createBattleBoardSnapshot: Battle3dModules["createBattleBoardSnapshot"];
+};
+
+function reportBattle3dLoadError(error: unknown): void {
+  console.error("[BATTLE] Failed to load the 3D battle scene.", error);
+}
+
+function loadBattle3dModules(): Promise<Battle3dModules> {
+  if (!battle3dModulesPromise) {
+    battle3dModulesPromise = Promise.all([
+      import("../battle3d/BattleSceneController"),
+      import("../battle3d/snapshot"),
+    ]).then(([controllerModule, snapshotModule]) => ({
+      BattleSceneController: controllerModule.BattleSceneController,
+      createBattleBoardSnapshot: snapshotModule.createBattleBoardSnapshot,
+    })).catch((error) => {
+      battle3dModulesPromise = null;
+      throw error;
+    });
+  }
+  return battle3dModulesPromise;
+}
+
+function preloadBattle3dModules(): void {
+  void loadBattle3dModules().catch(reportBattle3dLoadError);
+}
+
+async function getBattleSceneTools(): Promise<BattleSceneTools> {
+  const modules = await loadBattle3dModules();
+  if (!battleSceneController) {
+    battleSceneController = new modules.BattleSceneController();
+    battleSceneController.setInteractionHandlers(pendingBattleSceneInteractionHandlers);
+    battleSceneController.setViewChangeHandler(pendingBattleSceneViewChangeHandler);
+    battleSceneController.setZoomFactor(battleZoom);
+  }
+  return {
+    scene: battleSceneController,
+    createBattleBoardSnapshot: modules.createBattleBoardSnapshot,
+  };
+}
+
+function setBattleSceneInteractionHandlers(handlers: BattleSceneInteractionHandlers): void {
+  pendingBattleSceneInteractionHandlers = handlers;
+  battleSceneController?.setInteractionHandlers(handlers);
+}
+
+function setBattleSceneViewChangeHandler(handler: ((view: BattleCameraViewPreset) => void) | null): void {
+  pendingBattleSceneViewChangeHandler = handler;
+  battleSceneController?.setViewChangeHandler(handler);
+}
 
 function clampBattleViewIndex(index: number): number {
   return Math.max(0, Math.min(BATTLE_VIEW_SLOT_COUNT - 1, index));
@@ -1576,13 +1640,6 @@ function getBattleBoardHost(): HTMLElement | null {
   return document.getElementById("battleBoard3dHost") as HTMLElement | null;
 }
 
-function getBattleSceneControllerInstance(): BattleSceneController {
-  if (!battleSceneController) {
-    battleSceneController = new BattleSceneController();
-  }
-  return battleSceneController;
-}
-
 function getOriginalBattleUnitElement(unitId: string): HTMLElement | null {
   void unitId;
   return null;
@@ -2399,8 +2456,11 @@ function resetBattleUiSessionState(): void {
   resetTurnStateForUnit(null);
   resetBattlePan();
   uiPanelsMinimized = false;
-  battleSceneController?.setViewChangeHandler(null);
+  battleBoardSyncRequestId += 1;
+  pendingBattleSceneInteractionHandlers = {};
+  setBattleSceneViewChangeHandler(null);
   resetBattleViewPresetSessionState();
+  currentBattleBoardRenderState = null;
   battleSceneController?.dispose();
   battleSceneController = null;
 }
@@ -5581,6 +5641,7 @@ export function renderBattleScreen() {
 
   if (localBattleState) {
     syncBattleAudioState(localBattleState);
+    preloadBattle3dModules();
   }
 
   const battle = localBattleState as BattleState;
@@ -7491,32 +7552,39 @@ function syncBattleBoardScene(
     isPlacementPhase,
   );
   currentBattleBoardRenderState = renderState;
-
-  const scene = getBattleSceneControllerInstance();
-  scene.mount(host);
-  scene.setViewChangeHandler((view) => {
+  const syncRequestId = ++battleBoardSyncRequestId;
+  setBattleSceneViewChangeHandler((view) => {
     captureActiveBattleViewPreset(view);
   });
-  scene.sync(createBattleBoardSnapshot(battle, {
-    moveTiles: renderState.moveTiles,
-    attackTiles: renderState.attackTiles,
-    placementTiles: renderState.placementTiles,
-    facingTiles: renderState.facingTiles,
-    hoveredTile,
-    hiddenUnitIds: renderState.hiddenUnitIds,
-    echoFieldPlacements: renderState.echoPlacements,
-    selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
-    focusTile: renderState.focusTile,
-  }));
 
-  const activeViewIndex = getActiveBattleViewIndex();
-  const activeViewSignature = `${battle.id}:${activeViewIndex}`;
-  if (battleLastAppliedViewSignature !== activeViewSignature) {
-    const activeViewPreset = getActiveBattleViewPreset();
-    battleZoom = activeViewPreset.zoomFactor;
-    scene.applyViewState(activeViewPreset, false);
-    battleLastAppliedViewSignature = activeViewSignature;
-  }
+  void getBattleSceneTools().then(({ scene, createBattleBoardSnapshot }) => {
+    const activeHost = getBattleBoardHost();
+    if (!activeHost || syncRequestId !== battleBoardSyncRequestId) {
+      return;
+    }
+
+    scene.mount(activeHost);
+    scene.sync(createBattleBoardSnapshot(battle, {
+      moveTiles: renderState.moveTiles,
+      attackTiles: renderState.attackTiles,
+      placementTiles: renderState.placementTiles,
+      facingTiles: renderState.facingTiles,
+      hoveredTile,
+      hiddenUnitIds: renderState.hiddenUnitIds,
+      echoFieldPlacements: renderState.echoPlacements,
+      selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
+      focusTile: renderState.focusTile,
+    }));
+
+    const activeViewIndex = getActiveBattleViewIndex();
+    const activeViewSignature = `${battle.id}:${activeViewIndex}`;
+    if (battleLastAppliedViewSignature !== activeViewSignature) {
+      const activeViewPreset = getActiveBattleViewPreset();
+      battleZoom = activeViewPreset.zoomFactor;
+      scene.applyViewState(activeViewPreset, false);
+      battleLastAppliedViewSignature = activeViewSignature;
+    }
+  }).catch(reportBattle3dLoadError);
 }
 
 function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
@@ -8067,7 +8135,7 @@ function attachBattleListeners() {
       placementPanel.addEventListener("click", placementPanelHandler);
     }
 
-    getBattleSceneControllerInstance().setInteractionHandlers({
+    setBattleSceneInteractionHandlers({
       onPrimaryPick: (pick) => handleBattleBoardPlacementPick(pick, battle, isClientNetworkPlacement),
       onHoverTile: (tile) => updateHoveredBattleTile(tile),
     });
@@ -8076,7 +8144,7 @@ function attachBattleListeners() {
     return;
   }
 
-  getBattleSceneControllerInstance().setInteractionHandlers({
+  setBattleSceneInteractionHandlers({
     onPrimaryPick: (pick) => handleBattleBoardActionPick(pick, battle, activeUnit, isPlayerTurn),
     onHoverTile: (tile) => updateHoveredBattleTile(tile),
   });
