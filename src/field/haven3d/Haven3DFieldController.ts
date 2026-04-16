@@ -25,6 +25,7 @@ import {
   type Haven3DTargetKind,
   type Haven3DTargetRef,
 } from "./targeting";
+import { getHaven3DEnemyDefense, isHaven3DEnemyDefenseBroken } from "./combatRules";
 
 type FieldAvatarView = {
   x: number;
@@ -40,6 +41,8 @@ type Actor = {
   bladeTrail?: THREE.Object3D;
   weaponForms?: Partial<Record<Haven3DGearbladeMode, THREE.Object3D>>;
   telegraph?: THREE.Object3D;
+  defenseShield?: THREE.Object3D;
+  defenseArmor?: THREE.Object3D;
   hitMaterials?: ReactiveMaterial[];
 };
 
@@ -184,6 +187,8 @@ const GRAPPLE_KNOCKBACK = 520;
 const ENEMY_HIT_REACTION_MS = 320;
 const ENEMY_TELEGRAPH_RANGE_PX = 118;
 const ENEMY_DANGER_RANGE_PX = 58;
+const ENEMY_ATTACK_WINDUP_MS = 760;
+const ENEMY_ATTACK_RECOVERY_MS = 680;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -922,13 +927,57 @@ export class Haven3DFieldController implements Haven3DModeController {
     telegraph.position.set(0, 0.075, 0.88);
     telegraph.visible = false;
     telegraph.renderOrder = 4;
-    group.add(body, crest, label, targetRing, telegraph);
+    const defenseShield = new THREE.Group();
+    const shieldRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.52, 0.045, 10, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x66dbc9,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+      }),
+    );
+    shieldRing.rotation.x = Math.PI / 2;
+    shieldRing.position.y = 0.95;
+    const shieldBand = new THREE.Mesh(
+      new THREE.TorusGeometry(0.46, 0.025, 8, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0xa7fff1,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      }),
+    );
+    shieldBand.position.y = 0.95;
+    defenseShield.add(shieldRing, shieldBand);
+    defenseShield.visible = false;
+
+    const defenseArmor = new THREE.Group();
+    const armorMaterial = new THREE.MeshStandardMaterial({
+      color: 0xd49b45,
+      roughness: 0.4,
+      metalness: 0.72,
+      emissive: 0x3c2206,
+      emissiveIntensity: 0.28,
+    });
+    const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.42, 0.08), armorMaterial);
+    chestPlate.position.set(0, 0.98, -0.3);
+    chestPlate.castShadow = true;
+    const shoulderPlate = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.12, 0.16), armorMaterial);
+    shoulderPlate.position.set(0, 1.28, 0);
+    shoulderPlate.castShadow = true;
+    defenseArmor.add(chestPlate, shoulderPlate);
+    defenseArmor.visible = false;
+
+    group.add(body, crest, label, targetRing, telegraph, defenseShield, defenseArmor);
     this.dynamicGroup.add(group);
     return {
       group,
       label,
       targetRing,
       telegraph,
+      defenseShield,
+      defenseArmor,
       hitMaterials: [
         { material: hide, baseEmissive: 0x000000, baseIntensity: 0 },
         { material: core, baseEmissive: 0x3d1208, baseIntensity: 0.35 },
@@ -1778,9 +1827,22 @@ export class Haven3DFieldController implements Haven3DModeController {
       actor.group.position.set(world.x, world.y, world.z);
       actor.group.rotation.y = this.getRotationForFacing(enemy.facing);
       this.updateEnemyHitReaction(actor, enemy.id, widthScale, heightScale);
+      this.updateEnemyDefenseVisuals(actor, enemy);
       this.updateEnemyTelegraph(actor, enemy);
       this.updateActorTargetRing(actor, "enemy", enemy.id);
     });
+  }
+
+  private updateEnemyDefenseVisuals(actor: Actor, enemy: FieldEnemy): void {
+    const defense = getHaven3DEnemyDefense(enemy);
+    const broken = isHaven3DEnemyDefenseBroken(enemy);
+    if (actor.defenseShield) {
+      actor.defenseShield.visible = defense === "shield" && !broken;
+      actor.defenseShield.rotation.y += 0.012;
+    }
+    if (actor.defenseArmor) {
+      actor.defenseArmor.visible = defense === "armor" && !broken;
+    }
   }
 
   private updateEnemyHitReaction(actor: Actor, enemyId: string, widthScale: number, heightScale: number): void {
@@ -1821,20 +1883,32 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    const currentTime = this.currentFrameTime || performance.now();
+    const isWindup = enemy.attackState === "windup";
+    const isRecovery = enemy.attackState === "recovery";
     const distance = Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y);
     const isLocked = this.targetLock?.kind === "enemy" && this.targetLock.id === enemy.id;
-    const shouldShow = distance <= ENEMY_TELEGRAPH_RANGE_PX || (isLocked && distance <= ENEMY_TELEGRAPH_RANGE_PX * 1.7);
+    const shouldShow = isWindup || isRecovery || distance <= ENEMY_TELEGRAPH_RANGE_PX || (isLocked && distance <= ENEMY_TELEGRAPH_RANGE_PX * 1.7);
     actor.telegraph.visible = shouldShow;
     if (!shouldShow) {
       return;
     }
 
-    const danger = 1 - THREE.MathUtils.clamp((distance - ENEMY_DANGER_RANGE_PX) / (ENEMY_TELEGRAPH_RANGE_PX - ENEMY_DANGER_RANGE_PX), 0, 1);
-    const pulse = (Math.sin((this.currentFrameTime || performance.now()) * 0.015) + 1) * 0.5;
-    actor.telegraph.scale.set(0.8 + danger * 0.42 + pulse * 0.06, 1, 0.88 + danger * 0.52);
+    const danger = isWindup
+      ? THREE.MathUtils.clamp((currentTime - Number(enemy.attackStartedAt ?? currentTime)) / ENEMY_ATTACK_WINDUP_MS, 0, 1)
+      : isRecovery
+        ? 1 - THREE.MathUtils.clamp((currentTime - Number(enemy.attackStartedAt ?? currentTime)) / ENEMY_ATTACK_RECOVERY_MS, 0, 1)
+        : 1 - THREE.MathUtils.clamp((distance - ENEMY_DANGER_RANGE_PX) / (ENEMY_TELEGRAPH_RANGE_PX - ENEMY_DANGER_RANGE_PX), 0, 1);
+    const pulse = (Math.sin(currentTime * 0.015) + 1) * 0.5;
+    const attackLength = isWindup || isRecovery ? 1.38 + danger * 0.72 : 0.88 + danger * 0.52;
+    actor.telegraph.position.z = isWindup || isRecovery ? 0.98 : 0.88;
+    actor.telegraph.scale.set(0.8 + danger * 0.42 + pulse * 0.06, 1, attackLength);
     actor.telegraph.traverse((node) => {
       if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
-        node.material.opacity = 0.08 + danger * 0.28 + pulse * 0.06;
+        node.material.opacity = isRecovery
+          ? Math.max(0.05, danger * 0.18)
+          : 0.08 + danger * 0.38 + pulse * 0.08;
+        node.material.color.setHex(isWindup ? 0xff3d2e : 0xff7a3e);
       }
     });
   }

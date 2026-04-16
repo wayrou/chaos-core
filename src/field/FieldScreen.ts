@@ -12,6 +12,10 @@ import {
   getOverlappingInteractionZone,
 } from "./player";
 import { Haven3DFieldController } from "./haven3d/Haven3DFieldController";
+import {
+  resolveHaven3DGearbladeDamage,
+  type Haven3DEnemyDefense,
+} from "./haven3d/combatRules";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { showAlertDialog } from "../ui/components/confirmDialog";
@@ -653,6 +657,14 @@ const FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS = 320;
 const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
 const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
+const HAVEN3D_ENEMY_ATTACK_TRIGGER_RANGE = 92;
+const HAVEN3D_ENEMY_ATTACK_REACH = 116;
+const HAVEN3D_ENEMY_ATTACK_HALF_WIDTH = 34;
+const HAVEN3D_ENEMY_ATTACK_WINDUP_MS = 760;
+const HAVEN3D_ENEMY_ATTACK_RECOVERY_MS = 680;
+const HAVEN3D_ENEMY_ATTACK_COOLDOWN_MS = 1280;
+const HAVEN3D_ENEMY_ATTACK_DAMAGE = 14;
+const HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE = 520;
 const FIELD_COMPANION_ATTACK_RANGE = 56;
 const FIELD_CAMERA_SMOOTHING = 0.2;
 const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
@@ -2325,6 +2337,10 @@ export function storeInteractionZonePosition(zoneId: string, x: number, y: numbe
 function stopHaven3DFieldRuntime(): void {
   haven3DFieldController?.dispose();
   haven3DFieldController = null;
+}
+
+function isHaven3DFieldRuntimeActive(): boolean {
+  return currentMap?.id === "base_camp" && Boolean(haven3DFieldController);
 }
 
 function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void {
@@ -5655,6 +5671,52 @@ function getFieldFacingUnitVector(facing: "north" | "south" | "east" | "west"): 
   }
 }
 
+function getFieldFacingFromDelta(
+  dx: number,
+  dy: number,
+  fallback: "north" | "south" | "east" | "west",
+): "north" | "south" | "east" | "west" {
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+    return fallback;
+  }
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? "east" : "west";
+  }
+  return dy >= 0 ? "south" : "north";
+}
+
+function showHaven3DDefensePing(enemy: FieldEnemy, defense: Haven3DEnemyDefense, requiredMode: string | null): void {
+  if (defense === "none" || !requiredMode) {
+    return;
+  }
+
+  showSystemPing({
+    type: "info",
+    title: defense === "shield" ? "SHIELD HELD" : "ARMOR HELD",
+    message: enemy.name,
+    detail: `${requiredMode.toUpperCase()} mode can break this defense.`,
+    durationMs: 1400,
+    channel: `haven3d-defense-${enemy.id}`,
+    replaceChannel: true,
+  });
+}
+
+function showHaven3DDefenseBreakPing(enemy: FieldEnemy, defense: Haven3DEnemyDefense): void {
+  if (defense === "none") {
+    return;
+  }
+
+  showSystemPing({
+    type: "success",
+    title: defense === "shield" ? "SHIELD RIPPED" : "ARMOR CRACKED",
+    message: enemy.name,
+    detail: "The target is now vulnerable to the full Gearblade kit.",
+    durationMs: 1800,
+    channel: `haven3d-defense-break-${enemy.id}`,
+    replaceChannel: true,
+  });
+}
+
 function handleHaven3DBladeStrike(strike: {
   playerId: PlayerId;
   x: number;
@@ -5673,7 +5735,7 @@ function handleHaven3DBladeStrike(strike: {
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   const forward = getFieldFacingUnitVector(strike.facing);
   const halfArcCos = Math.cos(strike.arcRadians / 2);
-  const damage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
+  const baseDamage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
   const knockback = strike.knockback + bowbladeFieldProfile.meleeKnockbackBonus;
   const energyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
   let didHit = false;
@@ -5696,6 +5758,14 @@ function handleHaven3DBladeStrike(strike: {
       continue;
     }
 
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "blade");
+    if (defenseResult.blocked) {
+      didHit = true;
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      continue;
+    }
+
+    const damage = baseDamage * defenseResult.damageMultiplier;
     didHit = true;
     enemy.hp -= damage;
     fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
@@ -5725,7 +5795,7 @@ function handleHaven3DLauncherImpact(impact: {
   }
 
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
-  const damage = impact.damage + bowbladeFieldProfile.rangedDamageBonus;
+  const baseDamage = impact.damage + bowbladeFieldProfile.rangedDamageBonus;
   const knockback = impact.knockback;
   let didHit = false;
 
@@ -5745,6 +5815,18 @@ function handleHaven3DLauncherImpact(impact: {
       continue;
     }
 
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "launcher");
+    if (defenseResult.blocked) {
+      didHit = true;
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      break;
+    }
+    if (defenseResult.breaksDefense) {
+      enemy.gearbladeDefenseBroken = true;
+      showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+    }
+
+    const damage = baseDamage * defenseResult.damageMultiplier;
     didHit = true;
     enemy.hp -= damage;
     enemy.vx = (dx / distance) * knockback;
@@ -5778,10 +5860,21 @@ function handleHaven3DGrappleImpact(impact: {
     return false;
   }
 
+  const defenseResult = resolveHaven3DGearbladeDamage(enemy, "grapple");
+  if (defenseResult.blocked) {
+    showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+    playPlaceholderSfx("ui-move");
+    return true;
+  }
+  if (defenseResult.breaksDefense) {
+    enemy.gearbladeDefenseBroken = true;
+    showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+  }
+
   const dx = enemy.x - impact.x;
   const dy = enemy.y - impact.y;
   const distance = Math.max(0.001, Math.hypot(dx, dy));
-  enemy.hp -= impact.damage;
+  enemy.hp -= impact.damage * defenseResult.damageMultiplier;
   enemy.vx = (dx / distance) * impact.knockback;
   enemy.vy = (dy / distance) * impact.knockback;
   enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION * 1.35;
@@ -5988,6 +6081,113 @@ function updateFieldProjectiles(deltaTime: number): void {
   }
 }
 
+function clearHaven3DEnemyAttack(enemy: FieldEnemy): void {
+  delete enemy.attackState;
+  delete enemy.attackStartedAt;
+  delete enemy.attackDidStrike;
+  delete enemy.attackOriginX;
+  delete enemy.attackOriginY;
+  delete enemy.attackTargetX;
+  delete enemy.attackTargetY;
+  delete enemy.attackDirectionX;
+  delete enemy.attackDirectionY;
+}
+
+function startHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): void {
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  enemy.attackState = "windup";
+  enemy.attackStartedAt = currentTime;
+  enemy.attackDidStrike = false;
+  enemy.attackOriginX = enemy.x;
+  enemy.attackOriginY = enemy.y;
+  enemy.attackTargetX = player.x;
+  enemy.attackTargetY = player.y;
+  enemy.attackDirectionX = dx / distance;
+  enemy.attackDirectionY = dy / distance;
+  enemy.facing = getFieldFacingFromDelta(dx, dy, enemy.facing);
+}
+
+function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
+  if (!fieldState) {
+    return;
+  }
+
+  enemy.lastAttackAt = currentTime;
+  const player = fieldState.player;
+  if ((player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  const originX = enemy.attackOriginX ?? enemy.x;
+  const originY = enemy.attackOriginY ?? enemy.y;
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const dx = player.x - originX;
+  const dy = player.y - originY;
+  const forwardDistance = (dx * directionX) + (dy * directionY);
+  const lateralDistance = Math.abs((dx * directionY) - (dy * directionX));
+  const wasHit = forwardDistance >= 0
+    && forwardDistance <= HAVEN3D_ENEMY_ATTACK_REACH + (player.height / 2)
+    && lateralDistance <= HAVEN3D_ENEMY_ATTACK_HALF_WIDTH + (player.width / 2);
+
+  if (!wasHit) {
+    return;
+  }
+
+  fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - HAVEN3D_ENEMY_ATTACK_DAMAGE);
+  fieldState.player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
+  const knockbackDistance = Math.max(0.001, Math.hypot(dx, dy));
+  fieldState.player.vx = (dx / knockbackDistance) * HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE;
+  fieldState.player.vy = (dy / knockbackDistance) * HAVEN3D_ENEMY_ATTACK_KNOCKBACK_FORCE;
+
+  showSystemPing({
+    type: "error",
+    title: "HOSTILE STRIKE",
+    message: `${enemy.name} committed through the warning zone.`,
+    detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
+    durationMs: 1800,
+    channel: "field-player-damage",
+    replaceChannel: true,
+  });
+}
+
+function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): boolean {
+  if (enemy.attackState === "windup") {
+    const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
+    if (!enemy.attackDidStrike && elapsed >= HAVEN3D_ENEMY_ATTACK_WINDUP_MS) {
+      enemy.attackDidStrike = true;
+      applyHaven3DEnemyStrike(enemy, currentTime);
+      enemy.attackState = "recovery";
+      enemy.attackStartedAt = currentTime;
+    }
+    return true;
+  }
+
+  if (enemy.attackState === "recovery") {
+    const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
+    if (elapsed >= HAVEN3D_ENEMY_ATTACK_RECOVERY_MS) {
+      clearHaven3DEnemyAttack(enemy);
+    }
+    return true;
+  }
+
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const distance = Math.hypot(dx, dy);
+  const timeSinceLastAttack = currentTime - Number(enemy.lastAttackAt ?? Number.NEGATIVE_INFINITY);
+  if (
+    distance <= HAVEN3D_ENEMY_ATTACK_TRIGGER_RANGE
+    && timeSinceLastAttack >= HAVEN3D_ENEMY_ATTACK_COOLDOWN_MS
+  ) {
+    startHaven3DEnemyAttack(enemy, player, currentTime);
+    return true;
+  }
+
+  return false;
+}
+
 function updateFieldEnemies(deltaTime: number, currentTime: number): void {
   if (!fieldState?.fieldEnemies || !currentMap) {
     return;
@@ -6008,6 +6208,7 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     return;
   }
 
+  const useHaven3DAttacks = isHaven3DFieldRuntimeActive();
   for (const enemy of fieldState.fieldEnemies) {
     if (enemy.hp <= 0) {
       continue;
@@ -6040,6 +6241,13 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     }
 
     if (enemy.knockbackTime > 0) {
+      if (useHaven3DAttacks) {
+        clearHaven3DEnemyAttack(enemy);
+      }
+      continue;
+    }
+
+    if (useHaven3DAttacks && updateHaven3DEnemyAttack(enemy, player, currentTime)) {
       continue;
     }
 
@@ -6125,6 +6333,10 @@ function updateFieldPlayerPressure(deltaTime: number): void {
   }
 
   if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  if (isHaven3DFieldRuntimeActive()) {
     return;
   }
 

@@ -250,6 +250,10 @@ function buildImportedEnemyDrops(definition: ImportedFieldEnemyDefinition): Fiel
   };
 }
 
+function coerceGearbladeDefense(value: unknown, fallback: FieldEnemy["gearbladeDefense"] = "none"): FieldEnemy["gearbladeDefense"] {
+  return value === "shield" || value === "armor" || value === "none" ? value : fallback;
+}
+
 function buildObjectEnemyDrops(object: FieldObject): FieldEnemy["drops"] | undefined {
   const rawDrops = object.metadata?.drops as Record<string, unknown> | undefined;
   if (!rawDrops) {
@@ -325,6 +329,8 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(object.metadata?.aggroRange, existing?.aggroRange ?? DEFAULT_AGGRO_RANGE),
+        gearbladeDefense: coerceGearbladeDefense(object.metadata?.gearbladeDefense, existing?.gearbladeDefense),
+        gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
         sourceObjectId: object.id,
         kind: typeof object.metadata?.enemyKind === "string" ? object.metadata.enemyKind : "light",
         spriteKey:
@@ -394,6 +400,8 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(definition.stats.aggroRange, DEFAULT_AGGRO_RANGE),
+        gearbladeDefense: existing?.gearbladeDefense,
+        gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
         sourceDefinitionId: definition.id,
         spawnKey,
         kind: definition.kind?.trim() || "light",

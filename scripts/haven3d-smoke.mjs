@@ -285,6 +285,270 @@ async function runSmoke() {
     `Grapple mode did not pull and stagger the smoke enemy: ${JSON.stringify({ grappleStartDistance, grappleEndDistance, grappleAfter })}`,
   );
 
+  const attackSetup = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const maps = await import("/src/field/maps.ts");
+    const coords = await import("/src/field/haven3d/coordinates.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = maps.getFieldMap("base_camp");
+    if (!runtime) {
+      return null;
+    }
+
+    const offsets = [
+      { enemy: { x: 76, y: 0 }, dodge: { x: 0, y: 176 } },
+      { enemy: { x: -76, y: 0 }, dodge: { x: 0, y: 176 } },
+      { enemy: { x: 0, y: 76 }, dodge: { x: 176, y: 0 } },
+      { enemy: { x: 0, y: -76 }, dodge: { x: 176, y: 0 } },
+    ];
+    let placement = null;
+    for (let y = 1; y < map.height - 1 && !placement; y += 1) {
+      for (let x = 1; x < map.width - 1 && !placement; x += 1) {
+        const player = { x: x * 64 + 32, y: y * 64 + 32 };
+        if (!coords.canAvatarMoveTo(map, player.x, player.y, 32, 32)) {
+          continue;
+        }
+        for (const offset of offsets) {
+          const enemy = { x: player.x + offset.enemy.x, y: player.y + offset.enemy.y };
+          const dodge = { x: player.x + offset.dodge.x, y: player.y + offset.dodge.y };
+          if (
+            coords.canAvatarMoveTo(map, enemy.x, enemy.y, 36, 36)
+            && coords.canAvatarMoveTo(map, dodge.x, dodge.y, 32, 32)
+          ) {
+            placement = { player, enemy, dodge };
+            break;
+          }
+        }
+      }
+    }
+    if (!placement) {
+      throw new Error("Could not find a HAVEN attack smoke placement.");
+    }
+
+    runtime.player.x = placement.player.x;
+    runtime.player.y = placement.player.y;
+    runtime.player.hp = 100;
+    runtime.player.maxHp = 100;
+    runtime.player.invulnerabilityTime = 0;
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.companion = undefined;
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_striker",
+      name: "Smoke Striker",
+      x: placement.enemy.x,
+      y: placement.enemy.y,
+      width: 36,
+      height: 36,
+      hp: 60,
+      maxHp: 60,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 260,
+    }];
+    return placement;
+  });
+  assertSmoke(Boolean(attackSetup), "Attack smoke setup failed.");
+  await page.waitForFunction(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_striker");
+    return enemy?.attackState === "windup";
+  }, null, { timeout: 10000 });
+  await page.evaluate((dodge) => {
+    window.__haven3dSmokeDodge = dodge;
+  }, attackSetup.dodge);
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const dodge = window.__haven3dSmokeDodge;
+    if (runtime && dodge) {
+      runtime.player.x = dodge.x;
+      runtime.player.y = dodge.y;
+    }
+  });
+  await page.waitForTimeout(1100);
+  const dodgedAttackResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    return { hp: runtime?.player.hp ?? null };
+  });
+  assertSmoke(dodgedAttackResult.hp === 100, `Enemy windup was not avoidable: ${JSON.stringify(dodgedAttackResult)}`);
+
+  await page.evaluate((placement) => {
+    window.__haven3dSmokeAttackPlacement = placement;
+  }, attackSetup);
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const placement = window.__haven3dSmokeAttackPlacement;
+    if (!runtime || !placement) {
+      return;
+    }
+    runtime.player.x = placement.player.x;
+    runtime.player.y = placement.player.y;
+    runtime.player.hp = 100;
+    runtime.player.invulnerabilityTime = 0;
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_striker",
+      name: "Smoke Striker",
+      x: placement.enemy.x,
+      y: placement.enemy.y,
+      width: 36,
+      height: 36,
+      hp: 60,
+      maxHp: 60,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 260,
+    }];
+  });
+  await page.waitForFunction(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_striker");
+    return enemy?.attackState === "windup";
+  }, null, { timeout: 10000 });
+  await page.waitForTimeout(1100);
+  const committedAttackResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    return { hp: runtime?.player.hp ?? null };
+  });
+  assertSmoke(
+    typeof committedAttackResult.hp === "number" && committedAttackResult.hp < 100,
+    `Enemy timed strike did not apply damage: ${JSON.stringify(committedAttackResult)}`,
+  );
+
+  await page.evaluate((placement) => {
+    window.__haven3dSmokeVulnerabilityPlacement = placement;
+  }, attackSetup);
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const placement = window.__haven3dSmokeVulnerabilityPlacement;
+    if (!runtime || !placement) {
+      return;
+    }
+    runtime.player.x = placement.player.x;
+    runtime.player.y = placement.player.y;
+    runtime.player.hp = 100;
+    runtime.player.invulnerabilityTime = 0;
+    runtime.companion = undefined;
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_shield",
+      name: "Smoke Shield",
+      x: placement.player.x + 48,
+      y: placement.player.y,
+      width: 36,
+      height: 36,
+      hp: 30,
+      maxHp: 30,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+      gearbladeDefense: "shield",
+      gearbladeDefenseBroken: false,
+    }];
+  });
+  await page.keyboard.press("Digit1");
+  await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(600);
+  const shieldBladeResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_shield");
+    return { hp: enemy?.hp ?? null, broken: enemy?.gearbladeDefenseBroken ?? null };
+  });
+  assertSmoke(
+    typeof shieldBladeResult.hp === "number" && shieldBladeResult.hp >= 28 && shieldBladeResult.broken === false,
+    `Shielded enemy did not block Blade mode: ${JSON.stringify(shieldBladeResult)}`,
+  );
+  await page.keyboard.press("Digit3");
+  await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(900);
+  const shieldGrappleResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_shield");
+    return { hp: enemy?.hp ?? null, broken: enemy?.gearbladeDefenseBroken ?? null };
+  });
+  assertSmoke(
+    shieldGrappleResult.broken === true && typeof shieldGrappleResult.hp === "number" && shieldGrappleResult.hp < shieldBladeResult.hp,
+    `Grapple mode did not open the shielded enemy: ${JSON.stringify(shieldGrappleResult)}`,
+  );
+
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const placement = window.__haven3dSmokeVulnerabilityPlacement;
+    if (!runtime || !placement) {
+      return;
+    }
+    runtime.player.x = placement.player.x;
+    runtime.player.y = placement.player.y;
+    runtime.player.hp = 100;
+    runtime.player.invulnerabilityTime = 0;
+    runtime.companion = undefined;
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_armor",
+      name: "Smoke Armor",
+      x: placement.player.x + 116,
+      y: placement.player.y,
+      width: 36,
+      height: 36,
+      hp: 32,
+      maxHp: 32,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+      gearbladeDefense: "armor",
+      gearbladeDefenseBroken: false,
+    }];
+  });
+  await page.keyboard.press("Digit1");
+  await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(600);
+  const armorBladeResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_armor");
+    return { hp: enemy?.hp ?? null, broken: enemy?.gearbladeDefenseBroken ?? null };
+  });
+  assertSmoke(
+    typeof armorBladeResult.hp === "number" && armorBladeResult.hp >= 30 && armorBladeResult.broken === false,
+    `Armored enemy did not block Blade mode: ${JSON.stringify(armorBladeResult)}`,
+  );
+  await page.keyboard.press("Digit2");
+  await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(900);
+  const armorLauncherResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_armor");
+    return { hp: enemy?.hp ?? null, broken: enemy?.gearbladeDefenseBroken ?? null };
+  });
+  assertSmoke(
+    armorLauncherResult.broken === true && typeof armorLauncherResult.hp === "number" && armorLauncherResult.hp < armorBladeResult.hp,
+    `Launcher mode did not crack the armored enemy: ${JSON.stringify(armorLauncherResult)}`,
+  );
+
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
     const npcs = await import("/src/field/npcs.ts");

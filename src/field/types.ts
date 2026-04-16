@@ -98,6 +98,18 @@ export interface FieldEnemy {
   vy: number;
   knockbackTime: number;
   aggroRange: number;
+  gearbladeDefense?: "shield" | "armor" | "none";
+  gearbladeDefenseBroken?: boolean;
+  attackState?: "windup" | "recovery";
+  attackStartedAt?: number;
+  attackDidStrike?: boolean;
+  attackOriginX?: number;
+  attackOriginY?: number;
+  attackTargetX?: number;
+  attackTargetY?: number;
+  attackDirectionX?: number;
+  attackDirectionY?: number;
+  lastAttackAt?: number;
   sourceObjectId?: string;
   sourceDefinitionId?: string;
   spawnKey?: string;

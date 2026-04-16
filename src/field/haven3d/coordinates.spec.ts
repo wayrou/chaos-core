@@ -14,6 +14,10 @@ import {
 } from "./coordinates";
 import { HAVEN3D_GEARBLADE_MODES, createHaven3DModeController } from "./modes";
 import {
+  getHaven3DEnemyDefense,
+  resolveHaven3DGearbladeDamage,
+} from "./combatRules";
+import {
   createHaven3DTargetCandidates,
   selectNextHaven3DTarget,
 } from "./targeting";
@@ -228,5 +232,38 @@ describe("HAVEN 3D field adapter", () => {
     expect(first?.key).toBe("npc:npc_one");
     expect(second?.key).toBe("enemy:enemy_one");
     expect(previous?.key).toBe("npc:npc_one");
+  });
+
+  it("requires Grapple to open shields and Launcher to crack armor", () => {
+    const shieldedEnemy = {
+      id: "shielded_enemy",
+      name: "Shielded Enemy",
+      kind: "shield",
+      gearbladeDefenseBroken: false,
+    };
+    const armoredEnemy = {
+      id: "armored_enemy",
+      name: "Armored Enemy",
+      kind: "armor",
+      gearbladeDefenseBroken: false,
+    };
+
+    expect(getHaven3DEnemyDefense(shieldedEnemy)).toBe("shield");
+    expect(resolveHaven3DGearbladeDamage(shieldedEnemy, "blade")).toMatchObject({
+      blocked: true,
+      requiredBreaker: "grapple",
+    });
+    expect(resolveHaven3DGearbladeDamage(shieldedEnemy, "grapple")).toMatchObject({
+      blocked: false,
+      breaksDefense: true,
+    });
+    expect(resolveHaven3DGearbladeDamage(armoredEnemy, "grapple")).toMatchObject({
+      blocked: true,
+      requiredBreaker: "launcher",
+    });
+    expect(resolveHaven3DGearbladeDamage(armoredEnemy, "launcher")).toMatchObject({
+      blocked: false,
+      breaksDefense: true,
+    });
   });
 });
