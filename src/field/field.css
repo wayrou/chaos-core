@@ -126,6 +126,110 @@
   background: #23201e;
 }
 
+/* 3D HAVEN traversal */
+.field-root--haven3d {
+  background: #111513;
+}
+
+.haven3d-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(14, 17, 16, 0.18), rgba(6, 8, 8, 0.46)),
+    #111513;
+}
+
+.haven3d-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.haven3d-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  outline: none;
+}
+
+.haven3d-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  color: #f5ead2;
+  font-family: var(--font-terminal, 'JetBrains Mono', monospace);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.72);
+}
+
+.haven3d-field-tag {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: grid;
+  gap: 5px;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 1px solid rgba(230, 184, 109, 0.36);
+  border-radius: 8px;
+  background: rgba(18, 22, 20, 0.74);
+  box-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 238, 200, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.haven3d-field-tag__eyebrow {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #8ad8c6;
+  text-transform: uppercase;
+}
+
+.haven3d-field-tag__title {
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #f4ddb1;
+  text-transform: uppercase;
+}
+
+.haven3d-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 32px;
+  max-width: min(620px, calc(100vw - 40px));
+  min-height: 44px;
+  transform: translateX(-50%) translateY(8px);
+  padding: 12px 18px;
+  border: 1px solid rgba(230, 184, 109, 0.42);
+  border-radius: 8px;
+  background: rgba(16, 18, 16, 0.82);
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 238, 200, 0.08);
+  color: #fff2cf;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-align: center;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+  pointer-events: none;
+}
+
+.haven3d-prompt--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Tiles - Earthy Adventure Gothic */
 .field-tile-layer {
   position: absolute;

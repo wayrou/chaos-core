@@ -11,6 +11,7 @@ import {
   updatePlayerMovement,
   getOverlappingInteractionZone,
 } from "./player";
+import { Haven3DFieldController } from "./haven3d/Haven3DFieldController";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { showAlertDialog } from "../ui/components/confirmDialog";
@@ -210,6 +211,7 @@ function openOperationMapFromField(): void {
 let fieldState: FieldState | null = null;
 let currentMap: FieldMap | null = null;
 let animationFrameId: number | null = null;
+let haven3DFieldController: Haven3DFieldController | null = null;
 let lastFrameTime = 0;
 // Legacy movementInput kept for backward compatibility, but we'll use getPlayerInput instead
 let movementInput = {
@@ -2320,6 +2322,119 @@ export function storeInteractionZonePosition(zoneId: string, x: number, y: numbe
   lastInteractionZonePosition = { x, y, zoneId };
 }
 
+function stopHaven3DFieldRuntime(): void {
+  haven3DFieldController?.dispose();
+  haven3DFieldController = null;
+}
+
+function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  if (fieldState.isPaused) {
+    resetFieldControllerActionTracking();
+    return;
+  }
+
+  const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
+  updateFieldMovementFeedback(
+    currentTime,
+    Boolean(getPlayerInput("P1").special1 || (state.players.P2.active && getPlayerInput("P2").special1)),
+  );
+
+  if (fieldState.npcs) {
+    const map = currentMap;
+    fieldState.npcs = fieldState.npcs.map((npc) => updateNpc(npc, map, deltaTime, currentTime));
+  }
+
+  updateFieldCombat(deltaTime, currentTime);
+  processFieldControllerActions();
+  maybeTriggerAutoInteraction();
+  activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
+  syncFieldMinimapExploration();
+  flushFieldAvatarPositionsToGameState();
+  drawPinnedMinimapOverlay();
+}
+
+function mountHaven3DFieldRuntime(root: HTMLElement): void {
+  if (!currentMap || !fieldState) {
+    return;
+  }
+
+  stopHaven3DFieldRuntime();
+
+  const existingPanel = root.querySelector("#allNodesPanel");
+  root.innerHTML = "";
+  if (existingPanel) {
+    root.appendChild(existingPanel);
+  }
+
+  const fieldRoot = document.createElement("div");
+  fieldRoot.className = "field-root field-root--haven3d";
+  fieldRoot.innerHTML = `
+    <div class="haven3d-root">
+      <div class="haven3d-scene" data-haven3d-scene></div>
+      <div class="haven3d-hud">
+        <div class="haven3d-field-tag">
+          <div class="haven3d-field-tag__eyebrow">HAVEN FIELD</div>
+          <div class="haven3d-field-tag__title">BASE CAMP</div>
+        </div>
+        <div class="haven3d-prompt" data-haven3d-prompt></div>
+      </div>
+    </div>
+  `;
+  root.insertBefore(fieldRoot, root.firstChild);
+
+  const sceneHost = fieldRoot.querySelector<HTMLElement>("[data-haven3d-scene]");
+  if (!sceneHost) {
+    return;
+  }
+
+  const map = currentMap;
+  haven3DFieldController = new Haven3DFieldController({
+    host: sceneHost,
+    map,
+    getNpcs: () => fieldState?.npcs ?? [],
+    getEnemies: () => fieldState?.fieldEnemies ?? [],
+    getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
+    isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
+    isPaused: () => Boolean(fieldState?.isPaused),
+    setPlayerAvatar: (playerId, x, y, facing) => {
+      setRuntimeFieldAvatarPosition(playerId, x, y, facing);
+    },
+    constrainPlayerPosition: (playerId, desired, previous) => {
+      const otherPlayerId: PlayerId = playerId === "P1" ? "P2" : "P1";
+      const otherAvatar = isFieldPlayerActive(otherPlayerId)
+        ? getRuntimeFieldAvatar(otherPlayerId)
+        : null;
+      if (!otherAvatar) {
+        return desired;
+      }
+
+      const constrained = applyTetherConstraint(previous, desired, otherAvatar);
+      return {
+        ...desired,
+        x: constrained.x,
+        y: constrained.y,
+      };
+    },
+    getPrompt: () => activeInteractionPrompt,
+    onInteractPressed: (playerId) => handleInteractKey(playerId),
+    onOpenMenu: () => toggleAllNodesPanel(),
+    onFrame: (deltaTime, currentTime) => updateHaven3DFieldRuntime(deltaTime, currentTime),
+    onBladeStrike: (strike) => handleHaven3DBladeStrike(strike),
+    enableGearbladeModes: true,
+    enabledGearbladeModes: ["blade"],
+  });
+  haven3DFieldController.start();
+
+  ensureFieldFeedbackListener();
+  registerFieldControllerContext();
+  scheduleFieldFocusableRefresh();
+}
+
 function syncFieldMinimapExploration(): void {
   if (!fieldState || !currentMap) {
     return;
@@ -3227,6 +3342,17 @@ export function renderFieldScreen(
   // Create panel first (outside field-root)
   createAllNodesPanel();
 
+  if (mapId === "base_camp" && !options?.openBuildMode) {
+    activeInteractionPrompt = getCombinedInteractionPrompt();
+    mountHaven3DFieldRuntime(root);
+    createPinnedNodesOverlay();
+    requestAnimationFrame(() => drawPinnedMinimapOverlay());
+    if (previousMapId !== mapId) {
+      maybeShowFieldTutorials(mapId);
+    }
+    return;
+  }
+
   startGameLoop();
   render();
   if (options?.openBuildMode) {
@@ -3775,6 +3901,7 @@ function render(): void {
     fieldRoot.className = "field-root";
     root.insertBefore(fieldRoot, root.firstChild);
   }
+  fieldRoot.classList.remove("field-root--haven3d");
 
   // Update only the field-root content (preserves panel)
   fieldRoot.innerHTML = `
@@ -4501,6 +4628,7 @@ function toggleAllNodesPanel(): void {
 
   // Stop the game loop and cleanup
   stopGameLoop();
+  stopHaven3DFieldRuntime();
   cleanupGlobalListeners();
 
   // Remove the overlay panel if it exists
@@ -5503,6 +5631,77 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       handleFieldEnemyDefeat(enemy);
     }
   }
+}
+
+function getFieldFacingUnitVector(facing: "north" | "south" | "east" | "west"): { x: number; y: number } {
+  switch (facing) {
+    case "north":
+      return { x: 0, y: -1 };
+    case "south":
+      return { x: 0, y: 1 };
+    case "east":
+      return { x: 1, y: 0 };
+    case "west":
+      return { x: -1, y: 0 };
+    default:
+      return { x: 0, y: 1 };
+  }
+}
+
+function handleHaven3DBladeStrike(strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  facing: "north" | "south" | "east" | "west";
+  target: { kind: "npc" | "enemy"; id: string; key: string } | null;
+  radius: number;
+  arcRadians: number;
+  damage: number;
+  knockback: number;
+}): void {
+  if (!fieldState?.fieldEnemies || !fieldState.combat) {
+    return;
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const forward = getFieldFacingUnitVector(strike.facing);
+  const halfArcCos = Math.cos(strike.arcRadians / 2);
+  const damage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
+  const knockback = strike.knockback + bowbladeFieldProfile.meleeKnockbackBonus;
+  const energyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
+  let didHit = false;
+
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - strike.x;
+    const dy = enemy.y - strike.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const isLockedTarget = strike.target?.kind === "enemy" && strike.target.id === enemy.id;
+    const isInArc = ((dx / distance) * forward.x) + ((dy / distance) * forward.y) >= halfArcCos;
+    const closeEnough = distance <= Math.max(strike.radius, enemy.width + 42);
+    if (!isLockedTarget && (!closeEnough || !isInArc)) {
+      continue;
+    }
+    if (isLockedTarget && distance > strike.radius * 1.45) {
+      continue;
+    }
+
+    didHit = true;
+    enemy.hp -= damage;
+    fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
+    enemy.vx = (dx / distance) * knockback;
+    enemy.vy = (dy / distance) * knockback;
+    enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+
+    if (enemy.hp <= 0) {
+      handleFieldEnemyDefeat(enemy);
+    }
+  }
+
+  playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
 }
 
 function performFieldRangedAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {
@@ -6795,6 +6994,7 @@ function stopGameLoop(): void {
 export function teardownFieldMode(): void {
   flushFieldAvatarPositionsToGameState(true);
   stopGameLoop();
+  stopHaven3DFieldRuntime();
   resetFieldControllerActionTracking();
   cleanupGlobalListeners();
   if (fieldFocusableRefreshTimerId !== null) {
