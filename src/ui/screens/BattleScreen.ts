@@ -1177,7 +1177,7 @@ const CARD_DATABASE: Record<string, Card> = {
   "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 1, range: 0, description: "Move 2 extra tiles this turn." },
   "core_basic_attack": { id: "core_basic_attack", name: "Basic Attack", type: "core", target: "enemy", strainCost: 2, range: 1, description: "Deal weapon damage to adjacent enemy.", damage: 0 },
   "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
-  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "self", strainCost: 3, range: 0, description: "Attack enemy that enters range." },
+  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "enemy", strainCost: 6, range: 5, description: "Stun an enemy for one turn.", effects: [{ type: "stun", duration: 1 }] },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
   "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 2." },
 
@@ -1308,7 +1308,7 @@ function fallbackGetCardById(id: string): Card {
   let range = 5;
   let damage: number | undefined = 3;
   const lower = name.toLowerCase();
-  if (lower.includes("guard") || lower.includes("stance") || lower.includes("draw") || lower.includes("brace") || lower.includes("hide") || lower.includes("fade") || lower.includes("roll") || lower.includes("burst") || lower.includes("overwatch") || lower.includes("wait") || lower.includes("form")) {
+  if (lower.includes("guard") || lower.includes("stance") || lower.includes("draw") || lower.includes("brace") || lower.includes("hide") || lower.includes("fade") || lower.includes("roll") || lower.includes("burst") || lower.includes("wait") || lower.includes("form")) {
     target = "self";
     range = 0;
     damage = undefined;

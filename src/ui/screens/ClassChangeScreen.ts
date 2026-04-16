@@ -182,7 +182,6 @@ function renderCurrentClassGrid(unit: Unit, progress: UnitClassProgress, statBan
         <div class="class-grid-panel__details">
           <span>Weapons: ${classDef.weaponTypes.join(" / ").toUpperCase()}</span>
           ${classDef.innateAbility ? `<span>Innate: ${classDef.innateAbility}</span>` : ""}
-          <span>${unit.name} spends from the shared ${STAT_SHORT_LABEL} bank.</span>
         </div>
       </div>
       <div class="class-grid-board">

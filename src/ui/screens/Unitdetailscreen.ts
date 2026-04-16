@@ -542,6 +542,25 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
             </div>
           </div>
 
+          <div class="unitdetail-columns unitdetail-columns--management">
+            <div class="unitdetail-column">
+              <div class="unitdetail-section">
+                <div class="unitdetail-section-title">EQUIPMENT (6 SLOTS)</div>
+                <div class="auto-equip-section">
+                  <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
+                </div>
+                <div class="equip-slots-grid">
+                  ${equipSlotsHtml}
+                </div>
+              </div>
+            </div>
+
+            <div class="unitdetail-column">
+              ${renderIdentitySection(unit, unitClass, unitAppearance)}
+              ${renderHardpointsSection(unitId)}
+            </div>
+          </div>
+
           <div class="unitdetail-section unitdetail-section--deck">
             <div class="unitdetail-deck-toolbar">
               <div class="unitdetail-deck-heading">
@@ -594,25 +613,6 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
             <div class="unitdetail-deck-grid-heading">FULL DECK GRID</div>
             <div class="deck-grid deck-grid--compiled">
               ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
-            </div>
-          </div>
-
-          <div class="unitdetail-columns unitdetail-columns--management">
-            <div class="unitdetail-column">
-              <div class="unitdetail-section">
-                <div class="unitdetail-section-title">EQUIPMENT (6 SLOTS)</div>
-                <div class="auto-equip-section">
-                  <button class="auto-equip-btn" id="autoEquipBtn">AUTO EQUIP</button>
-                </div>
-                <div class="equip-slots-grid">
-                  ${equipSlotsHtml}
-                </div>
-              </div>
-            </div>
-
-            <div class="unitdetail-column">
-              ${renderIdentitySection(unit, unitClass, unitAppearance)}
-              ${renderHardpointsSection(unitId)}
             </div>
           </div>
         </div>

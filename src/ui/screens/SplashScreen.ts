@@ -7,32 +7,32 @@ import mpSplashVideo from "../../assets/MP_splash.mp4";
 import ardyciaSplashVideo from "../../assets/Ardycia_Splash.mp4";
 import { renderScrollLinkBoot } from "./ScrollLinkBoot";
 
-type SplashClip = {
-  kind: "video";
+type SplashStep = {
   id: string;
-  src: string;
   fallbackMs: number;
-};
-
-type SplashEpigraph = {
-  kind: "epigraph";
-  id: string;
-  title: string;
-  definition: string;
-  durationMs: number;
-};
-
-type SplashStep = SplashClip | SplashEpigraph;
+} & (
+  | {
+      kind: "video";
+      src: string;
+    }
+  | {
+      kind: "epigraph";
+      word: string;
+      partOfSpeech: string;
+      definition: string;
+    }
+);
 
 const SPLASH_SEQUENCE: SplashStep[] = [
-  { kind: "video", id: "mr-planet", src: mpSplashVideo, fallbackMs: 15000 },
-  { kind: "video", id: "ardycia", src: ardyciaSplashVideo, fallbackMs: 15000 },
+  { id: "mr-planet", kind: "video", src: mpSplashVideo, fallbackMs: 15000 },
+  { id: "ardycia", kind: "video", src: ardyciaSplashVideo, fallbackMs: 15000 },
   {
-    kind: "epigraph",
     id: "sprawl-epigraph",
-    title: "Sprawl",
-    definition: "(v.) to spread or develop irregularly or without restraint.",
-    durationMs: 3600,
+    kind: "epigraph",
+    fallbackMs: 4200,
+    word: "Sprawl",
+    partOfSpeech: "(v.)",
+    definition: "to spread or develop irregularly or without restraint.",
   },
 ];
 
@@ -165,36 +165,7 @@ function attachSplashSkipInputs(skipSequence: () => void): void {
   };
 }
 
-function renderEpigraphStep(step: SplashEpigraph, advance: () => void): void {
-  const root = document.getElementById("app");
-  if (!root) {
-    console.error("Missing #app element in index.html");
-    return;
-  }
-
-  root.innerHTML = `
-    <div class="splash-screen splash-screen--epigraph" data-splash-sequence="${step.id}">
-      <div class="splash-epigraph" aria-label="${step.title} epigraph">
-        <div class="splash-epigraph-title">${step.title}</div>
-        <div class="splash-epigraph-definition">${step.definition}</div>
-      </div>
-      <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
-    </div>
-  `;
-
-  const skipBtn = root.querySelector<HTMLButtonElement>("#splashSkipBtn");
-  skipBtn?.addEventListener("click", completeSplashSequence, { once: true });
-  attachSplashSkipInputs(completeSplashSequence);
-
-  activeSplashTimeout = window.setTimeout(() => {
-    if (!document.querySelector(`[data-splash-sequence="${step.id}"]`)) {
-      return;
-    }
-    advance();
-  }, step.durationMs);
-}
-
-function renderSplashStep(index: number): void {
+function renderSplashClip(index: number): void {
   const root = document.getElementById("app");
   if (!root) {
     console.error("Missing #app element in index.html");
@@ -203,11 +174,40 @@ function renderSplashStep(index: number): void {
   document.body.setAttribute("data-screen", "splash");
   clearSplashControllerContext();
 
-  const step = SPLASH_SEQUENCE[index];
-  if (!step) {
+  const clip = SPLASH_SEQUENCE[index];
+  if (!clip) {
     transitionToScrollLinkBoot();
     return;
   }
+
+  root.innerHTML = clip.kind === "video"
+    ? `
+      <div class="splash-screen splash-screen--video" data-splash-sequence="${clip.id}">
+        <video
+          class="splash-video"
+          id="splashVideo"
+          autoplay
+          muted
+          playsinline
+          preload="auto"
+        >
+          <source src="${clip.src}" type="video/mp4" />
+        </video>
+        <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
+      </div>
+    `
+    : `
+      <div class="splash-screen splash-screen--epigraph" data-splash-sequence="${clip.id}">
+        <div class="splash-epigraph" aria-label="${clip.word} epigraph">
+          <div class="splash-epigraph__word">${clip.word}</div>
+          <div class="splash-epigraph__definition">
+            <span class="splash-epigraph__part">${clip.partOfSpeech}</span>
+            ${clip.definition}
+          </div>
+        </div>
+        <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
+      </div>
+    `;
 
   const advance = () => {
     if (splashSequenceExiting) {
@@ -215,29 +215,8 @@ function renderSplashStep(index: number): void {
     }
     clearSplashTimeout();
     clearSplashInputHandlers();
-    renderSplashStep(index + 1);
+    renderSplashClip(index + 1);
   };
-
-  if (step.kind === "epigraph") {
-    renderEpigraphStep(step, advance);
-    return;
-  }
-
-  root.innerHTML = `
-    <div class="splash-screen splash-screen--video" data-splash-sequence="${step.id}">
-      <video
-        class="splash-video"
-        id="splashVideo"
-        autoplay
-        muted
-        playsinline
-        preload="auto"
-      >
-        <source src="${step.src}" type="video/mp4" />
-      </video>
-      <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
-    </div>
-  `;
 
   const video = root.querySelector<HTMLVideoElement>("#splashVideo");
   const skipBtn = root.querySelector<HTMLButtonElement>("#splashSkipBtn");
@@ -247,9 +226,7 @@ function renderSplashStep(index: number): void {
 
   if (video) {
     const safeAdvance = () => {
-      if (!document.querySelector(`[data-splash-sequence="${step.id}"]`)) {
-        return;
-      }
+      if (!document.querySelector(`[data-splash-sequence="${clip.id}"]`)) return;
       advance();
     };
 
@@ -270,7 +247,7 @@ function renderSplashStep(index: number): void {
 
   activeSplashTimeout = window.setTimeout(() => {
     advance();
-  }, step.fallbackMs);
+  }, clip.fallbackMs);
 }
 
 export function renderSplashScreen(): void {
@@ -278,5 +255,5 @@ export function renderSplashScreen(): void {
   syncSplashAudioCue();
   clearSplashTimeout();
   clearSplashInputHandlers();
-  renderSplashStep(0);
+  renderSplashClip(0);
 }

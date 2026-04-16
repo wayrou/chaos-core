@@ -17,7 +17,7 @@ type StoryPlaceholderCopy = {
   subtitle: string;
   body: string[];
   primaryLabel: string;
-  secondaryLabel: string;
+  secondaryLabel?: string;
   footer: string;
 };
 
@@ -28,10 +28,9 @@ const STORY_PLACEHOLDER_COPY: Record<StoryPlaceholderKind, StoryPlaceholderCopy>
     subtitle: "This is where the campaign intro will play after the player starts a new operation.",
     body: [
       "Placeholder flow active. Replace this screen with the opening cinematic, dialogue, or animated briefing when story content is ready.",
-      "For now, the player can continue into Base Camp immediately or skip past this placeholder at any time.",
+      "For now, the player can continue directly into Base Camp at any time.",
     ],
     primaryLabel: "CONTINUE",
-    secondaryLabel: "SKIP TO BASE CAMP",
     footer: "Temporary story waypoint. No gameplay state is blocked behind this placeholder.",
   },
   ending: {
@@ -217,13 +216,15 @@ export function renderStoryPlaceholderScreen(config: StoryPlaceholderConfig): vo
           >
             ${escapeHtml(copy.primaryLabel)}
           </button>
-          <button
-            class="story-placeholder-btn"
-            type="button"
-            id="storyPlaceholderSkipBtn"
-          >
-            ${escapeHtml(copy.secondaryLabel)}
-          </button>
+          ${copy.secondaryLabel ? `
+            <button
+              class="story-placeholder-btn"
+              type="button"
+              id="storyPlaceholderSkipBtn"
+            >
+              ${escapeHtml(copy.secondaryLabel)}
+            </button>
+          ` : ""}
         </div>
         <div class="story-placeholder-note">${escapeHtml(copy.footer)}</div>
       </section>

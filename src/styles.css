@@ -16372,6 +16372,7 @@ button {
 /* Base button styles for equipment actions */
 .equip-change-btn,
 .equip-unequip-btn,
+.equip-view-gear-btn,
 .equip-customize-btn {
   padding: 0.35rem 0.6rem;
   font-size: 0.65rem;
@@ -16430,8 +16431,9 @@ button {
   transform: scale(0.98);
 }
 
-/* VIEW WEAPON button */
-.equip-view-weapon-btn {
+/* VIEW / INSPECT button */
+.equip-view-weapon-btn,
+.equip-view-gear-btn {
   padding: 0.35rem 0.6rem;
   font-size: 0.65rem;
   font-family: "Courier New", monospace;
@@ -16448,14 +16450,25 @@ button {
   gap: 0.3rem;
 }
 
-.equip-view-weapon-btn:hover {
+.equip-view-gear-btn {
+  font-size: 0;
+}
+
+.equip-view-gear-btn::after {
+  content: "VIEW";
+  font-size: 0.65rem;
+}
+
+.equip-view-weapon-btn:hover,
+.equip-view-gear-btn:hover {
   background: linear-gradient(135deg, #3a4a5a 0%, #2a3540 100%);
   border-color: #7f9fff;
   color: #afbfff;
   box-shadow: 0 0 8px rgba(127, 159, 255, 0.3);
 }
 
-.equip-view-weapon-btn:active {
+.equip-view-weapon-btn:active,
+.equip-view-gear-btn:active {
   transform: scale(0.98);
 }
 
@@ -33206,40 +33219,12 @@ body {
 
 .splash-screen--epigraph {
   position: relative;
+  display: grid;
+  place-items: center;
   overflow: hidden;
   background:
     radial-gradient(circle at center, rgba(34, 34, 40, 0.2) 0, rgba(0, 0, 0, 0) 55%),
     #000;
-}
-
-.splash-epigraph {
-  width: min(42rem, calc(100vw - 4rem));
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.9rem;
-  text-align: center;
-  color: #fff;
-  animation: splashFadeIn 0.7s ease-in;
-}
-
-.splash-epigraph-title,
-.splash-epigraph-definition {
-  font-family: Georgia, "Times New Roman", serif;
-  font-style: italic;
-  font-weight: 700;
-  color: #fff;
-}
-
-.splash-epigraph-title {
-  font-size: clamp(2.4rem, 6vw, 4.2rem);
-  line-height: 1;
-}
-
-.splash-epigraph-definition {
-  font-size: clamp(1rem, 2vw, 1.35rem);
-  line-height: 1.6;
-  max-width: 34rem;
 }
 
 .splash-video {
@@ -33250,6 +33235,42 @@ body {
   background: #000;
   transform: scale(0.5);
   transform-origin: center center;
+}
+
+.splash-epigraph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  width: min(42rem, calc(100vw - 4rem));
+  padding: 2rem;
+  text-align: center;
+  color: #fff;
+  animation: splashFadeIn 0.7s ease-in;
+}
+
+.splash-epigraph__word {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.4rem, 6vw, 4.2rem);
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+}
+
+.splash-epigraph__part {
+  font: inherit;
+  color: inherit;
+}
+
+.splash-epigraph__definition {
+  max-width: 34rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1rem, 2vw, 1.35rem);
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1.6;
+  color: #fff;
 }
 
 .splash-skip-btn {
