@@ -2418,10 +2418,6 @@ function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void
 
   const state = getGameState();
   syncRuntimeFieldAvatarsFromState(state);
-  updateFieldMovementFeedback(
-    currentTime,
-    Boolean(getPlayerInput("P1").special1 || (state.players.P2.active && getPlayerInput("P2").special1)),
-  );
 
   if (fieldState.npcs) {
     const map = currentMap;
@@ -2485,6 +2481,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     map,
     getNpcs: () => fieldState?.npcs ?? [],
     getEnemies: () => fieldState?.fieldEnemies ?? [],
+    getCompanion: () => fieldState?.companion ?? null,
     getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
     isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
     isPaused: () => Boolean(fieldState?.isPaused),
@@ -2511,6 +2508,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     onInteractPressed: (playerId) => handleInteractKey(playerId),
     onOpenMenu: () => toggleAllNodesPanel(),
     onFrame: (deltaTime, currentTime) => updateHaven3DFieldRuntime(deltaTime, currentTime),
+    onPlayerFootstep: () => playPlaceholderSfx("ui-move"),
     onBladeStrike: (strike) => handleHaven3DBladeStrike(strike),
     onLauncherImpact: (impact) => handleHaven3DLauncherImpact(impact),
     onGrappleImpact: (impact) => handleHaven3DGrappleImpact(impact),
@@ -5403,6 +5401,10 @@ function getFieldGearbladeMode(combat: FieldState["combat"] | null | undefined):
 }
 
 function setFieldGearbladeMode(mode: Haven3DGearbladeMode): void {
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
+
   if (!fieldState?.combat || !isFieldCombatActive()) {
     return;
   }
@@ -5432,6 +5434,10 @@ function toggleFieldCombatRangedMode(): void {
 }
 
 function handleFieldGearbladeModePointerDown(event: PointerEvent): void {
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
+
   const target = event.target as HTMLElement | null;
   const button = target?.closest<HTMLElement>("[data-field-gearblade-mode]");
   if (!button || !document.querySelector(".field-root")) {
@@ -6715,9 +6721,6 @@ function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): v
   if (!fieldState?.companion || !currentMap) {
     return;
   }
-  if (isHaven3DFieldRuntimeActive()) {
-    return;
-  }
 
   const player = fieldState.player;
   const companion = fieldState.companion;
@@ -7025,6 +7028,10 @@ function handleKeyDown(e: KeyboardEvent): void {
 
   // Update player input system
   handlePlayerInputKeyDown(e);
+
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
 
   if (!e.repeat && isFieldCombatActive()) {
     const requestedGearbladeMode =

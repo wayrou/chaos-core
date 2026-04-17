@@ -7,6 +7,7 @@ import {
   isPlayerInputActionEvent,
 } from "../../core/playerInput";
 import type { FieldEnemy, FieldMap, FieldNpc, PlayerAvatar } from "../types";
+import type { Companion } from "../companion";
 import {
   HAVEN3D_FIELD_TILE_SIZE,
   HAVEN3D_WORLD_TILE_SIZE,
@@ -27,7 +28,14 @@ import {
 } from "./targeting";
 import { getHaven3DEnemyDefense, isHaven3DEnemyDefenseBroken } from "./combatRules";
 import { getHaven3DEnemyAttackProfile } from "./enemyMoves";
-import { applyChaosSkyboxBackground } from "../../ui/threeSkybox";
+import {
+  ARDYCIA_TOON_OUTLINE_SCALE,
+  addInvertedHullOutlines,
+  applyArdyciaToonRendererStyle,
+  applyArdyciaToonSceneStyle,
+  createArdyciaToonMaterial,
+  createInvertedHullOutlineMaterial,
+} from "../../ui/threeToonStyle";
 
 type FieldAvatarView = {
   x: number;
@@ -38,6 +46,7 @@ type FieldAvatarView = {
 type Actor = {
   group: THREE.Group;
   chibi?: ChibiRig;
+  sable?: SableRig;
   motion?: ActorMotionState;
   label?: THREE.Sprite;
   targetRing?: THREE.Object3D;
@@ -59,12 +68,27 @@ type ChibiRig = {
   rightUpperArm: THREE.Object3D;
   leftForearm: THREE.Object3D;
   rightForearm: THREE.Object3D;
+  rightHandMount: THREE.Object3D;
+  rightHand: THREE.Object3D;
   leftThigh: THREE.Object3D;
   rightThigh: THREE.Object3D;
   leftShin: THREE.Object3D;
   rightShin: THREE.Object3D;
   leftFoot: THREE.Object3D;
   rightFoot: THREE.Object3D;
+};
+
+type SableRig = {
+  root: THREE.Group;
+  body: THREE.Object3D;
+  chest: THREE.Object3D;
+  head: THREE.Object3D;
+  snout: THREE.Object3D;
+  tail: THREE.Object3D;
+  frontLeftLeg: THREE.Object3D;
+  frontRightLeg: THREE.Object3D;
+  rearLeftLeg: THREE.Object3D;
+  rearRightLeg: THREE.Object3D;
 };
 
 type ActorMotionState = {
@@ -75,6 +99,8 @@ type ActorMotionState = {
   visualYaw: number;
   speedPxPerSecond: number;
   moving: boolean;
+  footDustStep?: number;
+  footstepSoundStep?: number;
 };
 
 type Haven3DBladeStrike = {
@@ -136,13 +162,44 @@ type LauncherProjectile = {
   knockback: number;
 };
 
+type PlayerVerticalState = {
+  elevation: number;
+  velocity: number;
+  grounded: boolean;
+  jumpStartedAt: number;
+};
+
+type GrappleAnchor = {
+  id: string;
+  key: string;
+  label: string;
+  x: number;
+  y: number;
+  height: number;
+  group: THREE.Group;
+  phase: number;
+};
+
+type GrappleAnchorTargetRef = {
+  kind: "grapple-node";
+  id: string;
+  key: string;
+};
+
 type GrappleMoveState = {
   startedAt: number;
-  target: Haven3DTargetRef;
+  target: Haven3DTargetRef | GrappleAnchorTargetRef;
   targetPoint: { x: number; y: number };
+  targetHeight: number;
   impacted: boolean;
   line: THREE.Line;
   hook: THREE.Mesh;
+  swing?: {
+    startX: number;
+    startY: number;
+    durationMs: number;
+    arcHeight: number;
+  };
 };
 
 type ReactiveMaterial = {
@@ -163,7 +220,16 @@ type VisualEffect = {
   velocity: THREE.Vector3;
   spin?: number;
   baseScale?: THREE.Vector3;
+  opacity?: number;
+  scaleGrowth?: number;
   channel?: string;
+};
+
+type CameraYawPan = {
+  startedAt: number;
+  durationMs: number;
+  fromYaw: number;
+  toYaw: number;
 };
 
 type Haven3DFieldControllerOptions = {
@@ -171,6 +237,7 @@ type Haven3DFieldControllerOptions = {
   map: FieldMap;
   getNpcs: () => FieldNpc[];
   getEnemies: () => FieldEnemy[];
+  getCompanion?: () => Companion | null | undefined;
   getPlayerAvatar: (playerId: PlayerId) => FieldAvatarView | null;
   isPlayerActive: (playerId: PlayerId) => boolean;
   isPaused: () => boolean;
@@ -184,6 +251,7 @@ type Haven3DFieldControllerOptions = {
   onInteractPressed: (playerId: PlayerId) => void;
   onOpenMenu: () => void;
   onFrame: (deltaMs: number, currentTime: number) => void;
+  onPlayerFootstep?: (playerId: PlayerId, side: "left" | "right", speedRatio: number) => void;
   onBladeStrike?: (strike: Haven3DBladeStrike) => boolean;
   onLauncherImpact?: (impact: Haven3DLauncherImpact) => boolean;
   onGrappleImpact?: (impact: Haven3DGrappleImpact) => boolean;
@@ -200,6 +268,7 @@ const CAMERA_MAX_PITCH = 0.62;
 const CAMERA_DEFAULT_DISTANCE = 8.8;
 const CAMERA_MIN_DISTANCE = 5.4;
 const CAMERA_MAX_DISTANCE = 15.5;
+const CAMERA_FORWARD_PAN_DURATION_MS = 260;
 const BLADE_SWING_WINDUP_MS = 260;
 const BLADE_SWING_IMPACT_MS = 365;
 const BLADE_SWING_TOTAL_MS = 940;
@@ -225,11 +294,20 @@ const GRAPPLE_PULL_SPEED_PX_PER_SECOND = 670;
 const GRAPPLE_MAX_DURATION_MS = 860;
 const GRAPPLE_DAMAGE = 14;
 const GRAPPLE_KNOCKBACK = 520;
+const GRAPPLE_SWING_DURATION_MS = 760;
+const GRAPPLE_SWING_ARC_HEIGHT = 2.65;
+const GRAPPLE_NODE_HEIGHT = 3.35;
+const GRAPPLE_NODE_MAX_COUNT = 7;
+const PLAYER_JUMP_VELOCITY = 5.1;
+const PLAYER_JUMP_GRAVITY = 15.2;
 const ENEMY_HIT_REACTION_MS = 320;
 const ENEMY_TELEGRAPH_RANGE_PX = 118;
 const ENEMY_DANGER_RANGE_PX = 58;
 const TARGET_LOCK_BREAK_DISTANCE_PX = 540;
 const IMPACT_HITSTOP_MS = 64;
+const RUN_DUST_MIN_SPEED_RATIO = 1.12;
+const RUN_DUST_STEP_OFFSET_PX = 11;
+const RUN_DUST_TRAIL_OFFSET_PX = 14;
 const BLADE_BACK_POSITION = new THREE.Vector3(-0.22, 1.3, -0.26);
 const BLADE_BACK_ROTATION = new THREE.Euler(Math.PI / 2, 0.58, -0.48);
 const ENEMY_PING_HEIGHT = 3.36;
@@ -267,36 +345,6 @@ function disposeObject(object: THREE.Object3D): void {
         disposeMaterial(node.material as THREE.Material | THREE.Material[]);
       }
     }
-  });
-}
-
-function createToonGradientMap(): THREE.DataTexture {
-  const texture = new THREE.DataTexture(new Uint8Array([34, 118, 188, 255]), 4, 1, THREE.RedFormat);
-  texture.minFilter = THREE.NearestFilter;
-  texture.magFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-const HAVEN_TOON_GRADIENT_MAP = createToonGradientMap();
-
-function createHavenToonMaterial(options: {
-  color: THREE.ColorRepresentation;
-  emissive?: THREE.ColorRepresentation;
-  emissiveIntensity?: number;
-  transparent?: boolean;
-  opacity?: number;
-  side?: THREE.Side;
-}): THREE.MeshToonMaterial {
-  return new THREE.MeshToonMaterial({
-    color: options.color,
-    emissive: options.emissive ?? 0x000000,
-    emissiveIntensity: options.emissiveIntensity ?? 0,
-    gradientMap: HAVEN_TOON_GRADIENT_MAP,
-    transparent: options.transparent,
-    opacity: options.opacity,
-    side: options.side,
   });
 }
 
@@ -449,6 +497,10 @@ function lerpAngleRadians(from: number, to: number, amount: number): number {
   return from + delta * amount;
 }
 
+function getHumanoidFootPlantStep(cycle: number): number {
+  return Math.floor((cycle - Math.PI * 0.5) / Math.PI);
+}
+
 function createChibiCapsule(
   radius: number,
   length: number,
@@ -494,11 +546,11 @@ function createChibiAnatomy(options: {
 
   const leftUpperArm = new THREE.Group();
   leftUpperArm.position.set(-0.34, 0.98, 0.03);
-  leftUpperArm.rotation.set(0, 0, -0.42);
+  leftUpperArm.rotation.set(0.28, 0.1, -0.24);
   const leftUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const leftForearm = new THREE.Group();
   leftForearm.position.set(0, -0.3, 0.03);
-  leftForearm.rotation.set(-0.1, 0, -0.16);
+  leftForearm.rotation.set(-0.48, 0.05, -0.16);
   const leftForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
   const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), headMaterial);
   leftHand.position.set(0, -0.28, 0.04);
@@ -509,24 +561,27 @@ function createChibiAnatomy(options: {
 
   const rightUpperArm = new THREE.Group();
   rightUpperArm.position.set(0.34, 0.98, 0.03);
-  rightUpperArm.rotation.set(0, 0, 0.42);
+  rightUpperArm.rotation.set(0.26, -0.08, 0.24);
   const rightUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const rightForearm = new THREE.Group();
   rightForearm.position.set(0, -0.3, 0.03);
-  rightForearm.rotation.set(-0.1, 0, 0.16);
+  rightForearm.rotation.set(-0.46, -0.05, 0.16);
   const rightForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
+  const rightHandMount = new THREE.Group();
+  rightHandMount.position.set(0, -0.28, 0.04);
   const rightHand = leftHand.clone();
-  rightHand.position.set(0, -0.28, 0.04);
-  rightForearm.add(rightForearmMesh, rightHand);
+  rightHand.position.set(0, 0, 0);
+  rightHandMount.add(rightHand);
+  rightForearm.add(rightForearmMesh, rightHandMount);
   rightUpperArm.add(rightUpperArmMesh, rightForearm);
 
   const leftThigh = new THREE.Group();
-  leftThigh.position.set(-0.14, 0.48, 0.03);
-  leftThigh.rotation.set(0.06, 0, 0.12);
+  leftThigh.position.set(-0.17, 0.48, 0.03);
+  leftThigh.rotation.set(0.08, 0, -0.075);
   const leftThighMesh = createChibiCapsule(0.105, 0.26, bodyMaterial, [0, -0.15, 0.01]);
   const leftShin = new THREE.Group();
   leftShin.position.set(0, -0.31, 0.02);
-  leftShin.rotation.set(0.08, 0, -0.04);
+  leftShin.rotation.set(0.16, 0, -0.04);
   const leftShinMesh = createChibiCapsule(0.085, 0.24, bodyMaterial, [0, -0.13, 0.01]);
   const leftFoot = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), headMaterial);
   leftFoot.position.set(0, -0.27, 0.14);
@@ -536,12 +591,12 @@ function createChibiAnatomy(options: {
   leftThigh.add(leftThighMesh, leftShin);
 
   const rightThigh = new THREE.Group();
-  rightThigh.position.set(0.14, 0.48, 0.03);
-  rightThigh.rotation.set(0.06, 0, -0.12);
+  rightThigh.position.set(0.17, 0.48, 0.03);
+  rightThigh.rotation.set(0.08, 0, 0.075);
   const rightThighMesh = createChibiCapsule(0.105, 0.26, bodyMaterial, [0, -0.15, 0.01]);
   const rightShin = new THREE.Group();
   rightShin.position.set(0, -0.31, 0.02);
-  rightShin.rotation.set(0.08, 0, 0.04);
+  rightShin.rotation.set(0.16, 0, 0.04);
   const rightShinMesh = createChibiCapsule(0.085, 0.24, bodyMaterial, [0, -0.13, 0.01]);
   const rightFoot = leftFoot.clone();
   rightFoot.position.set(0, -0.27, 0.14);
@@ -569,6 +624,8 @@ function createChibiAnatomy(options: {
     rightUpperArm,
     leftForearm,
     rightForearm,
+    rightHandMount,
+    rightHand,
     leftThigh,
     rightThigh,
     leftShin,
@@ -589,6 +646,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   private readonly playerActors = new Map<PlayerId, Actor>();
   private readonly npcActors = new Map<string, Actor>();
   private readonly enemyActors = new Map<string, Actor>();
+  private companionActor: Actor | null = null;
   private readonly clockForward = new THREE.Vector3(0, 0, -1);
   private readonly clockRight = new THREE.Vector3(1, 0, 0);
   private resizeObserver: ResizeObserver | null = null;
@@ -615,11 +673,13 @@ export class Haven3DFieldController implements Haven3DModeController {
   private readonly enemyHpSnapshot = new Map<string, number>();
   private readonly enemyHitReactions = new Map<string, EnemyHitReaction>();
   private readonly visualEffects: VisualEffect[] = [];
+  private readonly playerVerticalStates = new Map<PlayerId, PlayerVerticalState>();
+  private readonly grappleAnchors = new Map<string, GrappleAnchor>();
   private readonly cameraImpulse = new THREE.Vector3();
   private modeElements: HTMLElement[] = [];
   private currentFrameTime = 0;
   private hitstopRemainingMs = 0;
-  private cameraSnapNextFrame = false;
+  private cameraYawPan: CameraYawPan | null = null;
   private clearSkyboxBackground: (() => void) | null = null;
 
   private readonly handleResize = () => this.resize();
@@ -661,6 +721,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     this.setGearbladeMode(mode);
     this.renderer.domElement.focus();
   };
@@ -690,6 +751,15 @@ export class Haven3DFieldController implements Haven3DModeController {
       event.stopPropagation();
       if (!event.repeat) {
         this.selectNextTarget(event.shiftKey);
+      }
+      return;
+    }
+
+    if (event.code === "Space" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        this.tryStartPlayerJump("P1");
       }
       return;
     }
@@ -754,11 +824,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       initialMode: "blade",
     });
     this.activeGearbladeMode = this.modeController.activeMode;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    applyArdyciaToonRendererStyle(this.renderer);
     this.renderer.domElement.className = "haven3d-canvas";
     this.renderer.domElement.tabIndex = 0;
     this.scene.add(this.worldGroup, this.dynamicGroup);
@@ -893,31 +959,12 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private buildScene(): void {
-    this.clearSkyboxBackground = applyChaosSkyboxBackground(this.scene, 0x151816);
-    this.scene.fog = new THREE.Fog(0x151816, 44, 150);
-
-    const hemi = new THREE.HemisphereLight(0xe4d5b5, 0x111412, 1.75);
-    this.scene.add(hemi);
-
-    const sun = new THREE.DirectionalLight(0xf0c98f, 2.45);
-    sun.position.set(18, 30, 16);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 120;
-    sun.shadow.camera.left = -60;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 42;
-    sun.shadow.camera.bottom = -42;
-    this.scene.add(sun);
-
-    const fill = new THREE.DirectionalLight(0x6bb8a8, 0.56);
-    fill.position.set(-18, 10, -18);
-    this.scene.add(fill);
+    this.clearSkyboxBackground = applyArdyciaToonSceneStyle(this.scene);
 
     this.buildTileDeck();
     this.buildInteractionZones();
     this.buildFieldObjects();
+    this.buildGrappleAnchors();
     this.createPlayerActor("P1", 0xd48342);
     this.createPlayerActor("P2", 0x7b66c9);
     this.syncDynamicActors();
@@ -936,8 +983,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       1.15,
       HAVEN3D_WORLD_TILE_SIZE,
     );
-    const deckMaterial = createHavenToonMaterial({ color: 0x55493a });
-    const wallMaterial = createHavenToonMaterial({ color: 0x3d4144 });
+    const deckMaterial = createArdyciaToonMaterial({ color: 0x55493a });
+    const wallMaterial = createArdyciaToonMaterial({ color: 0x3d4144 });
 
     const matrix = new THREE.Matrix4();
     const walkableMesh = new THREE.InstancedMesh(walkableGeometry, deckMaterial, walkableTiles.length);
@@ -963,7 +1010,33 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
     wallMesh.castShadow = true;
     wallMesh.receiveShadow = true;
-    this.worldGroup.add(wallMesh);
+
+    const wallOutlineMesh = new THREE.InstancedMesh(
+      wallGeometry,
+      createInvertedHullOutlineMaterial(),
+      wallTiles.length,
+    );
+    const outlinePosition = new THREE.Vector3();
+    const outlineRotation = new THREE.Quaternion();
+    const outlineScale = new THREE.Vector3(
+      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+    );
+    wallTiles.forEach((tile, index) => {
+      const world = fieldToHavenWorld(this.options.map, {
+        x: (tile.x + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
+        y: (tile.y + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
+      }, 0.52);
+      outlinePosition.set(world.x, world.y, world.z);
+      matrix.compose(outlinePosition, outlineRotation, outlineScale);
+      wallOutlineMesh.setMatrixAt(index, matrix);
+    });
+    wallOutlineMesh.castShadow = false;
+    wallOutlineMesh.receiveShadow = false;
+    wallOutlineMesh.renderOrder = 0;
+    wallMesh.renderOrder = 1;
+    this.worldGroup.add(wallOutlineMesh, wallMesh);
   }
 
   private buildInteractionZones(): void {
@@ -991,6 +1064,79 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private buildGrappleAnchors(): void {
+    const layout = createHaven3DSceneLayout(this.options.map);
+    const sourcePoints = [
+      ...layout.zones.map((zone) => ({
+        id: zone.id,
+        label: zone.label,
+        fieldCenter: zone.fieldCenter,
+      })),
+      ...layout.objects
+        .filter((object) => object.type === "station" || object.type === "door")
+        .map((object) => ({
+          id: object.id,
+          label: object.label || object.id,
+          fieldCenter: object.fieldCenter,
+        })),
+    ];
+
+    const usedTiles = new Set<string>();
+    sourcePoints.slice(0, GRAPPLE_NODE_MAX_COUNT).forEach((source, index) => {
+      const tileKey = `${Math.round(source.fieldCenter.x / HAVEN3D_FIELD_TILE_SIZE)},${Math.round(source.fieldCenter.y / HAVEN3D_FIELD_TILE_SIZE)}`;
+      if (usedTiles.has(tileKey)) {
+        return;
+      }
+      usedTiles.add(tileKey);
+
+      const group = this.createGrappleAnchorVisual();
+      const world = fieldToHavenWorld(this.options.map, source.fieldCenter, GRAPPLE_NODE_HEIGHT);
+      group.name = `Haven3DGrappleNode:${source.id}`;
+      group.position.set(world.x, world.y, world.z);
+      group.visible = false;
+      this.worldGroup.add(group);
+
+      const key = `grapple-node:${source.id}`;
+      this.grappleAnchors.set(key, {
+        id: source.id,
+        key,
+        label: source.label || "Grapple Node",
+        x: source.fieldCenter.x,
+        y: source.fieldCenter.y,
+        height: GRAPPLE_NODE_HEIGHT,
+        group,
+        phase: index * 0.77,
+      });
+    });
+  }
+
+  private createGrappleAnchorVisual(): THREE.Group {
+    const group = new THREE.Group();
+    const nodeMaterial = createArdyciaToonMaterial({
+      color: 0x58c1aa,
+      emissive: 0x0a4c43,
+      emissiveIntensity: 1.15,
+    });
+    const lineMaterial = new THREE.MeshBasicMaterial({
+      color: 0x66dbc9,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+    });
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), nodeMaterial);
+    core.castShadow = true;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 8, 28), lineMaterial.clone());
+    ring.rotation.x = Math.PI / 2;
+    const sideRing = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.022, 8, 24), lineMaterial.clone());
+    sideRing.rotation.y = Math.PI / 2;
+    const tether = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.78, 8), lineMaterial.clone());
+    tether.position.y = -0.58;
+    addInvertedHullOutlines(core, ARDYCIA_TOON_OUTLINE_SCALE.prop);
+    group.add(core, ring, sideRing, tether);
+    group.renderOrder = 19;
+    return group;
+  }
+
   private buildFieldObjects(): void {
     createHaven3DSceneLayout(this.options.map).objects
       .forEach((object) => {
@@ -1001,7 +1147,7 @@ export class Haven3DFieldController implements Haven3DModeController {
             : object.type === "resource"
               ? 0x66a872
               : 0x665c4f;
-        const material = createHavenToonMaterial({ color });
+        const material = createArdyciaToonMaterial({ color });
         const mesh = new THREE.Mesh(
           new THREE.BoxGeometry(object.worldSize.width, object.worldSize.height, object.worldSize.depth),
           material,
@@ -1009,6 +1155,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         mesh.position.set(object.worldCenter.x, object.worldSize.height / 2, object.worldCenter.z);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        addInvertedHullOutlines(mesh, ARDYCIA_TOON_OUTLINE_SCALE.prop);
         this.worldGroup.add(mesh);
 
         if (object.type === "station" && object.label) {
@@ -1023,10 +1170,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     const group = new THREE.Group();
     group.name = `Haven3DPlayer${playerId}`;
 
-    const coat = createHavenToonMaterial({ color });
-    const skin = createHavenToonMaterial({ color: 0xd8b79c });
-    const leather = createHavenToonMaterial({ color: 0x231d19 });
-    const brass = createHavenToonMaterial({ color: 0xb88745 });
+    const coat = createArdyciaToonMaterial({ color });
+    const skin = createArdyciaToonMaterial({ color: 0xd8b79c });
+    const leather = createArdyciaToonMaterial({ color: 0x231d19 });
+    const brass = createArdyciaToonMaterial({ color: 0xb88745 });
 
     const anatomy = createChibiAnatomy({
       bodyMaterial: coat,
@@ -1050,7 +1197,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     guard.castShadow = true;
     const bladeMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.18, 0.08, 1.52),
-      createHavenToonMaterial({
+      createArdyciaToonMaterial({
         color: 0xc8b16f,
         emissive: 0x2b1708,
         emissiveIntensity: 0.15,
@@ -1083,7 +1230,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     chamber.castShadow = true;
     const sight = new THREE.Mesh(
       new THREE.BoxGeometry(0.08, 0.08, 0.28),
-      createHavenToonMaterial({
+      createArdyciaToonMaterial({
         color: 0x58c1aa,
         emissive: 0x123c37,
         emissiveIntensity: 0.75,
@@ -1101,7 +1248,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     hookBase.castShadow = true;
     const hook = new THREE.Mesh(
       new THREE.TorusGeometry(0.16, 0.03, 8, 16, Math.PI * 1.35),
-      createHavenToonMaterial({
+      createArdyciaToonMaterial({
         color: 0x4fb4a4,
         emissive: 0x123c37,
         emissiveIntensity: 0.85,
@@ -1113,6 +1260,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     blade.add(bladeForm, launcherForm, grappleForm);
     anatomy.root.add(shoulderStrap, blade);
+    addInvertedHullOutlines(anatomy.root, ARDYCIA_TOON_OUTLINE_SCALE.character);
     group.add(anatomy.root);
     this.dynamicGroup.add(group);
     this.playerActors.set(playerId, {
@@ -1128,17 +1276,220 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private createSableActor(): Actor {
+    const group = new THREE.Group();
+    group.name = "Haven3DCompanion:Sable";
+
+    const coat = createArdyciaToonMaterial({ color: 0xb46252 });
+    const shadowCoat = createArdyciaToonMaterial({ color: 0x73302b });
+    const whiteFur = createArdyciaToonMaterial({ color: 0xeadfd2 });
+    const warmShadowFur = createArdyciaToonMaterial({ color: 0xa69184 });
+    const pawMaterial = createArdyciaToonMaterial({ color: 0x4b3028 });
+    const leather = createArdyciaToonMaterial({ color: 0x3f2115 });
+    const brass = createArdyciaToonMaterial({ color: 0xb78e43 });
+    const collarMaterial = createArdyciaToonMaterial({
+      color: 0x245a4f,
+      emissive: 0x0b2c27,
+      emissiveIntensity: 0.26,
+    });
+    const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x050505 });
+
+    const root = new THREE.Group();
+    root.name = "SableRigRoot";
+    root.position.y = 0.13;
+
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.36, 20, 14), coat);
+    body.name = "SableBody";
+    body.position.set(0, 0.62, -0.05);
+    body.scale.set(0.96, 0.64, 1.72);
+
+    const belly = new THREE.Mesh(new THREE.SphereGeometry(0.27, 18, 12), whiteFur);
+    belly.name = "SableBellyPatch";
+    belly.position.set(0, 0.51, 0.16);
+    belly.scale.set(0.86, 0.46, 1.34);
+
+    const chest = new THREE.Mesh(new THREE.SphereGeometry(0.31, 18, 12), whiteFur);
+    chest.name = "SableChest";
+    chest.position.set(0, 0.7, 0.48);
+    chest.scale.set(0.82, 0.82, 0.92);
+
+    const neck = createChibiCapsule(0.12, 0.26, coat, [0, 0.76, 0.5], [Math.PI / 2, 0, 0]);
+    neck.name = "SableNeck";
+    neck.scale.set(1.06, 0.94, 0.94);
+
+    const head = new THREE.Group();
+    head.name = "SableHead";
+    head.position.set(0, 0.96, 0.72);
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.29, 20, 14), coat);
+    headMesh.name = "SableHeadMesh";
+    headMesh.scale.set(0.9, 0.78, 0.95);
+    const faceMask = new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 10), whiteFur);
+    faceMask.name = "SableFaceMask";
+    faceMask.position.set(0, -0.02, 0.13);
+    faceMask.scale.set(0.82, 0.66, 0.52);
+    const snout = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.32), whiteFur);
+    snout.name = "SableSnout";
+    snout.position.set(0, -0.06, 0.27);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), shadowCoat);
+    nose.name = "SableNose";
+    nose.position.set(0, -0.04, 0.44);
+    nose.scale.set(1.32, 0.74, 0.7);
+    const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.029, 8, 6), eyeMaterial);
+    leftEye.name = "SableLeftEye";
+    leftEye.position.set(-0.092, 0.055, 0.235);
+    const rightEye = leftEye.clone();
+    rightEye.name = "SableRightEye";
+    rightEye.position.x = 0.092;
+    const leftEar = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.36, 4), coat);
+    leftEar.name = "SableLeftEar";
+    leftEar.position.set(-0.15, 0.21, -0.03);
+    leftEar.rotation.set(0.14, 0.18, -0.28);
+    const rightEar = leftEar.clone();
+    rightEar.name = "SableRightEar";
+    rightEar.position.x = 0.15;
+    rightEar.rotation.set(0.14, -0.18, 0.28);
+    const leftInnerEar = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.26, 4), warmShadowFur);
+    leftInnerEar.name = "SableLeftInnerEar";
+    leftInnerEar.position.set(-0.15, 0.205, 0.01);
+    leftInnerEar.rotation.copy(leftEar.rotation);
+    const rightInnerEar = leftInnerEar.clone();
+    rightInnerEar.name = "SableRightInnerEar";
+    rightInnerEar.position.x = 0.15;
+    rightInnerEar.rotation.copy(rightEar.rotation);
+    head.add(headMesh, faceMask, snout, nose, leftEye, rightEye, leftEar, rightEar, leftInnerEar, rightInnerEar);
+
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 8, 24), collarMaterial);
+    collar.name = "SableCollar";
+    collar.position.set(0, 0.77, 0.52);
+    collar.scale.set(1.18, 0.78, 1);
+
+    const scarfShape = new THREE.Shape();
+    scarfShape.moveTo(-0.31, 0.12);
+    scarfShape.lineTo(0.34, 0.1);
+    scarfShape.lineTo(0.04, -0.43);
+    scarfShape.lineTo(-0.31, 0.12);
+    const scarf = new THREE.Mesh(
+      new THREE.ShapeGeometry(scarfShape),
+      createArdyciaToonMaterial({
+        color: 0x245a4f,
+        emissive: 0x0b2c27,
+        emissiveIntensity: 0.18,
+        side: THREE.DoubleSide,
+      }),
+    );
+    scarf.name = "SableKerchief";
+    scarf.position.set(0, 0.72, 0.72);
+    scarf.rotation.set(-0.1, 0, 0.04);
+
+    const tail = new THREE.Group();
+    tail.name = "SableTail";
+    tail.position.set(0, 0.71, -0.76);
+    tail.rotation.set(-0.46, 0, 0);
+    const tailCurl = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.065, 10, 28, Math.PI * 1.52), coat);
+    tailCurl.name = "SableTailCurl";
+    tailCurl.position.set(0, 0.04, -0.1);
+    tailCurl.rotation.set(0.24, Math.PI / 2, -0.36);
+    const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), whiteFur);
+    tailTip.name = "SableTailTip";
+    tailTip.position.set(-0.11, 0.1, 0.08);
+    tailTip.scale.set(0.85, 0.7, 1.1);
+    tail.add(tailCurl, tailTip);
+
+    const saddlebag = new THREE.Group();
+    saddlebag.name = "SableSideBag";
+    saddlebag.position.set(-0.42, 0.58, -0.16);
+    saddlebag.rotation.set(0.02, 0.06, -0.04);
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.28, 0.42), leather);
+    bag.name = "SableBag";
+    bag.castShadow = true;
+    const flap = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.06, 0.36), shadowCoat);
+    flap.name = "SableBagFlap";
+    flap.position.set(-0.005, 0.12, 0);
+    const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.04), brass);
+    clasp.name = "SableBagClasp";
+    clasp.position.set(-0.095, 0.03, 0.12);
+    saddlebag.add(bag, flap, clasp);
+
+    const createLeg = (name: string, x: number, z: number, outward: number): THREE.Group => {
+      const leg = new THREE.Group();
+      leg.name = name;
+      leg.position.set(x, 0.52, z);
+      leg.rotation.z = outward;
+      const upper = createChibiCapsule(0.065, 0.27, coat, [0, -0.17, 0.005]);
+      upper.name = `${name}Upper`;
+      upper.scale.set(0.9, 1.02, 0.9);
+      const lowerMaterial = name.includes("Front") ? whiteFur : warmShadowFur;
+      const lower = createChibiCapsule(0.056, 0.21, lowerMaterial, [0, -0.39, 0.02]);
+      lower.name = `${name}Lower`;
+      lower.scale.set(0.86, 1.04, 0.86);
+      const paw = new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 8), name.includes("Front") ? whiteFur : pawMaterial);
+      paw.name = `${name}Paw`;
+      paw.position.set(0, -0.54, 0.08);
+      paw.scale.set(1.05, 0.44, 1.46);
+      leg.add(upper, lower, paw);
+      return leg;
+    };
+
+    const frontLeftLeg = createLeg("SableFrontLeftLeg", -0.2, 0.43, -0.055);
+    const frontRightLeg = createLeg("SableFrontRightLeg", 0.2, 0.43, 0.055);
+    const rearLeftLeg = createLeg("SableRearLeftLeg", -0.21, -0.5, -0.045);
+    const rearRightLeg = createLeg("SableRearRightLeg", 0.21, -0.5, 0.045);
+
+    root.add(
+      body,
+      belly,
+      chest,
+      neck,
+      head,
+      collar,
+      scarf,
+      tail,
+      saddlebag,
+      frontLeftLeg,
+      frontRightLeg,
+      rearLeftLeg,
+      rearRightLeg,
+    );
+    root.traverse((node) => {
+      if (node instanceof THREE.Mesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+      }
+    });
+    addInvertedHullOutlines(root, 1.064);
+
+    group.add(root);
+    this.dynamicGroup.add(group);
+
+    return {
+      group,
+      sable: {
+        root,
+        body,
+        chest,
+        head,
+        snout,
+        tail,
+        frontLeftLeg,
+        frontRightLeg,
+        rearLeftLeg,
+        rearRightLeg,
+      },
+    };
+  }
+
   private createNpcActor(npc: FieldNpc): Actor {
     const group = new THREE.Group();
     group.name = `Haven3DNpc:${npc.id}`;
-    const material = createHavenToonMaterial({ color: 0x4f7f76 });
-    const brass = createHavenToonMaterial({ color: 0xb58b4c });
-    const skin = createHavenToonMaterial({ color: 0xd4b69e });
+    const material = createArdyciaToonMaterial({ color: 0x4f7f76 });
+    const brass = createArdyciaToonMaterial({ color: 0xb58b4c });
+    const skin = createArdyciaToonMaterial({ color: 0xd4b69e });
     const anatomy = createChibiAnatomy({
       bodyMaterial: material,
       headMaterial: skin,
       accentMaterial: brass,
     });
+    addInvertedHullOutlines(anatomy.root, ARDYCIA_TOON_OUTLINE_SCALE.character);
     const label = createLabelSprite(npc.name, { accent: "rgba(103, 202, 181, 0.72)", width: 320 });
     label.position.y = 2.48;
     const targetRing = createTargetRing(0x67cab5);
@@ -1150,8 +1501,8 @@ export class Haven3DFieldController implements Haven3DModeController {
   private createEnemyActor(enemy: FieldEnemy): Actor {
     const group = new THREE.Group();
     group.name = `Haven3DEnemy:${enemy.id}`;
-    const hide = createHavenToonMaterial({ color: 0x8a2f36 });
-    const core = createHavenToonMaterial({
+    const hide = createArdyciaToonMaterial({ color: 0x8a2f36 });
+    const core = createArdyciaToonMaterial({
       color: 0xf2a14b,
       emissive: 0x3d1208,
       emissiveIntensity: 0.35,
@@ -1161,9 +1512,11 @@ export class Haven3DFieldController implements Haven3DModeController {
       headMaterial: hide,
       accentMaterial: core,
     });
+    addInvertedHullOutlines(anatomy.root, ARDYCIA_TOON_OUTLINE_SCALE.enemy);
     const crest = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.2), core);
     crest.position.set(0, 1.34, 0.3);
     crest.castShadow = true;
+    addInvertedHullOutlines(crest, ARDYCIA_TOON_OUTLINE_SCALE.prop);
     const label = createLabelSprite(enemy.name, { accent: "rgba(242, 112, 74, 0.76)", width: 340 });
     label.position.y = 2.48;
     const targetRing = createTargetRing(0xf2704a);
@@ -1207,7 +1560,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     defenseShield.visible = false;
 
     const defenseArmor = new THREE.Group();
-    const armorMaterial = createHavenToonMaterial({
+    const armorMaterial = createArdyciaToonMaterial({
       color: 0xd49b45,
       emissive: 0x3c2206,
       emissiveIntensity: 0.28,
@@ -1219,6 +1572,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     shoulderPlate.position.set(0, 1.18, 0);
     shoulderPlate.castShadow = true;
     defenseArmor.add(chestPlate, shoulderPlate);
+    addInvertedHullOutlines(defenseArmor, ARDYCIA_TOON_OUTLINE_SCALE.armor);
     defenseArmor.visible = false;
 
     group.add(anatomy.root, crest, label, targetRing, telegraph, defenseShield, defenseArmor);
@@ -1253,6 +1607,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     if (!this.options.isPaused() && !hitstopped) {
+      this.updatePlayerVertical(deltaMs);
       this.movePlayers(deltaMs);
       this.updateBladeSwing(deltaMs, currentTime);
       this.updateGrappleMove(deltaMs, currentTime);
@@ -1268,6 +1623,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     this.updateCamera(deltaMs / 1000);
+    this.updateGrappleAnchors(currentTime);
     this.syncDynamicActors();
     this.updatePrompt();
     this.renderer.render(this.scene, this.camera);
@@ -1345,6 +1701,82 @@ export class Haven3DFieldController implements Haven3DModeController {
 
       this.options.setPlayerAvatar(playerId, constrained.x, constrained.y, constrained.facing);
     });
+  }
+
+  private getPlayerVerticalState(playerId: PlayerId): PlayerVerticalState {
+    let state = this.playerVerticalStates.get(playerId);
+    if (!state) {
+      state = {
+        elevation: 0,
+        velocity: 0,
+        grounded: true,
+        jumpStartedAt: Number.NEGATIVE_INFINITY,
+      };
+      this.playerVerticalStates.set(playerId, state);
+    }
+    return state;
+  }
+
+  private tryStartPlayerJump(playerId: PlayerId): void {
+    if (this.options.isPaused() || !this.options.isPlayerActive(playerId)) {
+      return;
+    }
+    if (playerId === "P1" && this.grappleMove) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar) {
+      return;
+    }
+
+    const state = this.getPlayerVerticalState(playerId);
+    if (!state.grounded || state.elevation > 0.025) {
+      return;
+    }
+
+    state.grounded = false;
+    state.elevation = 0.02;
+    state.velocity = PLAYER_JUMP_VELOCITY;
+    state.jumpStartedAt = this.currentFrameTime || performance.now();
+    this.cameraImpulse.y += playerId === "P1" ? 0.045 : 0;
+  }
+
+  private updatePlayerVertical(deltaMs: number): void {
+    const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const state = this.getPlayerVerticalState(playerId);
+      if (playerId === "P1" && this.grappleMove?.target.kind === "grapple-node") {
+        return;
+      }
+      if (state.grounded && state.elevation <= 0) {
+        return;
+      }
+
+      state.velocity -= PLAYER_JUMP_GRAVITY * deltaSeconds;
+      state.elevation += state.velocity * deltaSeconds;
+      if (state.elevation <= 0) {
+        state.elevation = 0;
+        state.velocity = 0;
+        state.grounded = true;
+      } else {
+        state.grounded = false;
+      }
+    });
+  }
+
+  private setPlayerSwingElevation(playerId: PlayerId, elevation: number): void {
+    const state = this.getPlayerVerticalState(playerId);
+    state.elevation = Math.max(0, elevation);
+    state.velocity = 0;
+    state.grounded = state.elevation <= 0.015;
+  }
+
+  private landPlayerVertical(playerId: PlayerId): void {
+    const state = this.getPlayerVerticalState(playerId);
+    state.elevation = 0;
+    state.velocity = 0;
+    state.grounded = true;
   }
 
   private getActionMovementMultiplier(playerId: PlayerId): number {
@@ -1462,6 +1894,38 @@ export class Haven3DFieldController implements Haven3DModeController {
       const score = candidate.distance * 0.035 + (1 - dot) * 5 + enemyBias;
       if (score < bestScore) {
         best = candidate;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private findGrappleAnchor(rangePx: number): GrappleAnchor | null {
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar || this.grappleAnchors.size === 0) {
+      return null;
+    }
+
+    const direction = this.getActionDirection(avatar);
+    let best: GrappleAnchor | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const anchor of this.grappleAnchors.values()) {
+      const distance = Math.hypot(anchor.x - avatar.x, anchor.y - avatar.y);
+      if (distance > rangePx) {
+        continue;
+      }
+
+      const toAnchor = { x: anchor.x - avatar.x, y: anchor.y - avatar.y };
+      const length = Math.max(0.001, Math.hypot(toAnchor.x, toAnchor.y));
+      const dot = ((toAnchor.x / length) * direction.x) + ((toAnchor.y / length) * direction.y);
+      if (dot < 0.08 && distance > 118) {
+        continue;
+      }
+
+      const score = distance * 0.03 + (1 - dot) * 4.2;
+      if (score < bestScore) {
+        best = anchor;
         bestScore = score;
       }
     }
@@ -1603,7 +2067,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const originY = avatar.y + direction.y * 36;
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.14, 14, 10),
-      createHavenToonMaterial({
+      createArdyciaToonMaterial({
         color: 0xf2b04d,
         emissive: 0x8c3f10,
         emissiveIntensity: 1.8,
@@ -1703,13 +2167,28 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const avatar = this.options.getPlayerAvatar("P1");
-    const target = this.findActionTarget(GRAPPLE_RANGE_PX);
-    if (!avatar || !target) {
+    const lockedTarget = this.getLockedTargetCandidate();
+    const lockedActionTarget = lockedTarget && lockedTarget.distance <= GRAPPLE_RANGE_PX
+      ? lockedTarget
+      : null;
+    const anchor = lockedActionTarget ? null : this.findGrappleAnchor(GRAPPLE_RANGE_PX);
+    const actionTarget = lockedActionTarget ?? (anchor ? null : this.findActionTarget(GRAPPLE_RANGE_PX));
+    if (!avatar || (!anchor && !actionTarget)) {
       this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS * 0.45;
       return;
     }
 
-    const direction = this.getActionDirection(avatar, target);
+    const targetPoint = anchor
+      ? { x: anchor.x, y: anchor.y }
+      : { x: actionTarget?.x ?? avatar.x, y: actionTarget?.y ?? avatar.y };
+    const targetRef: Haven3DTargetRef | GrappleAnchorTargetRef = anchor
+      ? { kind: "grapple-node", id: anchor.id, key: anchor.key }
+      : {
+        kind: actionTarget!.kind,
+        id: actionTarget!.id,
+        key: actionTarget!.key,
+      };
+    const direction = this.getActionDirection(avatar, targetPoint);
     const lineMaterial = new THREE.LineBasicMaterial({
       color: 0x4fb4a4,
       transparent: true,
@@ -1734,11 +2213,20 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     this.grappleMove = {
       startedAt: now,
-      target,
-      targetPoint: { x: target.x, y: target.y },
+      target: targetRef,
+      targetPoint,
+      targetHeight: anchor?.height ?? 1.08,
       impacted: false,
       line,
       hook,
+      swing: anchor
+        ? {
+          startX: avatar.x,
+          startY: avatar.y,
+          durationMs: GRAPPLE_SWING_DURATION_MS,
+          arcHeight: GRAPPLE_SWING_ARC_HEIGHT,
+        }
+        : undefined,
     };
     this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS;
     this.options.setPlayerAvatar("P1", avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
@@ -1753,6 +2241,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     const avatar = this.options.getPlayerAvatar("P1");
     if (!avatar) {
       this.finishGrappleMove(false);
+      return;
+    }
+
+    if (this.grappleMove.target.kind === "grapple-node") {
+      this.updateGrappleSwing(currentTime, avatar);
       return;
     }
 
@@ -1802,6 +2295,33 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.updateGrappleLine();
   }
 
+  private updateGrappleSwing(currentTime: number, avatar: FieldAvatarView): void {
+    if (!this.grappleMove?.swing) {
+      this.finishGrappleMove(false);
+      return;
+    }
+
+    const elapsed = currentTime - this.grappleMove.startedAt;
+    const progress = THREE.MathUtils.clamp(elapsed / this.grappleMove.swing.durationMs, 0, 1);
+    const easedProgress = smoothstep(progress);
+    const startX = this.grappleMove.swing.startX;
+    const startY = this.grappleMove.swing.startY;
+    const targetX = this.grappleMove.targetPoint.x;
+    const targetY = this.grappleMove.targetPoint.y;
+    const nextX = THREE.MathUtils.lerp(startX, targetX, easedProgress);
+    const nextY = THREE.MathUtils.lerp(startY, targetY, easedProgress);
+    const lift = Math.sin(progress * Math.PI) * this.grappleMove.swing.arcHeight;
+    const facing = fieldFacingFromDelta(targetX - avatar.x, targetY - avatar.y, avatar.facing);
+
+    this.setPlayerSwingElevation("P1", lift);
+    this.options.setPlayerAvatar("P1", nextX, nextY, facing);
+    this.updateGrappleLine();
+
+    if (progress >= 1) {
+      this.finishGrappleMove(true);
+    }
+  }
+
   private updateGrappleLine(): void {
     if (!this.grappleMove) {
       return;
@@ -1812,8 +2332,9 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    const from = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 1.18);
-    const to = fieldToHavenWorld(this.options.map, this.grappleMove.targetPoint, 1.08);
+    const playerElevation = this.getPlayerVerticalState("P1").elevation;
+    const from = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 1.18 + playerElevation);
+    const to = fieldToHavenWorld(this.options.map, this.grappleMove.targetPoint, this.grappleMove.targetHeight);
     this.grappleMove.line.geometry.setFromPoints([
       new THREE.Vector3(from.x, from.y, from.z),
       new THREE.Vector3(to.x, to.y, to.z),
@@ -1827,6 +2348,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    const wasSwing = this.grappleMove.target.kind === "grapple-node";
     if (spawnSpark) {
       this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
     }
@@ -1834,6 +2356,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     disposeObject(this.grappleMove.line);
     disposeObject(this.grappleMove.hook);
     this.grappleMove = null;
+    if (wasSwing) {
+      this.landPlayerVertical("P1");
+    }
   }
 
   private updateActorMotion(
@@ -1864,7 +2389,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     motion.speedPxPerSecond = THREE.MathUtils.lerp(motion.speedPxPerSecond, instantSpeed, smoothing);
     motion.moving = motion.speedPxPerSecond > 12;
     if (motion.moving) {
-      const cycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 36, 3.6, 10.5);
+      const speedRatio = motion.speedPxPerSecond / PLAYER_SPEED_PX_PER_SECOND;
+      const runBlend = smoothstep((speedRatio - 1.05) / 0.45);
+      const walkCycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 44, 3.1, 7.4);
+      const runCycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 50, 7.8, 12.8);
+      const cycleRate = THREE.MathUtils.lerp(walkCycleRate, runCycleRate, runBlend);
       motion.cycle += deltaSeconds * cycleRate * intensity;
     }
 
@@ -1886,44 +2415,394 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.applyChibiMotion(actor.chibi, motion, intensity);
   }
 
+  private updateSableMotion(
+    actor: Actor,
+    companion: Companion,
+    lookDirection: { x: number; y: number } | null = null,
+  ): void {
+    const currentTime = this.currentFrameTime || performance.now();
+    const fallbackYaw = this.getRotationForFacing(companion.facing);
+    const motion = actor.motion ?? {
+      lastX: companion.x,
+      lastY: companion.y,
+      lastTime: currentTime,
+      cycle: (((companion.x * 0.017) + (companion.y * 0.011)) % 1) * Math.PI * 2,
+      visualYaw: fallbackYaw,
+      speedPxPerSecond: 0,
+      moving: false,
+    };
+
+    const deltaSeconds = Math.min(0.12, Math.max(0, (currentTime - motion.lastTime) / 1000));
+    const deltaX = companion.x - motion.lastX;
+    const deltaY = companion.y - motion.lastY;
+    const distance = Math.hypot(deltaX, deltaY);
+    const instantSpeed = deltaSeconds > 0 ? distance / deltaSeconds : 0;
+    const smoothing = deltaSeconds > 0 ? 1 - Math.pow(0.018, deltaSeconds) : 1;
+    motion.speedPxPerSecond = THREE.MathUtils.lerp(motion.speedPxPerSecond, instantSpeed, smoothing);
+    motion.moving = motion.speedPxPerSecond > 10;
+    if (motion.moving) {
+      const stateBoost = companion.state === "attack" ? 1.16 : companion.state === "fetch" ? 1.08 : 1;
+      const cycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 36, 4.8, 14.2);
+      motion.cycle += deltaSeconds * cycleRate * stateBoost;
+    } else {
+      motion.cycle += deltaSeconds * (companion.state === "idle" ? 0.18 : 0.42);
+    }
+
+    const lookLength = lookDirection ? Math.hypot(lookDirection.x, lookDirection.y) : 0;
+    const targetYaw = lookDirection && lookLength > 0.001
+      ? getYawFromFieldDelta(lookDirection.x, lookDirection.y, motion.visualYaw)
+      : distance > 0.05
+        ? getYawFromFieldDelta(deltaX, deltaY, motion.visualYaw)
+        : fallbackYaw;
+    const yawSmoothing = deltaSeconds > 0 ? 1 - Math.pow(0.0007, deltaSeconds) : 1;
+    motion.visualYaw = lerpAngleRadians(motion.visualYaw, targetYaw, yawSmoothing);
+    actor.group.rotation.y = motion.visualYaw;
+
+    motion.lastX = companion.x;
+    motion.lastY = companion.y;
+    motion.lastTime = currentTime;
+    actor.motion = motion;
+
+    this.applySableMotion(actor.sable, motion, companion);
+  }
+
   private applyChibiMotion(chibi: ChibiRig | undefined, motion: ActorMotionState, intensity: number): void {
     if (!chibi) {
       return;
     }
 
     const currentTime = this.currentFrameTime || performance.now();
-    const stride = motion.moving
-      ? THREE.MathUtils.clamp((motion.speedPxPerSecond / PLAYER_SPEED_PX_PER_SECOND) * intensity, 0, 1.25)
+    const speedRatio = motion.moving
+      ? THREE.MathUtils.clamp((motion.speedPxPerSecond / PLAYER_SPEED_PX_PER_SECOND) * intensity, 0, 1.75)
       : 0;
+    const moveBlend = motion.moving ? smoothstep(speedRatio / 0.22) : 0;
+    const runBlend = motion.moving ? smoothstep((speedRatio - 1.05) / 0.45) : 0;
+    const walkBlend = moveBlend * (1 - runBlend);
     const cycle = motion.cycle;
     const swing = Math.sin(cycle);
     const counterSwing = Math.sin(cycle + Math.PI);
     const stepBounce = Math.abs(Math.sin(cycle));
-    const idleBreath = Math.sin(currentTime * 0.003 + cycle) * 0.012;
-    const bob = motion.moving ? stepBounce * 0.075 * stride : idleBreath;
-    const lean = motion.moving ? -0.08 * stride : 0;
-    const sideSway = Math.sin(cycle * 2) * 0.035 * stride;
+    const doubleStep = Math.sin((cycle * 2) + 0.18);
+    const idleBreath = Math.sin(currentTime * 0.0026 + cycle * 0.12);
+    const idleWeight = 1 - moveBlend;
+    const walkAmount = walkBlend * THREE.MathUtils.clamp(speedRatio, 0, 1);
+    const runAmount = runBlend * THREE.MathUtils.clamp((speedRatio - 0.72) / 0.88, 0, 1.25);
+    const bob = (idleBreath * 0.014 * idleWeight)
+      + (stepBounce * 0.052 * walkAmount)
+      + ((0.038 + (Math.abs(doubleStep) * 0.092)) * runAmount);
+    const rootForwardLean = (0.024 * walkAmount) + (0.16 * runAmount);
+    const forwardLean = (0.018 * idleWeight) + (0.05 * walkAmount) + (0.22 * runAmount);
+    const torsoTwist = swing * ((0.035 * walkAmount) + (0.12 * runAmount));
+    const sideSway = doubleStep * ((0.024 * walkAmount) + (0.06 * runAmount));
+    const legOutwardSplay = 0.075 + (0.018 * walkAmount) + (0.03 * runAmount);
 
     chibi.root.position.y = 0.18 + bob;
-    chibi.torso.rotation.set(lean, 0, sideSway);
-    chibi.pelvis.rotation.set(-lean * 0.35, 0, -sideSway * 0.6);
-    chibi.head.rotation.set(-lean * 0.28, 0, -sideSway * 0.42);
+    chibi.root.rotation.set(rootForwardLean, 0, 0);
+    chibi.torso.rotation.set(forwardLean, torsoTwist, sideSway);
+    chibi.pelvis.rotation.set(0.018 + (forwardLean * 0.18), -torsoTwist * 0.42, -sideSway * 0.68);
+    chibi.head.rotation.set(0.034 + (forwardLean * 0.05), -torsoTwist * 0.32, -sideSway * 0.36);
 
-    const leftArmSwing = counterSwing * stride;
-    const rightArmSwing = swing * stride;
-    const leftLegSwing = swing * stride;
-    const rightLegSwing = counterSwing * stride;
-    chibi.leftUpperArm.rotation.set(0.56 * leftArmSwing, 0, -0.42 - 0.08 * stride);
-    chibi.rightUpperArm.rotation.set(0.56 * rightArmSwing, 0, 0.42 + 0.08 * stride);
-    chibi.leftForearm.rotation.set(-0.18 - 0.28 * Math.max(0, -leftArmSwing), 0, -0.14 - 0.04 * stride);
-    chibi.rightForearm.rotation.set(-0.18 - 0.28 * Math.max(0, -rightArmSwing), 0, 0.14 + 0.04 * stride);
+    const leftWalkArm = counterSwing * 0.4 * walkAmount;
+    const rightWalkArm = swing * 0.4 * walkAmount;
+    const leftRunArm = counterSwing * 1.08 * runAmount;
+    const rightRunArm = swing * 1.08 * runAmount;
+    const leftLegSwing = swing;
+    const rightLegSwing = counterSwing;
+    const leftWalkLeg = leftLegSwing * 0.54 * walkAmount;
+    const rightWalkLeg = rightLegSwing * 0.54 * walkAmount;
+    const leftRunLeg = leftLegSwing * 1.05 * runAmount;
+    const rightRunLeg = rightLegSwing * 1.05 * runAmount;
+    const leftBackKick = Math.max(0, -leftLegSwing);
+    const rightBackKick = Math.max(0, -rightLegSwing);
+    const leftForwardReach = Math.max(0, leftLegSwing);
+    const rightForwardReach = Math.max(0, rightLegSwing);
 
-    chibi.leftThigh.rotation.set(0.06 + 0.64 * leftLegSwing, 0, 0.12 - 0.035 * stride);
-    chibi.rightThigh.rotation.set(0.06 + 0.64 * rightLegSwing, 0, -0.12 + 0.035 * stride);
-    chibi.leftShin.rotation.set(0.1 + 0.58 * Math.max(0, -leftLegSwing), 0, -0.04);
-    chibi.rightShin.rotation.set(0.1 + 0.58 * Math.max(0, -rightLegSwing), 0, 0.04);
-    chibi.leftFoot.rotation.set(-0.12 * Math.max(0, leftLegSwing) + 0.28 * Math.max(0, -leftLegSwing), 0, 0);
-    chibi.rightFoot.rotation.set(-0.12 * Math.max(0, rightLegSwing) + 0.28 * Math.max(0, -rightLegSwing), 0, 0);
+    chibi.leftUpperArm.rotation.set(
+      0.28 + leftWalkArm + leftRunArm - (0.16 * runAmount),
+      0.1 + (0.16 * runAmount),
+      -0.24 - (0.06 * walkAmount) + (0.08 * runAmount),
+    );
+    chibi.rightUpperArm.rotation.set(
+      0.26 + rightWalkArm + rightRunArm - (0.16 * runAmount),
+      -0.08 - (0.16 * runAmount),
+      0.24 + (0.06 * walkAmount) - (0.08 * runAmount),
+    );
+    chibi.leftForearm.rotation.set(
+      -0.48 - (0.16 * walkAmount) - (0.48 * runAmount) - (0.2 * Math.max(0, -leftRunArm)),
+      0.05 - (0.08 * runAmount),
+      -0.16 - (0.04 * walkAmount) + (0.08 * runAmount),
+    );
+    chibi.rightForearm.rotation.set(
+      -0.46 - (0.16 * walkAmount) - (0.48 * runAmount) - (0.2 * Math.max(0, -rightRunArm)),
+      -0.05 + (0.08 * runAmount),
+      0.16 + (0.04 * walkAmount) - (0.08 * runAmount),
+    );
+
+    chibi.leftThigh.rotation.set(
+      0.08 + leftWalkLeg + leftRunLeg,
+      0.02 * runAmount,
+      -legOutwardSplay,
+    );
+    chibi.rightThigh.rotation.set(
+      0.08 + rightWalkLeg + rightRunLeg,
+      -0.02 * runAmount,
+      legOutwardSplay,
+    );
+    chibi.leftShin.rotation.set(
+      0.16 + (0.46 * leftBackKick * walkAmount) + ((0.18 + (1.02 * leftBackKick)) * runAmount),
+      0,
+      -0.04 - (0.04 * runAmount),
+    );
+    chibi.rightShin.rotation.set(
+      0.16 + (0.46 * rightBackKick * walkAmount) + ((0.18 + (1.02 * rightBackKick)) * runAmount),
+      0,
+      0.04 + (0.04 * runAmount),
+    );
+    chibi.leftFoot.rotation.set(
+      (-0.1 * leftForwardReach * walkAmount) + (0.26 * leftBackKick * walkAmount) - (0.42 * leftForwardReach * runAmount) + (0.62 * leftBackKick * runAmount),
+      0,
+      -0.08 * runAmount,
+    );
+    chibi.rightFoot.rotation.set(
+      (-0.1 * rightForwardReach * walkAmount) + (0.26 * rightBackKick * walkAmount) - (0.42 * rightForwardReach * runAmount) + (0.62 * rightBackKick * runAmount),
+      0,
+      0.08 * runAmount,
+    );
+    chibi.rightHandMount.position.set(0, -0.28, 0.04);
+    chibi.rightHand.scale.set(0.9, 0.72, 0.62);
+  }
+
+  private applyChibiJumpPose(chibi: ChibiRig | undefined, vertical: PlayerVerticalState): void {
+    if (!chibi || vertical.grounded) {
+      return;
+    }
+
+    const liftBlend = THREE.MathUtils.clamp(vertical.elevation / 1.4, 0, 1);
+    const risingBlend = vertical.velocity > 0
+      ? THREE.MathUtils.clamp(vertical.velocity / PLAYER_JUMP_VELOCITY, 0, 1)
+      : 0;
+    const fallingBlend = vertical.velocity < 0
+      ? THREE.MathUtils.clamp(Math.abs(vertical.velocity) / PLAYER_JUMP_VELOCITY, 0, 1)
+      : 0;
+    const tuck = Math.max(liftBlend, 0.42 + fallingBlend * 0.28);
+
+    chibi.root.rotation.x += 0.1 * liftBlend;
+    chibi.torso.rotation.x += 0.12 * liftBlend;
+    chibi.head.rotation.x -= 0.05 * fallingBlend;
+    chibi.leftUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.x, 0.78, 0.32 + risingBlend * 0.18);
+    chibi.rightUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.x, 0.78, 0.32 + risingBlend * 0.18);
+    chibi.leftUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.z, -0.52, 0.34);
+    chibi.rightUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.z, 0.52, 0.34);
+    chibi.leftForearm.rotation.x = THREE.MathUtils.lerp(chibi.leftForearm.rotation.x, -0.72, 0.3);
+    chibi.rightForearm.rotation.x = THREE.MathUtils.lerp(chibi.rightForearm.rotation.x, -0.72, 0.3);
+    chibi.leftThigh.rotation.x = THREE.MathUtils.lerp(chibi.leftThigh.rotation.x, 0.68, tuck);
+    chibi.rightThigh.rotation.x = THREE.MathUtils.lerp(chibi.rightThigh.rotation.x, 0.48, tuck);
+    chibi.leftShin.rotation.x = THREE.MathUtils.lerp(chibi.leftShin.rotation.x, 0.82, tuck);
+    chibi.rightShin.rotation.x = THREE.MathUtils.lerp(chibi.rightShin.rotation.x, 0.72, tuck);
+    chibi.leftFoot.rotation.x = THREE.MathUtils.lerp(chibi.leftFoot.rotation.x, -0.18, tuck);
+    chibi.rightFoot.rotation.x = THREE.MathUtils.lerp(chibi.rightFoot.rotation.x, -0.08, tuck);
+  }
+
+  private applySableMotion(sable: SableRig | undefined, motion: ActorMotionState, companion: Companion): void {
+    if (!sable) {
+      return;
+    }
+
+    const currentTime = this.currentFrameTime || performance.now();
+    const baseSpeed = Math.max(1, companion.speed || 240);
+    const speedRatio = motion.moving
+      ? THREE.MathUtils.clamp(motion.speedPxPerSecond / baseSpeed, 0, 1.9)
+      : 0;
+    const moveBlend = motion.moving ? smoothstep(speedRatio / 0.24) : 0;
+    const runBlend = motion.moving ? smoothstep((speedRatio - 0.78) / 0.62) : 0;
+    const attackIntent = companion.state === "attack" ? 1 : 0;
+    const fetchIntent = companion.state === "fetch" ? 1 : 0;
+    const alertBlend = Math.max(attackIntent, fetchIntent * 0.58);
+    const cycle = motion.cycle;
+    const stride = Math.sin(cycle);
+    const counterStride = Math.sin(cycle + Math.PI);
+    const doubleStep = Math.sin((cycle * 2) + 0.2);
+    const stepLift = Math.abs(Math.sin(cycle));
+    const idleBreath = Math.sin(currentTime * 0.003 + cycle * 0.12);
+    const wagSpeed = companion.state === "idle" ? 0.006 : companion.state === "attack" ? 0.021 : 0.014;
+    const wagAmount = 0.18 + (0.18 * moveBlend) + (0.2 * alertBlend);
+    const lean = 0.025 + (0.06 * moveBlend) + (0.1 * runBlend) + (0.07 * alertBlend);
+
+    sable.root.position.y = 0.13
+      + (idleBreath * 0.01 * (1 - moveBlend))
+      + (stepLift * 0.018 * moveBlend)
+      + (Math.abs(doubleStep) * 0.018 * runBlend);
+    sable.root.rotation.set(lean, 0, doubleStep * 0.018 * moveBlend);
+    sable.body.rotation.set(
+      0.045 + (0.055 * runBlend) + (0.035 * alertBlend),
+      stride * 0.028 * moveBlend,
+      doubleStep * 0.026 * moveBlend,
+    );
+    sable.chest.rotation.set(
+      -0.02 + (0.06 * runBlend) + (0.04 * alertBlend),
+      -stride * 0.018 * moveBlend,
+      -doubleStep * 0.018 * moveBlend,
+    );
+    sable.head.rotation.set(
+      -0.045 - (0.035 * runBlend) + (0.06 * alertBlend) + (idleBreath * 0.018 * (1 - moveBlend)),
+      -stride * 0.045 * moveBlend,
+      -doubleStep * 0.028 * moveBlend,
+    );
+    sable.snout.position.z = 0.27 + (alertBlend * Math.sin(currentTime * 0.018) * 0.012);
+    sable.tail.rotation.set(
+      -0.46 - (0.1 * alertBlend) + (0.07 * runBlend),
+      Math.sin((currentTime * wagSpeed) + cycle * 0.22) * wagAmount,
+      Math.cos((currentTime * wagSpeed) + cycle * 0.18) * 0.08 * (0.4 + moveBlend),
+    );
+
+    const strideAmount = ((0.34 * moveBlend) + (0.42 * runBlend)) * (1 + alertBlend * 0.18);
+    const legLift = 0.025 * moveBlend + (0.025 * runBlend);
+    const frontLeftLift = Math.max(0, stride) * legLift;
+    const frontRightLift = Math.max(0, counterStride) * legLift;
+    const rearLeftLift = Math.max(0, counterStride) * legLift;
+    const rearRightLift = Math.max(0, stride) * legLift;
+
+    sable.frontLeftLeg.position.y = 0.52 + frontLeftLift;
+    sable.frontRightLeg.position.y = 0.52 + frontRightLift;
+    sable.rearLeftLeg.position.y = 0.52 + rearLeftLift;
+    sable.rearRightLeg.position.y = 0.52 + rearRightLift;
+    sable.frontLeftLeg.rotation.set(0.08 + (stride * strideAmount), 0.018 * moveBlend, -0.055);
+    sable.frontRightLeg.rotation.set(0.08 + (counterStride * strideAmount), -0.018 * moveBlend, 0.055);
+    sable.rearLeftLeg.rotation.set(0.02 + (counterStride * strideAmount * 0.92), -0.012 * moveBlend, -0.045);
+    sable.rearRightLeg.rotation.set(0.02 + (stride * strideAmount * 0.92), 0.012 * moveBlend, 0.045);
+  }
+
+  private maybeEmitPlayerFootstep(actor: Actor, playerId: PlayerId): void {
+    const motion = actor.motion;
+    if (!motion?.moving) {
+      if (motion) {
+        motion.footstepSoundStep = undefined;
+      }
+      return;
+    }
+
+    const speedRatio = motion.speedPxPerSecond / PLAYER_SPEED_PX_PER_SECOND;
+    if (speedRatio < 0.18) {
+      motion.footstepSoundStep = undefined;
+      return;
+    }
+
+    const stepIndex = getHumanoidFootPlantStep(motion.cycle);
+    if (motion.footstepSoundStep === undefined) {
+      motion.footstepSoundStep = stepIndex;
+      return;
+    }
+    if (motion.footstepSoundStep === stepIndex) {
+      return;
+    }
+
+    motion.footstepSoundStep = stepIndex;
+    this.options.onPlayerFootstep?.(playerId, stepIndex % 2 === 0 ? "left" : "right", speedRatio);
+  }
+
+  private maybeSpawnRunDust(actor: Actor, fieldX: number, fieldY: number): void {
+    const motion = actor.motion;
+    if (!motion?.moving) {
+      if (motion) {
+        motion.footDustStep = undefined;
+      }
+      return;
+    }
+
+    const speedRatio = motion.speedPxPerSecond / PLAYER_SPEED_PX_PER_SECOND;
+    if (speedRatio < RUN_DUST_MIN_SPEED_RATIO) {
+      motion.footDustStep = undefined;
+      return;
+    }
+
+    const stepIndex = getHumanoidFootPlantStep(motion.cycle);
+    if (motion.footDustStep === undefined) {
+      motion.footDustStep = stepIndex;
+      return;
+    }
+    if (motion.footDustStep === stepIndex) {
+      return;
+    }
+
+    motion.footDustStep = stepIndex;
+    const forward = {
+      x: Math.sin(motion.visualYaw),
+      y: Math.cos(motion.visualYaw),
+    };
+    const side = stepIndex % 2 === 0 ? 1 : -1;
+    const right = { x: forward.y, y: -forward.x };
+    this.spawnRunDustPuff(
+      {
+        x: fieldX - forward.x * RUN_DUST_TRAIL_OFFSET_PX + right.x * RUN_DUST_STEP_OFFSET_PX * side,
+        y: fieldY - forward.y * RUN_DUST_TRAIL_OFFSET_PX + right.y * RUN_DUST_STEP_OFFSET_PX * side,
+      },
+      forward,
+      side,
+      speedRatio,
+    );
+  }
+
+  private spawnRunDustPuff(
+    point: { x: number; y: number },
+    forward: { x: number; y: number },
+    side: 1 | -1,
+    speedRatio: number,
+  ): void {
+    const world = fieldToHavenWorld(this.options.map, point, 0.08);
+    const trailingWorld = fieldToHavenWorld(this.options.map, {
+      x: point.x - forward.x * 26 + forward.y * side * 4,
+      y: point.y - forward.y * 26 - forward.x * side * 4,
+    }, 0.08);
+    const velocity = new THREE.Vector3(
+      trailingWorld.x - world.x,
+      0,
+      trailingWorld.z - world.z,
+    );
+    if (velocity.lengthSq() > 0.0001) {
+      velocity.normalize().multiplyScalar(0.38 + THREE.MathUtils.clamp(speedRatio - 1, 0, 0.85) * 0.22);
+    }
+    velocity.y = 0.26 + THREE.MathUtils.clamp(speedRatio - 1, 0, 0.85) * 0.14;
+
+    const group = new THREE.Group();
+    group.name = "run-dust-puff";
+    group.position.set(world.x, world.y, world.z);
+    const puffCount = speedRatio > 1.45 ? 3 : 2;
+    for (let index = 0; index < puffCount; index += 1) {
+      const material = new THREE.MeshBasicMaterial({
+        color: index === 0 ? 0xd3b88b : 0x9f8a68,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const puff = new THREE.Mesh(new THREE.CircleGeometry(0.08 + index * 0.025, 8), material);
+      puff.name = "run-dust-particle";
+      puff.position.set(
+        (Math.random() - 0.5) * 0.16,
+        index * 0.018,
+        (Math.random() - 0.5) * 0.14,
+      );
+      puff.rotation.set(
+        -Math.PI / 2 + (Math.random() - 0.5) * 0.36,
+        0,
+        Math.random() * Math.PI * 2,
+      );
+      puff.scale.set(1 + Math.random() * 0.45, 0.58 + Math.random() * 0.32, 1);
+      group.add(puff);
+    }
+
+    group.renderOrder = 21;
+    this.dynamicGroup.add(group);
+    this.visualEffects.push({
+      object: group,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: 360,
+      velocity,
+      spin: 1.4 * side,
+      baseScale: group.scale.clone(),
+      opacity: 0.38,
+      scaleGrowth: 1.75,
+    });
   }
 
   private beginImpactFeedback(point: { x: number; y: number }, intensity: number): void {
@@ -2027,19 +2906,19 @@ export class Haven3DFieldController implements Haven3DModeController {
       const t = THREE.MathUtils.clamp(elapsed / effect.durationMs, 0, 1);
       effect.object.position.addScaledVector(effect.velocity, deltaMs / 1000);
       if (effect.baseScale) {
-        effect.object.scale.copy(effect.baseScale).multiplyScalar(1 + t * 0.16);
+        effect.object.scale.copy(effect.baseScale).multiplyScalar(1 + t * (effect.scaleGrowth ?? 0.16));
       } else {
-        effect.object.scale.setScalar(1 + t * 1.35);
+        effect.object.scale.setScalar(1 + t * (effect.scaleGrowth ?? 1.35));
       }
       if (effect.spin) {
         effect.object.rotation.z += effect.spin * (deltaMs / 1000);
       }
       effect.object.traverse((node) => {
         if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
-          node.material.opacity = Math.max(0, 0.82 * (1 - t));
+          node.material.opacity = Math.max(0, (effect.opacity ?? 0.82) * (1 - t));
         }
         if (node instanceof THREE.Sprite && node.material instanceof THREE.SpriteMaterial) {
-          node.material.opacity = Math.max(0, 0.96 * (1 - t));
+          node.material.opacity = Math.max(0, (effect.opacity ?? 0.96) * (1 - t));
         }
       });
       if (t >= 1) {
@@ -2050,9 +2929,33 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
   }
 
+  private updateGrappleAnchors(currentTime: number): void {
+    const visible = this.activeMode === "grapple";
+    for (const anchor of this.grappleAnchors.values()) {
+      anchor.group.visible = visible;
+      if (!visible) {
+        continue;
+      }
+
+      const pulse = (Math.sin(currentTime * 0.004 + anchor.phase) + 1) * 0.5;
+      const scale = 0.92 + pulse * 0.18;
+      anchor.group.scale.setScalar(scale);
+      anchor.group.rotation.y += 0.012 + pulse * 0.006;
+      anchor.group.rotation.z = Math.sin(currentTime * 0.0025 + anchor.phase) * 0.08;
+      anchor.group.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
+          node.material.opacity = 0.32 + pulse * 0.36;
+        }
+      });
+    }
+  }
+
   private updateCamera(dt: number): void {
     const mouseSensitivity = 0.003;
     const yawDelta = -this.mouseDx * mouseSensitivity;
+    if (Math.abs(yawDelta) > 0.000001) {
+      this.cameraYawPan = null;
+    }
     this.pitch = THREE.MathUtils.clamp(
       this.pitch - this.mouseDy * mouseSensitivity,
       CAMERA_MIN_PITCH,
@@ -2062,8 +2965,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.mouseDy = 0;
 
     const avatar = this.options.getPlayerAvatar("P1");
+    const playerElevation = avatar ? this.getPlayerVerticalState("P1").elevation : 0;
     const playerWorld = avatar
-      ? fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 1.15)
+      ? fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 1.15 + playerElevation)
       : { x: 0, y: 1.15, z: 0 };
     const lockedTarget = this.getLockedTargetCandidate();
     const cameraDistance = this.cameraDistance;
@@ -2071,8 +2975,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     let cameraYaw = this.yaw + yawDelta;
     let focus = new THREE.Vector3(playerWorld.x, playerWorld.y, playerWorld.z);
     let distance = cameraDistance;
+    let forwardPanActive = false;
 
     if (avatar && lockedTarget) {
+      this.cameraYawPan = null;
       this.targetOrbitYawOffset += yawDelta;
       const targetWorld = fieldToHavenWorld(this.options.map, { x: lockedTarget.x, y: lockedTarget.y }, 1.1);
       const playerToTargetX = targetWorld.x - playerWorld.x;
@@ -2092,6 +2998,16 @@ export class Haven3DFieldController implements Haven3DModeController {
         (playerWorld.z * 0.64) + (targetWorld.z * 0.36),
       );
     } else {
+      if (this.cameraYawPan) {
+        const elapsed = (this.currentFrameTime || performance.now()) - this.cameraYawPan.startedAt;
+        const amount = smoothstep(elapsed / this.cameraYawPan.durationMs);
+        cameraYaw = lerpAngleRadians(this.cameraYawPan.fromYaw, this.cameraYawPan.toYaw, amount);
+        forwardPanActive = amount < 1;
+        if (!forwardPanActive) {
+          cameraYaw = this.cameraYawPan.toYaw;
+          this.cameraYawPan = null;
+        }
+      }
       this.yaw = cameraYaw;
       this.targetOrbitYawOffset = 0;
     }
@@ -2106,12 +3022,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       ? new THREE.Vector3(Math.cos(cameraYaw) * 0.62, 0, -Math.sin(cameraYaw) * 0.62)
       : new THREE.Vector3();
     const desired = focus.clone().add(offset).add(shoulderOffset);
-    if (this.cameraSnapNextFrame) {
-      this.camera.position.copy(desired);
-      this.cameraSnapNextFrame = false;
-    } else {
-      this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
-    }
+    const positionLerpBase = forwardPanActive ? 0.00002 : 0.001;
+    this.camera.position.lerp(desired, 1 - Math.pow(positionLerpBase, dt));
     this.camera.lookAt(focus);
     if (this.cameraImpulse.lengthSq() > 0.000001) {
       this.camera.position.add(this.cameraImpulse);
@@ -2129,6 +3041,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   private syncDynamicActors(): void {
     this.syncPlayerActor("P1");
     this.syncPlayerActor("P2");
+    this.syncCompanionActor();
     this.syncNpcActors();
     this.syncEnemyActors();
   }
@@ -2148,8 +3061,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const world = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 0.04);
+    const vertical = this.getPlayerVerticalState(playerId);
     const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
-    actor.group.position.set(world.x, world.y, world.z);
+    actor.group.position.set(world.x, world.y + vertical.elevation, world.z);
     const bladeLookDirection = playerId === "P1" && this.bladeSwing
       ? this.bladeSwing.direction
       : null;
@@ -2164,15 +3078,28 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.getRotationForFacing(avatar.facing),
       lookDirection,
     );
-    this.updatePlayerBladePose(actor, playerId);
+    this.applyChibiJumpPose(actor.chibi, vertical);
+    if (vertical.grounded) {
+      this.maybeEmitPlayerFootstep(actor, playerId);
+      this.maybeSpawnRunDust(actor, avatar.x, avatar.y);
+    } else if (actor.motion) {
+      actor.motion.footstepSoundStep = undefined;
+      actor.motion.footDustStep = undefined;
+    }
+    this.updatePlayerBladePose(actor, playerId, lockedTarget);
   }
 
-  private updatePlayerBladePose(actor: Actor, playerId: PlayerId): void {
+  private updatePlayerBladePose(
+    actor: Actor,
+    playerId: PlayerId,
+    lockedTarget: Haven3DTargetCandidate | null = null,
+  ): void {
     if (!actor.blade) {
       return;
     }
 
     const activeMode = playerId === "P1" ? this.activeMode : "blade";
+    const isTargetReady = playerId === "P1" && Boolean(lockedTarget) && activeMode !== null;
     this.updatePlayerWeaponForm(actor, activeMode);
     if (activeMode !== "blade") {
       actor.blade.visible = true;
@@ -2183,26 +3110,37 @@ export class Haven3DFieldController implements Haven3DModeController {
       const grapplePulse = activeMode === "grapple" && this.grappleMove
         ? Math.sin(((this.currentFrameTime || performance.now()) - this.grappleMove.startedAt) * 0.018) * 0.06
         : 0;
+
+      if (isTargetReady && activeMode) {
+        this.applyTargetReadyBodyPose(actor, activeMode);
+        this.mountBladeOnSwingHand(actor);
+        this.updateTargetReadyWeaponPose(actor, activeMode, recoil, grapplePulse);
+        this.hideBladeTrail(actor);
+        return;
+      }
+
+      this.mountBladeOnChibiRoot(actor);
       actor.blade.position.set(0.42, 0.98, 0.22 - recoil * 0.18);
       actor.blade.rotation.set(-0.54 + grapplePulse, 0.18, -0.16);
-      if (actor.bladeTrail) {
-        actor.bladeTrail.visible = false;
-      }
+      this.hideBladeTrail(actor);
       return;
     }
 
     const swing = playerId === "P1" ? this.bladeSwing : null;
     if (!swing) {
       actor.blade.visible = true;
+      if (isTargetReady && activeMode) {
+        this.applyTargetReadyBodyPose(actor, activeMode);
+        this.mountBladeOnSwingHand(actor);
+        this.updateTargetReadyWeaponPose(actor, activeMode);
+        this.hideBladeTrail(actor);
+        return;
+      }
+
+      this.mountBladeOnChibiRoot(actor);
       actor.blade.position.copy(BLADE_BACK_POSITION);
       actor.blade.rotation.copy(BLADE_BACK_ROTATION);
-      if (actor.bladeTrail) {
-        actor.bladeTrail.visible = false;
-        const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
-        if (material instanceof THREE.MeshBasicMaterial) {
-          material.opacity = 0;
-        }
-      }
+      this.hideBladeTrail(actor);
       return;
     }
 
@@ -2212,44 +3150,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     const strike = smoothstep((elapsed - BLADE_SWING_WINDUP_MS) / (BLADE_LUNGE_END_MS - BLADE_SWING_WINDUP_MS));
     const recovery = smoothstep((elapsed - BLADE_LUNGE_END_MS) / (BLADE_SWING_TOTAL_MS - BLADE_LUNGE_END_MS));
     const side = swing.side;
-    const hiltX = 0.42 * side;
-    const hiltY = 0.98;
-    const hiltZ = 0.42;
-
-    if (elapsed < BLADE_SWING_WINDUP_MS) {
-      actor.blade.position.set(
-        THREE.MathUtils.lerp(BLADE_BACK_POSITION.x, hiltX, windup),
-        THREE.MathUtils.lerp(BLADE_BACK_POSITION.y, hiltY + 0.08, windup),
-        THREE.MathUtils.lerp(BLADE_BACK_POSITION.z, hiltZ - 0.08, windup),
-      );
-      actor.blade.rotation.set(
-        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.x, -0.58, windup),
-        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.y, 1.46 * side, windup),
-        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.z, -0.95 * side, windup),
-      );
-    } else if (elapsed < BLADE_LUNGE_END_MS) {
-      actor.blade.position.set(
-        hiltX - 0.06 * side * strike,
-        hiltY + 0.08 - 0.04 * strike,
-        hiltZ + 0.14 * Math.sin(strike * Math.PI),
-      );
-      actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.58, -0.2, strike),
-        THREE.MathUtils.lerp(1.46 * side, -1.3 * side, strike),
-        THREE.MathUtils.lerp(-0.95 * side, 1.04 * side, strike),
-      );
-    } else {
-      actor.blade.position.set(
-        THREE.MathUtils.lerp(hiltX - 0.06 * side, BLADE_BACK_POSITION.x, recovery),
-        THREE.MathUtils.lerp(hiltY + 0.04, BLADE_BACK_POSITION.y, recovery),
-        THREE.MathUtils.lerp(hiltZ + 0.06, BLADE_BACK_POSITION.z, recovery),
-      );
-      actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.2, BLADE_BACK_ROTATION.x, recovery),
-        THREE.MathUtils.lerp(-1.3 * side, BLADE_BACK_ROTATION.y, recovery),
-        THREE.MathUtils.lerp(1.04 * side, BLADE_BACK_ROTATION.z, recovery),
-      );
-    }
+    this.applyBladeSwingArmPose(actor, swing, elapsed, windup, strike, recovery);
+    this.mountBladeOnSwingHand(actor);
+    this.updateHeldBladeSwingPose(actor, side, elapsed, windup, strike, recovery);
 
     if (actor.bladeTrail) {
       const active = elapsed >= BLADE_SWING_WINDUP_MS && elapsed <= BLADE_LUNGE_END_MS + 70;
@@ -2261,10 +3164,311 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
   }
 
+  private hideBladeTrail(actor: Actor): void {
+    if (!actor.bladeTrail) {
+      return;
+    }
+
+    actor.bladeTrail.visible = false;
+    const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
+    if (material instanceof THREE.MeshBasicMaterial) {
+      material.opacity = 0;
+    }
+  }
+
+  private applyTargetReadyBodyPose(actor: Actor, activeMode: Haven3DGearbladeMode): void {
+    const chibi = actor.chibi;
+    if (!chibi) {
+      return;
+    }
+
+    const isBlade = activeMode === "blade";
+    const isLauncher = activeMode === "launcher";
+    const lean = isLauncher ? 0.04 : 0.06;
+
+    chibi.root.position.y -= 0.012;
+    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, lean, 0.72);
+    chibi.torso.rotation.y = THREE.MathUtils.lerp(chibi.torso.rotation.y, -0.08, 0.5);
+    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.04, 0.5);
+    chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, 0.06, 0.5);
+    chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.04, 0.5);
+
+    chibi.rightUpperArm.rotation.set(
+      isBlade ? 0.32 : 0.24,
+      isBlade ? -0.12 : -0.1,
+      isBlade ? 0.44 : 0.34,
+    );
+    chibi.rightForearm.rotation.set(
+      isBlade ? -0.64 : -0.56,
+      isBlade ? 0.06 : 0.02,
+      isBlade ? 0.18 : 0.16,
+    );
+
+    chibi.leftUpperArm.rotation.set(
+      0.3,
+      0.1,
+      -0.24,
+    );
+    chibi.leftForearm.rotation.set(
+      -0.5,
+      0.05,
+      -0.16,
+    );
+
+    chibi.rightHandMount.position.set(0, -0.3, isBlade ? 0.07 : 0.08);
+    chibi.rightHand.scale.set(0.98, 0.74, 0.64);
+  }
+
+  private updateTargetReadyWeaponPose(
+    actor: Actor,
+    activeMode: Haven3DGearbladeMode,
+    recoil = 0,
+    grapplePulse = 0,
+  ): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    const frameTime = this.currentFrameTime || performance.now();
+    const idleLift = Math.sin(frameTime * 0.006) * 0.012;
+    if (activeMode === "blade") {
+      actor.blade.position.set(0.02, -0.03 + idleLift, 0.16);
+      actor.blade.rotation.set(0.25, 0.4, -0.2);
+      return;
+    }
+
+    if (activeMode === "launcher") {
+      actor.blade.position.set(0.03, -0.02 + idleLift, 0.1 - recoil * 0.08);
+      actor.blade.rotation.set(0.16 - recoil * 0.08, 0.18, -0.12);
+      return;
+    }
+
+    actor.blade.position.set(0.03, -0.02 + idleLift, 0.1);
+    actor.blade.rotation.set(0.12 + grapplePulse, 0.22, -0.1);
+  }
+
+  private mountBladeOnChibiRoot(actor: Actor): void {
+    if (!actor.blade || !actor.chibi || actor.blade.parent === actor.chibi.root) {
+      return;
+    }
+
+    actor.chibi.root.attach(actor.blade);
+  }
+
+  private mountBladeOnSwingHand(actor: Actor): void {
+    if (!actor.blade || !actor.chibi || actor.blade.parent === actor.chibi.rightHandMount) {
+      return;
+    }
+
+    actor.chibi.rightHandMount.attach(actor.blade);
+  }
+
+  private updateHeldBladeSwingPose(
+    actor: Actor,
+    side: 1 | -1,
+    elapsed: number,
+    windup: number,
+    strike: number,
+    recovery: number,
+  ): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    const impactBias = elapsed >= BLADE_SWING_WINDUP_MS && elapsed < BLADE_LUNGE_END_MS
+      ? Math.sin(strike * Math.PI)
+      : 0;
+    actor.blade.position.set(
+      0.02 * side,
+      -0.02 + 0.02 * impactBias,
+      0.18 + 0.05 * impactBias,
+    );
+
+    if (elapsed < BLADE_SWING_WINDUP_MS) {
+      actor.blade.rotation.set(
+        THREE.MathUtils.lerp(-0.16, -0.46, windup),
+        THREE.MathUtils.lerp(0.26 * side, 0.84 * side, windup),
+        THREE.MathUtils.lerp(-0.28 * side, 0.2 * side, windup),
+      );
+      return;
+    }
+
+    if (elapsed < BLADE_LUNGE_END_MS) {
+      const snap = 1 - ((1 - strike) ** 1.55);
+      actor.blade.rotation.set(
+        THREE.MathUtils.lerp(-0.46, 0.12, snap),
+        THREE.MathUtils.lerp(0.84 * side, -0.78 * side, snap),
+        THREE.MathUtils.lerp(0.2 * side, -0.54 * side, snap),
+      );
+      return;
+    }
+
+    actor.blade.rotation.set(
+      THREE.MathUtils.lerp(0.12, -0.12, recovery),
+      THREE.MathUtils.lerp(-0.78 * side, 0.28 * side, recovery),
+      THREE.MathUtils.lerp(-0.54 * side, -0.18 * side, recovery),
+    );
+  }
+
+  private applyBladeSwingArmPose(
+    actor: Actor,
+    swing: BladeSwingState,
+    elapsed: number,
+    windup: number,
+    strike: number,
+    recovery: number,
+  ): void {
+    const chibi = actor.chibi;
+    if (!chibi) {
+      return;
+    }
+
+    const side = swing.side;
+    const impactBias = elapsed >= BLADE_SWING_WINDUP_MS && elapsed < BLADE_LUNGE_END_MS
+      ? Math.sin(strike * Math.PI)
+      : 0;
+    const armStrike = 1 - ((1 - strike) ** 1.45);
+    const plant = elapsed < BLADE_SWING_WINDUP_MS
+      ? windup
+      : elapsed < BLADE_LUNGE_END_MS
+        ? 1
+        : 1 - recovery;
+    const counter = elapsed < BLADE_SWING_WINDUP_MS
+      ? windup
+      : elapsed < BLADE_LUNGE_END_MS
+        ? armStrike
+        : 1 - recovery;
+    const blendRotation = (node: THREE.Object3D, x: number, y: number, z: number, amount: number): void => {
+      node.rotation.set(
+        THREE.MathUtils.lerp(node.rotation.x, x, amount),
+        THREE.MathUtils.lerp(node.rotation.y, y, amount),
+        THREE.MathUtils.lerp(node.rotation.z, z, amount),
+      );
+    };
+
+    if (elapsed < BLADE_SWING_WINDUP_MS) {
+      chibi.rightUpperArm.rotation.set(
+        THREE.MathUtils.lerp(0.26, -1.5, windup),
+        THREE.MathUtils.lerp(-0.08, -0.56 * side, windup),
+        THREE.MathUtils.lerp(0.24, 1.28 * side, windup),
+      );
+      chibi.rightForearm.rotation.set(
+        THREE.MathUtils.lerp(-0.46, -1.08, windup),
+        THREE.MathUtils.lerp(-0.05, 0.42 * side, windup),
+        THREE.MathUtils.lerp(0.16, 1.04 * side, windup),
+      );
+      chibi.torso.rotation.y = THREE.MathUtils.lerp(0, -0.38 * side, windup);
+      chibi.head.rotation.y = THREE.MathUtils.lerp(0, 0.18 * side, windup);
+      blendRotation(chibi.leftUpperArm, -0.28, 0.26 * side, -0.94 * side, counter);
+      blendRotation(chibi.leftForearm, -0.58, -0.2 * side, -0.52 * side, counter);
+    } else if (elapsed < BLADE_LUNGE_END_MS) {
+      chibi.rightUpperArm.rotation.set(
+        THREE.MathUtils.lerp(-1.5, 1.2, armStrike),
+        THREE.MathUtils.lerp(-0.56 * side, 0.92 * side, armStrike),
+        THREE.MathUtils.lerp(1.28 * side, -1.58 * side, armStrike),
+      );
+      chibi.rightForearm.rotation.set(
+        THREE.MathUtils.lerp(-1.08, 0.14, armStrike),
+        THREE.MathUtils.lerp(0.42 * side, -0.76 * side, armStrike),
+        THREE.MathUtils.lerp(1.04 * side, -1.04 * side, armStrike),
+      );
+      chibi.torso.rotation.y = THREE.MathUtils.lerp(-0.38 * side, 0.58 * side, armStrike);
+      chibi.torso.rotation.z += 0.2 * side * impactBias;
+      chibi.head.rotation.y = THREE.MathUtils.lerp(0.18 * side, -0.28 * side, armStrike);
+      blendRotation(chibi.leftUpperArm, 0.74, -0.62 * side, 1.12 * side, counter);
+      blendRotation(chibi.leftForearm, -0.84, 0.42 * side, 0.72 * side, counter);
+    } else {
+      chibi.rightUpperArm.rotation.set(
+        THREE.MathUtils.lerp(1.2, 0.26, recovery),
+        THREE.MathUtils.lerp(0.92 * side, -0.08, recovery),
+        THREE.MathUtils.lerp(-1.58 * side, 0.24, recovery),
+      );
+      chibi.rightForearm.rotation.set(
+        THREE.MathUtils.lerp(0.14, -0.46, recovery),
+        THREE.MathUtils.lerp(-0.76 * side, -0.05, recovery),
+        THREE.MathUtils.lerp(-1.04 * side, 0.16, recovery),
+      );
+      chibi.torso.rotation.y = THREE.MathUtils.lerp(0.58 * side, 0, recovery);
+      chibi.head.rotation.y = THREE.MathUtils.lerp(-0.28 * side, 0, recovery);
+      chibi.leftUpperArm.rotation.set(
+        THREE.MathUtils.lerp(0.74, 0.28, recovery),
+        THREE.MathUtils.lerp(-0.62 * side, 0.1, recovery),
+        THREE.MathUtils.lerp(1.12 * side, -0.24, recovery),
+      );
+      chibi.leftForearm.rotation.set(
+        THREE.MathUtils.lerp(-0.84, -0.48, recovery),
+        THREE.MathUtils.lerp(0.42 * side, 0.05, recovery),
+        THREE.MathUtils.lerp(0.72 * side, -0.16, recovery),
+      );
+    }
+
+    const leftLeads = side === 1;
+    const leadThighX = 0.48 + 0.08 * impactBias;
+    const rearThighX = -0.18 - 0.05 * impactBias;
+    const leadShinX = 0.24 + 0.12 * impactBias;
+    const rearShinX = 0.62 + 0.16 * impactBias;
+    const leadFootX = -0.18 - 0.06 * impactBias;
+    const rearFootX = 0.28 + 0.08 * impactBias;
+    const plantAmount = THREE.MathUtils.clamp(plant, 0, 1);
+
+    chibi.root.position.y -= 0.026 * plantAmount + 0.018 * impactBias;
+    blendRotation(chibi.pelvis, 0.1, -0.2 * side, -0.12 * side, plantAmount);
+    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, -0.12, plantAmount);
+    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.08, plantAmount);
+
+    blendRotation(
+      chibi.leftThigh,
+      leftLeads ? leadThighX : rearThighX,
+      leftLeads ? 0.05 : -0.06,
+      leftLeads ? 0.18 : -0.02,
+      plantAmount,
+    );
+    blendRotation(
+      chibi.rightThigh,
+      leftLeads ? rearThighX : leadThighX,
+      leftLeads ? 0.06 : -0.05,
+      leftLeads ? 0.02 : -0.18,
+      plantAmount,
+    );
+    blendRotation(chibi.leftShin, leftLeads ? leadShinX : rearShinX, 0, leftLeads ? -0.08 : -0.02, plantAmount);
+    blendRotation(chibi.rightShin, leftLeads ? rearShinX : leadShinX, 0, leftLeads ? 0.02 : 0.08, plantAmount);
+    blendRotation(chibi.leftFoot, leftLeads ? leadFootX : rearFootX, 0, leftLeads ? -0.12 : 0.04, plantAmount);
+    blendRotation(chibi.rightFoot, leftLeads ? rearFootX : leadFootX, 0, leftLeads ? -0.04 : 0.12, plantAmount);
+
+    const handPulse = 1 + 0.16 * impactBias;
+    chibi.rightHandMount.position.set(0, -0.28 + 0.05 * impactBias, 0.04 + 0.24 * impactBias);
+    chibi.rightHand.scale.set(0.9 * handPulse, 0.72 * handPulse, 0.62 * handPulse);
+  }
+
   private updatePlayerWeaponForm(actor: Actor, activeMode: Haven3DGearbladeMode | null): void {
     for (const [mode, object] of Object.entries(actor.weaponForms ?? {}) as Array<[Haven3DGearbladeMode, THREE.Object3D]>) {
       object.visible = activeMode === mode;
     }
+  }
+
+  private syncCompanionActor(): void {
+    const companion = this.options.getCompanion?.() ?? null;
+    if (!companion) {
+      if (this.companionActor) {
+        this.dynamicGroup.remove(this.companionActor.group);
+        disposeObject(this.companionActor.group);
+        this.companionActor = null;
+      }
+      return;
+    }
+
+    if (!this.companionActor) {
+      this.companionActor = this.createSableActor();
+    }
+
+    const actor = this.companionActor;
+    actor.group.visible = true;
+    const world = fieldToHavenWorld(this.options.map, { x: companion.x, y: companion.y }, 0.035);
+    actor.group.position.set(world.x, world.y, world.z);
+    const lookDirection = companion.target
+      ? { x: companion.target.x - companion.x, y: companion.target.y - companion.y }
+      : null;
+    this.updateSableMotion(actor, companion, lookDirection);
   }
 
   private syncNpcActors(): void {
@@ -2464,6 +3668,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const targets = this.getTargetCandidates();
     this.targetLock = selectNextHaven3DTarget(targets, this.targetLock, reverse);
     this.targetOrbitYawOffset = 0;
+    this.cameraYawPan = null;
   }
 
   private snapCameraToPlayerFacing(): void {
@@ -2476,8 +3681,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.targetOrbitYawOffset = 0;
     this.mouseDx = 0;
     this.mouseDy = 0;
-    this.yaw = getCameraYawForFacing(avatar.facing);
-    this.cameraSnapNextFrame = true;
+    this.cameraYawPan = {
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: CAMERA_FORWARD_PAN_DURATION_MS,
+      fromYaw: this.yaw,
+      toYaw: getCameraYawForFacing(avatar.facing),
+    };
   }
 
   private getRotationForFacing(facing: PlayerAvatar["facing"]): number {

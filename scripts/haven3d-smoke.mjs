@@ -94,6 +94,12 @@ function assertSmoke(condition, message) {
   }
 }
 
+async function triggerPrimaryAction(page, canvas) {
+  const box = await canvas.boundingBox();
+  assertSmoke(Boolean(box), "HAVEN 3D canvas was not measurable for primary action.");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+
 async function cycleUntilTarget(page, label, attempts = 8) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await page.keyboard.press("KeyZ");
@@ -166,6 +172,7 @@ async function runSmoke() {
     }
     runtime.player.facing = "north";
     runtime.npcs = [];
+    runtime.companion = undefined;
     runtime.fieldEnemies = [{
       id: "enemy_smoke_near_miss",
       name: "Smoke Near Miss",
@@ -187,6 +194,17 @@ async function runSmoke() {
   await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
   await page.keyboard.press("Digit1");
   await page.keyboard.press("Space");
+  await page.waitForTimeout(240);
+  const spaceNoActionResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const enemy = field.getCurrentFieldRuntimeState()?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_near_miss");
+    return { hp: enemy?.hp ?? null, knockbackTime: enemy?.knockbackTime ?? null };
+  });
+  assertSmoke(
+    spaceNoActionResult.hp === 20 && spaceNoActionResult.knockbackTime === 0,
+    `Space triggered a Gearblade action instead of remaining jump-only in HAVEN 3D: ${JSON.stringify(spaceNoActionResult)}`,
+  );
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(950);
   const bladeNearMissResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -228,7 +246,7 @@ async function runSmoke() {
   await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
   await cycleUntilTarget(page, "TARGET :: SMOKE TESTER");
   await cycleUntilTarget(page, "TARGET :: SMOKE ENEMY");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(1100);
   const bladeHitResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -275,7 +293,7 @@ async function runSmoke() {
   await page.keyboard.press("Digit2");
   await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="launcher"]')?.classList.contains("haven3d-mode-chip--active"));
   await cycleUntilTarget(page, "TARGET :: SMOKE LAUNCHER");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
   const launcherHitResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -319,7 +337,7 @@ async function runSmoke() {
   await page.keyboard.press("Digit3");
   await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="grapple"]')?.classList.contains("haven3d-mode-chip--active"));
   await cycleUntilTarget(page, "TARGET :: SMOKE GRAPPLE");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
   const grappleAfter = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -523,7 +541,7 @@ async function runSmoke() {
   });
   await page.keyboard.press("Digit1");
   await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(600);
   const shieldBladeResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -536,7 +554,7 @@ async function runSmoke() {
   );
   await page.keyboard.press("Digit3");
   await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
   const shieldGrappleResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -582,7 +600,7 @@ async function runSmoke() {
   });
   await page.keyboard.press("Digit1");
   await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(600);
   const armorBladeResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -595,7 +613,7 @@ async function runSmoke() {
   );
   await page.keyboard.press("Digit2");
   await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
-  await page.keyboard.press("Space");
+  await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
   const armorLauncherResult = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -661,7 +679,10 @@ async function runSmoke() {
   await page.waitForSelector("#dialoguePanel.dialogue-panel--visible", { timeout: 10000 });
   const dialogueText = await page.locator("#dialoguePanel").innerText();
   assertSmoke(/Smoke Tester|Medic|Hello there|commander/i.test(dialogueText), "NPC dialogue did not open from HAVEN 3D.");
-  await page.locator("#dialogueCloseBtn").click();
+  await page.evaluate(async () => {
+    const dialogue = await import("/src/ui/screens/DialogueScreen.ts");
+    dialogue.closeDialogue();
+  });
   await page.waitForSelector("#dialoguePanel", { state: "detached", timeout: 10000 });
 
   const beforeMove = await page.evaluate(async () => {
@@ -772,7 +793,8 @@ async function runSmoke() {
   };
 }
 
-const server = spawn("pnpm", ["exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+const viteBin = join(process.cwd(), "node_modules", "vite", "bin", "vite.js");
+const server = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
   cwd: process.cwd(),
   env: process.env,
   stdio: ["ignore", "pipe", "pipe"],
