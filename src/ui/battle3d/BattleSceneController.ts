@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { applyChaosSkyboxBackground } from "../threeSkybox";
 import type { BattleCameraViewPreset } from "../../core/types";
 import {
   getBattleBillboardPerspectiveFromOrbitYaw,
@@ -284,13 +285,14 @@ export class BattleSceneController {
   private attackAnim: AttackAnim | null = null;
   private viewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
   private currentBillboardPerspective: BattleBillboardPerspective = getBattleBillboardPerspectiveFromOrbitYaw(this.orbitYaw);
+  private clearSkyboxBackground: (() => void) | null = null;
 
   constructor() {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.className = "battle-3d-canvas";
 
-    this.scene.background = new THREE.Color("#070b11");
+    this.clearSkyboxBackground = applyChaosSkyboxBackground(this.scene, "#070b11");
     this.scene.add(this.boardGroup, this.objectGroup, this.traversalGroup, this.unitGroup, this.highlightGroup);
 
     const ambient = new THREE.AmbientLight("#f1f0e8", 1.8);
@@ -510,6 +512,8 @@ export class BattleSceneController {
     this.resizeObserver = null;
     Array.from(this.unitActors.values()).forEach((actor) => this.disposeUnitActor(actor));
     this.unitActors.clear();
+    this.clearSkyboxBackground?.();
+    this.clearSkyboxBackground = null;
     this.renderer.dispose();
     this.host = null;
     this.snapshot = null;

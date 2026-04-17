@@ -27,6 +27,7 @@ import {
 } from "./targeting";
 import { getHaven3DEnemyDefense, isHaven3DEnemyDefenseBroken } from "./combatRules";
 import { getHaven3DEnemyAttackProfile } from "./enemyMoves";
+import { applyChaosSkyboxBackground } from "../../ui/threeSkybox";
 
 type FieldAvatarView = {
   x: number;
@@ -145,7 +146,7 @@ type GrappleMoveState = {
 };
 
 type ReactiveMaterial = {
-  material: THREE.MeshStandardMaterial;
+  material: THREE.MeshToonMaterial;
   baseEmissive: number;
   baseIntensity: number;
 };
@@ -161,6 +162,8 @@ type VisualEffect = {
   durationMs: number;
   velocity: THREE.Vector3;
   spin?: number;
+  baseScale?: THREE.Vector3;
+  channel?: string;
 };
 
 type Haven3DFieldControllerOptions = {
@@ -227,8 +230,9 @@ const ENEMY_TELEGRAPH_RANGE_PX = 118;
 const ENEMY_DANGER_RANGE_PX = 58;
 const TARGET_LOCK_BREAK_DISTANCE_PX = 540;
 const IMPACT_HITSTOP_MS = 64;
-const BLADE_SCABBARD_POSITION = new THREE.Vector3(0.42, 0.58, -0.06);
-const BLADE_SCABBARD_ROTATION = new THREE.Euler(-0.08, Math.PI - 0.18, -0.18);
+const BLADE_BACK_POSITION = new THREE.Vector3(-0.22, 1.3, -0.26);
+const BLADE_BACK_ROTATION = new THREE.Euler(Math.PI / 2, 0.58, -0.48);
+const ENEMY_PING_HEIGHT = 3.36;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -266,6 +270,36 @@ function disposeObject(object: THREE.Object3D): void {
   });
 }
 
+function createToonGradientMap(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(new Uint8Array([34, 118, 188, 255]), 4, 1, THREE.RedFormat);
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const HAVEN_TOON_GRADIENT_MAP = createToonGradientMap();
+
+function createHavenToonMaterial(options: {
+  color: THREE.ColorRepresentation;
+  emissive?: THREE.ColorRepresentation;
+  emissiveIntensity?: number;
+  transparent?: boolean;
+  opacity?: number;
+  side?: THREE.Side;
+}): THREE.MeshToonMaterial {
+  return new THREE.MeshToonMaterial({
+    color: options.color,
+    emissive: options.emissive ?? 0x000000,
+    emissiveIntensity: options.emissiveIntensity ?? 0,
+    gradientMap: HAVEN_TOON_GRADIENT_MAP,
+    transparent: options.transparent,
+    opacity: options.opacity,
+    side: options.side,
+  });
+}
+
 function createLabelSprite(text: string, options: { accent?: string; width?: number } = {}): THREE.Sprite {
   const canvas = document.createElement("canvas");
   canvas.width = options.width ?? 384;
@@ -295,6 +329,58 @@ function createLabelSprite(text: string, options: { accent?: string; width?: num
   const sprite = new THREE.Sprite(material);
   sprite.scale.set(2.55, 0.64, 1);
   sprite.renderOrder = 15;
+  return sprite;
+}
+
+function createCombatPingSprite(
+  title: string,
+  detail: string | null,
+  tone: "info" | "warning" | "success" | "danger",
+): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 132;
+  const context = canvas.getContext("2d");
+  const palette = {
+    info: { stroke: "rgba(102, 219, 201, 0.72)", glow: "rgba(102, 219, 201, 0.24)", title: "#f5ead2", detail: "#8ad8c6" },
+    warning: { stroke: "rgba(242, 176, 77, 0.82)", glow: "rgba(242, 176, 77, 0.28)", title: "#fff2cf", detail: "#f2b04d" },
+    success: { stroke: "rgba(130, 230, 157, 0.78)", glow: "rgba(130, 230, 157, 0.24)", title: "#f1ffe8", detail: "#82e69d" },
+    danger: { stroke: "rgba(255, 119, 93, 0.82)", glow: "rgba(255, 119, 93, 0.3)", title: "#fff0e8", detail: "#ff9a79" },
+  }[tone];
+
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.shadowColor = palette.glow;
+    context.shadowBlur = 18;
+    context.fillStyle = "rgba(13, 16, 15, 0.84)";
+    context.fillRect(8, 10, canvas.width - 16, canvas.height - 20);
+    context.shadowBlur = 0;
+    context.strokeStyle = palette.stroke;
+    context.lineWidth = 4;
+    context.strokeRect(10, 12, canvas.width - 20, canvas.height - 24);
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.font = "800 30px sans-serif";
+    context.fillStyle = palette.title;
+    context.fillText(title.toUpperCase().slice(0, 24), canvas.width / 2, detail ? 48 : 66);
+    if (detail) {
+      context.font = "700 20px sans-serif";
+      context.fillStyle = palette.detail;
+      context.fillText(detail.toUpperCase().slice(0, 34), canvas.width / 2, 88);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0.96,
+    depthTest: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(3.2, 0.82, 1);
+  sprite.renderOrder = 25;
   return sprite;
 }
 
@@ -353,6 +439,11 @@ function getYawFromFieldDelta(dx: number, dy: number, fallback = 0): number {
   return Math.atan2(dx, dy);
 }
 
+function getCameraYawForFacing(facing: PlayerAvatar["facing"]): number {
+  const vector = getFacingVector(facing);
+  return -Math.atan2(vector.x, -vector.y);
+}
+
 function lerpAngleRadians(from: number, to: number, amount: number): number {
   const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
   return from + delta * amount;
@@ -373,9 +464,9 @@ function createChibiCapsule(
 }
 
 function createChibiAnatomy(options: {
-  bodyMaterial: THREE.MeshStandardMaterial;
-  headMaterial: THREE.MeshStandardMaterial;
-  accentMaterial?: THREE.MeshStandardMaterial;
+  bodyMaterial: THREE.MeshToonMaterial;
+  headMaterial: THREE.MeshToonMaterial;
+  accentMaterial?: THREE.MeshToonMaterial;
 }): ChibiRig {
   const group = new THREE.Group();
   const bodyMaterial = options.bodyMaterial;
@@ -400,13 +491,6 @@ function createChibiAnatomy(options: {
   head.position.y = 1.56;
   head.scale.set(0.96, 1.05, 0.92);
   head.castShadow = true;
-
-  const leftEar = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), headMaterial);
-  leftEar.position.set(-0.42, 1.54, 0.02);
-  leftEar.scale.set(0.55, 0.9, 0.34);
-  leftEar.castShadow = true;
-  const rightEar = leftEar.clone();
-  rightEar.position.x = 0.42;
 
   const leftUpperArm = new THREE.Group();
   leftUpperArm.position.set(-0.34, 0.98, 0.03);
@@ -469,8 +553,6 @@ function createChibiAnatomy(options: {
     pelvis,
     neck,
     head,
-    leftEar,
-    rightEar,
     leftUpperArm,
     rightUpperArm,
     leftThigh,
@@ -537,6 +619,8 @@ export class Haven3DFieldController implements Haven3DModeController {
   private modeElements: HTMLElement[] = [];
   private currentFrameTime = 0;
   private hitstopRemainingMs = 0;
+  private cameraSnapNextFrame = false;
+  private clearSkyboxBackground: (() => void) | null = null;
 
   private readonly handleResize = () => this.resize();
   private readonly handlePointerLockChange = () => {
@@ -589,6 +673,15 @@ export class Haven3DFieldController implements Haven3DModeController {
       event.preventDefault();
       event.stopPropagation();
       this.options.onOpenMenu();
+      return;
+    }
+
+    if (event.key === "Tab" || event.code === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        this.snapCameraToPlayerFacing();
+      }
       return;
     }
 
@@ -747,6 +840,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.renderer.domElement.removeEventListener("wheel", this.handleWheel);
     this.modeElements.forEach((element) => element.removeEventListener("click", this.handleModeButtonClick));
     this.modeElements = [];
+    this.clearSkyboxBackground?.();
+    this.clearSkyboxBackground = null;
     window.removeEventListener("resize", this.handleResize);
     window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("mouseup", this.handleMouseUp);
@@ -798,7 +893,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private buildScene(): void {
-    this.scene.background = new THREE.Color(0x151816);
+    this.clearSkyboxBackground = applyChaosSkyboxBackground(this.scene, 0x151816);
     this.scene.fog = new THREE.Fog(0x151816, 44, 150);
 
     const hemi = new THREE.HemisphereLight(0xe4d5b5, 0x111412, 1.75);
@@ -841,16 +936,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       1.15,
       HAVEN3D_WORLD_TILE_SIZE,
     );
-    const deckMaterial = new THREE.MeshStandardMaterial({
-      color: 0x55493a,
-      roughness: 0.86,
-      metalness: 0.14,
-    });
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      color: 0x3d4144,
-      roughness: 0.78,
-      metalness: 0.18,
-    });
+    const deckMaterial = createHavenToonMaterial({ color: 0x55493a });
+    const wallMaterial = createHavenToonMaterial({ color: 0x3d4144 });
 
     const matrix = new THREE.Matrix4();
     const walkableMesh = new THREE.InstancedMesh(walkableGeometry, deckMaterial, walkableTiles.length);
@@ -914,11 +1001,7 @@ export class Haven3DFieldController implements Haven3DModeController {
             : object.type === "resource"
               ? 0x66a872
               : 0x665c4f;
-        const material = new THREE.MeshStandardMaterial({
-          color,
-          roughness: 0.72,
-          metalness: object.type === "station" ? 0.34 : 0.16,
-        });
+        const material = createHavenToonMaterial({ color });
         const mesh = new THREE.Mesh(
           new THREE.BoxGeometry(object.worldSize.width, object.worldSize.height, object.worldSize.depth),
           material,
@@ -940,10 +1023,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     const group = new THREE.Group();
     group.name = `Haven3DPlayer${playerId}`;
 
-    const coat = new THREE.MeshStandardMaterial({ color, roughness: 0.78, metalness: 0.16 });
-    const skin = new THREE.MeshStandardMaterial({ color: 0xd8b79c, roughness: 0.82, metalness: 0.04 });
-    const leather = new THREE.MeshStandardMaterial({ color: 0x231d19, roughness: 0.88, metalness: 0.06 });
-    const brass = new THREE.MeshStandardMaterial({ color: 0xb88745, roughness: 0.5, metalness: 0.55 });
+    const coat = createHavenToonMaterial({ color });
+    const skin = createHavenToonMaterial({ color: 0xd8b79c });
+    const leather = createHavenToonMaterial({ color: 0x231d19 });
+    const brass = createHavenToonMaterial({ color: 0xb88745 });
 
     const anatomy = createChibiAnatomy({
       bodyMaterial: coat,
@@ -954,24 +1037,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     shoulderStrap.position.set(0.12, 1.02, -0.03);
     shoulderStrap.rotation.set(0.08, -0.18, -0.24);
     shoulderStrap.castShadow = true;
-    const scabbard = new THREE.Group();
-    scabbard.position.copy(BLADE_SCABBARD_POSITION);
-    scabbard.rotation.copy(BLADE_SCABBARD_ROTATION);
-    const scabbardSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 1.18), leather);
-    scabbardSleeve.position.z = 0.82;
-    scabbardSleeve.castShadow = true;
-    const scabbardMouth = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.13, 0.12), brass);
-    scabbardMouth.position.z = 0.18;
-    scabbardMouth.castShadow = true;
-    const scabbardHilt = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.28), leather);
-    scabbardHilt.position.z = -0.02;
-    scabbardHilt.castShadow = true;
-    const scabbardGuard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.065, 0.07), brass);
-    scabbardGuard.position.z = 0.14;
-    scabbardGuard.castShadow = true;
-    scabbard.add(scabbardSleeve, scabbardMouth, scabbardHilt, scabbardGuard);
     const blade = new THREE.Group();
-    blade.position.set(0.42, 0.98, 0.22);
+    blade.position.copy(BLADE_BACK_POSITION);
+    blade.rotation.copy(BLADE_BACK_ROTATION);
 
     const bladeForm = new THREE.Group();
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.42), leather);
@@ -982,10 +1050,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     guard.castShadow = true;
     const bladeMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.18, 0.08, 1.52),
-      new THREE.MeshStandardMaterial({
+      createHavenToonMaterial({
         color: 0xc8b16f,
-        roughness: 0.32,
-        metalness: 0.72,
         emissive: 0x2b1708,
         emissiveIntensity: 0.15,
       }),
@@ -1017,10 +1083,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     chamber.castShadow = true;
     const sight = new THREE.Mesh(
       new THREE.BoxGeometry(0.08, 0.08, 0.28),
-      new THREE.MeshStandardMaterial({
+      createHavenToonMaterial({
         color: 0x58c1aa,
-        roughness: 0.38,
-        metalness: 0.35,
         emissive: 0x123c37,
         emissiveIntensity: 0.75,
       }),
@@ -1037,10 +1101,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     hookBase.castShadow = true;
     const hook = new THREE.Mesh(
       new THREE.TorusGeometry(0.16, 0.03, 8, 16, Math.PI * 1.35),
-      new THREE.MeshStandardMaterial({
+      createHavenToonMaterial({
         color: 0x4fb4a4,
-        roughness: 0.35,
-        metalness: 0.35,
         emissive: 0x123c37,
         emissiveIntensity: 0.85,
       }),
@@ -1050,7 +1112,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     grappleForm.add(coil, hookBase, hook);
 
     blade.add(bladeForm, launcherForm, grappleForm);
-    anatomy.root.add(shoulderStrap, scabbard, blade);
+    anatomy.root.add(shoulderStrap, blade);
     group.add(anatomy.root);
     this.dynamicGroup.add(group);
     this.playerActors.set(playerId, {
@@ -1069,21 +1131,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   private createNpcActor(npc: FieldNpc): Actor {
     const group = new THREE.Group();
     group.name = `Haven3DNpc:${npc.id}`;
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x4f7f76,
-      roughness: 0.82,
-      metalness: 0.08,
-    });
-    const brass = new THREE.MeshStandardMaterial({
-      color: 0xb58b4c,
-      roughness: 0.58,
-      metalness: 0.35,
-    });
-    const skin = new THREE.MeshStandardMaterial({
-      color: 0xd4b69e,
-      roughness: 0.82,
-      metalness: 0.04,
-    });
+    const material = createHavenToonMaterial({ color: 0x4f7f76 });
+    const brass = createHavenToonMaterial({ color: 0xb58b4c });
+    const skin = createHavenToonMaterial({ color: 0xd4b69e });
     const anatomy = createChibiAnatomy({
       bodyMaterial: material,
       headMaterial: skin,
@@ -1100,15 +1150,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   private createEnemyActor(enemy: FieldEnemy): Actor {
     const group = new THREE.Group();
     group.name = `Haven3DEnemy:${enemy.id}`;
-    const hide = new THREE.MeshStandardMaterial({
-      color: 0x8a2f36,
-      roughness: 0.76,
-      metalness: 0.12,
-    });
-    const core = new THREE.MeshStandardMaterial({
+    const hide = createHavenToonMaterial({ color: 0x8a2f36 });
+    const core = createHavenToonMaterial({
       color: 0xf2a14b,
-      roughness: 0.46,
-      metalness: 0.34,
       emissive: 0x3d1208,
       emissiveIntensity: 0.35,
     });
@@ -1163,10 +1207,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     defenseShield.visible = false;
 
     const defenseArmor = new THREE.Group();
-    const armorMaterial = new THREE.MeshStandardMaterial({
+    const armorMaterial = createHavenToonMaterial({
       color: 0xd49b45,
-      roughness: 0.4,
-      metalness: 0.72,
       emissive: 0x3c2206,
       emissiveIntensity: 0.28,
     });
@@ -1561,10 +1603,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const originY = avatar.y + direction.y * 36;
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.14, 14, 10),
-      new THREE.MeshStandardMaterial({
+      createHavenToonMaterial({
         color: 0xf2b04d,
-        roughness: 0.35,
-        metalness: 0.15,
         emissive: 0x8c3f10,
         emissiveIntensity: 1.8,
       }),
@@ -1920,6 +1960,43 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.cameraImpulse.clampLength(0, 0.34);
   }
 
+  public showEnemyPing(
+    enemyId: string,
+    title: string,
+    detail: string | null,
+    tone: "info" | "warning" | "success" | "danger" = "info",
+  ): boolean {
+    const actor = this.enemyActors.get(enemyId);
+    if (!actor?.group.visible) {
+      return false;
+    }
+
+    const channel = `enemy-ping:${enemyId}`;
+    for (let index = this.visualEffects.length - 1; index >= 0; index -= 1) {
+      const effect = this.visualEffects[index];
+      if (effect.channel !== channel) {
+        continue;
+      }
+      this.dynamicGroup.remove(effect.object);
+      disposeObject(effect.object);
+      this.visualEffects.splice(index, 1);
+    }
+
+    const sprite = createCombatPingSprite(title, detail, tone);
+    sprite.position.copy(actor.group.position);
+    sprite.position.y += ENEMY_PING_HEIGHT;
+    this.dynamicGroup.add(sprite);
+    this.visualEffects.push({
+      object: sprite,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: tone === "danger" ? 1320 : 1180,
+      velocity: new THREE.Vector3(0, 0.72, 0),
+      baseScale: sprite.scale.clone(),
+      channel,
+    });
+    return true;
+  }
+
   private spawnHitSpark(point: { x: number; y: number }, color: number): void {
     const world = fieldToHavenWorld(this.options.map, point, 0.62);
     const material = new THREE.MeshBasicMaterial({
@@ -1949,13 +2026,20 @@ export class Haven3DFieldController implements Haven3DModeController {
       const elapsed = currentTime - effect.startedAt;
       const t = THREE.MathUtils.clamp(elapsed / effect.durationMs, 0, 1);
       effect.object.position.addScaledVector(effect.velocity, deltaMs / 1000);
-      effect.object.scale.setScalar(1 + t * 1.35);
+      if (effect.baseScale) {
+        effect.object.scale.copy(effect.baseScale).multiplyScalar(1 + t * 0.16);
+      } else {
+        effect.object.scale.setScalar(1 + t * 1.35);
+      }
       if (effect.spin) {
         effect.object.rotation.z += effect.spin * (deltaMs / 1000);
       }
       effect.object.traverse((node) => {
         if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial) {
           node.material.opacity = Math.max(0, 0.82 * (1 - t));
+        }
+        if (node instanceof THREE.Sprite && node.material instanceof THREE.SpriteMaterial) {
+          node.material.opacity = Math.max(0, 0.96 * (1 - t));
         }
       });
       if (t >= 1) {
@@ -2022,7 +2106,12 @@ export class Haven3DFieldController implements Haven3DModeController {
       ? new THREE.Vector3(Math.cos(cameraYaw) * 0.62, 0, -Math.sin(cameraYaw) * 0.62)
       : new THREE.Vector3();
     const desired = focus.clone().add(offset).add(shoulderOffset);
-    this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
+    if (this.cameraSnapNextFrame) {
+      this.camera.position.copy(desired);
+      this.cameraSnapNextFrame = false;
+    } else {
+      this.camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
+    }
     this.camera.lookAt(focus);
     if (this.cameraImpulse.lengthSq() > 0.000001) {
       this.camera.position.add(this.cameraImpulse);
@@ -2104,9 +2193,9 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     const swing = playerId === "P1" ? this.bladeSwing : null;
     if (!swing) {
-      actor.blade.visible = false;
-      actor.blade.position.copy(BLADE_SCABBARD_POSITION);
-      actor.blade.rotation.copy(BLADE_SCABBARD_ROTATION);
+      actor.blade.visible = true;
+      actor.blade.position.copy(BLADE_BACK_POSITION);
+      actor.blade.rotation.copy(BLADE_BACK_ROTATION);
       if (actor.bladeTrail) {
         actor.bladeTrail.visible = false;
         const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
@@ -2129,14 +2218,14 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     if (elapsed < BLADE_SWING_WINDUP_MS) {
       actor.blade.position.set(
-        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.x, hiltX, windup),
-        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.y, hiltY + 0.08, windup),
-        THREE.MathUtils.lerp(BLADE_SCABBARD_POSITION.z, hiltZ - 0.08, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_POSITION.x, hiltX, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_POSITION.y, hiltY + 0.08, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_POSITION.z, hiltZ - 0.08, windup),
       );
       actor.blade.rotation.set(
-        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.x, -0.58, windup),
-        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.y, 1.46 * side, windup),
-        THREE.MathUtils.lerp(BLADE_SCABBARD_ROTATION.z, -0.95 * side, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.x, -0.58, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.y, 1.46 * side, windup),
+        THREE.MathUtils.lerp(BLADE_BACK_ROTATION.z, -0.95 * side, windup),
       );
     } else if (elapsed < BLADE_LUNGE_END_MS) {
       actor.blade.position.set(
@@ -2151,14 +2240,14 @@ export class Haven3DFieldController implements Haven3DModeController {
       );
     } else {
       actor.blade.position.set(
-        THREE.MathUtils.lerp(hiltX - 0.06 * side, BLADE_SCABBARD_POSITION.x, recovery),
-        THREE.MathUtils.lerp(hiltY + 0.04, BLADE_SCABBARD_POSITION.y, recovery),
-        THREE.MathUtils.lerp(hiltZ + 0.06, BLADE_SCABBARD_POSITION.z, recovery),
+        THREE.MathUtils.lerp(hiltX - 0.06 * side, BLADE_BACK_POSITION.x, recovery),
+        THREE.MathUtils.lerp(hiltY + 0.04, BLADE_BACK_POSITION.y, recovery),
+        THREE.MathUtils.lerp(hiltZ + 0.06, BLADE_BACK_POSITION.z, recovery),
       );
       actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.2, BLADE_SCABBARD_ROTATION.x, recovery),
-        THREE.MathUtils.lerp(-1.3 * side, BLADE_SCABBARD_ROTATION.y, recovery),
-        THREE.MathUtils.lerp(1.04 * side, BLADE_SCABBARD_ROTATION.z, recovery),
+        THREE.MathUtils.lerp(-0.2, BLADE_BACK_ROTATION.x, recovery),
+        THREE.MathUtils.lerp(-1.3 * side, BLADE_BACK_ROTATION.y, recovery),
+        THREE.MathUtils.lerp(1.04 * side, BLADE_BACK_ROTATION.z, recovery),
       );
     }
 
@@ -2375,6 +2464,20 @@ export class Haven3DFieldController implements Haven3DModeController {
     const targets = this.getTargetCandidates();
     this.targetLock = selectNextHaven3DTarget(targets, this.targetLock, reverse);
     this.targetOrbitYawOffset = 0;
+  }
+
+  private snapCameraToPlayerFacing(): void {
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      return;
+    }
+
+    this.targetLock = null;
+    this.targetOrbitYawOffset = 0;
+    this.mouseDx = 0;
+    this.mouseDy = 0;
+    this.yaw = getCameraYawForFacing(avatar.facing);
+    this.cameraSnapNextFrame = true;
   }
 
   private getRotationForFacing(facing: PlayerAvatar["facing"]): number {

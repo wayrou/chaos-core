@@ -20,6 +20,7 @@ import {
   getHaven3DEnemyAttackLabel,
   getHaven3DEnemyAttackProfile,
 } from "./haven3d/enemyMoves";
+import type { Haven3DGearbladeMode } from "./haven3d/coordinates";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
 import { showAlertDialog } from "../ui/components/confirmDialog";
@@ -110,7 +111,6 @@ import {
   BOWBLADE_BASE_RANGED_RANGE,
   BOWBLADE_MIN_ATTACK_CYCLE_MS,
   getBowbladeFieldProfile,
-  getWeaponsmithInstalledUpgradeIds,
 } from "../core/weaponsmith";
 import { getAerissFieldMovementSpeedBonus } from "../core/mounts";
 import {
@@ -221,6 +221,7 @@ let currentMap: FieldMap | null = null;
 let animationFrameId: number | null = null;
 let haven3DFieldController: Haven3DFieldController | null = null;
 let lastFrameTime = 0;
+let baseCampViewMode: "third-person" | "top-down" = "third-person";
 // Legacy movementInput kept for backward compatibility, but we'll use getPlayerInput instead
 let movementInput = {
   up: false,
@@ -298,6 +299,7 @@ function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
     attackCooldown: 0,
     attackAnimTime: 0,
     isRangedMode: false,
+    gearbladeMode: "blade",
     energyCells: 0,
     maxEnergyCells: Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus),
   };
@@ -308,6 +310,10 @@ function normalizeFieldCombatState(
 ): NonNullable<FieldState["combat"]> {
   const nextCombat = combat ? { ...combat } : createDefaultFieldCombatState();
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  if (!nextCombat.gearbladeMode) {
+    nextCombat.gearbladeMode = nextCombat.isRangedMode ? "launcher" : "blade";
+  }
+  nextCombat.isRangedMode = nextCombat.gearbladeMode === "launcher";
   nextCombat.maxEnergyCells = Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus);
   nextCombat.energyCells = Math.max(0, Math.min(nextCombat.energyCells, nextCombat.maxEnergyCells));
   return nextCombat;
@@ -653,6 +659,10 @@ const FIELD_ATTACK_DAMAGE = BOWBLADE_BASE_MELEE_DAMAGE;
 const FIELD_RANGED_ATTACK_DAMAGE = BOWBLADE_BASE_RANGED_DAMAGE;
 const FIELD_PROJECTILE_SPEED = BOWBLADE_BASE_PROJECTILE_SPEED;
 const FIELD_PROJECTILE_LIFETIME = 2000;
+const FIELD_GRAPPLE_RANGE = 430;
+const FIELD_GRAPPLE_DAMAGE = 14;
+const FIELD_GRAPPLE_PULL_FORCE = 560;
+const FIELD_ENEMY_PING_2D_CLEARANCE = 58;
 const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
@@ -859,14 +869,18 @@ function renderFieldFeedbackRequest(request: FeedbackRequest): void {
     return;
   }
 
-  if (request.type === "resource") {
+  const feedbackText = request.text ?? (request.type === "resource" ? "RESOURCE" : null);
+  if (feedbackText) {
+    const tone = typeof request.meta?.tone === "string" ? request.meta.tone : request.type;
     const textEl = document.createElement("div");
-    textEl.className = "field-feedback-element field-feedback-text";
-    textEl.textContent = request.text ?? "RESOURCE";
+    textEl.className = `field-feedback-element field-feedback-text field-feedback-text--${tone}`;
+    textEl.textContent = feedbackText;
     textEl.style.left = `${origin.x}px`;
     textEl.style.top = `${origin.y - 18}px`;
-    queueFieldFeedbackElement(textEl, 760);
+    queueFieldFeedbackElement(textEl, request.type === "warning" ? 1040 : 820);
+  }
 
+  if (request.type === "resource") {
     const target = resolveFieldOverlayPoint(request.targetPosition);
     if (target) {
       const pickupEl = document.createElement("div");
@@ -2339,6 +2353,59 @@ function isHaven3DFieldRuntimeActive(): boolean {
   return currentMap?.id === "base_camp" && Boolean(haven3DFieldController);
 }
 
+function renderBaseCampViewToggle(): string {
+  const showingThirdPerson = baseCampViewMode === "third-person";
+  return `
+    <button
+      class="field-view-toggle ${showingThirdPerson ? "field-view-toggle--third-person" : "field-view-toggle--top-down"}"
+      type="button"
+      data-field-view-toggle
+      aria-pressed="${showingThirdPerson}"
+      title="Switch base camp camera"
+    >
+      <span class="field-view-toggle__label">VIEW</span>
+      <span class="field-view-toggle__value">${showingThirdPerson ? "3D" : "TOP"}</span>
+    </button>
+  `;
+}
+
+function switchBaseCampViewMode(): void {
+  if (currentMap?.id !== "base_camp") {
+    return;
+  }
+  baseCampViewMode = baseCampViewMode === "third-person" ? "top-down" : "third-person";
+  renderFieldScreen("base_camp");
+}
+
+function handleFieldViewTogglePointerDown(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest<HTMLElement>("[data-field-view-toggle]");
+  if (!button || !document.querySelector(".field-root")) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  switchBaseCampViewMode();
+}
+
+function attachFieldViewToggleHandlers(root: ParentNode = document): void {
+  root.querySelectorAll<HTMLElement>("[data-field-view-toggle]").forEach((button) => {
+    if (button.dataset.fieldViewToggleKeybound === "true") {
+      return;
+    }
+    button.dataset.fieldViewToggleKeybound = "true";
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      switchBaseCampViewMode();
+    });
+  });
+}
+
 function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void {
   if (!fieldState || !currentMap) {
     return;
@@ -2393,10 +2460,13 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
           <div class="haven3d-field-tag__eyebrow">HAVEN FIELD</div>
           <div class="haven3d-field-tag__title">BASE CAMP</div>
         </div>
-        <div class="haven3d-mode-strip" aria-label="Gearblade modes">
-          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="blade"><span>1</span>Blade</button>
-          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="launcher"><span>2</span>Launcher</button>
-          <button class="haven3d-mode-chip" type="button" data-haven3d-mode="grapple"><span>3</span>Grapple</button>
+        <div class="haven3d-corner-controls">
+          ${renderBaseCampViewToggle()}
+          <div class="haven3d-mode-strip" aria-label="Gearblade modes">
+            <button class="haven3d-mode-chip" type="button" data-haven3d-mode="blade"><span>1</span>Blade</button>
+            <button class="haven3d-mode-chip" type="button" data-haven3d-mode="launcher"><span>2</span>Launcher</button>
+            <button class="haven3d-mode-chip" type="button" data-haven3d-mode="grapple"><span>3</span>Grapple</button>
+          </div>
         </div>
         <div class="haven3d-prompt" data-haven3d-prompt></div>
       </div>
@@ -2449,6 +2519,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
   });
   haven3DFieldController.start();
 
+  attachFieldViewToggleHandlers(fieldRoot);
   ensureFieldFeedbackListener();
   registerFieldControllerContext();
   scheduleFieldFocusableRefresh();
@@ -3361,7 +3432,7 @@ export function renderFieldScreen(
   // Create panel first (outside field-root)
   createAllNodesPanel();
 
-  if (mapId === "base_camp" && !options?.openBuildMode) {
+  if (mapId === "base_camp" && !options?.openBuildMode && baseCampViewMode === "third-person") {
     activeInteractionPrompt = getCombinedInteractionPrompt();
     mountHaven3DFieldRuntime(root);
     createPinnedNodesOverlay();
@@ -3850,7 +3921,15 @@ function render(): void {
     combatActive && p1Avatar && fieldState.combat?.isAttacking
       ? renderFieldAttackEffect(p1Avatar)
       : "";
-  const weaponWindowHtml = combatActive ? renderFieldWeaponWindow(fieldState.combat ?? createDefaultFieldCombatState()) : "";
+  const combatState = fieldState.combat ?? createDefaultFieldCombatState();
+  const fieldCornerControlsHtml = (currentMap.id === "base_camp" && !isHavenBuildModeEnabled()) || combatActive
+    ? `
+      <div class="field-corner-controls">
+        ${currentMap.id === "base_camp" && !isHavenBuildModeEnabled() ? renderBaseCampViewToggle() : ""}
+        ${combatActive ? renderFieldGearbladeModeStrip(combatState) : ""}
+      </div>
+    `
+    : "";
 
   // Sable companion (Headline 15a)
   const companionHtml = fieldState.companion ? `
@@ -3891,7 +3970,7 @@ function render(): void {
     ? `<div class="field-build-mode-header">BUILD MODE ACTIVE</div>`
     : "";
   const controllerHudInstructions = combatActive
-    ? `${moveLabel} to move • ${dashLabel} to dash • ${attackLabel} to attack • ${dashLabel} to toggle melee/ranged • Clear hostiles to interact`
+    ? `${moveLabel} to move • ${dashLabel} to dash • ${attackLabel} to attack • 1/2/3 or Tab to switch Gearblade • Clear hostiles to interact`
     : `${moveLabel} to move • ${dashLabel} to dash • ${interactLabel} to interact • Hold ${cancelLabel} for Inventory`;
   const promptHtml = !combatActive && activeInteractionPrompt
     ? `<div class="field-interaction-prompt">${activeInteractionPrompt}</div>`
@@ -3902,7 +3981,7 @@ function render(): void {
   void promptHtml;
   void hudInstructions;
   const combatStatusHtml = combatActive
-    ? `<div class="field-hud-combat-status">HP ${Math.max(0, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP))}/${Math.max(1, Number(fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP))} • HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
+    ? `<div class="field-hud-combat-status">HP ${Math.max(0, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP))}/${Math.max(1, Number(fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP))} • HOSTILES ${liveEnemyCount} • ${getFieldGearbladeMode(fieldState.combat).toUpperCase()} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
     : "";
 
   // Get field-root container or create it
@@ -3939,7 +4018,7 @@ function render(): void {
       </div>
     </div>
 
-    ${weaponWindowHtml}
+    ${fieldCornerControlsHtml}
 
     <div class="field-hud">
       ${getFieldBetaMarkerHtml(currentMap.id)}
@@ -3951,6 +4030,7 @@ function render(): void {
     ${renderHavenBuildPanel()}
   `;
   enhanceTerminalUiButtons(fieldRoot);
+  attachFieldViewToggleHandlers(fieldRoot);
 
   const existingLobbyOverlay = root.querySelector(".network-lobby-overlay") as HTMLElement | null;
   if (networkLobby) {
@@ -4314,35 +4394,29 @@ function renderFieldProjectiles(projectiles: FieldProjectile[]): string {
     .join("");
 }
 
-function renderFieldWeaponWindow(combat: NonNullable<FieldState["combat"]>): string {
-  const toggleModeLabel = getPlayerActionLabel("P1", "special1");
-  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
-  const installedUpgradeCount = getWeaponsmithInstalledUpgradeIds(getGameState()).length;
+function renderFieldGearbladeModeStrip(combat: NonNullable<FieldState["combat"]>): string {
+  const activeMode = getFieldGearbladeMode(combat);
+  const modes: Array<{ mode: Haven3DGearbladeMode; key: string; label: string }> = [
+    { mode: "blade", key: "1", label: "Blade" },
+    { mode: "launcher", key: "2", label: "Launcher" },
+    { mode: "grapple", key: "3", label: "Grapple" },
+  ];
   return `
-    <div class="field-node-weapon-window">
-      <div class="weapon-window-title">BOWBLADE</div>
-      <div class="weapon-window-mode ${combat.isRangedMode ? "weapon-window-mode--ranged" : "weapon-window-mode--melee"}">
-        ${combat.isRangedMode ? "RANGED" : "MELEE"}
-      </div>
-      <div class="weapon-window-energy">
-        <div class="weapon-window-energy-label">ENERGY CELLS</div>
-        <div class="weapon-window-energy-bar">
-          <div class="weapon-window-energy-fill" style="width: ${(combat.energyCells / combat.maxEnergyCells) * 100}%"></div>
-        </div>
-        <div class="weapon-window-energy-value">${combat.energyCells} / ${combat.maxEnergyCells}</div>
-      </div>
-      ${combat.isRangedMode && combat.energyCells <= 0 ? `
-        <div class="weapon-window-warning">NO ENERGY - USE MELEE TO CHARGE</div>
-      ` : ""}
-      <div class="weapon-window-empty-copy">
-        UPGRADES ${installedUpgradeCount} // MELEE +${bowbladeFieldProfile.meleeDamageBonus} // RANGED +${bowbladeFieldProfile.rangedDamageBonus}
-      </div>
-      <div class="weapon-window-hint"><span class="key-hint">${toggleModeLabel}</span> Switch Mode</div>
+    <div class="haven3d-mode-strip field-gearblade-mode-strip" aria-label="Gearblade modes">
+      ${modes.map(({ mode, key, label }) => `
+        <button
+          class="haven3d-mode-chip ${activeMode === mode ? "haven3d-mode-chip--active" : ""}"
+          type="button"
+          data-field-gearblade-mode="${mode}"
+          aria-pressed="${activeMode === mode}"
+        ><span>${key}</span>${label}</button>
+      `).join("")}
     </div>
   `;
 }
 
 function renderFieldAttackEffect(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): string {
+  const activeMode = getFieldGearbladeMode(fieldState?.combat);
   const attackOffset = {
     north: { x: 0, y: -35, rotation: -45 },
     south: { x: 0, y: 35, rotation: 135 },
@@ -4352,7 +4426,7 @@ function renderFieldAttackEffect(player: { x: number; y: number; facing: "north"
 
   const offset = attackOffset[player.facing];
   return `
-    <div class="field-node-attack-effect field-node-sword-slash"
+    <div class="field-node-attack-effect field-node-sword-slash field-node-sword-slash--${activeMode}"
          data-facing="${player.facing}"
          style="
            left: ${player.x + offset.x - 40}px;
@@ -5321,13 +5395,57 @@ function removePinnedNodesOverlay(): void {
   }
 }
 
+function getFieldGearbladeMode(combat: FieldState["combat"] | null | undefined): Haven3DGearbladeMode {
+  if (combat?.gearbladeMode === "blade" || combat?.gearbladeMode === "launcher" || combat?.gearbladeMode === "grapple") {
+    return combat.gearbladeMode;
+  }
+  return combat?.isRangedMode ? "launcher" : "blade";
+}
+
+function setFieldGearbladeMode(mode: Haven3DGearbladeMode): void {
+  if (!fieldState?.combat || !isFieldCombatActive()) {
+    return;
+  }
+
+  fieldState.combat.gearbladeMode = mode;
+  fieldState.combat.isRangedMode = mode === "launcher";
+  render();
+}
+
+function cycleFieldGearbladeMode(): void {
+  if (!fieldState?.combat || !isFieldCombatActive()) {
+    return;
+  }
+
+  const modes: Haven3DGearbladeMode[] = ["blade", "launcher", "grapple"];
+  const currentMode = getFieldGearbladeMode(fieldState.combat);
+  const currentIndex = Math.max(0, modes.indexOf(currentMode));
+  setFieldGearbladeMode(modes[(currentIndex + 1) % modes.length]);
+}
+
 function toggleFieldCombatRangedMode(): void {
   if (!fieldState?.combat || !isFieldCombatActive()) {
     return;
   }
 
-  fieldState.combat.isRangedMode = !fieldState.combat.isRangedMode;
-  render();
+  setFieldGearbladeMode(getFieldGearbladeMode(fieldState.combat) === "launcher" ? "blade" : "launcher");
+}
+
+function handleFieldGearbladeModePointerDown(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest<HTMLElement>("[data-field-gearblade-mode]");
+  if (!button || !document.querySelector(".field-root")) {
+    return;
+  }
+
+  const mode = button.dataset.fieldGearbladeMode as Haven3DGearbladeMode | undefined;
+  if (mode !== "blade" && mode !== "launcher" && mode !== "grapple") {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  setFieldGearbladeMode(mode);
 }
 
 function triggerFieldCombatAttack(): void {
@@ -5344,7 +5462,8 @@ function triggerFieldCombatAttack(): void {
     return;
   }
 
-  if (fieldState.combat.isRangedMode) {
+  const mode = getFieldGearbladeMode(fieldState.combat);
+  if (mode === "launcher") {
     if (fieldState.combat.energyCells <= 0) {
       showSystemPing({
         type: "info",
@@ -5357,6 +5476,8 @@ function triggerFieldCombatAttack(): void {
     }
 
     performFieldRangedAttack(player);
+  } else if (mode === "grapple") {
+    performFieldGrappleAttack(player);
   } else {
     performFieldMeleeAttack(player);
   }
@@ -5634,7 +5755,13 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       continue;
     }
 
-    enemy.hp -= meleeDamage;
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "blade");
+    if (defenseResult.blocked) {
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      continue;
+    }
+
+    enemy.hp -= meleeDamage * defenseResult.damageMultiplier;
     fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + meleeEnergyGain);
 
     const dx = enemy.x - player.x;
@@ -5650,6 +5777,53 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       handleFieldEnemyDefeat(enemy);
     }
   }
+}
+
+function performFieldGrappleAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {
+  if (!fieldState?.fieldEnemies) {
+    return;
+  }
+
+  const target = getNearestFieldEnemyInRange(player, FIELD_GRAPPLE_RANGE, -0.18);
+  if (!target) {
+    showSystemPing({
+      type: "info",
+      title: "NO GRAPPLE TARGET",
+      message: "Face a hostile within tether range.",
+      channel: "field-combat-grapple",
+      replaceChannel: true,
+    });
+    playPlaceholderSfx("ui-move");
+    return;
+  }
+
+  const defenseResult = resolveHaven3DGearbladeDamage(target, "grapple");
+  if (defenseResult.blocked) {
+    showHaven3DDefensePing(target, defenseResult.defense, defenseResult.requiredBreaker);
+    playPlaceholderSfx("ui-move");
+    return;
+  }
+  if (defenseResult.breaksDefense) {
+    target.gearbladeDefenseBroken = true;
+    showHaven3DDefenseBreakPing(target, defenseResult.defense);
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const damage = (FIELD_GRAPPLE_DAMAGE + Math.max(0, Math.floor(bowbladeFieldProfile.meleeDamageBonus * 0.35))) * defenseResult.damageMultiplier;
+  target.hp -= damage;
+
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  target.vx = -(dx / distance) * FIELD_GRAPPLE_PULL_FORCE;
+  target.vy = -(dy / distance) * FIELD_GRAPPLE_PULL_FORCE;
+  target.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION * 1.45;
+  target.facing = getFieldFacingFromDelta(player.x - target.x, player.y - target.y, target.facing);
+
+  if (target.hp <= 0) {
+    handleFieldEnemyDefeat(target);
+  }
+  playPlaceholderSfx("ui-confirm");
 }
 
 function getFieldFacingUnitVector(facing: "north" | "south" | "east" | "west"): { x: number; y: number } {
@@ -5681,20 +5855,85 @@ function getFieldFacingFromDelta(
   return dy >= 0 ? "south" : "north";
 }
 
+function getNearestFieldEnemyInRange(
+  origin: Pick<PlayerAvatar, "x" | "y" | "facing">,
+  range: number,
+  minForwardDot = -1,
+): FieldEnemy | null {
+  if (!fieldState?.fieldEnemies) {
+    return null;
+  }
+
+  const direction = getFieldFacingUnitVector(origin.facing);
+  let nearestEnemy: FieldEnemy | null = null;
+  let nearestDistance = range;
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - origin.x;
+    const dy = enemy.y - origin.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 0.001 || distance > nearestDistance) {
+      continue;
+    }
+
+    const dot = ((dx / distance) * direction.x) + ((dy / distance) * direction.y);
+    if (dot < minForwardDot) {
+      continue;
+    }
+
+    nearestEnemy = enemy;
+    nearestDistance = distance;
+  }
+  return nearestEnemy;
+}
+
+type FieldEnemyPingTone = "info" | "warning" | "success" | "danger";
+
+function showFieldEnemyPing(
+  enemy: FieldEnemy,
+  title: string,
+  detail: string | null,
+  tone: FieldEnemyPingTone,
+): void {
+  if (isHaven3DFieldRuntimeActive() && haven3DFieldController?.showEnemyPing(enemy.id, title, detail, tone)) {
+    return;
+  }
+
+  const text = detail ? `${title} // ${detail}` : title;
+  triggerFeedback({
+    type: tone === "success" ? "ui_confirm" : tone === "danger" ? "hit" : "warning",
+    source: "field",
+    intensity: tone === "danger" ? 2 : 1,
+    position: {
+      x: enemy.x,
+      y: enemy.y - Math.max(FIELD_ENEMY_PING_2D_CLEARANCE, enemy.height * 1.32),
+      space: "field-world",
+    },
+    text,
+    channel: `field-enemy-ping-${enemy.id}`,
+    audioHook: null,
+    haptic: null,
+    meta: {
+      tone,
+      enemyId: enemy.id,
+    },
+  });
+}
+
 function showHaven3DDefensePing(enemy: FieldEnemy, defense: Haven3DEnemyDefense, requiredMode: string | null): void {
   if (defense === "none" || !requiredMode) {
     return;
   }
 
-  showSystemPing({
-    type: "info",
-    title: defense === "shield" ? "SHIELD HELD" : "ARMOR HELD",
-    message: enemy.name,
-    detail: `${requiredMode.toUpperCase()} mode can break this defense.`,
-    durationMs: 1400,
-    channel: `haven3d-defense-${enemy.id}`,
-    replaceChannel: true,
-  });
+  showFieldEnemyPing(
+    enemy,
+    defense === "shield" ? "SHIELD HELD" : "ARMOR HELD",
+    `USE ${requiredMode.toUpperCase()}`,
+    "warning",
+  );
 }
 
 function showHaven3DDefenseBreakPing(enemy: FieldEnemy, defense: Haven3DEnemyDefense): void {
@@ -5702,15 +5941,12 @@ function showHaven3DDefenseBreakPing(enemy: FieldEnemy, defense: Haven3DEnemyDef
     return;
   }
 
-  showSystemPing({
-    type: "success",
-    title: defense === "shield" ? "SHIELD RIPPED" : "ARMOR CRACKED",
-    message: enemy.name,
-    detail: "The target is now vulnerable to the full Gearblade kit.",
-    durationMs: 1800,
-    channel: `haven3d-defense-break-${enemy.id}`,
-    replaceChannel: true,
-  });
+  showFieldEnemyPing(
+    enemy,
+    defense === "shield" ? "SHIELD RIPPED" : "ARMOR CRACKED",
+    "VULNERABLE",
+    "success",
+  );
 }
 
 function getDistanceToSegmentPx(
@@ -5985,6 +6221,7 @@ function performFieldRangedAttack(player: { x: number; y: number; facing: "north
     damage: rangedDamage,
     lifetime: 0,
     maxLifetime: FIELD_PROJECTILE_LIFETIME,
+    gearbladeMode: "launcher",
   });
 }
 
@@ -6107,7 +6344,22 @@ function updateFieldProjectiles(deltaTime: number): void {
         continue;
       }
 
-      enemy.hp -= projectile.damage;
+      let damageMultiplier = 1;
+      if (projectile.gearbladeMode === "launcher") {
+        const defenseResult = resolveHaven3DGearbladeDamage(enemy, "launcher");
+        if (defenseResult.blocked) {
+          showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+          fieldState.projectiles.splice(index, 1);
+          break;
+        }
+        if (defenseResult.breaksDefense) {
+          enemy.gearbladeDefenseBroken = true;
+          showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+        }
+        damageMultiplier = defenseResult.damageMultiplier;
+      }
+
+      enemy.hp -= projectile.damage * damageMultiplier;
       if (distance > 0) {
         enemy.vx = ((enemy.x - projectile.x) / distance) * (FIELD_ENEMY_KNOCKBACK_FORCE * 0.5);
         enemy.vy = ((enemy.y - projectile.y) / distance) * (FIELD_ENEMY_KNOCKBACK_FORCE * 0.5);
@@ -6190,15 +6442,12 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
   fieldState.player.vx = (dx / knockbackDistance) * profile.knockbackForce;
   fieldState.player.vy = (dy / knockbackDistance) * profile.knockbackForce;
 
-  showSystemPing({
-    type: "error",
-    title: getHaven3DEnemyAttackLabel(profile.style),
-    message: `${enemy.name} committed through the warning zone.`,
-    detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
-    durationMs: 1800,
-    channel: "field-player-damage",
-    replaceChannel: true,
-  });
+  showFieldEnemyPing(
+    enemy,
+    getHaven3DEnemyAttackLabel(profile.style),
+    `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
+    "danger",
+  );
 }
 
 function updateHaven3DEnemyAttackLunge(enemy: FieldEnemy, profile: ReturnType<typeof getHaven3DEnemyAttackProfile>, elapsed: number): void {
@@ -6452,15 +6701,12 @@ function updateFieldPlayerPressure(deltaTime: number): void {
     fieldState.player.vx = (dx / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
     fieldState.player.vy = (dy / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
 
-    showSystemPing({
-      type: "error",
-      title: "HOSTILE CONTACT",
-      message: `${enemy.name} struck the lane.`,
-      detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
-      durationMs: 1800,
-      channel: "field-player-damage",
-      replaceChannel: true,
-    });
+    showFieldEnemyPing(
+      enemy,
+      "HOSTILE CONTACT",
+      `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
+      "danger",
+    );
     break;
   }
 }
@@ -6612,6 +6858,8 @@ function setupGlobalListeners(): void {
 
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);
+  document.addEventListener("pointerdown", handleFieldViewTogglePointerDown, true);
+  document.addEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.addEventListener("click", handleFieldObjectClick, true);
 
   // Also add document-level click handler for All Nodes button as fallback
@@ -6659,6 +6907,8 @@ function cleanupGlobalListeners(): void {
 
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keyup", handleKeyUp);
+  document.removeEventListener("pointerdown", handleFieldViewTogglePointerDown, true);
+  document.removeEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.removeEventListener("click", handleFieldObjectClick, true);
   document.removeEventListener("click", handleAllNodesButtonClick, true);
 
@@ -6777,10 +7027,23 @@ function handleKeyDown(e: KeyboardEvent): void {
   handlePlayerInputKeyDown(e);
 
   if (!e.repeat && isFieldCombatActive()) {
-    if (key === "tab" || e.code === "Tab") {
+    const requestedGearbladeMode =
+      e.code === "Digit1" || e.code === "Numpad1" ? "blade"
+        : e.code === "Digit2" || e.code === "Numpad2" ? "launcher"
+          : e.code === "Digit3" || e.code === "Numpad3" ? "grapple"
+            : null;
+
+    if (requestedGearbladeMode) {
       e.preventDefault();
       e.stopPropagation();
-      toggleFieldCombatRangedMode();
+      setFieldGearbladeMode(requestedGearbladeMode);
+      return;
+    }
+
+    if (key === "tab" || e.code === "Tab" || key === "q" || e.code === "KeyQ") {
+      e.preventDefault();
+      e.stopPropagation();
+      cycleFieldGearbladeMode();
       return;
     }
 

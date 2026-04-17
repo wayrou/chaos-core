@@ -143,6 +143,7 @@ export interface FieldProjectile {
   damage: number;
   lifetime: number;
   maxLifetime: number;
+  gearbladeMode?: "launcher";
 }
 
 export interface FieldCombatState {
@@ -150,6 +151,7 @@ export interface FieldCombatState {
   attackCooldown: number;
   attackAnimTime: number;
   isRangedMode: boolean;
+  gearbladeMode?: "blade" | "launcher" | "grapple";
   energyCells: number;
   maxEnergyCells: number;
 }
