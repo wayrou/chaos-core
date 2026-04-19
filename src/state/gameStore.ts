@@ -22,6 +22,7 @@ import { withNormalizedSchemaState } from "../core/schemaSystem";
 import { withNormalizedTheaterDeploymentPresetState } from "../core/theaterDeploymentPreset";
 import { withNormalizedUnitAppearanceState } from "../core/unitAppearance";
 import { withNormalizedWeaponsmithState } from "../core/weaponsmith";
+import { withNormalizedOuterDecksState } from "../core/outerDecks";
 
 // ----------------------------------------------------------------------------
 // STATE
@@ -44,7 +45,9 @@ function syncSchemaState(state: GameState): GameState {
         withNormalizedFoundryState(
           withNormalizedSchemaState(
             withNormalizedUnitAppearanceState(
-              withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
+              withNormalizedOuterDecksState(
+                withNormalizedWeaponsmithState(withNormalizedTheaterDeploymentPresetState(normalizedState)),
+              ),
             ),
           ),
         ),

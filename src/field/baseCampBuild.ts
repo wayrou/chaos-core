@@ -37,21 +37,21 @@ export interface BaseCampNodeDefinition {
 }
 
 export const BASE_CAMP_NODE_DEFINITIONS: BaseCampNodeDefinition[] = [
-  { id: "shop", label: "SHOP", objectId: "shop_station", zoneId: "interact_shop", width: 2, height: 2, defaultX: 3, defaultY: 3 },
-  { id: "quarters", label: "QUARTERS", objectId: "quarters_station", zoneId: "interact_quarters", width: 2, height: 2, defaultX: 7, defaultY: 3 },
-  { id: "roster", label: "UNIT ROSTER", objectId: "roster_station", zoneId: "interact_roster", width: 2, height: 2, defaultX: 11, defaultY: 3 },
-  { id: "loadout", label: "LOADOUT", objectId: "loadout_station", zoneId: "interact_loadout", width: 2, height: 2, defaultX: 27, defaultY: 5 },
-  { id: "ops-terminal", label: "OPS TERMINAL", objectId: "ops_terminal", zoneId: "interact_ops", width: 2, height: 2, defaultX: 27, defaultY: 8 },
-  { id: "quest-board", label: "QUEST BOARD", objectId: "quest_board", zoneId: "interact_quest_board", width: 2, height: 2, defaultX: 3, defaultY: 10 },
-  { id: "tavern", label: "TAVERN", objectId: "tavern_station", zoneId: "interact_tavern", width: 2, height: 2, defaultX: 7, defaultY: 10 },
-  { id: "gear-workbench", label: "WORKSHOP", objectId: "gear_workbench_station", zoneId: "interact_gear_workbench", width: 2, height: 2, defaultX: 11, defaultY: 10 },
-  { id: "comms-array", label: "COMMS ARRAY", objectId: "comms_array_station", zoneId: "interact_comms_array", width: 2, height: 2, defaultX: 30, defaultY: 14 },
-  { id: "schema", label: "S.C.H.E.M.A.", objectId: "schema_station", zoneId: "interact_schema", width: 2, height: 2, defaultX: 37, defaultY: 13 },
-  { id: "stable", label: "STABLE", objectId: "stable_station", zoneId: "interact_stable", width: 2, height: 2, defaultX: 43, defaultY: 13 },
-  { id: "dispatch", label: "DISPATCH", objectId: "dispatch_station", zoneId: "interact_dispatch", width: 2, height: 2, defaultX: 37, defaultY: 16 },
-  { id: "foundry-annex", label: "FOUNDRY + ANNEX", objectId: "foundry_annex_station", zoneId: "interact_foundry_annex", width: 2, height: 2, defaultX: 43, defaultY: 16 },
-  { id: "port", label: "PORT", objectId: "port_station", zoneId: "interact_port", width: 2, height: 2, defaultX: 43, defaultY: 18 },
-  { id: "black-market", label: "BLACK MARKET", objectId: "black_market_station", zoneId: "interact_black_market", width: 2, height: 2, defaultX: 46, defaultY: 18 },
+  { id: "shop", label: "SHOP", objectId: "shop_station", zoneId: "interact_shop", width: 7, height: 5, defaultX: 6, defaultY: 6 },
+  { id: "quarters", label: "QUARTERS", objectId: "quarters_station", zoneId: "interact_quarters", width: 7, height: 5, defaultX: 17, defaultY: 6 },
+  { id: "roster", label: "UNIT ROSTER", objectId: "roster_station", zoneId: "interact_roster", width: 8, height: 5, defaultX: 28, defaultY: 6 },
+  { id: "loadout", label: "LOADOUT", objectId: "loadout_station", zoneId: "interact_loadout", width: 8, height: 5, defaultX: 46, defaultY: 7 },
+  { id: "ops-terminal", label: "OPS TERMINAL", objectId: "ops_terminal", zoneId: "interact_ops", width: 8, height: 5, defaultX: 58, defaultY: 7 },
+  { id: "quest-board", label: "QUEST BOARD", objectId: "quest_board", zoneId: "interact_quest_board", width: 7, height: 5, defaultX: 6, defaultY: 18 },
+  { id: "tavern", label: "TAVERN", objectId: "tavern_station", zoneId: "interact_tavern", width: 7, height: 5, defaultX: 17, defaultY: 18 },
+  { id: "gear-workbench", label: "WORKSHOP", objectId: "gear_workbench_station", zoneId: "interact_gear_workbench", width: 8, height: 5, defaultX: 28, defaultY: 18 },
+  { id: "comms-array", label: "COMMS ARRAY", objectId: "comms_array_station", zoneId: "interact_comms_array", width: 8, height: 5, defaultX: 70, defaultY: 7 },
+  { id: "schema", label: "S.C.H.E.M.A.", objectId: "schema_station", zoneId: "interact_schema", width: 8, height: 5, defaultX: 46, defaultY: 25 },
+  { id: "stable", label: "STABLE", objectId: "stable_station", zoneId: "interact_stable", width: 8, height: 5, defaultX: 70, defaultY: 25 },
+  { id: "dispatch", label: "DISPATCH", objectId: "dispatch_station", zoneId: "interact_dispatch", width: 8, height: 5, defaultX: 58, defaultY: 25 },
+  { id: "foundry-annex", label: "FOUNDRY + ANNEX", objectId: "foundry_annex_station", zoneId: "interact_foundry_annex", width: 10, height: 6, defaultX: 46, defaultY: 38 },
+  { id: "port", label: "PORT", objectId: "port_station", zoneId: "interact_port", width: 8, height: 6, defaultX: 59, defaultY: 38 },
+  { id: "black-market", label: "BLACK MARKET", objectId: "black_market_station", zoneId: "interact_black_market", width: 8, height: 6, defaultX: 70, defaultY: 38 },
 ];
 
 export function getBaseCampNodeDefinitions(): BaseCampNodeDefinition[] {

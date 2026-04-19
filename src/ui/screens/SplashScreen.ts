@@ -26,14 +26,6 @@ type SplashStep = {
 const SPLASH_SEQUENCE: SplashStep[] = [
   { id: "mr-planet", kind: "video", src: mpSplashVideo, fallbackMs: 15000 },
   { id: "ardycia", kind: "video", src: ardyciaSplashVideo, fallbackMs: 15000 },
-  {
-    id: "sprawl-epigraph",
-    kind: "epigraph",
-    fallbackMs: 4200,
-    word: "Sprawl",
-    partOfSpeech: "(v.)",
-    definition: "to spread or develop irregularly or without restraint.",
-  },
 ];
 
 let activeSplashTimeout: number | null = null;

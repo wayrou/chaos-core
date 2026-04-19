@@ -94,10 +94,60 @@ function assertSmoke(condition, message) {
   }
 }
 
+function angleDeltaRadians(a, b) {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
+
 async function triggerPrimaryAction(page, canvas) {
   const box = await canvas.boundingBox();
   assertSmoke(Boolean(box), "HAVEN 3D canvas was not measurable for primary action.");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+
+async function setGearbladeMode(page, mode, key) {
+  const fieldVisible = await page
+    .waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 2000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!fieldVisible) {
+    const screenState = await page.evaluate(() => ({
+      screen: document.body.dataset.screen,
+      hasFieldRoot: Boolean(document.querySelector(".field-root--haven3d")),
+      hasCanvas: Boolean(document.querySelector(".haven3d-canvas")),
+      hasShopRoot: Boolean(document.querySelector(".shop-root")),
+      modeChipCount: document.querySelectorAll("[data-haven3d-mode]").length,
+      appClass: document.getElementById("app")?.firstElementChild?.className ?? null,
+    }));
+    throw new Error(`HAVEN 3D field missing before switching to ${mode}: ${JSON.stringify(screenState)}`);
+  }
+  await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
+  await page.keyboard.press(key);
+  await page.waitForTimeout(120);
+  const isActive = await page
+    .locator(`[data-haven3d-mode="${mode}"].haven3d-mode-chip--active`)
+    .count()
+    .then((count) => count > 0);
+  if (!isActive) {
+    const hasModeChip = await page.locator(`[data-haven3d-mode="${mode}"]`).count().then((count) => count > 0);
+    if (!hasModeChip) {
+      const screenState = await page.evaluate(() => ({
+        screen: document.body.dataset.screen,
+        hasFieldRoot: Boolean(document.querySelector(".field-root--haven3d")),
+        hasCanvas: Boolean(document.querySelector(".haven3d-canvas")),
+        hasShopRoot: Boolean(document.querySelector(".shop-root")),
+        modeChipCount: document.querySelectorAll("[data-haven3d-mode]").length,
+        appClass: document.getElementById("app")?.firstElementChild?.className ?? null,
+      }));
+      throw new Error(`HAVEN 3D mode chip missing for ${mode}: ${JSON.stringify(screenState)}`);
+    }
+    await page.locator(`[data-haven3d-mode="${mode}"]`).click();
+  }
+  await page.waitForFunction(
+    (requestedMode) => document
+      .querySelector(`[data-haven3d-mode="${requestedMode}"]`)
+      ?.classList.contains("haven3d-mode-chip--active"),
+    mode,
+  );
 }
 
 async function cycleUntilTarget(page, label, attempts = 8) {
@@ -146,22 +196,115 @@ async function runSmoke() {
   const canvasStats = getCanvasStats(canvasShot);
   assertSmoke(canvasStats.coloredRatio > 0.5, `HAVEN 3D canvas looks blank: ${JSON.stringify(canvasStats)}`);
 
-  const authoredFixtureState = await page.evaluate(async () => {
+  const havenBuildingCollision = await page.evaluate(async () => {
+    const maps = await import("/src/field/maps.ts");
+    const map = maps.getFieldMap("base_camp");
+    const shop = map.objects.find((object) => object.id === "shop_station");
+    const shopDoor = map.interactionZones.find((zone) => zone.id === "interact_shop");
+    const outerGate = map.objects.find((object) => object.id === "haven_outer_deck_south_gate");
+    return {
+      width: map.width,
+      height: map.height,
+      shopBodyWalkable: shop ? map.tiles[shop.y]?.[shop.x]?.walkable ?? null : null,
+      shopDoorWalkable: shopDoor ? map.tiles[shopDoor.y]?.[shopDoor.x]?.walkable ?? null : null,
+      shopDoorAuto: shopDoor?.metadata?.autoTrigger === true,
+      outerGateBodyWalkable: outerGate ? map.tiles[outerGate.y]?.[outerGate.x]?.walkable ?? null : null,
+    };
+  });
+  assertSmoke(
+    havenBuildingCollision.width >= 80
+      && havenBuildingCollision.height >= 50
+      && havenBuildingCollision.shopBodyWalkable === false
+      && havenBuildingCollision.shopDoorWalkable === true
+      && havenBuildingCollision.shopDoorAuto === true
+      && havenBuildingCollision.outerGateBodyWalkable === false,
+    `HAVEN building collision/door contract failed: ${JSON.stringify(havenBuildingCollision)}`,
+  );
+
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const maps = await import("/src/field/maps.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = maps.getFieldMap("base_camp");
+    const shopDoor = map.interactionZones.find((zone) => zone.id === "interact_shop");
+    if (!runtime || !shopDoor) {
+      throw new Error("No HAVEN runtime or shop door for node return smoke.");
+    }
+    runtime.player.x = (shopDoor.x + (shopDoor.width / 2)) * 64;
+    runtime.player.y = shopDoor.y * 64 + 32;
+    runtime.player.facing = "north";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+  });
+  await page.waitForSelector(".shop-root", { timeout: 10000 });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  await page.waitForTimeout(500);
+  const nodeReturnTrapResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const maps = await import("/src/field/maps.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = maps.getFieldMap("base_camp");
+    const shopDoor = map.interactionZones.find((zone) => zone.id === "interact_shop");
+    const tileX = runtime ? Math.floor(runtime.player.x / 64) : null;
+    const tileY = runtime ? Math.floor(runtime.player.y / 64) : null;
+    const inShopDoor = Boolean(shopDoor && tileX !== null && tileY !== null
+      && tileX >= shopDoor.x
+      && tileX < shopDoor.x + shopDoor.width
+      && tileY >= shopDoor.y
+      && tileY < shopDoor.y + shopDoor.height);
+    return {
+      screen: document.body.dataset.screen,
+      hasShopRoot: Boolean(document.querySelector(".shop-root")),
+      mapId: field.getCurrentFieldMap(),
+      tileX,
+      tileY,
+      inShopDoor,
+    };
+  });
+  assertSmoke(
+    nodeReturnTrapResult.screen === "field-base-camp"
+      && nodeReturnTrapResult.mapId === "base_camp"
+      && nodeReturnTrapResult.hasShopRoot === false
+      && nodeReturnTrapResult.inShopDoor === false,
+    `Returning from a HAVEN node retrapped the player: ${JSON.stringify(nodeReturnTrapResult)}`,
+  );
+  await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
     const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      return;
+    }
+    runtime.player.x = 41 * 64 + 32;
+    runtime.player.y = 27 * 64 + 32;
+    runtime.player.facing = "south";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.npcs = [];
+    runtime.fieldEnemies = [];
+  });
+  await page.waitForTimeout(150);
+
+  const temporaryFixtureState = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const temporaryNames = new Set([
+      "HAVEN Sparring Bulwark",
+      "HAVEN Latchwire Slinger",
+      "HAVEN Plate Sentinel",
+    ]);
     return (runtime?.fieldEnemies ?? [])
-      .filter((enemy) => enemy.id.startsWith("field_enemy_haven_") || enemy.id.includes("haven_"))
+      .filter((enemy) => temporaryNames.has(enemy.name))
       .map((enemy) => ({
+        id: enemy.id,
         name: enemy.name,
         defense: enemy.gearbladeDefense ?? "none",
         attackStyle: enemy.attackStyle ?? "slash",
       }));
   });
   assertSmoke(
-    authoredFixtureState.some((enemy) => enemy.name === "HAVEN Sparring Bulwark" && enemy.defense === "shield" && enemy.attackStyle === "shield_bash")
-      && authoredFixtureState.some((enemy) => enemy.name === "HAVEN Latchwire Slinger" && enemy.attackStyle === "shot")
-      && authoredFixtureState.some((enemy) => enemy.name === "HAVEN Plate Sentinel" && enemy.defense === "armor" && enemy.attackStyle === "lunge"),
-    `Authored HAVEN enemy fixtures were not present before smoke injection: ${JSON.stringify(authoredFixtureState)}`,
+    temporaryFixtureState.length === 0,
+    `Temporary HAVEN enemy fixtures are still present: ${JSON.stringify(temporaryFixtureState)}`,
   );
 
   await page.evaluate(async () => {
@@ -192,7 +335,7 @@ async function runSmoke() {
     }];
   });
   await page.evaluate(() => document.querySelector(".haven3d-canvas")?.focus());
-  await page.keyboard.press("Digit1");
+  await setGearbladeMode(page, "blade", "Digit1");
   await page.keyboard.press("Space");
   await page.waitForTimeout(240);
   const spaceNoActionResult = await page.evaluate(async () => {
@@ -290,8 +433,7 @@ async function runSmoke() {
       aggroRange: 0,
     }];
   });
-  await page.keyboard.press("Digit2");
-  await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="launcher"]')?.classList.contains("haven3d-mode-chip--active"));
+  await setGearbladeMode(page, "launcher", "Digit2");
   await cycleUntilTarget(page, "TARGET :: SMOKE LAUNCHER");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
@@ -334,8 +476,7 @@ async function runSmoke() {
       enemy: { x: runtime.fieldEnemies[0].x, y: runtime.fieldEnemies[0].y, hp: runtime.fieldEnemies[0].hp },
     };
   });
-  await page.keyboard.press("Digit3");
-  await page.waitForFunction(() => document.querySelector('[data-haven3d-mode="grapple"]')?.classList.contains("haven3d-mode-chip--active"));
+  await setGearbladeMode(page, "grapple", "Digit3");
   await cycleUntilTarget(page, "TARGET :: SMOKE GRAPPLE");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
@@ -539,7 +680,7 @@ async function runSmoke() {
       gearbladeDefenseBroken: false,
     }];
   });
-  await page.keyboard.press("Digit1");
+  await setGearbladeMode(page, "blade", "Digit1");
   await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(600);
@@ -552,7 +693,7 @@ async function runSmoke() {
     typeof shieldBladeResult.hp === "number" && shieldBladeResult.hp >= 28 && shieldBladeResult.broken === false,
     `Shielded enemy did not block Blade mode: ${JSON.stringify(shieldBladeResult)}`,
   );
-  await page.keyboard.press("Digit3");
+  await setGearbladeMode(page, "grapple", "Digit3");
   await cycleUntilTarget(page, "TARGET :: SMOKE SHIELD");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
@@ -598,7 +739,7 @@ async function runSmoke() {
       gearbladeDefenseBroken: false,
     }];
   });
-  await page.keyboard.press("Digit1");
+  await setGearbladeMode(page, "blade", "Digit1");
   await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(600);
@@ -611,7 +752,7 @@ async function runSmoke() {
     typeof armorBladeResult.hp === "number" && armorBladeResult.hp >= 30 && armorBladeResult.broken === false,
     `Armored enemy did not block Blade mode: ${JSON.stringify(armorBladeResult)}`,
   );
-  await page.keyboard.press("Digit2");
+  await setGearbladeMode(page, "launcher", "Digit2");
   await cycleUntilTarget(page, "TARGET :: SMOKE ARMOR");
   await triggerPrimaryAction(page, canvas);
   await page.waitForTimeout(900);
@@ -714,6 +855,40 @@ async function runSmoke() {
   assertSmoke(moveDistance > 20, `WASD movement did not move enough: ${moveDistance.toFixed(2)}px`);
   assertSmoke(Math.abs((afterMove?.x ?? 0) - (beforeMove?.x ?? 0)) > 4, "Right-drag free camera did not affect camera-relative movement.");
 
+  await page.keyboard.press("Tab");
+  await page.evaluate(() => {
+    document.querySelector("canvas.haven3d-canvas")?.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 620,
+    }));
+  });
+  await page.waitForTimeout(360);
+  const cameraBeforeScreenRoundTrip = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return field.getCurrentHaven3DFieldCameraState();
+  });
+  assertSmoke(
+    cameraBeforeScreenRoundTrip?.distance > 9.2,
+    `HAVEN 3D camera zoom did not change before remount: ${JSON.stringify(cameraBeforeScreenRoundTrip)}`,
+  );
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    field.renderFieldScreen(field.getCurrentFieldMap() ?? "base_camp");
+  });
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  const cameraAfterScreenRoundTrip = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return field.getCurrentHaven3DFieldCameraState();
+  });
+  assertSmoke(Boolean(cameraAfterScreenRoundTrip), "HAVEN 3D camera was not available after field remount.");
+  assertSmoke(
+    Math.abs(cameraAfterScreenRoundTrip.distance - cameraBeforeScreenRoundTrip.distance) < 0.01
+      && Math.abs(cameraAfterScreenRoundTrip.pitch - cameraBeforeScreenRoundTrip.pitch) < 0.01
+      && angleDeltaRadians(cameraAfterScreenRoundTrip.yaw, cameraBeforeScreenRoundTrip.yaw) < 0.02,
+    `HAVEN 3D camera reset after screen round-trip: ${JSON.stringify({ before: cameraBeforeScreenRoundTrip, after: cameraAfterScreenRoundTrip })}`,
+  );
+
   await page.keyboard.press("Escape");
   await page.waitForSelector("#allNodesMenuGrid", { timeout: 10000 });
   assertSmoke(await page.locator("#allNodesBuildModeBtn").count() === 1, "All Nodes did not expose Field Build Mode.");
@@ -744,16 +919,21 @@ async function runSmoke() {
     const layout = coords.createHaven3DSceneLayout(maps.getFieldMap("base_camp"));
     return {
       hasHaven3d: Boolean(document.querySelector(".field-root--haven3d")),
-      quartersObject: layout.objects.find((object) => object.id === "quarters_station")?.fieldOrigin ?? null,
-      quartersZone: layout.zones.find((zone) => zone.id === "interact_quarters")?.fieldOrigin ?? null,
+      quartersObject: layout.objects.find((object) => object.id === "quarters_station") ?? null,
+      quartersZone: layout.zones.find((zone) => zone.id === "interact_quarters") ?? null,
     };
   });
   assertSmoke(buildRoundTrip.hasHaven3d, "Returning from Build Mode did not remount HAVEN 3D.");
-  assertSmoke(buildRoundTrip.quartersObject?.x === 16 && buildRoundTrip.quartersZone?.y === 8, "Saved node position did not reflect in 3D layout.");
+  assertSmoke(
+    buildRoundTrip.quartersObject?.fieldOrigin?.x === 16
+      && buildRoundTrip.quartersObject?.fieldOrigin?.y === 8
+      && buildRoundTrip.quartersZone?.fieldOrigin?.y === 13,
+    `Saved node position did not reflect in 3D building/door layout: ${JSON.stringify(buildRoundTrip)}`,
+  );
 
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
-    field.setNextFieldSpawnOverrideTile("base_camp", { x: 24, y: 23, facing: "south" });
+    field.setNextFieldSpawnOverrideTile("base_camp", { x: 41, y: 47, facing: "south" });
     field.renderFieldScreen("base_camp");
   });
   await page.waitForFunction(async () => {
@@ -763,8 +943,99 @@ async function runSmoke() {
   const outerDeckState = await page.evaluate(() => ({
     hasHaven3d: Boolean(document.querySelector(".field-root--haven3d")),
     has2dViewport: Boolean(document.querySelector(".field-viewport")),
+    hasFieldTag: Boolean(document.querySelector(".haven3d-field-tag")),
   }));
-  assertSmoke(!outerDeckState.hasHaven3d && outerDeckState.has2dViewport, "Outer Deck map did not stay on 2D field runtime.");
+  assertSmoke(
+    outerDeckState.hasHaven3d && !outerDeckState.has2dViewport && !outerDeckState.hasFieldTag,
+    `Outer Deck overworld did not mount in HAVEN 3D runtime: ${JSON.stringify(outerDeckState)}`,
+  );
+
+  const outerDeckPickupProbe = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = field.getCurrentFieldRuntimeMap();
+    const resource = map?.objects.find((object) => (
+      object.type === "resource"
+      && !(runtime?.collectedResourceObjectIds ?? []).includes(object.id)
+    ));
+    if (!runtime || !resource) {
+      return null;
+    }
+    runtime.player.x = (resource.x + resource.width / 2) * 64;
+    runtime.player.y = (resource.y + resource.height / 2) * 64;
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.fieldEnemies = [];
+    return { id: resource.id };
+  });
+  assertSmoke(Boolean(outerDeckPickupProbe), "Outer Deck 3D pickup smoke could not find an uncollected resource.");
+  await page.waitForTimeout(350);
+  const outerDeckPickupResult = await page.evaluate(async (probe) => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    return {
+      collected: Boolean(runtime?.collectedResourceObjectIds?.includes(probe.id)),
+      visibleIn3d: field.isCurrentHaven3DFieldObjectVisible(probe.id),
+    };
+  }, outerDeckPickupProbe);
+  assertSmoke(
+    outerDeckPickupResult.collected && outerDeckPickupResult.visibleIn3d === false,
+    `Outer Deck 3D pickup did not hide after collection: ${JSON.stringify(outerDeckPickupResult)}`,
+  );
+
+  await page.evaluate(() => {
+    document.querySelector("[data-field-view-toggle]")?.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+  });
+  await page.waitForSelector(".field-viewport", { timeout: 10000 });
+  const outerDeckTopDownState = await page.evaluate(() => ({
+    hasHaven3d: Boolean(document.querySelector(".field-root--haven3d")),
+    has2dViewport: Boolean(document.querySelector(".field-viewport")),
+  }));
+  assertSmoke(
+    !outerDeckTopDownState.hasHaven3d && outerDeckTopDownState.has2dViewport,
+    `Outer Deck top-down fallback toggle failed: ${JSON.stringify(outerDeckTopDownState)}`,
+  );
+  await page.evaluate(() => {
+    document.querySelector("[data-field-view-toggle]")?.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+  });
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+
+  const outerDeckBranchState = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const outerDecks = await import("/src/core/outerDecks.ts");
+    store.updateGameState((state) => outerDecks.beginOuterDeckExpedition(state, "counterweight_shaft"));
+    const subarea = outerDecks.getCurrentOuterDeckSubarea(store.getGameState());
+    if (!subarea) {
+      return null;
+    }
+    field.renderFieldScreen(subarea.mapId);
+    return { mapId: subarea.mapId, title: subarea.title };
+  });
+  assertSmoke(Boolean(outerDeckBranchState), "Could not start an outer deck branch smoke expedition.");
+  await page.waitForFunction(async (expectedMapId) => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return field.getCurrentFieldMap() === expectedMapId && Boolean(document.querySelector(".field-root--haven3d canvas.haven3d-canvas"));
+  }, outerDeckBranchState.mapId, { timeout: 10000 });
+  const outerDeckBranchRuntime = await page.evaluate(() => ({
+    hasHaven3d: Boolean(document.querySelector(".field-root--haven3d")),
+    has2dViewport: Boolean(document.querySelector(".field-viewport")),
+    hasFieldTag: Boolean(document.querySelector(".haven3d-field-tag")),
+  }));
+  assertSmoke(
+    outerDeckBranchRuntime.hasHaven3d && !outerDeckBranchRuntime.has2dViewport && !outerDeckBranchRuntime.hasFieldTag,
+    `Outer Deck branch map did not mount in HAVEN 3D runtime: ${JSON.stringify({ outerDeckBranchState, outerDeckBranchRuntime })}`,
+  );
 
   await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");

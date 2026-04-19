@@ -83,9 +83,33 @@ export function getFieldObjectCenterPixels(object: FieldMap["objects"][number]):
   };
 }
 
+export function getFieldTileElevation(map: FieldMap, tileX: number, tileY: number): number {
+  const elevation = Number(map.tiles[tileY]?.[tileX]?.elevation ?? 0);
+  return Number.isFinite(elevation) ? Math.max(0, elevation) : 0;
+}
+
+export function getFieldPointElevation(map: FieldMap, point: Haven3DFieldPoint): number {
+  return getFieldTileElevation(
+    map,
+    Math.floor(point.x / HAVEN3D_FIELD_TILE_SIZE),
+    Math.floor(point.y / HAVEN3D_FIELD_TILE_SIZE),
+  );
+}
+
+export function getFieldPointElevationWorld(map: FieldMap, point: Haven3DFieldPoint): number {
+  return getFieldPointElevation(map, point) * 0.42;
+}
+
 function getFieldObjectHeight(object: FieldMap["objects"][number]): number {
+  if (object.metadata?.grappleAnchor === true) {
+    return 0.32;
+  }
+
   switch (object.type) {
     case "station":
+      if (object.metadata?.havenBuilding) {
+        return object.sprite === "bulkhead" ? 3.35 : 3.55;
+      }
       return 2.75;
     case "decoration":
       return 1.12;
@@ -117,7 +141,7 @@ export function createHaven3DSceneLayout(map: FieldMap): Haven3DSceneLayout {
             width: object.width,
             height: object.height,
           },
-          worldCenter: fieldToHavenWorld(map, fieldCenter, 0.08),
+          worldCenter: fieldToHavenWorld(map, fieldCenter, getFieldPointElevationWorld(map, fieldCenter) + 0.08),
           worldSize: {
             width: Math.max(0.7, object.width * HAVEN3D_WORLD_TILE_SIZE * 0.78),
             depth: Math.max(0.7, object.height * HAVEN3D_WORLD_TILE_SIZE * 0.78),
@@ -139,7 +163,7 @@ export function createHaven3DSceneLayout(map: FieldMap): Haven3DSceneLayout {
           width: zone.width,
           height: zone.height,
         },
-        worldCenter: fieldToHavenWorld(map, fieldCenter, 0.012),
+        worldCenter: fieldToHavenWorld(map, fieldCenter, getFieldPointElevationWorld(map, fieldCenter) + 0.012),
         worldSize: {
           width: zone.width * HAVEN3D_WORLD_TILE_SIZE * 0.84,
           depth: zone.height * HAVEN3D_WORLD_TILE_SIZE * 0.84,

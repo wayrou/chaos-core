@@ -36,14 +36,25 @@ export function applyArdyciaToonRendererStyle(renderer: THREE.WebGLRenderer): vo
   renderer.domElement.style.filter = ARDYCIA_TOON_COLOR_GRADE_FILTER;
 }
 
-export function applyArdyciaToonSceneStyle(scene: THREE.Scene): () => void {
-  const clearSkyboxBackground = applyChaosSkyboxBackground(scene, ARDYCIA_TOON_FOG_COLOR);
-  scene.fog = new THREE.FogExp2(ARDYCIA_TOON_FOG_COLOR, ARDYCIA_TOON_FOG_DENSITY);
+export type ArdyciaToonSceneStyleOptions = {
+  fogColor?: THREE.ColorRepresentation;
+  fogDensity?: number;
+  hemisphereIntensity?: number;
+  sunIntensity?: number;
+  fillIntensity?: number;
+  rimIntensity?: number;
+};
 
-  const hemi = new THREE.HemisphereLight(0xffead0, 0x123447, 0.58);
+export function applyArdyciaToonSceneStyle(scene: THREE.Scene, options: ArdyciaToonSceneStyleOptions = {}): () => void {
+  const fogColor = options.fogColor ?? ARDYCIA_TOON_FOG_COLOR;
+  const fogDensity = options.fogDensity ?? ARDYCIA_TOON_FOG_DENSITY;
+  const clearSkyboxBackground = applyChaosSkyboxBackground(scene, fogColor);
+  scene.fog = new THREE.FogExp2(fogColor, fogDensity);
+
+  const hemi = new THREE.HemisphereLight(0xffead0, 0x123447, options.hemisphereIntensity ?? 0.58);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight(0xffc167, 3.65);
+  const sun = new THREE.DirectionalLight(0xffc167, options.sunIntensity ?? 3.65);
   sun.position.set(22, 32, 18);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -55,11 +66,11 @@ export function applyArdyciaToonSceneStyle(scene: THREE.Scene): () => void {
   sun.shadow.camera.bottom = -42;
   scene.add(sun);
 
-  const fill = new THREE.DirectionalLight(0x63c6d6, 1.05);
+  const fill = new THREE.DirectionalLight(0x63c6d6, options.fillIntensity ?? 1.05);
   fill.position.set(-24, 14, -28);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xb0f4ff, 0.72);
+  const rim = new THREE.DirectionalLight(0xb0f4ff, options.rimIntensity ?? 0.72);
   rim.position.set(-26, 18, 24);
   scene.add(rim);
 

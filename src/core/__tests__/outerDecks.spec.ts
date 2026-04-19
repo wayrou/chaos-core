@@ -1,11 +1,13 @@
 // @ts-nocheck
 
+import { describe, expect, it } from "vitest";
 import { createNewGameState } from "../initialState";
 import {
   OUTER_DECK_OVERWORLD_MAP_ID,
   abortOuterDeckExpedition,
   beginOuterDeckExpedition,
   claimOuterDeckCompletion,
+  claimOuterDeckWorldBossDefeat,
   createDefaultOuterDecksState,
   getOuterDeckBranchEntrySubarea,
   getOuterDeckFieldContext,
@@ -102,18 +104,43 @@ describe("outerDecks", () => {
   });
 
   it("keeps default state empty before any branch is entered", () => {
-    expect(createDefaultOuterDecksState()).toEqual({
-      isExpeditionActive: false,
-      activeExpedition: null,
-      zoneCompletionCounts: {
-        counterweight_shaft: 0,
-        outer_scaffold: 0,
-        drop_bay: 0,
-        supply_intake_port: 0,
-      },
-      zoneFirstClearRecipeClaimed: {},
-      seenNpcEncounterIds: [],
-      runHistory: [],
+    const state = createDefaultOuterDecksState();
+    expect(state.isExpeditionActive).toBe(false);
+    expect(state.activeExpedition).toBeNull();
+    expect(state.zoneCompletionCounts).toEqual({
+      counterweight_shaft: 0,
+      outer_scaffold: 0,
+      drop_bay: 0,
+      supply_intake_port: 0,
     });
+    expect(state.zoneFirstClearRecipeClaimed).toEqual({});
+    expect(state.seenNpcEncounterIds).toEqual([]);
+    expect(state.runHistory).toEqual([]);
+    expect(state.openWorld.generationVersion).toBe(1);
+    expect(Number.isFinite(state.openWorld.seed)).toBe(true);
+    expect(state.openWorld.collectedResourceKeys).toEqual([]);
+    expect(state.openWorld.defeatedEnemyKeys).toEqual([]);
+    expect(state.openWorld.defeatedBossKeys).toEqual([]);
+  });
+
+  it("claims legacy open-world boss rewards once", () => {
+    const result = claimOuterDeckWorldBossDefeat(
+      createNewGameState(),
+      "boss:counterweight:0:-2",
+      "counterweight_shaft",
+    );
+    const repeated = claimOuterDeckWorldBossDefeat(
+      result.state,
+      "boss:counterweight:0:-2",
+      "counterweight_shaft",
+    );
+
+    expect(result.awardedRecipeId).toBe("recipe_steam_valve_wristguard");
+    expect(result.state.outerDecks?.defeatedBossKeys).toBeUndefined();
+    expect(result.state.outerDecks?.openWorld.defeatedBossKeys).toContain("boss:counterweight:0:-2");
+    expect(result.state.outerDecks?.zoneCompletionCounts.counterweight_shaft).toBe(1);
+    expect(result.state.knownRecipeIds).toContain("recipe_steam_valve_wristguard");
+    expect(repeated.awardedRecipeId).toBeNull();
+    expect(repeated.state.outerDecks?.zoneCompletionCounts.counterweight_shaft).toBe(1);
   });
 });

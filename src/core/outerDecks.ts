@@ -1,4 +1,5 @@
 import type { GameState } from "./types";
+import { generateSeed } from "./rng";
 
 export type OuterDeckZoneId =
   | "counterweight_shaft"
@@ -83,6 +84,19 @@ export interface OuterDeckRunHistoryEntry {
   clearedSubareaIds: string[];
 }
 
+export interface OuterDeckOpenWorldState {
+  seed: number;
+  generationVersion: number;
+  playerWorldX: number;
+  playerWorldY: number;
+  playerFacing: "north" | "south" | "east" | "west";
+  collectedResourceKeys: string[];
+  defeatedEnemyKeys: string[];
+  defeatedBossKeys: string[];
+  bossHpByKey: Record<string, number>;
+  exploredChunkKeys: string[];
+}
+
 export interface OuterDecksState {
   isExpeditionActive: boolean;
   activeExpedition: OuterDeckExpeditionState | null;
@@ -90,6 +104,7 @@ export interface OuterDecksState {
   zoneFirstClearRecipeClaimed: Partial<Record<OuterDeckZoneId, boolean>>;
   seenNpcEncounterIds: OuterDeckNpcEncounterId[];
   runHistory: OuterDeckRunHistoryEntry[];
+  openWorld: OuterDeckOpenWorldState;
 }
 
 export type OuterDeckFieldContext = "haven" | "outerDeckOverworld" | "outerDeckBranch";
@@ -103,11 +118,16 @@ export interface OuterDeckNpcEncounterDefinition {
 export const OUTER_DECK_OVERWORLD_MAP_ID = "outer_deck_overworld";
 export const OUTER_DECK_HAVEN_EXIT_OBJECT_ID = "haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_ZONE_ID = "interact_haven_outer_deck_south_gate";
-export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 23, y: 21 };
-export const OUTER_DECK_HAVEN_EXIT_SPAWN_TILE = { x: 24, y: 21, facing: "south" as const };
-export const OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE = { x: 70, y: 60, facing: "south" as const };
+export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 34, y: 48 };
+export const OUTER_DECK_HAVEN_EXIT_SPAWN_TILE = { x: 41, y: 46, facing: "north" as const };
+export const OUTER_DECK_OPEN_WORLD_GENERATION_VERSION = 1;
+export const OUTER_DECK_OPEN_WORLD_TILE_SIZE = 64;
+export const OUTER_DECK_OPEN_WORLD_CHUNK_SIZE = 24;
+export const OUTER_DECK_OPEN_WORLD_STREAM_RADIUS = 2;
+export const OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE = { x: 2, y: 4, facing: "south" as const };
+export const OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE = { x: 50, y: 52, facing: "south" as const };
 export const OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID = "outer_deck_overworld_return_haven";
-export const OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE = { x: 69, y: 57 };
+export const OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE = { x: 0, y: 1 };
 
 const OUTER_DECK_ZONE_ORDER: OuterDeckZoneId[] = [
   "counterweight_shaft",
@@ -173,12 +193,117 @@ const OUTER_DECK_NPC_ENCOUNTERS: Record<OuterDeckNpcEncounterId, OuterDeckNpcEnc
   },
 };
 
+const OUTER_DECK_LEGACY_BOSS_NPC_BY_ZONE: Record<OuterDeckZoneId, OuterDeckNpcEncounterId> = {
+  counterweight_shaft: "shaft_mechanist",
+  outer_scaffold: "scaffold_spotter",
+  drop_bay: "dropbay_loader",
+  supply_intake_port: "intake_quartermaster",
+};
+
 function createZoneCompletionCounts(): Record<OuterDeckZoneId, number> {
   return {
     counterweight_shaft: 0,
     outer_scaffold: 0,
     drop_bay: 0,
     supply_intake_port: 0,
+  };
+}
+
+function createEntryWorldPosition(): Pick<OuterDeckOpenWorldState, "playerWorldX" | "playerWorldY" | "playerFacing"> {
+  return {
+    playerWorldX: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+    playerWorldY: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+    playerFacing: OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.facing,
+  };
+}
+
+export function createDefaultOuterDeckOpenWorldState(seed: number = generateSeed()): OuterDeckOpenWorldState {
+  return {
+    seed,
+    generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
+    ...createEntryWorldPosition(),
+    collectedResourceKeys: [],
+    defeatedEnemyKeys: [],
+    defeatedBossKeys: [],
+    bossHpByKey: {},
+    exploredChunkKeys: [],
+  };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(value.flatMap((entry) => {
+    if (typeof entry !== "string") {
+      return [];
+    }
+    const trimmed = entry.trim();
+    return trimmed ? [trimmed] : [];
+  })));
+}
+
+function normalizeNumberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([key, amount]) => {
+      const numeric = Number(amount);
+      return key && Number.isFinite(numeric) && numeric > 0 ? [[key, numeric]] : [];
+    }),
+  );
+}
+
+function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorldState> | null): OuterDeckOpenWorldState {
+  const fallback = createDefaultOuterDeckOpenWorldState();
+  return {
+    seed: Number.isFinite(Number(openWorld?.seed)) ? Number(openWorld?.seed) : fallback.seed,
+    generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
+    playerWorldX: Number.isFinite(Number(openWorld?.playerWorldX)) ? Number(openWorld?.playerWorldX) : fallback.playerWorldX,
+    playerWorldY: Number.isFinite(Number(openWorld?.playerWorldY)) ? Number(openWorld?.playerWorldY) : fallback.playerWorldY,
+    playerFacing:
+      openWorld?.playerFacing === "north"
+      || openWorld?.playerFacing === "south"
+      || openWorld?.playerFacing === "east"
+      || openWorld?.playerFacing === "west"
+        ? openWorld.playerFacing
+        : fallback.playerFacing,
+    collectedResourceKeys: normalizeStringList(openWorld?.collectedResourceKeys),
+    defeatedEnemyKeys: normalizeStringList(openWorld?.defeatedEnemyKeys),
+    defeatedBossKeys: normalizeStringList(openWorld?.defeatedBossKeys),
+    bossHpByKey: normalizeNumberRecord(openWorld?.bossHpByKey),
+    exploredChunkKeys: normalizeStringList(openWorld?.exploredChunkKeys),
+  };
+}
+
+function normalizeOuterDecksState(outerDecks?: Partial<OuterDecksState> | null): OuterDecksState {
+  const defaults = {
+    isExpeditionActive: false,
+    activeExpedition: null,
+    zoneCompletionCounts: createZoneCompletionCounts(),
+    zoneFirstClearRecipeClaimed: {},
+    seenNpcEncounterIds: [],
+    runHistory: [],
+    openWorld: createDefaultOuterDeckOpenWorldState(),
+  };
+
+  return {
+    isExpeditionActive: Boolean(outerDecks?.isExpeditionActive && outerDecks.activeExpedition),
+    activeExpedition: cloneActiveExpedition(outerDecks?.activeExpedition ?? null),
+    zoneCompletionCounts: {
+      ...defaults.zoneCompletionCounts,
+      ...(outerDecks?.zoneCompletionCounts ?? {}),
+    },
+    zoneFirstClearRecipeClaimed: { ...(outerDecks?.zoneFirstClearRecipeClaimed ?? {}) },
+    seenNpcEncounterIds: normalizeStringList(outerDecks?.seenNpcEncounterIds) as OuterDeckNpcEncounterId[],
+    runHistory: Array.isArray(outerDecks?.runHistory)
+      ? outerDecks.runHistory.slice(-20).map((entry) => ({
+          ...entry,
+          clearedSubareaIds: [...(entry.clearedSubareaIds ?? [])],
+        }))
+      : [],
+    openWorld: normalizeOuterDeckOpenWorldState(outerDecks?.openWorld),
   };
 }
 
@@ -437,22 +562,210 @@ function cloneActiveExpedition(expedition: OuterDeckExpeditionState | null): Out
 function withOuterDecksState(state: GameState, outerDecks: OuterDecksState): GameState {
   return {
     ...state,
-    outerDecks,
+    outerDecks: normalizeOuterDecksState(outerDecks),
   };
 }
 
 function getSafeOuterDecksState(state: GameState): OuterDecksState {
-  return state.outerDecks ?? createDefaultOuterDecksState();
+  return normalizeOuterDecksState(state.outerDecks);
 }
 
 export function createDefaultOuterDecksState(): OuterDecksState {
+  return normalizeOuterDecksState(null);
+}
+
+export function withNormalizedOuterDecksState<T extends GameState>(state: T): T {
+  const normalized = normalizeOuterDecksState(state.outerDecks);
+  if (state.outerDecks === normalized) {
+    return state;
+  }
   return {
+    ...state,
+    outerDecks: normalized,
+  };
+}
+
+export function getOuterDeckOpenWorldState(state: GameState): OuterDeckOpenWorldState {
+  return getSafeOuterDecksState(state).openWorld;
+}
+
+export function ensureOuterDeckOpenWorldState(state: GameState): GameState {
+  return withOuterDecksState(state, getSafeOuterDecksState(state));
+}
+
+export function prepareOuterDeckOpenWorldEntry(state: GameState): GameState {
+  const outerDecks = getSafeOuterDecksState(state);
+  return withOuterDecksState(state, {
+    ...outerDecks,
     isExpeditionActive: false,
     activeExpedition: null,
-    zoneCompletionCounts: createZoneCompletionCounts(),
-    zoneFirstClearRecipeClaimed: {},
-    seenNpcEncounterIds: [],
-    runHistory: [],
+    openWorld: {
+      ...outerDecks.openWorld,
+      ...createEntryWorldPosition(),
+    },
+  });
+}
+
+export function setOuterDeckOpenWorldPlayerWorldPosition(
+  state: GameState,
+  playerWorldX: number,
+  playerWorldY: number,
+  playerFacing: "north" | "south" | "east" | "west" = getOuterDeckOpenWorldState(state).playerFacing,
+): GameState {
+  const outerDecks = getSafeOuterDecksState(state);
+  const nextOpenWorld: OuterDeckOpenWorldState = {
+    ...outerDecks.openWorld,
+    playerWorldX: Number.isFinite(playerWorldX) ? playerWorldX : outerDecks.openWorld.playerWorldX,
+    playerWorldY: Number.isFinite(playerWorldY) ? playerWorldY : outerDecks.openWorld.playerWorldY,
+    playerFacing,
+  };
+
+  if (
+    nextOpenWorld.playerWorldX === outerDecks.openWorld.playerWorldX
+    && nextOpenWorld.playerWorldY === outerDecks.openWorld.playerWorldY
+    && nextOpenWorld.playerFacing === outerDecks.openWorld.playerFacing
+  ) {
+    return state;
+  }
+
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    openWorld: nextOpenWorld,
+  });
+}
+
+function addOpenWorldKey(
+  state: GameState,
+  collectionKey: "collectedResourceKeys" | "defeatedEnemyKeys" | "defeatedBossKeys" | "exploredChunkKeys",
+  key: string,
+): GameState {
+  const normalizedKey = key.trim();
+  if (!normalizedKey) {
+    return state;
+  }
+
+  const outerDecks = getSafeOuterDecksState(state);
+  const current = outerDecks.openWorld[collectionKey] ?? [];
+  if (current.includes(normalizedKey)) {
+    return state;
+  }
+
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    openWorld: {
+      ...outerDecks.openWorld,
+      [collectionKey]: [...current, normalizedKey],
+    },
+  });
+}
+
+export function markOuterDeckOpenWorldResourceCollected(state: GameState, resourceKey: string): GameState {
+  return addOpenWorldKey(state, "collectedResourceKeys", resourceKey);
+}
+
+export function markOuterDeckOpenWorldEnemyDefeated(state: GameState, enemyKey: string): GameState {
+  return addOpenWorldKey(state, "defeatedEnemyKeys", enemyKey);
+}
+
+export function markOuterDeckOpenWorldChunkExplored(state: GameState, chunkKey: string): GameState {
+  return addOpenWorldKey(state, "exploredChunkKeys", chunkKey);
+}
+
+export function setOuterDeckOpenWorldBossHp(state: GameState, bossKey: string, hp: number | null): GameState {
+  const normalizedKey = bossKey.trim();
+  if (!normalizedKey) {
+    return state;
+  }
+
+  const outerDecks = getSafeOuterDecksState(state);
+  const nextBossHpByKey = { ...outerDecks.openWorld.bossHpByKey };
+  if (hp === null || !Number.isFinite(hp) || hp <= 0) {
+    delete nextBossHpByKey[normalizedKey];
+  } else {
+    nextBossHpByKey[normalizedKey] = hp;
+  }
+
+  if (JSON.stringify(nextBossHpByKey) === JSON.stringify(outerDecks.openWorld.bossHpByKey)) {
+    return state;
+  }
+
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    openWorld: {
+      ...outerDecks.openWorld,
+      bossHpByKey: nextBossHpByKey,
+    },
+  });
+}
+
+export function claimOuterDeckWorldBossDefeat(
+  state: GameState,
+  bossKey: string,
+  zoneId?: OuterDeckZoneId | null,
+): { state: GameState; awardedRecipeId: string | null } {
+  const normalizedBossKey = bossKey.trim();
+  if (!normalizedBossKey) {
+    return { state, awardedRecipeId: null };
+  }
+
+  const outerDecks = getSafeOuterDecksState(state);
+  if (outerDecks.openWorld.defeatedBossKeys.includes(normalizedBossKey)) {
+    return {
+      state: setOuterDeckOpenWorldBossHp(state, normalizedBossKey, null),
+      awardedRecipeId: null,
+    };
+  }
+
+  const nextBossHpByKey = { ...outerDecks.openWorld.bossHpByKey };
+  delete nextBossHpByKey[normalizedBossKey];
+
+  let awardedRecipeId: string | null = null;
+  let nextKnownRecipeIds = state.knownRecipeIds;
+  let zoneCompletionCounts = { ...outerDecks.zoneCompletionCounts };
+  let zoneFirstClearRecipeClaimed = { ...outerDecks.zoneFirstClearRecipeClaimed };
+  let seenNpcEncounterIds = [...outerDecks.seenNpcEncounterIds];
+
+  if (zoneId && OUTER_DECK_ZONE_DEFINITIONS[zoneId]) {
+    const definition = getOuterDeckZoneDefinition(zoneId);
+    zoneCompletionCounts = {
+      ...zoneCompletionCounts,
+      [zoneId]: Math.max(0, Number(zoneCompletionCounts[zoneId] ?? 0)) + 1,
+    };
+
+    if (!zoneFirstClearRecipeClaimed[zoneId] && definition.firstClearRecipeId) {
+      awardedRecipeId = definition.firstClearRecipeId;
+      zoneFirstClearRecipeClaimed = {
+        ...zoneFirstClearRecipeClaimed,
+        [zoneId]: true,
+      };
+      nextKnownRecipeIds = state.knownRecipeIds.includes(definition.firstClearRecipeId)
+        ? state.knownRecipeIds
+        : [...state.knownRecipeIds, definition.firstClearRecipeId];
+    }
+
+    const encounterId = OUTER_DECK_LEGACY_BOSS_NPC_BY_ZONE[zoneId];
+    if (!seenNpcEncounterIds.includes(encounterId)) {
+      seenNpcEncounterIds = [...seenNpcEncounterIds, encounterId];
+    }
+  }
+
+  return {
+    awardedRecipeId,
+    state: {
+      ...state,
+      knownRecipeIds: nextKnownRecipeIds,
+      outerDecks: normalizeOuterDecksState({
+        ...outerDecks,
+        zoneCompletionCounts,
+        zoneFirstClearRecipeClaimed,
+        seenNpcEncounterIds,
+        openWorld: {
+          ...outerDecks.openWorld,
+          defeatedBossKeys: [...outerDecks.openWorld.defeatedBossKeys, normalizedBossKey],
+          bossHpByKey: nextBossHpByKey,
+        },
+      }),
+    },
   };
 }
 

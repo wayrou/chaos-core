@@ -128,7 +128,7 @@ describe("HAVEN 3D field adapter", () => {
     const zone = map.interactionZones.find((entry) => entry.id === "interact_shop");
 
     expect(shop).toMatchObject({ x: 9, y: 8 });
-    expect(zone).toMatchObject({ x: 9, y: 8 });
+    expect(zone).toMatchObject({ x: 11, y: 13, width: 3, height: 1 });
   });
 
   it("round-trips saved Build Mode node positions through the 3D scene layout", () => {
@@ -149,7 +149,7 @@ describe("HAVEN 3D field adapter", () => {
     const zoneFieldCenter = havenWorldToField(map, quartersZone!.worldCenter);
 
     expect(quartersObject?.fieldOrigin).toEqual({ x: 15, y: 7 });
-    expect(quartersZone?.fieldOrigin).toEqual({ x: 15, y: 7 });
+    expect(quartersZone?.fieldOrigin).toEqual({ x: 17, y: 12 });
     expect(objectFieldCenter.x).toBeCloseTo(quartersObject!.fieldCenter.x, 5);
     expect(objectFieldCenter.y).toBeCloseTo(quartersObject!.fieldCenter.y, 5);
     expect(zoneFieldCenter.x).toBeCloseTo(quartersZone!.fieldCenter.x, 5);

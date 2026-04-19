@@ -21,18 +21,71 @@ import {
   getBaseCampNodeDefinitions,
   getBaseCampNodeLayout,
   isBaseCampNodeUnlocked,
+  type BaseCampNodeId,
 } from "./baseCampBuild";
 import { getFieldDecorFootprintSize, getPlacedFieldDecor, isFieldDecorBlocking } from "../core/decorSystem";
 import {
   OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
   OUTER_DECK_HAVEN_EXIT_OBJECT_TILE,
-  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
   OUTER_DECK_HAVEN_EXIT_ZONE_ID,
   OUTER_DECK_OVERWORLD_MAP_ID,
 } from "../core/outerDecks";
 import { COUNTERWEIGHT_WORKSHOP_MAP_ID, isWeaponsmithUnlocked } from "../core/weaponsmith";
 import { createOuterDeckFieldMap } from "./outerDeckMaps";
 import { createWeaponsmithWorkshopFieldMap } from "./weaponsmithWorkshopMap";
+
+const HAVEN_CAMPUS_WIDTH = 84;
+const HAVEN_CAMPUS_HEIGHT = 52;
+
+type HavenBuildingSpec = {
+  nodeId: BaseCampNodeId;
+  objectId: string;
+  zoneId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  doorWidth?: number;
+};
+
+const HAVEN_BUILDING_SPECS: HavenBuildingSpec[] = [
+  { nodeId: "shop", objectId: "shop_station", zoneId: "interact_shop", x: 6, y: 6, width: 7, height: 5 },
+  { nodeId: "quarters", objectId: "quarters_station", zoneId: "interact_quarters", x: 17, y: 6, width: 7, height: 5 },
+  { nodeId: "roster", objectId: "roster_station", zoneId: "interact_roster", x: 28, y: 6, width: 8, height: 5 },
+  { nodeId: "quest-board", objectId: "quest_board", zoneId: "interact_quest_board", x: 6, y: 18, width: 7, height: 5 },
+  { nodeId: "tavern", objectId: "tavern_station", zoneId: "interact_tavern", x: 17, y: 18, width: 7, height: 5 },
+  { nodeId: "gear-workbench", objectId: "gear_workbench_station", zoneId: "interact_gear_workbench", x: 28, y: 18, width: 8, height: 5 },
+  { nodeId: "loadout", objectId: "loadout_station", zoneId: "interact_loadout", x: 46, y: 7, width: 8, height: 5 },
+  { nodeId: "ops-terminal", objectId: "ops_terminal", zoneId: "interact_ops", x: 58, y: 7, width: 8, height: 5 },
+  { nodeId: "comms-array", objectId: "comms_array_station", zoneId: "interact_comms_array", x: 70, y: 7, width: 8, height: 5 },
+  { nodeId: "schema", objectId: "schema_station", zoneId: "interact_schema", x: 46, y: 25, width: 8, height: 5 },
+  { nodeId: "dispatch", objectId: "dispatch_station", zoneId: "interact_dispatch", x: 58, y: 25, width: 8, height: 5 },
+  { nodeId: "stable", objectId: "stable_station", zoneId: "interact_stable", x: 70, y: 25, width: 8, height: 5 },
+  { nodeId: "foundry-annex", objectId: "foundry_annex_station", zoneId: "interact_foundry_annex", x: 46, y: 38, width: 10, height: 6 },
+  { nodeId: "port", objectId: "port_station", zoneId: "interact_port", x: 59, y: 38, width: 8, height: 6 },
+  { nodeId: "black-market", objectId: "black_market_station", zoneId: "interact_black_market", x: 70, y: 38, width: 8, height: 6 },
+];
+
+const HAVEN_BUILDING_BY_NODE_ID = new Map(HAVEN_BUILDING_SPECS.map((spec) => [spec.nodeId, spec]));
+
+const HAVEN_OUTER_DECK_GATE = {
+  x: 34,
+  y: 48,
+  width: 16,
+  height: 3,
+  doorX: 40,
+  doorY: 47,
+  doorWidth: 4,
+  doorHeight: 1,
+};
+
+const HAVEN_WEAPONSMITH_BUILDING = {
+  x: 35,
+  y: 38,
+  width: 8,
+  height: 6,
+  doorWidth: 3,
+};
 
 function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
   for (let y = top; y < top + height; y += 1) {
@@ -62,9 +115,13 @@ function setMapAreaBlocked(map: FieldMap, left: number, top: number, width: numb
   }
 }
 
+function isBaseCampBlockingStation(map: FieldMap, object: FieldObject): boolean {
+  return map.id === "base_camp" && object.type === "station";
+}
+
 function ensureNodeFootprintsWalkable(map: FieldMap): FieldMap {
   map.objects.forEach((object) => {
-    if (object.type === "station") {
+    if (object.type === "station" && !isBaseCampBlockingStation(map, object)) {
       setMapAreaWalkable(map, object.x, object.y, object.width, object.height);
     }
   });
@@ -74,6 +131,133 @@ function ensureNodeFootprintsWalkable(map: FieldMap): FieldMap {
   });
 
   return map;
+}
+
+function createHavenCampusTiles(): FieldMap["tiles"] {
+  return Array.from({ length: HAVEN_CAMPUS_HEIGHT }, (_, y) => (
+    Array.from({ length: HAVEN_CAMPUS_WIDTH }, (_, x) => {
+      const isBoundary = x === 0 || y === 0 || x === HAVEN_CAMPUS_WIDTH - 1 || y === HAVEN_CAMPUS_HEIGHT - 1;
+      return {
+        x,
+        y,
+        walkable: !isBoundary,
+        type: isBoundary ? "wall" as const : "floor" as const,
+      };
+    })
+  ));
+}
+
+function expandBaseCampToHavenCampus(map: FieldMap): void {
+  map.width = HAVEN_CAMPUS_WIDTH;
+  map.height = HAVEN_CAMPUS_HEIGHT;
+  map.tiles = createHavenCampusTiles();
+
+  fillRect(map, 3, 13, 80, 16, true, "stone");
+  fillRect(map, 3, 34, 80, 36, true, "stone");
+  fillRect(map, 39, 3, 44, 48, true, "stone");
+  fillRect(map, 3, 46, 80, 48, true, "stone");
+}
+
+function getDoorWidth(width: number, requestedWidth?: number): number {
+  return Math.max(2, Math.min(width - 2, requestedWidth ?? (width >= 9 ? 4 : 3)));
+}
+
+function getSouthDoorBounds(
+  map: FieldMap,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  requestedDoorWidth?: number,
+): { x: number; y: number; width: number; height: number } {
+  const doorWidth = getDoorWidth(width, requestedDoorWidth);
+  return {
+    x: Math.max(1, Math.min(map.width - doorWidth - 1, x + Math.floor((width - doorWidth) / 2))),
+    y: Math.max(1, Math.min(map.height - 2, y + height)),
+    width: doorWidth,
+    height: 1,
+  };
+}
+
+function placeObjectFootprint(
+  map: FieldMap,
+  objectId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  metadata: Record<string, unknown> = {},
+): void {
+  const object = map.objects.find((entry) => entry.id === objectId);
+  if (!object) {
+    return;
+  }
+
+  object.x = x;
+  object.y = y;
+  object.width = width;
+  object.height = height;
+  object.metadata = {
+    ...(object.metadata ?? {}),
+    ...metadata,
+  };
+}
+
+function placeInteractionDoor(
+  map: FieldMap,
+  zoneId: string,
+  bounds: { x: number; y: number; width: number; height: number },
+  objectId: string,
+): void {
+  const zone = map.interactionZones.find((entry) => entry.id === zoneId);
+  if (!zone) {
+    return;
+  }
+
+  zone.x = bounds.x;
+  zone.y = bounds.y;
+  zone.width = bounds.width;
+  zone.height = bounds.height;
+  zone.metadata = {
+    ...(zone.metadata ?? {}),
+    autoTrigger: true,
+    doorForObjectId: objectId,
+    doorFacing: "south",
+  };
+}
+
+function placeHavenBuilding(
+  map: FieldMap,
+  spec: Pick<HavenBuildingSpec, "objectId" | "zoneId" | "width" | "height" | "doorWidth">,
+  x: number,
+  y: number,
+): void {
+  const door = getSouthDoorBounds(map, x, y, spec.width, spec.height, spec.doorWidth);
+  placeObjectFootprint(map, spec.objectId, x, y, spec.width, spec.height, {
+    havenBuilding: true,
+    doorZoneId: spec.zoneId,
+    doorX: door.x,
+    doorY: door.y,
+    doorWidth: door.width,
+    doorHeight: door.height,
+  });
+  placeInteractionDoor(map, spec.zoneId, door, spec.objectId);
+}
+
+function applyDefaultHavenBuildingLayout(map: FieldMap): void {
+  HAVEN_BUILDING_SPECS.forEach((spec) => placeHavenBuilding(map, spec, spec.x, spec.y));
+}
+
+function applyHavenBuildingCollision(map: FieldMap): void {
+  map.objects.forEach((object) => {
+    if (isBaseCampBlockingStation(map, object)) {
+      setMapAreaBlocked(map, object.x, object.y, object.width, object.height);
+    }
+  });
+
+  map.interactionZones.forEach((zone) => {
+    setMapAreaWalkable(map, zone.x, zone.y, zone.width, zone.height);
+  });
 }
 
 // ============================================================================
@@ -7963,6 +8147,7 @@ function createBaseCampMap(): FieldMap {
 function cloneFieldMap(map: FieldMap): FieldMap {
   return {
     ...map,
+    metadata: map.metadata ? { ...map.metadata } : undefined,
     tiles: map.tiles.map((row) => row.map((tile) => ({ ...tile }))),
     objects: map.objects.map((object) => ({
       ...object,
@@ -8069,8 +8254,13 @@ function applyBaseCampBuildLayout(map: FieldMap): void {
       return;
     }
 
-    moveObject(map.objects, definition.objectId, layout.x, layout.y);
-    moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);
+    const buildingSpec = HAVEN_BUILDING_BY_NODE_ID.get(definition.id);
+    if (buildingSpec) {
+      placeHavenBuilding(map, buildingSpec, layout.x, layout.y);
+    } else {
+      moveObject(map.objects, definition.objectId, layout.x, layout.y);
+      moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);
+    }
   });
 
   applyPlacedFieldBuildObjects(map);
@@ -8104,77 +8294,6 @@ function applyPlacedFieldBuildObjects(map: FieldMap): void {
   });
 }
 
-const HAVEN_GEARBLADE_ENEMY_FIXTURES: FieldObject[] = [
-  {
-    id: "haven_sparring_bulwark_fixture",
-    x: 18,
-    y: 14,
-    width: 1,
-    height: 1,
-    type: "enemy",
-    sprite: "field_enemy",
-    metadata: {
-      name: "HAVEN Sparring Bulwark",
-      enemyKind: "haven_shield_bulwark",
-      hp: 76,
-      speed: 78,
-      aggroRange: 210,
-      gearbladeDefense: "shield",
-      attackStyle: "shield_bash",
-    },
-  },
-  {
-    id: "haven_latchwire_slinger_fixture",
-    x: 21,
-    y: 15,
-    width: 1,
-    height: 1,
-    type: "enemy",
-    sprite: "field_enemy",
-    metadata: {
-      name: "HAVEN Latchwire Slinger",
-      enemyKind: "haven_latchwire_slinger",
-      hp: 48,
-      speed: 82,
-      aggroRange: 360,
-      attackStyle: "shot",
-    },
-  },
-  {
-    id: "haven_plate_sentinel_fixture",
-    x: 24,
-    y: 14,
-    width: 1,
-    height: 1,
-    type: "enemy",
-    sprite: "field_enemy",
-    metadata: {
-      name: "HAVEN Plate Sentinel",
-      enemyKind: "haven_plate_sentinel",
-      hp: 82,
-      speed: 68,
-      aggroRange: 230,
-      gearbladeDefense: "armor",
-      attackStyle: "lunge",
-    },
-  },
-];
-
-function appendHavenGearbladeEnemyFixtures(map: FieldMap): void {
-  fillRect(map, 16, 13, 26, 16, true, "floor");
-  const existingObjectIds = new Set(map.objects.map((object) => object.id));
-  HAVEN_GEARBLADE_ENEMY_FIXTURES.forEach((fixture) => {
-    if (existingObjectIds.has(fixture.id)) {
-      return;
-    }
-
-    map.objects.push({
-      ...fixture,
-      metadata: fixture.metadata ? { ...fixture.metadata } : undefined,
-    });
-  });
-}
-
 function createConfiguredBaseCampMap(): FieldMap {
   const map = cloneFieldMap(createBaseCampMap());
   const state = getGameState();
@@ -8185,45 +8304,8 @@ function createConfiguredBaseCampMap(): FieldMap {
   );
 
   normalizeGroundTilesToFloor(map);
-
-  moveObject(map.objects, "comms_array_station", 30, 14);
-
-  moveInteractionZone(map.interactionZones, "interact_comms_array", 30, 14);
-
-  // Keep Comms Array reachable from the start.
-  fillRect(map, 29, 13, 32, 17, true, "floor");
-
-  // Keep the HAVEN annex physically open at all times; the actual facility nodes
-  // simply appear as they unlock.
-  fillRect(map, 35, 12, 47, 21, true, "floor");
-
-  for (let x = 34; x <= 48; x += 1) {
-    setTile(map, x, 11, false, "wall");
-    setTile(map, x, 22, false, "wall");
-  }
-
-  for (let y = 11; y <= 22; y += 1) {
-    setTile(map, 34, y, false, "wall");
-    setTile(map, 48, y, false, "wall");
-  }
-
-  moveObject(map.objects, "stable_station", 43, 13);
-  moveObject(map.objects, "dispatch_station", 37, 16);
-  moveObject(map.objects, "black_market_station", 46, 18);
-  moveObject(map.objects, "port_station", 43, 18);
-
-  moveInteractionZone(map.interactionZones, "interact_stable", 43, 13);
-  moveInteractionZone(map.interactionZones, "interact_dispatch", 37, 16);
-  moveInteractionZone(map.interactionZones, "interact_black_market", 46, 18);
-  moveInteractionZone(map.interactionZones, "interact_port", 43, 18);
-
-  // Keep a two-tile wide passage under the Comms Array so the annex-side lane
-  // is always physically accessible even before its facilities unlock.
-  fillRect(map, 33, 15, 34, 20, true, "floor");
-
-  // Give Foundry a reachable upper-right lane near Loadout without leaving a
-  // disconnected dead strip at the very top-right of the map.
-  fillRect(map, 29, 5, 36, 8, true, "floor");
+  expandBaseCampToHavenCampus(map);
+  applyDefaultHavenBuildingLayout(map);
 
   if (!isPortNodeUnlocked()) {
     map.objects = map.objects.filter((object) => object.id !== "port_station");
@@ -8257,58 +8339,85 @@ function createConfiguredBaseCampMap(): FieldMap {
 
   applyBaseCampBuildLayout(map);
 
-  // Open a south-exit lane from HAVEN into the Outer Deck overworld.
-  fillRect(map, 22, 19, 27, 23, true, "floor");
-  setTile(map, 24, 24, false, "wall");
-  setTile(map, 25, 24, false, "wall");
-  appendHavenGearbladeEnemyFixtures(map);
-
   map.objects.push({
     id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
     x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
     y: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.y,
-    width: 4,
-    height: 2,
+    width: HAVEN_OUTER_DECK_GATE.width,
+    height: HAVEN_OUTER_DECK_GATE.height,
     type: "station",
     sprite: "bulkhead",
-    metadata: { name: "Outer Deck Access [Beta]" },
+    metadata: {
+      name: "Outer Deck Access [Beta]",
+      havenBuilding: true,
+      doorZoneId: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
+      doorX: HAVEN_OUTER_DECK_GATE.doorX,
+      doorY: HAVEN_OUTER_DECK_GATE.doorY,
+      doorWidth: HAVEN_OUTER_DECK_GATE.doorWidth,
+      doorHeight: HAVEN_OUTER_DECK_GATE.doorHeight,
+    },
   });
   map.interactionZones.unshift({
     id: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
-    x: OUTER_DECK_HAVEN_EXIT_OBJECT_TILE.x,
-    y: OUTER_DECK_HAVEN_EXIT_SPAWN_TILE.y + 1,
-    width: 4,
-    height: 2,
+    x: HAVEN_OUTER_DECK_GATE.doorX,
+    y: HAVEN_OUTER_DECK_GATE.doorY,
+    width: HAVEN_OUTER_DECK_GATE.doorWidth,
+    height: HAVEN_OUTER_DECK_GATE.doorHeight,
     action: "custom",
     label: "OUTER DECKS [BETA]",
     metadata: {
       handlerId: "outer_deck_enter_overworld",
       autoTrigger: true,
+      doorForObjectId: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
+      doorFacing: "south",
     },
   });
 
   if (isWeaponsmithUnlocked(state)) {
+    const door = getSouthDoorBounds(
+      map,
+      HAVEN_WEAPONSMITH_BUILDING.x,
+      HAVEN_WEAPONSMITH_BUILDING.y,
+      HAVEN_WEAPONSMITH_BUILDING.width,
+      HAVEN_WEAPONSMITH_BUILDING.height,
+      HAVEN_WEAPONSMITH_BUILDING.doorWidth,
+    );
     map.objects.push({
       id: "haven_weaponsmith_station",
-      x: 40,
-      y: 13,
-      width: 2,
-      height: 2,
+      x: HAVEN_WEAPONSMITH_BUILDING.x,
+      y: HAVEN_WEAPONSMITH_BUILDING.y,
+      width: HAVEN_WEAPONSMITH_BUILDING.width,
+      height: HAVEN_WEAPONSMITH_BUILDING.height,
       type: "station",
       sprite: "repair_bench",
-      metadata: { name: "Weaponsmith Bench" },
+      metadata: {
+        name: "Weaponsmith Bench",
+        havenBuilding: true,
+        doorZoneId: "interact_haven_weaponsmith",
+        doorX: door.x,
+        doorY: door.y,
+        doorWidth: door.width,
+        doorHeight: door.height,
+      },
     });
     map.interactionZones.unshift({
       id: "interact_haven_weaponsmith",
-      x: 40,
-      y: 13,
-      width: 2,
-      height: 2,
+      x: door.x,
+      y: door.y,
+      width: door.width,
+      height: door.height,
       action: "custom",
       label: "WEAPONSMITH",
-      metadata: { handlerId: "weaponsmith_workshop" },
+      metadata: {
+        handlerId: "weaponsmith_workshop",
+        autoTrigger: true,
+        doorForObjectId: "haven_weaponsmith_station",
+        doorFacing: "south",
+      },
     });
   }
+
+  applyHavenBuildingCollision(map);
 
   return map;
 }

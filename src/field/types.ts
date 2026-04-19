@@ -12,6 +12,7 @@ export interface FieldMap {
   tiles: FieldTile[][];
   objects: FieldObject[];
   interactionZones: InteractionZone[];
+  metadata?: Record<string, any>;
 }
 
 export interface FieldTile {
@@ -19,6 +20,7 @@ export interface FieldTile {
   y: number;
   walkable: boolean;
   type: "floor" | "wall" | "grass" | "dirt" | "stone";
+  elevation?: number;
 }
 
 export interface FieldObject {

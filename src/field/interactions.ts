@@ -37,6 +37,7 @@ import {
   isOuterDeckSubareaCleared,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
+  prepareOuterDeckOpenWorldEntry,
   resolveOuterDeckMechanic,
   setOuterDeckCurrentSubarea,
 } from "../core/outerDecks";
@@ -460,9 +461,9 @@ export async function handleInteraction(
       }
 
       if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
-        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        const { renderFieldScreen } = await import("./FieldScreen");
         try {
-          setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE);
+          updateGameState((state) => prepareOuterDeckOpenWorldEntry(state));
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
         } catch (error) {
           console.error("[FIELD] Failed to enter Outer Deck overworld:", error);

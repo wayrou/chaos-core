@@ -25,6 +25,7 @@ import {
 import { getGameState } from "../state/gameStore";
 import type { GameState } from "../core/types";
 import type { FieldMap, FieldObject, InteractionZone } from "./types";
+import { createOuterDeckOpenWorldFieldMap } from "./outerDeckWorld";
 
 const OVERWORLD_WIDTH = 140;
 const OVERWORLD_HEIGHT = 90;
@@ -1055,7 +1056,7 @@ export function createOuterDeckFieldMap(
   state: GameState = getGameState(),
 ): FieldMap | null {
   if (isOuterDeckOverworldMap(mapId)) {
-    return createOuterDeckOverworldMap(state);
+    return createOuterDeckOpenWorldFieldMap(state);
   }
   return createOuterDeckBranchMap(mapId, state);
 }
