@@ -4,6 +4,7 @@
 // ============================================================================
 
 import type { EffectFlowDocument } from "./effectFlow";
+import type { MerchantListingSource } from "./merchant";
 
 export type FieldModRarity = "common" | "uncommon" | "rare";
 export type FieldModScope = "unit" | "squad";
@@ -47,6 +48,7 @@ export interface FieldModDef {
   tags?: string[];
   cost?: number;                 // for Black Market
   unlockAfterOperationFloor?: number;
+  merchant?: MerchantListingSource;
 }
 
 export interface FieldModInstance {

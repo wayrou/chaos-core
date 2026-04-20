@@ -87,14 +87,25 @@ export interface OuterDeckRunHistoryEntry {
 export interface OuterDeckOpenWorldState {
   seed: number;
   generationVersion: number;
+  floorOrdinal: number;
   playerWorldX: number;
   playerWorldY: number;
   playerFacing: "north" | "south" | "east" | "west";
   collectedResourceKeys: string[];
+  collectedTheaterChartKeys: string[];
+  collectedApronKeyKeys: string[];
   defeatedEnemyKeys: string[];
   defeatedBossKeys: string[];
   bossHpByKey: Record<string, number>;
   exploredChunkKeys: string[];
+  placedLanterns: OuterDeckPlacedLantern[];
+}
+
+export interface OuterDeckPlacedLantern {
+  id: string;
+  worldTileX: number;
+  worldTileY: number;
+  placedAt: number;
 }
 
 export interface OuterDecksState {
@@ -105,6 +116,7 @@ export interface OuterDecksState {
   seenNpcEncounterIds: OuterDeckNpcEncounterId[];
   runHistory: OuterDeckRunHistoryEntry[];
   openWorld: OuterDeckOpenWorldState;
+  openWorldByFloor: Record<string, OuterDeckOpenWorldState>;
 }
 
 export type OuterDeckFieldContext = "haven" | "outerDeckOverworld" | "outerDeckBranch";
@@ -118,16 +130,19 @@ export interface OuterDeckNpcEncounterDefinition {
 export const OUTER_DECK_OVERWORLD_MAP_ID = "outer_deck_overworld";
 export const OUTER_DECK_HAVEN_EXIT_OBJECT_ID = "haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_ZONE_ID = "interact_haven_outer_deck_south_gate";
-export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 34, y: 48 };
+export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 40, y: 48 };
 export const OUTER_DECK_HAVEN_EXIT_SPAWN_TILE = { x: 41, y: 46, facing: "north" as const };
 export const OUTER_DECK_OPEN_WORLD_GENERATION_VERSION = 1;
 export const OUTER_DECK_OPEN_WORLD_TILE_SIZE = 64;
 export const OUTER_DECK_OPEN_WORLD_CHUNK_SIZE = 24;
 export const OUTER_DECK_OPEN_WORLD_STREAM_RADIUS = 2;
 export const OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE = { x: 2, y: 4, facing: "south" as const };
+export const OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE = { x: 1, y: 3 };
+export const OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES = 700;
 export const OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE = { x: 50, y: 52, facing: "south" as const };
 export const OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID = "outer_deck_overworld_return_haven";
 export const OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE = { x: 0, y: 1 };
+export const OUTER_DECK_OVERWORLD_TRAVELING_MERCHANT_ZONE_ID = "outer_deck_overworld_traveling_merchant";
 
 const OUTER_DECK_ZONE_ORDER: OuterDeckZoneId[] = [
   "counterweight_shaft",
@@ -217,16 +232,23 @@ function createEntryWorldPosition(): Pick<OuterDeckOpenWorldState, "playerWorldX
   };
 }
 
-export function createDefaultOuterDeckOpenWorldState(seed: number = generateSeed()): OuterDeckOpenWorldState {
+export function createDefaultOuterDeckOpenWorldState(
+  seed: number = generateSeed(),
+  floorOrdinal = 1,
+): OuterDeckOpenWorldState {
   return {
     seed,
     generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
+    floorOrdinal: Math.max(1, Math.floor(Number(floorOrdinal) || 1)),
     ...createEntryWorldPosition(),
     collectedResourceKeys: [],
+    collectedTheaterChartKeys: [],
+    collectedApronKeyKeys: [],
     defeatedEnemyKeys: [],
     defeatedBossKeys: [],
     bossHpByKey: {},
     exploredChunkKeys: [],
+    placedLanterns: [],
   };
 }
 
@@ -255,11 +277,52 @@ function normalizeNumberRecord(value: unknown): Record<string, number> {
   );
 }
 
+function normalizePlacedLanterns(value: unknown): OuterDeckPlacedLantern[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const raw = entry as Partial<OuterDeckPlacedLantern>;
+    const worldTileX = Number(raw.worldTileX);
+    const worldTileY = Number(raw.worldTileY);
+    if (!Number.isFinite(worldTileX) || !Number.isFinite(worldTileY)) {
+      return [];
+    }
+
+    const normalizedX = Math.floor(worldTileX);
+    const normalizedY = Math.floor(worldTileY);
+    const id = String(raw.id ?? `lantern:${normalizedX}:${normalizedY}`).trim();
+    const dedupeKey = `${normalizedX}:${normalizedY}`;
+    if (!id || seen.has(dedupeKey)) {
+      return [];
+    }
+
+    seen.add(dedupeKey);
+    return [{
+      id,
+      worldTileX: normalizedX,
+      worldTileY: normalizedY,
+      placedAt: Number.isFinite(Number(raw.placedAt)) ? Number(raw.placedAt) : Date.now(),
+    }];
+  });
+}
+
+function getOpenWorldFloorKey(floorOrdinal: number): string {
+  return String(Math.max(1, Math.floor(Number(floorOrdinal) || 1)));
+}
+
 function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorldState> | null): OuterDeckOpenWorldState {
   const fallback = createDefaultOuterDeckOpenWorldState();
   return {
     seed: Number.isFinite(Number(openWorld?.seed)) ? Number(openWorld?.seed) : fallback.seed,
     generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
+    floorOrdinal: Math.max(1, Math.floor(Number(openWorld?.floorOrdinal ?? fallback.floorOrdinal) || 1)),
     playerWorldX: Number.isFinite(Number(openWorld?.playerWorldX)) ? Number(openWorld?.playerWorldX) : fallback.playerWorldX,
     playerWorldY: Number.isFinite(Number(openWorld?.playerWorldY)) ? Number(openWorld?.playerWorldY) : fallback.playerWorldY,
     playerFacing:
@@ -270,14 +333,43 @@ function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorld
         ? openWorld.playerFacing
         : fallback.playerFacing,
     collectedResourceKeys: normalizeStringList(openWorld?.collectedResourceKeys),
+    collectedTheaterChartKeys: normalizeStringList(openWorld?.collectedTheaterChartKeys),
+    collectedApronKeyKeys: normalizeStringList(openWorld?.collectedApronKeyKeys),
     defeatedEnemyKeys: normalizeStringList(openWorld?.defeatedEnemyKeys),
     defeatedBossKeys: normalizeStringList(openWorld?.defeatedBossKeys),
     bossHpByKey: normalizeNumberRecord(openWorld?.bossHpByKey),
     exploredChunkKeys: normalizeStringList(openWorld?.exploredChunkKeys),
+    placedLanterns: normalizePlacedLanterns(openWorld?.placedLanterns),
   };
 }
 
+function normalizeOpenWorldByFloor(
+  value: unknown,
+  activeOpenWorld: OuterDeckOpenWorldState,
+): Record<string, OuterDeckOpenWorldState> {
+  const archive: Record<string, OuterDeckOpenWorldState> = {};
+
+  if (value && typeof value === "object") {
+    Object.entries(value as Record<string, Partial<OuterDeckOpenWorldState> | null | undefined>).forEach(([rawKey, rawOpenWorld]) => {
+      const floorOrdinal = Math.max(
+        1,
+        Math.floor(Number(rawOpenWorld?.floorOrdinal ?? rawKey) || 1),
+      );
+      const key = getOpenWorldFloorKey(floorOrdinal);
+      archive[key] = {
+        ...normalizeOuterDeckOpenWorldState(rawOpenWorld),
+        floorOrdinal,
+      };
+    });
+  }
+
+  archive[getOpenWorldFloorKey(activeOpenWorld.floorOrdinal)] = activeOpenWorld;
+  return archive;
+}
+
 function normalizeOuterDecksState(outerDecks?: Partial<OuterDecksState> | null): OuterDecksState {
+  const defaultOpenWorld = createDefaultOuterDeckOpenWorldState();
+  const openWorld = normalizeOuterDeckOpenWorldState(outerDecks?.openWorld ?? defaultOpenWorld);
   const defaults = {
     isExpeditionActive: false,
     activeExpedition: null,
@@ -285,7 +377,7 @@ function normalizeOuterDecksState(outerDecks?: Partial<OuterDecksState> | null):
     zoneFirstClearRecipeClaimed: {},
     seenNpcEncounterIds: [],
     runHistory: [],
-    openWorld: createDefaultOuterDeckOpenWorldState(),
+    openWorld: defaultOpenWorld,
   };
 
   return {
@@ -303,7 +395,8 @@ function normalizeOuterDecksState(outerDecks?: Partial<OuterDecksState> | null):
           clearedSubareaIds: [...(entry.clearedSubareaIds ?? [])],
         }))
       : [],
-    openWorld: normalizeOuterDeckOpenWorldState(outerDecks?.openWorld),
+    openWorld,
+    openWorldByFloor: normalizeOpenWorldByFloor(outerDecks?.openWorldByFloor, openWorld),
   };
 }
 
@@ -593,14 +686,32 @@ export function ensureOuterDeckOpenWorldState(state: GameState): GameState {
   return withOuterDecksState(state, getSafeOuterDecksState(state));
 }
 
-export function prepareOuterDeckOpenWorldEntry(state: GameState): GameState {
+export function prepareOuterDeckOpenWorldEntry(state: GameState, floorOrdinal?: number): GameState {
   const outerDecks = getSafeOuterDecksState(state);
+  const resolvedFloorOrdinal = Math.max(1, Math.floor(Number(floorOrdinal ?? outerDecks.openWorld.floorOrdinal ?? 1) || 1));
+  const activeFloorKey = getOpenWorldFloorKey(outerDecks.openWorld.floorOrdinal);
+  const targetFloorKey = getOpenWorldFloorKey(resolvedFloorOrdinal);
+  const openWorldByFloor = {
+    ...outerDecks.openWorldByFloor,
+    [activeFloorKey]: outerDecks.openWorld,
+  };
+  const floorOpenWorld = openWorldByFloor[targetFloorKey]
+    ? {
+        ...openWorldByFloor[targetFloorKey],
+        floorOrdinal: resolvedFloorOrdinal,
+      }
+    : createDefaultOuterDeckOpenWorldState(generateSeed(), resolvedFloorOrdinal);
   return withOuterDecksState(state, {
     ...outerDecks,
     isExpeditionActive: false,
     activeExpedition: null,
+    openWorldByFloor: {
+      ...openWorldByFloor,
+      [targetFloorKey]: floorOpenWorld,
+    },
     openWorld: {
-      ...outerDecks.openWorld,
+      ...floorOpenWorld,
+      floorOrdinal: resolvedFloorOrdinal,
       ...createEntryWorldPosition(),
     },
   });
@@ -636,7 +747,13 @@ export function setOuterDeckOpenWorldPlayerWorldPosition(
 
 function addOpenWorldKey(
   state: GameState,
-  collectionKey: "collectedResourceKeys" | "defeatedEnemyKeys" | "defeatedBossKeys" | "exploredChunkKeys",
+  collectionKey:
+    | "collectedResourceKeys"
+    | "collectedTheaterChartKeys"
+    | "collectedApronKeyKeys"
+    | "defeatedEnemyKeys"
+    | "defeatedBossKeys"
+    | "exploredChunkKeys",
   key: string,
 ): GameState {
   const normalizedKey = key.trim();
@@ -661,6 +778,46 @@ function addOpenWorldKey(
 
 export function markOuterDeckOpenWorldResourceCollected(state: GameState, resourceKey: string): GameState {
   return addOpenWorldKey(state, "collectedResourceKeys", resourceKey);
+}
+
+export function markOuterDeckOpenWorldTheaterChartCollected(state: GameState, chartKey: string): GameState {
+  return addOpenWorldKey(state, "collectedTheaterChartKeys", chartKey);
+}
+
+export function markOuterDeckOpenWorldApronKeyCollected(state: GameState, key: string): GameState {
+  return addOpenWorldKey(state, "collectedApronKeyKeys", key);
+}
+
+export function placeOuterDeckOpenWorldLantern(
+  state: GameState,
+  lantern: Omit<OuterDeckPlacedLantern, "placedAt"> & { placedAt?: number },
+): GameState {
+  const worldTileX = Math.floor(Number(lantern.worldTileX));
+  const worldTileY = Math.floor(Number(lantern.worldTileY));
+  if (!Number.isFinite(worldTileX) || !Number.isFinite(worldTileY)) {
+    return state;
+  }
+
+  const outerDecks = getSafeOuterDecksState(state);
+  const tileKey = `${worldTileX}:${worldTileY}`;
+  if (outerDecks.openWorld.placedLanterns.some((entry) => `${entry.worldTileX}:${entry.worldTileY}` === tileKey)) {
+    return state;
+  }
+
+  const nextLantern: OuterDeckPlacedLantern = {
+    id: String(lantern.id || `lantern:${tileKey}`).trim() || `lantern:${tileKey}`,
+    worldTileX,
+    worldTileY,
+    placedAt: Number.isFinite(Number(lantern.placedAt)) ? Number(lantern.placedAt) : Date.now(),
+  };
+
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    openWorld: {
+      ...outerDecks.openWorld,
+      placedLanterns: [...outerDecks.openWorld.placedLanterns, nextLantern],
+    },
+  });
 }
 
 export function markOuterDeckOpenWorldEnemyDefeated(state: GameState, enemyKey: string): GameState {

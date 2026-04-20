@@ -115,7 +115,8 @@ async function setGearbladeMode(page, mode, key) {
       hasFieldRoot: Boolean(document.querySelector(".field-root--haven3d")),
       hasCanvas: Boolean(document.querySelector(".haven3d-canvas")),
       hasShopRoot: Boolean(document.querySelector(".shop-root")),
-      modeChipCount: document.querySelectorAll("[data-haven3d-mode]").length,
+      modeHotspotCount: document.querySelectorAll("[data-haven3d-mode]").length,
+      activeMode: document.querySelector("[data-gearblade-mode-selector]")?.getAttribute("data-active-mode") ?? null,
       appClass: document.getElementById("app")?.firstElementChild?.className ?? null,
     }));
     throw new Error(`HAVEN 3D field missing before switching to ${mode}: ${JSON.stringify(screenState)}`);
@@ -124,28 +125,29 @@ async function setGearbladeMode(page, mode, key) {
   await page.keyboard.press(key);
   await page.waitForTimeout(120);
   const isActive = await page
-    .locator(`[data-haven3d-mode="${mode}"].haven3d-mode-chip--active`)
+    .locator(`[data-gearblade-mode-selector][data-active-mode="${mode}"]`)
     .count()
     .then((count) => count > 0);
   if (!isActive) {
-    const hasModeChip = await page.locator(`[data-haven3d-mode="${mode}"]`).count().then((count) => count > 0);
-    if (!hasModeChip) {
+    const hasModeHotspot = await page.locator(`[data-haven3d-mode="${mode}"]`).count().then((count) => count > 0);
+    if (!hasModeHotspot) {
       const screenState = await page.evaluate(() => ({
         screen: document.body.dataset.screen,
         hasFieldRoot: Boolean(document.querySelector(".field-root--haven3d")),
         hasCanvas: Boolean(document.querySelector(".haven3d-canvas")),
         hasShopRoot: Boolean(document.querySelector(".shop-root")),
-        modeChipCount: document.querySelectorAll("[data-haven3d-mode]").length,
+        modeHotspotCount: document.querySelectorAll("[data-haven3d-mode]").length,
+        activeMode: document.querySelector("[data-gearblade-mode-selector]")?.getAttribute("data-active-mode") ?? null,
         appClass: document.getElementById("app")?.firstElementChild?.className ?? null,
       }));
-      throw new Error(`HAVEN 3D mode chip missing for ${mode}: ${JSON.stringify(screenState)}`);
+      throw new Error(`HAVEN 3D mode hotspot missing for ${mode}: ${JSON.stringify(screenState)}`);
     }
     await page.locator(`[data-haven3d-mode="${mode}"]`).click();
   }
   await page.waitForFunction(
     (requestedMode) => document
-      .querySelector(`[data-haven3d-mode="${requestedMode}"]`)
-      ?.classList.contains("haven3d-mode-chip--active"),
+      .querySelector("[data-gearblade-mode-selector]")
+      ?.getAttribute("data-active-mode") === requestedMode,
     mode,
   );
 }
@@ -219,6 +221,105 @@ async function runSmoke() {
       && havenBuildingCollision.shopDoorAuto === true
       && havenBuildingCollision.outerGateBodyWalkable === false,
     `HAVEN building collision/door contract failed: ${JSON.stringify(havenBuildingCollision)}`,
+  );
+
+  const havenZiplineRideSetup = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const maps = await import("/src/field/maps.ts");
+    const coords = await import("/src/field/haven3d/coordinates.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = maps.getFieldMap("base_camp");
+    const track = map.objects.find((object) => (
+      object.metadata?.ziplineTrack === true
+      && object.metadata?.routeId === "haven_campus_zipline"
+    ));
+    const startAnchor = track
+      ? map.objects.find((object) => object.id === track.metadata?.startAnchorId)
+      : null;
+    const endAnchor = track
+      ? map.objects.find((object) => object.id === track.metadata?.endAnchorId)
+      : null;
+    if (!runtime || !track || !startAnchor || !endAnchor) {
+      throw new Error("No HAVEN zipline route available for ride smoke.");
+    }
+
+    const center = (object) => ({
+      x: (object.x + object.width / 2) * 64,
+      y: (object.y + object.height / 2) * 64,
+    });
+    const start = center(startAnchor);
+    const end = center(endAnchor);
+    const attachT = 0.22;
+    const attach = {
+      x: start.x + ((end.x - start.x) * attachT),
+      y: start.y + ((end.y - start.y) * attachT),
+    };
+    const offsets = [
+      { x: 0, y: 86 },
+      { x: 0, y: -86 },
+      { x: 48, y: 0 },
+      { x: -48, y: 0 },
+      { x: 0, y: 28 },
+    ];
+    const player = offsets
+      .map((offset) => ({ x: attach.x + offset.x, y: attach.y + offset.y }))
+      .find((candidate) => coords.canAvatarMoveTo(map, candidate.x, candidate.y, 32, 32));
+    if (!player) {
+      throw new Error("No walkable HAVEN zipline ride setup tile.");
+    }
+
+    runtime.player.x = player.x;
+    runtime.player.y = player.y;
+    runtime.player.facing = "east";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.fieldEnemies = [];
+    runtime.npcs = [];
+    runtime.companion = undefined;
+    document.querySelector(".haven3d-canvas")?.focus();
+
+    return { start, end, attach, attachT, playerBefore: player };
+  });
+  await setGearbladeMode(page, "grapple", "Digit3");
+  await triggerPrimaryAction(page, canvas);
+  await page.waitForTimeout(3200);
+  const havenZiplineRideResult = await page.evaluate(async (setup) => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (!runtime) {
+      return null;
+    }
+    const projectRawT = (point) => {
+      const dx = setup.end.x - setup.start.x;
+      const dy = setup.end.y - setup.start.y;
+      const lengthSq = Math.max(1, (dx * dx) + (dy * dy));
+      return (((point.x - setup.start.x) * dx) + ((point.y - setup.start.y) * dy)) / lengthSq;
+    };
+    const after = { x: runtime.player.x, y: runtime.player.y };
+    const segmentLength = Math.hypot(setup.end.x - setup.start.x, setup.end.y - setup.start.y);
+    const afterRawT = projectRawT(after);
+    const afterT = Math.max(0, Math.min(1, afterRawT));
+    const endDistance = Math.min(
+      Math.hypot(after.x - setup.start.x, after.y - setup.start.y),
+      Math.hypot(after.x - setup.end.x, after.y - setup.end.y),
+    );
+    return {
+      moved: Math.hypot(after.x - setup.playerBefore.x, after.y - setup.playerBefore.y),
+      ziplineTravel: Math.abs(afterT - setup.attachT) * segmentLength,
+      endDistance,
+      carriedOffEnd: afterRawT < -0.02 || afterRawT > 1.02,
+      afterRawT,
+      afterT,
+    };
+  }, havenZiplineRideSetup);
+  assertSmoke(
+    havenZiplineRideResult
+      && havenZiplineRideResult.moved > 340
+      && havenZiplineRideResult.ziplineTravel > 300
+      && havenZiplineRideResult.carriedOffEnd
+      && havenZiplineRideResult.endDistance > 70
+      && havenZiplineRideResult.endDistance < 420,
+    `HAVEN zipline grapple did not carry the player off the cable end with momentum: ${JSON.stringify(havenZiplineRideResult)}`,
   );
 
   await page.evaluate(async () => {
@@ -983,32 +1084,146 @@ async function runSmoke() {
     `Outer Deck 3D pickup did not hide after collection: ${JSON.stringify(outerDeckPickupResult)}`,
   );
 
-  await page.evaluate(() => {
-    document.querySelector("[data-field-view-toggle]")?.dispatchEvent(new PointerEvent("pointerdown", {
-      bubbles: true,
-      cancelable: true,
-      pointerId: 1,
-      pointerType: "mouse",
-    }));
-  });
-  await page.waitForSelector(".field-viewport", { timeout: 10000 });
-  const outerDeckTopDownState = await page.evaluate(() => ({
+  const outerDeckNoSwitcherState = await page.evaluate(() => ({
+    hasViewToggle: Boolean(document.querySelector("[data-field-view-toggle]")),
     hasHaven3d: Boolean(document.querySelector(".field-root--haven3d")),
     has2dViewport: Boolean(document.querySelector(".field-viewport")),
   }));
   assertSmoke(
-    !outerDeckTopDownState.hasHaven3d && outerDeckTopDownState.has2dViewport,
-    `Outer Deck top-down fallback toggle failed: ${JSON.stringify(outerDeckTopDownState)}`,
+    !outerDeckNoSwitcherState.hasViewToggle && outerDeckNoSwitcherState.hasHaven3d && !outerDeckNoSwitcherState.has2dViewport,
+    `Outer Deck view switcher was not fully removed: ${JSON.stringify(outerDeckNoSwitcherState)}`,
   );
-  await page.evaluate(() => {
-    document.querySelector("[data-field-view-toggle]")?.dispatchEvent(new PointerEvent("pointerdown", {
-      bubbles: true,
-      cancelable: true,
-      pointerId: 1,
-      pointerType: "mouse",
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  await page.waitForSelector("[data-haven3d-apron-nav]", { timeout: 10000 });
+  await page.waitForTimeout(120);
+  const apronNavigatorState = await page.evaluate(() => {
+    const nav = document.querySelector("[data-haven3d-apron-nav]");
+    return {
+      exists: Boolean(nav),
+      hidden: nav?.hasAttribute("hidden") ?? true,
+      text: nav?.textContent ?? "",
+      bearing: nav instanceof HTMLElement ? nav.style.getPropertyValue("--apron-bearing") : "",
+    };
+  });
+  assertSmoke(
+    apronNavigatorState.exists
+      && !apronNavigatorState.hidden
+      && /HAVEN/i.test(apronNavigatorState.text)
+      && /CELL/i.test(apronNavigatorState.text)
+      && apronNavigatorState.bearing.trim().length > 0,
+    `Outer Deck HAVEN navigator did not render/update: ${JSON.stringify(apronNavigatorState)}`,
+  );
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const outerDecks = await import("/src/core/outerDecks.ts");
+    store.updateGameState((state) => ({
+      ...state,
+      outerDecks: {
+        ...state.outerDecks,
+        openWorld: {
+          ...state.outerDecks.openWorld,
+          seed: 6666,
+          playerWorldX: (outerDecks.OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * outerDecks.OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+          playerWorldY: (outerDecks.OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * outerDecks.OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+          playerFacing: outerDecks.OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.facing,
+        },
+      },
     }));
+    field.renderFieldScreen(outerDecks.OUTER_DECK_OVERWORLD_MAP_ID);
   });
   await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  await page.waitForTimeout(200);
+  const apronTraversalRouteState = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const map = field.getCurrentFieldRuntimeMap();
+    const zipline = map?.objects.find((object) => object.metadata?.ziplineTrack === true);
+    const routeAnchorCount = map?.objects.filter((object) => object.metadata?.grappleAnchor === true && object.metadata?.routeId).length ?? 0;
+    const grappleRouteAnchors = field.getCurrentHaven3DGrappleRouteAnchorState();
+    const linkedRouteAnchor = grappleRouteAnchors.find((anchor) => anchor.connectedAnchorIds.some((id) => grappleRouteAnchors.some((candidate) => candidate.id === id)));
+    const linkedRouteTargets = linkedRouteAnchor
+      ? linkedRouteAnchor.connectedAnchorIds.filter((id) => grappleRouteAnchors.some((candidate) => candidate.id === id))
+      : [];
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (runtime && linkedRouteAnchor && linkedRouteTargets.length > 0) {
+      runtime.player.x = linkedRouteAnchor.x + 6;
+      runtime.player.y = linkedRouteAnchor.y + 6;
+      runtime.player.vx = 0;
+      runtime.player.vy = 0;
+      runtime.player.facing = "east";
+    }
+    const preferredGrappleAnchor = field.getCurrentHaven3DPreferredGrappleAnchorState();
+    const resourceWalkable = map?.objects
+      .filter((object) => object.type === "resource")
+      .every((object) => map.tiles[object.y]?.[object.x]?.walkable === true && object.metadata?.requiresSable !== true);
+    return {
+      ziplineId: zipline?.id ?? null,
+      ziplineVisible: zipline ? field.isCurrentHaven3DFieldObjectVisible(zipline.id) : false,
+      ziplineTraversalNeed: zipline?.metadata?.traversalNeed ?? null,
+      ziplineElevationDelta: Number(zipline?.metadata?.traversalElevationDelta ?? 0),
+      ziplineBlockedTiles: Number(zipline?.metadata?.traversalBlockedTiles ?? 0),
+      routeAnchorCount,
+      routeGraphLinked: Boolean(linkedRouteAnchor && linkedRouteTargets.length > 0),
+      routeSnapPreferredId: preferredGrappleAnchor?.id ?? null,
+      routeSnapTargetIds: linkedRouteTargets,
+      resourceWalkable,
+    };
+  });
+  assertSmoke(
+    Boolean(apronTraversalRouteState.ziplineId)
+      && apronTraversalRouteState.ziplineVisible
+      && (
+        (apronTraversalRouteState.ziplineTraversalNeed === "elevation" && apronTraversalRouteState.ziplineElevationDelta >= 10)
+        || (apronTraversalRouteState.ziplineTraversalNeed === "chasm" && apronTraversalRouteState.ziplineBlockedTiles >= 3)
+      )
+      && apronTraversalRouteState.routeAnchorCount >= 2
+      && apronTraversalRouteState.routeGraphLinked
+      && apronTraversalRouteState.routeSnapTargetIds.includes(apronTraversalRouteState.routeSnapPreferredId)
+      && apronTraversalRouteState.resourceWalkable,
+    `Outer Deck traversal routes or visible pickup contract failed: ${JSON.stringify(apronTraversalRouteState)}`,
+  );
+
+  const outerDeckDistantHavenSetup = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const outerDecks = await import("/src/core/outerDecks.ts");
+    const outerDeckWorld = await import("/src/field/outerDeckWorld.ts");
+    const farWorldX = ((outerDecks.OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * 7) + 10.5) * outerDecks.OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    const farWorldY = (8.5) * outerDecks.OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    store.updateGameState((state) => outerDecks.setOuterDeckOpenWorldPlayerWorldPosition(state, farWorldX, farWorldY, "west"));
+    field.renderFieldScreen(outerDecks.OUTER_DECK_OVERWORLD_MAP_ID);
+    const map = field.getCurrentFieldRuntimeMap();
+    const runtime = field.getCurrentFieldRuntimeState();
+    if (map && runtime && outerDeckWorld.isOuterDeckOpenWorldMap(map)) {
+      const local = outerDeckWorld.outerDeckWorldPixelToLocal(map, farWorldX, farWorldY);
+      runtime.player.x = local.x;
+      runtime.player.y = local.y;
+      runtime.player.vx = 0;
+      runtime.player.vy = 0;
+    }
+    return {
+      hasPhysicalHaven: Boolean(map?.objects.some((object) => object.metadata?.havenCargoElevatorExterior === true)),
+      mapId: field.getCurrentFieldMap(),
+    };
+  });
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  await page.waitForTimeout(350);
+  const outerDeckDistantHavenState = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const map = field.getCurrentFieldRuntimeMap();
+    const physicalHaven = map?.objects.find((object) => object.metadata?.havenCargoElevatorExterior === true);
+    return {
+      mapId: field.getCurrentFieldMap(),
+      hasPhysicalHaven: Boolean(physicalHaven),
+      physicalHavenVisible: physicalHaven ? field.isCurrentHaven3DFieldObjectVisible(physicalHaven.id) : false,
+      distantLandmarkVisible: field.isCurrentHaven3DDistantHavenLandmarkVisible(),
+    };
+  });
+  assertSmoke(
+    (outerDeckDistantHavenState.hasPhysicalHaven && outerDeckDistantHavenState.physicalHavenVisible)
+      || (!outerDeckDistantHavenState.hasPhysicalHaven && outerDeckDistantHavenState.distantLandmarkVisible),
+    `Outer Deck HAVEN landmark was not visible after moving far from the elevator: ${JSON.stringify({ outerDeckDistantHavenSetup, outerDeckDistantHavenState })}`,
+  );
 
   const outerDeckBranchState = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");

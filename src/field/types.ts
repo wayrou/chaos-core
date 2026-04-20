@@ -21,6 +21,8 @@ export interface FieldTile {
   walkable: boolean;
   type: "floor" | "wall" | "grass" | "dirt" | "stone";
   elevation?: number;
+  standable3d?: boolean;
+  render3d?: boolean;
 }
 
 export interface FieldObject {
@@ -100,6 +102,13 @@ export interface FieldEnemy {
   vy: number;
   knockbackTime: number;
   aggroRange: number;
+  roamHomeX?: number;
+  roamHomeY?: number;
+  roamRadius?: number;
+  roamSpeedMultiplier?: number;
+  roamTargetX?: number;
+  roamTargetY?: number;
+  nextRoamAt?: number;
   gearbladeDefense?: "shield" | "armor" | "none";
   gearbladeDefenseBroken?: boolean;
   attackStyle?: "slash" | "lunge" | "shot" | "shield_bash";
@@ -146,6 +155,9 @@ export interface FieldProjectile {
   lifetime: number;
   maxLifetime: number;
   gearbladeMode?: "launcher";
+  hostile?: boolean;
+  sourceEnemyId?: string;
+  radius?: number;
 }
 
 export interface FieldCombatState {

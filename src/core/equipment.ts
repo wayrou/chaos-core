@@ -18,6 +18,7 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import type { ImportedCard, ImportedGear } from "../content/technica/types";
+import type { MerchantListingSource } from "./merchant";
 import { getLibraryCardDatabase, type GearSlotData, type LibraryCard } from "./gearWorkbench";
 
 // ----------------------------------------------------------------------------
@@ -170,6 +171,7 @@ export interface EquipmentVictoryRewardSource {
 
 export interface EquipmentAcquisition {
   shop?: EquipmentShopSource;
+  merchant?: MerchantListingSource;
   enemyDrop?: EquipmentEnemyDropSource;
   victoryReward?: EquipmentVictoryRewardSource;
   otherSourcesNotes?: string;

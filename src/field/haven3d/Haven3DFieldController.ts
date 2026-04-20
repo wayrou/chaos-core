@@ -1,17 +1,17 @@
 import * as THREE from "three";
 import type { PlayerId } from "../../core/types";
+import type { WeaponsmithUtilityItemId } from "../../core/weaponsmith";
 import {
   getPlayerInput,
   handleKeyDown as handlePlayerInputKeyDown,
   handleKeyUp as handlePlayerInputKeyUp,
   isPlayerInputActionEvent,
 } from "../../core/playerInput";
-import type { FieldEnemy, FieldMap, FieldNpc, FieldObject, PlayerAvatar } from "../types";
+import type { FieldEnemy, FieldMap, FieldNpc, FieldObject, FieldProjectile, PlayerAvatar } from "../types";
 import type { Companion } from "../companion";
 import {
   HAVEN3D_FIELD_TILE_SIZE,
   HAVEN3D_WORLD_TILE_SIZE,
-  canAvatarMoveTo,
   createHaven3DSceneLayout,
   fieldFacingFromDelta,
   fieldToHavenWorld,
@@ -28,6 +28,11 @@ import {
   type Haven3DTargetKind,
   type Haven3DTargetRef,
 } from "./targeting";
+import {
+  GEARBLADE_MODE_SELECTOR_DESTINATIONS,
+  GEARBLADE_MODE_UI,
+  type GearbladeModeSelectorHotspot,
+} from "../gearbladeModeUi";
 import { getHaven3DEnemyDefense, isHaven3DEnemyDefenseBroken } from "./combatRules";
 import { getHaven3DEnemyAttackProfile } from "./enemyMoves";
 import {
@@ -54,7 +59,6 @@ type Actor = {
   targetRing?: THREE.Object3D;
   blade?: THREE.Group;
   bladeTrail?: THREE.Object3D;
-  weaponForms?: Partial<Record<Haven3DGearbladeMode, THREE.Object3D>>;
   telegraph?: THREE.Object3D;
   defenseShield?: THREE.Object3D;
   defenseArmor?: THREE.Object3D;
@@ -67,6 +71,7 @@ type ChibiRig = {
   pelvis: THREE.Object3D;
   head: THREE.Object3D;
   leftUpperArm: THREE.Object3D;
+  rightShoulderPivot: THREE.Object3D;
   rightUpperArm: THREE.Object3D;
   leftForearm: THREE.Object3D;
   rightForearm: THREE.Object3D;
@@ -81,6 +86,7 @@ type ChibiRig = {
   cape?: THREE.Object3D;
   leftCapePanel?: THREE.Object3D;
   rightCapePanel?: THREE.Object3D;
+  glider?: THREE.Object3D;
 };
 
 type SableRig = {
@@ -137,6 +143,15 @@ type Haven3DLauncherImpact = {
   radius: number;
   damage: number;
   knockback: number;
+  utility?: "attack" | "flare";
+};
+
+type Haven3DLauncherFire = {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  utility: "attack" | "flare";
 };
 
 type Haven3DGrappleImpact = {
@@ -156,6 +171,27 @@ type BladeSwingState = {
   side: 1 | -1;
 };
 
+type BladeSwingPose = {
+  localYaw: number;
+  slashPulse: number;
+  hiltForwardPx: number;
+  hiltSidePx: number;
+  bladeDirection: { x: number; y: number };
+  hilt: { x: number; y: number };
+  tip: { x: number; y: number };
+};
+
+type BladeSwingWeaponPose = {
+  hiltX: number;
+  hiltY: number;
+  hiltZ: number;
+  bladePitch: number;
+  bladeYaw: number;
+  bladeRoll: number;
+  swingProgress: number;
+  slashPulse: number;
+};
+
 type GearbladeTransformState = {
   from: Haven3DGearbladeMode;
   to: Haven3DGearbladeMode;
@@ -169,22 +205,15 @@ type GearbladeTransformSnapshot = GearbladeTransformState & {
   pulse: number;
 };
 
-type GearbladePartName = "blade" | "launcher" | "grapple";
-
-type GearbladePartPose = {
-  position: THREE.Vector3Tuple;
-  rotation: THREE.Vector3Tuple;
-  scale: THREE.Vector3Tuple;
-};
-
 type LauncherProjectile = {
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   x: number;
   y: number;
   vx: number;
   vy: number;
   ttlMs: number;
   target: Haven3DTargetRef | null;
+  utility: "attack" | "flare";
   radius: number;
   damage: number;
   knockback: number;
@@ -194,7 +223,24 @@ type PlayerVerticalState = {
   elevation: number;
   velocity: number;
   grounded: boolean;
+  gliding: boolean;
+  gliderDeployedAt: number;
   jumpStartedAt: number;
+  jumpFlipDirection: 1 | -1;
+  groundElevation: number;
+  worldElevation: number;
+};
+
+type ZiplineDismountDrift = {
+  playerId: PlayerId;
+  vx: number;
+  vy: number;
+  startedAt: number;
+  durationMs: number;
+};
+
+type FinishGrappleMoveOptions = {
+  preserveAirborne?: boolean;
 };
 
 type GrappleAnchor = {
@@ -206,6 +252,62 @@ type GrappleAnchor = {
   height: number;
   group: THREE.Group;
   phase: number;
+  routeId?: string;
+  routeIndex?: number;
+  connectedAnchorIds: string[];
+};
+
+type GrappleSourcePoint = {
+  id: string;
+  label: string;
+  fieldCenter: { x: number; y: number };
+  height: number;
+  routeId?: string;
+  routeIndex?: number;
+  connectedAnchorIds?: string[];
+};
+
+type ZiplineEndpoint = {
+  fieldPoint: { x: number; y: number };
+  height: number;
+};
+
+type ZiplineTrackEndpoints = {
+  start: ZiplineEndpoint;
+  end: ZiplineEndpoint;
+};
+
+type GrappleZiplineSegment = {
+  id: string;
+  key: string;
+  routeId?: string;
+  startAnchorId?: string;
+  endAnchorId?: string;
+  start: ZiplineEndpoint;
+  end: ZiplineEndpoint;
+  length: number;
+  directionX: number;
+  directionY: number;
+};
+
+type GrappleZiplineTarget = {
+  segment: GrappleZiplineSegment;
+  attachPoint: { x: number; y: number };
+  attachHeight: number;
+  attachT: number;
+  endPoint: { x: number; y: number };
+  endHeight: number;
+  endT: 0 | 1;
+};
+
+type GrappleAnchorState = {
+  id: string;
+  key: string;
+  x: number;
+  y: number;
+  routeId: string | null;
+  routeIndex: number | null;
+  connectedAnchorIds: string[];
 };
 
 type GrappleAnchorTargetRef = {
@@ -214,9 +316,15 @@ type GrappleAnchorTargetRef = {
   key: string;
 };
 
+type GrappleZiplineTargetRef = {
+  kind: "zipline-track";
+  id: string;
+  key: string;
+};
+
 type GrappleMoveState = {
   startedAt: number;
-  target: Haven3DTargetRef | GrappleAnchorTargetRef;
+  target: Haven3DTargetRef | GrappleAnchorTargetRef | GrappleZiplineTargetRef;
   targetPoint: { x: number; y: number };
   targetHeight: number;
   impacted: boolean;
@@ -227,6 +335,22 @@ type GrappleMoveState = {
     startY: number;
     durationMs: number;
     arcHeight: number;
+  };
+  zipline?: {
+    segmentKey: string;
+    startX: number;
+    startY: number;
+    startHeight: number;
+    attachX: number;
+    attachY: number;
+    attachHeight: number;
+    attachT: number;
+    endX: number;
+    endY: number;
+    endHeight: number;
+    endT: 0 | 1;
+    attachDurationMs: number;
+    rideDurationMs: number;
   };
 };
 
@@ -309,6 +433,7 @@ type Haven3DFieldControllerOptions = {
   initialCameraState?: Haven3DFieldCameraState | null;
   getNpcs: () => FieldNpc[];
   getEnemies: () => FieldEnemy[];
+  getFieldProjectiles?: () => FieldProjectile[];
   getCompanion?: () => Companion | null | undefined;
   getPlayerAvatar: (playerId: PlayerId) => FieldAvatarView | null;
   isPlayerActive: (playerId: PlayerId) => boolean;
@@ -323,11 +448,14 @@ type Haven3DFieldControllerOptions = {
   onInteractPressed: (playerId: PlayerId) => void;
   onOpenMenu: () => void;
   onFrame: (deltaMs: number, currentTime: number) => void;
-  isFieldObjectVisible?: (objectId: string) => boolean;
+  isFieldObjectVisible?: (objectId: string, object?: FieldObject) => boolean;
   onPlayerFootstep?: (playerId: PlayerId, side: "left" | "right", speedRatio: number) => void;
   onBladeStrike?: (strike: Haven3DBladeStrike) => boolean;
+  onLauncherFire?: (fire: Haven3DLauncherFire) => boolean;
   onLauncherImpact?: (impact: Haven3DLauncherImpact) => boolean;
   onGrappleImpact?: (impact: Haven3DGrappleImpact) => boolean;
+  canUseGlider?: (playerId: PlayerId) => boolean;
+  hasApronUtility?: (playerId: PlayerId, utilityItemId: WeaponsmithUtilityItemId) => boolean;
   enableGearbladeModes?: boolean;
   enabledGearbladeModes?: readonly Haven3DGearbladeMode[];
 };
@@ -335,7 +463,7 @@ type Haven3DFieldControllerOptions = {
 const PLAYER_WIDTH = 32;
 const PLAYER_HEIGHT = 32;
 const PLAYER_SPEED_PX_PER_SECOND = 278;
-const DASH_MULTIPLIER = 1.65;
+const DASH_MULTIPLIER = 2.475;
 const CAMERA_MIN_PITCH = -0.38;
 const CAMERA_MAX_PITCH = 0.62;
 const CAMERA_DEFAULT_DISTANCE = 8.8;
@@ -368,8 +496,8 @@ const HAVEN3D_OUTER_DECK_OVERWORLD_PROFILE: Haven3DMapProfile = {
     minDistance: 8.2,
     maxDistance: 24,
     heightOffset: 4.35,
-    farMin: 520,
-    farScale: 1.6,
+    farMin: 1800,
+    farScale: 4.2,
     lockedBaseDistance: 9.2,
     lockedTargetScale: 0.18,
     lockedTargetAddMax: 5.5,
@@ -377,13 +505,24 @@ const HAVEN3D_OUTER_DECK_OVERWORLD_PROFILE: Haven3DMapProfile = {
     lockedMaxDistance: 16.2,
   },
   scene: {
-    fogColor: 0x151f20,
-    fogDensity: 0.0046,
-    hemisphereIntensity: 0.66,
-    sunIntensity: 3.85,
-    fillIntensity: 0.92,
-    rimIntensity: 0.82,
+    fogColor: 0x020915,
+    fogDensity: 0.0155,
+    hemisphereIntensity: 0.16,
+    sunIntensity: 0.62,
+    fillIntensity: 0.22,
+    rimIntensity: 1.42,
   },
+};
+const HAVEN_SKYLINE_TRACKS_GROUP_NAME = "HavenSkylineTracks";
+const OUTER_DECK_HAVEN_LANDMARK = {
+  worldX: -40,
+  worldY: -48,
+  width: 84,
+  height: 52,
+  visualHeightWorld: 10.8,
+  skylineTrackHeightWorld: 320,
+  maxTrueDistanceWorld: 720,
+  minScale: 0.56,
 };
 const HAVEN3D_OUTER_DECK_BRANCH_PROFILE: Haven3DMapProfile = {
   camera: {
@@ -401,26 +540,34 @@ const HAVEN3D_OUTER_DECK_BRANCH_PROFILE: Haven3DMapProfile = {
     lockedMaxDistance: 12.4,
   },
   scene: {
-    fogColor: 0x151b1c,
-    fogDensity: 0.0158,
-    hemisphereIntensity: 0.56,
-    sunIntensity: 3.72,
-    fillIntensity: 1.1,
-    rimIntensity: 0.78,
+    fogColor: 0x030914,
+    fogDensity: 0.024,
+    hemisphereIntensity: 0.18,
+    sunIntensity: 0.66,
+    fillIntensity: 0.24,
+    rimIntensity: 1.36,
   },
 };
 const CAMERA_FORWARD_PAN_DURATION_MS = 260;
-const BLADE_SWING_WINDUP_MS = 300;
-const BLADE_SWING_IMPACT_MS = 430;
-const BLADE_SWING_TOTAL_MS = 1080;
-const BLADE_SWING_RANGE_PX = 136;
-const BLADE_SWING_ARC_RADIANS = Math.PI * 1.08;
-const BLADE_SWING_HIT_WIDTH_PX = 17;
+const BLADE_SWING_WINDUP_MS = 174;
+const BLADE_SWING_IMPACT_MS = 293;
+const BLADE_SWING_TOTAL_MS = 585;
+const BLADE_SWING_ARC_START_MS = 64;
+const BLADE_SWING_ARC_END_MS = 521;
+const BLADE_SWING_RANGE_PX = 148;
+const BLADE_SWING_ARC_RADIANS = Math.PI * 1.62;
+const BLADE_SWING_HIT_WIDTH_PX = 34;
+const BLADE_SWING_START_LOCAL_YAW = 1.3;
+const BLADE_SWING_END_LOCAL_YAW = -1.3;
+const BLADE_SWING_BLADE_LENGTH_PX = 108;
+const BLADE_SWING_HILT_FORWARD_PX = 30;
+const BLADE_SWING_HILT_SIDE_START_PX = 44;
+const BLADE_SWING_HILT_SIDE_END_PX = -44;
 const BLADE_SWING_DAMAGE = 38;
 const BLADE_SWING_KNOCKBACK = 620;
-const BLADE_LUNGE_START_MS = 300;
-const BLADE_LUNGE_END_MS = 560;
-const BLADE_LUNGE_SPEED_PX_PER_SECOND = 205;
+const BLADE_LUNGE_START_MS = 192;
+const BLADE_LUNGE_END_MS = 347;
+const BLADE_LUNGE_SPEED_PX_PER_SECOND = 242;
 const LAUNCHER_COOLDOWN_MS = 360;
 const LAUNCHER_RECOIL_MS = 160;
 const LAUNCHER_SPEED_PX_PER_SECOND = 780;
@@ -439,8 +586,36 @@ const GRAPPLE_SWING_DURATION_MS = 760;
 const GRAPPLE_SWING_ARC_HEIGHT = 2.65;
 const GRAPPLE_NODE_HEIGHT = 3.35;
 const GRAPPLE_NODE_MAX_COUNT = 24;
-const PLAYER_JUMP_VELOCITY = 5.1;
+const GRAPPLE_ROUTE_HANDOFF_DISTANCE_PX = 152;
+const GRAPPLE_ROUTE_DIRECT_RANGE_PX = GRAPPLE_RANGE_PX * 1.72;
+const GRAPPLE_ROUTE_LINK_RANGE_PX = HAVEN3D_FIELD_TILE_SIZE * 54;
+const GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX = 46;
+const GRAPPLE_ZIPLINE_ATTACH_RANGE_PX = GRAPPLE_RANGE_PX * 1.16;
+const GRAPPLE_ZIPLINE_CLOSE_ATTACH_RADIUS_PX = 132;
+const GRAPPLE_ZIPLINE_MAX_AIM_OFFSET_PX = 176;
+const GRAPPLE_ZIPLINE_RIDE_SPEED_PX_PER_SECOND = 980;
+const GRAPPLE_ZIPLINE_MIN_ATTACH_DURATION_MS = 120;
+const GRAPPLE_ZIPLINE_MAX_ATTACH_DURATION_MS = 300;
+const GRAPPLE_ZIPLINE_MIN_RIDE_DURATION_MS = 340;
+const GRAPPLE_ZIPLINE_MAX_RIDE_DURATION_MS = 2850;
+const GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD = 1.88;
+const GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND = 720;
+const GRAPPLE_ZIPLINE_DISMOUNT_DURATION_MS = 620;
+const GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY = 0.55;
+const PLAYER_JUMP_HEIGHT_MULTIPLIER = 5;
+const PLAYER_JUMP_VELOCITY = 5.1 * Math.sqrt(PLAYER_JUMP_HEIGHT_MULTIPLIER);
+const PLAYER_COUNTERWEIGHT_BOOTS_JUMP_VELOCITY_MULTIPLIER = 1.18;
 const PLAYER_JUMP_GRAVITY = 15.2;
+const PLAYER_JUMP_FRONT_FLIP_DELAY_MS = 40;
+const PLAYER_JUMP_FRONT_FLIP_DURATION_MS = 360;
+const PLAYER_GLIDER_MIN_DEPLOY_ELEVATION = 0.42;
+const PLAYER_GLIDER_DEPLOY_MAX_UPWARD_VELOCITY = 0.72;
+const PLAYER_GLIDER_GRAVITY = 2.65;
+const PLAYER_GLIDER_DESCENT_VELOCITY = -1.18;
+const PLAYER_GLIDER_MOVEMENT_MULTIPLIER = 1.16;
+const PLAYER_LEDGE_DROP_WORLD_THRESHOLD = 0.18;
+const PLAYER_STANDABLE_SURFACE_ENTRY_WORLD_BUFFER = 0.28;
+const PLAYER_GROUNDED_STEP_UP_WORLD_THRESHOLD = 0.36;
 const ENEMY_HIT_REACTION_MS = 320;
 const ENEMY_TELEGRAPH_RANGE_PX = 118;
 const ENEMY_DANGER_RANGE_PX = 58;
@@ -453,7 +628,21 @@ const DASH_BURST_POSE_MS = 160;
 const GEARBLADE_TRANSFORM_MS = 520;
 const BLADE_BACK_POSITION = new THREE.Vector3(-0.22, 1.3, -0.26);
 const BLADE_BACK_ROTATION = new THREE.Euler(Math.PI / 2, 0.58, -0.48);
+const BLADE_GRIP_CENTER_LOCAL_Z = -0.16;
+const BLADE_SWING_WRIST_TO_GRIP = 0.065;
+const BLADE_SWING_WRIST_DROP_FROM_GRIP = 0.012;
+const PLAYER_RIGHT_HAND_LOCAL_X = -1;
+const BLADE_TARGET_READY_HILT_X = 0.58 * PLAYER_RIGHT_HAND_LOCAL_X;
+const BLADE_TARGET_READY_HILT_Y = 0.84;
+const BLADE_TARGET_READY_HILT_Z = 0.14;
+const BLADE_TARGET_READY_PITCH = -Math.PI / 2 + 0.05;
+const BLADE_TARGET_READY_YAW = 0.22 * PLAYER_RIGHT_HAND_LOCAL_X;
+const BLADE_TARGET_READY_ROLL = -0.3 * PLAYER_RIGHT_HAND_LOCAL_X;
+const SABLE_SPRINT_SPEED_RATIO_START = 1.1;
+const SABLE_SPRINT_SPEED_RATIO_SPAN = 0.42;
 const ENEMY_PING_HEIGHT = 3.36;
+const TERRAIN_BASE_Y = -0.34;
+const TERRAIN_TILE_OVERLAP = 1.035;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -608,101 +797,6 @@ function smoothstep(value: number): number {
   return t * t * (3 - (2 * t));
 }
 
-function getGearbladePartPose(mode: Haven3DGearbladeMode, part: GearbladePartName): GearbladePartPose {
-  switch (mode) {
-    case "launcher":
-      if (part === "blade") {
-        return {
-          position: [0.17, -0.08, 0.48],
-          rotation: [0.08, 0.16, 0.74],
-          scale: [0.48, 0.62, 0.58],
-        };
-      }
-      if (part === "grapple") {
-        return {
-          position: [-0.12, 0.1, -0.05],
-          rotation: [0.12, Math.PI / 2, 0.44],
-          scale: [0.54, 0.58, 0.54],
-        };
-      }
-      return {
-        position: [0, 0.02, 0.16],
-        rotation: [0, 0, 0],
-        scale: [1.24, 1.12, 1.42],
-      };
-    case "grapple":
-      if (part === "blade") {
-        return {
-          position: [-0.14, -0.08, 0.44],
-          rotation: [0.04, -0.2, -0.58],
-          scale: [0.56, 0.58, 0.66],
-        };
-      }
-      if (part === "launcher") {
-        return {
-          position: [0.09, -0.04, -0.1],
-          rotation: [0, 0.36, -0.14],
-          scale: [0.82, 0.86, 0.82],
-        };
-      }
-      return {
-        position: [0, 0.04, 0.1],
-        rotation: [0, 0, 0],
-        scale: [1.28, 1.28, 1.28],
-      };
-    case "blade":
-    default:
-      if (part === "launcher") {
-        return {
-          position: [0.02, -0.09, -0.18],
-          rotation: [0.08, -0.24, Math.PI * 0.5],
-          scale: [0.44, 0.52, 0.68],
-        };
-      }
-      if (part === "grapple") {
-        return {
-          position: [0.04, 0.07, -0.06],
-          rotation: [0.12, Math.PI / 2, -0.26],
-          scale: [0.46, 0.5, 0.46],
-        };
-      }
-      return {
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1.18, 1.16, 1.12],
-      };
-  }
-}
-
-function lerpTuple(from: THREE.Vector3Tuple, to: THREE.Vector3Tuple, amount: number): THREE.Vector3Tuple {
-  return [
-    THREE.MathUtils.lerp(from[0], to[0], amount),
-    THREE.MathUtils.lerp(from[1], to[1], amount),
-    THREE.MathUtils.lerp(from[2], to[2], amount),
-  ];
-}
-
-function blendGearbladePartPose(
-  fromMode: Haven3DGearbladeMode,
-  toMode: Haven3DGearbladeMode,
-  part: GearbladePartName,
-  amount: number,
-): GearbladePartPose {
-  const from = getGearbladePartPose(fromMode, part);
-  const to = getGearbladePartPose(toMode, part);
-  return {
-    position: lerpTuple(from.position, to.position, amount),
-    rotation: lerpTuple(from.rotation, to.rotation, amount),
-    scale: lerpTuple(from.scale, to.scale, amount),
-  };
-}
-
-function applyGearbladePartPose(object: THREE.Object3D, pose: GearbladePartPose): void {
-  object.position.set(...pose.position);
-  object.rotation.set(...pose.rotation);
-  object.scale.set(...pose.scale);
-}
-
 function getFacingVector(facing: PlayerAvatar["facing"]): { x: number; y: number } {
   switch (facing) {
     case "north":
@@ -842,12 +936,12 @@ function createChibiAnatomy(options: {
   head.castShadow = true;
 
   const leftUpperArm = new THREE.Group();
-  leftUpperArm.position.set(-0.34, 0.98, 0.03);
-  leftUpperArm.rotation.set(0.28, 0.1, -0.24);
+  leftUpperArm.position.set(0.34, 0.98, 0.03);
+  leftUpperArm.rotation.set(0.28, -0.1, 0.24);
   const leftUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const leftForearm = new THREE.Group();
   leftForearm.position.set(0, -0.3, 0.03);
-  leftForearm.rotation.set(-0.48, 0.05, -0.16);
+  leftForearm.rotation.set(-0.48, -0.05, 0.16);
   const leftForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
   const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), headMaterial);
   leftHand.position.set(0, -0.28, 0.04);
@@ -856,13 +950,14 @@ function createChibiAnatomy(options: {
   leftForearm.add(leftForearmMesh, leftHand);
   leftUpperArm.add(leftUpperArmMesh, leftForearm);
 
+  const rightShoulderPivot = new THREE.Group();
+  rightShoulderPivot.position.set(-0.34, 0.98, 0.03);
   const rightUpperArm = new THREE.Group();
-  rightUpperArm.position.set(0.34, 0.98, 0.03);
-  rightUpperArm.rotation.set(0.26, -0.08, 0.24);
+  rightUpperArm.rotation.set(0.26, 0.08, -0.24);
   const rightUpperArmMesh = createChibiCapsule(0.085, 0.22, bodyMaterial, [0, -0.14, 0.01]);
   const rightForearm = new THREE.Group();
   rightForearm.position.set(0, -0.3, 0.03);
-  rightForearm.rotation.set(-0.46, -0.05, 0.16);
+  rightForearm.rotation.set(-0.46, 0.05, -0.16);
   const rightForearmMesh = createChibiCapsule(0.075, 0.2, bodyMaterial, [0, -0.13, 0.02]);
   const rightHandMount = new THREE.Group();
   rightHandMount.position.set(0, -0.28, 0.04);
@@ -871,6 +966,7 @@ function createChibiAnatomy(options: {
   rightHandMount.add(rightHand);
   rightForearm.add(rightForearmMesh, rightHandMount);
   rightUpperArm.add(rightUpperArmMesh, rightForearm);
+  rightShoulderPivot.add(rightUpperArm);
 
   const leftThigh = new THREE.Group();
   leftThigh.position.set(-0.17, 0.48, 0.03);
@@ -906,7 +1002,7 @@ function createChibiAnatomy(options: {
     neck,
     head,
     leftUpperArm,
-    rightUpperArm,
+    rightShoulderPivot,
     leftThigh,
     rightThigh,
   );
@@ -918,6 +1014,7 @@ function createChibiAnatomy(options: {
     pelvis,
     head,
     leftUpperArm,
+    rightShoulderPivot,
     rightUpperArm,
     leftForearm,
     rightForearm,
@@ -932,6 +1029,77 @@ function createChibiAnatomy(options: {
   };
 }
 
+function attachApronGlider(anatomy: ChibiRig): void {
+  if (anatomy.glider) {
+    return;
+  }
+
+  const clothMaterial = new THREE.MeshBasicMaterial({
+    color: 0xf1cf76,
+    side: THREE.DoubleSide,
+  });
+  const undersideMaterial = new THREE.MeshBasicMaterial({
+    color: 0xa56b2f,
+    side: THREE.DoubleSide,
+  });
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: 0x2f2116 });
+  const glider = new THREE.Group();
+  glider.name = "ApronGlider";
+  glider.visible = false;
+  glider.position.set(0, 2.06, -0.18);
+
+  const leftWing = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.055, 0.88), clothMaterial);
+  leftWing.name = "ApronGliderLeftWing";
+  leftWing.position.set(-0.68, 0, -0.08);
+  leftWing.rotation.z = 0.055;
+  leftWing.castShadow = true;
+  leftWing.receiveShadow = true;
+
+  const rightWing = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.055, 0.88), clothMaterial);
+  rightWing.name = "ApronGliderRightWing";
+  rightWing.position.set(0.68, 0, -0.08);
+  rightWing.rotation.z = -0.055;
+  rightWing.castShadow = true;
+  rightWing.receiveShadow = true;
+
+  const centerPanel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.94), undersideMaterial);
+  centerPanel.name = "ApronGliderCenterPanel";
+  centerPanel.position.set(0, -0.012, -0.08);
+  centerPanel.castShadow = true;
+  centerPanel.receiveShadow = true;
+
+  const frontRib = new THREE.Mesh(new THREE.BoxGeometry(2.92, 0.07, 0.07), trimMaterial);
+  frontRib.name = "ApronGliderFrontRib";
+  frontRib.position.set(0, 0.035, 0.38);
+  frontRib.castShadow = true;
+
+  const backRib = new THREE.Mesh(new THREE.BoxGeometry(2.46, 0.055, 0.06), trimMaterial);
+  backRib.name = "ApronGliderBackRib";
+  backRib.position.set(0, 0.03, -0.56);
+  backRib.castShadow = true;
+
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.07, 1.08), trimMaterial);
+  spine.name = "ApronGliderSpine";
+  spine.position.set(0, 0.048, -0.08);
+  spine.castShadow = true;
+
+  const leftHandle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.64, 0.045), trimMaterial);
+  leftHandle.name = "ApronGliderLeftHandle";
+  leftHandle.position.set(-0.33, -0.34, 0.08);
+  leftHandle.rotation.z = -0.2;
+  leftHandle.castShadow = true;
+
+  const rightHandle = leftHandle.clone();
+  rightHandle.name = "ApronGliderRightHandle";
+  rightHandle.position.x = 0.33;
+  rightHandle.rotation.z = 0.2;
+  rightHandle.castShadow = true;
+
+  glider.add(leftWing, rightWing, centerPanel, frontRib, backRib, spine, leftHandle, rightHandle);
+  anatomy.glider = glider;
+  anatomy.root.add(glider);
+}
+
 function createAerissPlayerDetails(anatomy: ChibiRig, bladeForm: THREE.Group): void {
   const hairMaterial = createArdyciaToonMaterial({ color: 0x3e2d24, side: THREE.DoubleSide });
   const hairShadowMaterial = createArdyciaToonMaterial({ color: 0x1d1511, side: THREE.DoubleSide });
@@ -943,6 +1111,17 @@ function createAerissPlayerDetails(anatomy: ChibiRig, bladeForm: THREE.Group): v
   const tunicShadowMaterial = createArdyciaToonMaterial({ color: 0x173f36 });
   const scarfMaterial = createArdyciaToonMaterial({ color: 0x7a2018, side: THREE.DoubleSide });
   const capeMaterial = createArdyciaToonMaterial({ color: 0x5f1712, side: THREE.DoubleSide });
+  const gliderClothMaterial = createArdyciaToonMaterial({
+    color: 0xd8c98f,
+    emissive: 0x4c3718,
+    emissiveIntensity: 0.42,
+    side: THREE.DoubleSide,
+  });
+  const gliderTrimMaterial = createArdyciaToonMaterial({
+    color: 0x4f2d1d,
+    emissive: 0x261106,
+    emissiveIntensity: 0.24,
+  });
   const armorMaterial = createArdyciaToonMaterial({ color: 0x586179 });
   const wrapMaterial = createArdyciaToonMaterial({ color: 0xe7dfcb });
   const leatherMaterial = createArdyciaToonMaterial({ color: 0x3a2118 });
@@ -1198,6 +1377,69 @@ function createAerissPlayerDetails(anatomy: ChibiRig, bladeForm: THREE.Group): v
   anatomy.rightCapePanel = rightCapePanel;
   anatomy.root.add(cape);
 
+  const createGliderClothPanel = (name: string, points: Array<[number, number]>): THREE.Mesh => {
+    const shape = new THREE.Shape();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        shape.moveTo(x, y);
+      } else {
+        shape.lineTo(x, y);
+      }
+    });
+    shape.lineTo(points[0][0], points[0][1]);
+    const panel = new THREE.Mesh(new THREE.ShapeGeometry(shape), gliderClothMaterial);
+    panel.name = name;
+    panel.castShadow = true;
+    return panel;
+  };
+  const glider = new THREE.Group();
+  glider.name = "AerissApronGlider";
+  glider.visible = false;
+  glider.position.set(0, 1.74, -0.18);
+  glider.rotation.set(0.04, 0, 0);
+  const leftGliderPanel = createGliderClothPanel("AerissGliderLeftCloth", [
+    [0, -0.02],
+    [-1.02, -0.2],
+    [-1.2, 0.22],
+    [-0.1, 0.46],
+  ]);
+  const rightGliderPanel = createGliderClothPanel("AerissGliderRightCloth", [
+    [0, -0.02],
+    [1.02, -0.2],
+    [1.2, 0.22],
+    [0.1, 0.46],
+  ]);
+  leftGliderPanel.rotation.x = -Math.PI / 2;
+  rightGliderPanel.rotation.x = -Math.PI / 2;
+  const gliderRib = new THREE.Mesh(new THREE.BoxGeometry(2.36, 0.045, 0.055), gliderTrimMaterial);
+  gliderRib.name = "AerissGliderRib";
+  gliderRib.position.set(0, 0.012, -0.02);
+  gliderRib.rotation.z = 0.02;
+  gliderRib.castShadow = true;
+  const gliderBackRib = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.035, 0.045), gliderTrimMaterial);
+  gliderBackRib.name = "AerissGliderBackRib";
+  gliderBackRib.position.set(0, 0.012, -0.42);
+  gliderBackRib.rotation.z = -0.015;
+  gliderBackRib.castShadow = true;
+  const gliderCenterBrace = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.045, 0.78), gliderTrimMaterial);
+  gliderCenterBrace.name = "AerissGliderCenterBrace";
+  gliderCenterBrace.position.set(0, 0.02, -0.18);
+  gliderCenterBrace.rotation.z = 0.02;
+  gliderCenterBrace.castShadow = true;
+  const leftHandle = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.72, 0.04), gliderTrimMaterial);
+  leftHandle.name = "AerissGliderLeftHandle";
+  leftHandle.position.set(-0.46, -0.34, -0.04);
+  leftHandle.rotation.z = -0.28;
+  leftHandle.castShadow = true;
+  const rightHandle = leftHandle.clone();
+  rightHandle.name = "AerissGliderRightHandle";
+  rightHandle.position.x = 0.46;
+  rightHandle.rotation.z = 0.28;
+  glider.add(leftGliderPanel, rightGliderPanel, gliderRib, gliderBackRib, gliderCenterBrace, leftHandle, rightHandle);
+  addInvertedHullOutlines(glider, ARDYCIA_TOON_OUTLINE_SCALE.prop);
+  anatomy.glider = glider;
+  anatomy.root.add(glider);
+
   const addPauldron = (parent: THREE.Object3D, name: string, side: -1 | 1) => {
     const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 8), armorMaterial);
     pauldron.name = name;
@@ -1259,13 +1501,16 @@ export class Haven3DFieldController implements Haven3DModeController {
   private readonly modeController: Haven3DModeController;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(62, 1, 0.1, 260);
-  private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  private readonly renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
   private readonly worldGroup = new THREE.Group();
   private readonly dynamicGroup = new THREE.Group();
   private readonly playerActors = new Map<PlayerId, Actor>();
   private readonly npcActors = new Map<string, Actor>();
   private readonly enemyActors = new Map<string, Actor>();
+  private readonly fieldProjectileActors = new Map<string, THREE.Object3D>();
   private readonly fieldObjectGroups = new Map<string, THREE.Object3D>();
+  private readonly fieldObjectsById = new Map<string, FieldObject>();
+  private distantHavenLandmark: THREE.Group | null = null;
   private companionActor: Actor | null = null;
   private mapProfile: Haven3DMapProfile = HAVEN3D_BASE_MAP_PROFILE;
   private readonly clockForward = new THREE.Vector3(0, 0, -1);
@@ -1291,12 +1536,14 @@ export class Haven3DFieldController implements Haven3DModeController {
   private nextBladeSwingSide: 1 | -1 = 1;
   private gearbladeTransform: GearbladeTransformState | null = null;
   private grappleMove: GrappleMoveState | null = null;
+  private ziplineDismountDrift: ZiplineDismountDrift | null = null;
   private readonly launcherProjectiles: LauncherProjectile[] = [];
   private readonly enemyHpSnapshot = new Map<string, number>();
   private readonly enemyHitReactions = new Map<string, EnemyHitReaction>();
   private readonly visualEffects: VisualEffect[] = [];
   private readonly playerVerticalStates = new Map<PlayerId, PlayerVerticalState>();
   private readonly grappleAnchors = new Map<string, GrappleAnchor>();
+  private readonly grappleZiplineSegments = new Map<string, GrappleZiplineSegment>();
   private readonly cameraImpulse = new THREE.Vector3();
   private modeElements: HTMLElement[] = [];
   private currentFrameTime = 0;
@@ -1454,6 +1701,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.activeGearbladeMode = this.modeController.activeMode;
     this.configureCameraForMap();
     applyArdyciaToonRendererStyle(this.renderer);
+    this.renderer.shadowMap.enabled = false;
     this.renderer.domElement.className = "haven3d-canvas";
     this.renderer.domElement.tabIndex = 0;
     this.scene.add(this.worldGroup, this.dynamicGroup);
@@ -1480,8 +1728,46 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
+  replaceMap(map: FieldMap): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.finishGrappleMove(false);
+    this.clearMapBoundTransients();
+    this.options.map = map;
+    this.mapProfile = getHaven3DMapProfile(map);
+    this.cameraDistance = THREE.MathUtils.clamp(
+      this.cameraDistance,
+      this.mapProfile.camera.minDistance,
+      this.mapProfile.camera.maxDistance,
+    );
+    this.configureCameraForMap();
+    this.resetActorMotionSnapshots();
+    this.rebuildWorldScene();
+    this.syncDynamicActors();
+    this.syncFieldProjectiles();
+    this.resize();
+    this.snapCameraNextFrame = true;
+  }
+
   isFieldObjectVisible(objectId: string): boolean {
     return this.fieldObjectGroups.get(objectId)?.visible === true;
+  }
+
+  getGrappleRouteAnchorState(): GrappleAnchorState[] {
+    return Array.from(this.grappleAnchors.values())
+      .filter((anchor) => Boolean(anchor.routeId))
+      .map((anchor) => this.getGrappleAnchorState(anchor));
+  }
+
+  getPreferredGrappleAnchorState(rangePx = GRAPPLE_RANGE_PX): GrappleAnchorState | null {
+    const anchor = this.findGrappleAnchor(rangePx);
+    return anchor ? this.getGrappleAnchorState(anchor) : null;
+  }
+
+  isDistantHavenLandmarkVisible(): boolean {
+    return this.distantHavenLandmark?.visible === true;
   }
 
   private getModeForKeyEvent(event: KeyboardEvent): Haven3DGearbladeMode | null {
@@ -1659,13 +1945,78 @@ export class Haven3DFieldController implements Haven3DModeController {
   private buildScene(): void {
     this.clearSkyboxBackground = applyArdyciaToonSceneStyle(this.scene, this.mapProfile.scene);
 
+    this.buildWorldScene();
+    this.createPlayerActor("P1", 0xd48342);
+    this.createPlayerActor("P2", 0x7b66c9);
+    this.syncDynamicActors();
+  }
+
+  private buildWorldScene(): void {
+    this.buildTerrainUnderlay();
     this.buildTileDeck();
     this.buildInteractionZones();
     this.buildFieldObjects();
     this.buildGrappleAnchors();
-    this.createPlayerActor("P1", 0xd48342);
-    this.createPlayerActor("P2", 0x7b66c9);
-    this.syncDynamicActors();
+    this.buildGrappleZiplineSegments();
+    this.buildDistantHavenLandmark();
+  }
+
+  private clearWorldScene(): void {
+    Array.from(this.worldGroup.children).forEach((child) => {
+      this.worldGroup.remove(child);
+      disposeObject(child);
+    });
+    this.fieldObjectGroups.clear();
+    this.fieldObjectsById.clear();
+    this.grappleAnchors.clear();
+    this.grappleZiplineSegments.clear();
+    this.distantHavenLandmark = null;
+  }
+
+  private rebuildWorldScene(): void {
+    this.clearWorldScene();
+    this.buildWorldScene();
+  }
+
+  private clearMapBoundTransients(): void {
+    this.ziplineDismountDrift = null;
+
+    for (let index = this.launcherProjectiles.length - 1; index >= 0; index -= 1) {
+      this.removeLauncherProjectile(index);
+    }
+
+    for (let index = this.visualEffects.length - 1; index >= 0; index -= 1) {
+      const effect = this.visualEffects[index];
+      if (!effect) {
+        continue;
+      }
+      this.dynamicGroup.remove(effect.object);
+      disposeObject(effect.object);
+      this.visualEffects.splice(index, 1);
+    }
+
+    this.fieldProjectileActors.forEach((object) => {
+      this.dynamicGroup.remove(object);
+      disposeObject(object);
+    });
+    this.fieldProjectileActors.clear();
+
+    this.enemyHitReactions.clear();
+  }
+
+  private resetActorMotionSnapshots(): void {
+    this.playerActors.forEach((actor) => {
+      actor.motion = undefined;
+    });
+    this.npcActors.forEach((actor) => {
+      actor.motion = undefined;
+    });
+    this.enemyActors.forEach((actor) => {
+      actor.motion = undefined;
+    });
+    if (this.companionActor) {
+      this.companionActor.motion = undefined;
+    }
   }
 
   private createHavenBuildingDoorWallTileMask(): Set<string> {
@@ -1703,25 +2054,78 @@ export class Haven3DFieldController implements Haven3DModeController {
     return getFieldPointElevationWorld(this.options.map, point);
   }
 
+  private canPlayerMoveTo(playerId: PlayerId, x: number, y: number, width: number, height: number): boolean {
+    const state = this.getPlayerVerticalState(playerId);
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const corners = [
+      { x: x - halfW, y: y - halfH },
+      { x: x + halfW, y: y - halfH },
+      { x: x - halfW, y: y + halfH },
+      { x: x + halfW, y: y + halfH },
+    ];
+
+    for (const corner of corners) {
+      const tileX = Math.floor(corner.x / HAVEN3D_FIELD_TILE_SIZE);
+      const tileY = Math.floor(corner.y / HAVEN3D_FIELD_TILE_SIZE);
+      if (tileY < 0 || tileY >= this.options.map.height || tileX < 0 || tileX >= this.options.map.width) {
+        return false;
+      }
+
+      const tile = this.options.map.tiles[tileY]?.[tileX];
+      if (!tile) {
+        return false;
+      }
+      if (tile.walkable) {
+        continue;
+      }
+      if (tile.standable3d !== true) {
+        return false;
+      }
+
+      const targetGroundElevation = Math.max(0, Number(tile.elevation ?? 0)) * 0.42;
+      if (state.grounded) {
+        if (targetGroundElevation > state.groundElevation + PLAYER_GROUNDED_STEP_UP_WORLD_THRESHOLD) {
+          return false;
+        }
+        continue;
+      }
+
+      if (state.worldElevation + PLAYER_STANDABLE_SURFACE_ENTRY_WORLD_BUFFER < targetGroundElevation) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private buildTerrainUnderlay(): void {
+    const width = (this.options.map.width * HAVEN3D_WORLD_TILE_SIZE) + HAVEN3D_WORLD_TILE_SIZE;
+    const depth = (this.options.map.height * HAVEN3D_WORLD_TILE_SIZE) + HAVEN3D_WORLD_TILE_SIZE;
+    const base = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 0.32, depth),
+      createArdyciaToonMaterial({ color: 0x121716 }),
+    );
+    base.name = "Haven3DTerrainUnderdeck";
+    base.position.set(0, TERRAIN_BASE_Y - 0.18, 0);
+    base.receiveShadow = true;
+    this.worldGroup.add(base);
+  }
+
   private buildTileDeck(): void {
-    const walkableTiles = this.options.map.tiles.flatMap((row) => row.filter((tile) => tile.walkable));
+    const walkableTiles = this.options.map.tiles.flatMap((row) => row.filter((tile) => tile.walkable && tile.render3d !== false));
     const doorWallTileMask = this.createHavenBuildingDoorWallTileMask();
     const wallTiles = this.options.map.tiles.flatMap((row) => row.filter((tile) => (
-      !tile.walkable && !doorWallTileMask.has(`${tile.x},${tile.y}`)
+      !tile.walkable && tile.render3d !== false && !doorWallTileMask.has(`${tile.x},${tile.y}`)
     )));
-    const walkableGeometry = new THREE.BoxGeometry(
-      HAVEN3D_WORLD_TILE_SIZE * 0.98,
-      0.1,
-      HAVEN3D_WORLD_TILE_SIZE * 0.98,
-    );
-    const wallGeometry = new THREE.BoxGeometry(
-      HAVEN3D_WORLD_TILE_SIZE,
-      1.15,
-      HAVEN3D_WORLD_TILE_SIZE,
-    );
+    const terrainGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
     const wallMaterial = createArdyciaToonMaterial({ color: 0x3d4144 });
 
     const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
     const walkableTilesByType = new Map<FieldMap["tiles"][number][number]["type"], typeof walkableTiles>();
     walkableTiles.forEach((tile) => {
       const typedTiles = walkableTilesByType.get(tile.type) ?? [];
@@ -1731,7 +2135,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     for (const [tileType, tiles] of walkableTilesByType.entries()) {
       const walkableMesh = new THREE.InstancedMesh(
-        walkableGeometry.clone(),
+        terrainGeometry.clone(),
         createArdyciaToonMaterial({ color: getHaven3DTileColor(tileType) }),
         tiles.length,
       );
@@ -1740,13 +2144,19 @@ export class Haven3DFieldController implements Haven3DModeController {
           x: (tile.x + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
           y: (tile.y + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
         };
-        const world = fieldToHavenWorld(this.options.map, {
-          x: fieldPoint.x,
-          y: fieldPoint.y,
-        }, this.getGroundElevationAtPoint(fieldPoint) - 0.05);
-        matrix.makeTranslation(world.x, world.y, world.z);
+        const top = this.getGroundElevationAtPoint(fieldPoint);
+        const height = Math.max(0.18, top - TERRAIN_BASE_Y);
+        const world = fieldToHavenWorld(this.options.map, fieldPoint, 0);
+        position.set(world.x, TERRAIN_BASE_Y + (height / 2), world.z);
+        scale.set(
+          HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP,
+          height,
+          HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP,
+        );
+        matrix.compose(position, rotation, scale);
         walkableMesh.setMatrixAt(index, matrix);
       });
+      walkableMesh.instanceMatrix.needsUpdate = true;
       walkableMesh.receiveShadow = true;
       this.worldGroup.add(walkableMesh);
     }
@@ -1754,16 +2164,22 @@ export class Haven3DFieldController implements Haven3DModeController {
     const wallMesh = new THREE.InstancedMesh(wallGeometry, wallMaterial, wallTiles.length);
     wallTiles.forEach((tile, index) => {
       const fieldPoint = {
-        x: (tile.x + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
-        y: (tile.y + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
-      };
-      const world = fieldToHavenWorld(this.options.map, {
-        x: fieldPoint.x,
-        y: fieldPoint.y,
-      }, this.getGroundElevationAtPoint(fieldPoint) + 0.52);
-      matrix.makeTranslation(world.x, world.y, world.z);
+          x: (tile.x + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
+          y: (tile.y + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
+        };
+      const top = this.getGroundElevationAtPoint(fieldPoint) + (tile.standable3d === true ? 0 : 1.15);
+      const height = Math.max(0.65, top - TERRAIN_BASE_Y);
+      const world = fieldToHavenWorld(this.options.map, fieldPoint, 0);
+      position.set(world.x, TERRAIN_BASE_Y + (height / 2), world.z);
+      scale.set(
+        HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP,
+        height,
+        HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP,
+      );
+      matrix.compose(position, rotation, scale);
       wallMesh.setMatrixAt(index, matrix);
     });
+    wallMesh.instanceMatrix.needsUpdate = true;
     wallMesh.castShadow = true;
     wallMesh.receiveShadow = true;
 
@@ -1772,26 +2188,24 @@ export class Haven3DFieldController implements Haven3DModeController {
       createInvertedHullOutlineMaterial(),
       wallTiles.length,
     );
-    const outlinePosition = new THREE.Vector3();
-    const outlineRotation = new THREE.Quaternion();
-    const outlineScale = new THREE.Vector3(
-      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
-      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
-      ARDYCIA_TOON_OUTLINE_SCALE.architecture,
-    );
     wallTiles.forEach((tile, index) => {
       const fieldPoint = {
         x: (tile.x + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
         y: (tile.y + 0.5) * HAVEN3D_FIELD_TILE_SIZE,
       };
-      const world = fieldToHavenWorld(this.options.map, {
-        x: fieldPoint.x,
-        y: fieldPoint.y,
-      }, this.getGroundElevationAtPoint(fieldPoint) + 0.52);
-      outlinePosition.set(world.x, world.y, world.z);
-      matrix.compose(outlinePosition, outlineRotation, outlineScale);
+      const top = this.getGroundElevationAtPoint(fieldPoint) + (tile.standable3d === true ? 0 : 1.15);
+      const height = Math.max(0.65, top - TERRAIN_BASE_Y);
+      const world = fieldToHavenWorld(this.options.map, fieldPoint, 0);
+      position.set(world.x, TERRAIN_BASE_Y + (height / 2), world.z);
+      scale.set(
+        HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP * ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+        height * ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+        HAVEN3D_WORLD_TILE_SIZE * TERRAIN_TILE_OVERLAP * ARDYCIA_TOON_OUTLINE_SCALE.architecture,
+      );
+      matrix.compose(position, rotation, scale);
       wallOutlineMesh.setMatrixAt(index, matrix);
     });
+    wallOutlineMesh.instanceMatrix.needsUpdate = true;
     wallOutlineMesh.castShadow = false;
     wallOutlineMesh.receiveShadow = false;
     wallOutlineMesh.renderOrder = 0;
@@ -1826,7 +2240,28 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private buildGrappleAnchors(): void {
     const layout = createHaven3DSceneLayout(this.options.map);
-    const explicitAnchors = this.options.map.objects
+    const routeLinksByAnchorId = new Map<string, Set<string>>();
+    this.options.map.objects
+      .filter((object) => object.metadata?.ziplineTrack === true)
+      .forEach((object) => {
+        const startAnchorId = typeof object.metadata?.startAnchorId === "string"
+          ? object.metadata.startAnchorId
+          : null;
+        const endAnchorId = typeof object.metadata?.endAnchorId === "string"
+          ? object.metadata.endAnchorId
+          : null;
+        if (!startAnchorId || !endAnchorId) {
+          return;
+        }
+        const startLinks = routeLinksByAnchorId.get(startAnchorId) ?? new Set<string>();
+        const endLinks = routeLinksByAnchorId.get(endAnchorId) ?? new Set<string>();
+        startLinks.add(endAnchorId);
+        endLinks.add(startAnchorId);
+        routeLinksByAnchorId.set(startAnchorId, startLinks);
+        routeLinksByAnchorId.set(endAnchorId, endLinks);
+      });
+
+    const explicitAnchors: GrappleSourcePoint[] = this.options.map.objects
       .filter((object) => object.metadata?.grappleAnchor === true)
       .map((object) => {
         const fieldCenter = {
@@ -1834,6 +2269,7 @@ export class Haven3DFieldController implements Haven3DModeController {
           y: (object.y + (object.height / 2)) * HAVEN3D_FIELD_TILE_SIZE,
         };
         const anchorHeight = Number(object.metadata?.anchorHeight);
+        const routeIndex = Number(object.metadata?.routeIndex);
         return {
           id: object.id,
           label: String(object.metadata?.name ?? "Swing Node"),
@@ -1841,9 +2277,14 @@ export class Haven3DFieldController implements Haven3DModeController {
           height: Number.isFinite(anchorHeight)
             ? anchorHeight
             : this.getGroundElevationAtPoint(fieldCenter) + GRAPPLE_NODE_HEIGHT,
+          routeId: typeof object.metadata?.routeId === "string"
+            ? object.metadata.routeId
+            : undefined,
+          routeIndex: Number.isFinite(routeIndex) ? routeIndex : undefined,
+          connectedAnchorIds: Array.from(routeLinksByAnchorId.get(object.id) ?? []),
         };
       });
-    const sourcePoints = [
+    const sourcePoints: GrappleSourcePoint[] = [
       ...explicitAnchors,
       ...layout.zones.map((zone) => ({
         id: zone.id,
@@ -1886,8 +2327,62 @@ export class Haven3DFieldController implements Haven3DModeController {
         height: source.height,
         group,
         phase: index * 0.77,
+        routeId: source.routeId,
+        routeIndex: source.routeIndex,
+        connectedAnchorIds: source.connectedAnchorIds ?? [],
       });
     });
+  }
+
+  private buildGrappleZiplineSegments(): void {
+    this.grappleZiplineSegments.clear();
+    this.options.map.objects
+      .filter((object) => object.metadata?.ziplineTrack === true)
+      .forEach((object) => {
+        const endpoints = this.getZiplineTrackEndpoints(object.metadata ?? {});
+        if (!endpoints) {
+          return;
+        }
+
+        const dx = endpoints.end.fieldPoint.x - endpoints.start.fieldPoint.x;
+        const dy = endpoints.end.fieldPoint.y - endpoints.start.fieldPoint.y;
+        const length = Math.hypot(dx, dy);
+        if (length < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX) {
+          return;
+        }
+
+        const key = `zipline-track:${object.id}`;
+        this.grappleZiplineSegments.set(key, {
+          id: object.id,
+          key,
+          routeId: typeof object.metadata?.routeId === "string"
+            ? object.metadata.routeId
+            : undefined,
+          startAnchorId: typeof object.metadata?.startAnchorId === "string"
+            ? object.metadata.startAnchorId
+            : undefined,
+          endAnchorId: typeof object.metadata?.endAnchorId === "string"
+            ? object.metadata.endAnchorId
+            : undefined,
+          start: endpoints.start,
+          end: endpoints.end,
+          length,
+          directionX: dx / length,
+          directionY: dy / length,
+        });
+      });
+  }
+
+  private getGrappleAnchorState(anchor: GrappleAnchor): GrappleAnchorState {
+    return {
+      id: anchor.id,
+      key: anchor.key,
+      x: anchor.x,
+      y: anchor.y,
+      routeId: anchor.routeId ?? null,
+      routeIndex: anchor.routeIndex ?? null,
+      connectedAnchorIds: [...anchor.connectedAnchorIds],
+    };
   }
 
   private createGrappleAnchorVisual(): THREE.Group {
@@ -1914,6 +2409,157 @@ export class Haven3DFieldController implements Haven3DModeController {
     addInvertedHullOutlines(core, ARDYCIA_TOON_OUTLINE_SCALE.prop);
     group.add(core, ring, sideRing, tether);
     group.renderOrder = 19;
+    return group;
+  }
+
+  private getZiplineAnchorEndpoint(anchorId: unknown): ZiplineEndpoint | null {
+    if (typeof anchorId !== "string") {
+      return null;
+    }
+
+    const object = this.options.map.objects.find((entry) => (
+      entry.id === anchorId
+      && entry.metadata?.grappleAnchor === true
+    ));
+    if (!object) {
+      return null;
+    }
+
+    const fieldPoint = {
+      x: (object.x + (object.width / 2)) * HAVEN3D_FIELD_TILE_SIZE,
+      y: (object.y + (object.height / 2)) * HAVEN3D_FIELD_TILE_SIZE,
+    };
+    const anchorHeight = Number(object.metadata?.anchorHeight);
+    return {
+      fieldPoint,
+      height: Number.isFinite(anchorHeight)
+        ? anchorHeight
+        : this.getGroundElevationAtPoint(fieldPoint) + GRAPPLE_NODE_HEIGHT,
+    };
+  }
+
+  private getZiplineTrackEndpoints(metadata: Record<string, unknown>): ZiplineTrackEndpoints | null {
+    const startWorldTileX = Number(metadata.startWorldTileX);
+    const startWorldTileY = Number(metadata.startWorldTileY);
+    const endWorldTileX = Number(metadata.endWorldTileX);
+    const endWorldTileY = Number(metadata.endWorldTileY);
+    const startAnchorHeight = Number(metadata.startAnchorHeight);
+    const endAnchorHeight = Number(metadata.endAnchorHeight);
+    let startEndpoint: ZiplineEndpoint | null = null;
+    let endEndpoint: ZiplineEndpoint | null = null;
+
+    if (
+      Number.isFinite(startWorldTileX)
+      && Number.isFinite(startWorldTileY)
+      && Number.isFinite(endWorldTileX)
+      && Number.isFinite(endWorldTileY)
+    ) {
+      const startField = this.getOuterDeckWorldTileFieldPoint(startWorldTileX, startWorldTileY);
+      const endField = this.getOuterDeckWorldTileFieldPoint(endWorldTileX, endWorldTileY);
+      if (startField && endField) {
+        startEndpoint = {
+          fieldPoint: startField,
+          height: Number.isFinite(startAnchorHeight)
+            ? startAnchorHeight
+            : this.getGroundElevationAtPoint(startField) + GRAPPLE_NODE_HEIGHT,
+        };
+        endEndpoint = {
+          fieldPoint: endField,
+          height: Number.isFinite(endAnchorHeight)
+            ? endAnchorHeight
+            : this.getGroundElevationAtPoint(endField) + GRAPPLE_NODE_HEIGHT,
+        };
+      }
+    }
+
+    if (!startEndpoint || !endEndpoint) {
+      startEndpoint = this.getZiplineAnchorEndpoint(metadata.startAnchorId);
+      endEndpoint = this.getZiplineAnchorEndpoint(metadata.endAnchorId);
+    }
+
+    return startEndpoint && endEndpoint
+      ? { start: startEndpoint, end: endEndpoint }
+      : null;
+  }
+
+  private createZiplineTrackVisual(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group | null {
+    const metadata = sourceObject?.metadata ?? {};
+    const endpoints = this.getZiplineTrackEndpoints(metadata);
+    if (!endpoints) {
+      return null;
+    }
+
+    const startWorld = fieldToHavenWorld(
+      this.options.map,
+      endpoints.start.fieldPoint,
+      endpoints.start.height,
+    );
+    const endWorld = fieldToHavenWorld(
+      this.options.map,
+      endpoints.end.fieldPoint,
+      endpoints.end.height,
+    );
+    const toLocal = (world: THREE.Vector3) => new THREE.Vector3(
+      world.x - placement.worldCenter.x,
+      world.y - placement.worldCenter.y,
+      world.z - placement.worldCenter.z,
+    );
+    const start = toLocal(new THREE.Vector3(startWorld.x, startWorld.y, startWorld.z));
+    const end = toLocal(new THREE.Vector3(endWorld.x, endWorld.y, endWorld.z));
+    const mid = start.clone().lerp(end, 0.5);
+    mid.y -= Math.min(0.72, Math.max(0.22, start.distanceTo(end) * 0.035));
+
+    const group = new THREE.Group();
+    group.name = `ZiplineTrack:${sourceObject?.id ?? placement.id}`;
+    const cableMaterial = new THREE.LineBasicMaterial({
+      color: 0x88e6df,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+    });
+    cableMaterial.fog = false;
+    const shadowCableMaterial = cableMaterial.clone();
+    shadowCableMaterial.color.setHex(0x154c56);
+    shadowCableMaterial.opacity = 0.46;
+
+    const mainCable = new THREE.Line(new THREE.BufferGeometry().setFromPoints([start, mid, end]), cableMaterial);
+    const lowerMid = mid.clone();
+    lowerMid.y -= 0.18;
+    const lowerCable = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      start.clone().add(new THREE.Vector3(0, -0.16, 0)),
+      lowerMid,
+      end.clone().add(new THREE.Vector3(0, -0.16, 0)),
+    ]), shadowCableMaterial);
+    mainCable.renderOrder = 7;
+    lowerCable.renderOrder = 6;
+
+    const makePylon = (point: THREE.Vector3, height: number, side: -1 | 1) => {
+      const pylonHeight = Math.max(1.2, height);
+      const saddleHeight = pylonHeight + 0.12;
+      return [
+        this.createFieldObjectBox([0.16, pylonHeight, 0.16], [point.x, pylonHeight / 2, point.z], 0x334047),
+        this.createFieldObjectBox([0.62, 0.14, 0.24], [point.x, saddleHeight, point.z], 0x79d4d0, {
+          emissive: 0x14595d,
+          emissiveIntensity: 0.46,
+          rotation: [0, 0.18 * side, 0],
+        }),
+        this.createFieldObjectBox([0.08, pylonHeight * 0.72, 0.08], [point.x + (0.22 * side), pylonHeight * 0.42, point.z], 0x5d684f, {
+          rotation: [0, 0, 0.18 * side],
+        }),
+      ];
+    };
+
+    group.add(
+      ...makePylon(start, start.y, -1),
+      ...makePylon(end, end.y, 1),
+      mainCable,
+      lowerCable,
+    );
+    group.renderOrder = 6;
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.prop);
     return group;
   }
 
@@ -1969,6 +2615,136 @@ export class Haven3DFieldController implements Haven3DModeController {
       color,
     ));
     addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.prop);
+    return group;
+  }
+
+  private createRouteFieldObjectGroup(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group | null {
+    if (sourceObject?.metadata?.ziplineTrack === true || sourceObject?.sprite === "zipline_track") {
+      return this.createZiplineTrackVisual(placement, sourceObject) ?? new THREE.Group();
+    }
+
+    if (sourceObject?.metadata?.grappleAnchor === true || sourceObject?.sprite === "grapple_anchor") {
+      return new THREE.Group();
+    }
+
+    return null;
+  }
+
+  private createSimpleDoorwayGroup(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group | null {
+    if (sourceObject?.sprite !== "doorway") {
+      return null;
+    }
+
+    const width = Math.max(1.35, placement.worldSize.width);
+    const depth = Math.max(0.62, placement.worldSize.depth);
+    const height = Math.max(2.25, Math.min(2.9, placement.worldSize.height));
+    const postWidth = Math.max(0.18, Math.min(0.36, width * 0.14));
+    const lintelHeight = Math.max(0.24, Math.min(0.38, height * 0.13));
+    const openingWidth = Math.max(0.82, width - (postWidth * 2.55));
+    const openingHeight = Math.max(1.55, height - lintelHeight - 0.34);
+    const frameColor = sourceObject.metadata?.havenBuilding === true ? 0x59645f : 0x465155;
+    const trimColor = sourceObject.metadata?.havenBuilding === true ? 0xb88745 : 0x72c8a5;
+    const shadowColor = 0x101615;
+    const group = new THREE.Group();
+
+    group.add(
+      this.createFieldObjectBox(
+        [postWidth, height, depth * 0.72],
+        [-(openingWidth / 2 + postWidth / 2), height / 2, 0],
+        frameColor,
+      ),
+      this.createFieldObjectBox(
+        [postWidth, height, depth * 0.72],
+        [openingWidth / 2 + postWidth / 2, height / 2, 0],
+        frameColor,
+      ),
+      this.createFieldObjectBox(
+        [openingWidth + (postWidth * 2.35), lintelHeight, depth * 0.78],
+        [0, height - (lintelHeight / 2), 0],
+        frameColor,
+      ),
+      this.createFieldObjectBox(
+        [openingWidth, openingHeight, 0.08],
+        [0, 0.22 + (openingHeight / 2), -depth / 2 - 0.03],
+        shadowColor,
+        { emissive: 0x07100e, emissiveIntensity: 0.18 },
+      ),
+      this.createFieldObjectBox(
+        [openingWidth + (postWidth * 1.4), 0.12, depth * 0.92],
+        [0, 0.06, 0],
+        trimColor,
+        { emissive: 0x1d1206, emissiveIntensity: 0.1 },
+      ),
+      this.createFieldObjectBox(
+        [openingWidth + (postWidth * 1.3), 0.1, depth * 0.82],
+        [0, height - lintelHeight - 0.08, 0.02],
+        trimColor,
+        { emissive: 0x1d1206, emissiveIntensity: 0.08 },
+      ),
+    );
+
+    if (sourceObject.metadata?.returnBeacon === true) {
+      group.add(this.createHavenReturnBeacon(height));
+    }
+
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.architecture);
+    return group;
+  }
+
+  private createHavenReturnBeacon(baseHeight: number): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "HavenReturnBeacon";
+
+    const beaconMaterial = new THREE.MeshBasicMaterial({
+      color: 0x8ee8ff,
+      transparent: true,
+      opacity: 0.36,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0xcff8ff,
+      transparent: true,
+      opacity: 0.74,
+      depthWrite: false,
+    });
+
+    const beamHeight = 72;
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34, 1.08, beamHeight, 24, 1, true),
+      beaconMaterial,
+    );
+    beam.position.set(0, baseHeight + (beamHeight / 2) + 0.52, 0);
+    beam.renderOrder = 8;
+
+    const coreBeam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.16, beamHeight + 8, 16, 1, true),
+      coreMaterial.clone(),
+    );
+    coreBeam.position.set(0, baseHeight + (beamHeight / 2) + 4.5, 0);
+    coreBeam.renderOrder = 9;
+
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 8), coreMaterial);
+    core.position.set(0, baseHeight + 0.72, 0);
+    core.renderOrder = 9;
+
+    const ringMaterial = beaconMaterial.clone();
+    ringMaterial.opacity = 0.58;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.035, 8, 30), ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, baseHeight + 0.68, 0);
+    ring.renderOrder = 9;
+
+    const light = new THREE.PointLight(0x8ee8ff, 1.25, 8.5);
+    light.position.set(0, baseHeight + 1.45, 0);
+
+    group.add(beam, coreBeam, core, ring, light);
     return group;
   }
 
@@ -2132,6 +2908,297 @@ export class Haven3DFieldController implements Haven3DModeController {
     return group;
   }
 
+  private createHavenCargoElevatorExteriorGroup(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group {
+    const width = Math.max(24, placement.worldSize.width);
+    const depth = Math.max(18, placement.worldSize.depth);
+    const height = Math.max(8.8, Number(sourceObject?.metadata?.visualHeightWorld ?? placement.worldSize.height));
+    const frontZ = depth / 2;
+    const backZ = -depth / 2;
+    const wallThickness = 0.78;
+    const doorWidthTiles = Number(sourceObject?.metadata?.doorWidth ?? 6);
+    const doorWidth = Math.max(7.2, Math.min(width * 0.22, doorWidthTiles * HAVEN3D_WORLD_TILE_SIZE * 0.95));
+    const doorHeight = Math.max(3.25, Math.min(height * 0.44, 4.25));
+    const doorCenterY = doorHeight / 2 + 0.12;
+    const sideSegmentWidth = Math.max(2.2, (width - doorWidth - 1.6) / 2);
+    const sideOffset = (doorWidth / 2) + 0.8 + (sideSegmentWidth / 2);
+    const elevatorWall = 0x22303a;
+    const elevatorDark = 0x101820;
+    const elevatorCap = 0x384b53;
+    const brass = 0xb88745;
+    const glowBlue = 0x74d7ff;
+    const group = new THREE.Group();
+
+    this.addHavenCargoElevatorSkylineTracks(group, width, depth, height, sourceObject);
+
+    group.add(
+      this.createFieldObjectBox([width + 1.6, 0.34, depth + 1.2], [0, 0.17, 0], 0x18242b),
+      this.createFieldObjectBox([width, height, wallThickness], [0, height / 2, backZ], elevatorWall),
+      this.createFieldObjectBox([wallThickness, height, depth], [-width / 2, height / 2, 0], elevatorWall),
+      this.createFieldObjectBox([wallThickness, height, depth], [width / 2, height / 2, 0], elevatorWall),
+      this.createFieldObjectBox([sideSegmentWidth, height * 0.84, wallThickness], [-sideOffset, height * 0.42, frontZ], elevatorWall),
+      this.createFieldObjectBox([sideSegmentWidth, height * 0.84, wallThickness], [sideOffset, height * 0.42, frontZ], elevatorWall),
+      this.createFieldObjectBox([doorWidth + 2.2, 1.08, wallThickness + 0.1], [0, doorHeight + 0.78, frontZ], elevatorCap),
+      this.createFieldObjectBox([width + 2.1, 0.72, depth + 1.7], [0, height + 0.36, 0], elevatorCap),
+      this.createFieldObjectBox([width * 0.86, 0.22, wallThickness + 0.18], [0, height * 0.58, frontZ + 0.06], brass, {
+        emissive: 0x2a1706,
+        emissiveIntensity: 0.12,
+      }),
+    );
+
+    const ribCount = 7;
+    for (let index = 0; index < ribCount; index += 1) {
+      const t = ribCount <= 1 ? 0.5 : index / (ribCount - 1);
+      const x = (-width * 0.42) + (width * 0.84 * t);
+      if (Math.abs(x) < doorWidth * 0.68) {
+        continue;
+      }
+      group.add(
+        this.createFieldObjectBox([0.22, height * 0.76, wallThickness + 0.2], [x, height * 0.4, frontZ + 0.12], 0x53646a),
+      );
+    }
+
+    const panelWidth = Math.max(5, width * 0.1);
+    group.add(
+      this.createFieldObjectBox([doorWidth + 0.8, doorHeight + 0.6, 0.16], [0, doorCenterY, frontZ + 0.22], 0x06090d),
+      this.createFieldObjectBox([doorWidth, doorHeight, 0.22], [0, doorCenterY, frontZ + 0.34], elevatorDark, {
+        emissive: 0x031722,
+        emissiveIntensity: 0.38,
+      }),
+      this.createFieldObjectBox([0.08, doorHeight * 0.88, 0.28], [0, doorCenterY, frontZ + 0.48], 0x020405),
+      this.createFieldObjectBox([doorWidth * 0.78, 0.12, 0.32], [0, doorHeight + 0.34, frontZ + 0.5], glowBlue, {
+        emissive: glowBlue,
+        emissiveIntensity: 1.15,
+      }),
+      this.createFieldObjectBox([0.14, doorHeight + 0.28, 0.32], [-doorWidth / 2 - 0.28, doorCenterY, frontZ + 0.48], brass, {
+        emissive: 0x2a1706,
+        emissiveIntensity: 0.18,
+      }),
+      this.createFieldObjectBox([0.14, doorHeight + 0.28, 0.32], [doorWidth / 2 + 0.28, doorCenterY, frontZ + 0.48], brass, {
+        emissive: 0x2a1706,
+        emissiveIntensity: 0.18,
+      }),
+      this.createFieldObjectBox([doorWidth + 5.4, 0.18, 5.6], [0, 0.1, frontZ + 2.65], 0x344047),
+      this.createFieldObjectBox([panelWidth, height * 0.22, 0.12], [-width * 0.32, height * 0.58, frontZ + 0.46], 0x162129, {
+        emissive: 0x052331,
+        emissiveIntensity: 0.42,
+      }),
+      this.createFieldObjectBox([panelWidth, height * 0.22, 0.12], [width * 0.32, height * 0.58, frontZ + 0.46], 0x162129, {
+        emissive: 0x052331,
+        emissiveIntensity: 0.42,
+      }),
+    );
+
+    const leftLamp = this.createFieldObjectBox([0.32, 0.48, 0.22], [-doorWidth / 2 - 1.15, 2.18, frontZ + 0.62], 0xffc067, {
+      emissive: 0xffad43,
+      emissiveIntensity: 1.5,
+    });
+    const rightLamp = this.createFieldObjectBox([0.32, 0.48, 0.22], [doorWidth / 2 + 1.15, 2.18, frontZ + 0.62], 0xffc067, {
+      emissive: 0xffad43,
+      emissiveIntensity: 1.5,
+    });
+    const warmDoorLight = new THREE.PointLight(0xffc067, 2.85, 18.5, 1.32);
+    warmDoorLight.position.set(0, 2.5, frontZ + 2.25);
+    const statusLight = new THREE.PointLight(glowBlue, 1.1, 22, 1.55);
+    statusLight.position.set(0, height * 0.72, frontZ + 0.9);
+    group.add(leftLamp, rightLamp, warmDoorLight, statusLight);
+
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.architecture);
+    const skylineTracks = group.getObjectByName(HAVEN_SKYLINE_TRACKS_GROUP_NAME);
+    if (skylineTracks) {
+      this.setObjectFogEnabled(skylineTracks, false);
+    }
+    return group;
+  }
+
+  private addHavenCargoElevatorSkylineTracks(
+    group: THREE.Group,
+    width: number,
+    depth: number,
+    elevatorHeight: number,
+    sourceObject: FieldObject | undefined,
+  ): void {
+    const railHeight = Math.max(180, Number(sourceObject?.metadata?.skylineTrackHeightWorld ?? 220));
+    const railBaseY = 0.08;
+    const railCenterY = railBaseY + (railHeight / 2);
+    const cornerInset = 2.65;
+    const cornerOutset = 1.05;
+    const xEdge = (width / 2) + cornerOutset;
+    const zEdge = (depth / 2) + cornerOutset;
+    const railColor = 0x465c64;
+    const darkRail = 0x111820;
+    const braceColor = 0x6e5a37;
+    const signalColor = 0x74d7ff;
+    const trackGroup = new THREE.Group();
+    trackGroup.name = HAVEN_SKYLINE_TRACKS_GROUP_NAME;
+    group.add(trackGroup);
+
+    ([
+      { sx: -1, sz: -1 },
+      { sx: 1, sz: -1 },
+      { sx: -1, sz: 1 },
+      { sx: 1, sz: 1 },
+    ] as const).forEach(({ sx, sz }) => {
+      const outerX = sx * xEdge;
+      const outerZ = sz * zEdge;
+      const innerX = outerX - (sx * cornerInset);
+      const innerZ = outerZ - (sz * cornerInset);
+      trackGroup.add(
+        this.createFieldObjectBox([0.34, railHeight, 0.34], [outerX, railCenterY, outerZ], railColor),
+        this.createFieldObjectBox([0.28, railHeight, 0.28], [innerX, railCenterY, outerZ], railColor),
+        this.createFieldObjectBox([0.28, railHeight, 0.28], [outerX, railCenterY, innerZ], railColor),
+        this.createFieldObjectBox([0.12, railHeight + 42, 0.12], [innerX, railCenterY + 21, innerZ], darkRail),
+        this.createFieldObjectBox([0.14, railHeight * 0.96, 0.14], [outerX, railCenterY + 4.4, outerZ], signalColor, {
+          emissive: signalColor,
+          emissiveIntensity: 0.36,
+        }),
+        this.createFieldObjectBox([cornerInset + 1.08, 0.5, cornerInset + 1.08], [outerX - (sx * cornerInset * 0.5), elevatorHeight + 0.26, outerZ - (sz * cornerInset * 0.5)], 0x35454d),
+      );
+
+      for (let y = elevatorHeight + 10; y < railHeight; y += 56) {
+        trackGroup.add(
+          this.createFieldObjectBox([cornerInset + 0.48, 0.18, 0.22], [outerX - (sx * cornerInset * 0.5), y, outerZ], braceColor),
+          this.createFieldObjectBox([0.22, 0.18, cornerInset + 0.48], [outerX, y + 1.8, outerZ - (sz * cornerInset * 0.5)], braceColor),
+        );
+      }
+    });
+  }
+
+  private setObjectFogEnabled(root: THREE.Object3D, enabled: boolean): void {
+    root.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) {
+        return;
+      }
+
+      const materials = Array.isArray(node.material) ? node.material : [node.material];
+      materials.forEach((material) => {
+        const fogMaterial = material as THREE.Material & { fog?: boolean };
+        if (fogMaterial.fog === enabled) {
+          return;
+        }
+        fogMaterial.fog = enabled;
+        fogMaterial.needsUpdate = true;
+      });
+    });
+  }
+
+  private isOuterDeckOpenWorldRuntimeMap(): boolean {
+    return this.options.map.metadata?.kind === "outerDeckOpenWorld";
+  }
+
+  private getOuterDeckWorldTileFieldPoint(worldTileX: number, worldTileY: number): { x: number; y: number } | null {
+    const metadata = this.options.map.metadata;
+    if (metadata?.kind !== "outerDeckOpenWorld") {
+      return null;
+    }
+
+    const worldOriginTileX = Number(metadata.worldOriginTileX);
+    const worldOriginTileY = Number(metadata.worldOriginTileY);
+    if (!Number.isFinite(worldOriginTileX) || !Number.isFinite(worldOriginTileY)) {
+      return null;
+    }
+
+    return {
+      x: (worldTileX - worldOriginTileX) * HAVEN3D_FIELD_TILE_SIZE,
+      y: (worldTileY - worldOriginTileY) * HAVEN3D_FIELD_TILE_SIZE,
+    };
+  }
+
+  private createDistantHavenLandmarkGroup(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "DistantHavenSkylineLandmark";
+    const width = OUTER_DECK_HAVEN_LANDMARK.width * HAVEN3D_WORLD_TILE_SIZE;
+    const depth = OUTER_DECK_HAVEN_LANDMARK.height * HAVEN3D_WORLD_TILE_SIZE;
+    const height = OUTER_DECK_HAVEN_LANDMARK.visualHeightWorld;
+    const fakeSourceObject: FieldObject = {
+      id: "distant_haven_skyline",
+      x: 0,
+      y: 0,
+      width: OUTER_DECK_HAVEN_LANDMARK.width,
+      height: OUTER_DECK_HAVEN_LANDMARK.height,
+      type: "decoration",
+      metadata: {
+        skylineTrackHeightWorld: OUTER_DECK_HAVEN_LANDMARK.skylineTrackHeightWorld,
+      },
+    };
+
+    this.addHavenCargoElevatorSkylineTracks(group, width, depth, height, fakeSourceObject);
+    group.add(
+      this.createFieldObjectBox([width + 4.4, 1.2, depth + 3.2], [0, height * 0.42, 0], 0x101820, {
+        emissive: 0x092b3a,
+        emissiveIntensity: 0.38,
+      }),
+      this.createFieldObjectBox([width * 0.24, 0.34, 1.1], [0, height + 1.1, depth / 2 + 1.2], 0x74d7ff, {
+        emissive: 0x3bc9ff,
+        emissiveIntensity: 1.65,
+      }),
+    );
+
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.architecture);
+    this.setObjectFogEnabled(group, false);
+    group.visible = false;
+    return group;
+  }
+
+  private buildDistantHavenLandmark(): void {
+    if (!this.isOuterDeckOpenWorldRuntimeMap()) {
+      return;
+    }
+
+    const hasPhysicalHaven = this.options.map.objects.some((object) => object.metadata?.havenCargoElevatorExterior === true);
+    if (hasPhysicalHaven) {
+      return;
+    }
+
+    this.distantHavenLandmark = this.createDistantHavenLandmarkGroup();
+    this.worldGroup.add(this.distantHavenLandmark);
+    this.updateDistantHavenLandmark();
+  }
+
+  private updateDistantHavenLandmark(): void {
+    const group = this.distantHavenLandmark;
+    if (!group) {
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    const centerPoint = this.getOuterDeckWorldTileFieldPoint(
+      OUTER_DECK_HAVEN_LANDMARK.worldX + (OUTER_DECK_HAVEN_LANDMARK.width / 2),
+      OUTER_DECK_HAVEN_LANDMARK.worldY + (OUTER_DECK_HAVEN_LANDMARK.height / 2),
+    );
+    if (!avatar || !centerPoint) {
+      group.visible = false;
+      return;
+    }
+
+    const playerWorld = fieldToHavenWorld(this.options.map, { x: avatar.x, y: avatar.y }, 0);
+    const trueWorld = fieldToHavenWorld(this.options.map, centerPoint, 0);
+    const dx = trueWorld.x - playerWorld.x;
+    const dz = trueWorld.z - playerWorld.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < 0.001) {
+      group.visible = false;
+      return;
+    }
+
+    const drawDistance = Math.min(distance, OUTER_DECK_HAVEN_LANDMARK.maxTrueDistanceWorld);
+    const directionX = dx / distance;
+    const directionZ = dz / distance;
+    const distanceScale = Math.max(
+      OUTER_DECK_HAVEN_LANDMARK.minScale,
+      Math.min(1, OUTER_DECK_HAVEN_LANDMARK.maxTrueDistanceWorld / Math.max(distance, 1)),
+    );
+    group.position.set(
+      playerWorld.x + (directionX * drawDistance),
+      0,
+      playerWorld.z + (directionZ * drawDistance),
+    );
+    group.scale.setScalar(distanceScale);
+    group.visible = true;
+  }
+
   private createOuterDeckFieldObjectGroup(
     placement: Haven3DSceneObjectPlacement,
     sourceObject: FieldObject | undefined,
@@ -2142,6 +3209,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const group = new THREE.Group();
 
     switch (sprite) {
+      case "haven_cargo_elevator_exterior":
+        return this.createHavenCargoElevatorExteriorGroup(placement, sourceObject);
       case "resource": {
         group.add(
           this.createFieldObjectBox([0.62, 0.16, 0.62], [0, 0.13, 0], 0x24463a),
@@ -2157,6 +3226,102 @@ export class Haven3DFieldController implements Haven3DModeController {
           }),
         );
         break;
+      }
+      case "theater_chart": {
+        const chartMaterial = createArdyciaToonMaterial({
+          color: 0x7cc7d6,
+          emissive: 0x103b52,
+          emissiveIntensity: 0.62,
+          side: THREE.DoubleSide,
+        });
+        const scroll = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.045, 0.42), chartMaterial);
+        scroll.position.set(0, 0.42, 0);
+        scroll.rotation.set(-0.18, 0.52, 0.08);
+        scroll.castShadow = true;
+        group.add(
+          this.createFieldObjectBox([0.72, 0.12, 0.48], [0, 0.08, 0], 0x243c4c),
+          scroll,
+          this.createFieldObjectBox([0.08, 0.16, 0.48], [-0.34, 0.43, 0], 0xc49a52),
+          this.createFieldObjectBox([0.08, 0.16, 0.48], [0.34, 0.43, 0], 0xc49a52),
+        );
+        break;
+      }
+      case "apron_key": {
+        const keyMaterial = createArdyciaToonMaterial({
+          color: 0xf2c15a,
+          emissive: 0x5b3308,
+          emissiveIntensity: 0.72,
+        });
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 8, 22), keyMaterial);
+        ring.position.set(-0.12, 0.58, 0);
+        ring.rotation.x = Math.PI / 2;
+        const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.07, 0.08), keyMaterial);
+        shaft.position.set(0.14, 0.58, 0);
+        shaft.castShadow = true;
+        const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.08), keyMaterial);
+        tooth.position.set(0.34, 0.51, 0);
+        tooth.castShadow = true;
+        group.add(
+          this.createFieldObjectBox([0.56, 0.12, 0.56], [0, 0.1, 0], 0x3e3425),
+          ring,
+          shaft,
+          tooth,
+        );
+        break;
+      }
+      case "apron_lantern": {
+        const frameMaterial = createArdyciaToonMaterial({ color: 0x5a3a24 });
+        const glowMaterial = createArdyciaToonMaterial({
+          color: 0xffd483,
+          emissive: 0xffba55,
+          emissiveIntensity: 2.8,
+        });
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.05, 8), frameMaterial);
+        post.position.y = 0.55;
+        post.castShadow = true;
+        const cage = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.34, 0.28), frameMaterial);
+        cage.position.y = 0.31;
+        cage.castShadow = true;
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 10), glowMaterial);
+        glow.position.y = 0.31;
+        group.add(
+          this.createFieldObjectBox([0.52, 0.1, 0.52], [0, 0.05, 0], 0x2b2720),
+          post,
+          cage,
+          glow,
+        );
+        break;
+      }
+      case "traveling_merchant_cart": {
+        const cartWidth = Math.max(1.7, width * 0.82);
+        const cartDepth = Math.max(1.5, depth * 0.78);
+        const canopyHeight = 1.55;
+        group.add(
+          this.createFieldObjectBox([cartWidth, 0.22, cartDepth], [0, 0.18, 0], 0x4b3325),
+          this.createFieldObjectBox([cartWidth * 0.82, 0.72, cartDepth * 0.72], [0, 0.62, 0], 0x9b6a36, {
+            emissive: 0x2b1306,
+            emissiveIntensity: 0.14,
+          }),
+          this.createFieldObjectBox([cartWidth * 0.98, 0.16, cartDepth * 0.86], [0, canopyHeight, 0], 0x456a56, {
+            emissive: 0x0b281d,
+            emissiveIntensity: 0.18,
+          }),
+          this.createFieldObjectBox([cartWidth * 0.84, 0.1, cartDepth * 0.94], [0, canopyHeight + 0.18, 0], 0xdbc27a),
+          this.createFieldObjectBox([0.1, 1.34, 0.1], [-cartWidth * 0.43, 0.84, -cartDepth * 0.38], 0x5e4630),
+          this.createFieldObjectBox([0.1, 1.34, 0.1], [cartWidth * 0.43, 0.84, -cartDepth * 0.38], 0x5e4630),
+          this.createFieldObjectBox([0.1, 1.34, 0.1], [-cartWidth * 0.43, 0.84, cartDepth * 0.38], 0x5e4630),
+          this.createFieldObjectBox([0.1, 1.34, 0.1], [cartWidth * 0.43, 0.84, cartDepth * 0.38], 0x5e4630),
+          this.createFieldObjectBox([0.38, 0.38, 0.18], [-cartWidth * 0.48, 0.24, cartDepth * 0.42], 0x231b18),
+          this.createFieldObjectBox([0.38, 0.38, 0.18], [cartWidth * 0.48, 0.24, cartDepth * 0.42], 0x231b18),
+          this.createFieldObjectBox([0.38, 0.38, 0.18], [-cartWidth * 0.48, 0.24, -cartDepth * 0.42], 0x231b18),
+          this.createFieldObjectBox([0.38, 0.38, 0.18], [cartWidth * 0.48, 0.24, -cartDepth * 0.42], 0x231b18),
+          this.createFieldObjectBox([0.5, 0.34, 0.44], [-cartWidth * 0.18, 1.02, -cartDepth * 0.12], 0x6c4b2f),
+          this.createFieldObjectBox([0.42, 0.28, 0.38], [cartWidth * 0.24, 1.0, 0.16], 0x7a5d3b),
+        );
+        break;
+      }
+      case "zipline_track": {
+        return this.createZiplineTrackVisual(placement, sourceObject);
       }
       case "bulkhead": {
         const postHeight = 2.45;
@@ -2273,7 +3438,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     placement: Haven3DSceneObjectPlacement,
     sourceObject: FieldObject | undefined,
   ): THREE.Group {
-    const group = this.createHavenBuildingGroup(placement, sourceObject)
+    const group = this.createRouteFieldObjectGroup(placement, sourceObject)
+      ?? this.createSimpleDoorwayGroup(placement, sourceObject)
+      ?? this.createHavenBuildingGroup(placement, sourceObject)
       ?? (usesOuterDeck3DSetDressing(this.options.map)
       ? this.createOuterDeckFieldObjectGroup(placement, sourceObject) ?? this.createGenericFieldObjectGroup(placement)
       : this.createGenericFieldObjectGroup(placement));
@@ -2285,10 +3452,14 @@ export class Haven3DFieldController implements Haven3DModeController {
     const sourceObjectsById = new Map(this.options.map.objects.map((object) => [object.id, object]));
     createHaven3DSceneLayout(this.options.map).objects
       .forEach((object) => {
-        const group = this.createFieldObjectGroup(object, sourceObjectsById.get(object.id));
+        const sourceObject = sourceObjectsById.get(object.id);
+        const group = this.createFieldObjectGroup(object, sourceObject);
         group.name = `Haven3DFieldObject:${object.id}`;
-        group.position.set(object.worldCenter.x, 0, object.worldCenter.z);
+        group.position.set(object.worldCenter.x, object.worldCenter.y, object.worldCenter.z);
         this.fieldObjectGroups.set(object.id, group);
+        if (sourceObject) {
+          this.fieldObjectsById.set(object.id, sourceObject);
+        }
         this.worldGroup.add(group);
       });
     this.syncFieldObjectVisibility();
@@ -2296,7 +3467,10 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private syncFieldObjectVisibility(): void {
     for (const [objectId, group] of this.fieldObjectGroups.entries()) {
-      group.visible = this.options.isFieldObjectVisible?.(objectId) ?? true;
+      const visible = this.options.isFieldObjectVisible?.(objectId, this.fieldObjectsById.get(objectId)) ?? true;
+      if (group.visible !== visible) {
+        group.visible = visible;
+      }
     }
   }
 
@@ -2313,11 +3487,6 @@ export class Haven3DFieldController implements Haven3DModeController {
       emissive: 0x2b1708,
       emissiveIntensity: 0.18,
     });
-    const gearGlow = createArdyciaToonMaterial({
-      color: 0x58c1aa,
-      emissive: 0x123c37,
-      emissiveIntensity: 0.75,
-    });
 
     const anatomy = createChibiAnatomy({
       bodyMaterial: coat,
@@ -2333,21 +3502,24 @@ export class Haven3DFieldController implements Haven3DModeController {
     blade.rotation.copy(BLADE_BACK_ROTATION);
     blade.scale.setScalar(1);
 
-    const bladeForm = new THREE.Group();
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.42), leather);
-    grip.position.z = -0.04;
+    grip.position.z = -0.16;
     grip.castShadow = true;
     const guard = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.08, 0.08), brass);
-    guard.position.z = 0.2;
+    guard.position.z = 0.08;
     guard.castShadow = true;
     const bladeMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.18, 0.08, 1.52),
+      new THREE.BoxGeometry(0.18, 0.08, 1.28),
       gearEdge,
     );
-    bladeMesh.position.z = 1.02;
+    bladeMesh.position.z = 0.8;
     bladeMesh.castShadow = true;
+    const bladeTip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.28, 4), gearEdge);
+    bladeTip.position.z = 1.56;
+    bladeTip.rotation.x = Math.PI / 2;
+    bladeTip.castShadow = true;
     const bladeTrail = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.95, 0.54),
+      new THREE.PlaneGeometry(1.68, 0.18),
       new THREE.MeshBasicMaterial({
         color: 0xf6d28a,
         transparent: true,
@@ -2357,45 +3529,39 @@ export class Haven3DFieldController implements Haven3DModeController {
       }),
     );
     bladeTrail.name = "bladeTrail";
-    bladeTrail.position.set(0.02, 0.02, 1.0);
+    bladeTrail.position.set(0.02, 0.006, 0.92);
     bladeTrail.rotation.x = Math.PI / 2;
     bladeTrail.visible = false;
-    bladeForm.add(grip, guard, bladeMesh, bladeTrail);
+    blade.add(grip, guard, bladeMesh, bladeTip, bladeTrail);
 
-    const launcherForm = new THREE.Group();
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 0.86, 14), leather);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.z = -0.42;
-    barrel.castShadow = true;
-    const chamber = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 10), brass);
-    chamber.position.z = 0.02;
-    chamber.castShadow = true;
-    const sight = new THREE.Mesh(
-      new THREE.BoxGeometry(0.08, 0.08, 0.28),
-      gearGlow,
+    const waistLantern = new THREE.Group();
+    waistLantern.name = "ApronWaistLantern";
+    waistLantern.position.set(0.27, 0.04, 0.26);
+    waistLantern.rotation.set(0.04, -0.18, -0.08);
+    const lanternHook = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.06, 0.06), brass);
+    lanternHook.position.set(0, 0.14, -0.025);
+    lanternHook.castShadow = true;
+    const lanternFrame = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.21, 0.13), brass);
+    lanternFrame.position.y = -0.02;
+    lanternFrame.castShadow = true;
+    const lanternCore = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 12, 8),
+      createArdyciaToonMaterial({
+        color: 0xffd37c,
+        emissive: 0xffb64e,
+        emissiveIntensity: 1.45,
+      }),
     );
-    sight.position.set(0, 0.16, -0.36);
-    launcherForm.add(barrel, chamber, sight);
+    lanternCore.position.y = -0.02;
+    const lanternHandle = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.011, 6, 16), brass);
+    lanternHandle.position.y = 0.09;
+    lanternHandle.rotation.x = Math.PI / 2;
+    const lanternLight = new THREE.PointLight(0xffc067, 1.55, 6.8, 1.55);
+    lanternLight.position.set(0, -0.02, 0.04);
+    waistLantern.add(lanternHook, lanternFrame, lanternCore, lanternHandle, lanternLight);
+    anatomy.pelvis.add(waistLantern);
 
-    const grappleForm = new THREE.Group();
-    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.045, 8, 18), brass);
-    coil.rotation.y = Math.PI / 2;
-    const hookBase = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 0.56, 10), leather);
-    hookBase.rotation.x = Math.PI / 2;
-    hookBase.position.z = -0.34;
-    hookBase.castShadow = true;
-    const hook = new THREE.Mesh(
-      new THREE.TorusGeometry(0.16, 0.03, 8, 16, Math.PI * 1.35),
-      gearGlow,
-    );
-    hook.position.z = -0.72;
-    hook.rotation.x = Math.PI / 2;
-    grappleForm.add(coil, hookBase, hook);
-
-    applyGearbladePartPose(bladeForm, getGearbladePartPose("blade", "blade"));
-    applyGearbladePartPose(launcherForm, getGearbladePartPose("blade", "launcher"));
-    applyGearbladePartPose(grappleForm, getGearbladePartPose("blade", "grapple"));
-    blade.add(bladeForm, launcherForm, grappleForm);
+    attachApronGlider(anatomy);
     anatomy.root.add(shoulderStrap, blade);
     addInvertedHullOutlines(anatomy.root, ARDYCIA_TOON_OUTLINE_SCALE.character);
     group.add(anatomy.root);
@@ -2405,11 +3571,6 @@ export class Haven3DFieldController implements Haven3DModeController {
       chibi: anatomy,
       blade,
       bladeTrail,
-      weaponForms: {
-        blade: bladeForm,
-        launcher: launcherForm,
-        grapple: grappleForm,
-      },
     });
   }
 
@@ -2750,6 +3911,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.movePlayers(deltaMs);
       this.updateBladeSwing(deltaMs, currentTime);
       this.updateGrappleMove(deltaMs, currentTime);
+      this.updateZiplineDismountDrift(deltaMs, currentTime);
       this.updateLauncherProjectiles(deltaMs);
       this.updateVisualEffects(deltaMs, currentTime);
     }
@@ -2763,8 +3925,10 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     this.syncFieldObjectVisibility();
     this.updateCamera(deltaMs / 1000);
+    this.updateDistantHavenLandmark();
     this.updateGrappleAnchors(currentTime);
     this.syncDynamicActors();
+    this.syncFieldProjectiles();
     this.updatePrompt();
     this.renderer.render(this.scene, this.camera);
     if (this.disposed) {
@@ -2789,36 +3953,19 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
 
       const input = getPlayerInput(playerId);
-      let moveX = 0;
-      let moveY = 0;
-      if (input.up) {
-        moveX += this.clockForward.x;
-        moveY += this.clockForward.z;
-      }
-      if (input.down) {
-        moveX -= this.clockForward.x;
-        moveY -= this.clockForward.z;
-      }
-      if (input.right) {
-        moveX += this.clockRight.x;
-        moveY += this.clockRight.z;
-      }
-      if (input.left) {
-        moveX -= this.clockRight.x;
-        moveY -= this.clockRight.z;
-      }
-
-      const length = Math.hypot(moveX, moveY);
-      if (length <= 0) {
+      const movement = this.getPlayerMovementInputVector(playerId);
+      if (!movement) {
         return;
       }
 
-      moveX /= length;
-      moveY /= length;
+      const verticalState = this.getPlayerVerticalState(playerId);
       const speed = PLAYER_SPEED_PX_PER_SECOND
-        * (input.special1 ? DASH_MULTIPLIER : 1)
+        * (input.special1 && !verticalState.gliding ? DASH_MULTIPLIER : 1)
+        * (verticalState.gliding ? PLAYER_GLIDER_MOVEMENT_MULTIPLIER : 1)
         * this.getActionMovementMultiplier(playerId);
       const step = speed * (deltaMs / 1000);
+      const moveX = movement.x;
+      const moveY = movement.y;
       let nextX = avatar.x + moveX * step;
       let nextY = avatar.y + moveY * step;
       const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
@@ -2826,10 +3973,10 @@ export class Haven3DFieldController implements Haven3DModeController {
         ? fieldFacingFromDelta(lockedTarget.x - avatar.x, lockedTarget.y - avatar.y, avatar.facing)
         : fieldFacingFromDelta(nextX - avatar.x, nextY - avatar.y, avatar.facing);
 
-      if (!canAvatarMoveTo(this.options.map, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      if (!this.canPlayerMoveTo(playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
         nextX = avatar.x;
       }
-      if (!canAvatarMoveTo(this.options.map, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      if (!this.canPlayerMoveTo(playerId, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
         nextY = avatar.y;
       }
 
@@ -2843,6 +3990,93 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private updateZiplineDismountDrift(deltaMs: number, currentTime: number): void {
+    const drift = this.ziplineDismountDrift;
+    if (!drift) {
+      return;
+    }
+    if (this.grappleMove || !this.options.isPlayerActive(drift.playerId)) {
+      this.ziplineDismountDrift = null;
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar(drift.playerId);
+    if (!avatar) {
+      this.ziplineDismountDrift = null;
+      return;
+    }
+
+    const vertical = this.getPlayerVerticalState(drift.playerId);
+    const elapsed = Math.max(0, currentTime - drift.startedAt);
+    if (vertical.grounded || elapsed >= drift.durationMs) {
+      this.ziplineDismountDrift = null;
+      return;
+    }
+
+    const t = THREE.MathUtils.clamp(elapsed / Math.max(1, drift.durationMs), 0, 1);
+    const falloff = 1 - smoothstep(t);
+    const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
+    const moveX = drift.vx * falloff * deltaSeconds;
+    const moveY = drift.vy * falloff * deltaSeconds;
+    if (Math.hypot(moveX, moveY) < 0.01) {
+      this.ziplineDismountDrift = null;
+      return;
+    }
+
+    let nextX = avatar.x + moveX;
+    let nextY = avatar.y + moveY;
+    const facing = fieldFacingFromDelta(drift.vx, drift.vy, avatar.facing);
+    if (!this.canPlayerMoveTo(drift.playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      nextX = avatar.x;
+    }
+    if (!this.canPlayerMoveTo(drift.playerId, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      nextY = avatar.y;
+    }
+    if (nextX === avatar.x && nextY === avatar.y) {
+      this.ziplineDismountDrift = null;
+      return;
+    }
+
+    const constrained = this.options.constrainPlayerPosition?.(
+      drift.playerId,
+      { x: nextX, y: nextY, facing },
+      avatar,
+    ) ?? { x: nextX, y: nextY, facing };
+    this.options.setPlayerAvatar(drift.playerId, constrained.x, constrained.y, constrained.facing);
+  }
+
+  private getPlayerMovementInputVector(playerId: PlayerId): { x: number; y: number } | null {
+    const input = getPlayerInput(playerId);
+    let moveX = 0;
+    let moveY = 0;
+    if (input.up) {
+      moveX += this.clockForward.x;
+      moveY += this.clockForward.z;
+    }
+    if (input.down) {
+      moveX -= this.clockForward.x;
+      moveY -= this.clockForward.z;
+    }
+    if (input.right) {
+      moveX += this.clockRight.x;
+      moveY += this.clockRight.z;
+    }
+    if (input.left) {
+      moveX -= this.clockRight.x;
+      moveY -= this.clockRight.z;
+    }
+
+    const length = Math.hypot(moveX, moveY);
+    if (length <= 0) {
+      return null;
+    }
+
+    return {
+      x: moveX / length,
+      y: moveY / length,
+    };
+  }
+
   private getPlayerVerticalState(playerId: PlayerId): PlayerVerticalState {
     let state = this.playerVerticalStates.get(playerId);
     if (!state) {
@@ -2850,11 +4084,64 @@ export class Haven3DFieldController implements Haven3DModeController {
         elevation: 0,
         velocity: 0,
         grounded: true,
+        gliding: false,
+        gliderDeployedAt: Number.NEGATIVE_INFINITY,
         jumpStartedAt: Number.NEGATIVE_INFINITY,
+        jumpFlipDirection: 1,
+        groundElevation: 0,
+        worldElevation: 0,
       };
       this.playerVerticalStates.set(playerId, state);
     }
     return state;
+  }
+
+  private getPlayerVisualWorldElevation(playerId: PlayerId, point: { x: number; y: number }): number {
+    const state = this.getPlayerVerticalState(playerId);
+    const groundElevation = this.getGroundElevationAtPoint(point);
+    if (!Number.isFinite(state.groundElevation)) {
+      state.groundElevation = groundElevation;
+    }
+    if (!Number.isFinite(state.worldElevation)) {
+      state.worldElevation = groundElevation + Math.max(0, state.elevation);
+    }
+
+    if (state.grounded) {
+      if (groundElevation < state.groundElevation - PLAYER_LEDGE_DROP_WORLD_THRESHOLD) {
+        state.grounded = false;
+        state.gliding = false;
+        state.velocity = Math.min(0, state.velocity);
+        state.worldElevation = Math.max(state.worldElevation, state.groundElevation);
+        state.elevation = Math.max(0, state.worldElevation - groundElevation);
+      } else {
+        state.groundElevation = groundElevation;
+        state.worldElevation = groundElevation;
+        state.elevation = 0;
+        state.velocity = 0;
+        return groundElevation;
+      }
+    }
+
+    if (state.worldElevation <= groundElevation) {
+      state.groundElevation = groundElevation;
+      state.worldElevation = groundElevation;
+      state.elevation = 0;
+      state.velocity = 0;
+      state.grounded = true;
+      state.gliding = false;
+      return groundElevation;
+    }
+
+    state.groundElevation = groundElevation;
+    state.elevation = Math.max(0, state.worldElevation - groundElevation);
+    return state.worldElevation;
+  }
+
+  private playerHasApronUtility(playerId: PlayerId, utilityItemId: WeaponsmithUtilityItemId): boolean {
+    return Boolean(
+      this.options.hasApronUtility?.(playerId, utilityItemId)
+      || (utilityItemId === "apron_glider" && this.options.canUseGlider?.(playerId) === true),
+    );
   }
 
   private tryStartPlayerJump(playerId: PlayerId): void {
@@ -2871,52 +4158,234 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const state = this.getPlayerVerticalState(playerId);
+    const avatarPoint = { x: avatar.x, y: avatar.y };
+    const groundElevation = this.getGroundElevationAtPoint(avatarPoint);
+    if (state.grounded) {
+      state.groundElevation = groundElevation;
+      state.worldElevation = groundElevation;
+      state.elevation = 0;
+    }
     if (!state.grounded || state.elevation > 0.025) {
+      if (state.gliding) {
+        this.stowPlayerGlider(playerId);
+      } else {
+        this.tryDeployPlayerGlider(playerId);
+      }
       return;
     }
 
     state.grounded = false;
+    state.gliding = false;
     state.elevation = 0.02;
-    state.velocity = PLAYER_JUMP_VELOCITY;
+    state.groundElevation = groundElevation;
+    state.worldElevation = groundElevation + state.elevation;
+    state.velocity = PLAYER_JUMP_VELOCITY * (
+      this.playerHasApronUtility(playerId, "counterweight_boots")
+        ? PLAYER_COUNTERWEIGHT_BOOTS_JUMP_VELOCITY_MULTIPLIER
+        : 1
+    );
     state.jumpStartedAt = this.currentFrameTime || performance.now();
+    state.jumpFlipDirection = this.shouldUseBackflipForJump(playerId, avatar) ? -1 : 1;
     this.cameraImpulse.y += playerId === "P1" ? 0.045 : 0;
+  }
+
+  private tryDeployPlayerGlider(playerId: PlayerId): boolean {
+    if (
+      this.options.isPaused()
+      || !this.options.isPlayerActive(playerId)
+      || !this.playerHasApronUtility(playerId, "apron_glider")
+    ) {
+      return false;
+    }
+    if (playerId === "P1" && this.grappleMove) {
+      return false;
+    }
+
+    const state = this.getPlayerVerticalState(playerId);
+    if (state.grounded || state.elevation < PLAYER_GLIDER_MIN_DEPLOY_ELEVATION) {
+      return false;
+    }
+
+    state.gliding = true;
+    state.gliderDeployedAt = this.currentFrameTime || performance.now();
+    state.velocity = Math.min(state.velocity, PLAYER_GLIDER_DEPLOY_MAX_UPWARD_VELOCITY);
+    this.cameraImpulse.y += playerId === "P1" ? 0.028 : 0;
+    return true;
+  }
+
+  private stowPlayerGlider(playerId: PlayerId): void {
+    const state = this.getPlayerVerticalState(playerId);
+    if (!state.gliding) {
+      return;
+    }
+
+    state.gliding = false;
+    state.gliderDeployedAt = Number.NEGATIVE_INFINITY;
+    state.velocity = Math.min(state.velocity, -0.35);
+    this.cameraImpulse.y += playerId === "P1" ? -0.018 : 0;
+  }
+
+  private shouldUseBackflipForJump(playerId: PlayerId, avatar: FieldAvatarView): boolean {
+    if (playerId !== "P1") {
+      return false;
+    }
+
+    const lockedTarget = this.getLockedTargetCandidate();
+    if (!lockedTarget) {
+      return false;
+    }
+
+    const movement = this.getPlayerMovementInputVector(playerId);
+    if (!movement) {
+      return false;
+    }
+
+    const input = getPlayerInput(playerId);
+    const targetVector = {
+      x: lockedTarget.x - avatar.x,
+      y: lockedTarget.y - avatar.y,
+    };
+    const targetDistance = Math.max(0.001, Math.hypot(targetVector.x, targetVector.y));
+    const movementTowardTarget = (
+      (movement.x * targetVector.x)
+      + (movement.y * targetVector.y)
+    ) / targetDistance;
+
+    return (input.down && !input.up) || movementTowardTarget < -0.24;
   }
 
   private updatePlayerVertical(deltaMs: number): void {
     const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
     (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
       const state = this.getPlayerVerticalState(playerId);
-      if (playerId === "P1" && this.grappleMove?.target.kind === "grapple-node") {
+      if (
+        playerId === "P1"
+        && (this.grappleMove?.target.kind === "grapple-node" || this.grappleMove?.target.kind === "zipline-track")
+      ) {
         return;
       }
-      if (state.grounded && state.elevation <= 0) {
+      const avatar = this.options.getPlayerAvatar(playerId);
+      if (!avatar) {
         return;
       }
 
-      state.velocity -= PLAYER_JUMP_GRAVITY * deltaSeconds;
-      state.elevation += state.velocity * deltaSeconds;
-      if (state.elevation <= 0) {
+      const avatarPoint = { x: avatar.x, y: avatar.y };
+      const groundElevation = this.getGroundElevationAtPoint(avatarPoint);
+      if (state.grounded) {
+        if (groundElevation >= state.groundElevation - PLAYER_LEDGE_DROP_WORLD_THRESHOLD) {
+          state.groundElevation = groundElevation;
+          state.worldElevation = groundElevation;
+          state.elevation = 0;
+          state.velocity = 0;
+          state.gliding = false;
+          return;
+        }
+
+        state.grounded = false;
+        state.gliding = false;
+        state.velocity = Math.min(0, state.velocity);
+        state.worldElevation = Math.max(state.worldElevation, state.groundElevation);
+        state.elevation = Math.max(0, state.worldElevation - groundElevation);
+      }
+
+      if (state.gliding && !this.playerHasApronUtility(playerId, "apron_glider")) {
+        state.gliding = false;
+      }
+
+      if (state.gliding) {
+        state.velocity = Math.max(
+          PLAYER_GLIDER_DESCENT_VELOCITY,
+          Math.min(state.velocity, PLAYER_GLIDER_DEPLOY_MAX_UPWARD_VELOCITY) - (PLAYER_GLIDER_GRAVITY * deltaSeconds),
+        );
+      } else {
+        state.velocity -= PLAYER_JUMP_GRAVITY * deltaSeconds;
+      }
+      state.worldElevation += state.velocity * deltaSeconds;
+      if (state.worldElevation <= groundElevation) {
         state.elevation = 0;
         state.velocity = 0;
         state.grounded = true;
+        state.gliding = false;
+        state.jumpFlipDirection = 1;
+        state.groundElevation = groundElevation;
+        state.worldElevation = groundElevation;
       } else {
         state.grounded = false;
+        state.groundElevation = groundElevation;
+        state.elevation = Math.max(0, state.worldElevation - groundElevation);
       }
     });
   }
 
   private setPlayerSwingElevation(playerId: PlayerId, elevation: number): void {
     const state = this.getPlayerVerticalState(playerId);
+    const avatar = this.options.getPlayerAvatar(playerId);
+    const groundElevation = avatar
+      ? this.getGroundElevationAtPoint({ x: avatar.x, y: avatar.y })
+      : state.groundElevation;
     state.elevation = Math.max(0, elevation);
+    state.groundElevation = groundElevation;
+    state.worldElevation = groundElevation + state.elevation;
     state.velocity = 0;
     state.grounded = state.elevation <= 0.015;
+    if (state.grounded) {
+      state.gliding = false;
+      state.jumpFlipDirection = 1;
+    }
+  }
+
+  private releasePlayerFromZipline(
+    point: { x: number; y: number },
+    riderWorldHeight: number,
+    direction: { x: number; y: number },
+    verticalVelocity: number,
+    currentTime: number,
+  ): void {
+    const state = this.getPlayerVerticalState("P1");
+    const groundElevation = this.getGroundElevationAtPoint(point);
+    const worldElevation = Math.max(riderWorldHeight, groundElevation + 0.18);
+    const directionLength = Math.max(0.001, Math.hypot(direction.x, direction.y));
+    const exitDirection = {
+      x: direction.x / directionLength,
+      y: direction.y / directionLength,
+    };
+
+    state.grounded = false;
+    state.gliding = false;
+    state.groundElevation = groundElevation;
+    state.worldElevation = worldElevation;
+    state.elevation = Math.max(0.18, worldElevation - groundElevation);
+    state.velocity = THREE.MathUtils.clamp(
+      verticalVelocity + GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY,
+      -0.35,
+      2.2,
+    );
+    state.jumpStartedAt = currentTime + PLAYER_JUMP_FRONT_FLIP_DELAY_MS;
+    state.jumpFlipDirection = 1;
+
+    this.ziplineDismountDrift = {
+      playerId: "P1",
+      vx: exitDirection.x * GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND,
+      vy: exitDirection.y * GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND,
+      startedAt: currentTime,
+      durationMs: GRAPPLE_ZIPLINE_DISMOUNT_DURATION_MS,
+    };
   }
 
   private landPlayerVertical(playerId: PlayerId): void {
     const state = this.getPlayerVerticalState(playerId);
+    const avatar = this.options.getPlayerAvatar(playerId);
+    const groundElevation = avatar
+      ? this.getGroundElevationAtPoint({ x: avatar.x, y: avatar.y })
+      : state.groundElevation;
     state.elevation = 0;
     state.velocity = 0;
     state.grounded = true;
+    state.gliding = false;
+    state.gliderDeployedAt = Number.NEGATIVE_INFINITY;
+    state.jumpFlipDirection = 1;
+    state.groundElevation = groundElevation;
+    state.worldElevation = groundElevation;
   }
 
   private getActionMovementMultiplier(playerId: PlayerId): number {
@@ -3041,6 +4510,159 @@ export class Haven3DFieldController implements Haven3DModeController {
     return best;
   }
 
+  private getPointOnZiplineSegment(
+    segment: GrappleZiplineSegment,
+    t: number,
+  ): { x: number; y: number; height: number } {
+    const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+    return {
+      x: THREE.MathUtils.lerp(segment.start.fieldPoint.x, segment.end.fieldPoint.x, clampedT),
+      y: THREE.MathUtils.lerp(segment.start.fieldPoint.y, segment.end.fieldPoint.y, clampedT),
+      height: THREE.MathUtils.lerp(segment.start.height, segment.end.height, clampedT),
+    };
+  }
+
+  private getNearestZiplineT(segment: GrappleZiplineSegment, point: { x: number; y: number }): number {
+    const vx = point.x - segment.start.fieldPoint.x;
+    const vy = point.y - segment.start.fieldPoint.y;
+    return THREE.MathUtils.clamp(
+      ((vx * segment.directionX) + (vy * segment.directionY)) / Math.max(1, segment.length),
+      0,
+      1,
+    );
+  }
+
+  private chooseZiplineEndT(
+    segment: GrappleZiplineSegment,
+    attachT: number,
+    direction: { x: number; y: number },
+  ): 0 | 1 {
+    const directionDot = (direction.x * segment.directionX) + (direction.y * segment.directionY);
+    let endT: 0 | 1 = Math.abs(directionDot) < 0.18
+      ? attachT <= 0.5 ? 1 : 0
+      : directionDot >= 0 ? 1 : 0;
+    const rideDistance = Math.abs(endT - attachT) * segment.length;
+    if (rideDistance < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX * 1.35) {
+      endT = endT === 1 ? 0 : 1;
+    }
+    return endT;
+  }
+
+  private findGrappleZiplineTarget(rangePx: number): GrappleZiplineTarget | null {
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar || this.grappleZiplineSegments.size === 0) {
+      return null;
+    }
+
+    const direction = this.getActionDirection(avatar);
+    const maxRange = Math.max(rangePx, GRAPPLE_ZIPLINE_ATTACH_RANGE_PX);
+    let best: GrappleZiplineTarget | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const segment of this.grappleZiplineSegments.values()) {
+      const attachT = this.getNearestZiplineT(segment, avatar);
+      const attach = this.getPointOnZiplineSegment(segment, attachT);
+      const toAttach = { x: attach.x - avatar.x, y: attach.y - avatar.y };
+      const attachDistance = Math.hypot(toAttach.x, toAttach.y);
+      if (attachDistance > maxRange) {
+        continue;
+      }
+
+      const closeEnoughToGrab = attachDistance <= GRAPPLE_ZIPLINE_CLOSE_ATTACH_RADIUS_PX;
+      const attachDirectionLength = Math.max(0.001, attachDistance);
+      const aimDot = ((toAttach.x / attachDirectionLength) * direction.x)
+        + ((toAttach.y / attachDirectionLength) * direction.y);
+      const aimOffset = Math.abs((toAttach.x * direction.y) - (toAttach.y * direction.x));
+      if (!closeEnoughToGrab && (aimDot < 0.02 || aimOffset > GRAPPLE_ZIPLINE_MAX_AIM_OFFSET_PX)) {
+        continue;
+      }
+
+      const endT = this.chooseZiplineEndT(segment, attachT, direction);
+      const end = this.getPointOnZiplineSegment(segment, endT);
+      const rideDistance = Math.hypot(end.x - attach.x, end.y - attach.y);
+      if (rideDistance < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX) {
+        continue;
+      }
+
+      const score = (attachDistance * 0.015)
+        + (aimOffset * 0.03)
+        + ((1 - aimDot) * (closeEnoughToGrab ? 0.8 : 2.4))
+        - 2.2;
+      if (score < bestScore) {
+        best = {
+          segment,
+          attachPoint: { x: attach.x, y: attach.y },
+          attachHeight: attach.height,
+          attachT,
+          endPoint: { x: end.x, y: end.y },
+          endHeight: end.height,
+          endT,
+        };
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private findNearestRouteOriginAnchor(avatar: FieldAvatarView): GrappleAnchor | null {
+    let nearest: GrappleAnchor | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const anchor of this.grappleAnchors.values()) {
+      if (!anchor.routeId || anchor.connectedAnchorIds.length === 0) {
+        continue;
+      }
+      const distance = Math.hypot(anchor.x - avatar.x, anchor.y - avatar.y);
+      if (distance > GRAPPLE_ROUTE_HANDOFF_DISTANCE_PX || distance >= nearestDistance) {
+        continue;
+      }
+      nearest = anchor;
+      nearestDistance = distance;
+    }
+    return nearest;
+  }
+
+  private findLinkedRouteGrappleAnchor(
+    avatar: FieldAvatarView,
+    direction: { x: number; y: number },
+    rangePx: number,
+  ): GrappleAnchor | null {
+    const routeOrigin = this.findNearestRouteOriginAnchor(avatar);
+    if (!routeOrigin) {
+      return null;
+    }
+
+    let best: GrappleAnchor | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const connectedAnchorId of routeOrigin.connectedAnchorIds) {
+      const anchor = this.grappleAnchors.get(`grapple-node:${connectedAnchorId}`);
+      if (!anchor || anchor.id === routeOrigin.id || anchor.routeId !== routeOrigin.routeId) {
+        continue;
+      }
+
+      const distance = Math.hypot(anchor.x - avatar.x, anchor.y - avatar.y);
+      if (
+        distance < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX
+        || distance > Math.max(rangePx, GRAPPLE_ROUTE_LINK_RANGE_PX)
+      ) {
+        continue;
+      }
+
+      const toAnchor = { x: anchor.x - avatar.x, y: anchor.y - avatar.y };
+      const length = Math.max(0.001, Math.hypot(toAnchor.x, toAnchor.y));
+      const dot = ((toAnchor.x / length) * direction.x) + ((toAnchor.y / length) * direction.y);
+      const forwardBias = routeOrigin.routeIndex !== undefined && anchor.routeIndex !== undefined
+        ? Math.max(0, anchor.routeIndex - routeOrigin.routeIndex) * -0.42
+        : 0;
+      const score = distance * 0.012 + (1 - dot) * 1.8 + forwardBias;
+      if (score < bestScore) {
+        best = anchor;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
   private findGrappleAnchor(rangePx: number): GrappleAnchor | null {
     const avatar = this.options.getPlayerAvatar("P1");
     if (!avatar || this.grappleAnchors.size === 0) {
@@ -3048,22 +4670,40 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const direction = this.getActionDirection(avatar);
+    const linkedRouteAnchor = this.findLinkedRouteGrappleAnchor(avatar, direction, rangePx);
+    if (linkedRouteAnchor) {
+      return linkedRouteAnchor;
+    }
+
     let best: GrappleAnchor | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
     for (const anchor of this.grappleAnchors.values()) {
       const distance = Math.hypot(anchor.x - avatar.x, anchor.y - avatar.y);
-      if (distance > rangePx) {
+      const isRouteAnchor = Boolean(anchor.routeId);
+      const anchorRangePx = isRouteAnchor ? Math.max(rangePx, GRAPPLE_ROUTE_DIRECT_RANGE_PX) : rangePx;
+      if (distance > anchorRangePx) {
+        continue;
+      }
+      if (isRouteAnchor && anchor.connectedAnchorIds.length > 0 && distance < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX) {
         continue;
       }
 
       const toAnchor = { x: anchor.x - avatar.x, y: anchor.y - avatar.y };
       const length = Math.max(0.001, Math.hypot(toAnchor.x, toAnchor.y));
       const dot = ((toAnchor.x / length) * direction.x) + ((toAnchor.y / length) * direction.y);
-      if (dot < 0.08 && distance > 118) {
+      const minDot = isRouteAnchor ? -0.12 : 0.08;
+      if (dot < minDot && distance > 118) {
         continue;
       }
 
-      const score = distance * 0.03 + (1 - dot) * 4.2;
+      const routeBias = isRouteAnchor ? -3.25 : 0;
+      const linkedBias = anchor.connectedAnchorIds.length > 0 ? -1.15 : 0;
+      const routeRangePenalty = isRouteAnchor && distance > rangePx ? (distance - rangePx) * 0.011 : 0;
+      const score = distance * (isRouteAnchor ? 0.024 : 0.03)
+        + (1 - dot) * (isRouteAnchor ? 3.1 : 4.2)
+        + routeBias
+        + linkedBias
+        + routeRangePenalty;
       if (score < bestScore) {
         best = anchor;
         bestScore = score;
@@ -3129,10 +4769,10 @@ export class Haven3DFieldController implements Haven3DModeController {
       const nextY = avatar.y + this.bladeSwing.direction.y * step;
       let lungeX = avatar.x;
       let lungeY = avatar.y;
-      if (canAvatarMoveTo(this.options.map, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      if (this.canPlayerMoveTo("P1", nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
         lungeX = nextX;
       }
-      if (canAvatarMoveTo(this.options.map, lungeX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+      if (this.canPlayerMoveTo("P1", lungeX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
         lungeY = nextY;
       }
       this.options.setPlayerAvatar("P1", lungeX, lungeY, avatar.facing);
@@ -3146,23 +4786,27 @@ export class Haven3DFieldController implements Haven3DModeController {
         x: avatar.x,
         y: avatar.y,
         facing: avatar.facing,
-        directionX: this.bladeSwing.direction.x,
-        directionY: this.bladeSwing.direction.y,
+        directionX: strikeLine.bladeDirection.x,
+        directionY: strikeLine.bladeDirection.y,
         hiltX: strikeLine.hilt.x,
         hiltY: strikeLine.hilt.y,
         tipX: strikeLine.tip.x,
         tipY: strikeLine.tip.y,
         bladeHalfWidth: BLADE_SWING_HIT_WIDTH_PX,
         target: this.bladeSwing.target,
-        radius: BLADE_SWING_RANGE_PX,
+        radius: Math.max(
+          BLADE_SWING_RANGE_PX,
+          Math.hypot(strikeLine.hilt.x - avatar.x, strikeLine.hilt.y - avatar.y),
+          Math.hypot(strikeLine.tip.x - avatar.x, strikeLine.tip.y - avatar.y),
+        ),
         arcRadians: BLADE_SWING_ARC_RADIANS,
         damage: BLADE_SWING_DAMAGE,
         knockback: BLADE_SWING_KNOCKBACK,
       }) ?? false;
       if (didHit) {
         this.beginImpactFeedback({
-          x: avatar.x + this.bladeSwing.direction.x * 72,
-          y: avatar.y + this.bladeSwing.direction.y * 72,
+          x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
+          y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
         }, 1);
       }
     }
@@ -3175,19 +4819,86 @@ export class Haven3DFieldController implements Haven3DModeController {
   private getBladeStrikeLine(
     avatar: FieldAvatarView,
     swing: BladeSwingState,
-  ): { hilt: { x: number; y: number }; tip: { x: number; y: number } } {
+  ): BladeSwingPose {
+    const elapsed = this.currentFrameTime - swing.startedAt;
+    return this.getBladeSwingPose(avatar, swing, elapsed);
+  }
+
+  private getBladeSwingPose(
+    avatar: FieldAvatarView,
+    swing: BladeSwingState,
+    elapsed: number,
+  ): BladeSwingPose {
+    const pose = this.getBladeSwingPoseValues(elapsed, swing.side);
     const forward = swing.direction;
     const right = { x: forward.y, y: -forward.x };
+    const bladeDirection = {
+      x: (forward.x * Math.cos(pose.localYaw)) + (right.x * Math.sin(pose.localYaw)),
+      y: (forward.y * Math.cos(pose.localYaw)) + (right.y * Math.sin(pose.localYaw)),
+    };
+    const bladeDirectionLength = Math.max(0.001, Math.hypot(bladeDirection.x, bladeDirection.y));
+    bladeDirection.x /= bladeDirectionLength;
+    bladeDirection.y /= bladeDirectionLength;
     const hilt = {
-      x: avatar.x + forward.x * 20 + right.x * 14 * swing.side,
-      y: avatar.y + forward.y * 20 + right.y * 14 * swing.side,
+      x: avatar.x + (forward.x * pose.hiltForwardPx) + (right.x * pose.hiltSidePx),
+      y: avatar.y + (forward.y * pose.hiltForwardPx) + (right.y * pose.hiltSidePx),
     };
     const tip = {
-      x: hilt.x + forward.x * BLADE_SWING_RANGE_PX + right.x * -38 * swing.side,
-      y: hilt.y + forward.y * BLADE_SWING_RANGE_PX + right.y * -38 * swing.side,
+      x: hilt.x + (bladeDirection.x * BLADE_SWING_BLADE_LENGTH_PX),
+      y: hilt.y + (bladeDirection.y * BLADE_SWING_BLADE_LENGTH_PX),
     };
 
-    return { hilt, tip };
+    return {
+      ...pose,
+      bladeDirection,
+      hilt,
+      tip,
+    };
+  }
+
+  private getBladeSwingPoseValues(
+    elapsed: number,
+    side: 1 | -1,
+  ): Omit<BladeSwingPose, "bladeDirection" | "hilt" | "tip"> {
+    const handedSide = side * PLAYER_RIGHT_HAND_LOCAL_X;
+    const startYaw = BLADE_SWING_START_LOCAL_YAW * handedSide;
+    const endYaw = BLADE_SWING_END_LOCAL_YAW * handedSide;
+    const swingProgress = this.getBladeSwingArcProgress(elapsed);
+    const slashPulse = Math.sin(swingProgress * Math.PI);
+    const localYaw = THREE.MathUtils.lerp(startYaw, endYaw, swingProgress);
+    const hiltSidePx = THREE.MathUtils.lerp(
+      BLADE_SWING_HILT_SIDE_START_PX * handedSide,
+      BLADE_SWING_HILT_SIDE_END_PX * handedSide,
+      swingProgress,
+    );
+
+    return {
+      localYaw,
+      slashPulse,
+      hiltForwardPx: BLADE_SWING_HILT_FORWARD_PX + (16 * slashPulse),
+      hiltSidePx,
+    };
+  }
+
+  private getBladeSwingArcProgress(elapsed: number): number {
+    const t = THREE.MathUtils.clamp(
+      (elapsed - BLADE_SWING_ARC_START_MS) / (BLADE_SWING_ARC_END_MS - BLADE_SWING_ARC_START_MS),
+      0,
+      1,
+    );
+
+    if (t < 0.36) {
+      const anticipation = t / 0.36;
+      return 0.18 * anticipation * anticipation;
+    }
+
+    if (t < 0.66) {
+      const cut = smoothstep((t - 0.36) / 0.3);
+      return THREE.MathUtils.lerp(0.18, 0.86, cut);
+    }
+
+    const followThrough = smoothstep((t - 0.66) / 0.34);
+    return THREE.MathUtils.lerp(0.86, 1, followThrough);
   }
 
   private fireLauncher(): void {
@@ -3206,27 +4917,46 @@ export class Haven3DFieldController implements Haven3DModeController {
     const originX = avatar.x + direction.x * 36;
     const originY = avatar.y + direction.y * 36;
     const originPoint = { x: originX, y: originY };
+    const utility: "attack" | "flare" = target?.kind === "enemy" ? "attack" : "flare";
+    const canFire = this.options.onLauncherFire?.({
+      playerId: "P1",
+      x: originX,
+      y: originY,
+      target,
+      utility,
+    }) ?? true;
+    if (!canFire) {
+      return;
+    }
+
+    const projectileGroup = new THREE.Group();
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 14, 10),
+      new THREE.SphereGeometry(utility === "flare" ? 0.18 : 0.14, 14, 10),
       createArdyciaToonMaterial({
-        color: 0xf2b04d,
-        emissive: 0x8c3f10,
-        emissiveIntensity: 1.8,
+        color: utility === "flare" ? 0x8af0ff : 0xf2b04d,
+        emissive: utility === "flare" ? 0x31b4d2 : 0x8c3f10,
+        emissiveIntensity: utility === "flare" ? 2.3 : 1.8,
       }),
     );
+    projectileGroup.add(mesh);
+    if (utility === "flare") {
+      const flareLight = new THREE.PointLight(0x8af0ff, 1.8, 5.8, 1.55);
+      projectileGroup.add(flareLight);
+    }
     const world = fieldToHavenWorld(this.options.map, originPoint, this.getGroundElevationAtPoint(originPoint) + 1.12);
-    mesh.position.set(world.x, world.y, world.z);
+    projectileGroup.position.set(world.x, world.y, world.z);
     mesh.castShadow = true;
-    this.dynamicGroup.add(mesh);
+    this.dynamicGroup.add(projectileGroup);
 
     this.launcherProjectiles.push({
-      mesh,
+      mesh: projectileGroup,
       x: originX,
       y: originY,
       vx: direction.x * LAUNCHER_SPEED_PX_PER_SECOND,
       vy: direction.y * LAUNCHER_SPEED_PX_PER_SECOND,
       ttlMs: (LAUNCHER_RANGE_PX / LAUNCHER_SPEED_PX_PER_SECOND) * 1000,
       target,
+      utility,
       radius: LAUNCHER_HIT_RADIUS_PX,
       damage: LAUNCHER_DAMAGE,
       knockback: LAUNCHER_KNOCKBACK,
@@ -3259,9 +4989,11 @@ export class Haven3DFieldController implements Haven3DModeController {
       const world = fieldToHavenWorld(this.options.map, projectilePoint, this.getGroundElevationAtPoint(projectilePoint) + 1.12);
       projectile.mesh.position.set(world.x, world.y, world.z);
 
-      const hitEnemy = this.options.getEnemies()
-        .filter((enemy) => enemy.hp > 0)
-        .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5);
+      const hitEnemy = projectile.utility === "attack"
+        ? this.options.getEnemies()
+            .filter((enemy) => enemy.hp > 0)
+            .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5)
+        : null;
       if (hitEnemy) {
         const didHit = this.options.onLauncherImpact?.({
           playerId: "P1",
@@ -3275,6 +5007,7 @@ export class Haven3DFieldController implements Haven3DModeController {
           radius: projectile.radius,
           damage: projectile.damage,
           knockback: projectile.knockback,
+          utility: projectile.utility,
         }) ?? false;
         this.spawnHitSpark({ x: projectile.x, y: projectile.y }, didHit ? 0xf2b04d : 0x6f6a5d);
         if (didHit) {
@@ -3285,7 +5018,21 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
 
       if (projectile.ttlMs <= 0) {
-        this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0x6f6a5d);
+        if (projectile.utility === "flare") {
+          this.options.onLauncherImpact?.({
+            playerId: "P1",
+            x: projectile.x,
+            y: projectile.y,
+            target: null,
+            radius: projectile.radius,
+            damage: 0,
+            knockback: 0,
+            utility: "flare",
+          });
+          this.spawnFlareBeacon({ x: projectile.x, y: projectile.y });
+        } else {
+          this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0x6f6a5d);
+        }
         this.removeLauncherProjectile(index);
       }
     }
@@ -3313,17 +5060,24 @@ export class Haven3DFieldController implements Haven3DModeController {
     const lockedActionTarget = lockedTarget && lockedTarget.distance <= GRAPPLE_RANGE_PX
       ? lockedTarget
       : null;
-    const anchor = lockedActionTarget ? null : this.findGrappleAnchor(GRAPPLE_RANGE_PX);
-    const actionTarget = lockedActionTarget ?? (anchor ? null : this.findActionTarget(GRAPPLE_RANGE_PX));
-    if (!avatar || (!anchor && !actionTarget)) {
+    const ziplineTarget = lockedActionTarget ? null : this.findGrappleZiplineTarget(GRAPPLE_RANGE_PX);
+    const anchor = lockedActionTarget || ziplineTarget ? null : this.findGrappleAnchor(GRAPPLE_RANGE_PX);
+    const actionTarget = lockedActionTarget ?? (ziplineTarget || anchor ? null : this.findActionTarget(GRAPPLE_RANGE_PX));
+    if (!avatar || (!ziplineTarget && !anchor && !actionTarget)) {
       this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS * 0.45;
       return;
     }
 
-    const targetPoint = anchor
+    this.ziplineDismountDrift = null;
+
+    const targetPoint = ziplineTarget
+      ? ziplineTarget.attachPoint
+      : anchor
       ? { x: anchor.x, y: anchor.y }
       : { x: actionTarget?.x ?? avatar.x, y: actionTarget?.y ?? avatar.y };
-    const targetRef: Haven3DTargetRef | GrappleAnchorTargetRef = anchor
+    const targetRef: Haven3DTargetRef | GrappleAnchorTargetRef | GrappleZiplineTargetRef = ziplineTarget
+      ? { kind: "zipline-track", id: ziplineTarget.segment.id, key: ziplineTarget.segment.key }
+      : anchor
       ? { kind: "grapple-node", id: anchor.id, key: anchor.key }
       : {
         kind: actionTarget!.kind,
@@ -3331,6 +5085,26 @@ export class Haven3DFieldController implements Haven3DModeController {
         key: actionTarget!.key,
       };
     const direction = this.getActionDirection(avatar, targetPoint);
+    const ziplineRideDistance = ziplineTarget
+      ? Math.hypot(ziplineTarget.endPoint.x - ziplineTarget.attachPoint.x, ziplineTarget.endPoint.y - ziplineTarget.attachPoint.y)
+      : 0;
+    const ziplineAttachDistance = ziplineTarget
+      ? Math.hypot(ziplineTarget.attachPoint.x - avatar.x, ziplineTarget.attachPoint.y - avatar.y)
+      : 0;
+    const ziplineAttachDurationMs = ziplineTarget
+      ? THREE.MathUtils.clamp(
+        (ziplineAttachDistance / Math.max(1, GRAPPLE_PULL_SPEED_PX_PER_SECOND)) * 1000,
+        GRAPPLE_ZIPLINE_MIN_ATTACH_DURATION_MS,
+        GRAPPLE_ZIPLINE_MAX_ATTACH_DURATION_MS,
+      )
+      : 0;
+    const ziplineRideDurationMs = ziplineTarget
+      ? THREE.MathUtils.clamp(
+        (ziplineRideDistance / Math.max(1, GRAPPLE_ZIPLINE_RIDE_SPEED_PX_PER_SECOND)) * 1000,
+        GRAPPLE_ZIPLINE_MIN_RIDE_DURATION_MS,
+        GRAPPLE_ZIPLINE_MAX_RIDE_DURATION_MS,
+      )
+      : 0;
     const lineMaterial = new THREE.LineBasicMaterial({
       color: 0x4fb4a4,
       transparent: true,
@@ -3357,7 +5131,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       startedAt: now,
       target: targetRef,
       targetPoint,
-      targetHeight: anchor?.height ?? this.getGroundElevationAtPoint(targetPoint) + 1.08,
+      targetHeight: ziplineTarget?.attachHeight ?? anchor?.height ?? this.getGroundElevationAtPoint(targetPoint) + 1.08,
       impacted: false,
       line,
       hook,
@@ -3367,6 +5141,24 @@ export class Haven3DFieldController implements Haven3DModeController {
           startY: avatar.y,
           durationMs: GRAPPLE_SWING_DURATION_MS,
           arcHeight: GRAPPLE_SWING_ARC_HEIGHT,
+        }
+        : undefined,
+      zipline: ziplineTarget
+        ? {
+          segmentKey: ziplineTarget.segment.key,
+          startX: avatar.x,
+          startY: avatar.y,
+          startHeight: this.getPlayerVisualWorldElevation("P1", { x: avatar.x, y: avatar.y }),
+          attachX: ziplineTarget.attachPoint.x,
+          attachY: ziplineTarget.attachPoint.y,
+          attachHeight: ziplineTarget.attachHeight,
+          attachT: ziplineTarget.attachT,
+          endX: ziplineTarget.endPoint.x,
+          endY: ziplineTarget.endPoint.y,
+          endHeight: ziplineTarget.endHeight,
+          endT: ziplineTarget.endT,
+          attachDurationMs: ziplineAttachDurationMs,
+          rideDurationMs: ziplineRideDurationMs,
         }
         : undefined,
     };
@@ -3383,6 +5175,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     const avatar = this.options.getPlayerAvatar("P1");
     if (!avatar) {
       this.finishGrappleMove(false);
+      return;
+    }
+
+    if (this.grappleMove.target.kind === "zipline-track") {
+      this.updateGrappleZipline(currentTime, avatar);
       return;
     }
 
@@ -3426,10 +5223,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     const moveY = (dy / Math.max(0.001, distance)) * step;
     let nextX = avatar.x + moveX;
     let nextY = avatar.y + moveY;
-    if (!canAvatarMoveTo(this.options.map, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+    if (!this.canPlayerMoveTo("P1", nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
       nextX = avatar.x;
     }
-    if (!canAvatarMoveTo(this.options.map, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+    if (!this.canPlayerMoveTo("P1", nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
       nextY = avatar.y;
     }
 
@@ -3455,12 +5252,88 @@ export class Haven3DFieldController implements Haven3DModeController {
     const lift = Math.sin(progress * Math.PI) * this.grappleMove.swing.arcHeight;
     const facing = fieldFacingFromDelta(targetX - avatar.x, targetY - avatar.y, avatar.facing);
 
-    this.setPlayerSwingElevation("P1", lift);
     this.options.setPlayerAvatar("P1", nextX, nextY, facing);
+    this.setPlayerSwingElevation("P1", lift);
     this.updateGrappleLine();
 
     if (progress >= 1) {
       this.finishGrappleMove(true);
+    }
+  }
+
+  private updateGrappleZipline(currentTime: number, avatar: FieldAvatarView): void {
+    const move = this.grappleMove;
+    const zipline = move?.zipline;
+    if (!move || !zipline) {
+      this.finishGrappleMove(false);
+      return;
+    }
+
+    const elapsed = Math.max(0, currentTime - move.startedAt);
+    const attachDuration = Math.max(1, zipline.attachDurationMs);
+    const rideDuration = Math.max(1, zipline.rideDurationMs);
+    const rideVector = {
+      x: zipline.endX - zipline.attachX,
+      y: zipline.endY - zipline.attachY,
+    };
+    const rideVerticalVelocity = (zipline.endHeight - zipline.attachHeight) / Math.max(0.001, rideDuration / 1000);
+
+    let nextX = zipline.attachX;
+    let nextY = zipline.attachY;
+    let cableHeight = zipline.attachHeight;
+    let riderWorldHeight = Math.max(0, zipline.attachHeight - GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD);
+    let rideComplete = false;
+
+    if (elapsed < attachDuration) {
+      const attachProgress = smoothstep(THREE.MathUtils.clamp(elapsed / attachDuration, 0, 1));
+      nextX = THREE.MathUtils.lerp(zipline.startX, zipline.attachX, attachProgress);
+      nextY = THREE.MathUtils.lerp(zipline.startY, zipline.attachY, attachProgress);
+      riderWorldHeight = THREE.MathUtils.lerp(
+        zipline.startHeight,
+        Math.max(0, zipline.attachHeight - GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD),
+        attachProgress,
+      );
+      move.targetPoint = { x: zipline.attachX, y: zipline.attachY };
+      move.targetHeight = zipline.attachHeight;
+    } else {
+      const rideProgress = THREE.MathUtils.clamp((elapsed - attachDuration) / rideDuration, 0, 1);
+      const segment = this.grappleZiplineSegments.get(zipline.segmentKey);
+      if (segment) {
+        const t = THREE.MathUtils.lerp(zipline.attachT, zipline.endT, rideProgress);
+        const cablePoint = this.getPointOnZiplineSegment(segment, t);
+        nextX = cablePoint.x;
+        nextY = cablePoint.y;
+        cableHeight = cablePoint.height;
+      } else {
+        nextX = THREE.MathUtils.lerp(zipline.attachX, zipline.endX, rideProgress);
+        nextY = THREE.MathUtils.lerp(zipline.attachY, zipline.endY, rideProgress);
+        cableHeight = THREE.MathUtils.lerp(zipline.attachHeight, zipline.endHeight, rideProgress);
+      }
+      riderWorldHeight = Math.max(0, cableHeight - GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD);
+      move.targetPoint = { x: nextX, y: nextY };
+      move.targetHeight = cableHeight;
+      rideComplete = rideProgress >= 1;
+    }
+
+    this.options.setPlayerAvatar(
+      "P1",
+      nextX,
+      nextY,
+      fieldFacingFromDelta(rideVector.x, rideVector.y, avatar.facing),
+    );
+    const groundElevation = this.getGroundElevationAtPoint({ x: nextX, y: nextY });
+    this.setPlayerSwingElevation("P1", Math.max(0, riderWorldHeight - groundElevation));
+    this.updateGrappleLine();
+
+    if (rideComplete) {
+      this.releasePlayerFromZipline(
+        { x: nextX, y: nextY },
+        riderWorldHeight,
+        rideVector,
+        rideVerticalVelocity,
+        currentTime,
+      );
+      this.finishGrappleMove(true, { preserveAirborne: true });
     }
   }
 
@@ -3474,9 +5347,12 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    const playerElevation = this.getPlayerVerticalState("P1").elevation;
     const avatarPoint = { x: avatar.x, y: avatar.y };
-    const from = fieldToHavenWorld(this.options.map, avatarPoint, this.getGroundElevationAtPoint(avatarPoint) + 1.18 + playerElevation);
+    const playerWorldElevation = this.getPlayerVisualWorldElevation("P1", avatarPoint);
+    const lineStartHeight = this.grappleMove.target.kind === "zipline-track"
+      ? playerWorldElevation + GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD
+      : playerWorldElevation + 1.18;
+    const from = fieldToHavenWorld(this.options.map, avatarPoint, lineStartHeight);
     const to = fieldToHavenWorld(this.options.map, this.grappleMove.targetPoint, this.grappleMove.targetHeight);
     this.grappleMove.line.geometry.setFromPoints([
       new THREE.Vector3(from.x, from.y, from.z),
@@ -3486,12 +5362,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.grappleMove.hook.rotation.z += 0.18;
   }
 
-  private finishGrappleMove(spawnSpark: boolean): void {
+  private finishGrappleMove(spawnSpark: boolean, options: FinishGrappleMoveOptions = {}): void {
     if (!this.grappleMove) {
       return;
     }
 
-    const wasSwing = this.grappleMove.target.kind === "grapple-node";
+    const wasAirborneGrapple = this.grappleMove.target.kind === "grapple-node"
+      || this.grappleMove.target.kind === "zipline-track";
     if (spawnSpark) {
       this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
     }
@@ -3499,7 +5376,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     disposeObject(this.grappleMove.line);
     disposeObject(this.grappleMove.hook);
     this.grappleMove = null;
-    if (wasSwing) {
+    if (wasAirborneGrapple && !options.preserveAirborne) {
       this.landPlayerVertical("P1");
     }
   }
@@ -3597,9 +5474,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     motion.speedPxPerSecond = THREE.MathUtils.lerp(motion.speedPxPerSecond, instantSpeed, smoothing);
     motion.moving = motion.speedPxPerSecond > 10;
     if (motion.moving) {
+      const baseSpeed = Math.max(1, companion.speed || 240);
+      const speedRatio = THREE.MathUtils.clamp(motion.speedPxPerSecond / baseSpeed, 0, 2.2);
+      const sprintBlend = smoothstep((speedRatio - SABLE_SPRINT_SPEED_RATIO_START) / SABLE_SPRINT_SPEED_RATIO_SPAN);
       const stateBoost = companion.state === "attack" ? 1.16 : companion.state === "fetch" ? 1.08 : 1;
-      const cycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 36, 4.8, 14.2);
-      motion.cycle += deltaSeconds * cycleRate * stateBoost;
+      const cycleRate = THREE.MathUtils.clamp(motion.speedPxPerSecond / 36, 4.8, 16.8);
+      motion.cycle += deltaSeconds * cycleRate * stateBoost * (1 + (sprintBlend * 0.28));
     } else {
       motion.cycle += deltaSeconds * (companion.state === "idle" ? 0.18 : 0.42);
     }
@@ -3630,6 +5510,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   ): void {
     if (!chibi) {
       return;
+    }
+    if (chibi.glider) {
+      chibi.glider.visible = false;
     }
 
     const currentTime = this.currentFrameTime || performance.now();
@@ -3671,7 +5554,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       + (dashPulse * 0.035);
     const legOutwardSplay = 0.075 + (0.018 * walkAmount) + (0.03 * runAmount) + (0.026 * dashBurstPose);
 
-    chibi.root.position.y = 0.18 + bob;
+    chibi.root.position.set(0, 0.18 + bob, 0);
     chibi.root.rotation.set(rootForwardLean, 0, 0);
     chibi.torso.rotation.set(forwardLean, torsoTwist, sideSway);
     chibi.pelvis.rotation.set(0.018 + (forwardLean * 0.18), -torsoTwist * 0.42, -sideSway * 0.68);
@@ -3708,24 +5591,24 @@ export class Haven3DFieldController implements Haven3DModeController {
     const rightForwardReach = Math.max(0, rightLegSwing);
 
     chibi.leftUpperArm.rotation.set(
-      THREE.MathUtils.lerp(0.28 + leftWalkArm, 1.18 + (0.08 * runAmount) + (0.46 * dashBurstPose) + (0.035 * armStream), streamPoseBlend),
-      THREE.MathUtils.lerp(0.1, 0.34 + (0.14 * dashBurstPose) + (0.035 * armStream), streamPoseBlend),
-      THREE.MathUtils.lerp(-0.24 - (0.06 * walkAmount), -0.5 - (0.04 * runAmount) - (0.18 * dashBurstPose), streamPoseBlend),
-    );
-    chibi.rightUpperArm.rotation.set(
-      THREE.MathUtils.lerp(0.26 + rightWalkArm, 1.16 + (0.08 * runAmount) + (0.46 * dashBurstPose) - (0.035 * armStream), streamPoseBlend),
+      THREE.MathUtils.lerp(0.26 + leftWalkArm, 1.16 + (0.08 * runAmount) + (0.46 * dashBurstPose) - (0.035 * armStream), streamPoseBlend),
       THREE.MathUtils.lerp(-0.08, -0.34 - (0.14 * dashBurstPose) + (0.035 * armStream), streamPoseBlend),
       THREE.MathUtils.lerp(0.24 + (0.06 * walkAmount), 0.5 + (0.04 * runAmount) + (0.18 * dashBurstPose), streamPoseBlend),
     );
-    chibi.leftForearm.rotation.set(
-      THREE.MathUtils.lerp(-0.48 - (0.16 * walkAmount), 0.16 + (0.16 * dashBurstPose) + (0.045 * armStream), streamPoseBlend),
-      THREE.MathUtils.lerp(0.05, 0.12 + (0.08 * dashBurstPose), streamPoseBlend),
-      THREE.MathUtils.lerp(-0.16 - (0.04 * walkAmount), -0.08, streamPoseBlend),
+    chibi.rightUpperArm.rotation.set(
+      THREE.MathUtils.lerp(0.28 + rightWalkArm, 1.18 + (0.08 * runAmount) + (0.46 * dashBurstPose) + (0.035 * armStream), streamPoseBlend),
+      THREE.MathUtils.lerp(0.1, 0.34 + (0.14 * dashBurstPose) + (0.035 * armStream), streamPoseBlend),
+      THREE.MathUtils.lerp(-0.24 - (0.06 * walkAmount), -0.5 - (0.04 * runAmount) - (0.18 * dashBurstPose), streamPoseBlend),
     );
-    chibi.rightForearm.rotation.set(
+    chibi.leftForearm.rotation.set(
       THREE.MathUtils.lerp(-0.46 - (0.16 * walkAmount), 0.16 + (0.16 * dashBurstPose) - (0.045 * armStream), streamPoseBlend),
       THREE.MathUtils.lerp(-0.05, -0.12 - (0.08 * dashBurstPose), streamPoseBlend),
       THREE.MathUtils.lerp(0.16 + (0.04 * walkAmount), 0.08, streamPoseBlend),
+    );
+    chibi.rightForearm.rotation.set(
+      THREE.MathUtils.lerp(-0.48 - (0.16 * walkAmount), 0.16 + (0.16 * dashBurstPose) + (0.045 * armStream), streamPoseBlend),
+      THREE.MathUtils.lerp(0.05, 0.12 + (0.08 * dashBurstPose), streamPoseBlend),
+      THREE.MathUtils.lerp(-0.16 - (0.04 * walkAmount), -0.08, streamPoseBlend),
     );
 
     const leftThighX = 0.08 + leftWalkLeg + leftRunLeg;
@@ -3784,7 +5667,11 @@ export class Haven3DFieldController implements Haven3DModeController {
       0,
       0.055 * runAmount,
     );
+    chibi.rightShoulderPivot.rotation.set(0, 0, 0);
+    chibi.rightForearm.position.set(0, -0.3, 0.03);
     chibi.rightHandMount.position.set(0, -0.28, 0.04);
+    chibi.rightHandMount.rotation.set(0, 0, 0);
+    chibi.rightHand.position.set(0, 0, 0);
     chibi.rightHand.scale.set(0.9, 0.72, 0.62);
   }
 
@@ -3793,6 +5680,19 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
+    const currentTime = this.currentFrameTime || performance.now();
+    if (vertical.gliding) {
+      this.applyChibiGliderPose(chibi, vertical, currentTime);
+      return;
+    }
+
+    const flipElapsedMs = Math.max(0, currentTime - vertical.jumpStartedAt - PLAYER_JUMP_FRONT_FLIP_DELAY_MS);
+    const flipTime = vertical.velocity > 0
+      ? THREE.MathUtils.clamp(flipElapsedMs / PLAYER_JUMP_FRONT_FLIP_DURATION_MS, 0, 1)
+      : 1;
+    const flipProgress = smoothstep(flipTime);
+    const flipPoseBlend = smoothstep(flipTime / 0.16) * (1 - smoothstep((flipTime - 0.84) / 0.16));
+    const flipTuck = Math.max(Math.sin(flipProgress * Math.PI), flipPoseBlend * 0.92);
     const liftBlend = THREE.MathUtils.clamp(vertical.elevation / 1.4, 0, 1);
     const risingBlend = vertical.velocity > 0
       ? THREE.MathUtils.clamp(vertical.velocity / PLAYER_JUMP_VELOCITY, 0, 1)
@@ -3800,23 +5700,133 @@ export class Haven3DFieldController implements Haven3DModeController {
     const fallingBlend = vertical.velocity < 0
       ? THREE.MathUtils.clamp(Math.abs(vertical.velocity) / PLAYER_JUMP_VELOCITY, 0, 1)
       : 0;
-    const tuck = Math.max(liftBlend, 0.42 + fallingBlend * 0.28);
+    const fallPoseBlend = Math.max(fallingBlend, smoothstep((flipTime - 0.86) / 0.14));
+    const fallArmSpreadBlend = smoothstep(fallPoseBlend / 0.28);
+    const tuck = Math.max(liftBlend * 0.76, 0.42 + fallPoseBlend * 0.28, flipTuck * 1.22);
+    const flipDirection = vertical.jumpFlipDirection ?? 1;
+    const flipSpin = Math.PI * 2 * flipProgress * flipDirection;
+    const pivotY = 0.82;
+    const pivotZ = 0.04;
+    const pivotCos = Math.cos(flipSpin);
+    const pivotSin = Math.sin(flipSpin);
+    const rotatedPivotY = (pivotY * pivotCos) - (pivotZ * pivotSin);
+    const rotatedPivotZ = (pivotY * pivotSin) + (pivotZ * pivotCos);
+    const pivotAmount = smoothstep(flipTime / 0.1);
+    const leftArmTargetX = THREE.MathUtils.lerp(-1.18, 0.02, fallArmSpreadBlend);
+    const rightArmTargetX = THREE.MathUtils.lerp(-1.18, 0.04, fallArmSpreadBlend);
+    const leftForearmTargetX = THREE.MathUtils.lerp(1.48, 0, fallArmSpreadBlend);
+    const rightForearmTargetX = THREE.MathUtils.lerp(1.48, -0.08, fallArmSpreadBlend);
+    const leftArmTargetY = 0.42 * flipPoseBlend * (1 - fallArmSpreadBlend);
+    const rightArmTargetY = -0.42 * flipPoseBlend * (1 - fallArmSpreadBlend);
+    const thighTarget = THREE.MathUtils.lerp(-1.58, 0.1, fallPoseBlend);
+    const rearThighTarget = THREE.MathUtils.lerp(-1.48, -1.02, fallPoseBlend);
+    const shinTarget = THREE.MathUtils.lerp(2.34, 0.08, fallPoseBlend);
+    const rearShinTarget = THREE.MathUtils.lerp(2.18, 1.48, fallPoseBlend);
+    const leftArmFoldZ = THREE.MathUtils.lerp(1.02, 1.76, fallArmSpreadBlend);
+    const rightArmFoldZ = THREE.MathUtils.lerp(-1.02, -1.74, fallArmSpreadBlend);
+    const leftForearmFoldZ = THREE.MathUtils.lerp(0.56, 0.02, fallArmSpreadBlend);
+    const rightForearmFoldZ = THREE.MathUtils.lerp(-0.56, -0.04, fallArmSpreadBlend);
+    const leftKneeFoldZ = THREE.MathUtils.lerp(0.34, 0, fallPoseBlend);
+    const rightKneeFoldZ = THREE.MathUtils.lerp(-0.34, 0.28, fallPoseBlend);
 
-    chibi.root.rotation.x += 0.1 * liftBlend;
-    chibi.torso.rotation.x += 0.12 * liftBlend;
-    chibi.head.rotation.x -= 0.05 * fallingBlend;
-    chibi.leftUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.x, 0.78, 0.32 + risingBlend * 0.18);
-    chibi.rightUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.x, 0.78, 0.32 + risingBlend * 0.18);
-    chibi.leftUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.z, -0.52, 0.34);
-    chibi.rightUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.z, 0.52, 0.34);
-    chibi.leftForearm.rotation.x = THREE.MathUtils.lerp(chibi.leftForearm.rotation.x, -0.72, 0.3);
-    chibi.rightForearm.rotation.x = THREE.MathUtils.lerp(chibi.rightForearm.rotation.x, -0.72, 0.3);
-    chibi.leftThigh.rotation.x = THREE.MathUtils.lerp(chibi.leftThigh.rotation.x, 0.68, tuck);
-    chibi.rightThigh.rotation.x = THREE.MathUtils.lerp(chibi.rightThigh.rotation.x, 0.48, tuck);
-    chibi.leftShin.rotation.x = THREE.MathUtils.lerp(chibi.leftShin.rotation.x, 0.82, tuck);
-    chibi.rightShin.rotation.x = THREE.MathUtils.lerp(chibi.rightShin.rotation.x, 0.72, tuck);
-    chibi.leftFoot.rotation.x = THREE.MathUtils.lerp(chibi.leftFoot.rotation.x, -0.18, tuck);
-    chibi.rightFoot.rotation.x = THREE.MathUtils.lerp(chibi.rightFoot.rotation.x, -0.08, tuck);
+    chibi.root.position.y += ((pivotY - rotatedPivotY) * pivotAmount) - (0.12 * flipPoseBlend);
+    chibi.root.position.z += (pivotZ - rotatedPivotZ) * pivotAmount;
+    chibi.root.rotation.x += flipSpin + (((0.1 * liftBlend) + (0.18 * fallPoseBlend)) * flipDirection);
+    chibi.torso.rotation.x += ((1.02 * flipPoseBlend) + (0.36 * flipTuck) - (0.18 * fallPoseBlend)) * flipDirection;
+    chibi.torso.rotation.y += 0.22 * fallPoseBlend;
+    chibi.torso.rotation.z += -0.16 * fallPoseBlend;
+    chibi.pelvis.rotation.x += ((-0.68 * flipPoseBlend) + (0.16 * fallPoseBlend)) * flipDirection;
+    chibi.pelvis.rotation.y += -0.16 * fallPoseBlend;
+    chibi.head.rotation.x += ((0.5 * flipPoseBlend) + (0.14 * flipTuck) - (0.16 * fallPoseBlend)) * flipDirection;
+    chibi.head.rotation.y += -0.12 * fallPoseBlend;
+    const armPoseAmount = 0.36 + (risingBlend * 0.16) + (fallArmSpreadBlend * 0.24);
+    chibi.leftUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.x, leftArmTargetX, armPoseAmount);
+    chibi.rightUpperArm.rotation.x = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.x, rightArmTargetX, armPoseAmount);
+    chibi.leftUpperArm.rotation.y = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.y, leftArmTargetY, 0.42);
+    chibi.rightUpperArm.rotation.y = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.y, rightArmTargetY, 0.42);
+    chibi.leftUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.z, leftArmFoldZ, 0.46 + (fallArmSpreadBlend * 0.24));
+    chibi.rightUpperArm.rotation.z = THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.z, rightArmFoldZ, 0.46 + (fallArmSpreadBlend * 0.24));
+    chibi.leftForearm.rotation.x = THREE.MathUtils.lerp(chibi.leftForearm.rotation.x, leftForearmTargetX, 0.36 + (fallArmSpreadBlend * 0.2));
+    chibi.rightForearm.rotation.x = THREE.MathUtils.lerp(chibi.rightForearm.rotation.x, rightForearmTargetX, 0.36 + (fallArmSpreadBlend * 0.2));
+    chibi.leftForearm.rotation.z = THREE.MathUtils.lerp(chibi.leftForearm.rotation.z, leftForearmFoldZ, 0.36 + (fallArmSpreadBlend * 0.2));
+    chibi.rightForearm.rotation.z = THREE.MathUtils.lerp(chibi.rightForearm.rotation.z, rightForearmFoldZ, 0.36 + (fallArmSpreadBlend * 0.2));
+    chibi.leftThigh.rotation.x = THREE.MathUtils.lerp(chibi.leftThigh.rotation.x, thighTarget, tuck);
+    chibi.rightThigh.rotation.x = THREE.MathUtils.lerp(chibi.rightThigh.rotation.x, rearThighTarget, tuck);
+    chibi.leftThigh.rotation.z = THREE.MathUtils.lerp(chibi.leftThigh.rotation.z, leftKneeFoldZ, 0.46 * flipPoseBlend);
+    chibi.rightThigh.rotation.z = THREE.MathUtils.lerp(chibi.rightThigh.rotation.z, rightKneeFoldZ, 0.46 * flipPoseBlend);
+    chibi.leftShin.rotation.x = THREE.MathUtils.lerp(chibi.leftShin.rotation.x, shinTarget, tuck);
+    chibi.rightShin.rotation.x = THREE.MathUtils.lerp(chibi.rightShin.rotation.x, rearShinTarget, tuck);
+    chibi.leftFoot.rotation.x = THREE.MathUtils.lerp(chibi.leftFoot.rotation.x, -0.42 + (0.46 * fallPoseBlend), tuck);
+    chibi.rightFoot.rotation.x = THREE.MathUtils.lerp(chibi.rightFoot.rotation.x, -0.36 + (0.1 * fallPoseBlend), tuck);
+  }
+
+  private applyChibiGliderPose(
+    chibi: ChibiRig,
+    vertical: PlayerVerticalState,
+    currentTime: number,
+  ): void {
+    const glideAgeMs = Math.max(0, currentTime - vertical.gliderDeployedAt);
+    const deployBlend = smoothstep(THREE.MathUtils.clamp(glideAgeMs / 180, 0, 1));
+    const flutter = Math.sin(currentTime * 0.011) * deployBlend;
+    const descentBlend = THREE.MathUtils.clamp(Math.abs(Math.min(0, vertical.velocity)) / Math.abs(PLAYER_GLIDER_DESCENT_VELOCITY), 0, 1);
+    const bob = Math.sin(currentTime * 0.0056) * 0.018 * deployBlend;
+
+    chibi.root.position.set(0, 0.18 + bob, 0.015);
+    chibi.root.rotation.set(
+      THREE.MathUtils.lerp(0, -0.08 - (0.035 * descentBlend), deployBlend),
+      0,
+      flutter * 0.026,
+    );
+    chibi.torso.rotation.set(
+      THREE.MathUtils.lerp(0.02, -0.09, deployBlend),
+      flutter * 0.035,
+      flutter * 0.045,
+    );
+    chibi.pelvis.rotation.set(THREE.MathUtils.lerp(0.04, 0.24, deployBlend), -flutter * 0.02, -flutter * 0.035);
+    chibi.head.rotation.set(THREE.MathUtils.lerp(0.02, 0.055, deployBlend), -flutter * 0.03, -flutter * 0.028);
+
+    chibi.leftUpperArm.rotation.set(
+      THREE.MathUtils.lerp(0.26, -1.34, deployBlend),
+      THREE.MathUtils.lerp(-0.08, -0.18, deployBlend),
+      THREE.MathUtils.lerp(0.24, 1.02, deployBlend),
+    );
+    chibi.rightUpperArm.rotation.set(
+      THREE.MathUtils.lerp(0.28, -1.34, deployBlend),
+      THREE.MathUtils.lerp(0.1, 0.18, deployBlend),
+      THREE.MathUtils.lerp(-0.24, -1.02, deployBlend),
+    );
+    chibi.leftForearm.rotation.set(
+      THREE.MathUtils.lerp(-0.46, -0.24, deployBlend),
+      THREE.MathUtils.lerp(-0.05, -0.12, deployBlend),
+      THREE.MathUtils.lerp(0.16, 0.32, deployBlend),
+    );
+    chibi.rightForearm.rotation.set(
+      THREE.MathUtils.lerp(-0.48, -0.24, deployBlend),
+      THREE.MathUtils.lerp(0.05, 0.12, deployBlend),
+      THREE.MathUtils.lerp(-0.16, -0.32, deployBlend),
+    );
+    chibi.leftThigh.rotation.set(THREE.MathUtils.lerp(0.08, -0.58, deployBlend), 0.04, -0.08);
+    chibi.rightThigh.rotation.set(THREE.MathUtils.lerp(0.08, -0.22, deployBlend), -0.04, 0.08);
+    chibi.leftShin.rotation.set(THREE.MathUtils.lerp(0.16, 0.92, deployBlend), 0, -0.04);
+    chibi.rightShin.rotation.set(THREE.MathUtils.lerp(0.16, 0.58, deployBlend), 0, 0.04);
+    chibi.leftFoot.rotation.set(THREE.MathUtils.lerp(0, -0.18, deployBlend), 0, -0.06);
+    chibi.rightFoot.rotation.set(THREE.MathUtils.lerp(0, -0.12, deployBlend), 0, 0.06);
+
+    if (chibi.cape) {
+      chibi.cape.rotation.x = THREE.MathUtils.lerp(chibi.cape.rotation.x, 0.64 + (flutter * 0.08), 0.6 * deployBlend);
+      chibi.cape.position.z = THREE.MathUtils.lerp(chibi.cape.position.z, -0.48, 0.6 * deployBlend);
+    }
+
+    if (chibi.glider) {
+      chibi.glider.visible = true;
+      chibi.glider.position.set(0, 2.06 + (flutter * 0.018), -0.18 - (0.035 * descentBlend));
+      chibi.glider.rotation.set(0.04 + (flutter * 0.018), 0, flutter * 0.035);
+      chibi.glider.scale.set(
+        THREE.MathUtils.lerp(0.68, 1.08, deployBlend),
+        THREE.MathUtils.lerp(0.88, 1.04, deployBlend),
+        1,
+      );
+    }
   }
 
   private applySableMotion(sable: SableRig | undefined, motion: ActorMotionState, companion: Companion): void {
@@ -3831,10 +5841,19 @@ export class Haven3DFieldController implements Haven3DModeController {
       : 0;
     const moveBlend = motion.moving ? smoothstep(speedRatio / 0.24) : 0;
     const runBlend = motion.moving ? smoothstep((speedRatio - 0.78) / 0.62) : 0;
+    const sprintBlend = motion.moving
+      ? smoothstep((speedRatio - SABLE_SPRINT_SPEED_RATIO_START) / SABLE_SPRINT_SPEED_RATIO_SPAN)
+      : 0;
+    const cycle = motion.cycle;
+    const gallopCycle = cycle * (1 + (sprintBlend * 0.18));
+    const frontReach = Math.max(0, Math.sin(gallopCycle + 0.5));
+    const frontPlant = Math.max(0, -Math.sin(gallopCycle + 0.18));
+    const rearGather = Math.max(0, Math.sin(gallopCycle - 0.2));
+    const rearPush = Math.max(0, -Math.sin(gallopCycle - 0.56));
+    const sprintSuspension = Math.max(0, Math.sin((gallopCycle * 2) + 0.45));
     const attackIntent = companion.state === "attack" ? 1 : 0;
     const fetchIntent = companion.state === "fetch" ? 1 : 0;
     const alertBlend = Math.max(attackIntent, fetchIntent * 0.58);
-    const cycle = motion.cycle;
     const stride = Math.sin(cycle);
     const counterStride = Math.sin(cycle + Math.PI);
     const doubleStep = Math.sin((cycle * 2) + 0.2);
@@ -3842,50 +5861,96 @@ export class Haven3DFieldController implements Haven3DModeController {
     const idleBreath = Math.sin(currentTime * 0.003 + cycle * 0.12);
     const wagSpeed = companion.state === "idle" ? 0.006 : companion.state === "attack" ? 0.021 : 0.014;
     const wagAmount = 0.18 + (0.18 * moveBlend) + (0.2 * alertBlend);
-    const lean = 0.025 + (0.06 * moveBlend) + (0.1 * runBlend) + (0.07 * alertBlend);
+    const sprintWave = Math.sin((gallopCycle * 2) + 0.24);
+    const lean = 0.025 + (0.06 * moveBlend) + (0.1 * runBlend) + (0.055 * sprintBlend) + (0.07 * alertBlend);
 
     sable.root.position.y = 0.13
       + (idleBreath * 0.01 * (1 - moveBlend))
       + (stepLift * 0.018 * moveBlend)
-      + (Math.abs(doubleStep) * 0.018 * runBlend);
-    sable.root.rotation.set(lean, 0, doubleStep * 0.018 * moveBlend);
+      + (Math.abs(doubleStep) * 0.018 * runBlend)
+      - (0.032 * sprintBlend)
+      + (sprintSuspension * 0.016 * sprintBlend);
+    sable.root.rotation.set(lean + (sprintWave * 0.01 * sprintBlend), 0, (doubleStep * 0.018 * moveBlend) + (sprintWave * 0.02 * sprintBlend));
+    sable.body.position.set(0, 0.62 - (0.012 * sprintBlend) + (sprintSuspension * 0.006 * sprintBlend), -0.05 - (0.024 * sprintBlend));
+    sable.body.scale.set(0.96 - (0.035 * sprintBlend), 0.64 - (0.026 * sprintBlend), 1.72 + (0.16 * sprintBlend));
     sable.body.rotation.set(
-      0.045 + (0.055 * runBlend) + (0.035 * alertBlend),
-      stride * 0.028 * moveBlend,
-      doubleStep * 0.026 * moveBlend,
+      0.045 + (0.055 * runBlend) + (0.038 * sprintBlend) + (0.035 * alertBlend),
+      (stride * 0.028 * moveBlend) - (sprintWave * 0.018 * sprintBlend),
+      (doubleStep * 0.026 * moveBlend) + (sprintWave * 0.035 * sprintBlend),
     );
+    sable.chest.position.set(0, 0.7 - (0.008 * sprintBlend), 0.48 + (0.032 * sprintBlend));
+    sable.chest.scale.set(0.82 + (0.02 * sprintBlend), 0.82 - (0.026 * sprintBlend), 0.92 + (0.05 * sprintBlend));
     sable.chest.rotation.set(
-      -0.02 + (0.06 * runBlend) + (0.04 * alertBlend),
-      -stride * 0.018 * moveBlend,
-      -doubleStep * 0.018 * moveBlend,
+      -0.02 + (0.06 * runBlend) + (0.055 * sprintBlend) + (0.04 * alertBlend),
+      (-stride * 0.018 * moveBlend) + (sprintWave * 0.022 * sprintBlend),
+      (-doubleStep * 0.018 * moveBlend) - (sprintWave * 0.03 * sprintBlend),
     );
+    sable.head.position.set(0, 0.96 - (0.028 * sprintBlend) + (sprintSuspension * 0.009 * sprintBlend), 0.72 + (0.05 * sprintBlend));
     sable.head.rotation.set(
-      -0.045 - (0.035 * runBlend) + (0.06 * alertBlend) + (idleBreath * 0.018 * (1 - moveBlend)),
-      -stride * 0.045 * moveBlend,
-      -doubleStep * 0.028 * moveBlend,
+      -0.045 - (0.035 * runBlend) - (0.07 * sprintBlend) + (0.06 * alertBlend) + (idleBreath * 0.018 * (1 - moveBlend)),
+      (-stride * 0.045 * moveBlend) + (sprintWave * 0.038 * sprintBlend),
+      (-doubleStep * 0.028 * moveBlend) - (sprintWave * 0.046 * sprintBlend),
     );
-    sable.snout.position.z = 0.27 + (alertBlend * Math.sin(currentTime * 0.018) * 0.012);
+    sable.snout.position.z = 0.27 + (0.035 * sprintBlend) + (alertBlend * Math.sin(currentTime * 0.018) * 0.012);
+    sable.tail.position.set(0, 0.71 - (0.045 * sprintBlend), -0.76 - (0.12 * sprintBlend));
     sable.tail.rotation.set(
-      -0.46 - (0.1 * alertBlend) + (0.07 * runBlend),
-      Math.sin((currentTime * wagSpeed) + cycle * 0.22) * wagAmount,
-      Math.cos((currentTime * wagSpeed) + cycle * 0.18) * 0.08 * (0.4 + moveBlend),
+      -0.46 - (0.1 * alertBlend) + (0.07 * runBlend) - (0.24 * sprintBlend),
+      (Math.sin((currentTime * wagSpeed) + cycle * 0.22) * wagAmount * (1 - (sprintBlend * 0.42))) + (sprintWave * 0.08 * sprintBlend),
+      (Math.cos((currentTime * wagSpeed) + cycle * 0.18) * 0.08 * (0.4 + moveBlend)) - (sprintWave * 0.12 * sprintBlend),
     );
 
-    const strideAmount = ((0.34 * moveBlend) + (0.42 * runBlend)) * (1 + alertBlend * 0.18);
-    const legLift = 0.025 * moveBlend + (0.025 * runBlend);
+    const strideAmount = ((0.34 * moveBlend) + (0.42 * runBlend)) * (1 + alertBlend * 0.18) * (1 - (0.18 * sprintBlend));
+    const legLift = 0.025 * moveBlend + (0.025 * runBlend) + (0.034 * sprintBlend);
     const frontLeftLift = Math.max(0, stride) * legLift;
     const frontRightLift = Math.max(0, counterStride) * legLift;
     const rearLeftLift = Math.max(0, counterStride) * legLift;
     const rearRightLift = Math.max(0, stride) * legLift;
+    const sprintFrontLift = (frontReach * 0.07) + (sprintSuspension * 0.03);
+    const sprintRearGroundPress = (0.036 + (rearPush * 0.064) + (rearGather * 0.018)) * (1 - (sprintSuspension * 0.22));
+    const sprintRearLift = (rearGather * 0.018) + (sprintSuspension * 0.006) - sprintRearGroundPress;
+    const sprintFrontLegX = (-0.82 * frontReach) + (0.74 * frontPlant) - (0.18 * sprintSuspension);
+    const sprintRearLegX = (-0.28 * rearGather) + (0.48 * rearPush) + (0.04 * sprintSuspension);
 
-    sable.frontLeftLeg.position.y = 0.52 + frontLeftLift;
-    sable.frontRightLeg.position.y = 0.52 + frontRightLift;
-    sable.rearLeftLeg.position.y = 0.52 + rearLeftLift;
-    sable.rearRightLeg.position.y = 0.52 + rearRightLift;
-    sable.frontLeftLeg.rotation.set(0.08 + (stride * strideAmount), 0.018 * moveBlend, -0.055);
-    sable.frontRightLeg.rotation.set(0.08 + (counterStride * strideAmount), -0.018 * moveBlend, 0.055);
-    sable.rearLeftLeg.rotation.set(0.02 + (counterStride * strideAmount * 0.92), -0.012 * moveBlend, -0.045);
-    sable.rearRightLeg.rotation.set(0.02 + (stride * strideAmount * 0.92), 0.012 * moveBlend, 0.045);
+    sable.frontLeftLeg.position.set(
+      -0.2 - (0.015 * sprintBlend),
+      0.52 + THREE.MathUtils.lerp(frontLeftLift, sprintFrontLift, sprintBlend),
+      0.43 + (((0.16 * frontReach) - (0.08 * frontPlant)) * sprintBlend),
+    );
+    sable.frontRightLeg.position.set(
+      0.2 + (0.015 * sprintBlend),
+      0.52 + THREE.MathUtils.lerp(frontRightLift, sprintFrontLift * 0.94, sprintBlend),
+      0.43 + (((0.15 * frontReach) - (0.075 * frontPlant)) * sprintBlend),
+    );
+    sable.rearLeftLeg.position.set(
+      -0.21 - (0.018 * sprintBlend),
+      0.52 + THREE.MathUtils.lerp(rearLeftLift, sprintRearLift * 0.94, sprintBlend),
+      -0.5 + (((0.13 * rearGather) - (0.12 * rearPush)) * sprintBlend),
+    );
+    sable.rearRightLeg.position.set(
+      0.21 + (0.018 * sprintBlend),
+      0.52 + THREE.MathUtils.lerp(rearRightLift, sprintRearLift, sprintBlend),
+      -0.5 + (((0.14 * rearGather) - (0.13 * rearPush)) * sprintBlend),
+    );
+    sable.frontLeftLeg.rotation.set(
+      THREE.MathUtils.lerp(0.08 + (stride * strideAmount), sprintFrontLegX - 0.05, sprintBlend),
+      0.018 * moveBlend,
+      -0.055 - (0.035 * sprintBlend),
+    );
+    sable.frontRightLeg.rotation.set(
+      THREE.MathUtils.lerp(0.08 + (counterStride * strideAmount), sprintFrontLegX + 0.03, sprintBlend),
+      -0.018 * moveBlend,
+      0.055 + (0.035 * sprintBlend),
+    );
+    sable.rearLeftLeg.rotation.set(
+      THREE.MathUtils.lerp(0.02 + (counterStride * strideAmount * 0.92), sprintRearLegX + 0.04, sprintBlend),
+      -0.012 * moveBlend,
+      -0.045 - (0.026 * sprintBlend),
+    );
+    sable.rearRightLeg.rotation.set(
+      THREE.MathUtils.lerp(0.02 + (stride * strideAmount * 0.92), sprintRearLegX - 0.04, sprintBlend),
+      0.012 * moveBlend,
+      0.045 + (0.026 * sprintBlend),
+    );
   }
 
   private maybeEmitPlayerFootstep(actor: Actor, playerId: PlayerId): void {
@@ -4170,6 +6235,48 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private spawnFlareBeacon(point: { x: number; y: number }): void {
+    const world = fieldToHavenWorld(this.options.map, point, this.getGroundElevationAtPoint(point) + 0.18);
+    const group = new THREE.Group();
+    group.name = "apron-flare-beacon";
+    group.position.set(world.x, world.y, world.z);
+
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0x8af0ff,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.028, 8, 32), ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(0.19, 16, 10),
+      new THREE.MeshBasicMaterial({
+        color: 0xd8fbff,
+        transparent: true,
+        opacity: 0.86,
+        depthWrite: false,
+      }),
+    );
+    core.position.y = 0.34;
+    const light = new THREE.PointLight(0x8af0ff, 2.9, 10.8, 1.45);
+    light.position.y = 0.62;
+    group.add(ring, core, light);
+    this.dynamicGroup.add(group);
+
+    this.visualEffects.push({
+      object: group,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: 8500,
+      velocity: new THREE.Vector3(0, 0.015, 0),
+      spin: 0.45,
+      baseScale: group.scale.clone(),
+      opacity: 0.72,
+      scaleGrowth: 0.38,
+    });
+  }
+
   private updateVisualEffects(deltaMs: number, currentTime: number): void {
     for (let index = this.visualEffects.length - 1; index >= 0; index -= 1) {
       const effect = this.visualEffects[index];
@@ -4236,10 +6343,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.mouseDy = 0;
 
     const avatar = this.options.getPlayerAvatar("P1");
-    const playerElevation = avatar ? this.getPlayerVerticalState("P1").elevation : 0;
     const playerPoint = avatar ? { x: avatar.x, y: avatar.y } : null;
     const playerWorld = avatar && playerPoint
-      ? fieldToHavenWorld(this.options.map, playerPoint, this.getGroundElevationAtPoint(playerPoint) + 1.15 + playerElevation)
+      ? fieldToHavenWorld(this.options.map, playerPoint, this.getPlayerVisualWorldElevation("P1", playerPoint) + 1.15)
       : { x: 0, y: 1.15, z: 0 };
     const lockedTarget = this.getLockedTargetCandidate();
     const cameraProfile = this.mapProfile.camera;
@@ -4333,6 +6439,76 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.syncEnemyActors();
   }
 
+  private createFieldProjectileActor(projectile: FieldProjectile): THREE.Object3D {
+    const hostile = projectile.hostile === true;
+    const group = new THREE.Group();
+    group.name = `Haven3DFieldProjectile:${projectile.id}`;
+    const coreColor = hostile ? 0xff4e38 : 0xffcc6e;
+    const glowColor = hostile ? 0xff9a42 : 0x66dbc9;
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(hostile ? 0.16 : 0.12, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: coreColor,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      }),
+    );
+    const trail = new THREE.Mesh(
+      new THREE.CylinderGeometry(hostile ? 0.035 : 0.028, hostile ? 0.12 : 0.09, hostile ? 0.86 : 0.58, 8),
+      new THREE.MeshBasicMaterial({
+        color: glowColor,
+        transparent: true,
+        opacity: hostile ? 0.52 : 0.42,
+        depthWrite: false,
+      }),
+    );
+    trail.rotation.x = Math.PI / 2;
+    trail.position.z = -0.36;
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(hostile ? 0.2 : 0.16, 0.018, 8, 18),
+      new THREE.MeshBasicMaterial({
+        color: glowColor,
+        transparent: true,
+        opacity: hostile ? 0.72 : 0.48,
+        depthWrite: false,
+      }),
+    );
+    halo.rotation.x = Math.PI / 2;
+    group.add(trail, core, halo);
+    group.renderOrder = 22;
+    this.dynamicGroup.add(group);
+    return group;
+  }
+
+  private syncFieldProjectiles(): void {
+    const projectiles = this.options.getFieldProjectiles?.() ?? [];
+    const projectileIds = new Set(projectiles.map((projectile) => projectile.id));
+    Array.from(this.fieldProjectileActors.entries()).forEach(([id, object]) => {
+      if (!projectileIds.has(id)) {
+        this.dynamicGroup.remove(object);
+        disposeObject(object);
+        this.fieldProjectileActors.delete(id);
+      }
+    });
+
+    const now = this.currentFrameTime || performance.now();
+    projectiles.forEach((projectile) => {
+      let object = this.fieldProjectileActors.get(projectile.id);
+      if (!object) {
+        object = this.createFieldProjectileActor(projectile);
+        this.fieldProjectileActors.set(projectile.id, object);
+      }
+      const point = { x: projectile.x, y: projectile.y };
+      const world = fieldToHavenWorld(this.options.map, point, this.getGroundElevationAtPoint(point) + 0.88);
+      const pulse = 1 + Math.sin(now * (projectile.hostile ? 0.022 : 0.018)) * (projectile.hostile ? 0.12 : 0.08);
+      const radiusScale = THREE.MathUtils.clamp(Number(projectile.radius ?? 6) / 8, 0.85, 1.65);
+      object.position.set(world.x, world.y, world.z);
+      object.rotation.y = getYawFromFieldDelta(projectile.vx, projectile.vy, object.rotation.y);
+      object.scale.setScalar(radiusScale * pulse);
+    });
+  }
+
   private syncPlayerActor(playerId: PlayerId): void {
     const actor = this.playerActors.get(playerId);
     if (!actor) {
@@ -4348,10 +6524,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const avatarPoint = { x: avatar.x, y: avatar.y };
-    const world = fieldToHavenWorld(this.options.map, avatarPoint, this.getGroundElevationAtPoint(avatarPoint) + 0.04);
+    const verticalWorldElevation = this.getPlayerVisualWorldElevation(playerId, avatarPoint);
+    const world = fieldToHavenWorld(this.options.map, avatarPoint, verticalWorldElevation + 0.04);
     const vertical = this.getPlayerVerticalState(playerId);
     const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
-    actor.group.position.set(world.x, world.y + vertical.elevation, world.z);
+    actor.group.position.set(world.x, world.y, world.z);
     const bladeLookDirection = playerId === "P1" && this.bladeSwing
       ? this.bladeSwing.direction
       : null;
@@ -4365,7 +6542,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       playerId === "P1" ? 1.08 : 1,
       this.getRotationForFacing(avatar.facing),
       lookDirection,
-      getPlayerInput(playerId).special1,
+      getPlayerInput(playerId).special1 && !vertical.gliding,
       !vertical.grounded,
     );
     this.applyChibiJumpPose(actor.chibi, vertical);
@@ -4392,6 +6569,15 @@ export class Haven3DFieldController implements Haven3DModeController {
     const isTargetReady = playerId === "P1" && Boolean(lockedTarget) && activeMode !== null;
     const transform = playerId === "P1" ? this.readGearbladeTransform() : null;
     this.updatePlayerWeaponForm(actor, activeMode, transform);
+    if (playerId === "P1" && activeMode === "grapple" && this.grappleMove?.target.kind === "zipline-track") {
+      actor.blade.visible = true;
+      this.applyZiplineRidePose(actor);
+      this.mountBladeOnSwingHand(actor);
+      this.updateZiplineGrappleGripPose(actor);
+      this.hideBladeTrail(actor);
+      return;
+    }
+
     if (activeMode && transform && !this.bladeSwing) {
       actor.blade.visible = true;
       this.applyGearbladeTransformBodyPose(actor, transform);
@@ -4431,8 +6617,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       actor.blade.visible = true;
       if (isTargetReady && activeMode) {
         this.applyTargetReadyBodyPose(actor, activeMode);
-        this.mountBladeOnSwingHand(actor);
-        this.updateTargetReadyWeaponPose(actor, activeMode);
+        this.mountBladeOnChibiRoot(actor);
+        this.updateBladeTargetReadyPose(actor);
         this.hideBladeTrail(actor);
         return;
       }
@@ -4449,19 +6635,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     const windup = smoothstep(elapsed / BLADE_SWING_WINDUP_MS);
     const strike = smoothstep((elapsed - BLADE_SWING_WINDUP_MS) / (BLADE_LUNGE_END_MS - BLADE_SWING_WINDUP_MS));
     const recovery = smoothstep((elapsed - BLADE_LUNGE_END_MS) / (BLADE_SWING_TOTAL_MS - BLADE_LUNGE_END_MS));
-    const side = swing.side;
     this.applyBladeSwingArmPose(actor, swing, elapsed, windup, strike, recovery);
-    this.mountBladeOnSwingHand(actor);
-    this.updateHeldBladeSwingPose(actor, side, elapsed, windup, strike, recovery);
-
-    if (actor.bladeTrail) {
-      const active = elapsed >= BLADE_SWING_WINDUP_MS && elapsed <= BLADE_LUNGE_END_MS + 70;
-      actor.bladeTrail.visible = active;
-      const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
-      if (material instanceof THREE.MeshBasicMaterial) {
-        material.opacity = active ? 0.32 + (0.44 * (1 - recovery)) : 0;
-      }
-    }
+    this.mountBladeOnChibiRoot(actor);
+    this.updateBladeSwingWeaponPose(actor, swing, elapsed);
+    this.hideBladeTrail(actor);
   }
 
   private hideBladeTrail(actor: Actor): void {
@@ -4470,10 +6647,119 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     actor.bladeTrail.visible = false;
+    actor.bladeTrail.scale.set(1, 1, 1);
     const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
     if (material instanceof THREE.MeshBasicMaterial) {
       material.opacity = 0;
     }
+  }
+
+  private applyZiplineRidePose(actor: Actor): void {
+    const chibi = actor.chibi;
+    if (!chibi) {
+      return;
+    }
+
+    const frameTime = this.currentFrameTime || performance.now();
+    const bob = Math.sin(frameTime * 0.0064) * 0.012;
+    const sway = Math.sin(frameTime * 0.0048) * 0.035;
+    const handedSide = PLAYER_RIGHT_HAND_LOCAL_X;
+    const rootHangY = bob;
+
+    chibi.root.position.set(0, rootHangY, 0.02);
+    chibi.root.rotation.set(0.08, 0, sway * 0.32);
+    chibi.torso.rotation.set(-0.08, sway * 0.58, -0.05 * handedSide + sway * 0.48);
+    chibi.pelvis.rotation.set(0.2, -sway * 0.26, 0.04 * handedSide);
+    chibi.head.rotation.set(0.06, -sway * 0.34, -sway * 0.22);
+
+    chibi.leftUpperArm.rotation.set(0.54 + sway * 0.18, -0.18, 0.5);
+    chibi.leftForearm.rotation.set(-0.34, -0.08, 0.18);
+
+    chibi.leftThigh.rotation.set(-0.34, 0.1, -0.24);
+    chibi.rightThigh.rotation.set(-0.28, -0.08, 0.18);
+    chibi.leftShin.rotation.set(0.74, 0.04, -0.08);
+    chibi.rightShin.rotation.set(0.62, -0.04, 0.08);
+    chibi.leftFoot.rotation.set(-0.22, 0.03, -0.1);
+    chibi.rightFoot.rotation.set(-0.18, -0.03, 0.08);
+
+    const shoulder = chibi.rightShoulderPivot.position;
+    const wristPoint = new THREE.Vector3(
+      0.14 * handedSide,
+      GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD - rootHangY,
+      0.015,
+    );
+    const shoulderToWrist = wristPoint.clone().sub(shoulder);
+    const wristDistance = Math.max(0.001, shoulderToWrist.length());
+    const wristDirection = shoulderToWrist.clone().normalize();
+    const upperArmLength = 0.43;
+    const lowerArmLength = THREE.MathUtils.clamp(
+      0.49,
+      Math.max(0.3, wristDistance - upperArmLength + 0.012),
+      upperArmLength + wristDistance - 0.012,
+    );
+    const reachDistance = THREE.MathUtils.clamp(
+      wristDistance,
+      Math.abs(upperArmLength - lowerArmLength) + 0.001,
+      upperArmLength + lowerArmLength - 0.001,
+    );
+    const elbowAlongReach = (
+      (upperArmLength * upperArmLength) - (lowerArmLength * lowerArmLength) + (reachDistance * reachDistance)
+    ) / (2 * reachDistance);
+    const elbowBend = Math.sqrt(Math.max(0, (upperArmLength * upperArmLength) - (elbowAlongReach * elbowAlongReach)));
+    const elbowBias = new THREE.Vector3(0.26 * handedSide, -0.08, -0.34 + sway * 0.18);
+    const elbowBendDirection = elbowBias
+      .addScaledVector(wristDirection, -elbowBias.dot(wristDirection))
+      .normalize();
+    if (elbowBendDirection.lengthSq() < 0.001) {
+      elbowBendDirection.set(0.18 * handedSide, 0, -1).normalize();
+    }
+
+    const elbow = shoulder.clone()
+      .addScaledVector(wristDirection, elbowAlongReach)
+      .addScaledVector(elbowBendDirection, elbowBend);
+    const upperDirection = elbow.clone().sub(shoulder).normalize();
+    const lowerDirection = wristPoint.clone().sub(elbow).normalize();
+    const localDown = new THREE.Vector3(0, -1, 0);
+    const shoulderRotation = new THREE.Quaternion().setFromUnitVectors(localDown, upperDirection);
+    const localLowerDirection = lowerDirection.clone().applyQuaternion(shoulderRotation.clone().invert()).normalize();
+
+    chibi.rightShoulderPivot.quaternion.copy(shoulderRotation);
+    chibi.rightUpperArm.rotation.set(0, 0, 0);
+    chibi.rightForearm.position.set(0, -upperArmLength, 0);
+    chibi.rightForearm.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(localDown, localLowerDirection));
+    chibi.rightHandMount.position.set(0, -lowerArmLength, 0);
+
+    const gripForward = new THREE.Vector3(0, 1, 0);
+    const palmUp = lowerDirection.clone().multiplyScalar(-1);
+    palmUp.addScaledVector(gripForward, -palmUp.dot(gripForward)).normalize();
+    if (palmUp.lengthSq() < 0.001) {
+      palmUp.set(0, 0, 1);
+    }
+    const palmRight = new THREE.Vector3().crossVectors(palmUp, gripForward).normalize();
+    const correctedPalmUp = new THREE.Vector3().crossVectors(gripForward, palmRight).normalize();
+    const desiredHandRotation = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(palmRight, correctedPalmUp, gripForward),
+    );
+    const handParentRotation = shoulderRotation.clone().multiply(chibi.rightForearm.quaternion);
+    chibi.rightHandMount.quaternion.copy(handParentRotation.invert().multiply(desiredHandRotation));
+    chibi.rightHandMount.rotateX(-0.1);
+    chibi.rightHandMount.rotateZ(-0.08 * handedSide);
+    chibi.rightHand.position.set(0, -0.002, 0.048);
+    chibi.rightHand.scale.set(0.9, 0.72, 0.62);
+  }
+
+  private updateZiplineGrappleGripPose(actor: Actor): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    const rotation = new THREE.Euler(-Math.PI / 2, 0.02 * PLAYER_RIGHT_HAND_LOCAL_X, 0.04 * PLAYER_RIGHT_HAND_LOCAL_X);
+    const scale = new THREE.Vector3(0.58, 0.58, 0.36);
+    const gripToBladeRoot = new THREE.Vector3(0, 0, -BLADE_GRIP_CENTER_LOCAL_Z * scale.z).applyEuler(rotation);
+    actor.blade.visible = true;
+    actor.blade.position.copy(gripToBladeRoot);
+    actor.blade.rotation.copy(rotation);
+    actor.blade.scale.copy(scale);
   }
 
   private applyTargetReadyBodyPose(actor: Actor, activeMode: Haven3DGearbladeMode): void {
@@ -4492,30 +6778,32 @@ export class Haven3DFieldController implements Haven3DModeController {
     chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.04, 0.5);
     chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, 0.06, 0.5);
     chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.04, 0.5);
+    chibi.rightShoulderPivot.rotation.set(0, 0, 0);
 
     chibi.rightUpperArm.rotation.set(
       isBlade ? 0.32 : 0.24,
-      isBlade ? -0.12 : -0.1,
-      isBlade ? 0.44 : 0.34,
+      isBlade ? 0.12 : 0.1,
+      isBlade ? -0.44 : -0.34,
     );
     chibi.rightForearm.rotation.set(
       isBlade ? -0.64 : -0.56,
       isBlade ? 0.06 : 0.02,
-      isBlade ? 0.18 : 0.16,
+      isBlade ? -0.18 : -0.16,
     );
 
     chibi.leftUpperArm.rotation.set(
       0.3,
-      0.1,
-      -0.24,
+      -0.1,
+      0.24,
     );
     chibi.leftForearm.rotation.set(
       -0.5,
-      0.05,
-      -0.16,
+      -0.05,
+      0.16,
     );
 
     chibi.rightHandMount.position.set(0, -0.3, isBlade ? 0.07 : 0.08);
+    chibi.rightHandMount.rotation.set(0.02, -0.06, 0.04);
     chibi.rightHand.scale.set(0.98, 0.74, 0.64);
   }
 
@@ -4532,19 +6820,129 @@ export class Haven3DFieldController implements Haven3DModeController {
     const frameTime = this.currentFrameTime || performance.now();
     const idleLift = Math.sin(frameTime * 0.006) * 0.012;
     if (activeMode === "blade") {
-      actor.blade.position.set(0.02, -0.03 + idleLift, 0.16);
-      actor.blade.rotation.set(0.25, 0.4, -0.2);
+      this.applySwordGripPose(actor);
+      actor.blade.position.y += idleLift;
       return;
     }
 
     if (activeMode === "launcher") {
-      actor.blade.position.set(0.03, -0.02 + idleLift, 0.1 - recoil * 0.08);
-      actor.blade.rotation.set(0.16 - recoil * 0.08, 0.18, -0.12);
+      this.applySwordGripPose(actor, 0.96);
+      actor.blade.position.y += idleLift;
+      actor.blade.position.z -= recoil * 0.05;
+      actor.blade.rotation.x -= recoil * 0.05;
       return;
     }
 
-    actor.blade.position.set(0.03, -0.02 + idleLift, 0.1);
-    actor.blade.rotation.set(0.12 + grapplePulse, 0.22, -0.1);
+    this.applySwordGripPose(actor, 0.98);
+    actor.blade.position.y += idleLift;
+    actor.blade.rotation.x += grapplePulse;
+  }
+
+  private updateBladeTargetReadyPose(actor: Actor): void {
+    if (!actor.blade || !actor.chibi) {
+      return;
+    }
+
+    const frameTime = this.currentFrameTime || performance.now();
+    const idleLift = Math.sin(frameTime * 0.0048) * 0.012;
+    const idleRoll = Math.sin(frameTime * 0.0038) * 0.018;
+    const hiltPoint = new THREE.Vector3(
+      BLADE_TARGET_READY_HILT_X,
+      BLADE_TARGET_READY_HILT_Y + idleLift,
+      BLADE_TARGET_READY_HILT_Z,
+    );
+    const bladeRotation = new THREE.Euler(
+      BLADE_TARGET_READY_PITCH,
+      BLADE_TARGET_READY_YAW,
+      BLADE_TARGET_READY_ROLL + idleRoll,
+    );
+    const gripToBladeRoot = new THREE.Vector3(0, 0, -BLADE_GRIP_CENTER_LOCAL_Z).applyEuler(bladeRotation);
+
+    actor.blade.position.copy(hiltPoint).add(gripToBladeRoot);
+    actor.blade.rotation.copy(bladeRotation);
+    actor.blade.scale.setScalar(1);
+    this.applyBladeTargetReadyArmPose(actor, hiltPoint, bladeRotation);
+  }
+
+  private applyBladeTargetReadyArmPose(
+    actor: Actor,
+    hiltPoint: THREE.Vector3,
+    bladeRotation: THREE.Euler,
+  ): void {
+    const chibi = actor.chibi;
+    if (!chibi) {
+      return;
+    }
+
+    const shoulder = chibi.rightShoulderPivot.position;
+    const bladeForward = new THREE.Vector3(0, 0, 1).applyEuler(bladeRotation).normalize();
+    const bladeRight = new THREE.Vector3(1, 0, 0).applyEuler(bladeRotation).normalize();
+    const wristPoint = hiltPoint.clone()
+      .addScaledVector(bladeForward, -0.072)
+      .addScaledVector(bladeRight, 0.016 * PLAYER_RIGHT_HAND_LOCAL_X);
+    wristPoint.y -= 0.012;
+
+    const shoulderToWrist = wristPoint.clone().sub(shoulder);
+    const hiltDistance = Math.max(0.001, shoulderToWrist.length());
+    const hiltDirection = shoulderToWrist.clone().normalize();
+    const upperArmLength = 0.31;
+    const lowerArmLength = THREE.MathUtils.clamp(
+      0.295,
+      Math.max(0.23, hiltDistance - upperArmLength + 0.012),
+      upperArmLength + hiltDistance - 0.012,
+    );
+    const reachDistance = THREE.MathUtils.clamp(
+      hiltDistance,
+      Math.abs(upperArmLength - lowerArmLength) + 0.001,
+      upperArmLength + lowerArmLength - 0.001,
+    );
+    const elbowAlongReach = (
+      (upperArmLength * upperArmLength) - (lowerArmLength * lowerArmLength) + (reachDistance * reachDistance)
+    ) / (2 * reachDistance);
+    const elbowBend = Math.sqrt(Math.max(0, (upperArmLength * upperArmLength) - (elbowAlongReach * elbowAlongReach)));
+    const elbowBias = new THREE.Vector3(
+      0.24 * PLAYER_RIGHT_HAND_LOCAL_X,
+      -0.78,
+      -0.34,
+    );
+    const elbowBendDirection = elbowBias
+      .addScaledVector(hiltDirection, -elbowBias.dot(hiltDirection))
+      .normalize();
+    if (elbowBendDirection.lengthSq() < 0.001) {
+      elbowBendDirection.set(0, -1, 0);
+    }
+
+    const elbow = shoulder.clone()
+      .addScaledVector(hiltDirection, elbowAlongReach)
+      .addScaledVector(elbowBendDirection, elbowBend);
+    const upperDirection = elbow.clone().sub(shoulder).normalize();
+    const lowerDirection = wristPoint.clone().sub(elbow).normalize();
+    const localDown = new THREE.Vector3(0, -1, 0);
+    const shoulderRotation = new THREE.Quaternion().setFromUnitVectors(localDown, upperDirection);
+    const localLowerDirection = lowerDirection.clone().applyQuaternion(shoulderRotation.clone().invert()).normalize();
+
+    chibi.rightShoulderPivot.quaternion.copy(shoulderRotation);
+    chibi.rightUpperArm.rotation.set(0, 0, 0);
+    chibi.rightForearm.position.set(0, -upperArmLength, 0);
+    chibi.rightForearm.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(localDown, localLowerDirection));
+    chibi.rightHandMount.position.set(0, -lowerArmLength, 0);
+
+    const palmForward = bladeForward.clone();
+    const palmUp = lowerDirection.clone().multiplyScalar(-1);
+    palmUp.addScaledVector(palmForward, -palmUp.dot(palmForward)).normalize();
+    if (palmUp.lengthSq() < 0.001) {
+      palmUp.set(0, 1, 0);
+    }
+    const palmRight = new THREE.Vector3().crossVectors(palmUp, palmForward).normalize();
+    const correctedPalmUp = new THREE.Vector3().crossVectors(palmForward, palmRight).normalize();
+    const desiredHandRotation = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(palmRight, correctedPalmUp, palmForward),
+    );
+    const handParentRotation = shoulderRotation.clone().multiply(chibi.rightForearm.quaternion);
+    chibi.rightHandMount.quaternion.copy(handParentRotation.invert().multiply(desiredHandRotation));
+    chibi.rightHandMount.rotateZ(-0.06 * PLAYER_RIGHT_HAND_LOCAL_X);
+    chibi.rightHand.position.set(0, -0.004, 0.058);
+    chibi.rightHand.scale.set(0.92, 0.72, 0.62);
   }
 
   private applyGearbladeTransformBodyPose(actor: Actor, transform: GearbladeTransformSnapshot): void {
@@ -4563,26 +6961,27 @@ export class Haven3DFieldController implements Haven3DModeController {
     chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.02 + (0.04 * pulse), 0.42);
     chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, 0.08 * side, 0.34);
     chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.08, 0.46);
+    chibi.rightShoulderPivot.rotation.set(0, 0, 0);
 
     chibi.rightUpperArm.rotation.set(
       THREE.MathUtils.lerp(-0.22, 0.34, settle) - (0.32 * pulse),
-      THREE.MathUtils.lerp(-0.28, -0.1, settle) - (0.1 * pulse),
-      THREE.MathUtils.lerp(0.76, 0.38, settle) + (0.24 * side * pulse),
+      THREE.MathUtils.lerp(0.28, 0.1, settle) + (0.1 * pulse),
+      THREE.MathUtils.lerp(-0.76, -0.38, settle) - (0.24 * side * pulse),
     );
     chibi.rightForearm.rotation.set(
       THREE.MathUtils.lerp(-0.78, -0.5, settle) - (0.16 * pulse),
       THREE.MathUtils.lerp(0.22, 0.04, settle),
-      THREE.MathUtils.lerp(0.42, 0.16, settle) + (0.16 * side * pulse),
+      THREE.MathUtils.lerp(-0.42, -0.16, settle) - (0.16 * side * pulse),
     );
     chibi.leftUpperArm.rotation.set(
       THREE.MathUtils.lerp(-0.18, 0.22, settle) - (0.12 * pulse),
-      0.18 * side,
-      THREE.MathUtils.lerp(-0.82 * side, -0.28, settle),
+      -0.18 * side,
+      THREE.MathUtils.lerp(0.82 * side, 0.28, settle),
     );
     chibi.leftForearm.rotation.set(
       THREE.MathUtils.lerp(-0.72, -0.46, settle),
-      -0.18 * side,
-      THREE.MathUtils.lerp(-0.44 * side, -0.12, settle),
+      0.18 * side,
+      THREE.MathUtils.lerp(0.44 * side, 0.12, settle),
     );
     chibi.rightHandMount.position.set(0, -0.29 + (0.035 * pulse), 0.08 + (0.08 * pulse));
   }
@@ -4594,14 +6993,14 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     const shudder = Math.sin(transform.t * Math.PI * 4);
     actor.blade.position.set(
-      0.03 + (0.018 * shudder * transform.pulse),
-      -0.03 + (0.055 * transform.pulse),
-      0.17 + (0.11 * transform.pulse),
+      0.018 * shudder * transform.pulse,
+      -0.02 + (0.04 * transform.pulse),
+      0.015 + (0.04 * transform.pulse),
     );
     actor.blade.rotation.set(
-      THREE.MathUtils.lerp(0.24, 0.12, transform.eased) - (0.26 * transform.pulse),
-      THREE.MathUtils.lerp(0.48, 0.22, transform.eased) + (0.18 * transform.pulse),
-      THREE.MathUtils.lerp(-0.26, -0.1, transform.eased) + (0.26 * shudder * transform.pulse),
+      0.02 - (0.12 * transform.pulse),
+      0.08 * transform.eased,
+      -0.04 + (0.18 * shudder * transform.pulse),
     );
   }
 
@@ -4621,53 +7020,70 @@ export class Haven3DFieldController implements Haven3DModeController {
     actor.chibi.rightHandMount.attach(actor.blade);
   }
 
+  private applySwordGripPose(actor: Actor, scale = 1): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    actor.blade.position.set(0, -0.02, 0);
+    actor.blade.rotation.set(-Math.PI / 2, 0, 0);
+    actor.blade.scale.setScalar(scale);
+  }
+
   private updateHeldBladeSwingPose(
     actor: Actor,
-    side: 1 | -1,
-    elapsed: number,
-    windup: number,
-    strike: number,
-    recovery: number,
   ): void {
     if (!actor.blade) {
       return;
     }
 
-    const impactBias = elapsed >= BLADE_SWING_WINDUP_MS && elapsed < BLADE_LUNGE_END_MS
-      ? Math.sin(strike * Math.PI)
-      : 0;
-    const heavyArc = Math.sin(THREE.MathUtils.clamp(elapsed / BLADE_SWING_TOTAL_MS, 0, 1) * Math.PI);
-    const shudder = Math.sin(elapsed * 0.055) * impactBias * 0.045;
+    this.applySwordGripPose(actor);
+  }
+
+  private updateBladeSwingWeaponPose(
+    actor: Actor,
+    swing: BladeSwingState,
+    elapsed: number,
+  ): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    const pose = this.getBladeSwingWeaponPoseValues(swing, elapsed);
+    const bladeRotation = new THREE.Euler(pose.bladePitch, pose.bladeYaw, pose.bladeRoll);
+    const gripToBladeRoot = new THREE.Vector3(0, 0, -BLADE_GRIP_CENTER_LOCAL_Z).applyEuler(bladeRotation);
     actor.blade.position.set(
-      (0.03 * side) + shudder,
-      -0.04 + 0.035 * impactBias,
-      0.2 + 0.12 * impactBias + 0.04 * heavyArc,
+      pose.hiltX + gripToBladeRoot.x,
+      pose.hiltY + gripToBladeRoot.y,
+      pose.hiltZ + gripToBladeRoot.z,
     );
+    actor.blade.rotation.copy(bladeRotation);
+    actor.blade.scale.setScalar(1);
+  }
 
-    if (elapsed < BLADE_SWING_WINDUP_MS) {
-      actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.12, -0.68, windup),
-        THREE.MathUtils.lerp(0.28 * side, 1.16 * side, windup),
-        THREE.MathUtils.lerp(-0.28 * side, 0.52 * side, windup),
-      );
-      return;
-    }
+  private getBladeSwingWeaponPoseValues(
+    swing: BladeSwingState,
+    elapsed: number,
+  ): BladeSwingWeaponPose {
+    const side = swing.side;
+    const swingProgress = this.getBladeSwingArcProgress(elapsed);
+    const slashPulse = Math.sin(swingProgress * Math.PI);
+    const recoveryProgress = smoothstep((elapsed - BLADE_LUNGE_END_MS) / (BLADE_SWING_TOTAL_MS - BLADE_LUNGE_END_MS));
+    const handedSide = side * PLAYER_RIGHT_HAND_LOCAL_X;
+    const hiltStartX = side === 1 ? 0.58 * PLAYER_RIGHT_HAND_LOCAL_X : -0.22 * PLAYER_RIGHT_HAND_LOCAL_X;
+    const hiltEndX = side === 1 ? -0.22 * PLAYER_RIGHT_HAND_LOCAL_X : 0.58 * PLAYER_RIGHT_HAND_LOCAL_X;
+    const wristFollow = (0.08 * handedSide * slashPulse) - (0.05 * handedSide * recoveryProgress);
 
-    if (elapsed < BLADE_LUNGE_END_MS) {
-      const snap = 1 - ((1 - strike) ** 1.72);
-      actor.blade.rotation.set(
-        THREE.MathUtils.lerp(-0.68, 0.34, snap),
-        THREE.MathUtils.lerp(1.16 * side, -1.18 * side, snap),
-        THREE.MathUtils.lerp(0.52 * side, -0.82 * side, snap),
-      );
-      return;
-    }
-
-    actor.blade.rotation.set(
-      THREE.MathUtils.lerp(0.34, -0.12, recovery),
-      THREE.MathUtils.lerp(-1.18 * side, 0.28 * side, recovery),
-      THREE.MathUtils.lerp(-0.82 * side, -0.18 * side, recovery),
-    );
+    return {
+      hiltX: THREE.MathUtils.lerp(hiltStartX, hiltEndX, swingProgress) - (0.025 * handedSide * slashPulse),
+      hiltY: 1.01 + (0.045 * slashPulse) - (0.012 * recoveryProgress),
+      hiltZ: 0.38 + (0.13 * slashPulse) - (0.045 * recoveryProgress),
+      bladePitch: 0.012 + (0.018 * slashPulse) - (0.012 * recoveryProgress),
+      bladeYaw: THREE.MathUtils.lerp(1.02 * handedSide, -0.94 * handedSide, swingProgress) + wristFollow,
+      bladeRoll: THREE.MathUtils.lerp(-0.08 * handedSide, 0.07 * handedSide, swingProgress) - (0.035 * handedSide * recoveryProgress),
+      swingProgress,
+      slashPulse,
+    };
   }
 
   private applyBladeSwingArmPose(
@@ -4684,20 +7100,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const side = swing.side;
-    const impactBias = elapsed >= BLADE_SWING_WINDUP_MS && elapsed < BLADE_LUNGE_END_MS
-      ? Math.sin(strike * Math.PI)
-      : 0;
-    const armStrike = 1 - ((1 - strike) ** 1.45);
-    const plant = elapsed < BLADE_SWING_WINDUP_MS
-      ? windup
-      : elapsed < BLADE_LUNGE_END_MS
-        ? 1
-        : 1 - recovery;
-    const counter = elapsed < BLADE_SWING_WINDUP_MS
-      ? windup
-      : elapsed < BLADE_LUNGE_END_MS
-        ? armStrike
-        : 1 - recovery;
+    const handedSide = side * PLAYER_RIGHT_HAND_LOCAL_X;
+    const weaponPose = this.getBladeSwingWeaponPoseValues(swing, elapsed);
+    const swingProgress = weaponPose.swingProgress;
+    const slashPulse = weaponPose.slashPulse;
+    const bodyTwist = THREE.MathUtils.lerp(-0.24 * handedSide, 0.28 * handedSide, swingProgress);
+    const recoveryEase = THREE.MathUtils.clamp(recovery, 0, 1);
+    const strikePulse = Math.sin(THREE.MathUtils.clamp(strike, 0, 1) * Math.PI);
     const blendRotation = (node: THREE.Object3D, x: number, y: number, z: number, amount: number): void => {
       node.rotation.set(
         THREE.MathUtils.lerp(node.rotation.x, x, amount),
@@ -4706,76 +7115,109 @@ export class Haven3DFieldController implements Haven3DModeController {
       );
     };
 
-    if (elapsed < BLADE_SWING_WINDUP_MS) {
-      chibi.rightUpperArm.rotation.set(
-        THREE.MathUtils.lerp(0.26, -1.82, windup),
-        THREE.MathUtils.lerp(-0.08, -0.72 * side, windup),
-        THREE.MathUtils.lerp(0.24, 1.48 * side, windup),
-      );
-      chibi.rightForearm.rotation.set(
-        THREE.MathUtils.lerp(-0.46, -1.2, windup),
-        THREE.MathUtils.lerp(-0.05, 0.58 * side, windup),
-        THREE.MathUtils.lerp(0.16, 1.18 * side, windup),
-      );
-      chibi.torso.rotation.y = THREE.MathUtils.lerp(0, -0.54 * side, windup);
-      chibi.torso.rotation.z += -0.08 * side * windup;
-      chibi.head.rotation.y = THREE.MathUtils.lerp(0, 0.24 * side, windup);
-      blendRotation(chibi.leftUpperArm, -0.46, 0.34 * side, -1.08 * side, counter);
-      blendRotation(chibi.leftForearm, -0.9, 0.26 * side, -0.72 * side, counter);
-    } else if (elapsed < BLADE_LUNGE_END_MS) {
-      chibi.rightUpperArm.rotation.set(
-        THREE.MathUtils.lerp(-1.82, 1.38, armStrike),
-        THREE.MathUtils.lerp(-0.72 * side, 1.12 * side, armStrike),
-        THREE.MathUtils.lerp(1.48 * side, -1.86 * side, armStrike),
-      );
-      chibi.rightForearm.rotation.set(
-        THREE.MathUtils.lerp(-1.2, 0.28, armStrike),
-        THREE.MathUtils.lerp(0.58 * side, -0.96 * side, armStrike),
-        THREE.MathUtils.lerp(1.18 * side, -1.28 * side, armStrike),
-      );
-      chibi.torso.rotation.y = THREE.MathUtils.lerp(-0.54 * side, 0.78 * side, armStrike);
-      chibi.torso.rotation.z += 0.34 * side * impactBias;
-      chibi.head.rotation.y = THREE.MathUtils.lerp(0.24 * side, -0.34 * side, armStrike);
-      blendRotation(chibi.leftUpperArm, 0.88, -0.78 * side, 1.34 * side, counter);
-      blendRotation(chibi.leftForearm, -0.62, 0.56 * side, 0.92 * side, counter);
-    } else {
-      chibi.rightUpperArm.rotation.set(
-        THREE.MathUtils.lerp(1.38, 0.26, recovery),
-        THREE.MathUtils.lerp(1.12 * side, -0.08, recovery),
-        THREE.MathUtils.lerp(-1.86 * side, 0.24, recovery),
-      );
-      chibi.rightForearm.rotation.set(
-        THREE.MathUtils.lerp(0.28, -0.46, recovery),
-        THREE.MathUtils.lerp(-0.96 * side, -0.05, recovery),
-        THREE.MathUtils.lerp(-1.28 * side, 0.16, recovery),
-      );
-      chibi.torso.rotation.y = THREE.MathUtils.lerp(0.78 * side, 0, recovery);
-      chibi.head.rotation.y = THREE.MathUtils.lerp(-0.34 * side, 0, recovery);
-      chibi.leftUpperArm.rotation.set(
-        THREE.MathUtils.lerp(0.88, 0.28, recovery),
-        THREE.MathUtils.lerp(-0.78 * side, 0.1, recovery),
-        THREE.MathUtils.lerp(1.34 * side, -0.24, recovery),
-      );
-      chibi.leftForearm.rotation.set(
-        THREE.MathUtils.lerp(-0.62, -0.48, recovery),
-        THREE.MathUtils.lerp(0.56 * side, 0.05, recovery),
-        THREE.MathUtils.lerp(0.92 * side, -0.16, recovery),
-      );
+    chibi.root.position.y -= 0.01 + (0.012 * slashPulse) + (0.006 * strikePulse);
+    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, 0.035 + (0.025 * slashPulse), 0.66);
+    chibi.torso.rotation.y = THREE.MathUtils.lerp(chibi.torso.rotation.y, bodyTwist, 0.78);
+    chibi.torso.rotation.z = THREE.MathUtils.lerp(chibi.torso.rotation.z, -0.045 * handedSide * slashPulse, 0.54);
+    chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.035 + (0.018 * windup), 0.68);
+    chibi.pelvis.rotation.y = THREE.MathUtils.lerp(chibi.pelvis.rotation.y, bodyTwist * 0.28, 0.72);
+    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.015, 0.54);
+    chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, bodyTwist * -0.24, 0.62);
+
+    const shoulder = chibi.rightShoulderPivot.position;
+    const gripPoint = new THREE.Vector3(weaponPose.hiltX, weaponPose.hiltY, weaponPose.hiltZ);
+    const bladeRotation = new THREE.Euler(weaponPose.bladePitch, weaponPose.bladeYaw, weaponPose.bladeRoll);
+    const bladeForward = new THREE.Vector3(0, 0, 1).applyEuler(bladeRotation).normalize();
+    const bladeRight = new THREE.Vector3(1, 0, 0).applyEuler(bladeRotation).normalize();
+    const wristPoint = gripPoint.clone()
+      .addScaledVector(bladeForward, -BLADE_SWING_WRIST_TO_GRIP)
+      .addScaledVector(bladeRight, 0.012 * handedSide * (1 - slashPulse));
+    wristPoint.y -= BLADE_SWING_WRIST_DROP_FROM_GRIP;
+    const shoulderToWrist = wristPoint.clone().sub(shoulder);
+    const hiltDistance = Math.max(0.001, shoulderToWrist.length());
+    const hiltDirection = shoulderToWrist.clone().normalize();
+    const upperArmLength = 0.31;
+    const relaxedLowerArmLength = 0.29 + (0.035 * slashPulse) + (0.035 * swingProgress);
+    const lowerArmLength = THREE.MathUtils.clamp(
+      relaxedLowerArmLength,
+      Math.max(0.22, hiltDistance - upperArmLength + 0.012),
+      upperArmLength + hiltDistance - 0.012,
+    );
+    const reachDistance = THREE.MathUtils.clamp(
+      hiltDistance,
+      Math.abs(upperArmLength - lowerArmLength) + 0.001,
+      upperArmLength + lowerArmLength - 0.001,
+    );
+    const elbowAlongReach = (
+      (upperArmLength * upperArmLength) - (lowerArmLength * lowerArmLength) + (reachDistance * reachDistance)
+    ) / (2 * reachDistance);
+    const elbowBend = Math.sqrt(Math.max(0, (upperArmLength * upperArmLength) - (elbowAlongReach * elbowAlongReach)));
+    const elbowBias = new THREE.Vector3(
+      THREE.MathUtils.lerp(0.16 * handedSide, -0.08 * handedSide, swingProgress),
+      -0.86,
+      -0.32 - (0.16 * slashPulse),
+    );
+    const elbowBendDirection = elbowBias
+      .addScaledVector(hiltDirection, -elbowBias.dot(hiltDirection))
+      .normalize();
+    if (elbowBendDirection.lengthSq() < 0.001) {
+      elbowBendDirection.set(0, -1, 0);
     }
+    const elbow = shoulder.clone()
+      .addScaledVector(hiltDirection, elbowAlongReach)
+      .addScaledVector(elbowBendDirection, elbowBend);
+    const upperDirection = elbow.clone().sub(shoulder).normalize();
+    const lowerDirection = wristPoint.clone().sub(elbow).normalize();
+    const localDown = new THREE.Vector3(0, -1, 0);
+    const shoulderRotation = new THREE.Quaternion().setFromUnitVectors(localDown, upperDirection);
+    const localLowerDirection = lowerDirection.clone().applyQuaternion(shoulderRotation.clone().invert()).normalize();
+    chibi.rightShoulderPivot.quaternion.copy(shoulderRotation);
+    chibi.rightUpperArm.rotation.set(0, 0, 0);
+    chibi.rightForearm.position.set(0, -upperArmLength, 0);
+    chibi.rightForearm.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(localDown, localLowerDirection));
+    chibi.rightHandMount.position.set(0, -lowerArmLength, 0);
+    const palmForward = bladeForward.clone().normalize();
+    const palmUp = lowerDirection.clone().multiplyScalar(-1);
+    palmUp.addScaledVector(palmForward, -palmUp.dot(palmForward)).normalize();
+    if (palmUp.lengthSq() < 0.001) {
+      palmUp.set(0, 1, 0);
+    }
+    const palmRight = new THREE.Vector3().crossVectors(palmUp, palmForward).normalize();
+    const correctedPalmUp = new THREE.Vector3().crossVectors(palmForward, palmRight).normalize();
+    const desiredHandRotation = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(palmRight, correctedPalmUp, palmForward),
+    );
+    const handParentRotation = shoulderRotation.clone().multiply(chibi.rightForearm.quaternion);
+    chibi.rightHandMount.quaternion.copy(handParentRotation.invert().multiply(desiredHandRotation));
+    chibi.rightHandMount.rotateZ(-0.08 * handedSide * (1 - recoveryEase));
+    chibi.rightHand.position.set(0, -0.006, BLADE_SWING_WRIST_TO_GRIP * 0.82);
+    chibi.rightHand.scale.set(0.92, 0.72, 0.62);
 
-    const leftLeads = side === 1;
-    const leadThighX = 0.48 + 0.08 * impactBias;
-    const rearThighX = -0.18 - 0.05 * impactBias;
-    const leadShinX = 0.24 + 0.12 * impactBias;
-    const rearShinX = 0.62 + 0.16 * impactBias;
-    const leadFootX = -0.18 - 0.06 * impactBias;
-    const rearFootX = 0.28 + 0.08 * impactBias;
-    const plantAmount = THREE.MathUtils.clamp(plant, 0, 1);
+    blendRotation(
+      chibi.leftUpperArm,
+      0.26 + (0.025 * slashPulse),
+      0.08 - (0.025 * bodyTwist),
+      -0.22,
+      0.74,
+    );
+    blendRotation(
+      chibi.leftForearm,
+      -0.45,
+      0.04,
+      -0.14,
+      0.74,
+    );
 
-    chibi.root.position.y -= 0.038 * plantAmount + 0.026 * impactBias;
-    blendRotation(chibi.pelvis, 0.1, -0.2 * side, -0.12 * side, plantAmount);
-    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, -0.18, plantAmount);
-    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.1, plantAmount);
+    const leftLeads = handedSide === 1;
+    const leadThighX = 0.16 + (0.03 * slashPulse);
+    const rearThighX = -0.02 - (0.025 * slashPulse);
+    const leadShinX = 0.13 + (0.025 * slashPulse);
+    const rearShinX = 0.22 + (0.025 * slashPulse);
+    const leadFootX = -0.06 - (0.02 * strikePulse);
+    const rearFootX = 0.09 + (0.025 * slashPulse);
+    const plantAmount = 0.74;
+
+    blendRotation(chibi.pelvis, 0.035, bodyTwist * 0.28, -0.055 * handedSide * slashPulse, plantAmount);
 
     blendRotation(
       chibi.leftThigh,
@@ -4795,10 +7237,6 @@ export class Haven3DFieldController implements Haven3DModeController {
     blendRotation(chibi.rightShin, leftLeads ? rearShinX : leadShinX, 0, leftLeads ? 0.02 : 0.08, plantAmount);
     blendRotation(chibi.leftFoot, leftLeads ? leadFootX : rearFootX, 0, leftLeads ? -0.12 : 0.04, plantAmount);
     blendRotation(chibi.rightFoot, leftLeads ? rearFootX : leadFootX, 0, leftLeads ? -0.04 : 0.12, plantAmount);
-
-    const handPulse = 1 + 0.16 * impactBias;
-    chibi.rightHandMount.position.set(0, -0.28 + 0.05 * impactBias, 0.04 + 0.24 * impactBias);
-    chibi.rightHand.scale.set(0.9 * handPulse, 0.72 * handPulse, 0.62 * handPulse);
   }
 
   private updatePlayerWeaponForm(
@@ -4807,29 +7245,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     transform: GearbladeTransformSnapshot | null = null,
   ): void {
     if (actor.blade) {
+      actor.blade.visible = Boolean(activeMode);
       actor.blade.scale.setScalar(1 + ((transform?.pulse ?? 0) * 0.05));
-    }
-
-    if (!activeMode) {
-      for (const object of Object.values(actor.weaponForms ?? {})) {
-        object.visible = false;
-      }
-      return;
-    }
-
-    for (const [mode, object] of Object.entries(actor.weaponForms ?? {}) as Array<[GearbladePartName, THREE.Object3D]>) {
-      object.visible = true;
-      const pose = transform
-        ? blendGearbladePartPose(transform.from, transform.to, mode, transform.eased)
-        : getGearbladePartPose(activeMode, mode);
-      applyGearbladePartPose(object, pose);
-
-      if (transform) {
-        const snapDirection = mode === "blade" ? 1 : mode === "launcher" ? -0.7 : 0.9;
-        object.rotation.z += transform.pulse * snapDirection * 0.18;
-        object.rotation.y += Math.sin(transform.t * Math.PI * 4) * transform.pulse * 0.08;
-        object.position.y += transform.pulse * (mode === "launcher" ? 0.05 : 0.035);
-      }
     }
   }
 
@@ -4930,11 +7347,87 @@ export class Haven3DFieldController implements Haven3DModeController {
         this.getRotationForFacing(enemy.facing),
         enemy.attackState ? attackDirection : null,
       );
+      this.applyEnemyAttackPose(actor, enemy);
       this.updateEnemyHitReaction(actor, enemy.id, widthScale, heightScale);
       this.updateEnemyDefenseVisuals(actor, enemy);
       this.updateEnemyTelegraph(actor, enemy);
       this.updateActorTargetRing(actor, "enemy", enemy.id);
     });
+  }
+
+  private applyEnemyAttackPose(actor: Actor, enemy: FieldEnemy): void {
+    const chibi = actor.chibi;
+    if (!chibi || (enemy.attackState !== "windup" && enemy.attackState !== "recovery")) {
+      return;
+    }
+
+    const currentTime = this.currentFrameTime || performance.now();
+    const profile = getHaven3DEnemyAttackProfile(enemy);
+    const elapsed = Math.max(0, currentTime - Number(enemy.attackStartedAt ?? currentTime));
+    const windup = enemy.attackState === "windup"
+      ? smoothstep(THREE.MathUtils.clamp(elapsed / Math.max(1, profile.windupMs), 0, 1))
+      : 0;
+    const recovery = enemy.attackState === "recovery"
+      ? 1 - smoothstep(THREE.MathUtils.clamp(elapsed / Math.max(1, profile.recoveryMs), 0, 1))
+      : 0;
+    const releasePulse = enemy.attackState === "recovery" ? Math.sin(recovery * Math.PI) : 0;
+    const lumberSway = Math.sin(currentTime * 0.007 + enemy.x * 0.025 + enemy.y * 0.014);
+    const isShot = profile.style === "shot";
+    const isShield = profile.style === "shield_bash";
+    const heavy = isShield ? 1.35 : profile.style === "lunge" ? 1.16 : 1;
+
+    chibi.root.position.y += (-0.055 * windup * heavy) + (0.075 * releasePulse);
+    chibi.root.rotation.x += isShot
+      ? (-0.08 * windup) + (0.12 * releasePulse)
+      : (-0.2 * windup * heavy) + (0.38 * releasePulse * heavy);
+    chibi.root.rotation.z += lumberSway * 0.08 * windup * heavy;
+    chibi.torso.rotation.x += isShot
+      ? (-0.04 * windup) + (0.1 * releasePulse)
+      : (-0.18 * windup * heavy) + (0.44 * releasePulse * heavy);
+    chibi.torso.rotation.z += lumberSway * 0.12 * windup;
+    chibi.head.rotation.x += isShot
+      ? -0.08 * windup
+      : -0.13 * windup + 0.08 * releasePulse;
+
+    if (isShot) {
+      const aim = Math.max(windup, recovery * 0.72);
+      chibi.leftUpperArm.rotation.set(
+        THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.x, 1.28, aim),
+        THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.y, 0.42, aim),
+        THREE.MathUtils.lerp(chibi.leftUpperArm.rotation.z, -0.36, aim),
+      );
+      chibi.rightUpperArm.rotation.set(
+        THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.x, 1.34, aim),
+        THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.y, -0.4, aim),
+        THREE.MathUtils.lerp(chibi.rightUpperArm.rotation.z, 0.36, aim),
+      );
+      chibi.leftForearm.rotation.set(
+        THREE.MathUtils.lerp(chibi.leftForearm.rotation.x, -0.24, aim),
+        THREE.MathUtils.lerp(chibi.leftForearm.rotation.y, 0.18, aim),
+        THREE.MathUtils.lerp(chibi.leftForearm.rotation.z, -0.06, aim),
+      );
+      chibi.rightForearm.rotation.set(
+        THREE.MathUtils.lerp(chibi.rightForearm.rotation.x, -0.18, aim),
+        THREE.MathUtils.lerp(chibi.rightForearm.rotation.y, -0.18, aim),
+        THREE.MathUtils.lerp(chibi.rightForearm.rotation.z, 0.06, aim),
+      );
+      chibi.rightHandMount.position.z += 0.12 * aim;
+      chibi.rightHand.scale.setScalar(0.9 + (0.28 * windup) + (0.46 * releasePulse));
+      return;
+    }
+
+    const windupReach = windup * heavy;
+    const strikeReach = Math.max(recovery, releasePulse) * heavy;
+    chibi.leftUpperArm.rotation.x += (-0.72 * windupReach) + (0.92 * strikeReach);
+    chibi.rightUpperArm.rotation.x += (-0.82 * windupReach) + (1.04 * strikeReach);
+    chibi.leftUpperArm.rotation.z += -0.48 * windupReach;
+    chibi.rightUpperArm.rotation.z += 0.48 * windupReach;
+    chibi.leftForearm.rotation.x += (-0.32 * windupReach) + (0.34 * strikeReach);
+    chibi.rightForearm.rotation.x += (-0.36 * windupReach) + (0.38 * strikeReach);
+    chibi.leftThigh.rotation.x += 0.16 * windupReach;
+    chibi.rightThigh.rotation.x += 0.22 * windupReach;
+    chibi.leftShin.rotation.x += 0.18 * windupReach;
+    chibi.rightShin.rotation.x += 0.2 * windupReach;
   }
 
   private updateEnemyDefenseVisuals(actor: Actor, enemy: FieldEnemy): void {
@@ -5095,13 +7588,39 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateModeHud(): void {
+    const activeMode = this.activeMode ?? "blade";
+    document.querySelectorAll<HTMLElement>("[data-gearblade-mode-selector]").forEach((selector) => {
+      const activeMeta = GEARBLADE_MODE_UI[activeMode];
+      selector.dataset.activeMode = activeMode;
+      const icon = selector.querySelector<HTMLImageElement>("[data-gearblade-mode-selector-icon]");
+      if (icon) {
+        icon.src = activeMeta.icon;
+        icon.alt = `${activeMeta.label} mode`;
+      }
+      const label = selector.querySelector<HTMLElement>("[data-gearblade-mode-selector-label]");
+      if (label) {
+        label.textContent = activeMeta.label;
+      }
+
+      selector.querySelectorAll<HTMLElement>("[data-gearblade-mode-hotspot]").forEach((hotspotElement) => {
+        const hotspot = hotspotElement.dataset.gearbladeModeHotspot as GearbladeModeSelectorHotspot | undefined;
+        const destination = hotspot ? GEARBLADE_MODE_SELECTOR_DESTINATIONS[activeMode][hotspot] : undefined;
+        if (!destination) {
+          return;
+        }
+
+        const meta = GEARBLADE_MODE_UI[destination];
+        hotspotElement.dataset.haven3dMode = destination;
+        hotspotElement.setAttribute("aria-label", `Switch to ${meta.label} mode`);
+        hotspotElement.setAttribute("title", `${meta.key} - ${meta.label}`);
+      });
+    });
+
     this.modeElements.forEach((element) => {
       const mode = element.dataset.haven3dMode as Haven3DGearbladeMode | undefined;
       const isEnabled = Boolean(mode && this.enabledModes.has(mode));
-      const isActive = Boolean(mode && this.activeMode === mode);
       element.hidden = !isEnabled;
-      element.classList.toggle("haven3d-mode-chip--active", isActive);
-      element.setAttribute("aria-pressed", String(isActive));
+      element.setAttribute("aria-pressed", "false");
       if (element instanceof HTMLButtonElement) {
         element.disabled = !isEnabled;
       }
@@ -5127,7 +7646,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const height = Math.max(1, this.options.host.clientHeight || window.innerHeight);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
     this.renderer.setSize(width, height, false);
   }
 }

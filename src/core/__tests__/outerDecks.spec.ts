@@ -21,6 +21,8 @@ import {
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
   markOuterDeckSubareaCleared,
+  placeOuterDeckOpenWorldLantern,
+  prepareOuterDeckOpenWorldEntry,
   resolveOuterDeckMechanic,
 } from "../outerDecks";
 
@@ -121,6 +123,27 @@ describe("outerDecks", () => {
     expect(state.openWorld.collectedResourceKeys).toEqual([]);
     expect(state.openWorld.defeatedEnemyKeys).toEqual([]);
     expect(state.openWorld.defeatedBossKeys).toEqual([]);
+    expect(state.openWorldByFloor["1"].floorOrdinal).toBe(1);
+  });
+
+  it("keeps Apron open-world progress separated by theater floor", () => {
+    const floorOneLit = placeOuterDeckOpenWorldLantern(createNewGameState(), {
+      id: "floor_01_lantern",
+      worldTileX: 5,
+      worldTileY: 6,
+    });
+    const floorTwoEntry = prepareOuterDeckOpenWorldEntry(floorOneLit, 2);
+    const floorTwoLit = placeOuterDeckOpenWorldLantern(floorTwoEntry, {
+      id: "floor_02_lantern",
+      worldTileX: 8,
+      worldTileY: 9,
+    });
+    const backToFloorOne = prepareOuterDeckOpenWorldEntry(floorTwoLit, 1);
+
+    expect(backToFloorOne.outerDecks?.openWorld.floorOrdinal).toBe(1);
+    expect(backToFloorOne.outerDecks?.openWorld.placedLanterns.map((lantern) => lantern.id)).toContain("floor_01_lantern");
+    expect(backToFloorOne.outerDecks?.openWorld.placedLanterns.map((lantern) => lantern.id)).not.toContain("floor_02_lantern");
+    expect(backToFloorOne.outerDecks?.openWorldByFloor["2"].placedLanterns.map((lantern) => lantern.id)).toContain("floor_02_lantern");
   });
 
   it("claims legacy open-world boss rewards once", () => {

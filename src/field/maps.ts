@@ -69,10 +69,10 @@ const HAVEN_BUILDING_SPECS: HavenBuildingSpec[] = [
 const HAVEN_BUILDING_BY_NODE_ID = new Map(HAVEN_BUILDING_SPECS.map((spec) => [spec.nodeId, spec]));
 
 const HAVEN_OUTER_DECK_GATE = {
-  x: 34,
+  x: 40,
   y: 48,
-  width: 16,
-  height: 3,
+  width: 4,
+  height: 2,
   doorX: 40,
   doorY: 47,
   doorWidth: 4,
@@ -86,6 +86,30 @@ const HAVEN_WEAPONSMITH_BUILDING = {
   height: 6,
   doorWidth: 3,
 };
+
+type HavenZiplineAnchorSpec = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  routeIndex: number;
+  anchorHeight: number;
+};
+
+const HAVEN_ZIPLINE_ROUTE_ID = "haven_campus_zipline";
+const HAVEN_ZIPLINE_ANCHORS: HavenZiplineAnchorSpec[] = [
+  { id: "haven_zipline_anchor_west", name: "West Zipline Node", x: 8, y: 31, routeIndex: 0, anchorHeight: 4.35 },
+  { id: "haven_zipline_anchor_north", name: "North Zipline Node", x: 42, y: 13, routeIndex: 1, anchorHeight: 5.15 },
+  { id: "haven_zipline_anchor_center", name: "Central Zipline Node", x: 42, y: 31, routeIndex: 2, anchorHeight: 4.75 },
+  { id: "haven_zipline_anchor_east", name: "East Zipline Node", x: 76, y: 31, routeIndex: 3, anchorHeight: 4.35 },
+  { id: "haven_zipline_anchor_south", name: "South Zipline Node", x: 42, y: 45, routeIndex: 4, anchorHeight: 5.05 },
+];
+const HAVEN_ZIPLINE_LINKS = [
+  ["haven_zipline_anchor_west", "haven_zipline_anchor_center"],
+  ["haven_zipline_anchor_north", "haven_zipline_anchor_center"],
+  ["haven_zipline_anchor_center", "haven_zipline_anchor_east"],
+  ["haven_zipline_anchor_center", "haven_zipline_anchor_south"],
+] as const;
 
 function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
   for (let y = top; y < top + height; y += 1) {
@@ -115,13 +139,17 @@ function setMapAreaBlocked(map: FieldMap, left: number, top: number, width: numb
   }
 }
 
-function isBaseCampBlockingStation(map: FieldMap, object: FieldObject): boolean {
-  return map.id === "base_camp" && object.type === "station";
+function isBlockingStationFootprint(map: FieldMap, object: FieldObject): boolean {
+  return object.type === "station" && (
+    map.id === "base_camp"
+    || object.metadata?.havenCargoElevatorExterior === true
+    || object.metadata?.blockingFootprint === true
+  );
 }
 
 function ensureNodeFootprintsWalkable(map: FieldMap): FieldMap {
   map.objects.forEach((object) => {
-    if (object.type === "station" && !isBaseCampBlockingStation(map, object)) {
+    if (object.type === "station" && !isBlockingStationFootprint(map, object)) {
       setMapAreaWalkable(map, object.x, object.y, object.width, object.height);
     }
   });
@@ -248,9 +276,65 @@ function applyDefaultHavenBuildingLayout(map: FieldMap): void {
   HAVEN_BUILDING_SPECS.forEach((spec) => placeHavenBuilding(map, spec, spec.x, spec.y));
 }
 
+function addHavenZiplineRoute(map: FieldMap): void {
+  const anchorsById = new Map(HAVEN_ZIPLINE_ANCHORS.map((anchor) => [anchor.id, anchor]));
+  HAVEN_ZIPLINE_ANCHORS.forEach((anchor) => {
+    if (map.objects.some((object) => object.id === anchor.id)) {
+      return;
+    }
+
+    map.objects.push({
+      id: anchor.id,
+      x: anchor.x,
+      y: anchor.y,
+      width: 1,
+      height: 1,
+      type: "decoration",
+      sprite: "grapple_anchor",
+      metadata: {
+        name: anchor.name,
+        grappleAnchor: true,
+        routeId: HAVEN_ZIPLINE_ROUTE_ID,
+        routeIndex: anchor.routeIndex,
+        anchorHeight: anchor.anchorHeight,
+      },
+    });
+  });
+
+  HAVEN_ZIPLINE_LINKS.forEach(([startAnchorId, endAnchorId], index) => {
+    const start = anchorsById.get(startAnchorId);
+    const end = anchorsById.get(endAnchorId);
+    if (!start || !end) {
+      return;
+    }
+    const id = `haven_zipline_track_${index}`;
+    if (map.objects.some((object) => object.id === id)) {
+      return;
+    }
+
+    map.objects.push({
+      id,
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.max(1, Math.abs(end.x - start.x) + 1),
+      height: Math.max(1, Math.abs(end.y - start.y) + 1),
+      type: "decoration",
+      sprite: "zipline_track",
+      metadata: {
+        name: "HAVEN Zipline",
+        ziplineTrack: true,
+        routeId: HAVEN_ZIPLINE_ROUTE_ID,
+        routeIndex: index,
+        startAnchorId,
+        endAnchorId,
+      },
+    });
+  });
+}
+
 function applyHavenBuildingCollision(map: FieldMap): void {
   map.objects.forEach((object) => {
-    if (isBaseCampBlockingStation(map, object)) {
+    if (isBlockingStationFootprint(map, object)) {
       setMapAreaBlocked(map, object.x, object.y, object.width, object.height);
     }
   });
@@ -8338,6 +8422,7 @@ function createConfiguredBaseCampMap(): FieldMap {
   }
 
   applyBaseCampBuildLayout(map);
+  addHavenZiplineRoute(map);
 
   map.objects.push({
     id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,
@@ -8346,9 +8431,9 @@ function createConfiguredBaseCampMap(): FieldMap {
     width: HAVEN_OUTER_DECK_GATE.width,
     height: HAVEN_OUTER_DECK_GATE.height,
     type: "station",
-    sprite: "bulkhead",
+    sprite: "doorway",
     metadata: {
-      name: "Outer Deck Access [Beta]",
+      name: "Apron Gate",
       havenBuilding: true,
       doorZoneId: OUTER_DECK_HAVEN_EXIT_ZONE_ID,
       doorX: HAVEN_OUTER_DECK_GATE.doorX,
@@ -8364,7 +8449,7 @@ function createConfiguredBaseCampMap(): FieldMap {
     width: HAVEN_OUTER_DECK_GATE.doorWidth,
     height: HAVEN_OUTER_DECK_GATE.doorHeight,
     action: "custom",
-    label: "OUTER DECKS [BETA]",
+    label: "THE APRON",
     metadata: {
       handlerId: "outer_deck_enter_overworld",
       autoTrigger: true,

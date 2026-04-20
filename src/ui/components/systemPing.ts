@@ -58,6 +58,7 @@ export function showSystemPing(options: SystemPingOptions): void {
 
   const stack = ensureSystemPingStack();
   playSystemPingSfx(type);
+  const isCompact = !title && !detail && message.length <= 40;
 
   if (channel && replaceChannel) {
     stack.querySelectorAll<HTMLElement>(`.system-ping[data-channel="${channel}"]`).forEach((existing) => {
@@ -66,15 +67,17 @@ export function showSystemPing(options: SystemPingOptions): void {
   }
 
   const ping = document.createElement("div");
-  ping.className = `system-ping system-ping--${type}`;
+  ping.className = `system-ping system-ping--${type}${isCompact ? " system-ping--compact" : ""}`;
   if (channel) {
     ping.dataset.channel = channel;
   }
 
-  const glyph = document.createElement("div");
-  glyph.className = "system-ping__glyph";
-  glyph.textContent = getPingGlyph(type);
-  ping.appendChild(glyph);
+  if (!isCompact) {
+    const glyph = document.createElement("div");
+    glyph.className = "system-ping__glyph";
+    glyph.textContent = getPingGlyph(type);
+    ping.appendChild(glyph);
+  }
 
   const copy = document.createElement("div");
   copy.className = "system-ping__copy";

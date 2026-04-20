@@ -11,6 +11,7 @@ import { getAllDecorItems } from "./decorSystem";
 import type { ResourceWallet } from "./resources";
 import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "./campaign";
 import type { GameState } from "./types";
+import { getMerchantFloorOrdinal } from "./merchant";
 
 // ----------------------------------------------------------------------------
 // TYPES
@@ -31,6 +32,8 @@ export interface UnlockableDefinition {
   sourceRules?: {
     shopEligible: boolean;
     rewardEligible: boolean;
+    merchantEligible?: boolean;
+    merchantFloorOrdinal?: number;
   };
 }
 
@@ -47,6 +50,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
   // Add all chassis
   for (const chassis of getAllChassis()) {
     const shopEligible = chassis.availableInHavenShop !== false;
+    const merchantFloorOrdinal = getMerchantFloorOrdinal(chassis.merchant);
     registry[chassis.id] = {
       id: chassis.id,
       type: "chassis",
@@ -62,12 +66,15 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       sourceRules: {
         shopEligible,
         rewardEligible: true,
+        merchantEligible: merchantFloorOrdinal !== null,
+        merchantFloorOrdinal: merchantFloorOrdinal ?? undefined,
       },
     };
   }
 
   // Add all doctrines
   for (const doctrine of getAllDoctrines()) {
+    const merchantFloorOrdinal = getMerchantFloorOrdinal(doctrine.merchant);
     registry[doctrine.id] = {
       id: doctrine.id,
       type: "doctrine",
@@ -81,6 +88,8 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       sourceRules: {
         shopEligible: true,
         rewardEligible: true,
+        merchantEligible: merchantFloorOrdinal !== null,
+        merchantFloorOrdinal: merchantFloorOrdinal ?? undefined,
       },
     };
   }
@@ -88,6 +97,7 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
   // Add all field mods
   const allFieldMods = getAllFieldModDefs();
   for (const mod of allFieldMods) {
+    const merchantFloorOrdinal = getMerchantFloorOrdinal(mod.merchant);
     registry[mod.id] = {
       id: mod.id,
       type: "field_mod",
@@ -99,12 +109,15 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       sourceRules: {
         shopEligible: true,
         rewardEligible: true,
+        merchantEligible: merchantFloorOrdinal !== null,
+        merchantFloorOrdinal: merchantFloorOrdinal ?? undefined,
       },
     };
   }
 
   // Add all decor unlocks
   for (const decor of getAllDecorItems()) {
+    const merchantFloorOrdinal = getMerchantFloorOrdinal(decor.sourceRules?.merchant);
     registry[decor.id] = {
       id: decor.id,
       type: "decor",
@@ -116,6 +129,8 @@ function buildUnlockableRegistry(): Record<string, UnlockableDefinition> {
       sourceRules: {
         shopEligible: decor.sourceRules?.shopEligible !== false,
         rewardEligible: decor.sourceRules?.rewardEligible !== false,
+        merchantEligible: merchantFloorOrdinal !== null,
+        merchantFloorOrdinal: merchantFloorOrdinal ?? undefined,
       },
     };
   }
@@ -194,6 +209,15 @@ export function getUnlockablesByType(type: UnlockableType): UnlockableDefinition
 export function getShopEligibleUnlockables(state?: GameState): UnlockableDefinition[] {
   return Object.values(getUnlockableRegistry()).filter(
     (u) => u.sourceRules?.shopEligible !== false && meetsUnlockRequirements(u, state)
+  );
+}
+
+export function getMerchantEligibleUnlockables(floorOrdinal: number, state?: GameState): UnlockableDefinition[] {
+  const normalizedFloor = Math.floor(Number(floorOrdinal));
+  return Object.values(getUnlockableRegistry()).filter(
+    (u) => u.sourceRules?.merchantEligible === true
+      && u.sourceRules?.merchantFloorOrdinal === normalizedFloor
+      && meetsUnlockRequirements(u, state)
   );
 }
 

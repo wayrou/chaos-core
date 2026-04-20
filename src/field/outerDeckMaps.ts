@@ -904,8 +904,8 @@ function createOuterDeckOverworldMap(state: GameState): FieldMap {
       width: 2,
       height: 2,
       type: "station",
-      sprite: "bulkhead",
-      metadata: { name: "HAVEN ACCESS" },
+      sprite: "doorway",
+      metadata: { name: "HAVEN Door" },
     },
     {
       id: "outer_deck_overworld_counterweight_gate",
@@ -1042,7 +1042,7 @@ function createOuterDeckOverworldMap(state: GameState): FieldMap {
 
   return {
     id: OUTER_DECK_OVERWORLD_MAP_ID,
-    name: "HAVEN Outer Decks",
+    name: "HAVEN Apron",
     width: OVERWORLD_WIDTH,
     height: OVERWORLD_HEIGHT,
     tiles,

@@ -104,10 +104,17 @@ function getFieldObjectHeight(object: FieldMap["objects"][number]): number {
   if (object.metadata?.grappleAnchor === true) {
     return 0.32;
   }
+  if (object.metadata?.havenCargoElevatorExterior === true) {
+    const visualHeight = Number(object.metadata.visualHeightWorld);
+    return Number.isFinite(visualHeight) && visualHeight > 0 ? visualHeight : 10.8;
+  }
 
   switch (object.type) {
     case "station":
       if (object.metadata?.havenBuilding) {
+        if (object.sprite === "doorway") {
+          return 2.65;
+        }
         return object.sprite === "bulkhead" ? 3.35 : 3.55;
       }
       return 2.75;
@@ -122,12 +129,26 @@ function getFieldObjectHeight(object: FieldMap["objects"][number]): number {
   }
 }
 
+function getFieldObjectWorldCenterElevation(
+  map: FieldMap,
+  object: FieldMap["objects"][number],
+  fieldCenter: Haven3DFieldPoint,
+): number {
+  const baseElevation = Number(object.metadata?.objectBaseElevationWorld);
+  if (Number.isFinite(baseElevation)) {
+    return baseElevation;
+  }
+  return getFieldPointElevationWorld(map, fieldCenter);
+}
+
 export function createHaven3DSceneLayout(map: FieldMap): Haven3DSceneLayout {
   return {
     objects: map.objects
       .filter((object) => object.type !== "enemy")
       .map((object) => {
         const fieldCenter = getFieldObjectCenterPixels(object);
+        const footprintScale = object.metadata?.useFull3DFootprint === true ? 1 : 0.78;
+        const worldCenterElevation = getFieldObjectWorldCenterElevation(map, object, fieldCenter);
         return {
           id: object.id,
           type: object.type,
@@ -141,10 +162,10 @@ export function createHaven3DSceneLayout(map: FieldMap): Haven3DSceneLayout {
             width: object.width,
             height: object.height,
           },
-          worldCenter: fieldToHavenWorld(map, fieldCenter, getFieldPointElevationWorld(map, fieldCenter) + 0.08),
+          worldCenter: fieldToHavenWorld(map, fieldCenter, worldCenterElevation + 0.08),
           worldSize: {
-            width: Math.max(0.7, object.width * HAVEN3D_WORLD_TILE_SIZE * 0.78),
-            depth: Math.max(0.7, object.height * HAVEN3D_WORLD_TILE_SIZE * 0.78),
+            width: Math.max(0.7, object.width * HAVEN3D_WORLD_TILE_SIZE * footprintScale),
+            depth: Math.max(0.7, object.height * HAVEN3D_WORLD_TILE_SIZE * footprintScale),
             height: getFieldObjectHeight(object),
           },
         };

@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { createEmptyResourceWallet, type ResourceWallet } from "../core/resources";
+import type { MerchantListingSource } from "../core/merchant";
 
 export type ChassisSlotType = "weapon" | "helmet" | "chestpiece" | "accessory";
 
@@ -33,6 +34,7 @@ export interface GearChassis {
   unlockAfterFloor?: number;
   availableInHavenShop?: boolean;
   havenShopUnlockAfterFloor?: number;
+  merchant?: MerchantListingSource;
   requiredQuestIds?: string[];
 }
 

@@ -343,7 +343,7 @@ function matchesImportedDefinitionForMap(
 export function syncFieldEnemiesForMap(
   map: FieldMap,
   currentEnemies: FieldEnemy[] = [],
-  currentTime = Date.now()
+  currentTime = 0
 ): FieldEnemy[] {
   const currentEnemyByPersistentKey = new Map(
     currentEnemies.map((enemy) => [buildEnemyPersistentKey(enemy), enemy]),
@@ -354,6 +354,8 @@ export function syncFieldEnemiesForMap(
     .map((object) => {
       const existing = currentEnemyByPersistentKey.get(createObjectPersistentKey(object.id));
       const enemyKind = typeof object.metadata?.enemyKind === "string" ? object.metadata.enemyKind : "light";
+      const objectCenterX = (object.x + object.width / 2) * TILE_SIZE;
+      const objectCenterY = (object.y + object.height / 2) * TILE_SIZE;
       const maxHp = getSignificantEnemyHp(object.metadata?.hp, existing?.maxHp ?? DEFAULT_ENEMY_HP, [
         object.id,
         object.metadata?.name,
@@ -361,11 +363,16 @@ export function syncFieldEnemiesForMap(
         object.metadata?.worldBoss ? "world_boss" : "",
       ]);
       const startingHp = coercePositiveNumber(object.metadata?.currentHp, maxHp);
+      const roamRadiusTiles = coercePositiveNumber(
+        object.metadata?.roamRadiusTiles,
+        existing?.roamRadius ? existing.roamRadius / TILE_SIZE : 0,
+      );
+      const roamRadius = roamRadiusTiles > 0 ? roamRadiusTiles * TILE_SIZE : undefined;
       const nextBase: FieldEnemy = {
         id: existing?.id ?? `field_enemy_${object.id}`,
         name: getEnemyName(object),
-        x: (object.x + object.width / 2) * TILE_SIZE,
-        y: (object.y + object.height / 2) * TILE_SIZE,
+        x: objectCenterX,
+        y: objectCenterY,
         width: coercePositiveNumber(object.metadata?.width, existing?.width ?? DEFAULT_ENEMY_WIDTH),
         height: coercePositiveNumber(object.metadata?.height, existing?.height ?? DEFAULT_ENEMY_HEIGHT),
         hp: getPreservedEnemyHp(existing, maxHp, startingHp),
@@ -378,6 +385,15 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(object.metadata?.aggroRange, existing?.aggroRange ?? DEFAULT_AGGRO_RANGE),
+        roamHomeX: roamRadius ? existing?.roamHomeX ?? objectCenterX : undefined,
+        roamHomeY: roamRadius ? existing?.roamHomeY ?? objectCenterY : undefined,
+        roamRadius,
+        roamSpeedMultiplier: roamRadius
+          ? coercePositiveNumber(object.metadata?.roamSpeedMultiplier, existing?.roamSpeedMultiplier ?? 0.85)
+          : undefined,
+        roamTargetX: roamRadius ? existing?.roamTargetX : undefined,
+        roamTargetY: roamRadius ? existing?.roamTargetY : undefined,
+        nextRoamAt: roamRadius ? existing?.nextRoamAt : undefined,
         gearbladeDefense: coerceGearbladeDefense(object.metadata?.gearbladeDefense, existing?.gearbladeDefense),
         gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
         attackStyle: coerceEnemyAttackStyle(object.metadata?.attackStyle, existing?.attackStyle),

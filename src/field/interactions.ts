@@ -43,6 +43,7 @@ import {
 } from "../core/outerDecks";
 import { createEmptyResourceWallet } from "../core/resources";
 import { grantSessionResources } from "../core/session";
+import { getCurrentOpsTerminalAtlasFloor } from "../core/opsTerminalAtlas";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import { showSystemPing } from "../ui/components/systemPing";
 
@@ -124,6 +125,11 @@ function showFieldTravelPing(title: string, message: string, detail?: string): v
 async function renderFieldShopScreen(): Promise<void> {
   const { renderShopScreen } = await import("../ui/screens/ShopScreen");
   renderShopScreen("field");
+}
+
+async function renderFieldMerchantShopScreen(floorOrdinal: number): Promise<void> {
+  const { renderMerchantShopScreen } = await import("../ui/screens/ShopScreen");
+  renderMerchantShopScreen("field", floorOrdinal);
 }
 
 async function renderFieldRosterScreen(): Promise<void> {
@@ -463,11 +469,12 @@ export async function handleInteraction(
       if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
         const { renderFieldScreen } = await import("./FieldScreen");
         try {
-          updateGameState((state) => prepareOuterDeckOpenWorldEntry(state));
+          const apronFloorOrdinal = getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+          updateGameState((state) => prepareOuterDeckOpenWorldEntry(state, apronFloorOrdinal));
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
         } catch (error) {
-          console.error("[FIELD] Failed to enter Outer Deck overworld:", error);
-          showFieldTravelPing("TRAVEL BLOCKED", "Outer Deck route failed to initialize.");
+          console.error("[FIELD] Failed to enter Apron overworld:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "Apron route failed to initialize.");
           onResume();
         }
         break;
@@ -481,10 +488,19 @@ export async function handleInteraction(
           setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
           renderFieldScreen("base_camp");
         } catch (error) {
-          console.error("[FIELD] Failed to return from Outer Decks:", error);
+          console.error("[FIELD] Failed to return from the Apron:", error);
           showFieldTravelPing("RETURN BLOCKED", "HAVEN access failed to resolve.");
           onResume();
         }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_traveling_merchant") {
+        const floorOrdinal = Math.max(
+          1,
+          Math.floor(Number(zone.metadata?.floorOrdinal ?? getGameState().outerDecks?.openWorld?.floorOrdinal ?? 1)),
+        );
+        openScreenAsync(() => renderFieldMerchantShopScreen(floorOrdinal));
         break;
       }
 
@@ -514,7 +530,7 @@ export async function handleInteraction(
           setNextFieldSpawnOverrideTile(entrySubarea.mapId, { x: 3, y: 6, facing: "east" });
           renderFieldScreen(entrySubarea.mapId as any);
         } catch (error) {
-          console.error("[FIELD] Failed to enter Outer Deck branch:", error);
+          console.error("[FIELD] Failed to enter Apron branch:", error);
           showFieldTravelPing("TRAVEL BLOCKED", "The branch route failed to initialize.");
           onResume();
         }
@@ -549,7 +565,7 @@ export async function handleInteraction(
         if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
           showFieldTravelPing(
             "ROUTE BLOCKED",
-            "Clear the current subarea before advancing deeper into the Outer Decks.",
+            "Clear the current subarea before advancing deeper into the Apron.",
           );
           onResume();
           break;
@@ -568,7 +584,7 @@ export async function handleInteraction(
             : { x: 3, y: 6, facing: "east" });
           renderFieldScreen(targetMapId as any);
         } catch (error) {
-          console.error("[FIELD] Failed to transition Outer Deck subarea:", error);
+          console.error("[FIELD] Failed to transition Apron subarea:", error);
           showFieldTravelPing("ROUTE BLOCKED", "The next subarea failed to initialize.");
           onResume();
         }
@@ -626,7 +642,7 @@ export async function handleInteraction(
         updateGameState((prev) => markOuterDeckCacheClaimed(prev, cacheId));
         showSystemPing({
           type: "success",
-          title: "OUTER DECK CACHE",
+          title: "APRON CACHE",
           message: currentSubarea.title,
           detail: summarizeOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined),
           channel: "outer-deck-cache",
@@ -673,7 +689,7 @@ export async function handleInteraction(
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
           showSystemPing({
             type: "success",
-            title: "OUTER DECK SECURED",
+            title: "APRON ROUTE SECURED",
             message: completionResult.awardedRecipeId
               ? `Recovered ${completionResult.awardedRecipeId.replace(/^recipe_/, "").replace(/_/g, " ").toUpperCase()}.`
               : "Recovery node secured and rewards transferred to HAVEN.",
@@ -682,7 +698,7 @@ export async function handleInteraction(
             replaceChannel: true,
           });
         } catch (error) {
-          console.error("[FIELD] Failed to return to Outer Deck overworld:", error);
+          console.error("[FIELD] Failed to return to Apron overworld:", error);
           showFieldTravelPing("RETURN BLOCKED", "Recovery route failed to initialize.");
           onResume();
         }

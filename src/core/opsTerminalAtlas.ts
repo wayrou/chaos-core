@@ -84,6 +84,19 @@ export interface OpsTerminalAtlasEconomySummary {
   incomePerTick: GameState["resources"];
 }
 
+export interface OpsTerminalAtlasChartResult {
+  floorOrdinal: number;
+  sectorLabel: string | null;
+  mappedRoomCount: number;
+}
+
+export interface OpsTerminalAtlasApronKeyResult {
+  floorOrdinal: number;
+  sectorLabel: string | null;
+  roomLabel: string | null;
+  unlocked: boolean;
+}
+
 export interface OpsTerminalAtlasCoreSummary {
   theaterId: string;
   floorId: string;
@@ -812,6 +825,116 @@ export function getCurrentOpsTerminalAtlasFloor(
     throw new Error("Current ops terminal atlas floor is not available.");
   }
   return cloneFloor(floor);
+}
+
+export function applyTheaterChartToCurrentAtlasFloor(
+  progress: CampaignProgress = loadOpsTerminalAtlasProgress(),
+): OpsTerminalAtlasChartResult {
+  const ensured = ensureCurrentFloorInitialized(progress);
+  const atlas = ensured.opsTerminalAtlas ? cloneAtlasState(ensured.opsTerminalAtlas) : null;
+  if (!atlas) {
+    return { floorOrdinal: 1, sectorLabel: null, mappedRoomCount: 0 };
+  }
+
+  const floor = atlas.floorsById[getFloorId(atlas.currentFloorOrdinal)];
+  if (!floor) {
+    return { floorOrdinal: atlas.currentFloorOrdinal, sectorLabel: null, mappedRoomCount: 0 };
+  }
+
+  const targetSector = floor.sectors.find((sector) => (
+    Object.values(sector.theater.rooms).some((room) => room.status === "unknown")
+  )) ?? null;
+  if (!targetSector) {
+    saveCampaignProgress({
+      ...ensured,
+      opsTerminalAtlas: decorateAtlasState(atlas),
+    });
+    return { floorOrdinal: floor.floorOrdinal, sectorLabel: null, mappedRoomCount: 0 };
+  }
+
+  let mappedRoomCount = 0;
+  Object.values(targetSector.theater.rooms).forEach((room) => {
+    if (room.status !== "unknown") {
+      return;
+    }
+    room.status = "mapped";
+    room.commsVisible = true;
+    mappedRoomCount += 1;
+  });
+
+  saveCampaignProgress({
+    ...ensured,
+    opsTerminalAtlas: decorateAtlasState(atlas),
+  });
+
+  return {
+    floorOrdinal: floor.floorOrdinal,
+    sectorLabel: targetSector.sectorLabel,
+    mappedRoomCount,
+  };
+}
+
+export function applyApronKeyToCurrentAtlasFloor(
+  progress: CampaignProgress = loadOpsTerminalAtlasProgress(),
+): OpsTerminalAtlasApronKeyResult {
+  const ensured = ensureCurrentFloorInitialized(progress);
+  const atlas = ensured.opsTerminalAtlas ? cloneAtlasState(ensured.opsTerminalAtlas) : null;
+  if (!atlas) {
+    return { floorOrdinal: 1, sectorLabel: null, roomLabel: null, unlocked: false };
+  }
+
+  const floor = atlas.floorsById[getFloorId(atlas.currentFloorOrdinal)];
+  if (!floor) {
+    return { floorOrdinal: atlas.currentFloorOrdinal, sectorLabel: null, roomLabel: null, unlocked: false };
+  }
+
+  let target: { sector: OpsTerminalAtlasSectorState; room: TheaterRoom } | null = null;
+  for (const sector of floor.sectors) {
+    const lockedBonusRoom = Object.values(sector.theater.rooms).find((room) => (
+      !room.secured
+      && room.requiredKeyType
+      && (room.tags ?? []).some((tag) => tag === "side_branch" || tag === "resource_pocket" || tag === "salvage_rich")
+    ));
+    if (lockedBonusRoom) {
+      target = { sector, room: lockedBonusRoom };
+      break;
+    }
+
+    const mappedSideRoom = Object.values(sector.theater.rooms).find((room) => (
+      !room.secured
+      && !room.requiredKeyType
+      && !room.isUplinkRoom
+      && (room.tags ?? []).some((tag) => tag === "side_branch" || tag === "resource_pocket" || tag === "salvage_rich")
+    ));
+    if (!target && mappedSideRoom) {
+      target = { sector, room: mappedSideRoom };
+    }
+  }
+
+  if (!target) {
+    saveCampaignProgress({
+      ...ensured,
+      opsTerminalAtlas: decorateAtlasState(atlas),
+    });
+    return { floorOrdinal: floor.floorOrdinal, sectorLabel: null, roomLabel: null, unlocked: false };
+  }
+
+  target.room.requiredKeyType = null;
+  target.room.status = target.room.status === "secured" ? "secured" : "mapped";
+  target.room.commsVisible = true;
+  target.room.tags = Array.from(new Set([...(target.room.tags ?? []), "apron_bonus"]));
+
+  saveCampaignProgress({
+    ...ensured,
+    opsTerminalAtlas: decorateAtlasState(atlas),
+  });
+
+  return {
+    floorOrdinal: floor.floorOrdinal,
+    sectorLabel: target.sector.sectorLabel,
+    roomLabel: target.room.label,
+    unlocked: true,
+  };
 }
 
 export function getOpsTerminalAtlasWarmEconomySummaries(

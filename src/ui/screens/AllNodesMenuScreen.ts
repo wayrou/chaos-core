@@ -65,6 +65,7 @@ import {
   abortOuterDeckExpedition,
   getOuterDeckFieldContext,
 } from "../../core/outerDecks";
+import { WEAPONSMITH_UNLOCK_FLOOR_ORDINAL } from "../../core/weaponsmith";
 import {
   getEscActionAvailability,
   getEscExpeditionRestrictionMessage,
@@ -663,7 +664,7 @@ function syncFloor12UnlockStatus(): void {
     type: "success",
     title: "DEBUG // FLOOR 12 STATUS",
     message: `Campaign progression synced to Floor ${String(Math.max(12, Number(nextProgress.highestReachedFloorOrdinal ?? targetFloorOrdinal))).padStart(2, "0")}.`,
-    detail: "Floor-gated ESC nodes, atlas final reset access, and related milestone unlocks are now available.",
+    detail: `Floor-gated ESC nodes, the Floor ${String(WEAPONSMITH_UNLOCK_FLOOR_ORDINAL).padStart(2, "0")} Weaponsmith node, atlas final reset access, and related milestone unlocks are now available.`,
     channel: "esc-dev-debug",
   });
 }
@@ -2009,7 +2010,7 @@ function renderResourceTrackerContent(
             data-resource-tracker-toggle="${showAdvanced ? "core-only" : "advanced"}"
             aria-pressed="${showAdvanced ? "true" : "false"}"
           >
-            ${showAdvanced ? "CORE ONLY" : "SHOW ADVANCED"}
+            ${showAdvanced ? "BASIC" : "ADVANCED"}
           </button>
         </div>
         <div class="all-nodes-balance-grid">
@@ -2142,7 +2143,7 @@ function focusWorkspaceItem(itemId: string): void {
     const focusTarget = itemId === MATERIALS_REFINERY_LAYOUT_ID
       ? item.querySelector<HTMLElement>("[data-refinery-craft-id]:not([disabled]), [data-refinery-craft-id]")
       : item.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
-    focusTarget?.focus();
+    focusTarget?.focus({ preventScroll: true });
   });
 }
 
@@ -2357,6 +2358,66 @@ function drawEscMinimap(root: HTMLElement): void {
   drawFieldMinimapCanvas(canvas, resolveEscMinimapModel(), { transparent: false });
 }
 
+type EscScrollSnapshot = {
+  gridTop: number;
+  appTop: number;
+  documentTop: number;
+  windowX: number;
+  windowY: number;
+};
+
+function readEscScrollSnapshot(root = document.getElementById("app")): EscScrollSnapshot | null {
+  if (!root?.querySelector(".all-nodes-menu-screen")) {
+    return null;
+  }
+
+  const grid = root.querySelector<HTMLElement>("#allNodesMenuGrid");
+  return {
+    gridTop: grid?.scrollTop ?? 0,
+    appTop: root.scrollTop,
+    documentTop: document.scrollingElement?.scrollTop ?? window.scrollY,
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+  };
+}
+
+function restoreEscScrollSnapshot(snapshot: EscScrollSnapshot | null, root = document.getElementById("app")): void {
+  if (!snapshot) {
+    return;
+  }
+
+  const apply = () => {
+    const appRoot = root ?? document.getElementById("app");
+    const grid = appRoot?.querySelector<HTMLElement>("#allNodesMenuGrid");
+    if (grid) {
+      grid.scrollTop = Math.min(snapshot.gridTop, Math.max(0, grid.scrollHeight - grid.clientHeight));
+    }
+
+    if (appRoot) {
+      appRoot.scrollTop = Math.min(snapshot.appTop, Math.max(0, appRoot.scrollHeight - appRoot.clientHeight));
+    }
+
+    const scrollingElement = document.scrollingElement;
+    if (scrollingElement) {
+      scrollingElement.scrollTop = Math.min(
+        snapshot.documentTop,
+        Math.max(0, scrollingElement.scrollHeight - scrollingElement.clientHeight),
+      );
+    }
+
+    if (window.scrollX !== snapshot.windowX || window.scrollY !== snapshot.windowY) {
+      window.scrollTo(snapshot.windowX, snapshot.windowY);
+    }
+
+    if (appRoot) {
+      queuePinnedItemFrameSync(appRoot);
+    }
+  };
+
+  apply();
+  requestAnimationFrame(apply);
+}
+
 function renderDockItem(itemId: string, nodeMap: Map<string, NodeDefinition>): string {
   if (itemId === RESOURCE_LAYOUT_ID) {
     return `
@@ -2418,6 +2479,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
   setMusicCue("haven-esc");
   const root = document.getElementById("app");
   if (!root) return;
+  const scrollSnapshot = readEscScrollSnapshot(root);
   document.body.setAttribute("data-screen", "esc-all-nodes");
   clearControllerContext();
 
@@ -2625,6 +2687,7 @@ export function renderAllNodesMenuScreen(fromFieldMap?: string): void {
       focus: getEscControllerActiveItem(),
     }),
   });
+  restoreEscScrollSnapshot(scrollSnapshot, root);
 }
 
 function attachAllNodesMenuListeners(): void {
@@ -2862,7 +2925,7 @@ function attachAllNodesMenuListeners(): void {
       }
     });
 
-    setTimeout(() => quacInput.focus(), 0);
+    setTimeout(() => quacInput.focus({ preventScroll: true }), 0);
   }
 
   if (allNodesEscHandler) {
