@@ -1,5 +1,14 @@
 import type { GameState } from "./types";
-import { generateSeed } from "./rng";
+import { createSeededRNG, generateSeed, randomInt } from "./rng";
+import { getAllFieldModDefs } from "./fieldModDefinitions";
+import type { FieldModDef, FieldModInstance, FieldModRarity } from "./fieldMods";
+import {
+  grantResolvedGearRewardToState,
+  resolveGearRewardSpec,
+  type GrantedGearReward,
+} from "./gearRewards";
+import { createEmptyResourceWallet, type ResourceWallet } from "./resources";
+import { grantSessionResources } from "./session";
 
 export type OuterDeckZoneId =
   | "counterweight_shaft"
@@ -98,6 +107,9 @@ export interface OuterDeckOpenWorldState {
   defeatedBossKeys: string[];
   bossHpByKey: Record<string, number>;
   exploredChunkKeys: string[];
+  clearedInteriorRoomKeys: string[];
+  claimedInteriorLootKeys: string[];
+  completedInteriorKeys: string[];
   placedLanterns: OuterDeckPlacedLantern[];
 }
 
@@ -119,7 +131,40 @@ export interface OuterDecksState {
   openWorldByFloor: Record<string, OuterDeckOpenWorldState>;
 }
 
-export type OuterDeckFieldContext = "haven" | "outerDeckOverworld" | "outerDeckBranch";
+export type OuterDeckFieldContext = "haven" | "outerDeckOverworld" | "outerDeckBranch" | "outerDeckInterior";
+
+export type OuterDeckInteriorVariant = "cave" | "structure" | "service_tunnel";
+
+export interface OuterDeckInteriorMapRef {
+  floorOrdinal: number;
+  chunkX: number;
+  chunkY: number;
+  depth: number;
+}
+
+export interface OuterDeckInteriorSpec {
+  key: string;
+  floorOrdinal: number;
+  chunkX: number;
+  chunkY: number;
+  chainLength: 2 | 3;
+  variant: OuterDeckInteriorVariant;
+  title: string;
+  entranceLabel: string;
+  cacheLabel: string;
+  rewardLabel: string;
+}
+
+export interface OuterDeckInteriorCacheRewardResult {
+  state: GameState;
+  granted: boolean;
+  alreadyClaimed: boolean;
+  rewardKey: string;
+  gearReward: GrantedGearReward | null;
+  fieldMod: FieldModDef | null;
+  wad: number;
+  resources: ResourceWallet;
+}
 
 export interface OuterDeckNpcEncounterDefinition {
   id: OuterDeckNpcEncounterId;
@@ -128,6 +173,7 @@ export interface OuterDeckNpcEncounterDefinition {
 }
 
 export const OUTER_DECK_OVERWORLD_MAP_ID = "outer_deck_overworld";
+export const OUTER_DECK_INTERIOR_MAP_PREFIX = "outerdeck_interior";
 export const OUTER_DECK_HAVEN_EXIT_OBJECT_ID = "haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_ZONE_ID = "interact_haven_outer_deck_south_gate";
 export const OUTER_DECK_HAVEN_EXIT_OBJECT_TILE = { x: 40, y: 48 };
@@ -172,6 +218,125 @@ const OUTER_DECK_OVERWORLD_BRANCH_SPAWNS: Record<
     returnSpawn: { x: 10, y: 45, facing: "east" },
   },
 };
+
+const OUTER_DECK_INTERIOR_PRESENTATION: Record<
+  OuterDeckInteriorVariant,
+  Pick<OuterDeckInteriorSpec, "title" | "entranceLabel" | "cacheLabel" | "rewardLabel">
+> = {
+  cave: {
+    title: "Apron Cave",
+    entranceLabel: "ENTER CAVE",
+    cacheLabel: "SECURE CACHE",
+    rewardLabel: "Apron Cave Cache",
+  },
+  structure: {
+    title: "Collapsed Structure",
+    entranceLabel: "ENTER HATCH",
+    cacheLabel: "SECURE CACHE",
+    rewardLabel: "Apron Structure Cache",
+  },
+  service_tunnel: {
+    title: "Service Tunnel",
+    entranceLabel: "ENTER TUNNEL",
+    cacheLabel: "SECURE CACHE",
+    rewardLabel: "Apron Tunnel Cache",
+  },
+};
+
+const OUTER_DECK_INTERIOR_VARIANTS: OuterDeckInteriorVariant[] = ["cave", "structure", "service_tunnel"];
+
+function stableOuterDeckSeed(baseSeed: number, ...parts: Array<string | number>): number {
+  let hash = (baseSeed >>> 0) || 2166136261;
+  parts.forEach((part) => {
+    const text = String(part);
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    hash ^= 1249;
+    hash = Math.imul(hash, 16777619);
+  });
+  return hash >>> 0;
+}
+
+function normalizeFloorOrdinal(value: number): number {
+  return Math.max(1, Math.floor(Number(value) || 1));
+}
+
+function normalizeChunkCoord(value: number): number {
+  return Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : 0;
+}
+
+function normalizeInteriorDepth(value: number): number {
+  return Math.max(0, Math.floor(Number(value) || 0));
+}
+
+export function getOuterDeckInteriorEntranceKey(
+  floorOrdinal: number,
+  chunkX: number,
+  chunkY: number,
+): string {
+  return `f${normalizeFloorOrdinal(floorOrdinal)}:cx${normalizeChunkCoord(chunkX)}:cy${normalizeChunkCoord(chunkY)}`;
+}
+
+export function getOuterDeckInteriorRoomKey(ref: OuterDeckInteriorMapRef): string {
+  return `${getOuterDeckInteriorEntranceKey(ref.floorOrdinal, ref.chunkX, ref.chunkY)}:d${normalizeInteriorDepth(ref.depth)}`;
+}
+
+export function getOuterDeckInteriorLootKey(ref: Omit<OuterDeckInteriorMapRef, "depth">): string {
+  return `${getOuterDeckInteriorEntranceKey(ref.floorOrdinal, ref.chunkX, ref.chunkY)}:cache`;
+}
+
+export function getOuterDeckInteriorSpec(
+  seed: number,
+  floorOrdinal: number,
+  chunkX: number,
+  chunkY: number,
+): OuterDeckInteriorSpec {
+  const normalizedFloor = normalizeFloorOrdinal(floorOrdinal);
+  const normalizedChunkX = normalizeChunkCoord(chunkX);
+  const normalizedChunkY = normalizeChunkCoord(chunkY);
+  const rng = createSeededRNG(stableOuterDeckSeed(seed, "interior", normalizedFloor, normalizedChunkX, normalizedChunkY));
+  const variant = OUTER_DECK_INTERIOR_VARIANTS[randomInt(rng, 0, OUTER_DECK_INTERIOR_VARIANTS.length - 1)] ?? "cave";
+  const chainLength = (rng() > 0.5 ? 3 : 2) as 2 | 3;
+  const presentation = OUTER_DECK_INTERIOR_PRESENTATION[variant];
+  return {
+    key: getOuterDeckInteriorEntranceKey(normalizedFloor, normalizedChunkX, normalizedChunkY),
+    floorOrdinal: normalizedFloor,
+    chunkX: normalizedChunkX,
+    chunkY: normalizedChunkY,
+    chainLength,
+    variant,
+    ...presentation,
+  };
+}
+
+export function buildOuterDeckInteriorMapId(
+  floorOrdinal: number,
+  chunkX: number,
+  chunkY: number,
+  depth: number,
+): string {
+  return `${OUTER_DECK_INTERIOR_MAP_PREFIX}_f${normalizeFloorOrdinal(floorOrdinal)}_cx${normalizeChunkCoord(chunkX)}_cy${normalizeChunkCoord(chunkY)}_d${normalizeInteriorDepth(depth)}`;
+}
+
+export function parseOuterDeckInteriorMapId(mapId: string | null | undefined): OuterDeckInteriorMapRef | null {
+  const match = String(mapId ?? "").match(/^outerdeck_interior_f(\d+)_cx(-?\d+)_cy(-?\d+)_d(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    floorOrdinal: normalizeFloorOrdinal(Number(match[1])),
+    chunkX: normalizeChunkCoord(Number(match[2])),
+    chunkY: normalizeChunkCoord(Number(match[3])),
+    depth: normalizeInteriorDepth(Number(match[4])),
+  };
+}
+
+export function isOuterDeckInteriorMap(mapId: string | null | undefined): boolean {
+  return parseOuterDeckInteriorMapId(mapId) !== null;
+}
 
 const OUTER_DECK_NPC_ENCOUNTERS: Record<OuterDeckNpcEncounterId, OuterDeckNpcEncounterDefinition> = {
   shaft_mechanist: {
@@ -248,6 +413,9 @@ export function createDefaultOuterDeckOpenWorldState(
     defeatedBossKeys: [],
     bossHpByKey: {},
     exploredChunkKeys: [],
+    clearedInteriorRoomKeys: [],
+    claimedInteriorLootKeys: [],
+    completedInteriorKeys: [],
     placedLanterns: [],
   };
 }
@@ -339,6 +507,9 @@ function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorld
     defeatedBossKeys: normalizeStringList(openWorld?.defeatedBossKeys),
     bossHpByKey: normalizeNumberRecord(openWorld?.bossHpByKey),
     exploredChunkKeys: normalizeStringList(openWorld?.exploredChunkKeys),
+    clearedInteriorRoomKeys: normalizeStringList(openWorld?.clearedInteriorRoomKeys),
+    claimedInteriorLootKeys: normalizeStringList(openWorld?.claimedInteriorLootKeys),
+    completedInteriorKeys: normalizeStringList(openWorld?.completedInteriorKeys),
     placedLanterns: normalizePlacedLanterns(openWorld?.placedLanterns),
   };
 }
@@ -753,7 +924,10 @@ function addOpenWorldKey(
     | "collectedApronKeyKeys"
     | "defeatedEnemyKeys"
     | "defeatedBossKeys"
-    | "exploredChunkKeys",
+    | "exploredChunkKeys"
+    | "clearedInteriorRoomKeys"
+    | "claimedInteriorLootKeys"
+    | "completedInteriorKeys",
   key: string,
 ): GameState {
   const normalizedKey = key.trim();
@@ -828,6 +1002,19 @@ export function markOuterDeckOpenWorldChunkExplored(state: GameState, chunkKey: 
   return addOpenWorldKey(state, "exploredChunkKeys", chunkKey);
 }
 
+export function markOuterDeckInteriorRoomCleared(state: GameState, roomKey: string): GameState {
+  return addOpenWorldKey(state, "clearedInteriorRoomKeys", roomKey);
+}
+
+export function markOuterDeckInteriorLootClaimed(state: GameState, lootKey: string): GameState {
+  let nextState = addOpenWorldKey(state, "claimedInteriorLootKeys", lootKey);
+  const completedKey = lootKey.replace(/:cache$/, "");
+  if (completedKey && completedKey !== lootKey) {
+    nextState = addOpenWorldKey(nextState, "completedInteriorKeys", completedKey);
+  }
+  return nextState;
+}
+
 export function setOuterDeckOpenWorldBossHp(state: GameState, bossKey: string, hp: number | null): GameState {
   const normalizedKey = bossKey.trim();
   if (!normalizedKey) {
@@ -853,6 +1040,197 @@ export function setOuterDeckOpenWorldBossHp(state: GameState, bossKey: string, h
       bossHpByKey: nextBossHpByKey,
     },
   });
+}
+
+function getOuterDeckInteriorDistanceTier(ref: Pick<OuterDeckInteriorMapRef, "chunkX" | "chunkY">): number {
+  return Math.max(0, Math.floor(Math.hypot(ref.chunkX, ref.chunkY)));
+}
+
+function getOuterDeckInteriorRewardResources(
+  spec: OuterDeckInteriorSpec,
+  distanceTier: number,
+): ResourceWallet {
+  const resources = createEmptyResourceWallet();
+  const baseAmount = Math.max(1, 1 + Math.floor(distanceTier / 3));
+  switch (spec.variant) {
+    case "cave":
+      resources.chaosShards = baseAmount;
+      resources.metalScrap = distanceTier >= 4 ? 1 : 0;
+      break;
+    case "structure":
+      resources.metalScrap = baseAmount + 1;
+      resources.steamComponents = distanceTier >= 3 ? 1 : 0;
+      break;
+    case "service_tunnel":
+      resources.steamComponents = baseAmount;
+      resources.wood = distanceTier >= 3 ? 1 : 0;
+      break;
+  }
+  return resources;
+}
+
+function getFieldModInventory(state: GameState): FieldModInstance[] {
+  return [...(state.runFieldModInventory ?? [])];
+}
+
+function canAddFieldModStack(mod: FieldModDef, inventory: FieldModInstance[]): boolean {
+  const existing = inventory.find((entry) => entry.defId === mod.id);
+  const maxStacks = Math.max(1, Number(mod.maxStacks ?? 99));
+  return !existing || existing.stacks < maxStacks;
+}
+
+function pickOuterDeckInteriorFieldMod(
+  state: GameState,
+  floorOrdinal: number,
+  seed: number,
+): FieldModDef | null {
+  const rng = createSeededRNG(seed);
+  if (rng() >= 0.3) {
+    return null;
+  }
+
+  const inventory = getFieldModInventory(state);
+  const allEligible = getAllFieldModDefs().filter((mod) => (
+    Math.max(1, Number(mod.unlockAfterOperationFloor ?? 1)) <= floorOrdinal
+    && canAddFieldModStack(mod, inventory)
+  ));
+  if (allEligible.length === 0) {
+    return null;
+  }
+
+  const weights: Record<FieldModRarity, number> = {
+    common: 45,
+    uncommon: 40,
+    rare: 15,
+  };
+  const rarityOrder: FieldModRarity[] = ["common", "uncommon", "rare"];
+  const totalWeight = rarityOrder.reduce((sum, rarity) => sum + weights[rarity], 0);
+  let roll = rng() * totalWeight;
+  let rarity: FieldModRarity = "common";
+  for (const candidateRarity of rarityOrder) {
+    roll -= weights[candidateRarity];
+    if (roll <= 0) {
+      rarity = candidateRarity;
+      break;
+    }
+  }
+
+  const rarityPool = allEligible.filter((mod) => mod.rarity === rarity);
+  const pool = rarityPool.length > 0 ? rarityPool : allEligible;
+  return pool[randomInt(rng, 0, pool.length - 1)] ?? null;
+}
+
+function grantFieldModToRunInventory(
+  state: GameState,
+  mod: FieldModDef,
+  instanceSeed: string,
+): GameState {
+  const inventory = getFieldModInventory(state);
+  const existingIndex = inventory.findIndex((entry) => entry.defId === mod.id);
+  const maxStacks = Math.max(1, Number(mod.maxStacks ?? 99));
+
+  if (existingIndex >= 0) {
+    const existing = inventory[existingIndex]!;
+    inventory[existingIndex] = {
+      ...existing,
+      stacks: Math.min(maxStacks, Math.max(1, existing.stacks) + 1),
+    };
+  } else {
+    inventory.push({
+      defId: mod.id,
+      stacks: 1,
+      instanceId: `${mod.id}_${instanceSeed.replace(/[^a-z0-9_-]/gi, "_")}`,
+    });
+  }
+
+  return {
+    ...state,
+    runFieldModInventory: inventory,
+  };
+}
+
+export function grantOuterDeckInteriorCacheReward(
+  state: GameState,
+  mapIdOrRef: string | OuterDeckInteriorMapRef,
+): OuterDeckInteriorCacheRewardResult {
+  const ref = typeof mapIdOrRef === "string" ? parseOuterDeckInteriorMapId(mapIdOrRef) : mapIdOrRef;
+  const emptyResources = createEmptyResourceWallet();
+  if (!ref) {
+    return {
+      state,
+      granted: false,
+      alreadyClaimed: false,
+      rewardKey: "",
+      gearReward: null,
+      fieldMod: null,
+      wad: 0,
+      resources: emptyResources,
+    };
+  }
+
+  const rewardKey = getOuterDeckInteriorLootKey(ref);
+  const outerDecks = getSafeOuterDecksState(state);
+  if (outerDecks.openWorld.claimedInteriorLootKeys.includes(rewardKey)) {
+    return {
+      state,
+      granted: false,
+      alreadyClaimed: true,
+      rewardKey,
+      gearReward: null,
+      fieldMod: null,
+      wad: 0,
+      resources: emptyResources,
+    };
+  }
+
+  const spec = getOuterDeckInteriorSpec(outerDecks.openWorld.seed, ref.floorOrdinal, ref.chunkX, ref.chunkY);
+  const distanceTier = getOuterDeckInteriorDistanceTier(ref);
+  const rewardSeed = stableOuterDeckSeed(
+    outerDecks.openWorld.seed,
+    "interior-cache",
+    ref.floorOrdinal,
+    ref.chunkX,
+    ref.chunkY,
+    ref.depth,
+  );
+  const rng = createSeededRNG(rewardSeed);
+  const slotPool = ["weapon", "helmet", "chestpiece", "accessory"] as const;
+  const slotType = slotPool[randomInt(rng, 0, slotPool.length - 1)] ?? "weapon";
+  const minStability = Math.min(78, 50 + ref.floorOrdinal + (distanceTier * 3));
+  const gearReward = resolveGearRewardSpec({
+    kind: "generated",
+    slotType,
+    minStability,
+    seed: stableOuterDeckSeed(rewardSeed, "gear"),
+    label: spec.rewardLabel,
+  }, state);
+  const resources = getOuterDeckInteriorRewardResources(spec, distanceTier);
+  const wad = 30 + (ref.floorOrdinal * 2) + (distanceTier * 7) + (spec.chainLength === 3 ? 8 : 0);
+
+  let nextState = gearReward ? grantResolvedGearRewardToState(state, gearReward) : state;
+  nextState = grantSessionResources(nextState, { wad, resources });
+
+  const fieldMod = pickOuterDeckInteriorFieldMod(
+    nextState,
+    ref.floorOrdinal,
+    stableOuterDeckSeed(rewardSeed, "field-mod"),
+  );
+  if (fieldMod) {
+    nextState = grantFieldModToRunInventory(nextState, fieldMod, rewardKey);
+  }
+
+  nextState = markOuterDeckInteriorLootClaimed(nextState, rewardKey);
+
+  return {
+    state: nextState,
+    granted: true,
+    alreadyClaimed: false,
+    rewardKey,
+    gearReward,
+    fieldMod,
+    wad,
+    resources,
+  };
 }
 
 export function claimOuterDeckWorldBossDefeat(
@@ -985,10 +1363,13 @@ export function isOuterDeckBranchMap(mapId: string | null | undefined): boolean 
 }
 
 export function isOuterDeckAccessibleMap(mapId: string | null | undefined): boolean {
-  return isOuterDeckOverworldMap(mapId) || isOuterDeckBranchMap(mapId);
+  return isOuterDeckOverworldMap(mapId) || isOuterDeckBranchMap(mapId) || isOuterDeckInteriorMap(mapId);
 }
 
 export function getOuterDeckFieldContext(mapId: string | null | undefined): OuterDeckFieldContext {
+  if (isOuterDeckInteriorMap(mapId)) {
+    return "outerDeckInterior";
+  }
   if (isOuterDeckBranchMap(mapId)) {
     return "outerDeckBranch";
   }

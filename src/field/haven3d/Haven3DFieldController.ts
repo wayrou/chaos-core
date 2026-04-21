@@ -549,25 +549,26 @@ const HAVEN3D_OUTER_DECK_BRANCH_PROFILE: Haven3DMapProfile = {
   },
 };
 const CAMERA_FORWARD_PAN_DURATION_MS = 260;
-const BLADE_SWING_WINDUP_MS = 174;
-const BLADE_SWING_IMPACT_MS = 293;
-const BLADE_SWING_TOTAL_MS = 585;
-const BLADE_SWING_ARC_START_MS = 64;
-const BLADE_SWING_ARC_END_MS = 521;
-const BLADE_SWING_RANGE_PX = 148;
-const BLADE_SWING_ARC_RADIANS = Math.PI * 1.62;
-const BLADE_SWING_HIT_WIDTH_PX = 34;
-const BLADE_SWING_START_LOCAL_YAW = 1.3;
-const BLADE_SWING_END_LOCAL_YAW = -1.3;
-const BLADE_SWING_BLADE_LENGTH_PX = 108;
-const BLADE_SWING_HILT_FORWARD_PX = 30;
-const BLADE_SWING_HILT_SIDE_START_PX = 44;
-const BLADE_SWING_HILT_SIDE_END_PX = -44;
+const BLADE_SWING_WINDUP_MS = 116;
+const BLADE_SWING_IMPACT_MS = 195;
+const BLADE_SWING_TOTAL_MS = 390;
+const BLADE_SWING_ARC_START_MS = 32;
+const BLADE_SWING_ARC_END_MS = 346;
+const BLADE_SWING_RANGE_PX = 156;
+const BLADE_SWING_ARC_RADIANS = Math.PI * 1.86;
+const BLADE_SWING_HIT_WIDTH_PX = 38;
+const BLADE_SWING_START_LOCAL_YAW = 1.62;
+const BLADE_SWING_END_LOCAL_YAW = -1.52;
+const BLADE_SWING_BLADE_LENGTH_PX = 118;
+const BLADE_SWING_HILT_FORWARD_PX = 34;
+const BLADE_SWING_HILT_SIDE_START_PX = 58;
+const BLADE_SWING_HILT_SIDE_END_PX = -52;
+const BLADE_DRAW_SMEAR_MS = 92;
 const BLADE_SWING_DAMAGE = 38;
 const BLADE_SWING_KNOCKBACK = 620;
-const BLADE_LUNGE_START_MS = 192;
-const BLADE_LUNGE_END_MS = 347;
-const BLADE_LUNGE_SPEED_PX_PER_SECOND = 242;
+const BLADE_LUNGE_START_MS = 128;
+const BLADE_LUNGE_END_MS = 232;
+const BLADE_LUNGE_SPEED_PX_PER_SECOND = 360;
 const LAUNCHER_COOLDOWN_MS = 360;
 const LAUNCHER_RECOIL_MS = 160;
 const LAUNCHER_SPEED_PX_PER_SECOND = 780;
@@ -3520,7 +3521,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     bladeTip.rotation.x = Math.PI / 2;
     bladeTip.castShadow = true;
     const bladeTrail = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.68, 0.18),
+      new THREE.PlaneGeometry(2.22, 0.44),
       new THREE.MeshBasicMaterial({
         color: 0xf6d28a,
         transparent: true,
@@ -4746,6 +4747,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       },
       side,
     };
+    this.spawnBladeDrawSmear(avatar, this.bladeSwing.direction, side);
 
     this.options.setPlayerAvatar(
       "P1",
@@ -4807,7 +4809,16 @@ export class Haven3DFieldController implements Haven3DModeController {
         damage: BLADE_SWING_DAMAGE,
         knockback: BLADE_SWING_KNOCKBACK,
       }) ?? false;
+      this.spawnBladeSlashEffect(strikeLine, this.bladeSwing.side, didHit);
       if (didHit) {
+        this.spawnHitSpark(
+          {
+            x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
+            y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
+          },
+          0xf2b04d,
+          this.getBladeSlashNormal(strikeLine, this.bladeSwing.side),
+        );
         this.beginImpactFeedback({
           x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
           y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
@@ -4869,7 +4880,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const endYaw = BLADE_SWING_END_LOCAL_YAW * handedSide;
     const swingProgress = this.getBladeSwingArcProgress(elapsed);
     const slashPulse = Math.sin(swingProgress * Math.PI);
-    const localYaw = THREE.MathUtils.lerp(startYaw, endYaw, swingProgress);
+    const whip = Math.sin(swingProgress * Math.PI * 2) * 0.16 * (1 - Math.abs(0.5 - swingProgress));
+    const localYaw = THREE.MathUtils.lerp(startYaw, endYaw, swingProgress) + (whip * handedSide);
     const hiltSidePx = THREE.MathUtils.lerp(
       BLADE_SWING_HILT_SIDE_START_PX * handedSide,
       BLADE_SWING_HILT_SIDE_END_PX * handedSide,
@@ -4879,8 +4891,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     return {
       localYaw,
       slashPulse,
-      hiltForwardPx: BLADE_SWING_HILT_FORWARD_PX + (16 * slashPulse),
-      hiltSidePx,
+      hiltForwardPx: BLADE_SWING_HILT_FORWARD_PX + (24 * slashPulse) - (8 * Math.max(0, 0.22 - swingProgress)),
+      hiltSidePx: hiltSidePx + (10 * handedSide * slashPulse),
     };
   }
 
@@ -4891,18 +4903,19 @@ export class Haven3DFieldController implements Haven3DModeController {
       1,
     );
 
-    if (t < 0.36) {
-      const anticipation = t / 0.36;
-      return 0.18 * anticipation * anticipation;
+    if (t < 0.22) {
+      const anticipation = t / 0.22;
+      return 0.12 * anticipation * anticipation;
     }
 
-    if (t < 0.66) {
-      const cut = smoothstep((t - 0.36) / 0.3);
-      return THREE.MathUtils.lerp(0.18, 0.86, cut);
+    if (t < 0.58) {
+      const cut = (t - 0.22) / 0.36;
+      const snap = 1 - Math.pow(1 - THREE.MathUtils.clamp(cut, 0, 1), 3);
+      return THREE.MathUtils.lerp(0.12, 0.94, snap);
     }
 
-    const followThrough = smoothstep((t - 0.66) / 0.34);
-    return THREE.MathUtils.lerp(0.86, 1, followThrough);
+    const followThrough = smoothstep((t - 0.58) / 0.42);
+    return THREE.MathUtils.lerp(0.94, 1, followThrough);
   }
 
   private fireLauncher(): void {
@@ -6218,8 +6231,23 @@ export class Haven3DFieldController implements Haven3DModeController {
     return true;
   }
 
-  private spawnHitSpark(point: { x: number; y: number }, color: number): void {
-    const world = fieldToHavenWorld(this.options.map, point, this.getGroundElevationAtPoint(point) + 0.62);
+  private spawnHitSpark(
+    point: { x: number; y: number },
+    color: number,
+    direction: { x: number; y: number } | null = null,
+  ): void {
+    const directionLength = direction ? Math.hypot(direction.x, direction.y) : 0;
+    const directed = direction && directionLength > 0.001
+      ? { x: direction.x / directionLength, y: direction.y / directionLength }
+      : null;
+    const world = fieldToHavenWorld(this.options.map, point, this.getGroundElevationAtPoint(point) + (directed ? 0.92 : 0.62));
+    const group = new THREE.Group();
+    group.name = directed ? "blade-directed-hit-spark" : "hit-spark";
+    group.position.set(world.x, world.y, world.z);
+    if (directed) {
+      group.rotation.y = Math.atan2(-directed.y, directed.x);
+    }
+
     const material = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -6228,16 +6256,248 @@ export class Haven3DFieldController implements Haven3DModeController {
       side: THREE.DoubleSide,
     });
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 6, 24), material);
-    ring.position.set(world.x, world.y, world.z);
     ring.rotation.x = Math.PI / 2;
     ring.renderOrder = 22;
-    this.dynamicGroup.add(ring);
+    group.add(ring);
+
+    if (directed) {
+      for (let index = 0; index < 6; index += 1) {
+        const streak = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.32 + index * 0.055, 0.04 + index * 0.005),
+          new THREE.MeshBasicMaterial({
+            color: index < 2 ? 0xfff0b8 : color,
+            transparent: true,
+            opacity: 0.8 - index * 0.06,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          }),
+        );
+        streak.name = "blade-impact-spark-streak";
+        streak.position.set(
+          0.12 + index * 0.08,
+          -0.1 + index * 0.05,
+          (Math.random() - 0.5) * 0.28,
+        );
+        streak.rotation.z = (Math.random() - 0.5) * 0.55;
+        streak.scale.y = 0.8 + Math.random() * 0.45;
+        group.add(streak);
+      }
+    }
+
+    this.dynamicGroup.add(group);
     this.visualEffects.push({
-      object: ring,
+      object: group,
       startedAt: this.currentFrameTime || performance.now(),
       durationMs: 260,
-      velocity: new THREE.Vector3(0, 1.15, 0),
-      spin: 8.5,
+      velocity: directed
+        ? new THREE.Vector3(directed.x * 1.32, 1.08, directed.y * 1.32)
+        : new THREE.Vector3(0, 1.15, 0),
+      spin: directed ? 2.8 : 8.5,
+      baseScale: group.scale.clone(),
+      opacity: directed ? 0.86 : 0.82,
+      scaleGrowth: directed ? 1.05 : 1.35,
+    });
+  }
+
+  private getBladeImpactSparkDirection(point: { x: number; y: number }): { x: number; y: number } | null {
+    if (!this.bladeSwing) {
+      return null;
+    }
+
+    const avatar = this.options.getPlayerAvatar("P1");
+    if (!avatar) {
+      return null;
+    }
+
+    const strikeLine = this.getBladeStrikeLine(avatar, this.bladeSwing);
+    const segmentX = strikeLine.tip.x - strikeLine.hilt.x;
+    const segmentY = strikeLine.tip.y - strikeLine.hilt.y;
+    const segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY);
+    if (segmentLengthSquared <= 0.001) {
+      return null;
+    }
+
+    const t = THREE.MathUtils.clamp(
+      (((point.x - strikeLine.hilt.x) * segmentX) + ((point.y - strikeLine.hilt.y) * segmentY)) / segmentLengthSquared,
+      0,
+      1,
+    );
+    const closestX = strikeLine.hilt.x + segmentX * t;
+    const closestY = strikeLine.hilt.y + segmentY * t;
+    let awayX = point.x - closestX;
+    let awayY = point.y - closestY;
+    let awayLength = Math.hypot(awayX, awayY);
+    if (awayLength <= 0.001) {
+      awayX = -strikeLine.bladeDirection.y * this.bladeSwing.side;
+      awayY = strikeLine.bladeDirection.x * this.bladeSwing.side;
+      awayLength = Math.hypot(awayX, awayY);
+    }
+
+    return awayLength > 0.001
+      ? { x: awayX / awayLength, y: awayY / awayLength }
+      : null;
+  }
+
+  private getBladeSlashNormal(strikeLine: BladeSwingPose, side: 1 | -1): { x: number; y: number } {
+    return {
+      x: -strikeLine.bladeDirection.y * side,
+      y: strikeLine.bladeDirection.x * side,
+    };
+  }
+
+  private spawnBladeDrawSmear(
+    avatar: FieldAvatarView,
+    direction: { x: number; y: number },
+    side: 1 | -1,
+  ): void {
+    const directionLength = Math.hypot(direction.x, direction.y);
+    if (directionLength <= 0.001) {
+      return;
+    }
+
+    const forward = { x: direction.x / directionLength, y: direction.y / directionLength };
+    const right = { x: forward.y, y: -forward.x };
+    const handedSide = side * PLAYER_RIGHT_HAND_LOCAL_X;
+    const start = {
+      x: avatar.x - forward.x * 18 + right.x * 46 * handedSide,
+      y: avatar.y - forward.y * 18 + right.y * 46 * handedSide,
+    };
+    const end = {
+      x: avatar.x + forward.x * 32 + right.x * 18 * handedSide,
+      y: avatar.y + forward.y * 32 + right.y * 18 * handedSide,
+    };
+    const ground = this.getGroundElevationAtPoint(avatar);
+    const startWorld = fieldToHavenWorld(this.options.map, start, ground + 1.02);
+    const endWorld = fieldToHavenWorld(this.options.map, end, ground + 1.17);
+    const worldDx = endWorld.x - startWorld.x;
+    const worldDy = endWorld.y - startWorld.y;
+    const worldDz = endWorld.z - startWorld.z;
+    const length = Math.max(0.24, Math.hypot(worldDx, worldDz));
+
+    const group = new THREE.Group();
+    group.name = "blade-draw-smear";
+    group.position.set(
+      (startWorld.x + endWorld.x) / 2,
+      (startWorld.y + endWorld.y) / 2,
+      (startWorld.z + endWorld.z) / 2,
+    );
+    group.rotation.y = Math.atan2(-worldDz, worldDx);
+    group.rotation.z = Math.atan2(worldDy, length) + 0.22 * side;
+
+    const smearMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffe6a6,
+      transparent: true,
+      opacity: 0.46,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const smear = new THREE.Mesh(new THREE.PlaneGeometry(length * 1.12, 0.2), smearMaterial);
+    smear.name = "blade-draw-main-smear";
+    group.add(smear);
+
+    const glintMaterial = new THREE.MeshBasicMaterial({
+      color: 0x67cab5,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const glint = new THREE.Mesh(new THREE.PlaneGeometry(length * 0.58, 0.055), glintMaterial);
+    glint.name = "blade-draw-edge-glint";
+    glint.position.set(length * 0.08, 0.06, 0.006);
+    group.add(glint);
+
+    group.renderOrder = 25;
+    this.dynamicGroup.add(group);
+    this.visualEffects.push({
+      object: group,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: BLADE_DRAW_SMEAR_MS,
+      velocity: new THREE.Vector3(0, 0.12, 0),
+      baseScale: group.scale.clone(),
+      opacity: 0.5,
+      scaleGrowth: 0.2,
+    });
+  }
+
+  private spawnBladeSlashEffect(strikeLine: BladeSwingPose, side: 1 | -1, didHit: boolean): void {
+    const midpoint = {
+      x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
+      y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
+    };
+    const ground = this.getGroundElevationAtPoint(midpoint);
+    const hiltWorld = fieldToHavenWorld(this.options.map, strikeLine.hilt, ground + 1.08);
+    const tipWorld = fieldToHavenWorld(this.options.map, strikeLine.tip, ground + 1.08);
+    const midpointWorld = new THREE.Vector3(
+      (hiltWorld.x + tipWorld.x) / 2,
+      (hiltWorld.y + tipWorld.y) / 2,
+      (hiltWorld.z + tipWorld.z) / 2,
+    );
+    const worldDx = tipWorld.x - hiltWorld.x;
+    const worldDz = tipWorld.z - hiltWorld.z;
+    const length = Math.max(0.4, Math.hypot(worldDx, worldDz));
+
+    const group = new THREE.Group();
+    group.name = didHit ? "blade-slash-impact-flash" : "blade-slash-air-flash";
+    group.position.copy(midpointWorld);
+    group.rotation.y = Math.atan2(-worldDz, worldDx);
+    group.rotation.z = 0.16 * side;
+
+    const mainMaterial = new THREE.MeshBasicMaterial({
+      color: didHit ? 0xfff0b8 : 0xf6d28a,
+      transparent: true,
+      opacity: didHit ? 0.82 : 0.58,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mainSlash = new THREE.Mesh(new THREE.PlaneGeometry(length * 1.05, didHit ? 0.62 : 0.46), mainMaterial);
+    mainSlash.name = "blade-slash-main-ribbon";
+    group.add(mainSlash);
+
+    const edgeMaterial = new THREE.MeshBasicMaterial({
+      color: 0x67cab5,
+      transparent: true,
+      opacity: didHit ? 0.58 : 0.36,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const edgeSlash = new THREE.Mesh(new THREE.PlaneGeometry(length * 0.76, 0.12), edgeMaterial);
+    edgeSlash.name = "blade-slash-edge-ribbon";
+    edgeSlash.position.y = didHit ? 0.15 : 0.11;
+    edgeSlash.position.x = -0.08 * side;
+    group.add(edgeSlash);
+
+    const groundMaterial = new THREE.MeshBasicMaterial({
+      color: didHit ? 0xffd67a : 0x67cab5,
+      transparent: true,
+      opacity: didHit ? 0.32 : 0.22,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const groundSlash = new THREE.Mesh(new THREE.PlaneGeometry(length * 1.12, didHit ? 0.28 : 0.2), groundMaterial);
+    groundSlash.name = "blade-slash-ground-streak";
+    groundSlash.rotation.x = -Math.PI / 2;
+    groundSlash.position.y = -0.96;
+    groundSlash.position.x = -0.06 * side;
+    group.add(groundSlash);
+
+    if (didHit) {
+      const light = new THREE.PointLight(0xffd98c, 1.6, 3.2, 1.5);
+      light.position.y = 0.05;
+      group.add(light);
+    }
+
+    group.renderOrder = 24;
+    this.dynamicGroup.add(group);
+    this.visualEffects.push({
+      object: group,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: didHit ? 210 : 165,
+      velocity: new THREE.Vector3(0, didHit ? 0.32 : 0.22, 0),
+      spin: 1.8 * side,
+      baseScale: group.scale.clone(),
+      opacity: didHit ? 0.86 : 0.62,
+      scaleGrowth: didHit ? 0.48 : 0.3,
     });
   }
 
@@ -6620,7 +6880,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.applyBladeSwingArmPose(actor, swing, elapsed, windup, strike, recovery);
     this.mountBladeOnChibiRoot(actor);
     this.updateBladeSwingWeaponPose(actor, swing, elapsed);
-    this.hideBladeTrail(actor);
+    this.updateBladeSwingTrail(actor, swing, elapsed);
   }
 
   private hideBladeTrail(actor: Actor): void {
@@ -6634,6 +6894,38 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (material instanceof THREE.MeshBasicMaterial) {
       material.opacity = 0;
     }
+  }
+
+  private updateBladeSwingTrail(actor: Actor, swing: BladeSwingState, elapsed: number): void {
+    if (!actor.bladeTrail) {
+      return;
+    }
+
+    const trailStart = BLADE_SWING_ARC_START_MS;
+    const trailEnd = BLADE_SWING_TOTAL_MS - 34;
+    const trailT = THREE.MathUtils.clamp((elapsed - trailStart) / Math.max(1, trailEnd - trailStart), 0, 1);
+    const pose = this.getBladeSwingWeaponPoseValues(swing, elapsed);
+    const slashPulse = Math.sin(trailT * Math.PI);
+    const impactFlash = Math.max(0, 1 - Math.abs(elapsed - BLADE_SWING_IMPACT_MS) / 62);
+    const active = elapsed >= trailStart && elapsed <= trailEnd && (slashPulse > 0.02 || impactFlash > 0.02);
+    actor.bladeTrail.visible = active;
+
+    const material = actor.bladeTrail instanceof THREE.Mesh ? actor.bladeTrail.material : null;
+    if (material instanceof THREE.MeshBasicMaterial) {
+      material.opacity = active ? Math.min(0.92, 0.18 + (0.55 * slashPulse) + (0.28 * impactFlash)) : 0;
+      material.color.setHex(impactFlash > 0.35 ? 0xfff0b8 : 0xf6d28a);
+    }
+
+    actor.bladeTrail.position.set(
+      0.02 - (0.045 * swing.side * PLAYER_RIGHT_HAND_LOCAL_X * pose.slashPulse),
+      0.006,
+      0.92 + (0.1 * pose.slashPulse),
+    );
+    actor.bladeTrail.scale.set(
+      1.12 + (0.5 * pose.slashPulse) + (0.22 * impactFlash),
+      1.05 + (1.5 * slashPulse),
+      1,
+    );
   }
 
   private applyZiplineRidePose(actor: Actor): void {
@@ -7063,17 +7355,18 @@ export class Haven3DFieldController implements Haven3DModeController {
     const slashPulse = Math.sin(swingProgress * Math.PI);
     const recoveryProgress = smoothstep((elapsed - BLADE_LUNGE_END_MS) / (BLADE_SWING_TOTAL_MS - BLADE_LUNGE_END_MS));
     const handedSide = side * PLAYER_RIGHT_HAND_LOCAL_X;
-    const hiltStartX = side === 1 ? 0.58 * PLAYER_RIGHT_HAND_LOCAL_X : -0.22 * PLAYER_RIGHT_HAND_LOCAL_X;
-    const hiltEndX = side === 1 ? -0.22 * PLAYER_RIGHT_HAND_LOCAL_X : 0.58 * PLAYER_RIGHT_HAND_LOCAL_X;
-    const wristFollow = (0.08 * handedSide * slashPulse) - (0.05 * handedSide * recoveryProgress);
+    const cutSnap = Math.sin(Math.min(1, swingProgress / 0.82) * Math.PI);
+    const hiltStartX = side === 1 ? 0.72 * PLAYER_RIGHT_HAND_LOCAL_X : -0.38 * PLAYER_RIGHT_HAND_LOCAL_X;
+    const hiltEndX = side === 1 ? -0.36 * PLAYER_RIGHT_HAND_LOCAL_X : 0.66 * PLAYER_RIGHT_HAND_LOCAL_X;
+    const wristFollow = (0.16 * handedSide * slashPulse) - (0.08 * handedSide * recoveryProgress);
 
     return {
-      hiltX: THREE.MathUtils.lerp(hiltStartX, hiltEndX, swingProgress) - (0.025 * handedSide * slashPulse),
-      hiltY: 1.01 + (0.045 * slashPulse) - (0.012 * recoveryProgress),
-      hiltZ: 0.38 + (0.13 * slashPulse) - (0.045 * recoveryProgress),
-      bladePitch: 0.012 + (0.018 * slashPulse) - (0.012 * recoveryProgress),
-      bladeYaw: THREE.MathUtils.lerp(1.02 * handedSide, -0.94 * handedSide, swingProgress) + wristFollow,
-      bladeRoll: THREE.MathUtils.lerp(-0.08 * handedSide, 0.07 * handedSide, swingProgress) - (0.035 * handedSide * recoveryProgress),
+      hiltX: THREE.MathUtils.lerp(hiltStartX, hiltEndX, swingProgress) - (0.045 * handedSide * slashPulse),
+      hiltY: 0.97 + (0.105 * slashPulse) - (0.02 * recoveryProgress),
+      hiltZ: 0.28 + (0.25 * cutSnap) - (0.065 * recoveryProgress),
+      bladePitch: -0.08 + (0.095 * slashPulse) - (0.025 * recoveryProgress),
+      bladeYaw: THREE.MathUtils.lerp(1.28 * handedSide, -1.14 * handedSide, swingProgress) + wristFollow,
+      bladeRoll: THREE.MathUtils.lerp(-0.18 * handedSide, 0.18 * handedSide, swingProgress) - (0.06 * handedSide * recoveryProgress),
       swingProgress,
       slashPulse,
     };
@@ -7097,7 +7390,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const weaponPose = this.getBladeSwingWeaponPoseValues(swing, elapsed);
     const swingProgress = weaponPose.swingProgress;
     const slashPulse = weaponPose.slashPulse;
-    const bodyTwist = THREE.MathUtils.lerp(-0.24 * handedSide, 0.28 * handedSide, swingProgress);
+    const cutCommit = Math.sin(Math.min(1, swingProgress / 0.72) * Math.PI);
+    const bodyTwist = THREE.MathUtils.lerp(-0.38 * handedSide, 0.46 * handedSide, swingProgress);
     const recoveryEase = THREE.MathUtils.clamp(recovery, 0, 1);
     const strikePulse = Math.sin(THREE.MathUtils.clamp(strike, 0, 1) * Math.PI);
     const blendRotation = (node: THREE.Object3D, x: number, y: number, z: number, amount: number): void => {
@@ -7108,14 +7402,15 @@ export class Haven3DFieldController implements Haven3DModeController {
       );
     };
 
-    chibi.root.position.y -= 0.01 + (0.012 * slashPulse) + (0.006 * strikePulse);
-    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, 0.035 + (0.025 * slashPulse), 0.66);
-    chibi.torso.rotation.y = THREE.MathUtils.lerp(chibi.torso.rotation.y, bodyTwist, 0.78);
-    chibi.torso.rotation.z = THREE.MathUtils.lerp(chibi.torso.rotation.z, -0.045 * handedSide * slashPulse, 0.54);
-    chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.035 + (0.018 * windup), 0.68);
-    chibi.pelvis.rotation.y = THREE.MathUtils.lerp(chibi.pelvis.rotation.y, bodyTwist * 0.28, 0.72);
-    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.015, 0.54);
-    chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, bodyTwist * -0.24, 0.62);
+    chibi.root.position.y -= 0.018 + (0.02 * slashPulse) + (0.014 * strikePulse);
+    chibi.root.position.z += 0.018 * cutCommit;
+    chibi.torso.rotation.x = THREE.MathUtils.lerp(chibi.torso.rotation.x, 0.055 + (0.045 * slashPulse), 0.74);
+    chibi.torso.rotation.y = THREE.MathUtils.lerp(chibi.torso.rotation.y, bodyTwist, 0.86);
+    chibi.torso.rotation.z = THREE.MathUtils.lerp(chibi.torso.rotation.z, -0.08 * handedSide * slashPulse, 0.62);
+    chibi.pelvis.rotation.x = THREE.MathUtils.lerp(chibi.pelvis.rotation.x, 0.045 + (0.028 * windup), 0.76);
+    chibi.pelvis.rotation.y = THREE.MathUtils.lerp(chibi.pelvis.rotation.y, bodyTwist * 0.34, 0.78);
+    chibi.head.rotation.x = THREE.MathUtils.lerp(chibi.head.rotation.x, 0.022 - (0.018 * slashPulse), 0.6);
+    chibi.head.rotation.y = THREE.MathUtils.lerp(chibi.head.rotation.y, bodyTwist * -0.32, 0.72);
 
     const shoulder = chibi.rightShoulderPivot.position;
     const gripPoint = new THREE.Vector3(weaponPose.hiltX, weaponPose.hiltY, weaponPose.hiltZ);
@@ -7130,7 +7425,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const hiltDistance = Math.max(0.001, shoulderToWrist.length());
     const hiltDirection = shoulderToWrist.clone().normalize();
     const upperArmLength = 0.31;
-    const relaxedLowerArmLength = 0.29 + (0.035 * slashPulse) + (0.035 * swingProgress);
+    const relaxedLowerArmLength = 0.29 + (0.055 * slashPulse) + (0.05 * swingProgress);
     const lowerArmLength = THREE.MathUtils.clamp(
       relaxedLowerArmLength,
       Math.max(0.22, hiltDistance - upperArmLength + 0.012),
@@ -7146,9 +7441,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     ) / (2 * reachDistance);
     const elbowBend = Math.sqrt(Math.max(0, (upperArmLength * upperArmLength) - (elbowAlongReach * elbowAlongReach)));
     const elbowBias = new THREE.Vector3(
-      THREE.MathUtils.lerp(0.16 * handedSide, -0.08 * handedSide, swingProgress),
-      -0.86,
-      -0.32 - (0.16 * slashPulse),
+      THREE.MathUtils.lerp(0.24 * handedSide, -0.12 * handedSide, swingProgress),
+      -0.88,
+      -0.4 - (0.24 * slashPulse),
     );
     const elbowBendDirection = elbowBias
       .addScaledVector(hiltDirection, -elbowBias.dot(hiltDirection))
@@ -7182,33 +7477,33 @@ export class Haven3DFieldController implements Haven3DModeController {
     );
     const handParentRotation = shoulderRotation.clone().multiply(chibi.rightForearm.quaternion);
     chibi.rightHandMount.quaternion.copy(handParentRotation.invert().multiply(desiredHandRotation));
-    chibi.rightHandMount.rotateZ(-0.08 * handedSide * (1 - recoveryEase));
+    chibi.rightHandMount.rotateZ((-0.12 * handedSide * (1 - recoveryEase)) + (0.04 * handedSide * slashPulse));
     chibi.rightHand.position.set(0, -0.006, BLADE_SWING_WRIST_TO_GRIP * 0.82);
     chibi.rightHand.scale.set(0.92, 0.72, 0.62);
 
     blendRotation(
       chibi.leftUpperArm,
-      0.26 + (0.025 * slashPulse),
-      0.08 - (0.025 * bodyTwist),
-      -0.22,
+      0.34 + (0.045 * slashPulse),
+      0.12 - (0.035 * bodyTwist),
+      -0.3 - (0.05 * handedSide * slashPulse),
       0.74,
     );
     blendRotation(
       chibi.leftForearm,
-      -0.45,
-      0.04,
-      -0.14,
+      -0.56,
+      0.06,
+      -0.18 - (0.04 * handedSide * slashPulse),
       0.74,
     );
 
     const leftLeads = handedSide === 1;
-    const leadThighX = 0.16 + (0.03 * slashPulse);
-    const rearThighX = -0.02 - (0.025 * slashPulse);
-    const leadShinX = 0.13 + (0.025 * slashPulse);
-    const rearShinX = 0.22 + (0.025 * slashPulse);
-    const leadFootX = -0.06 - (0.02 * strikePulse);
-    const rearFootX = 0.09 + (0.025 * slashPulse);
-    const plantAmount = 0.74;
+    const leadThighX = 0.22 + (0.055 * slashPulse);
+    const rearThighX = -0.06 - (0.04 * slashPulse);
+    const leadShinX = 0.18 + (0.04 * slashPulse);
+    const rearShinX = 0.28 + (0.035 * slashPulse);
+    const leadFootX = -0.1 - (0.035 * strikePulse);
+    const rearFootX = 0.14 + (0.035 * slashPulse);
+    const plantAmount = 0.82;
 
     blendRotation(chibi.pelvis, 0.035, bodyTwist * 0.28, -0.055 * handedSide * slashPulse, plantAmount);
 
@@ -7325,7 +7620,11 @@ export class Haven3DFieldController implements Haven3DModeController {
           startedAt: this.currentFrameTime || performance.now(),
           durationMs: ENEMY_HIT_REACTION_MS,
         });
-        this.spawnHitSpark({ x: enemy.x, y: enemy.y }, 0xf2b04d);
+        this.spawnHitSpark(
+          { x: enemy.x, y: enemy.y },
+          0xf2b04d,
+          this.getBladeImpactSparkDirection(enemyPoint),
+        );
       }
       this.enemyHpSnapshot.set(enemy.id, enemy.hp);
       actor.group.position.set(world.x, world.y, world.z);

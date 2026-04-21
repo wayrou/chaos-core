@@ -12,6 +12,13 @@ import {
   OUTER_DECK_OVERWORLD_MAP_ID,
   OUTER_DECK_OVERWORLD_TRAVELING_MERCHANT_ZONE_ID,
   beginOuterDeckExpedition,
+  buildOuterDeckInteriorMapId,
+  getOuterDeckInteriorLootKey,
+  getOuterDeckInteriorRoomKey,
+  getOuterDeckInteriorSpec,
+  markOuterDeckInteriorLootClaimed,
+  markOuterDeckInteriorRoomCleared,
+  parseOuterDeckInteriorMapId,
   placeOuterDeckOpenWorldLantern,
   resolveOuterDeckMechanic,
 } from "../outerDecks";
@@ -73,6 +80,23 @@ function hasElevationRun(map, minimumElevation, minimumLength) {
   }
 
   return false;
+}
+
+function findSeededApronWithInteriorEntrance() {
+  for (let seed = 1000; seed < 1300; seed += 1) {
+    const state = createSeededState(seed);
+    const map = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, state);
+    const entrances = map.objects.filter((object) => object.metadata?.outerDeckInteriorEntrance === true);
+    if (entrances.length > 0) {
+      return { seed, state, map, entrances };
+    }
+  }
+  throw new Error("Expected to find a deterministic Apron interior entrance seed");
+}
+
+function walkableRatio(map) {
+  const tiles = map.tiles.flat();
+  return tiles.filter((tile) => tile.walkable).length / tiles.length;
 }
 
 describe("outerDeckMaps", () => {
@@ -156,6 +180,57 @@ describe("outerDeckMaps", () => {
     expect(Math.max(...visibleElevations)).toBeGreaterThanOrEqual(96);
     expect(visibleElevations.filter((elevation) => elevation >= 76).length).toBeGreaterThanOrEqual(120);
     expect(hasElevationRun(overworld, 76, 8)).toBe(true);
+  });
+
+  it("places sparse deterministic generated Apron interior entrances away from HAVEN", () => {
+    const { seed, state, map, entrances } = findSeededApronWithInteriorEntrance();
+    const repeated = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, state);
+    const repeatedEntrances = repeated.objects.filter((object) => object.metadata?.outerDeckInteriorEntrance === true);
+    const zones = map.interactionZones.filter((zone) => zone.metadata?.handlerId === "outer_deck_interior_entry");
+
+    expect(entrances.length).toBeGreaterThan(0);
+    expect(entrances.length).toBeLessThanOrEqual(4);
+    expect(entrances.map((object) => object.id).sort()).toEqual(repeatedEntrances.map((object) => object.id).sort());
+    expect(zones.length).toBe(entrances.length);
+    entrances.forEach((entrance) => {
+      expect(Math.floor(Math.hypot(Number(entrance.metadata?.chunkX), Number(entrance.metadata?.chunkY)))).toBeGreaterThanOrEqual(2);
+      expect(String(entrance.metadata?.targetMapId)).toMatch(/^outerdeck_interior_f\d+_cx-?\d+_cy-?\d+_d0$/);
+    });
+
+    const different = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, createSeededState(seed + 1));
+    expect(different.objects.map((object) => object.id).sort()).not.toEqual(map.objects.map((object) => object.id).sort());
+  });
+
+  it("generates tight corridor mini-chain interiors with clear-gated enemies and final caches", () => {
+    const baseState = createSeededState(424242);
+    const spec = getOuterDeckInteriorSpec(424242, 1, 2, -2);
+    const entryMapId = buildOuterDeckInteriorMapId(1, 2, -2, 0);
+    const finalMapId = buildOuterDeckInteriorMapId(1, 2, -2, spec.chainLength - 1);
+    const entry = createOuterDeckFieldMap(entryMapId, baseState);
+    const final = createOuterDeckFieldMap(finalMapId, baseState);
+    const finalRef = parseOuterDeckInteriorMapId(finalMapId);
+    const finalRoomKey = getOuterDeckInteriorRoomKey(finalRef);
+    const finalLootKey = getOuterDeckInteriorLootKey(finalRef);
+    const clearedFinal = createOuterDeckFieldMap(
+      finalMapId,
+      markOuterDeckInteriorRoomCleared(baseState, finalRoomKey),
+    );
+    const claimedFinal = createOuterDeckFieldMap(
+      finalMapId,
+      markOuterDeckInteriorLootClaimed(baseState, finalLootKey),
+    );
+
+    expect(entry?.metadata?.kind).toBe("outerDeckInterior");
+    expect(entry?.interactionZones.some((zone) => zone.label === "SURFACE")).toBe(true);
+    expect(entry?.interactionZones.some((zone) => zone.label === "DEEPER")).toBe(true);
+    expect(walkableRatio(entry)).toBeGreaterThan(0.15);
+    expect(walkableRatio(entry)).toBeLessThan(0.5);
+    expect(entry?.objects.some((object) => object.type === "enemy")).toBe(true);
+    expect(final?.interactionZones.some((zone) => zone.metadata?.handlerId === "outer_deck_interior_cache")).toBe(true);
+    expect(final?.objects.some((object) => object.id.endsWith("_cache"))).toBe(true);
+    expect(clearedFinal?.objects.some((object) => object.type === "enemy")).toBe(false);
+    expect(claimedFinal?.interactionZones.some((zone) => zone.metadata?.handlerId === "outer_deck_interior_cache")).toBe(false);
+    expect(claimedFinal?.objects.some((object) => object.id.endsWith("_cache"))).toBe(false);
   });
 
   it("keeps Apron ziplines sparse and tied to real traversal problems", () => {

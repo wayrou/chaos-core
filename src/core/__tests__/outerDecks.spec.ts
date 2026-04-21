@@ -6,20 +6,30 @@ import {
   OUTER_DECK_OVERWORLD_MAP_ID,
   abortOuterDeckExpedition,
   beginOuterDeckExpedition,
+  buildOuterDeckInteriorMapId,
   claimOuterDeckCompletion,
   claimOuterDeckWorldBossDefeat,
   createDefaultOuterDecksState,
+  getOuterDeckInteriorLootKey,
+  getOuterDeckInteriorRoomKey,
+  getOuterDeckInteriorSpec,
   getOuterDeckBranchEntrySubarea,
   getOuterDeckFieldContext,
   getOuterDeckSubareaByMapId,
   getUnlockedOuterDeckZoneIds,
+  grantOuterDeckInteriorCacheReward,
   hasOuterDeckZoneBeenReclaimed,
+  isOuterDeckAccessibleMap,
+  isOuterDeckInteriorMap,
   isOuterDeckMechanicResolved,
   isOuterDeckBranchMap,
   isOuterDeckOverworldMap,
   isOuterDeckZoneUnlocked,
+  markOuterDeckInteriorLootClaimed,
+  markOuterDeckInteriorRoomCleared,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
+  parseOuterDeckInteriorMapId,
   markOuterDeckSubareaCleared,
   placeOuterDeckOpenWorldLantern,
   prepareOuterDeckOpenWorldEntry,
@@ -123,7 +133,71 @@ describe("outerDecks", () => {
     expect(state.openWorld.collectedResourceKeys).toEqual([]);
     expect(state.openWorld.defeatedEnemyKeys).toEqual([]);
     expect(state.openWorld.defeatedBossKeys).toEqual([]);
+    expect(state.openWorld.clearedInteriorRoomKeys).toEqual([]);
+    expect(state.openWorld.claimedInteriorLootKeys).toEqual([]);
+    expect(state.openWorld.completedInteriorKeys).toEqual([]);
     expect(state.openWorldByFloor["1"].floorOrdinal).toBe(1);
+  });
+
+  it("recognizes generated Apron interior maps as outer-deck field surfaces", () => {
+    const mapId = buildOuterDeckInteriorMapId(3, -2, 4, 1);
+
+    expect(parseOuterDeckInteriorMapId(mapId)).toEqual({
+      floorOrdinal: 3,
+      chunkX: -2,
+      chunkY: 4,
+      depth: 1,
+    });
+    expect(isOuterDeckInteriorMap(mapId)).toBe(true);
+    expect(isOuterDeckAccessibleMap(mapId)).toBe(true);
+    expect(getOuterDeckFieldContext(mapId)).toBe("outerDeckInterior");
+  });
+
+  it("keeps Apron interior progress separated by theater floor", () => {
+    const roomKey = getOuterDeckInteriorRoomKey({ floorOrdinal: 1, chunkX: 2, chunkY: -1, depth: 0 });
+    const lootKey = getOuterDeckInteriorLootKey({ floorOrdinal: 1, chunkX: 2, chunkY: -1, depth: 0 });
+    const floorOneMarked = markOuterDeckInteriorLootClaimed(
+      markOuterDeckInteriorRoomCleared(createNewGameState(), roomKey),
+      lootKey,
+    );
+    const floorTwoEntry = prepareOuterDeckOpenWorldEntry(floorOneMarked, 2);
+    const backToFloorOne = prepareOuterDeckOpenWorldEntry(floorTwoEntry, 1);
+
+    expect(floorOneMarked.outerDecks?.openWorld.clearedInteriorRoomKeys).toContain(roomKey);
+    expect(floorOneMarked.outerDecks?.openWorld.claimedInteriorLootKeys).toContain(lootKey);
+    expect(floorOneMarked.outerDecks?.openWorld.completedInteriorKeys).toContain("f1:cx2:cy-1");
+    expect(floorTwoEntry.outerDecks?.openWorld.clearedInteriorRoomKeys).not.toContain(roomKey);
+    expect(backToFloorOne.outerDecks?.openWorld.clearedInteriorRoomKeys).toContain(roomKey);
+    expect(backToFloorOne.outerDecks?.openWorld.claimedInteriorLootKeys).toContain(lootKey);
+  });
+
+  it("grants generated Apron interior cache gear once", () => {
+    const base = createNewGameState();
+    const seeded = {
+      ...base,
+      outerDecks: {
+        ...base.outerDecks,
+        openWorld: {
+          ...base.outerDecks.openWorld,
+          seed: 424242,
+          floorOrdinal: 4,
+        },
+      },
+    };
+    const spec = getOuterDeckInteriorSpec(424242, 4, 2, -2);
+    const finalMapId = buildOuterDeckInteriorMapId(4, 2, -2, spec.chainLength - 1);
+    const beforeEquipmentCount = seeded.equipmentPool.length;
+    const reward = grantOuterDeckInteriorCacheReward(seeded, finalMapId);
+    const repeated = grantOuterDeckInteriorCacheReward(reward.state, finalMapId);
+
+    expect(reward.granted).toBe(true);
+    expect(reward.gearReward).toBeTruthy();
+    expect(reward.state.equipmentPool.length).toBe(beforeEquipmentCount + 1);
+    expect(reward.state.equipmentPool).toContain(reward.gearReward.equipmentId);
+    expect(reward.state.outerDecks?.openWorld.claimedInteriorLootKeys).toContain(reward.rewardKey);
+    expect(repeated.granted).toBe(false);
+    expect(repeated.alreadyClaimed).toBe(true);
+    expect(repeated.state.equipmentPool.length).toBe(reward.state.equipmentPool.length);
   });
 
   it("keeps Apron open-world progress separated by theater floor", () => {

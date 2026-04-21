@@ -22,10 +22,13 @@ import {
 import {
   abortOuterDeckExpedition,
   OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  OUTER_DECK_OPEN_WORLD_TILE_SIZE,
   OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE,
   OUTER_DECK_OVERWORLD_MAP_ID,
   beginOuterDeckExpedition,
   claimOuterDeckCompletion,
+  grantOuterDeckInteriorCacheReward,
+  getOuterDeckInteriorRoomKey,
   getOuterDeckBranchEntrySubarea,
   getOuterDeckNpcEncounterDefinition,
   getOuterDeckOverworldReturnSpawn,
@@ -37,11 +40,13 @@ import {
   isOuterDeckSubareaCleared,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
+  parseOuterDeckInteriorMapId,
   prepareOuterDeckOpenWorldEntry,
   resolveOuterDeckMechanic,
   setOuterDeckCurrentSubarea,
+  setOuterDeckOpenWorldPlayerWorldPosition,
 } from "../core/outerDecks";
-import { createEmptyResourceWallet } from "../core/resources";
+import { createEmptyResourceWallet, getResourceEntries } from "../core/resources";
 import { grantSessionResources } from "../core/session";
 import { getCurrentOpsTerminalAtlasFloor } from "../core/opsTerminalAtlas";
 import { showAlertDialog } from "../ui/components/confirmDialog";
@@ -97,6 +102,27 @@ function summarizeOuterDeckRewardBundle(
   });
 
   return parts.join(" | ");
+}
+
+function isCurrentOuterDeckInteriorRoomCleared(map: FieldMap): boolean {
+  const ref = parseOuterDeckInteriorMapId(String(map.id));
+  if (!ref) {
+    return true;
+  }
+  const roomKey = getOuterDeckInteriorRoomKey(ref);
+  return Boolean(getGameState().outerDecks?.openWorld?.clearedInteriorRoomKeys?.includes(roomKey));
+}
+
+function summarizeOuterDeckInteriorReward(result: ReturnType<typeof grantOuterDeckInteriorCacheReward>): string {
+  const parts = [
+    result.gearReward ? `Gear: ${result.gearReward.name}` : "",
+    result.fieldMod ? `Field Mod: ${result.fieldMod.name}` : "",
+    result.wad > 0 ? `+${result.wad} WAD` : "",
+    ...getResourceEntries(result.resources, { keys: ["metalScrap", "wood", "chaosShards", "steamComponents"] })
+      .map((entry) => `+${entry.amount} ${entry.label}`),
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" | ") : "Cache already secured.";
 }
 
 /**
@@ -501,6 +527,115 @@ export async function handleInteraction(
           Math.floor(Number(zone.metadata?.floorOrdinal ?? getGameState().outerDecks?.openWorld?.floorOrdinal ?? 1)),
         );
         openScreenAsync(() => renderFieldMerchantShopScreen(floorOrdinal));
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_entry") {
+        const targetMapId = typeof zone.metadata?.targetMapId === "string" ? zone.metadata.targetMapId : "";
+        if (!targetMapId) {
+          onResume();
+          break;
+        }
+
+        const returnWorldTileX = Number(zone.metadata?.returnWorldTileX);
+        const returnWorldTileY = Number(zone.metadata?.returnWorldTileY);
+        const returnFacing = zone.metadata?.returnFacing === "north"
+          || zone.metadata?.returnFacing === "south"
+          || zone.metadata?.returnFacing === "east"
+          || zone.metadata?.returnFacing === "west"
+          ? zone.metadata.returnFacing
+          : "south";
+        if (Number.isFinite(returnWorldTileX) && Number.isFinite(returnWorldTileY)) {
+          updateGameState((state) => setOuterDeckOpenWorldPlayerWorldPosition(
+            state,
+            (returnWorldTileX + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+            (returnWorldTileY + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+            returnFacing,
+          ));
+        }
+
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
+          setNextFieldSpawnOverrideTile(targetMapId, { x: 2, y: 8, facing: "east" });
+          renderFieldScreen(targetMapId as any);
+        } catch (error) {
+          console.error("[FIELD] Failed to enter Apron interior:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "The corridor entrance failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_transition") {
+        const targetMapId = typeof zone.metadata?.targetMapId === "string" ? zone.metadata.targetMapId : "";
+        if (!targetMapId) {
+          onResume();
+          break;
+        }
+
+        if (zone.metadata?.requiresClear && !isCurrentOuterDeckInteriorRoomCleared(map)) {
+          showFieldTravelPing(
+            "ROUTE BLOCKED",
+            "Clear the corridor before pushing deeper.",
+          );
+          onResume();
+          break;
+        }
+
+        const direction = String(zone.metadata?.direction ?? "deeper");
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
+          setNextFieldSpawnOverrideTile(targetMapId, direction === "back"
+            ? { x: 19, y: 8, facing: "west" }
+            : { x: 2, y: 8, facing: "east" });
+          renderFieldScreen(targetMapId as any);
+        } catch (error) {
+          console.error("[FIELD] Failed to move through Apron interior:", error);
+          showFieldTravelPing("ROUTE BLOCKED", "The next corridor failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_exit") {
+        const { renderFieldScreen } = await import("./FieldScreen");
+        try {
+          renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
+        } catch (error) {
+          console.error("[FIELD] Failed to leave Apron interior:", error);
+          showFieldTravelPing("RETURN BLOCKED", "The surface route failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_cache") {
+        const ref = parseOuterDeckInteriorMapId(String(map.id));
+        if (!ref) {
+          onResume();
+          break;
+        }
+
+        if (zone.metadata?.requiresClear && !isCurrentOuterDeckInteriorRoomCleared(map)) {
+          await showFieldInteractionAlert("Hostiles remain in the corridor. Secure the area before opening the cache.");
+          onResume();
+          break;
+        }
+
+        const reward = grantOuterDeckInteriorCacheReward(getGameState(), ref);
+        updateGameState(() => reward.state);
+
+        const { renderFieldScreen } = await import("./FieldScreen");
+        renderFieldScreen(map.id);
+        showSystemPing({
+          type: reward.granted ? "success" : "info",
+          title: reward.granted ? "APRON CACHE SECURED" : "CACHE ALREADY SECURED",
+          message: reward.gearReward?.name ?? "Recovered cache",
+          detail: summarizeOuterDeckInteriorReward(reward),
+          durationMs: 5200,
+          channel: "outer-deck-interior-cache",
+          replaceChannel: true,
+        });
         break;
       }
 

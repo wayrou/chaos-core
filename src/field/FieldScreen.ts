@@ -200,18 +200,22 @@ import {
   abortOuterDeckExpedition,
   claimOuterDeckWorldBossDefeat,
   getOuterDeckFieldContext,
+  getOuterDeckInteriorRoomKey,
   getOuterDeckOpenWorldState,
   getOuterDeckSubareaByMapId,
   isOuterDeckAccessibleMap,
   isOuterDeckBranchMap,
+  isOuterDeckInteriorMap,
   isOuterDeckOverworldMap,
   isOuterDeckSubareaCleared,
+  markOuterDeckInteriorRoomCleared,
   markOuterDeckOpenWorldChunkExplored,
   markOuterDeckOpenWorldEnemyDefeated,
   markOuterDeckOpenWorldApronKeyCollected,
   markOuterDeckOpenWorldResourceCollected,
   markOuterDeckOpenWorldTheaterChartCollected,
   markOuterDeckSubareaCleared,
+  parseOuterDeckInteriorMapId,
   placeOuterDeckOpenWorldLantern,
   setOuterDeckOpenWorldBossHp,
   setOuterDeckOpenWorldPlayerWorldPosition,
@@ -7127,6 +7131,27 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
         message: subarea.title,
         detail: "Route gate and recovery interactions are now available.",
         channel: "outer-deck-subarea-clear",
+        replaceChannel: true,
+      });
+    }
+  }
+
+  if (currentMap && isOuterDeckInteriorMap(String(currentMap.id))) {
+    const ref = parseOuterDeckInteriorMapId(String(currentMap.id));
+    const roomKey = ref ? getOuterDeckInteriorRoomKey(ref) : "";
+    const roomCleared = Boolean(ref) && Boolean(fieldState?.fieldEnemies?.every((fieldEnemy) => fieldEnemy.hp <= 0));
+    if (
+      ref
+      && roomCleared
+      && !getGameState().outerDecks?.openWorld?.clearedInteriorRoomKeys?.includes(roomKey)
+    ) {
+      updateGameState((state) => markOuterDeckInteriorRoomCleared(state, roomKey));
+      showSystemPing({
+        type: "success",
+        title: "CORRIDOR SECURED",
+        message: currentMap.name,
+        detail: "The deeper route and cache interactions are now available.",
+        channel: "outer-deck-interior-clear",
         replaceChannel: true,
       });
     }

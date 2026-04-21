@@ -10,6 +10,8 @@ import {
   OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID,
   OUTER_DECK_OVERWORLD_MAP_ID,
   OUTER_DECK_OVERWORLD_TRAVELING_MERCHANT_ZONE_ID,
+  buildOuterDeckInteriorMapId,
+  getOuterDeckInteriorSpec,
   getOuterDeckOpenWorldState,
   type OuterDeckOpenWorldState,
   type OuterDeckRewardBundle,
@@ -209,6 +211,8 @@ const ENEMY_KINDS = [
 ] as const;
 
 const OUTER_DECK_ROAMING_ENEMY_DENSITY = 0.2;
+const OUTER_DECK_INTERIOR_SUPERCELL_SIZE = 3;
+const OUTER_DECK_INTERIOR_SPAWN_THRESHOLD = 0.48;
 const OUTER_DECK_GRAPPLE_ROUTE_CHUNK_STRIDE = 5;
 const OUTER_DECK_ZIPLINE_MAX_SEGMENTS_PER_ROUTE = 1;
 const OUTER_DECK_ZIPLINE_MIN_SPAN_TILES = 6;
@@ -1468,11 +1472,116 @@ function addPlacedLanterns(
   });
 }
 
+function shouldGenerateInteriorEntrance(openWorld: OuterDeckOpenWorldState, chunkX: number, chunkY: number): boolean {
+  const distanceTier = getDistanceTier(chunkX, chunkY);
+  if (distanceTier < 2) {
+    return false;
+  }
+
+  const superX = floorDiv(chunkX, OUTER_DECK_INTERIOR_SUPERCELL_SIZE);
+  const superY = floorDiv(chunkY, OUTER_DECK_INTERIOR_SUPERCELL_SIZE);
+  const anchorX = (superX * OUTER_DECK_INTERIOR_SUPERCELL_SIZE)
+    + Math.floor(random01(openWorld.seed, superX, superY, 5120) * OUTER_DECK_INTERIOR_SUPERCELL_SIZE);
+  const anchorY = (superY * OUTER_DECK_INTERIOR_SUPERCELL_SIZE)
+    + Math.floor(random01(openWorld.seed, superX, superY, 5121) * OUTER_DECK_INTERIOR_SUPERCELL_SIZE);
+  if (chunkX !== anchorX || chunkY !== anchorY) {
+    return false;
+  }
+
+  return random01(openWorld.seed, superX, superY, 5140) >= OUTER_DECK_INTERIOR_SPAWN_THRESHOLD;
+}
+
+function getInteriorEntranceSprite(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): string {
+  switch (variant) {
+    case "cave":
+      return "doorway";
+    case "structure":
+      return "bulkhead";
+    case "service_tunnel":
+      return "bulkhead";
+    default:
+      return "doorway";
+  }
+}
+
+function addChunkInteriorEntrance(
+  openWorld: OuterDeckOpenWorldState,
+  tiles: FieldMap["tiles"],
+  metadata: OuterDeckStreamMetadata,
+  objects: FieldObject[],
+  interactionZones: InteractionZone[],
+  occupied: Set<string>,
+  chunkX: number,
+  chunkY: number,
+): void {
+  if (!shouldGenerateInteriorEntrance(openWorld, chunkX, chunkY)) {
+    return;
+  }
+
+  const spawn = findChunkSpawnTile(openWorld.seed, tiles, metadata, occupied, chunkX, chunkY, 5180, {
+    avoidOrigin: true,
+  });
+  if (!spawn) {
+    return;
+  }
+
+  const spec = getOuterDeckInteriorSpec(openWorld.seed, metadata.floorOrdinal, chunkX, chunkY);
+  const targetMapId = buildOuterDeckInteriorMapId(metadata.floorOrdinal, chunkX, chunkY, 0);
+  const objectId = `${objectPrefix(chunkX, chunkY)}_interior_${spec.variant}`;
+  const zoneId = `${objectId}_zone`;
+  const completed = openWorld.completedInteriorKeys.includes(spec.key);
+
+  objects.push({
+    id: objectId,
+    x: spawn.localX,
+    y: spawn.localY,
+    width: 1,
+    height: 1,
+    type: "station",
+    sprite: getInteriorEntranceSprite(spec.variant),
+    metadata: {
+      name: completed ? `${spec.title} Secured` : spec.title,
+      outerDeckInteriorEntrance: true,
+      variant: spec.variant,
+      targetMapId,
+      floorOrdinal: metadata.floorOrdinal,
+      chunkX,
+      chunkY,
+      worldTileX: spawn.worldTileX,
+      worldTileY: spawn.worldTileY,
+      elevation: spawn.elevation,
+      completed,
+    },
+  });
+
+  interactionZones.push({
+    id: zoneId,
+    x: spawn.localX,
+    y: spawn.localY,
+    width: 1,
+    height: 1,
+    action: "custom",
+    label: completed ? `${spec.entranceLabel} // SECURED` : spec.entranceLabel,
+    metadata: {
+      handlerId: "outer_deck_interior_entry",
+      targetMapId,
+      floorOrdinal: metadata.floorOrdinal,
+      chunkX,
+      chunkY,
+      returnWorldTileX: spawn.worldTileX,
+      returnWorldTileY: spawn.worldTileY,
+      returnFacing: "south",
+    },
+  });
+  markOccupied(occupied, spawn.localX, spawn.localY);
+}
+
 function addChunkContent(
   openWorld: OuterDeckOpenWorldState,
   tiles: FieldMap["tiles"],
   metadata: OuterDeckStreamMetadata,
   objects: FieldObject[],
+  interactionZones: InteractionZone[],
   occupied: Set<string>,
   chunkX: number,
   chunkY: number,
@@ -1480,6 +1589,7 @@ function addChunkContent(
   addChunkBoss(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkResources(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkApronPickups(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
+  addChunkInteriorEntrance(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
   addChunkEnemies(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkGrappleNodes(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
 }
@@ -1579,7 +1689,7 @@ export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
 
   for (let chunkY = originChunkY; chunkY <= originChunkY + (OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2); chunkY += 1) {
     for (let chunkX = originChunkX; chunkX <= originChunkX + (OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2); chunkX += 1) {
-      addChunkContent(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
+      addChunkContent(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
     }
   }
 
