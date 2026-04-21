@@ -602,6 +602,7 @@ const GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD = 1.88;
 const GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND = 720;
 const GRAPPLE_ZIPLINE_DISMOUNT_DURATION_MS = 620;
 const GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY = 0.55;
+const GRAPPLE_ZIPLINE_DISMOUNT_MIN_FLIP_VELOCITY = 1.15;
 const PLAYER_JUMP_HEIGHT_MULTIPLIER = 5;
 const PLAYER_JUMP_VELOCITY = 5.1 * Math.sqrt(PLAYER_JUMP_HEIGHT_MULTIPLIER);
 const PLAYER_COUNTERWEIGHT_BOOTS_JUMP_VELOCITY_MULTIPLIER = 1.18;
@@ -4356,11 +4357,14 @@ export class Haven3DFieldController implements Haven3DModeController {
     state.worldElevation = worldElevation;
     state.elevation = Math.max(0.18, worldElevation - groundElevation);
     state.velocity = THREE.MathUtils.clamp(
-      verticalVelocity + GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY,
-      -0.35,
+      Math.max(
+        GRAPPLE_ZIPLINE_DISMOUNT_MIN_FLIP_VELOCITY,
+        verticalVelocity + GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY,
+      ),
+      GRAPPLE_ZIPLINE_DISMOUNT_MIN_FLIP_VELOCITY,
       2.2,
     );
-    state.jumpStartedAt = currentTime + PLAYER_JUMP_FRONT_FLIP_DELAY_MS;
+    state.jumpStartedAt = currentTime;
     state.jumpFlipDirection = 1;
 
     this.ziplineDismountDrift = {
@@ -5687,7 +5691,9 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const flipElapsedMs = Math.max(0, currentTime - vertical.jumpStartedAt - PLAYER_JUMP_FRONT_FLIP_DELAY_MS);
-    const flipTime = vertical.velocity > 0
+    const flipWindowActive = Number.isFinite(vertical.jumpStartedAt)
+      && currentTime - vertical.jumpStartedAt <= PLAYER_JUMP_FRONT_FLIP_DELAY_MS + PLAYER_JUMP_FRONT_FLIP_DURATION_MS;
+    const flipTime = vertical.velocity > 0 || flipWindowActive
       ? THREE.MathUtils.clamp(flipElapsedMs / PLAYER_JUMP_FRONT_FLIP_DURATION_MS, 0, 1)
       : 1;
     const flipProgress = smoothstep(flipTime);
@@ -6569,11 +6575,14 @@ export class Haven3DFieldController implements Haven3DModeController {
     const isTargetReady = playerId === "P1" && Boolean(lockedTarget) && activeMode !== null;
     const transform = playerId === "P1" ? this.readGearbladeTransform() : null;
     this.updatePlayerWeaponForm(actor, activeMode, transform);
-    if (playerId === "P1" && activeMode === "grapple" && this.grappleMove?.target.kind === "zipline-track") {
-      actor.blade.visible = true;
-      this.applyZiplineRidePose(actor);
-      this.mountBladeOnSwingHand(actor);
-      this.updateZiplineGrappleGripPose(actor);
+    if (activeMode !== "blade") {
+      if (playerId === "P1" && activeMode === "grapple" && this.grappleMove?.target.kind === "zipline-track") {
+        this.applyZiplineRidePose(actor);
+        this.updateZiplineGrappleGripPose(actor);
+      } else if (isTargetReady && activeMode) {
+        this.applyTargetReadyBodyPose(actor, activeMode);
+      }
+      this.stowBladeOnBack(actor);
       this.hideBladeTrail(actor);
       return;
     }
@@ -6583,31 +6592,6 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.applyGearbladeTransformBodyPose(actor, transform);
       this.mountBladeOnSwingHand(actor);
       this.updateGearbladeTransformWeaponPose(actor, transform);
-      this.hideBladeTrail(actor);
-      return;
-    }
-
-    if (activeMode !== "blade") {
-      actor.blade.visible = true;
-      const recoilElapsed = (this.currentFrameTime || performance.now()) - this.launcherRecoilStartedAt;
-      const recoil = activeMode === "launcher" && recoilElapsed >= 0 && recoilElapsed < LAUNCHER_RECOIL_MS
-        ? Math.sin((1 - recoilElapsed / LAUNCHER_RECOIL_MS) * Math.PI)
-        : 0;
-      const grapplePulse = activeMode === "grapple" && this.grappleMove
-        ? Math.sin(((this.currentFrameTime || performance.now()) - this.grappleMove.startedAt) * 0.018) * 0.06
-        : 0;
-
-      if (isTargetReady && activeMode) {
-        this.applyTargetReadyBodyPose(actor, activeMode);
-        this.mountBladeOnSwingHand(actor);
-        this.updateTargetReadyWeaponPose(actor, activeMode, recoil, grapplePulse);
-        this.hideBladeTrail(actor);
-        return;
-      }
-
-      this.mountBladeOnChibiRoot(actor);
-      actor.blade.position.set(0.42, 0.98, 0.22 - recoil * 0.18);
-      actor.blade.rotation.set(-0.54 + grapplePulse, 0.18, -0.16);
       this.hideBladeTrail(actor);
       return;
     }
@@ -6623,9 +6607,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         return;
       }
 
-      this.mountBladeOnChibiRoot(actor);
-      actor.blade.position.copy(BLADE_BACK_POSITION);
-      actor.blade.rotation.copy(BLADE_BACK_ROTATION);
+      this.stowBladeOnBack(actor);
       this.hideBladeTrail(actor);
       return;
     }
@@ -7010,6 +6992,17 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     actor.chibi.root.attach(actor.blade);
+  }
+
+  private stowBladeOnBack(actor: Actor): void {
+    if (!actor.blade) {
+      return;
+    }
+
+    this.mountBladeOnChibiRoot(actor);
+    actor.blade.position.copy(BLADE_BACK_POSITION);
+    actor.blade.rotation.copy(BLADE_BACK_ROTATION);
+    actor.blade.scale.setScalar(1);
   }
 
   private mountBladeOnSwingHand(actor: Actor): void {
