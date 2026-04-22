@@ -3,7 +3,7 @@ import { createNewGameState } from "../../core/initialState";
 import { setGameState } from "../../state/gameStore";
 import { getFieldMap } from "../maps";
 import { createNpc, getNpcInRange } from "../npcs";
-import type { FieldMap, PlayerAvatar } from "../types";
+import type { FieldLootOrb, FieldMap, PlayerAvatar } from "../types";
 import {
   HAVEN3D_FIELD_TILE_SIZE,
   canAvatarMoveTo,
@@ -79,6 +79,18 @@ function makeEnemy(id: string, name: string, x: number, y: number, hp = 10) {
     vy: 0,
     knockbackTime: 0,
     aggroRange: 320,
+  };
+}
+
+function makeLootOrb(id: string, sourceEnemyName: string, x: number, y: number): FieldLootOrb {
+  return {
+    id,
+    sourceEnemyName,
+    x,
+    y,
+    radius: 34,
+    drops: { wad: 1 },
+    spawnedAt: 0,
   };
 }
 
@@ -204,18 +216,20 @@ describe("HAVEN 3D field adapter", () => {
     expect([...bladeController.enabledModes]).toEqual(["blade"]);
   });
 
-  it("builds Z-target candidates for every live NPC and enemy in range order", () => {
+  it("builds Z-target candidates for live NPCs, enemies, and loot orbs in range order", () => {
     const origin = { x: 100, y: 100 };
     const npc = createNpc("npc_close", "Close NPC", 132, 100, "npc_test", { routeMode: "none" });
+    const lootOrb = makeLootOrb("orb_live", "Live Enemy", 150, 100);
     const liveEnemy = makeEnemy("enemy_live", "Live Enemy", 100, 170);
     const deadEnemy = makeEnemy("enemy_dead", "Dead Enemy", 104, 104, 0);
 
-    const targets = createHaven3DTargetCandidates(origin, [npc], [liveEnemy, deadEnemy]);
+    const targets = createHaven3DTargetCandidates(origin, [npc], [liveEnemy, deadEnemy], [lootOrb]);
 
-    expect(targets.map((target) => target.key)).toEqual(["npc:npc_close", "enemy:enemy_live"]);
+    expect(targets.map((target) => target.key)).toEqual(["npc:npc_close", "loot-orb:orb_live", "enemy:enemy_live"]);
+    expect(targets[1]?.label).toBe("Live Enemy Orb");
   });
 
-  it("cycles Z-target selection across NPCs and enemies", () => {
+  it("cycles Z-target selection across NPCs, loot orbs, and enemies", () => {
     const targets = createHaven3DTargetCandidates(
       { x: 100, y: 100 },
       [createNpc("npc_one", "NPC One", 140, 100, "npc_test", { routeMode: "none" })],
@@ -223,15 +237,18 @@ describe("HAVEN 3D field adapter", () => {
         makeEnemy("enemy_one", "Enemy One", 180, 100),
         makeEnemy("enemy_two", "Enemy Two", 220, 100),
       ],
+      [makeLootOrb("orb_one", "Enemy One", 160, 100)],
     );
 
     const first = selectNextHaven3DTarget(targets, null);
     const second = selectNextHaven3DTarget(targets, first);
-    const previous = selectNextHaven3DTarget(targets, second, true);
+    const third = selectNextHaven3DTarget(targets, second);
+    const previous = selectNextHaven3DTarget(targets, third, true);
 
     expect(first?.key).toBe("npc:npc_one");
-    expect(second?.key).toBe("enemy:enemy_one");
-    expect(previous?.key).toBe("npc:npc_one");
+    expect(second?.key).toBe("loot-orb:orb_one");
+    expect(third?.key).toBe("enemy:enemy_one");
+    expect(previous?.key).toBe("loot-orb:orb_one");
   });
 
   it("requires Grapple to open shields and Launcher to crack armor", () => {

@@ -10,9 +10,9 @@ import {
   OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID,
   OUTER_DECK_OVERWORLD_MAP_ID,
   OUTER_DECK_OVERWORLD_TRAVELING_MERCHANT_ZONE_ID,
-  buildOuterDeckInteriorMapId,
   getOuterDeckInteriorSpec,
   getOuterDeckOpenWorldState,
+  type OuterDeckInteriorVariant,
   type OuterDeckOpenWorldState,
   type OuterDeckRewardBundle,
   type OuterDeckZoneId,
@@ -97,6 +97,30 @@ type RouteCandidateTile = {
   elevation: number;
   hazardScore: number;
   randomScore: number;
+};
+
+export type OuterDeckInteriorEntranceSignal = {
+  chunkX: number;
+  chunkY: number;
+  worldTileX: number;
+  worldTileY: number;
+  worldX: number;
+  worldY: number;
+  distancePx: number;
+  variant: OuterDeckInteriorVariant;
+  title: string;
+  entranceLabel: string;
+  completed: boolean;
+};
+
+type EmbeddedCorridorDungeonPlan = {
+  chunkX: number;
+  chunkY: number;
+  bounds: { worldX: number; worldY: number; size: number };
+  entrance: { worldTileX: number; worldTileY: number };
+  cache: { worldTileX: number; worldTileY: number };
+  enemySpawns: Array<{ worldTileX: number; worldTileY: number }>;
+  floorKeys: Set<string>;
 };
 
 const WINDOW_CHUNK_SPAN = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2 + 1;
@@ -213,6 +237,8 @@ const ENEMY_KINDS = [
 const OUTER_DECK_ROAMING_ENEMY_DENSITY = 0.2;
 const OUTER_DECK_INTERIOR_SUPERCELL_SIZE = 3;
 const OUTER_DECK_INTERIOR_SPAWN_THRESHOLD = 0.48;
+const OUTER_DECK_EMBEDDED_CORRIDOR_BOUNDS_SIZE = 18;
+const OUTER_DECK_EMBEDDED_CORRIDOR_WALL_ELEVATION = 84;
 const OUTER_DECK_GRAPPLE_ROUTE_CHUNK_STRIDE = 5;
 const OUTER_DECK_ZIPLINE_MAX_SEGMENTS_PER_ROUTE = 1;
 const OUTER_DECK_ZIPLINE_MIN_SPAN_TILES = 6;
@@ -1473,6 +1499,10 @@ function addPlacedLanterns(
 }
 
 function shouldGenerateInteriorEntrance(openWorld: OuterDeckOpenWorldState, chunkX: number, chunkY: number): boolean {
+  if (LEGACY_BOSS_CHUNKS[getOuterDeckChunkKey(chunkX, chunkY)]) {
+    return false;
+  }
+
   const distanceTier = getDistanceTier(chunkX, chunkY);
   if (distanceTier < 2) {
     return false;
@@ -1491,7 +1521,163 @@ function shouldGenerateInteriorEntrance(openWorld: OuterDeckOpenWorldState, chun
   return random01(openWorld.seed, superX, superY, 5140) >= OUTER_DECK_INTERIOR_SPAWN_THRESHOLD;
 }
 
-function getInteriorEntranceSprite(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): string {
+function getEmbeddedCorridorDungeonPlan(seed: number, chunkX: number, chunkY: number): EmbeddedCorridorDungeonPlan {
+  const chunkWorldX = chunkX * OUTER_DECK_OPEN_WORLD_CHUNK_SIZE;
+  const chunkWorldY = chunkY * OUTER_DECK_OPEN_WORLD_CHUNK_SIZE;
+  const size = OUTER_DECK_EMBEDDED_CORRIDOR_BOUNDS_SIZE;
+  const bounds = {
+    worldX: chunkWorldX + 3,
+    worldY: chunkWorldY + 3,
+    size,
+  };
+  const direction = Math.floor(random01(seed, chunkX, chunkY, 5200) * 4);
+  const bendSign = random01(seed, chunkX, chunkY, 5201) > 0.5 ? 1 : -1;
+  const secondBendSign = random01(seed, chunkX, chunkY, 5202) > 0.38 ? -bendSign : bendSign;
+  const centerX = Math.floor(size / 2);
+  const firstBendX = centerX + (bendSign * 4);
+  const secondBendX = centerX + (secondBendSign * 4);
+  const floorKeys = new Set<string>();
+
+  const transform = (localX: number, localY: number): { worldTileX: number; worldTileY: number } => {
+    switch (direction) {
+      case 1:
+        return {
+          worldTileX: bounds.worldX + (size - 1 - localY),
+          worldTileY: bounds.worldY + localX,
+        };
+      case 2:
+        return {
+          worldTileX: bounds.worldX + (size - 1 - localX),
+          worldTileY: bounds.worldY + (size - 1 - localY),
+        };
+      case 3:
+        return {
+          worldTileX: bounds.worldX + localY,
+          worldTileY: bounds.worldY + (size - 1 - localX),
+        };
+      default:
+        return {
+          worldTileX: bounds.worldX + localX,
+          worldTileY: bounds.worldY + localY,
+        };
+    }
+  };
+
+  const addFloor = (localX: number, localY: number): void => {
+    const world = transform(localX, localY);
+    floorKeys.add(`${world.worldTileX}:${world.worldTileY}`);
+  };
+  const carveSquare = (localX: number, localY: number, radius = 1): void => {
+    for (let y = localY - radius; y <= localY + radius; y += 1) {
+      for (let x = localX - radius; x <= localX + radius; x += 1) {
+        addFloor(x, y);
+      }
+    }
+  };
+  const carveRect = (left: number, top: number, width: number, height: number): void => {
+    for (let y = top; y < top + height; y += 1) {
+      for (let x = left; x < left + width; x += 1) {
+        addFloor(x, y);
+      }
+    }
+  };
+  const carveSegment = (from: { x: number; y: number }, to: { x: number; y: number }): void => {
+    const steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y), 1);
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      carveSquare(
+        Math.round(from.x + ((to.x - from.x) * t)),
+        Math.round(from.y + ((to.y - from.y) * t)),
+        1,
+      );
+    }
+  };
+
+  const waypoints = [
+    { x: centerX, y: -2 },
+    { x: centerX, y: 5 },
+    { x: firstBendX, y: 5 },
+    { x: firstBendX, y: 10 },
+    { x: secondBendX, y: 10 },
+    { x: secondBendX, y: 15 },
+  ];
+
+  for (let index = 0; index < waypoints.length - 1; index += 1) {
+    carveSegment(waypoints[index]!, waypoints[index + 1]!);
+  }
+
+  carveRect(centerX - 2, 0, 5, 3);
+  carveRect(firstBendX - 2, 7, 5, 4);
+  carveRect(secondBendX - 3, 12, 7, 4);
+  carveRect(centerX - (bendSign > 0 ? 6 : 1), 8, 5, 3);
+
+  const entrance = transform(centerX, -2);
+  const cache = transform(secondBendX, 15);
+  const enemySpawns = [
+    transform(centerX, 4),
+    transform(firstBendX, 8),
+    transform(secondBendX, 11),
+    transform(secondBendX - secondBendSign * 2, 14),
+  ];
+
+  return {
+    chunkX,
+    chunkY,
+    bounds,
+    entrance,
+    cache,
+    enemySpawns,
+    floorKeys,
+  };
+}
+
+export function findNearestOuterDeckInteriorEntranceSignal(
+  openWorld: OuterDeckOpenWorldState,
+  worldX: number,
+  worldY: number,
+  searchRadiusChunks = 18,
+): OuterDeckInteriorEntranceSignal | null {
+  const centerChunk = getOuterDeckChunkCoordsFromWorldPixel(worldX, worldY);
+  const radius = Math.max(1, Math.floor(searchRadiusChunks));
+  let best: OuterDeckInteriorEntranceSignal | null = null;
+
+  for (let chunkY = centerChunk.chunkY - radius; chunkY <= centerChunk.chunkY + radius; chunkY += 1) {
+    for (let chunkX = centerChunk.chunkX - radius; chunkX <= centerChunk.chunkX + radius; chunkX += 1) {
+      if (!shouldGenerateInteriorEntrance(openWorld, chunkX, chunkY)) {
+        continue;
+      }
+
+      const spec = getOuterDeckInteriorSpec(openWorld.seed, openWorld.floorOrdinal, chunkX, chunkY);
+      const plan = getEmbeddedCorridorDungeonPlan(openWorld.seed, chunkX, chunkY);
+      const worldTileX = plan.entrance.worldTileX;
+      const worldTileY = plan.entrance.worldTileY;
+      const targetWorldX = (worldTileX + 0.5) * TILE_SIZE;
+      const targetWorldY = (worldTileY + 0.5) * TILE_SIZE;
+      const distancePx = Math.hypot(targetWorldX - worldX, targetWorldY - worldY);
+      if (best && distancePx >= best.distancePx) {
+        continue;
+      }
+
+      best = {
+        chunkX,
+        chunkY,
+        worldTileX,
+        worldTileY,
+        worldX: targetWorldX,
+        worldY: targetWorldY,
+        distancePx,
+        variant: spec.variant,
+        title: spec.title,
+        entranceLabel: spec.entranceLabel,
+        completed: openWorld.completedInteriorKeys.includes(spec.key),
+      };
+    }
+  }
+
+  return best;
+}
+
+function getEmbeddedCorridorMouthSprite(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): string {
   switch (variant) {
     case "cave":
       return "doorway";
@@ -1504,7 +1690,11 @@ function getInteriorEntranceSprite(variant: ReturnType<typeof getOuterDeckInteri
   }
 }
 
-function addChunkInteriorEntrance(
+function getEmbeddedCorridorWallType(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): TileType {
+  return variant === "cave" ? "stone" : "wall";
+}
+
+function addChunkEmbeddedCorridorDungeon(
   openWorld: OuterDeckOpenWorldState,
   tiles: FieldMap["tiles"],
   metadata: OuterDeckStreamMetadata,
@@ -1518,62 +1708,174 @@ function addChunkInteriorEntrance(
     return;
   }
 
-  const spawn = findChunkSpawnTile(openWorld.seed, tiles, metadata, occupied, chunkX, chunkY, 5180, {
-    avoidOrigin: true,
+  const plan = getEmbeddedCorridorDungeonPlan(openWorld.seed, chunkX, chunkY);
+  const spec = getOuterDeckInteriorSpec(openWorld.seed, metadata.floorOrdinal, chunkX, chunkY);
+  const floorElevation = Math.floor(1 + random01(openWorld.seed, chunkX, chunkY, 5210) * 4);
+  const wallType = getEmbeddedCorridorWallType(spec.variant);
+  const completed = openWorld.completedInteriorKeys.includes(spec.key);
+  const claimed = openWorld.claimedInteriorLootKeys.includes(`${spec.key}:cache`);
+
+  for (let y = plan.bounds.worldY; y < plan.bounds.worldY + plan.bounds.size; y += 1) {
+    for (let x = plan.bounds.worldX; x < plan.bounds.worldX + plan.bounds.size; x += 1) {
+      setWorldTile(tiles, metadata, x, y, {
+        walkable: false,
+        type: wallType,
+        elevation: OUTER_DECK_EMBEDDED_CORRIDOR_WALL_ELEVATION,
+        standable3d: false,
+      });
+    }
+  }
+
+  plan.floorKeys.forEach((key) => {
+    const [worldTileX, worldTileY] = key.split(":").map(Number);
+    if (!Number.isFinite(worldTileX) || !Number.isFinite(worldTileY)) {
+      return;
+    }
+    setWorldTile(tiles, metadata, worldTileX!, worldTileY!, {
+      walkable: true,
+      type: spec.variant === "cave" ? "stone" : "floor",
+      elevation: floorElevation,
+      standable3d: false,
+    });
+
+    const local = getLocalTileFromWorldTile(metadata, worldTileX!, worldTileY!);
+    if (local) {
+      occupied.add(`${local.x}:${local.y}`);
+    }
   });
-  if (!spawn) {
+
+  const entranceLocal = getLocalTileFromWorldTile(metadata, plan.entrance.worldTileX, plan.entrance.worldTileY);
+  if (entranceLocal) {
+    objects.push({
+      id: `${objectPrefix(chunkX, chunkY)}_embedded_corridor_mouth`,
+      x: entranceLocal.x,
+      y: entranceLocal.y,
+      width: 2,
+      height: 2,
+      type: "decoration",
+      sprite: getEmbeddedCorridorMouthSprite(spec.variant),
+      metadata: {
+        name: completed ? `${spec.title} Secured` : spec.title,
+        outerDeckInteriorEntrance: true,
+        outerDeckEmbeddedCorridor: true,
+        variant: spec.variant,
+        floorOrdinal: metadata.floorOrdinal,
+        chunkX,
+        chunkY,
+        worldTileX: plan.entrance.worldTileX,
+        worldTileY: plan.entrance.worldTileY,
+        elevation: floorElevation,
+        completed,
+      },
+    });
+  }
+
+  const enemyKeys = plan.enemySpawns.map((_, index) => `interior-enemy:${spec.key}:${index}`);
+  const enemyCount = Math.min(plan.enemySpawns.length, spec.chainLength + 1);
+  const distanceTier = getDistanceTier(chunkX, chunkY);
+  for (let index = 0; index < enemyCount; index += 1) {
+    const persistentKey = enemyKeys[index]!;
+    if (openWorld.defeatedEnemyKeys.includes(persistentKey)) {
+      continue;
+    }
+
+    const spawn = plan.enemySpawns[index]!;
+    const local = getLocalTileFromWorldTile(metadata, spawn.worldTileX, spawn.worldTileY);
+    if (!local) {
+      continue;
+    }
+
+    const kind = ENEMY_KINDS[Math.floor(random01(openWorld.seed, chunkX, chunkY, 5220 + index) * ENEMY_KINDS.length)] ?? ENEMY_KINDS[0];
+    objects.push({
+      id: `${objectPrefix(chunkX, chunkY)}_embedded_corridor_enemy_${index}`,
+      x: local.x,
+      y: local.y,
+      width: 1,
+      height: 1,
+      type: "enemy",
+      sprite: "field_enemy",
+      metadata: {
+        name: `${formatEnemyLabel(kind)} Guard`,
+        enemyKind: kind,
+        persistentKey,
+        outerDeckEmbeddedCorridorEnemy: true,
+        outerDeckEmbeddedCorridorKey: spec.key,
+        floorOrdinal: metadata.floorOrdinal,
+        chunkX,
+        chunkY,
+        hp: 86 + (distanceTier * 12) + (index * 10),
+        speed: 88 + Math.min(42, distanceTier * 4),
+        aggroRange: 260 + Math.min(180, distanceTier * 18),
+        roamRadiusTiles: 3,
+        roamSpeedMultiplier: 0.68,
+        gearbladeDefense: distanceTier >= 4 && index % 2 === 0 ? "armor" : "none",
+        attackStyle: index % 3 === 0 ? "lunge" : index % 3 === 1 ? "shot" : "slash",
+        drops: {
+          wad: 20 + (distanceTier * 6),
+          resources: {
+            metalScrap: spec.variant === "structure" ? 1 : 0,
+            wood: 0,
+            chaosShards: distanceTier >= 5 && index === enemyCount - 1 ? 1 : 0,
+            steamComponents: spec.variant !== "cave" ? 1 : 0,
+          },
+        },
+        worldTileX: spawn.worldTileX,
+        worldTileY: spawn.worldTileY,
+        elevation: floorElevation,
+      },
+    });
+    markOccupied(occupied, local.x, local.y);
+  }
+
+  const cacheLocal = getLocalTileFromWorldTile(metadata, plan.cache.worldTileX, plan.cache.worldTileY);
+  if (!cacheLocal) {
     return;
   }
 
-  const spec = getOuterDeckInteriorSpec(openWorld.seed, metadata.floorOrdinal, chunkX, chunkY);
-  const targetMapId = buildOuterDeckInteriorMapId(metadata.floorOrdinal, chunkX, chunkY, 0);
-  const objectId = `${objectPrefix(chunkX, chunkY)}_interior_${spec.variant}`;
-  const zoneId = `${objectId}_zone`;
-  const completed = openWorld.completedInteriorKeys.includes(spec.key);
-
   objects.push({
-    id: objectId,
-    x: spawn.localX,
-    y: spawn.localY,
+    id: `${objectPrefix(chunkX, chunkY)}_embedded_corridor_cache`,
+    x: cacheLocal.x,
+    y: cacheLocal.y,
     width: 1,
     height: 1,
     type: "station",
-    sprite: getInteriorEntranceSprite(spec.variant),
+    sprite: claimed ? "resource_cache_empty" : "resource_cache",
     metadata: {
-      name: completed ? `${spec.title} Secured` : spec.title,
-      outerDeckInteriorEntrance: true,
+      name: claimed ? `${spec.rewardLabel} Secured` : spec.rewardLabel,
+      outerDeckEmbeddedCorridorCache: true,
       variant: spec.variant,
-      targetMapId,
       floorOrdinal: metadata.floorOrdinal,
       chunkX,
       chunkY,
-      worldTileX: spawn.worldTileX,
-      worldTileY: spawn.worldTileY,
-      elevation: spawn.elevation,
-      completed,
+      depth: spec.chainLength - 1,
+      worldTileX: plan.cache.worldTileX,
+      worldTileY: plan.cache.worldTileY,
+      elevation: floorElevation,
+      claimed,
     },
   });
+  markOccupied(occupied, cacheLocal.x, cacheLocal.y);
 
-  interactionZones.push({
-    id: zoneId,
-    x: spawn.localX,
-    y: spawn.localY,
-    width: 1,
-    height: 1,
-    action: "custom",
-    label: completed ? `${spec.entranceLabel} // SECURED` : spec.entranceLabel,
-    metadata: {
-      handlerId: "outer_deck_interior_entry",
-      targetMapId,
-      floorOrdinal: metadata.floorOrdinal,
-      chunkX,
-      chunkY,
-      returnWorldTileX: spawn.worldTileX,
-      returnWorldTileY: spawn.worldTileY,
-      returnFacing: "south",
-    },
-  });
-  markOccupied(occupied, spawn.localX, spawn.localY);
+  if (!claimed) {
+    interactionZones.push({
+      id: `${objectPrefix(chunkX, chunkY)}_embedded_corridor_cache_zone`,
+      x: cacheLocal.x,
+      y: cacheLocal.y,
+      width: 1,
+      height: 1,
+      action: "custom",
+      label: "SECURE CACHE",
+      metadata: {
+        handlerId: "outer_deck_embedded_corridor_cache",
+        floorOrdinal: metadata.floorOrdinal,
+        chunkX,
+        chunkY,
+        depth: spec.chainLength - 1,
+        enemyKeys,
+        requiresClear: true,
+      },
+    });
+  }
 }
 
 function addChunkContent(
@@ -1586,10 +1888,10 @@ function addChunkContent(
   chunkX: number,
   chunkY: number,
 ): void {
+  addChunkEmbeddedCorridorDungeon(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
   addChunkBoss(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkResources(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkApronPickups(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
-  addChunkInteriorEntrance(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
   addChunkEnemies(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkGrappleNodes(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
 }

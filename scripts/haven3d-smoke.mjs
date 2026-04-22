@@ -101,7 +101,19 @@ function angleDeltaRadians(a, b) {
 async function triggerPrimaryAction(page, canvas) {
   const box = await canvas.boundingBox();
   assertSmoke(Boolean(box), "HAVEN 3D canvas was not measurable for primary action.");
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.evaluate(() => {
+    const canvasElement = document.querySelector(".haven3d-canvas");
+    if (!(canvasElement instanceof HTMLCanvasElement)) {
+      return;
+    }
+    canvasElement.focus();
+    canvasElement.dispatchEvent(new MouseEvent("mousedown", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    }));
+  });
 }
 
 async function setGearbladeMode(page, mode, key) {
@@ -1082,6 +1094,206 @@ async function runSmoke() {
   assertSmoke(
     outerDeckPickupResult.collected && outerDeckPickupResult.visibleIn3d === false,
     `Outer Deck 3D pickup did not hide after collection: ${JSON.stringify(outerDeckPickupResult)}`,
+  );
+
+  const lootOrbBefore = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const map = field.getCurrentFieldRuntimeMap();
+    if (!runtime || !map) {
+      return null;
+    }
+    const isClearTile = (x, y) => {
+      const tile = map.tiles[y]?.[x];
+      if (!tile?.walkable) {
+        return false;
+      }
+      return !map.objects.some((object) => (
+        object.type !== "enemy"
+        && x >= object.x
+        && x < object.x + object.width
+        && y >= object.y
+        && y < object.y + object.height
+      ));
+    };
+    let probeTile = null;
+    const centerTileX = Math.floor(runtime.player.x / 64);
+    const centerTileY = Math.floor(runtime.player.y / 64);
+    for (let radius = 0; radius < 12 && !probeTile; radius += 1) {
+      for (let dy = -radius; dy <= radius && !probeTile; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) {
+            continue;
+          }
+          const x = centerTileX + dx;
+          const y = centerTileY + dy;
+          if (x < 2 || y < 2 || x >= map.width - 3 || y >= map.height - 2) {
+            continue;
+          }
+          if (isClearTile(x, y) && isClearTile(x + 1, y)) {
+            probeTile = { x, y };
+            break;
+          }
+        }
+      }
+    }
+    if (!probeTile) {
+      return null;
+    }
+    const playerX = (probeTile.x + 0.5) * 64;
+    const playerY = (probeTile.y + 0.5) * 64;
+    runtime.player.x = playerX;
+    runtime.player.y = playerY;
+    runtime.player.facing = "east";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.companion = undefined;
+    runtime.npcs = [];
+    runtime.lootOrbs = [];
+    runtime.collectedResourceObjectIds = Array.from(new Set([
+      ...(runtime.collectedResourceObjectIds ?? []),
+      ...map.objects.filter((object) => object.type === "resource").map((object) => object.id),
+    ]));
+    runtime.fieldEnemies = [{
+      id: "enemy_smoke_loot_orb",
+      name: "Smoke Loot Carrier",
+      x: playerX + 54,
+      y: playerY,
+      width: 36,
+      height: 36,
+      hp: 12,
+      maxHp: 12,
+      speed: 0,
+      facing: "west",
+      lastMoveTime: 0,
+      vx: 0,
+      vy: 0,
+      knockbackTime: 0,
+      aggroRange: 0,
+      drops: {
+        wad: 7,
+        resources: { metalScrap: 2 },
+        items: [],
+      },
+    }];
+    const state = store.getGameState();
+    return {
+      wad: state.wad,
+      metalScrap: state.resources.metalScrap,
+    };
+  });
+  assertSmoke(Boolean(lootOrbBefore), "Outer Deck loot orb smoke could not prepare runtime.");
+  await setGearbladeMode(page, "blade", "Digit1");
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(120);
+  await cycleUntilTarget(page, "TARGET :: SMOKE LOOT CARRIER");
+  await triggerPrimaryAction(page, canvas);
+  await page.waitForTimeout(700);
+  const lootOrbDefeatResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const state = store.getGameState();
+    const enemy = runtime?.fieldEnemies?.find((entry) => entry.id === "enemy_smoke_loot_orb");
+    return {
+      enemyHp: enemy?.hp ?? null,
+      orbCount: runtime?.lootOrbs?.length ?? 0,
+      orb: runtime?.lootOrbs?.[0] ? {
+        x: runtime.lootOrbs[0].x,
+        y: runtime.lootOrbs[0].y,
+        wad: runtime.lootOrbs[0].drops?.wad ?? 0,
+        metalScrap: runtime.lootOrbs[0].drops?.resources?.metalScrap ?? 0,
+      } : null,
+      wad: state.wad,
+      metalScrap: state.resources.metalScrap,
+    };
+  });
+  assertSmoke(
+    lootOrbDefeatResult.orbCount === 1
+      && (lootOrbDefeatResult.enemyHp === null || lootOrbDefeatResult.enemyHp <= 0)
+      && lootOrbDefeatResult.orb?.wad === 7
+      && lootOrbDefeatResult.orb?.metalScrap === 2,
+    `Defeated Outer Deck enemy did not defer drops into a loot orb: ${JSON.stringify({ lootOrbBefore, lootOrbDefeatResult })}`,
+  );
+  const lootOrbDriftSetup = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const orb = runtime?.lootOrbs?.[0];
+    if (!runtime || !orb) {
+      return null;
+    }
+    runtime.player.x = orb.x - 128;
+    runtime.player.y = orb.y;
+    runtime.player.facing = "east";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    document.querySelector(".haven3d-canvas")?.focus();
+    return {
+      playerX: runtime.player.x,
+      orbX: orb.x,
+      orbY: orb.y,
+      distance: Math.hypot(orb.x - runtime.player.x, orb.y - runtime.player.y),
+    };
+  });
+  assertSmoke(Boolean(lootOrbDriftSetup), "Outer Deck loot orb drift setup could not find the spawned orb.");
+  await page.waitForTimeout(650);
+  const lootOrbDriftResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const orb = runtime?.lootOrbs?.[0];
+    if (!runtime || !orb) {
+      return null;
+    }
+    return {
+      playerX: runtime.player.x,
+      orbX: orb.x,
+      orbY: orb.y,
+      vx: orb.vx ?? 0,
+      distance: Math.hypot(orb.x - runtime.player.x, orb.y - runtime.player.y),
+    };
+  });
+  assertSmoke(
+    Boolean(lootOrbDriftResult)
+      && lootOrbDriftResult.orbX < lootOrbDriftSetup.orbX - 4
+      && lootOrbDriftResult.distance < lootOrbDriftSetup.distance,
+    `Loot orb did not drift toward the nearby player: ${JSON.stringify({ lootOrbDriftSetup, lootOrbDriftResult })}`,
+  );
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const orb = runtime?.lootOrbs?.[0];
+    if (!runtime || !orb) {
+      return;
+    }
+    runtime.player.x = orb.x - 58;
+    runtime.player.y = orb.y;
+    runtime.player.facing = "east";
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    document.querySelector(".haven3d-canvas")?.focus();
+  });
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(120);
+  await cycleUntilTarget(page, "TARGET :: SMOKE LOOT CARRIER ORB", 4);
+  await triggerPrimaryAction(page, canvas);
+  await page.waitForTimeout(700);
+  const lootOrbBreakResult = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const store = await import("/src/state/gameStore.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const state = store.getGameState();
+    return {
+      orbCount: runtime?.lootOrbs?.length ?? 0,
+      wad: state.wad,
+      metalScrap: state.resources.metalScrap,
+    };
+  });
+  assertSmoke(
+    lootOrbBreakResult.orbCount === 0
+      && lootOrbBreakResult.wad === lootOrbDefeatResult.wad + 7
+      && lootOrbBreakResult.metalScrap === lootOrbDefeatResult.metalScrap + 2,
+    `Blade did not break the Outer Deck loot orb and grant deferred drops: ${JSON.stringify({ lootOrbDefeatResult, lootOrbBreakResult })}`,
   );
 
   const outerDeckNoSwitcherState = await page.evaluate(() => ({

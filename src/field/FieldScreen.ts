@@ -3,7 +3,7 @@
 // ============================================================================
 
 import "./field.css";
-import { FieldEnemy, FieldMap, FieldNpc, FieldObject, FieldProjectile, FieldState, InteractionZone, PlayerAvatar } from "./types";
+import { FieldEnemy, FieldLootOrb, FieldMap, FieldNpc, FieldObject, FieldProjectile, FieldState, InteractionZone, PlayerAvatar } from "./types";
 import { getImportedItem } from "../content/technica";
 import { getFieldMap } from "./maps";
 import {
@@ -12,6 +12,7 @@ import {
   getOverlappingInteractionZone,
 } from "./player";
 import { Haven3DFieldController, type Haven3DFieldCameraState } from "./haven3d/Haven3DFieldController";
+import type { Haven3DTargetRef } from "./haven3d/targeting";
 import {
   resolveHaven3DGearbladeDamage,
   type Haven3DEnemyDefense,
@@ -222,6 +223,7 @@ import {
   type OuterDeckZoneId,
 } from "../core/outerDecks";
 import {
+  findNearestOuterDeckInteriorEntranceSignal,
   getOuterDeckChunkCoordsFromWorldPixel,
   getOuterDeckChunkKey,
   getOuterDeckStreamMetadata,
@@ -1018,6 +1020,13 @@ const FIELD_GRAPPLE_RANGE = 430;
 const FIELD_GRAPPLE_DAMAGE = 14;
 const FIELD_GRAPPLE_PULL_FORCE = 560;
 const FIELD_ENEMY_PING_2D_CLEARANCE = 58;
+const FIELD_LOOT_ORB_RADIUS = 34;
+const FIELD_LOOT_ORB_GRAVITY_RADIUS = 190;
+const FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS = 46;
+const FIELD_LOOT_ORB_GRAVITY_ACCELERATION = 520;
+const FIELD_LOOT_ORB_GRAVITY_MAX_SPEED = 128;
+const FIELD_LOOT_ORB_GRAVITY_SETTLE_DELAY_MS = 680;
+const FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE = 18;
 const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
@@ -2775,6 +2784,7 @@ function renderHaven3DApronNavigatorHtml(): string {
     <div class="haven3d-apron-nav" data-haven3d-apron-nav aria-label="Apron HAVEN bearing">
       <div class="haven3d-apron-nav__dial" aria-hidden="true">
         <span class="haven3d-apron-nav__needle"></span>
+        <span class="haven3d-apron-nav__needle haven3d-apron-nav__needle--interior"></span>
       </div>
       <div class="haven3d-apron-nav__readout">
         <div class="haven3d-apron-nav__label">HAVEN</div>
@@ -2783,6 +2793,7 @@ function renderHaven3DApronNavigatorHtml(): string {
           <span data-apron-nav-light>WAIST LIGHT</span>
           <span data-apron-nav-lanterns>LAMP 0</span>
           <span data-apron-nav-pickups>CHART 0 / KEY 0</span>
+          <span data-apron-nav-interior>CORRIDOR --</span>
         </div>
       </div>
     </div>
@@ -2797,6 +2808,60 @@ function formatApronNavigatorDistance(cells: number): string {
     return `${cells.toFixed(1)} CELLS`;
   }
   return `${Math.round(cells)} CELLS`;
+}
+
+function getApronInteriorVariantLabel(value: unknown): string {
+  switch (value) {
+    case "cave":
+      return "CAVE";
+    case "structure":
+      return "HATCH";
+    case "service_tunnel":
+      return "TUNNEL";
+    default:
+      return "CORRIDOR";
+  }
+}
+
+function getNearestVisibleApronInteriorEntranceSignal(
+  map: FieldMap,
+  playerWorld: { x: number; y: number },
+): { worldX: number; worldY: number; distancePx: number; variant: unknown; completed: boolean } | null {
+  let best: { worldX: number; worldY: number; distancePx: number; variant: unknown; completed: boolean } | null = null;
+
+  map.objects.forEach((object) => {
+    if (object.metadata?.outerDeckInteriorEntrance !== true) {
+      return;
+    }
+
+    const worldTileX = Number(object.metadata.worldTileX);
+    const worldTileY = Number(object.metadata.worldTileY);
+    const localCenter = {
+      x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
+      y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
+    };
+    const fallbackWorld = outerDeckLocalPixelToWorld(map, localCenter.x, localCenter.y);
+    const worldX = Number.isFinite(worldTileX)
+      ? (worldTileX + 0.5) * FIELD_TILE_SIZE
+      : fallbackWorld.x;
+    const worldY = Number.isFinite(worldTileY)
+      ? (worldTileY + 0.5) * FIELD_TILE_SIZE
+      : fallbackWorld.y;
+    const distancePx = Math.hypot(worldX - playerWorld.x, worldY - playerWorld.y);
+    if (best && distancePx >= best.distancePx) {
+      return;
+    }
+
+    best = {
+      worldX,
+      worldY,
+      distancePx,
+      variant: object.metadata?.variant,
+      completed: object.metadata?.completed === true,
+    };
+  });
+
+  return best;
 }
 
 function syncHaven3DApronNavigator(currentTime: number): void {
@@ -2828,8 +2893,34 @@ function syncHaven3DApronNavigator(currentTime: number): void {
   const rightX = Math.cos(cameraYaw);
   const rightY = -Math.sin(cameraYaw);
   const bearing = Math.atan2((unitX * rightX) + (unitY * rightY), (unitX * forwardX) + (unitY * forwardY));
+  const getCameraRelativeBearing = (targetWorldX: number, targetWorldY: number): number => {
+    const targetDx = targetWorldX - playerWorld.x;
+    const targetDy = targetWorldY - playerWorld.y;
+    const targetDistance = Math.hypot(targetDx, targetDy);
+    const targetUnitX = targetDistance > 0.001 ? targetDx / targetDistance : 0;
+    const targetUnitY = targetDistance > 0.001 ? targetDy / targetDistance : -1;
+    return Math.atan2(
+      (targetUnitX * rightX) + (targetUnitY * rightY),
+      (targetUnitX * forwardX) + (targetUnitY * forwardY),
+    );
+  };
 
   const openWorld = getOuterDeckOpenWorldState(getGameState());
+  const visibleInteriorSignal = getNearestVisibleApronInteriorEntranceSignal(currentMap, playerWorld);
+  const generatedInteriorSignal = visibleInteriorSignal
+    ? null
+    : findNearestOuterDeckInteriorEntranceSignal(openWorld, playerWorld.x, playerWorld.y);
+  const interiorSignal = visibleInteriorSignal ?? generatedInteriorSignal;
+  const interiorBearing = interiorSignal
+    ? getCameraRelativeBearing(interiorSignal.worldX, interiorSignal.worldY)
+    : 0;
+  const interiorDistanceCells = interiorSignal
+    ? interiorSignal.distancePx / FIELD_TILE_SIZE
+    : Number.POSITIVE_INFINITY;
+  const interiorVariantText = getApronInteriorVariantLabel(interiorSignal?.variant);
+  const interiorText = interiorSignal
+    ? `${visibleInteriorSignal ? "CORRIDOR" : "SIGNAL"} ${formatApronNavigatorDistance(interiorDistanceCells)} ${interiorVariantText}${interiorSignal.completed ? " SECURED" : ""}`
+    : "CORRIDOR --";
   const routeSources = getApronLightSources(currentTime).filter((source) => source.kind !== "hand");
   let nearestRouteDistancePx = Number.POSITIVE_INFINITY;
   let insideRouteLight = false;
@@ -2850,10 +2941,13 @@ function syncHaven3DApronNavigator(currentTime: number): void {
   const lanternText = `LAMP ${openWorld.placedLanterns.length}`;
   const pickupText = `CHART ${openWorld.collectedTheaterChartKeys.length} / KEY ${openWorld.collectedApronKeyKeys.length}`;
   const isNearHaven = distanceCells <= APRON_NAV_NEAR_HAVEN_CELLS;
-  const textKey = `${distanceText}|${routeLightText}|${lanternText}|${pickupText}|${isNearHaven ? "1" : "0"}`;
+  const textKey = `${distanceText}|${routeLightText}|${lanternText}|${pickupText}|${interiorText}|${isNearHaven ? "1" : "0"}`;
 
   navigator.hidden = false;
   navigator.style.setProperty("--apron-bearing", `${bearing}rad`);
+  navigator.style.setProperty("--apron-interior-bearing", `${interiorBearing}rad`);
+  navigator.classList.toggle("haven3d-apron-nav--interior-visible", Boolean(visibleInteriorSignal));
+  navigator.classList.toggle("haven3d-apron-nav--interior-missing", !interiorSignal);
   if (textKey === lastHaven3DApronNavigatorTextKey) {
     return;
   }
@@ -2864,6 +2958,7 @@ function syncHaven3DApronNavigator(currentTime: number): void {
   navigator.querySelector<HTMLElement>("[data-apron-nav-light]")!.textContent = routeLightText;
   navigator.querySelector<HTMLElement>("[data-apron-nav-lanterns]")!.textContent = lanternText;
   navigator.querySelector<HTMLElement>("[data-apron-nav-pickups]")!.textContent = pickupText;
+  navigator.querySelector<HTMLElement>("[data-apron-nav-interior]")!.textContent = interiorText;
 }
 
 function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void {
@@ -2885,6 +2980,7 @@ function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void
   }
 
   updateFieldCombat(deltaTime, currentTime);
+  updateFieldLootOrbs(deltaTime, currentTime);
   processFieldControllerActions();
   maybeTriggerAutoInteraction();
   activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
@@ -2941,6 +3037,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     getNpcs: () => fieldState?.npcs ?? [],
     getEnemies: () => fieldState?.fieldEnemies ?? [],
     getFieldProjectiles: () => fieldState?.projectiles ?? [],
+    getLootOrbs: () => fieldState?.lootOrbs ?? [],
     getCompanion: () => fieldState?.companion ?? null,
     getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
     isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
@@ -3104,6 +3201,34 @@ function syncFieldEnemiesForStreamedOuterDeckMap(map: FieldMap, previousSnapshot
   });
 }
 
+function rebaseOuterDeckLootOrbsForMap(
+  previousMap: FieldMap,
+  nextMap: FieldMap,
+  lootOrbs: FieldLootOrb[] = [],
+): FieldLootOrb[] {
+  if (lootOrbs.length === 0) {
+    return [];
+  }
+
+  return lootOrbs.flatMap((orb) => {
+    const world = outerDeckLocalPixelToWorld(previousMap, orb.x, orb.y);
+    const local = outerDeckWorldPixelToLocal(nextMap, world.x, world.y);
+    if (
+      local.x < 0
+      || local.y < 0
+      || local.x > nextMap.width * FIELD_TILE_SIZE
+      || local.y > nextMap.height * FIELD_TILE_SIZE
+    ) {
+      return [];
+    }
+
+    return [{
+      ...orb,
+      ...clampLocalOuterDeckPosition(nextMap, local),
+    }];
+  });
+}
+
 function clampLocalOuterDeckPosition(map: FieldMap, position: { x: number; y: number }): { x: number; y: number } {
   return {
     x: Math.max(FIELD_TILE_SIZE / 2, Math.min((map.width * FIELD_TILE_SIZE) - (FIELD_TILE_SIZE / 2), position.x)),
@@ -3160,6 +3285,7 @@ function rebuildOuterDeckStreamWindow(): boolean {
     npcs: syncFieldNpcsForMap(nextMap.id, fieldState.npcs ?? []),
     fieldEnemies: syncFieldEnemiesForStreamedOuterDeckMap(nextMap, enemySnapshots),
     projectiles: [],
+    lootOrbs: rebaseOuterDeckLootOrbsForMap(previousMap, nextMap, fieldState.lootOrbs ?? []),
     collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
   };
 
@@ -4363,6 +4489,7 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(fieldState.combat ?? createDefaultFieldCombatState()),
       projectiles: fieldState.projectiles ?? [],
+      lootOrbs: fieldState.lootOrbs ?? [],
       collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
     };
   } else {
@@ -4383,6 +4510,7 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(createDefaultFieldCombatState()),
       projectiles: [],
+      lootOrbs: [],
       collectedResourceObjectIds: [],
     };
   }
@@ -6959,8 +7087,190 @@ function placeApronLanternAtPlayer(): void {
   refreshCurrentOuterDeckMapFromState();
 }
 
-function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
-  const drops = enemy.drops;
+function hasFieldEnemyDrops(drops: FieldEnemy["drops"] | undefined): boolean {
+  if (!drops) {
+    return false;
+  }
+
+  const wad = Math.max(0, Math.floor(Number(drops.wad ?? 0)));
+  if (wad > 0) {
+    return true;
+  }
+
+  if (BASIC_RESOURCE_KEYS.some((key) => Math.max(0, Math.floor(Number(drops.resources?.[key] ?? 0))) > 0)) {
+    return true;
+  }
+
+  return (drops.items ?? []).some((item) => item.id && item.quantity > 0 && item.chance > 0);
+}
+
+function cloneFieldEnemyDrops(drops: FieldEnemy["drops"] | undefined): FieldEnemy["drops"] | undefined {
+  if (!drops) {
+    return undefined;
+  }
+
+  return {
+    wad: drops.wad,
+    resources: drops.resources ? { ...drops.resources } : undefined,
+    items: drops.items?.map((item) => ({ ...item })),
+  };
+}
+
+function fieldLootOrbGravitySmoothstep(value: number): number {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - (2 * t));
+}
+
+function canDriftLootOrbTo(x: number, y: number): boolean {
+  if (!currentMap) {
+    return false;
+  }
+
+  return canMoveEntityOnMap(
+    currentMap,
+    x,
+    y,
+    FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE,
+    FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE,
+  );
+}
+
+function getNearestLootOrbGravityTarget(orb: FieldLootOrb): Pick<PlayerAvatar, "x" | "y"> | null {
+  const state = getGameState();
+  let bestTarget: Pick<PlayerAvatar, "x" | "y"> | null = null;
+  let bestDistance = FIELD_LOOT_ORB_GRAVITY_RADIUS;
+
+  (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+    if (!isFieldPlayerActive(playerId, state)) {
+      return;
+    }
+
+    const avatar = getRuntimeFieldAvatar(playerId, state);
+    if (!avatar) {
+      return;
+    }
+
+    const distance = Math.hypot(avatar.x - orb.x, avatar.y - orb.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTarget = avatar;
+    }
+  });
+
+  return bestTarget;
+}
+
+function updateFieldLootOrbs(deltaTime: number, currentTime: number): void {
+  if (!fieldState?.lootOrbs || fieldState.lootOrbs.length === 0 || !currentMap) {
+    return;
+  }
+
+  const seconds = Math.min(0.05, Math.max(0, deltaTime / 1000));
+  if (seconds <= 0) {
+    return;
+  }
+
+  for (const orb of fieldState.lootOrbs) {
+    let vx = Number(orb.vx ?? 0);
+    let vy = Number(orb.vy ?? 0);
+    const ageMs = currentTime - orb.spawnedAt;
+    const target = ageMs >= FIELD_LOOT_ORB_GRAVITY_SETTLE_DELAY_MS
+      ? getNearestLootOrbGravityTarget(orb)
+      : null;
+
+    if (target) {
+      const dx = target.x - orb.x;
+      const dy = target.y - orb.y;
+      const distance = Math.max(0.001, Math.hypot(dx, dy));
+      if (distance > FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS) {
+        const rangeT = 1 - ((distance - FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS)
+          / Math.max(1, FIELD_LOOT_ORB_GRAVITY_RADIUS - FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS));
+        const pull = fieldLootOrbGravitySmoothstep(rangeT);
+        vx += (dx / distance) * FIELD_LOOT_ORB_GRAVITY_ACCELERATION * pull * seconds;
+        vy += (dy / distance) * FIELD_LOOT_ORB_GRAVITY_ACCELERATION * pull * seconds;
+      }
+    }
+
+    const speed = Math.hypot(vx, vy);
+    if (speed > FIELD_LOOT_ORB_GRAVITY_MAX_SPEED) {
+      const speedScale = FIELD_LOOT_ORB_GRAVITY_MAX_SPEED / speed;
+      vx *= speedScale;
+      vy *= speedScale;
+    }
+
+    const damping = target ? Math.pow(0.18, seconds) : Math.pow(0.035, seconds);
+    vx *= damping;
+    vy *= damping;
+
+    if (Math.abs(vx) < 0.02) {
+      vx = 0;
+    }
+    if (Math.abs(vy) < 0.02) {
+      vy = 0;
+    }
+
+    const nextX = orb.x + vx * seconds;
+    const nextY = orb.y + vy * seconds;
+    if (vx !== 0 && canDriftLootOrbTo(nextX, orb.y)) {
+      orb.x = nextX;
+    } else {
+      vx = 0;
+    }
+    if (vy !== 0 && canDriftLootOrbTo(orb.x, nextY)) {
+      orb.y = nextY;
+    } else {
+      vy = 0;
+    }
+
+    orb.vx = vx;
+    orb.vy = vy;
+  }
+}
+
+function shouldSpawnLootOrbForEnemy(enemy: FieldEnemy): boolean {
+  return Boolean(
+    currentMap
+      && fieldState
+      && isHaven3DFieldRuntimeActive()
+      && getOuterDeckFieldContext(String(currentMap.id)) !== "haven"
+      && hasFieldEnemyDrops(enemy.drops),
+  );
+}
+
+function spawnFieldEnemyLootOrb(enemy: FieldEnemy): void {
+  if (!fieldState || !hasFieldEnemyDrops(enemy.drops)) {
+    return;
+  }
+
+  const now = performance.now();
+  const orb: FieldLootOrb = {
+    id: `field_loot_orb_${enemy.id}_${Math.round(now)}`,
+    x: enemy.x,
+    y: enemy.y,
+    radius: FIELD_LOOT_ORB_RADIUS,
+    drops: cloneFieldEnemyDrops(enemy.drops),
+    sourceEnemyId: enemy.id,
+    sourceEnemyName: enemy.name,
+    spawnedAt: now,
+  };
+
+  fieldState.lootOrbs = [
+    ...(fieldState.lootOrbs ?? []).filter((existing) => existing.sourceEnemyId !== enemy.id),
+    orb,
+  ];
+
+  showSystemPing({
+    type: "info",
+    title: "LOOT ORB FORMED",
+    message: enemy.name,
+    detail: "Break it with the Gearblade to claim the drop.",
+    durationMs: 2600,
+    channel: "field-enemy-drops",
+    replaceChannel: true,
+  });
+}
+
+function awardFieldDrops(drops: FieldEnemy["drops"] | undefined): string[] {
   if (!drops) {
     return [];
   }
@@ -7070,6 +7380,10 @@ function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
   return rewardLines;
 }
 
+function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
+  return awardFieldDrops(enemy.drops);
+}
+
 function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
   if (enemy.deathAnimTime !== undefined) {
     return;
@@ -7080,7 +7394,9 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
 
   updateQuestProgress("kill_enemies", 1, 1);
 
-  const rewardLines = awardFieldEnemyDrops(enemy);
+  const rewardLines = shouldSpawnLootOrbForEnemy(enemy)
+    ? (spawnFieldEnemyLootOrb(enemy), [])
+    : awardFieldEnemyDrops(enemy);
   if (rewardLines.length > 0) {
     showSystemPing({
       type: "success",
@@ -7403,6 +7719,105 @@ function getDistanceToSegmentPx(
   return Math.hypot(pointX - closestX, pointY - closestY);
 }
 
+function breakFieldLootOrb(orb: FieldLootOrb, strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+}): boolean {
+  if (!fieldState?.lootOrbs) {
+    return false;
+  }
+
+  const index = fieldState.lootOrbs.findIndex((entry) => entry.id === orb.id);
+  if (index < 0) {
+    return false;
+  }
+
+  const drops = cloneFieldEnemyDrops(orb.drops);
+  fieldState.lootOrbs.splice(index, 1);
+  const rewardLines = awardFieldDrops(drops);
+  const detail = rewardLines.length > 0
+    ? rewardLines.join(" | ")
+    : "No usable salvage remained.";
+
+  triggerFeedback({
+    type: "resource",
+    source: "field",
+    intensity: 2,
+    position: {
+      x: orb.x,
+      y: orb.y,
+      space: "field-world",
+    },
+    targetPosition: {
+      x: strike.x,
+      y: strike.y,
+      space: "field-world",
+    },
+    text: rewardLines.length > 0 ? rewardLines.join(" ") : "ORB BROKEN",
+    channel: `field-loot-orb-${orb.id}`,
+    meta: {
+      sourceEnemyId: orb.sourceEnemyId,
+      playerId: strike.playerId,
+    },
+  });
+
+  showSystemPing({
+    type: rewardLines.length > 0 ? "success" : "info",
+    title: "LOOT ORB BROKEN",
+    message: orb.sourceEnemyName ?? "Apron salvage",
+    detail,
+    durationMs: rewardLines.length > 0 ? 4200 : 2400,
+    channel: "field-enemy-drops",
+    replaceChannel: true,
+  });
+  playPlaceholderSfx("ui-confirm");
+  return true;
+}
+
+function breakLootOrbsWithBladeStrike(strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  hiltX: number;
+  hiltY: number;
+  tipX: number;
+  tipY: number;
+  bladeHalfWidth: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+}): boolean {
+  if (!fieldState?.lootOrbs || fieldState.lootOrbs.length === 0) {
+    return false;
+  }
+
+  let didBreak = false;
+  for (const orb of [...fieldState.lootOrbs]) {
+    const bladeDistance = getDistanceToSegmentPx(
+      orb.x,
+      orb.y,
+      strike.hiltX,
+      strike.hiltY,
+      strike.tipX,
+      strike.tipY,
+    );
+    const distance = Math.hypot(orb.x - strike.x, orb.y - strike.y);
+    const isLockedTarget = strike.target?.kind === "loot-orb" && strike.target.id === orb.id;
+    const lockAssistWidth = isLockedTarget ? 22 : 0;
+    const lockAssistReach = isLockedTarget ? 24 : 0;
+    if (bladeDistance > strike.bladeHalfWidth + orb.radius + lockAssistWidth) {
+      continue;
+    }
+    if (distance > strike.radius + orb.radius + lockAssistReach) {
+      continue;
+    }
+
+    didBreak = breakFieldLootOrb(orb, strike) || didBreak;
+  }
+
+  return didBreak;
+}
+
 function handleHaven3DBladeStrike(strike: {
   playerId: PlayerId;
   x: number;
@@ -7415,21 +7830,26 @@ function handleHaven3DBladeStrike(strike: {
   tipX: number;
   tipY: number;
   bladeHalfWidth: number;
-  target: { kind: "npc" | "enemy"; id: string; key: string } | null;
+  target: Haven3DTargetRef | null;
   radius: number;
   arcRadians: number;
   damage: number;
   knockback: number;
 }): boolean {
-  if (!fieldState?.fieldEnemies || !fieldState.combat) {
+  if (!fieldState) {
     return false;
+  }
+
+  const brokeLootOrb = breakLootOrbsWithBladeStrike(strike);
+  if (!fieldState.fieldEnemies) {
+    return brokeLootOrb;
   }
 
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   const baseDamage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
   const knockback = strike.knockback + bowbladeFieldProfile.meleeKnockbackBonus;
   const energyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
-  let didHit = false;
+  let didHit = brokeLootOrb;
 
   for (const enemy of fieldState.fieldEnemies) {
     if (enemy.hp <= 0) {
@@ -7449,8 +7869,8 @@ function handleHaven3DBladeStrike(strike: {
       strike.tipY,
     );
     const enemyRadius = Math.max(enemy.width, enemy.height) * 0.48;
-    const lockAssistWidth = isLockedTarget ? 8 : 0;
-    const lockAssistReach = isLockedTarget ? 14 : 0;
+    const lockAssistWidth = isLockedTarget ? 32 : 0;
+    const lockAssistReach = isLockedTarget ? 34 : 0;
     if (bladeDistance > strike.bladeHalfWidth + enemyRadius + lockAssistWidth) {
       continue;
     }
@@ -7470,7 +7890,9 @@ function handleHaven3DBladeStrike(strike: {
     const damage = baseDamage * defenseResult.damageMultiplier;
     didHit = true;
     enemy.hp -= damage;
-    fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
+    if (fieldState.combat) {
+      fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
+    }
     enemy.vx = (dx / distance) * knockback;
     enemy.vy = (dy / distance) * knockback;
     enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
@@ -7489,7 +7911,7 @@ function handleHaven3DLauncherFire(fire: {
   utility: "attack" | "flare";
   x: number;
   y: number;
-  target: { kind: "npc" | "enemy"; id: string; key: string } | null;
+  target: Haven3DTargetRef | null;
 }): boolean {
   if (fire.utility !== "flare" || !currentMap || !isOuterDeckOpenWorldMap(currentMap)) {
     return true;
@@ -7535,7 +7957,7 @@ function handleHaven3DLauncherImpact(impact: {
   playerId: PlayerId;
   x: number;
   y: number;
-  target: { kind: "npc" | "enemy"; id: string; key: string } | null;
+  target: Haven3DTargetRef | null;
   radius: number;
   damage: number;
   knockback: number;
@@ -7609,7 +8031,7 @@ function handleHaven3DGrappleImpact(impact: {
   playerId: PlayerId;
   x: number;
   y: number;
-  target: { kind: "npc" | "enemy"; id: string; key: string };
+  target: Haven3DTargetRef;
   damage: number;
   knockback: number;
 }): boolean {

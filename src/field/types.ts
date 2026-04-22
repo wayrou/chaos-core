@@ -160,6 +160,19 @@ export interface FieldProjectile {
   radius?: number;
 }
 
+export interface FieldLootOrb {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  drops?: FieldEnemy["drops"];
+  sourceEnemyId?: string;
+  sourceEnemyName?: string;
+  spawnedAt: number;
+  vx?: number;
+  vy?: number;
+}
+
 export interface FieldCombatState {
   isAttacking: boolean;
   attackCooldown: number;
@@ -180,5 +193,6 @@ export interface FieldState {
   fieldEnemies?: FieldEnemy[];
   combat?: FieldCombatState;
   projectiles?: FieldProjectile[];
+  lootOrbs?: FieldLootOrb[];
   collectedResourceObjectIds?: string[];
 }

@@ -221,6 +221,7 @@
 
 .haven3d-apron-nav {
   --apron-bearing: 0rad;
+  --apron-interior-bearing: 0rad;
   position: absolute;
   top: 18px;
   left: 18px;
@@ -273,6 +274,24 @@
 .haven3d-apron-nav--near .haven3d-apron-nav__needle {
   background: linear-gradient(180deg, #e5fff1, #80e69d 62%, #337a54);
   filter: drop-shadow(0 0 9px rgba(128, 230, 157, 0.56));
+}
+
+.haven3d-apron-nav__needle--interior {
+  width: 7px;
+  height: 22px;
+  transform: translate(-50%, -74%) rotate(var(--apron-interior-bearing));
+  background: linear-gradient(180deg, #fff3c4, #ff9f43 64%, #995018);
+  filter: drop-shadow(0 0 8px rgba(255, 159, 67, 0.58));
+  opacity: 0.72;
+}
+
+.haven3d-apron-nav--interior-visible .haven3d-apron-nav__needle--interior {
+  opacity: 1;
+  background: linear-gradient(180deg, #fff9dd, #ffce73 62%, #c46b23);
+}
+
+.haven3d-apron-nav--interior-missing .haven3d-apron-nav__needle--interior {
+  opacity: 0.22;
 }
 
 .haven3d-apron-nav__readout {
