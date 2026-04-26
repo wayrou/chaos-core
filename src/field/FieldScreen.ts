@@ -163,6 +163,7 @@ import {
   getCurrentOpsTerminalAtlasFloor,
   getOpsTerminalAtlasWarmEconomySummaries,
 } from "../core/opsTerminalAtlas";
+import { runQuacDebugCommand } from "../core/quacDevCommands";
 import {
   canCraftDecorItem,
   craftDecorItem,
@@ -862,7 +863,8 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2.0;
 const ZOOM_STEP = 0.1;
 let fieldPinnedResizeHandler: (() => void) | null = null;
-let fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+const PINNED_QUAC_HELP_TEXT = 'Type a node name, or use /dev commands. Example: "unit roster" or "/give 5 healing kit".';
+let fieldPinnedQuacFeedback = PINNED_QUAC_HELP_TEXT;
 let stickyNoteDragResumePending = false;
 let lastNetworkLobbyAvatarSyncKey = "";
 let lastMinimapRevealKey = "";
@@ -6575,10 +6577,36 @@ function handlePinnedOverlaySubmit(e: SubmitEvent): void {
   if (!input || !status) return;
 
   const rawCommand = input.value;
+  const normalizedCommand = rawCommand.trim().toLowerCase().replace(/\s+/g, " ");
+
+  if (normalizedCommand.startsWith("/")) {
+    const result = runQuacDebugCommand(getGameState(), rawCommand);
+    if (!result.handled) {
+      fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "/dev".`;
+      renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
+      input.select();
+      return;
+    }
+
+    updateGameState(() => result.state);
+    fieldPinnedQuacFeedback = result.statusText;
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, !result.success);
+    if (result.success) {
+      input.value = "";
+      if (result.ping) {
+        showSystemPing(result.ping);
+      }
+      updatePinnedNodesOverlay();
+    } else {
+      input.select();
+    }
+    return;
+  }
+
   const resolvedAction = resolvePinnedQuacCommand(rawCommand);
 
   if (!resolvedAction) {
-    fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
+    fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", "port", or "/dev".`;
     renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
     input.select();
     return;
@@ -6604,7 +6632,7 @@ function handlePinnedOverlayInput(e: Event): void {
   const status = input.closest(".all-nodes-item-shell")?.querySelector<HTMLElement>("[data-field-quac-status]");
   if (!status || !status.classList.contains("all-nodes-cli-status--error")) return;
 
-  fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+  fieldPinnedQuacFeedback = PINNED_QUAC_HELP_TEXT;
   renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
 }
 

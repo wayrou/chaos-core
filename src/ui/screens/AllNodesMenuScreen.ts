@@ -36,6 +36,7 @@ import {
   holdPositionInOpsTerminalAtlas,
   setCurrentOpsTerminalAtlasFloorOrdinal,
 } from "../../core/opsTerminalAtlas";
+import { runQuacDebugCommand } from "../../core/quacDevCommands";
 import { BASIC_RESOURCE_KEYS, RESOURCE_SHORT_LABELS, createEmptyResourceWallet, getResourceEntries, type ResourceWallet } from "../../core/resources";
 import { getLocalSessionPlayerSlot, getSessionResourcePool } from "../../core/session";
 import { showAlertDialog } from "../components/confirmDialog";
@@ -74,7 +75,8 @@ import {
 } from "../../core/escAvailability";
 
 let lastFieldMap: string = "base_camp";
-let quacLastFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+const QUAC_HELP_TEXT = `Type a node name, or use /dev commands. Example: "unit roster" or "/give 5 healing kit".`;
+let quacLastFeedback = QUAC_HELP_TEXT;
 let suppressNodeClickUntil = 0;
 let allNodesEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let allNodesResizeHandler: (() => void) | null = null;
@@ -2049,9 +2051,9 @@ function renderResourceTrackerContent(
 
 function renderQuacContent(isPinned: boolean): string {
   return `
-    <div class="all-nodes-item-shell all-nodes-item-shell--quac">
+    <div class="all-nodes-item-shell all-nodes-item-shell--quac" data-quac-shell>
       ${renderItemToolbar(QUAC_LAYOUT_ID, "QUAC terminal", { extraClass: " all-nodes-item-toolbar--quac", isPinned })}
-      <section class="all-nodes-cli-panel" aria-label="Quick User Access Console" data-ez-drag-disable="true">
+      <section class="all-nodes-cli-panel" aria-label="Quick User Access Console" data-ez-drag-disable="true" data-quac-panel>
         <div class="all-nodes-cli-header">
           <div class="all-nodes-cli-title">Q.U.A.C. TERMINAL</div>
         </div>
@@ -2142,6 +2144,8 @@ function focusWorkspaceItem(itemId: string): void {
   requestAnimationFrame(() => {
     const focusTarget = itemId === MATERIALS_REFINERY_LAYOUT_ID
       ? item.querySelector<HTMLElement>("[data-refinery-craft-id]:not([disabled]), [data-refinery-craft-id]")
+      : itemId === QUAC_LAYOUT_ID
+        ? item.querySelector<HTMLElement>("#quacInput")
       : item.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
     focusTarget?.focus({ preventScroll: true });
   });
@@ -2886,6 +2890,20 @@ function attachAllNodesMenuListeners(): void {
     await renderMainMenu();
   });
 
+  root.querySelectorAll<HTMLElement>("[data-quac-shell], [data-quac-panel]").forEach((element) => {
+    element.addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) {
+        return;
+      }
+      if (target.closest("#quacInput, .all-nodes-cli-submit, .all-nodes-item-toolbar, .all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize")) {
+        return;
+      }
+      const quacInput = root.querySelector<HTMLInputElement>("#quacInput");
+      quacInput?.focus({ preventScroll: true });
+    });
+  });
+
   const quacForm = root.querySelector<HTMLFormElement>("#quacForm");
   const quacInput = root.querySelector<HTMLInputElement>("#quacInput");
   const quacStatus = root.querySelector<HTMLElement>("#quacStatus");
@@ -2893,10 +2911,39 @@ function attachAllNodesMenuListeners(): void {
     quacForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const rawCommand = quacInput.value;
+      const normalizedCommand = rawCommand.trim().toLowerCase().replace(/\s+/g, " ");
+
+      if (normalizedCommand.startsWith("/")) {
+        const result = runQuacDebugCommand(getGameState(), rawCommand);
+        if (!result.handled) {
+          quacLastFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "/dev".`;
+          quacStatus.textContent = quacLastFeedback;
+          quacStatus.classList.add("all-nodes-cli-status--error");
+          quacInput.select();
+          return;
+        }
+
+        setGameState(result.state);
+        quacLastFeedback = result.statusText;
+        quacStatus.textContent = quacLastFeedback;
+        quacStatus.classList.toggle("all-nodes-cli-status--error", !result.success);
+        if (result.success) {
+          quacInput.value = "";
+          if (result.ping) {
+            showSystemPing(result.ping);
+          }
+          renderAllNodesMenuScreen(lastFieldMap);
+          requestAnimationFrame(() => focusWorkspaceItem(QUAC_LAYOUT_ID));
+        } else {
+          quacInput.select();
+        }
+        return;
+      }
+
       const resolvedAction = resolveQuacCommand(rawCommand);
 
       if (!resolvedAction) {
-        quacLastFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
+        quacLastFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", "port", or "/dev".`;
         quacStatus.textContent = quacLastFeedback;
         quacStatus.classList.add("all-nodes-cli-status--error");
         quacInput.select();
@@ -2921,7 +2968,7 @@ function attachAllNodesMenuListeners(): void {
     quacInput.addEventListener("input", () => {
       if (quacStatus.classList.contains("all-nodes-cli-status--error")) {
         quacStatus.classList.remove("all-nodes-cli-status--error");
-        quacStatus.textContent = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+        quacStatus.textContent = QUAC_HELP_TEXT;
       }
     });
 
@@ -2965,7 +3012,7 @@ function attachPointerGridDrag(root: HTMLElement): void {
       const target = event.target as HTMLElement | null;
       if (!target) return;
 
-      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label, .all-nodes-refinery-craft-btn, .all-nodes-theater-clock-toggle")) {
+      if (target.closest(".all-nodes-item-minimize, .all-nodes-item-color, .all-nodes-item-pin, .all-nodes-item-resize, .all-nodes-cli-panel, .all-nodes-cli-header, .all-nodes-cli-title, .all-nodes-cli-status, .all-nodes-cli-form, .all-nodes-cli-input, .all-nodes-cli-submit, .all-nodes-cli-prompt, .notes-widget, .notes-widget button, .notes-widget input, .notes-widget textarea, .notes-widget label, .all-nodes-refinery-craft-btn, .all-nodes-theater-clock-toggle")) {
         return;
       }
 

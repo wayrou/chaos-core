@@ -12,9 +12,13 @@ import {
   OUTER_DECK_OVERWORLD_MAP_ID,
   OUTER_DECK_OVERWORLD_TRAVELING_MERCHANT_ZONE_ID,
   beginOuterDeckExpedition,
+  buildOuterDeckInteriorMapId,
   getOuterDeckInteriorLootKey,
-  markOuterDeckOpenWorldEnemyDefeated,
+  getOuterDeckInteriorRoomKey,
+  getOuterDeckInteriorSpec,
   markOuterDeckInteriorLootClaimed,
+  markOuterDeckInteriorRoomCleared,
+  parseOuterDeckInteriorMapId,
   placeOuterDeckOpenWorldLantern,
   resolveOuterDeckMechanic,
 } from "../outerDecks";
@@ -178,18 +182,15 @@ describe("outerDeckMaps", () => {
     const { seed, state, map, entrances } = findSeededApronWithInteriorEntrance();
     const repeated = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, state);
     const repeatedEntrances = repeated.objects.filter((object) => object.metadata?.outerDeckInteriorEntrance === true);
-    const entryZones = map.interactionZones.filter((zone) => zone.metadata?.handlerId === "outer_deck_interior_entry");
-    const cacheZones = map.interactionZones.filter((zone) => zone.metadata?.handlerId === "outer_deck_embedded_corridor_cache");
+    const zones = map.interactionZones.filter((zone) => zone.metadata?.handlerId === "outer_deck_interior_entry");
 
     expect(entrances.length).toBeGreaterThan(0);
     expect(entrances.length).toBeLessThanOrEqual(4);
     expect(entrances.map((object) => object.id).sort()).toEqual(repeatedEntrances.map((object) => object.id).sort());
-    expect(entryZones.length).toBe(0);
-    expect(cacheZones.length).toBe(entrances.length);
+    expect(zones.length).toBe(entrances.length);
     entrances.forEach((entrance) => {
       expect(Math.floor(Math.hypot(Number(entrance.metadata?.chunkX), Number(entrance.metadata?.chunkY)))).toBeGreaterThanOrEqual(2);
-      expect(entrance.metadata?.outerDeckEmbeddedCorridor).toBe(true);
-      expect(entrance.metadata?.targetMapId).toBeUndefined();
+      expect(String(entrance.metadata?.targetMapId)).toMatch(/^outerdeck_interior_f\d+_cx-?\d+_cy-?\d+_d0$/);
     });
     const signal = findNearestOuterDeckInteriorEntranceSignal(
       state.outerDecks.openWorld,
@@ -209,67 +210,34 @@ describe("outerDeckMaps", () => {
     expect(different.objects.map((object) => object.id).sort()).not.toEqual(map.objects.map((object) => object.id).sort());
   });
 
-  it("embeds larger tall-walled corridor dungeons directly into the streamed Apron", () => {
-    const { state, map, entrances } = findSeededApronWithInteriorEntrance();
-    const entrance = entrances[0];
-    const chunkX = Number(entrance.metadata?.chunkX);
-    const chunkY = Number(entrance.metadata?.chunkY);
-    const highWallsNearEntrance = map.tiles
-      .slice(Math.max(0, entrance.y - 12), Math.min(map.height, entrance.y + 16))
-      .flatMap((row) => row.slice(Math.max(0, entrance.x - 12), Math.min(map.width, entrance.x + 16)))
-      .filter((tile) => !tile.walkable && tile.standable3d !== true && Number(tile.elevation ?? 0) >= 80);
-    const carvedFloorsNearEntrance = map.tiles
-      .slice(Math.max(0, entrance.y - 12), Math.min(map.height, entrance.y + 16))
-      .flatMap((row) => row.slice(Math.max(0, entrance.x - 12), Math.min(map.width, entrance.x + 16)))
-      .filter((tile) => tile.walkable && Number(tile.elevation ?? 0) <= 6);
-    const hasThreeWideRun = map.tiles.some((row) => {
-      let run = 0;
-      for (const tile of row) {
-        run = tile.walkable && Number(tile.elevation ?? 0) <= 6 ? run + 1 : 0;
-        if (run >= 3) {
-          return true;
-        }
-      }
-      return false;
-    });
-    const isSameCorridorSite = (metadata) => Number(metadata?.chunkX) === chunkX && Number(metadata?.chunkY) === chunkY;
-    const corridorEnemies = map.objects.filter((object) => (
-      object.metadata?.outerDeckEmbeddedCorridorEnemy === true
-      && isSameCorridorSite(object.metadata)
-    ));
-    const cache = map.objects.find((object) => (
-      object.metadata?.outerDeckEmbeddedCorridorCache === true
-      && isSameCorridorSite(object.metadata)
-    ));
-    const cacheZone = map.interactionZones.find((zone) => (
-      zone.metadata?.handlerId === "outer_deck_embedded_corridor_cache"
-      && isSameCorridorSite(zone.metadata)
-    ));
-    const claimedState = markOuterDeckInteriorLootClaimed(
-      state,
-      getOuterDeckInteriorLootKey({ floorOrdinal: 1, chunkX, chunkY }),
+  it("generates tight corridor mini-chain interiors with clear-gated enemies and final caches", () => {
+    const baseState = createSeededState(424242);
+    const spec = getOuterDeckInteriorSpec(424242, 1, 2, -2);
+    const entryMapId = buildOuterDeckInteriorMapId(1, 2, -2, 0);
+    const finalMapId = buildOuterDeckInteriorMapId(1, 2, -2, spec.chainLength - 1);
+    const entry = createOuterDeckFieldMap(entryMapId, baseState);
+    const final = createOuterDeckFieldMap(finalMapId, baseState);
+    const finalRef = parseOuterDeckInteriorMapId(finalMapId);
+    const finalRoomKey = getOuterDeckInteriorRoomKey(finalRef);
+    const finalLootKey = getOuterDeckInteriorLootKey(finalRef);
+    const clearedFinal = createOuterDeckFieldMap(
+      finalMapId,
+      markOuterDeckInteriorRoomCleared(baseState, finalRoomKey),
     );
-    const claimedMap = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, claimedState);
-    const defeatedState = corridorEnemies.reduce(
-      (nextState, enemy) => markOuterDeckOpenWorldEnemyDefeated(nextState, String(enemy.metadata?.persistentKey)),
-      state,
+    const claimedFinal = createOuterDeckFieldMap(
+      finalMapId,
+      markOuterDeckInteriorLootClaimed(baseState, finalLootKey),
     );
-    const clearedMap = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, defeatedState);
 
-    expect(highWallsNearEntrance.length).toBeGreaterThan(24);
-    expect(carvedFloorsNearEntrance.length).toBeGreaterThan(18);
-    expect(hasThreeWideRun).toBe(true);
-    expect(corridorEnemies.length).toBeGreaterThan(0);
-    expect(cache).toBeTruthy();
-    expect(cacheZone?.label).toBe("SECURE CACHE");
-    expect(claimedMap.interactionZones.some((zone) => (
-      zone.metadata?.handlerId === "outer_deck_embedded_corridor_cache"
-      && isSameCorridorSite(zone.metadata)
-    ))).toBe(false);
-    expect(clearedMap.objects.some((object) => (
-      object.metadata?.outerDeckEmbeddedCorridorEnemy === true
-      && isSameCorridorSite(object.metadata)
-    ))).toBe(false);
+    expect(entry?.metadata?.kind).toBe("outerDeckInterior");
+    expect(entry?.interactionZones.some((zone) => zone.label === "SURFACE")).toBe(true);
+    expect(entry?.interactionZones.some((zone) => zone.label === "DEEPER")).toBe(true);
+    expect(entry?.objects.some((object) => object.type === "enemy")).toBe(true);
+    expect(final?.interactionZones.some((zone) => zone.metadata?.handlerId === "outer_deck_interior_cache")).toBe(true);
+    expect(final?.objects.some((object) => object.id.endsWith("_cache"))).toBe(true);
+    expect(clearedFinal?.objects.some((object) => object.type === "enemy")).toBe(false);
+    expect(claimedFinal?.interactionZones.some((zone) => zone.metadata?.handlerId === "outer_deck_interior_cache")).toBe(false);
+    expect(claimedFinal?.objects.some((object) => object.id.endsWith("_cache"))).toBe(false);
   });
 
   it("keeps Apron ziplines sparse and tied to real traversal problems", () => {

@@ -223,6 +223,7 @@ export interface OperationRun {
   sprawlDirection?: TheaterSprawlDirection;
   theater?: TheaterNetworkState;
   theaterFloors?: Record<number, TheaterNetworkState>;
+  theaterResourceDecayEnabled?: boolean;
 }
 
 export interface PlayerProfile {
@@ -648,6 +649,7 @@ export interface UILayoutState {
   opsTerminalAtlasNotesWindowColor?: string;
   opsTerminalAtlasDebugFloorBypass?: boolean;
   escDebugPortStableUnlock?: boolean;
+  quacDebugAutoWinBattles?: boolean;
   theaterDebugDisableEnemyRoomAttacks?: boolean;
   notesState?: PlayerNotesState;
 }
@@ -1290,6 +1292,7 @@ export interface TheaterNetworkState {
   rooms: Record<RoomId, TheaterRoom>;
   currentRoomId: RoomId;
   selectedRoomId: RoomId;
+  resourceDecayEnabled?: boolean;
   currentNodeId?: string;
   selectedNodeId?: string;
   annexesById?: Record<string, AnnexInstance>;

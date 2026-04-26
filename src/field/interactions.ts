@@ -530,45 +530,6 @@ export async function handleInteraction(
         break;
       }
 
-      if (zone.metadata?.handlerId === "outer_deck_embedded_corridor_cache") {
-        const floorOrdinal = Math.max(1, Math.floor(Number(zone.metadata?.floorOrdinal ?? getGameState().outerDecks?.openWorld?.floorOrdinal ?? 1)));
-        const chunkX = Math.trunc(Number(zone.metadata?.chunkX ?? 0));
-        const chunkY = Math.trunc(Number(zone.metadata?.chunkY ?? 0));
-        const depth = Math.max(0, Math.floor(Number(zone.metadata?.depth ?? 0)));
-        const enemyKeys = Array.isArray(zone.metadata?.enemyKeys)
-          ? zone.metadata.enemyKeys.map((entry) => String(entry))
-          : [];
-        const defeatedEnemyKeys = getGameState().outerDecks?.openWorld?.defeatedEnemyKeys ?? [];
-        const hostilesRemain = Boolean(zone.metadata?.requiresClear)
-          && enemyKeys.some((key) => !defeatedEnemyKeys.includes(key));
-        if (hostilesRemain) {
-          await showFieldInteractionAlert("Hostiles remain in the corridor. Secure the cave before opening the cache.");
-          onResume();
-          break;
-        }
-
-        const reward = grantOuterDeckInteriorCacheReward(getGameState(), {
-          floorOrdinal,
-          chunkX,
-          chunkY,
-          depth,
-        });
-        updateGameState(() => reward.state);
-
-        const { renderFieldScreen } = await import("./FieldScreen");
-        renderFieldScreen(map.id);
-        showSystemPing({
-          type: reward.granted ? "success" : "info",
-          title: reward.granted ? "APRON CACHE SECURED" : "CACHE ALREADY SECURED",
-          message: reward.gearReward?.name ?? "Recovered cache",
-          detail: summarizeOuterDeckInteriorReward(reward),
-          durationMs: 5200,
-          channel: "outer-deck-embedded-corridor-cache",
-          replaceChannel: true,
-        });
-        break;
-      }
-
       if (zone.metadata?.handlerId === "outer_deck_interior_entry") {
         const targetMapId = typeof zone.metadata?.targetMapId === "string" ? zone.metadata.targetMapId : "";
         if (!targetMapId) {

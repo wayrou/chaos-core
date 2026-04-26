@@ -67,6 +67,10 @@ import {
   hasTheaterOperation,
 } from "../../core/theaterSystem";
 import {
+  forceBattleVictory,
+  isQuacDebugAutoWinBattlesEnabled,
+} from "../../core/quacDevCommands";
+import {
   clearControllerContext,
   getControllerActionLabel,
   registerControllerContext,
@@ -5639,6 +5643,24 @@ export function renderBattleScreen() {
     }
   }
 
+  if (
+    localBattleState
+    && isQuacDebugAutoWinBattlesEnabled(state)
+    && localBattleState.phase !== "victory"
+    && localBattleState.phase !== "defeat"
+  ) {
+    setBattleState(forceBattleVictory(localBattleState));
+    showSystemPing({
+      type: "info",
+      title: "QUAC AUTO WIN",
+      message: "Battle resolved immediately for dev testing.",
+      channel: "quac-auto-win-battle",
+      replaceChannel: true,
+    });
+    renderBattleScreen();
+    return;
+  }
+
   if (localBattleState) {
     syncBattleAudioState(localBattleState);
     preloadBattle3dModules();
@@ -6947,6 +6969,17 @@ function renderBattleResultOverlay(battle: BattleState): string {
       : isTheaterOperationBattle
         ? "ROOM SECURED"
         : "HOSTILES BROKEN";
+    const battleChannelLabel = isDefenseBattle
+      ? "DEFENSE GRID"
+      : isTheaterOperationBattle
+        ? "THEATER LINK"
+        : "TACTICAL LINK";
+    const rewardChannelLabel = `${rewardPacketTypes} CHANNEL${rewardPacketTypes === 1 ? "" : "S"}`;
+    const victoryFooterNote = isDefenseBattle
+      ? "Perimeter stabilized. Recovery and reward transfer channels are standing by."
+      : isTheaterOperationBattle
+        ? "Room secured. Claim the packet and continue the operation route."
+        : "The route is clear. Claim the packet and continue the tactical push.";
 
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
@@ -6962,69 +6995,104 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
     return `
       <div class="battle-result-overlay">
-        <div class="battle-result-card">
-          <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
-          <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
-          ${isDefenseBattle ? `
-            <div class="battle-defense-success">
-              Facility perimeter held. Defensive line remains intact.
+        <div class="battle-result-card battle-result-card--victory">
+          <div class="battle-result-victory-header">
+            <div class="battle-result-victory-header-main">
+              <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
+              <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
+              ${isDefenseBattle ? `
+                <div class="battle-defense-success">
+                  Facility perimeter held. Defensive line remains intact.
+                </div>
+              ` : `
+                <div class="battle-result-copy">
+                  Hostile resistance broken. Claim the reward package and continue the operation.
+                </div>
+              `}
             </div>
-          ` : `
-            <div class="battle-result-copy">
-              Hostile resistance broken. Claim the reward package and continue the operation.
+            <div class="battle-result-victory-status-strip">
+              <div class="battle-result-victory-badge">${victoryStatusLabel}</div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Link</div>
+                <div class="battle-result-victory-strip-value">${battleChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Packet</div>
+                <div class="battle-result-victory-strip-value">${rewardChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item battle-result-victory-strip-item--wide">
+                <div class="battle-result-victory-strip-label">Combat Note</div>
+                <div class="battle-result-victory-strip-value battle-result-victory-strip-value--note">${escapeBattleText(latestBattleNote)}</div>
+              </div>
             </div>
-          `}
-          <div class="battle-result-message">${escapeBattleText(latestBattleNote)}</div>
-          <div class="battle-result-summary">
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">SURVIVORS</div>
-              <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
-              <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">INTEGRITY</div>
-              <div class="battle-result-summary-card__value">${integrityPercent}%</div>
-              <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">TURN COUNT</div>
-              <div class="battle-result-summary-card__value">${battle.turnCount}</div>
-              <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">STATUS</div>
-              <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
-              <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
-            </article>
           </div>
-          <div class="battle-result-section-title">Reward Packet</div>
-          <div class="battle-reward-grid">
-            <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
-            <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
-            ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
-            ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
-            ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
-            ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
-            ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
-            ${resolvedGearRewards.map((reward) => `
-              <div class="battle-reward-item battle-reward-item--gear">
-                <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
-                <div class="reward-value">${escapeBattleText(reward.name)}</div>
-                <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+          <div class="battle-result-dashboard">
+            <section class="battle-result-panel battle-result-panel--summary">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Squad Debrief</div>
+                <div class="battle-result-panel-meta">ENGAGEMENT DATA</div>
               </div>
-            `).join("")}
-            ${unlockableId && unlockableId !== "pending" && unlockableName ? `
-              <div class="battle-reward-item battle-reward-item--unlockable">
-                <div class="reward-label">NEW UNLOCK</div>
-                <div class="reward-value">${unlockableName}</div>
+              <div class="battle-result-summary">
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">SURVIVORS</div>
+                  <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
+                  <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">INTEGRITY</div>
+                  <div class="battle-result-summary-card__value">${integrityPercent}%</div>
+                  <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">TURN COUNT</div>
+                  <div class="battle-result-summary-card__value">${battle.turnCount}</div>
+                  <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">STATUS</div>
+                  <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
+                  <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
+                </article>
               </div>
-            ` : ""}
+            </section>
+            <section class="battle-result-panel battle-result-panel--rewards">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Reward Packet</div>
+                <div class="battle-result-panel-meta">TRANSFER READY</div>
+              </div>
+              <div class="battle-reward-grid">
+                <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
+                <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
+                ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
+                ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
+                ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
+                ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
+                ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
+                ${resolvedGearRewards.map((reward) => `
+                  <div class="battle-reward-item battle-reward-item--gear">
+                    <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
+                    <div class="reward-value">${escapeBattleText(reward.name)}</div>
+                    <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+                  </div>
+                `).join("")}
+                ${unlockableId && unlockableId !== "pending" && unlockableName ? `
+                  <div class="battle-reward-item battle-reward-item--unlockable">
+                    <div class="reward-label">NEW UNLOCK</div>
+                    <div class="reward-value">${unlockableName}</div>
+                  </div>
+                ` : ""}
+              </div>
+            </section>
           </div>
           <div class="battle-result-footer">
+            <div class="battle-result-footer-copy">
+              <div class="battle-result-footer-label">Transfer Channel</div>
+              <div class="battle-result-footer-note">${victoryFooterNote}</div>
+            </div>
             <button class="battle-result-btn battle-result-btn--claim" id="claimRewardsBtn">CLAIM REWARDS AND CONTINUE</button>
           </div>
         </div>
