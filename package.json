@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "test:haven3d-smoke": "node scripts/haven3d-smoke.mjs",
     "preview": "vite preview",
     "backend": "cargo run --manifest-path src-tauri/Cargo.toml --bin chaos_backend",
     "backend:check": "cargo check --manifest-path src-tauri/Cargo.toml --bin chaos_backend",
@@ -24,6 +25,8 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
     "@types/three": "^0.183.1",
+    "playwright": "1.57.0",
+    "pngjs": "7.0.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vitest": "^4.1.4"

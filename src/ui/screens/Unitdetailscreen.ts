@@ -26,6 +26,18 @@ import { loadCampaignProgress, saveCampaignProgress } from "../../core/campaign"
 import { HardpointState, FieldModInstance } from "../../core/fieldMods";
 import { getFieldModDef } from "../../core/fieldModDefinitions";
 import {
+  clampUnitNotes,
+  clampUnitName,
+  normalizeUnitAppearance,
+  UNIT_APPEARANCE_HAIR_OPTIONS,
+  UNIT_APPEARANCE_HEAD_OPTIONS,
+  UNIT_NAME_MAX_LENGTH,
+  UNIT_NOTES_MAX_LENGTH,
+  type UnitAppearance,
+  type UnitAppearanceHairId,
+  type UnitAppearanceHeadId,
+} from "../../core/unitAppearance";
+import {
   drawNextUnitSampleHand,
   ensureUnitSampleHandState,
   playUnitSampleHandCard,
@@ -42,6 +54,9 @@ type LoadoutSlot = keyof UnitLoadout;
 let currentUnitDetailReturnTo: UnitDetailReturnTo = "basecamp";
 let unitDetailEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let unitDetailSampleDrawState: UnitSampleHandState | null = null;
+
+const escapeHtml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escapeAttr = (value: string) => escapeHtml(value).replace(/"/g, "&quot;");
 
 function returnToActiveOperationRoster(): void {
   renderRosterScreen("operation");
@@ -202,6 +217,110 @@ function renderDeckCard(
   `;
 }
 
+function renderIdentitySection(
+  unit: { name: string; notes?: string },
+  unitClass: UnitClass,
+  appearance: UnitAppearance,
+): string {
+  const portraitPath = getUnitManagementStandIconPath(unitClass, appearance);
+  const headOptionsHtml = UNIT_APPEARANCE_HEAD_OPTIONS.map((option) => `
+    <button
+      class="unitdetail-appearance-option ${appearance.head === option.id ? "unitdetail-appearance-option--selected" : ""}"
+      type="button"
+      data-appearance-head="${option.id}"
+      aria-pressed="${appearance.head === option.id ? "true" : "false"}"
+    >
+      ${escapeHtml(option.label)}
+    </button>
+  `).join("");
+  const hairOptionsHtml = UNIT_APPEARANCE_HAIR_OPTIONS.map((option) => `
+    <button
+      class="unitdetail-appearance-option ${appearance.hair === option.id ? "unitdetail-appearance-option--selected" : ""}"
+      type="button"
+      data-appearance-hair="${option.id}"
+      aria-pressed="${appearance.hair === option.id ? "true" : "false"}"
+    >
+      ${escapeHtml(option.label)}
+    </button>
+  `).join("");
+
+  return `
+    <div class="unitdetail-section">
+      <div class="unitdetail-section-title">IDENTITY</div>
+      <div class="unitdetail-identity-card">
+        <div class="unitdetail-identity-preview">
+          <div class="unitdetail-identity-sprite">
+            <img
+              src="${portraitPath}"
+              alt="${escapeAttr(unit.name)}"
+              class="unitdetail-identity-sprite-img"
+              onerror="this.src='/assets/portraits/units/core/Unit_Stand_Test.png';"
+            />
+          </div>
+          <div class="unitdetail-identity-copy">
+            <div class="unitdetail-identity-overline">FIELD IDENTITY</div>
+            <div class="unitdetail-identity-current-name">${escapeHtml(unit.name)}</div>
+            <div class="unitdetail-identity-note">
+              Placeholder head and hair slots currently swap temporary stand sheets.
+            </div>
+          </div>
+        </div>
+
+        <label class="unitdetail-identity-field">
+          <span class="unitdetail-identity-label">CALLSIGN</span>
+          <div class="unitdetail-identity-name-row">
+            <input
+              id="unitdetailNameInput"
+              class="unitdetail-identity-name-input"
+              type="text"
+              maxlength="${UNIT_NAME_MAX_LENGTH}"
+              value="${escapeAttr(unit.name)}"
+              spellcheck="false"
+            />
+            <button id="unitdetailNameSaveBtn" class="unitdetail-identity-name-btn" type="button">
+              SAVE NAME
+            </button>
+          </div>
+        </label>
+
+        <div class="unitdetail-appearance-groups">
+          <div class="unitdetail-appearance-group">
+            <div class="unitdetail-identity-label">HEAD</div>
+            <div class="unitdetail-appearance-option-row">
+              ${headOptionsHtml}
+            </div>
+          </div>
+          <div class="unitdetail-appearance-group">
+            <div class="unitdetail-identity-label">HAIR</div>
+            <div class="unitdetail-appearance-option-row">
+              ${hairOptionsHtml}
+            </div>
+          </div>
+        </div>
+
+        <label class="unitdetail-identity-field unitdetail-identity-field--notes">
+          <span class="unitdetail-identity-label">OPERATOR NOTES</span>
+          <textarea
+            id="unitdetailNotesInput"
+            class="unitdetail-identity-notes-input"
+            maxlength="${UNIT_NOTES_MAX_LENGTH}"
+            placeholder="Add reminders, role notes, quirks, or loadout plans for this operator."
+            spellcheck="false"
+          >${escapeHtml(unit.notes ?? "")}</textarea>
+          <div class="unitdetail-identity-notes-row">
+            <div class="unitdetail-identity-note unitdetail-identity-note--subtle">
+              Saved per unit from this management screen.
+            </div>
+            <button id="unitdetailNotesSaveBtn" class="unitdetail-identity-name-btn" type="button">
+              SAVE NOTES
+            </button>
+          </div>
+        </label>
+      </div>
+    </div>
+  `;
+}
+
 export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailReturnTo = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
@@ -223,6 +342,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
   const cardsById = getAllEquipmentCards();
 
   const unitClass: UnitClass = (unit as any).unitClass || "squire";
+  const unitAppearance = normalizeUnitAppearance(unit.appearance, unitClass);
   const loadout: UnitLoadout = (unit as any).loadout || {
     primaryWeapon: null,
     secondaryWeapon: null,
@@ -347,7 +467,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     })
     .join("");
 
-  const portraitPath = getUnitManagementStandIconPath(unitClass);
+  const portraitPath = getUnitManagementStandIconPath(unitClass, unitAppearance);
 
   // Calculate PWR for the unit
   const pwr = (unit as any).pwr ?? calculatePWR({
@@ -436,6 +556,7 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
             </div>
 
             <div class="unitdetail-column">
+              ${renderIdentitySection(unit, unitClass, unitAppearance)}
               ${renderHardpointsSection(unitId)}
             </div>
           </div>
@@ -525,6 +646,74 @@ export function renderUnitDetailScreen(unitId: string, returnTo: UnitDetailRetur
     // Import dynamically to avoid circular dependencies
     import("./ClassChangeScreen").then(({ renderClassChangeScreen }) => {
       renderClassChangeScreen(unitId, returnTo);
+    });
+  });
+
+  const persistUnitName = () => {
+    const nameInput = root.querySelector<HTMLInputElement>("#unitdetailNameInput");
+    if (!nameInput) {
+      return;
+    }
+    updateUnitIdentity(unitId, {
+      name: clampUnitName(nameInput.value, unit.name),
+    });
+  };
+
+  const persistUnitNotes = () => {
+    const notesInput = root.querySelector<HTMLTextAreaElement>("#unitdetailNotesInput");
+    if (!notesInput) {
+      return;
+    }
+    updateUnitIdentity(unitId, {
+      notes: clampUnitNotes(notesInput.value),
+    });
+  };
+
+  root.querySelector("#unitdetailNameSaveBtn")?.addEventListener("click", persistUnitName);
+  root.querySelector<HTMLInputElement>("#unitdetailNameInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    persistUnitName();
+  });
+
+  root.querySelector("#unitdetailNotesSaveBtn")?.addEventListener("click", persistUnitNotes);
+  root.querySelector<HTMLTextAreaElement>("#unitdetailNotesInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) {
+      return;
+    }
+    event.preventDefault();
+    persistUnitNotes();
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-appearance-head]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const headId = button.getAttribute("data-appearance-head") as UnitAppearanceHeadId | null;
+      if (!headId || headId === unitAppearance.head) {
+        return;
+      }
+      updateUnitIdentity(unitId, {
+        appearance: {
+          ...unitAppearance,
+          head: headId,
+        },
+      });
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>("[data-appearance-hair]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const hairId = button.getAttribute("data-appearance-hair") as UnitAppearanceHairId | null;
+      if (!hairId || hairId === unitAppearance.hair) {
+        return;
+      }
+      updateUnitIdentity(unitId, {
+        appearance: {
+          ...unitAppearance,
+          hair: hairId,
+        },
+      });
     });
   });
 
@@ -803,6 +992,76 @@ function equipItem(unitId: string, slot: LoadoutSlot, equipId: string): void {
         ...prev.unitsById,
         [unitId]: updatedUnit,
       },
+    };
+  });
+
+  renderUnitDetailScreen(unitId, currentUnitDetailReturnTo);
+}
+
+function updateUnitIdentity(
+  unitId: string,
+  updates: Partial<{
+    name: string;
+    notes: string;
+    appearance: UnitAppearance;
+  }>,
+): void {
+  updateGameState((prev) => {
+    const unit = prev.unitsById[unitId];
+    if (!unit) {
+      return prev;
+    }
+
+    const nextName = updates.name ?? unit.name;
+    const nextNotes = updates.notes ?? unit.notes ?? "";
+    const nextAppearance = updates.appearance ?? normalizeUnitAppearance(unit.appearance, unit.unitClass);
+    const unitChanged = unit.name !== nextName
+      || (unit.notes ?? "") !== nextNotes
+      || unit.appearance?.head !== nextAppearance.head
+      || unit.appearance?.hair !== nextAppearance.hair;
+
+    let battleChanged = false;
+    const nextCurrentBattle = prev.currentBattle
+      ? {
+          ...prev.currentBattle,
+          units: Object.fromEntries(
+            Object.entries(prev.currentBattle.units).map(([battleUnitId, battleUnit]) => {
+              if (battleUnit.baseUnitId !== unitId && battleUnit.id !== unitId) {
+                return [battleUnitId, battleUnit];
+              }
+
+              battleChanged = true;
+              return [
+                battleUnitId,
+                {
+                  ...battleUnit,
+                  name: nextName,
+                  appearance: nextAppearance,
+                },
+              ];
+            }),
+          ) as typeof prev.currentBattle.units,
+        }
+      : prev.currentBattle;
+
+    if (!unitChanged && !battleChanged) {
+      return prev;
+    }
+
+    return {
+      ...prev,
+      unitsById: unitChanged
+        ? {
+            ...prev.unitsById,
+            [unitId]: {
+              ...unit,
+              name: nextName,
+              notes: nextNotes,
+              appearance: nextAppearance,
+            },
+          }
+        : prev.unitsById,
+      currentBattle: nextCurrentBattle,
     };
   });
 

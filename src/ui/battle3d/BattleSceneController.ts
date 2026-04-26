@@ -1,4 +1,11 @@
 import * as THREE from "three";
+import {
+  ARDYCIA_TOON_OUTLINE_SCALE,
+  addInvertedHullOutlines,
+  applyArdyciaToonRendererStyle,
+  applyArdyciaToonSceneStyle,
+  createArdyciaToonMaterial,
+} from "../threeToonStyle";
 import type { BattleCameraViewPreset } from "../../core/types";
 import {
   getBattleBillboardPerspectiveFromOrbitYaw,
@@ -62,13 +69,11 @@ type LoadedBillboardTexture = {
   texture: THREE.Texture;
 };
 
-function createColorMaterial(color: string, opacity = 1): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+function createColorMaterial(color: string, opacity = 1): THREE.MeshToonMaterial {
+  return createArdyciaToonMaterial({
     color,
     transparent: opacity < 1,
     opacity,
-    roughness: 0.76,
-    metalness: 0.18,
   });
 }
 
@@ -284,22 +289,15 @@ export class BattleSceneController {
   private attackAnim: AttackAnim | null = null;
   private viewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
   private currentBillboardPerspective: BattleBillboardPerspective = getBattleBillboardPerspectiveFromOrbitYaw(this.orbitYaw);
+  private clearSkyboxBackground: (() => void) | null = null;
 
   constructor() {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    applyArdyciaToonRendererStyle(this.renderer);
     this.renderer.domElement.className = "battle-3d-canvas";
 
-    this.scene.background = new THREE.Color("#070b11");
+    this.clearSkyboxBackground = applyArdyciaToonSceneStyle(this.scene);
     this.scene.add(this.boardGroup, this.objectGroup, this.traversalGroup, this.unitGroup, this.highlightGroup);
-
-    const ambient = new THREE.AmbientLight("#f1f0e8", 1.8);
-    const keyLight = new THREE.DirectionalLight("#fff1cf", 1.6);
-    keyLight.position.set(7, 14, 9);
-    const rimLight = new THREE.DirectionalLight("#98b7ff", 0.8);
-    rimLight.position.set(-8, 10, -6);
-    this.scene.add(ambient, keyLight, rimLight);
-    this.scene.fog = new THREE.FogExp2("#0c1119", 0.032);
 
     this.camera.position.set(10, 9, 10);
     this.camera.lookAt(this.baseTarget);
@@ -510,6 +508,8 @@ export class BattleSceneController {
     this.resizeObserver = null;
     Array.from(this.unitActors.values()).forEach((actor) => this.disposeUnitActor(actor));
     this.unitActors.clear();
+    this.clearSkyboxBackground?.();
+    this.clearSkyboxBackground = null;
     this.renderer.dispose();
     this.host = null;
     this.snapshot = null;
@@ -623,6 +623,8 @@ export class BattleSceneController {
       );
       column.position.copy(world);
       column.position.y = BOARD_TILE_BASE_BOTTOM + tileColumnHeight(tile.elevation) / 2;
+      column.receiveShadow = true;
+      addInvertedHullOutlines(column, ARDYCIA_TOON_OUTLINE_SCALE.tacticalTile);
       this.boardGroup.add(column);
 
       const top = new THREE.Mesh(
@@ -631,7 +633,9 @@ export class BattleSceneController {
       );
       top.position.copy(world);
       top.position.y += BOARD_TILE_TOP_THICKNESS / 2;
+      top.receiveShadow = true;
       top.userData = { tileKey: tile.key, x: tile.x, y: tile.y, pickable: true };
+      addInvertedHullOutlines(top, ARDYCIA_TOON_OUTLINE_SCALE.tacticalTile);
       this.boardGroup.add(top);
       this.tileCaps.set(tile.key, top);
       this.tileTopWorld.set(tile.key, top.position.clone());
@@ -644,6 +648,9 @@ export class BattleSceneController {
         wall.position.copy(world);
         wall.position.y += 0.42;
         wall.rotation.y = Math.PI / 4;
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        addInvertedHullOutlines(wall, ARDYCIA_TOON_OUTLINE_SCALE.architecture);
         this.objectGroup.add(wall);
       } else if (tile.terrain === "light_cover") {
         const cover = new THREE.Mesh(
@@ -653,6 +660,9 @@ export class BattleSceneController {
         cover.position.copy(world);
         cover.position.y += 0.26;
         cover.rotation.y = Math.PI / 5;
+        cover.castShadow = true;
+        cover.receiveShadow = true;
+        addInvertedHullOutlines(cover, ARDYCIA_TOON_OUTLINE_SCALE.prop);
         this.objectGroup.add(cover);
       }
     });
@@ -685,6 +695,9 @@ export class BattleSceneController {
         createColorMaterial(getObjectColor(objectVisual.type), objectVisual.hidden ? 0.35 : 0.94),
       );
       body.position.y = objectVisual.type === "light_tower" ? 0.62 : 0.28;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      addInvertedHullOutlines(body, ARDYCIA_TOON_OUTLINE_SCALE.prop);
       group.add(body);
 
       if (objectVisual.radius && objectVisual.radius > 0) {
@@ -824,6 +837,7 @@ export class BattleSceneController {
       baseUnitId: unit.baseUnitId,
       classId: unit.classId,
       perspective,
+      standPath: unit.standPath,
       fallbackPath: unit.portraitPath,
     });
     const requestKey = `${unit.facing ?? "none"}|${candidates.join("|")}`;

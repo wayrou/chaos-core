@@ -2,6 +2,7 @@
 import type { EffectFlowDocument } from "./effectFlow";
 import type { WeaponCardRules } from "./weaponData";
 import type { ResourceWallet } from "./resources";
+import type { UnitAppearance } from "./unitAppearance";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
 export type { ResourceKey, ResourceWallet } from "./resources";
@@ -90,6 +91,8 @@ export interface Card {
 export interface Unit {
   id: UnitId;
   name: string;
+  appearance?: UnitAppearance;
+  notes?: string;
   isEnemy: boolean;
   hp: number;
   maxHp: number;
@@ -220,6 +223,7 @@ export interface OperationRun {
   sprawlDirection?: TheaterSprawlDirection;
   theater?: TheaterNetworkState;
   theaterFloors?: Record<number, TheaterNetworkState>;
+  theaterResourceDecayEnabled?: boolean;
 }
 
 export interface PlayerProfile {
@@ -645,6 +649,7 @@ export interface UILayoutState {
   opsTerminalAtlasNotesWindowColor?: string;
   opsTerminalAtlasDebugFloorBypass?: boolean;
   escDebugPortStableUnlock?: boolean;
+  quacDebugAutoWinBattles?: boolean;
   theaterDebugDisableEnemyRoomAttacks?: boolean;
   notesState?: PlayerNotesState;
 }
@@ -1287,6 +1292,7 @@ export interface TheaterNetworkState {
   rooms: Record<RoomId, TheaterRoom>;
   currentRoomId: RoomId;
   selectedRoomId: RoomId;
+  resourceDecayEnabled?: boolean;
   currentNodeId?: string;
   selectedNodeId?: string;
   annexesById?: Record<string, AnnexInstance>;

@@ -3,7 +3,7 @@
 // ============================================================================
 
 import "./field.css";
-import { FieldEnemy, FieldMap, FieldNpc, FieldProjectile, FieldState, InteractionZone, PlayerAvatar } from "./types";
+import { FieldEnemy, FieldLootOrb, FieldMap, FieldNpc, FieldObject, FieldProjectile, FieldState, InteractionZone, PlayerAvatar } from "./types";
 import { getImportedItem } from "../content/technica";
 import { getFieldMap } from "./maps";
 import {
@@ -11,29 +11,39 @@ import {
   updatePlayerMovement,
   getOverlappingInteractionZone,
 } from "./player";
+import { Haven3DFieldController, type Haven3DFieldCameraState } from "./haven3d/Haven3DFieldController";
+import type { Haven3DTargetRef } from "./haven3d/targeting";
+import {
+  resolveHaven3DGearbladeDamage,
+  type Haven3DEnemyDefense,
+} from "./haven3d/combatRules";
+import {
+  getHaven3DEnemyAttackLabel,
+  getHaven3DEnemyAttackProfile,
+} from "./haven3d/enemyMoves";
+import type { Haven3DGearbladeMode } from "./haven3d/coordinates";
+import {
+  GEARBLADE_MODE_SELECTOR_DESTINATIONS,
+  GEARBLADE_MODE_UI,
+  type GearbladeModeSelectorHotspot,
+} from "./gearbladeModeUi";
 import { handleInteraction, getInteractionZone } from "./interactions";
 import { getGameState, updateGameState } from "../state/gameStore";
-import { ensureTheaterAutoTickStateSync, renderAllNodesMenuScreen } from "../ui/screens/AllNodesMenuScreen";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import {
-  checkCompanionReachedTarget,
   createCompanion,
-  findNearestEnemy,
-  findNearestResource,
   updateCompanion,
-  updateCompanionAttack,
-  updateCompanionFetch,
   updateCompanionFollow,
 } from "./companion";
 import { isEnemyFieldObject, syncFieldEnemiesForMap } from "./enemies";
 import { updateNpc, getNpcInRange, getFieldNpcsForMap, NPC_DIALOGUE } from "./npcs";
-import { showDialogue, showNpcDialogue } from "../ui/screens/DialogueScreen";
 import {
   getPlayerInput,
   getPlayerActionLabel,
   handleKeyDown as handlePlayerInputKeyDown,
   handleKeyUp as handlePlayerInputKeyUp,
   isPlayerInputActionEvent,
+  resetPlayerInput,
 } from "../core/playerInput";
 import {
   clearControllerContext,
@@ -44,12 +54,13 @@ import {
 } from "../core/controllerSupport";
 import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
-import { renderOperationMapScreen } from "../ui/screens/OperationMapScreen";
 import {
   NETWORK_PLAYER_SLOTS,
   SESSION_PLAYER_SLOTS,
   type BaseCampLayoutLoadout,
   type BaseCampPinnedItemFrame,
+  type FieldAvatar,
+  type GameState,
   type LobbyState,
   type NetworkPlayerSlot,
   type PlayerId,
@@ -103,7 +114,10 @@ import {
   BOWBLADE_BASE_RANGED_RANGE,
   BOWBLADE_MIN_ATTACK_CYCLE_MS,
   getBowbladeFieldProfile,
-  getWeaponsmithInstalledUpgradeIds,
+  hasApronGlider,
+  hasBeltLanternUpgrade,
+  hasScrapMagnet,
+  hasWeaponsmithUtilityItem,
 } from "../core/weaponsmith";
 import { getAerissFieldMovementSpeedBonus } from "../core/mounts";
 import {
@@ -112,6 +126,7 @@ import {
   grantSessionResources,
   getPlayerControllerLabel,
   isLocalCoopActive,
+  spendSessionCost,
 } from "../core/session";
 import {
   attachNotesWidgetHandlers,
@@ -143,9 +158,12 @@ import {
   type BaseCampNodeId,
 } from "./baseCampBuild";
 import {
+  applyApronKeyToCurrentAtlasFloor,
+  applyTheaterChartToCurrentAtlasFloor,
   getCurrentOpsTerminalAtlasFloor,
   getOpsTerminalAtlasWarmEconomySummaries,
 } from "../core/opsTerminalAtlas";
+import { runQuacDebugCommand } from "../core/quacDevCommands";
 import {
   canCraftDecorItem,
   craftDecorItem,
@@ -179,13 +197,61 @@ import {
   type EscNodeAction,
 } from "../core/escAvailability";
 import {
+  OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE,
+  OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  abortOuterDeckExpedition,
+  claimOuterDeckWorldBossDefeat,
   getOuterDeckFieldContext,
+  getOuterDeckInteriorRoomKey,
+  getOuterDeckOpenWorldState,
   getOuterDeckSubareaByMapId,
+  isOuterDeckAccessibleMap,
   isOuterDeckBranchMap,
+  isOuterDeckInteriorMap,
   isOuterDeckOverworldMap,
   isOuterDeckSubareaCleared,
+  markOuterDeckInteriorRoomCleared,
+  markOuterDeckOpenWorldChunkExplored,
+  markOuterDeckOpenWorldEnemyDefeated,
+  markOuterDeckOpenWorldApronKeyCollected,
+  markOuterDeckOpenWorldResourceCollected,
+  markOuterDeckOpenWorldTheaterChartCollected,
   markOuterDeckSubareaCleared,
+  parseOuterDeckInteriorMapId,
+  placeOuterDeckOpenWorldLantern,
+  setOuterDeckOpenWorldBossHp,
+  setOuterDeckOpenWorldPlayerWorldPosition,
+  type OuterDeckZoneId,
 } from "../core/outerDecks";
+import {
+  findNearestOuterDeckInteriorEntranceSignal,
+  getOuterDeckChunkCoordsFromWorldPixel,
+  getOuterDeckChunkKey,
+  getOuterDeckStreamMetadata,
+  isOuterDeckOpenWorldMap,
+  outerDeckLocalPixelToWorld,
+  outerDeckWorldPixelToLocal,
+  shouldRecenterOuterDeckStreamWindow,
+} from "./outerDeckWorld";
+
+function openAllNodesMenuFromField(currentMapId?: FieldMap["id"]): void {
+  resetFieldMovementInputState();
+  void import("../ui/screens/AllNodesMenuScreen").then(({ renderAllNodesMenuScreen }) => {
+    renderAllNodesMenuScreen(currentMapId);
+  });
+}
+
+function syncFieldTheaterAutoTickState(): void {
+  void import("../ui/screens/AllNodesMenuScreen").then(({ ensureTheaterAutoTickStateSync }) => {
+    ensureTheaterAutoTickStateSync();
+  });
+}
+
+function openOperationMapFromField(): void {
+  void import("../ui/screens/OperationMapScreen").then(({ renderOperationMapScreen }) => {
+    renderOperationMapScreen();
+  });
+}
 
 // ============================================================================
 // STATE
@@ -194,7 +260,9 @@ import {
 let fieldState: FieldState | null = null;
 let currentMap: FieldMap | null = null;
 let animationFrameId: number | null = null;
+let haven3DFieldController: Haven3DFieldController | null = null;
 let lastFrameTime = 0;
+const haven3DFieldCameraStates = new Map<string, Haven3DFieldCameraState>();
 // Legacy movementInput kept for backward compatibility, but we'll use getPlayerInput instead
 let movementInput = {
   up: false,
@@ -224,6 +292,34 @@ let isPanelOpen = false;
 // Track if global listeners are attached (prevents duplicates)
 let globalListenersAttached = false;
 let fieldFocusableRefreshTimerId: number | null = null;
+let fieldRuntimeP2Avatar: FieldAvatar | null = null;
+let lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
+let lastFieldAvatarSyncKey = "";
+const FIELD_AVATAR_SYNC_INTERVAL_MS = 120;
+const OUTER_DECK_AVATAR_SYNC_INTERVAL_MS = 300;
+let lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
+let lastOuterDeckRuntimePersistKey = "";
+const OUTER_DECK_RUNTIME_PERSIST_INTERVAL_MS = 500;
+let lastPinnedMinimapOverlayDrawKey = "";
+let lastPinnedMinimapOverlayDrawAtMs = Number.NEGATIVE_INFINITY;
+const PINNED_MINIMAP_OVERLAY_REFRESH_INTERVAL_MS = 1000;
+let lastMinimapRevealAtMs = Number.NEGATIVE_INFINITY;
+const OUTER_DECK_MINIMAP_REVEAL_INTERVAL_MS = 450;
+let lastMountedFieldStateMeterSyncKey = "";
+let lastHaven3DApronNavigatorTextKey = "";
+
+function resetFieldMovementInputState(): void {
+  movementInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    dash: false,
+  };
+  resetPlayerInput();
+  resetHavenBuildPanState();
+  resetFieldControllerActionTracking();
+}
 
 function scheduleFieldFocusableRefresh(delayMs = 48): void {
   if (fieldFocusableRefreshTimerId !== null) {
@@ -268,6 +364,7 @@ function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
     attackCooldown: 0,
     attackAnimTime: 0,
     isRangedMode: false,
+    gearbladeMode: "blade",
     energyCells: 0,
     maxEnergyCells: Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus),
   };
@@ -278,6 +375,10 @@ function normalizeFieldCombatState(
 ): NonNullable<FieldState["combat"]> {
   const nextCombat = combat ? { ...combat } : createDefaultFieldCombatState();
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  if (!nextCombat.gearbladeMode) {
+    nextCombat.gearbladeMode = nextCombat.isRangedMode ? "launcher" : "blade";
+  }
+  nextCombat.isRangedMode = nextCombat.gearbladeMode === "launcher";
   nextCombat.maxEnergyCells = Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus);
   nextCombat.energyCells = Math.max(0, Math.min(nextCombat.energyCells, nextCombat.maxEnergyCells));
   return nextCombat;
@@ -295,6 +396,112 @@ function normalizeFieldPlayerState(player: PlayerAvatar): PlayerAvatar {
   };
 }
 
+function renderGearbladeModeSelectorHotspotHtml(
+  activeMode: Haven3DGearbladeMode,
+  hotspot: GearbladeModeSelectorHotspot,
+  dataAttribute: "data-haven3d-mode" | "data-field-gearblade-mode",
+): string {
+  const destination = GEARBLADE_MODE_SELECTOR_DESTINATIONS[activeMode][hotspot];
+  const meta = GEARBLADE_MODE_UI[destination];
+  return `
+    <button
+      class="haven3d-mode-selector__hotspot haven3d-mode-selector__hotspot--${hotspot}"
+      type="button"
+      ${dataAttribute}="${destination}"
+      data-gearblade-mode-hotspot="${hotspot}"
+      aria-label="Switch to ${meta.label} mode"
+      aria-pressed="false"
+      title="${meta.key} - ${meta.label}"
+    ></button>
+  `;
+}
+
+function renderGearbladeModeSelectorHtml(
+  activeMode: Haven3DGearbladeMode,
+  dataAttribute: "data-haven3d-mode" | "data-field-gearblade-mode",
+  extraClass = "",
+): string {
+  const meta = GEARBLADE_MODE_UI[activeMode];
+  return `
+    <div
+      class="haven3d-mode-selector ${extraClass}"
+      data-gearblade-mode-selector
+      data-active-mode="${activeMode}"
+      aria-label="Gearblade mode selector"
+    >
+      <img
+        class="haven3d-mode-selector__icon"
+        data-gearblade-mode-selector-icon
+        src="${meta.icon}"
+        alt="${meta.label} mode"
+        draggable="false"
+      />
+      <span class="haven3d-mode-selector__label" data-gearblade-mode-selector-label>${meta.label}</span>
+      ${renderGearbladeModeSelectorHotspotHtml(activeMode, "left", dataAttribute)}
+      ${renderGearbladeModeSelectorHotspotHtml(activeMode, "right", dataAttribute)}
+    </div>
+  `;
+}
+
+function renderHaven3DGearbladeModeStripHtml(activeMode: Haven3DGearbladeMode = "blade"): string {
+  return `
+    <div class="haven3d-mode-strip" aria-label="Gearblade modes">
+      ${renderGearbladeModeSelectorHtml(activeMode, "data-haven3d-mode")}
+    </div>
+  `;
+}
+
+function getFieldPlayerStateVitals(): { hp: number; maxHp: number; ratio: number; critical: boolean } {
+  const player = fieldState?.player;
+  const maxHp = Math.max(1, Number(player?.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const hp = Math.max(0, Math.min(maxHp, Number(player?.hp ?? maxHp)));
+  const ratio = Math.max(0, Math.min(1, hp / maxHp));
+  return {
+    hp,
+    maxHp,
+    ratio,
+    critical: ratio <= 0.3,
+  };
+}
+
+function renderFieldStateMeterHtml(): string {
+  const vitals = getFieldPlayerStateVitals();
+  return `
+    <div class="field-state-meter ${vitals.critical ? "field-state-meter--critical" : ""}" data-field-state-meter>
+      <div class="field-state-meter__topline">
+        <span>STATE</span>
+        <span data-field-state-meter-text>${vitals.hp}/${vitals.maxHp}</span>
+      </div>
+      <div class="field-state-meter__track">
+        <div class="field-state-meter__fill" data-field-state-meter-fill style="width: ${(vitals.ratio * 100).toFixed(1)}%"></div>
+      </div>
+    </div>
+  `;
+}
+
+function syncMountedFieldStateMeters(root: ParentNode = document): void {
+  const vitals = getFieldPlayerStateVitals();
+  const syncKey = `${vitals.hp}:${vitals.maxHp}:${vitals.ratio.toFixed(3)}:${vitals.critical ? "1" : "0"}`;
+  if (root === document && syncKey === lastMountedFieldStateMeterSyncKey) {
+    return;
+  }
+  if (root === document) {
+    lastMountedFieldStateMeterSyncKey = syncKey;
+  }
+
+  root.querySelectorAll<HTMLElement>("[data-field-state-meter]").forEach((meter) => {
+    meter.classList.toggle("field-state-meter--critical", vitals.critical);
+    const text = meter.querySelector<HTMLElement>("[data-field-state-meter-text]");
+    if (text) {
+      text.textContent = `${vitals.hp}/${vitals.maxHp}`;
+    }
+    const fill = meter.querySelector<HTMLElement>("[data-field-state-meter-fill]");
+    if (fill) {
+      fill.style.width = `${(vitals.ratio * 100).toFixed(1)}%`;
+    }
+  });
+}
+
 function getFieldAttackCooldown(): number {
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   return Math.max(BOWBLADE_MIN_ATTACK_CYCLE_MS, FIELD_ATTACK_COOLDOWN + bowbladeFieldProfile.attackCooldownDelta);
@@ -302,14 +509,15 @@ function getFieldAttackCooldown(): number {
 
 function getLocallyRelevantFieldEnemies(): FieldEnemy[] {
   const liveEnemies = (fieldState?.fieldEnemies ?? []).filter((enemy) => enemy.hp > 0);
-  if (!currentMap || !isOuterDeckOverworldMap(currentMap.id)) {
+  if (!currentMap || (!isOuterDeckOverworldMap(currentMap.id) && currentMap.id !== "base_camp")) {
     return liveEnemies;
   }
 
+  const state = getGameState();
   const activeAvatarPositions = (["P1", "P2"] as PlayerId[])
-    .map((playerId) => getGameState().players[playerId])
-    .filter((player) => Boolean(player?.active && player.avatar))
-    .map((player) => player!.avatar!)
+    .filter((playerId) => isFieldPlayerActive(playerId, state))
+    .map((playerId) => getRuntimeFieldAvatar(playerId, state))
+    .filter((avatar): avatar is FieldAvatar => Boolean(avatar))
     .map((avatar) => ({ x: avatar.x, y: avatar.y }));
 
   if (activeAvatarPositions.length === 0 && fieldState?.player) {
@@ -335,28 +543,315 @@ function getUncollectedFieldResourceObjects(): Array<FieldMap["objects"][number]
   return currentMap.objects.filter((object) => object.type === "resource" && !collected.has(object.id));
 }
 
-function syncP1AvatarPosition(nextX: number, nextY: number): void {
+function getApronHandLanternLightRadius(playerId: PlayerId): number {
+  return playerId === "P1" && hasBeltLanternUpgrade(getGameState())
+    ? APRON_UPGRADED_HAND_LANTERN_LIGHT_RADIUS_PX
+    : APRON_HAND_LANTERN_LIGHT_RADIUS_PX;
+}
+
+function getFieldResourcePickupRadius(resourceObject: FieldMap["objects"][number]): number {
+  const resourceType = String(resourceObject.metadata?.resourceType ?? "") as ResourceKey;
+  const canMagnetize = isBasicFieldResourceKey(resourceType) && hasScrapMagnet(getGameState());
+  return canMagnetize ? FIELD_SCRAP_MAGNET_PICKUP_RADIUS_PX : FIELD_RESOURCE_PICKUP_RADIUS_PX;
+}
+
+function getFieldObjectForEnemy(enemy: FieldEnemy, map: FieldMap | null = currentMap): FieldObject | null {
+  if (!map || !enemy.sourceObjectId) {
+    return null;
+  }
+  return map.objects.find((object) => object.id === enemy.sourceObjectId) ?? null;
+}
+
+function getPersistentFieldEnemyKey(enemy: FieldEnemy, map: FieldMap | null = currentMap): string {
+  const sourceObject = getFieldObjectForEnemy(enemy, map);
+  return String(sourceObject?.metadata?.persistentKey ?? enemy.sourceObjectId ?? enemy.spawnKey ?? enemy.id);
+}
+
+function normalizeOuterDeckZoneId(value: unknown): OuterDeckZoneId | null {
+  return value === "counterweight_shaft"
+    || value === "outer_scaffold"
+    || value === "drop_bay"
+    || value === "supply_intake_port"
+    ? value
+    : null;
+}
+
+function cloneFieldData<T>(value: T): T {
+  return value == null ? value : JSON.parse(JSON.stringify(value)) as T;
+}
+
+function captureOuterDeckRunSnapshot(state: GameState): OuterDeckRunSnapshot | null {
+  if (!state.outerDecks) {
+    return null;
+  }
+
+  return {
+    wad: state.wad,
+    resources: cloneFieldData(state.resources),
+    sessionResourceLedger: cloneFieldData(state.session.resourceLedger),
+    consumables: cloneFieldData(state.consumables),
+    inventory: cloneFieldData(state.inventory),
+    knownRecipeIds: cloneFieldData(state.knownRecipeIds),
+    outerDecks: cloneFieldData(state.outerDecks),
+  };
+}
+
+function restoreOuterDeckRunSnapshot(state: GameState, snapshot: OuterDeckRunSnapshot): GameState {
+  return {
+    ...state,
+    wad: snapshot.wad,
+    resources: cloneFieldData(snapshot.resources),
+    session: {
+      ...state.session,
+      resourceLedger: cloneFieldData(snapshot.sessionResourceLedger),
+    },
+    consumables: cloneFieldData(snapshot.consumables),
+    inventory: cloneFieldData(snapshot.inventory),
+    knownRecipeIds: cloneFieldData(snapshot.knownRecipeIds),
+    outerDecks: cloneFieldData(snapshot.outerDecks),
+  };
+}
+
+function formatOuterDeckRunLossSummary(snapshot: OuterDeckRunSnapshot | null, current: GameState): string {
+  if (!snapshot) {
+    return "Unbanked salvage was dropped during recovery.";
+  }
+
+  const losses: string[] = [];
+  const wadLost = Math.max(0, Math.floor(Number(current.wad ?? 0) - Number(snapshot.wad ?? 0)));
+  if (wadLost > 0) {
+    losses.push(`${wadLost} WAD`);
+  }
+
+  BASIC_RESOURCE_KEYS.forEach((key) => {
+    const amount = Math.max(0, Math.floor(Number(current.resources?.[key] ?? 0) - Number(snapshot.resources?.[key] ?? 0)));
+    if (amount > 0) {
+      losses.push(`${amount} ${formatFieldEnemyResourceName(key)}`);
+    }
+  });
+
+  return losses.length > 0
+    ? `Lost unbanked run haul: ${losses.join(", ")}.`
+    : "No unbanked salvage was recovered before the failure.";
+}
+
+function maybeBeginOuterDeckRunSnapshot(map: FieldMap | null): void {
+  if (!map || !isOuterDeckOpenWorldMap(map) || outerDeckRunSnapshot) {
+    return;
+  }
+
+  outerDeckRunSnapshot = captureOuterDeckRunSnapshot(getGameState());
+}
+
+function maybeBankOuterDeckRunSnapshot(previousMapId: FieldMap["id"] | string | null, nextMapId: FieldMap["id"] | string): void {
+  if (!outerDeckRunSnapshot || fieldFailureTransitionPending || !previousMapId) {
+    return;
+  }
+
+  const wasInOuterDeck = getOuterDeckFieldContext(String(previousMapId)) !== "haven";
+  const nextIsHaven = getOuterDeckFieldContext(String(nextMapId)) === "haven";
+  if (wasInOuterDeck && nextIsHaven) {
+    outerDeckRunSnapshot = null;
+  }
+}
+
+function persistOuterDeckOpenWorldRuntimeState(force = false): void {
+  if (suppressOuterDeckRuntimePersist) {
+    return;
+  }
+
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return;
+  }
+
+  const world = outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y);
+  const facing = fieldState.player.facing;
+  const bossHpEntries = (fieldState.fieldEnemies ?? [])
+    .filter((enemy) => enemy.hp > 0)
+    .flatMap((enemy) => {
+      const sourceObject = getFieldObjectForEnemy(enemy);
+      const bossKey = String(sourceObject?.metadata?.bossKey ?? "");
+      if (!bossKey || enemy.hp >= enemy.maxHp) {
+        return [];
+      }
+      return [{ bossKey, hp: enemy.hp }];
+    });
+  const chunk = getOuterDeckChunkCoordsFromWorldPixel(world.x, world.y);
+  const exploredChunkKey = getOuterDeckChunkKey(chunk.chunkX, chunk.chunkY);
+  const bossHpKey = bossHpEntries
+    .map((entry) => `${entry.bossKey}:${Math.max(0, Math.round(entry.hp))}`)
+    .sort()
+    .join(",");
+  const persistKey = [
+    Math.round(world.x / FIELD_TILE_SIZE),
+    Math.round(world.y / FIELD_TILE_SIZE),
+    facing,
+    exploredChunkKey,
+    bossHpKey,
+  ].join("|");
+  const now = performance.now();
+  if (!force) {
+    if (persistKey === lastOuterDeckRuntimePersistKey) {
+      return;
+    }
+    if (now - lastOuterDeckRuntimePersistAtMs < OUTER_DECK_RUNTIME_PERSIST_INTERVAL_MS) {
+      return;
+    }
+  }
+
+  lastOuterDeckRuntimePersistAtMs = now;
+  lastOuterDeckRuntimePersistKey = persistKey;
+
   updateGameState((state) => {
-    const avatar = state.players.P1.avatar;
-    if (!avatar) {
-      return state;
+    let nextState = setOuterDeckOpenWorldPlayerWorldPosition(state, world.x, world.y, facing);
+    nextState = markOuterDeckOpenWorldChunkExplored(nextState, exploredChunkKey);
+    for (const entry of bossHpEntries) {
+      nextState = setOuterDeckOpenWorldBossHp(nextState, entry.bossKey, entry.hp);
+    }
+    return force || nextState !== state ? nextState : state;
+  });
+}
+
+function syncP1AvatarPosition(nextX: number, nextY: number): void {
+  if (!fieldState) {
+    return;
+  }
+  fieldState.player.x = nextX;
+  fieldState.player.y = nextY;
+}
+
+function areFieldAvatarsEqual(a: FieldAvatar | null | undefined, b: FieldAvatar | null | undefined): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.x === b.x && a.y === b.y && a.facing === b.facing;
+}
+
+function getRuntimeFieldAvatar(playerId: PlayerId, state = getGameState()): FieldAvatar | null {
+  if (playerId === "P1") {
+    return fieldState
+      ? {
+          x: fieldState.player.x,
+          y: fieldState.player.y,
+          facing: fieldState.player.facing,
+        }
+      : state.players.P1.avatar;
+  }
+
+  if (!state.players.P2.active) {
+    return null;
+  }
+
+  return fieldRuntimeP2Avatar ?? state.players.P2.avatar;
+}
+
+function syncRuntimeFieldAvatarsFromState(state = getGameState()): void {
+  if (!state.players.P2.active) {
+    fieldRuntimeP2Avatar = null;
+    return;
+  }
+
+  if (!fieldRuntimeP2Avatar && state.players.P2.avatar) {
+    fieldRuntimeP2Avatar = { ...state.players.P2.avatar };
+  }
+}
+
+function setRuntimeFieldAvatarPosition(
+  playerId: PlayerId,
+  nextX: number,
+  nextY: number,
+  facing?: FieldAvatar["facing"],
+): void {
+  if (playerId === "P1") {
+    if (!fieldState) {
+      return;
+    }
+    fieldState.player.x = nextX;
+    fieldState.player.y = nextY;
+    if (facing) {
+      fieldState.player.facing = facing;
+    }
+    return;
+  }
+
+  const persistedAvatar = getGameState().players.P2.avatar;
+  fieldRuntimeP2Avatar = {
+    x: nextX,
+    y: nextY,
+    facing: facing ?? fieldRuntimeP2Avatar?.facing ?? persistedAvatar?.facing ?? "south",
+  };
+}
+
+function isFieldPlayerActive(playerId: PlayerId, state = getGameState()): boolean {
+  return Boolean(state.players[playerId]?.active);
+}
+
+function flushFieldAvatarPositionsToGameState(force = false): void {
+  const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
+
+  const p1RuntimeAvatar = getRuntimeFieldAvatar("P1", state);
+  const p2RuntimeAvatar = getRuntimeFieldAvatar("P2", state);
+  const nextSyncKey = [
+    state.players.P1.active ? "1" : "0",
+    p1RuntimeAvatar ? `${p1RuntimeAvatar.x.toFixed(2)}:${p1RuntimeAvatar.y.toFixed(2)}:${p1RuntimeAvatar.facing}` : "null",
+    state.players.P2.active ? "1" : "0",
+    p2RuntimeAvatar ? `${p2RuntimeAvatar.x.toFixed(2)}:${p2RuntimeAvatar.y.toFixed(2)}:${p2RuntimeAvatar.facing}` : "null",
+  ].join("|");
+
+  if (!force) {
+    if (nextSyncKey === lastFieldAvatarSyncKey) {
+      return;
+    }
+
+    const now = performance.now();
+    const syncIntervalMs = currentMap && isOuterDeckOpenWorldMap(currentMap)
+      ? OUTER_DECK_AVATAR_SYNC_INTERVAL_MS
+      : FIELD_AVATAR_SYNC_INTERVAL_MS;
+    if (now - lastFieldAvatarSyncAtMs < syncIntervalMs) {
+      return;
+    }
+    lastFieldAvatarSyncAtMs = now;
+  } else {
+    lastFieldAvatarSyncAtMs = performance.now();
+  }
+
+  lastFieldAvatarSyncKey = nextSyncKey;
+
+  updateGameState((currentState) => {
+    const currentP1Avatar = currentState.players.P1.avatar;
+    const currentP2Avatar = currentState.players.P2.avatar;
+    const p1Changed = !areFieldAvatarsEqual(currentP1Avatar, p1RuntimeAvatar);
+    const p2Changed = !areFieldAvatarsEqual(currentP2Avatar, p2RuntimeAvatar);
+
+    if (!p1Changed && !p2Changed) {
+      return currentState;
     }
 
     return {
-      ...state,
+      ...currentState,
       players: {
-        ...state.players,
-        P1: {
-          ...state.players.P1,
-          avatar: {
-            ...avatar,
-            x: nextX,
-            y: nextY,
-          },
-        },
+        ...currentState.players,
+        P1: p1Changed
+          ? {
+              ...currentState.players.P1,
+              avatar: p1RuntimeAvatar ? { ...p1RuntimeAvatar } : null,
+            }
+          : currentState.players.P1,
+        P2: p2Changed
+          ? {
+              ...currentState.players.P2,
+              avatar: p2RuntimeAvatar ? { ...p2RuntimeAvatar } : null,
+            }
+          : currentState.players.P2,
       },
     };
   });
+
+  persistOuterDeckOpenWorldRuntimeState(force);
 }
 
 // Store last interaction zone position for returning to field from nodes
@@ -368,7 +863,8 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2.0;
 const ZOOM_STEP = 0.1;
 let fieldPinnedResizeHandler: (() => void) | null = null;
-let fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+const PINNED_QUAC_HELP_TEXT = 'Type a node name, or use /dev commands. Example: "unit roster" or "/give 5 healing kit".';
+let fieldPinnedQuacFeedback = PINNED_QUAC_HELP_TEXT;
 let stickyNoteDragResumePending = false;
 let lastNetworkLobbyAvatarSyncKey = "";
 let lastMinimapRevealKey = "";
@@ -384,8 +880,11 @@ let lastFieldPromptSignature: string | null = null;
 let lastFieldStepSample: { x: number; y: number } | null = null;
 let fieldStepDistanceAccumulator = 0;
 let fieldStepPulseUntilMs = 0;
-let lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
 let lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
+let outerDeckRunSnapshot: OuterDeckRunSnapshot | null = null;
+let suppressOuterDeckRuntimePersist = false;
+let apronRuntimeFlares: ApronRuntimeFlare[] = [];
+let fieldFailureTransitionPending = false;
 let havenBuildModeActive = false;
 let havenBuildResumePaused = false;
 let havenBuildCameraCenter: { x: number; y: number } | null = null;
@@ -499,35 +998,85 @@ let pendingFieldSpawnOverride: {
   y: number;
   facing?: "north" | "south" | "east" | "west";
 } | null = null;
+let pendingFieldReturnFromInteraction: {
+  mapId: string;
+  playerId: PlayerId;
+  savedPlayerPos: { x: number; y: number };
+  zoneId: string;
+  interactionKey: string;
+} | null = null;
 
 const FIELD_TILE_SIZE = 64;
 const FIELD_ATTACK_COOLDOWN = BOWBLADE_BASE_ATTACK_CYCLE_MS;
 const FIELD_ATTACK_DURATION = 200;
 const FIELD_ATTACK_RANGE = 70;
 const FIELD_RANGED_ATTACK_RANGE = BOWBLADE_BASE_RANGED_RANGE;
-const FIELD_ATTACK_DAMAGE = BOWBLADE_BASE_MELEE_DAMAGE;
-const FIELD_RANGED_ATTACK_DAMAGE = BOWBLADE_BASE_RANGED_DAMAGE;
+const FIELD_ATTACK_DAMAGE = Math.max(18, BOWBLADE_BASE_MELEE_DAMAGE);
+const FIELD_RANGED_ATTACK_DAMAGE = Math.max(34, BOWBLADE_BASE_RANGED_DAMAGE);
 const FIELD_PROJECTILE_SPEED = BOWBLADE_BASE_PROJECTILE_SPEED;
 const FIELD_PROJECTILE_LIFETIME = 2000;
+const FIELD_ENEMY_PROJECTILE_SPEED = 360;
+const FIELD_ENEMY_PROJECTILE_LIFETIME = 1800;
+const FIELD_ENEMY_PROJECTILE_RADIUS = 12;
+const FIELD_GRAPPLE_RANGE = 430;
+const FIELD_GRAPPLE_DAMAGE = 14;
+const FIELD_GRAPPLE_PULL_FORCE = 560;
+const FIELD_ENEMY_PING_2D_CLEARANCE = 58;
+const FIELD_LOOT_ORB_RADIUS = 34;
+const FIELD_LOOT_ORB_GRAVITY_RADIUS = 190;
+const FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS = 46;
+const FIELD_LOOT_ORB_GRAVITY_ACCELERATION = 520;
+const FIELD_LOOT_ORB_GRAVITY_MAX_SPEED = 128;
+const FIELD_LOOT_ORB_GRAVITY_SETTLE_DELAY_MS = 680;
+const FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE = 18;
 const FIELD_ENEMY_KNOCKBACK_FORCE = BOWBLADE_BASE_MELEE_KNOCKBACK_FORCE;
 const FIELD_ENEMY_KNOCKBACK_DURATION = 300;
 const FIELD_KNOCKBACK_DAMPING = 0.85;
 const FIELD_PLAYER_MAX_HP = 100;
 const FIELD_OUTER_DECK_OVERWORLD_COMBAT_RADIUS = 320;
+const FIELD_OUTER_DECK_ENEMY_ROAM_INTERVAL_MIN_MS = 900;
+const FIELD_OUTER_DECK_ENEMY_ROAM_INTERVAL_MAX_MS = 2600;
+const FIELD_OUTER_DECK_ENEMY_ROAM_RETRY_MS = 420;
+const FIELD_OUTER_DECK_ENEMY_ROAM_ARRIVAL_PX = 18;
+const FIELD_ENEMY_MOVE_STEP_MS = 180;
 const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
 const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
-const FIELD_COMPANION_ATTACK_RANGE = 56;
 const FIELD_CAMERA_SMOOTHING = 0.2;
 const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
 const FIELD_FOOTSTEP_DISTANCE = 82;
 const FIELD_DASH_FOOTSTEP_DISTANCE = 56;
 const FIELD_STEP_PULSE_DURATION_MS = 150;
-const FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS = 180;
-const FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS = 900;
 const FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS = 520;
+const APRON_HAND_LANTERN_LIGHT_RADIUS_PX = 230;
+const APRON_UPGRADED_HAND_LANTERN_LIGHT_RADIUS_PX = 340;
+const APRON_PLACED_LANTERN_LIGHT_RADIUS_PX = 390;
+const APRON_FLARE_LIGHT_RADIUS_PX = 440;
+const APRON_FLARE_DURATION_MS = 8500;
+const APRON_LANTERN_RESOURCE_COST: Partial<ResourceWallet> = { wood: 1, metalScrap: 1 };
+const APRON_FLARE_RESOURCE_COST: Partial<ResourceWallet> = { steamComponents: 1 };
+const FIELD_RESOURCE_PICKUP_RADIUS_PX = 36;
+const FIELD_SCRAP_MAGNET_PICKUP_RADIUS_PX = 128;
+const APRON_NAV_NEAR_HAVEN_CELLS = 12;
 const HAVEN_BUILD_PAN_SPEED = 720;
 const HAVEN_BUILD_PAN_FAST_MULTIPLIER = 2.25;
+
+type ApronRuntimeFlare = {
+  x: number;
+  y: number;
+  radius: number;
+  expiresAt: number;
+};
+
+type OuterDeckRunSnapshot = {
+  wad: GameState["wad"];
+  resources: GameState["resources"];
+  sessionResourceLedger: GameState["session"]["resourceLedger"];
+  consumables: GameState["consumables"];
+  inventory: GameState["inventory"];
+  knownRecipeIds: GameState["knownRecipeIds"];
+  outerDecks: NonNullable<GameState["outerDecks"]>;
+};
 
 function getFieldBetaMarkerHtml(mapId: FieldMap["id"]): string {
   const fieldContext = getOuterDeckFieldContext(String(mapId));
@@ -535,7 +1084,7 @@ function getFieldBetaMarkerHtml(mapId: FieldMap["id"]): string {
     return "";
   }
 
-  const label = fieldContext === "outerDeckOverworld" ? "OUTER DECKS // BETA FIELD SYSTEM" : "OUTER DECK SUBAREA // BETA FIELD SYSTEM";
+  const label = fieldContext === "outerDeckOverworld" ? "THE APRON // SURVEY FIELD" : "APRON SUBAREA // SURVEY FIELD";
   return `<div class="field-beta-marker">${label}</div>`;
 }
 
@@ -556,10 +1105,10 @@ function maybeShowFieldTutorials(mapId: FieldMap["id"]): void {
 
   if (fieldContext !== "haven") {
     showTutorialCallout({
-      id: "tutorial_outer_deck_beta",
-      title: "Outer Decks Are In Beta",
-      message: "Everything outside HAVEN is currently a beta field layer tied to expeditions and recovery routes.",
-      detail: "Expect tuning and routing changes here while the beta focuses on Regions 1-2 and the first 6 floors of the campaign.",
+      id: "tutorial_apron_survey",
+      title: "The Apron",
+      message: "The Apron is the cavernous dark belt around HAVEN. Light marks routes, buys safety, and keeps hostiles from pressing into your path.",
+      detail: "Press L to place a lantern for 1 Wood and 1 Metal Scrap. Launcher flares cost 1 Steam Component.",
       durationMs: 9000,
       channel: "tutorial-field",
     });
@@ -604,30 +1153,16 @@ function resetFieldFeedbackState(): void {
   lastFieldStepSample = null;
   fieldStepDistanceAccumulator = 0;
   fieldStepPulseUntilMs = 0;
-  lastSableAttackAudioAtMs = Number.NEGATIVE_INFINITY;
   lastSableBarkAudioAtMs = Number.NEGATIVE_INFINITY;
 }
 
-function playSableBark(currentTime: number, reason: "attack" | "pickup"): void {
-  const barkCooldownMs = reason === "pickup"
-    ? FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS
-    : FIELD_SABLE_BARK_ATTACK_COOLDOWN_MS;
-  if (currentTime - lastSableBarkAudioAtMs < barkCooldownMs) {
+function playSablePickupBark(currentTime: number): void {
+  if (currentTime - lastSableBarkAudioAtMs < FIELD_SABLE_BARK_PICKUP_COOLDOWN_MS) {
     return;
   }
 
   lastSableBarkAudioAtMs = currentTime;
   playNamedAudioHook("sable_bark");
-}
-
-function playSableAttackFeedback(currentTime: number): void {
-  if (currentTime - lastSableAttackAudioAtMs >= FIELD_SABLE_ATTACK_AUDIO_COOLDOWN_MS) {
-    lastSableAttackAudioAtMs = currentTime;
-    playNamedAudioHook("sable_attack");
-  }
-
-  // Let Sable punctuate her work with a bark without turning rapid field loops into constant chatter.
-  playSableBark(currentTime, "attack");
 }
 
 function getFieldOverlayRoot(): HTMLElement | null {
@@ -715,14 +1250,18 @@ function renderFieldFeedbackRequest(request: FeedbackRequest): void {
     return;
   }
 
-  if (request.type === "resource") {
+  const feedbackText = request.text ?? (request.type === "resource" ? "RESOURCE" : null);
+  if (feedbackText) {
+    const tone = typeof request.meta?.tone === "string" ? request.meta.tone : request.type;
     const textEl = document.createElement("div");
-    textEl.className = "field-feedback-element field-feedback-text";
-    textEl.textContent = request.text ?? "RESOURCE";
+    textEl.className = `field-feedback-element field-feedback-text field-feedback-text--${tone}`;
+    textEl.textContent = feedbackText;
     textEl.style.left = `${origin.x}px`;
     textEl.style.top = `${origin.y - 18}px`;
-    queueFieldFeedbackElement(textEl, 760);
+    queueFieldFeedbackElement(textEl, request.type === "warning" ? 1040 : 820);
+  }
 
+  if (request.type === "resource") {
     const target = resolveFieldOverlayPoint(request.targetPosition);
     if (target) {
       const pickupEl = document.createElement("div");
@@ -1281,6 +1820,7 @@ function suspendFieldForScreenTransition(): void {
   if (fieldState) {
     fieldState.isPaused = true;
   }
+  flushFieldAvatarPositionsToGameState(true);
   teardownFieldMode();
 }
 
@@ -1409,6 +1949,14 @@ function getPreferredFieldSpawnPosition(map: FieldMap["id"], tileSize: number): 
   if (map === "network_lobby") {
     const spawnTileX = 11;
     const spawnTileY = 11;
+    return {
+      x: spawnTileX * tileSize + tileSize / 2,
+      y: spawnTileY * tileSize + tileSize / 2,
+    };
+  }
+  if (map === "base_camp") {
+    const spawnTileX = 41;
+    const spawnTileY = 27;
     return {
       x: spawnTileX * tileSize + tileSize / 2,
       y: spawnTileY * tileSize + tileSize / 2,
@@ -2154,6 +2702,14 @@ export function getCurrentFieldRuntimeState(): FieldState | null {
   return fieldState;
 }
 
+export function isCurrentHaven3DFieldObjectVisible(objectId: string): boolean {
+  return haven3DFieldController?.isFieldObjectVisible(objectId) ?? false;
+}
+
+export function isCurrentHaven3DDistantHavenLandmarkVisible(): boolean {
+  return haven3DFieldController?.isDistantHavenLandmarkVisible() ?? false;
+}
+
 export function setNextFieldSpawnOverride(
   mapId: FieldMap["id"],
   position: { x: number; y: number; facing?: "north" | "south" | "east" | "west" },
@@ -2185,6 +2741,356 @@ export function storeInteractionZonePosition(zoneId: string, x: number, y: numbe
   lastInteractionZonePosition = { x, y, zoneId };
 }
 
+function stopHaven3DFieldRuntime(): void {
+  if (haven3DFieldController) {
+    haven3DFieldCameraStates.set(String(haven3DFieldController.mapId), haven3DFieldController.getCameraState());
+  }
+  haven3DFieldController?.dispose();
+  haven3DFieldController = null;
+}
+
+export function getCurrentHaven3DFieldCameraState(): Haven3DFieldCameraState | null {
+  return haven3DFieldController?.getCameraState() ?? null;
+}
+
+export function getCurrentHaven3DGrappleRouteAnchorState(): ReturnType<
+  Haven3DFieldController["getGrappleRouteAnchorState"]
+> {
+  return haven3DFieldController?.getGrappleRouteAnchorState() ?? [];
+}
+
+export function getCurrentHaven3DPreferredGrappleAnchorState(): ReturnType<
+  Haven3DFieldController["getPreferredGrappleAnchorState"]
+> {
+  return haven3DFieldController?.getPreferredGrappleAnchorState() ?? null;
+}
+
+function isHaven3DSupportedMap(mapId: FieldMap["id"] | string | null | undefined): boolean {
+  return mapId === "base_camp" || isOuterDeckAccessibleMap(mapId);
+}
+
+function shouldUseHaven3DFieldRuntime(mapId: FieldMap["id"] | string, options?: { openBuildMode?: boolean }): boolean {
+  return isHaven3DSupportedMap(mapId) && !options?.openBuildMode;
+}
+
+function isHaven3DFieldRuntimeActive(): boolean {
+  return Boolean(currentMap && isHaven3DSupportedMap(currentMap.id) && haven3DFieldController);
+}
+
+function renderHaven3DApronNavigatorHtml(): string {
+  if (!currentMap || !isOuterDeckOpenWorldMap(currentMap)) {
+    return "";
+  }
+
+  return `
+    <div class="haven3d-apron-nav" data-haven3d-apron-nav aria-label="Apron HAVEN bearing">
+      <div class="haven3d-apron-nav__dial" aria-hidden="true">
+        <span class="haven3d-apron-nav__needle"></span>
+        <span class="haven3d-apron-nav__needle haven3d-apron-nav__needle--interior"></span>
+      </div>
+      <div class="haven3d-apron-nav__readout">
+        <div class="haven3d-apron-nav__label">HAVEN</div>
+        <div class="haven3d-apron-nav__distance" data-apron-nav-distance>-- CELLS</div>
+        <div class="haven3d-apron-nav__meta">
+          <span data-apron-nav-light>WAIST LIGHT</span>
+          <span data-apron-nav-lanterns>LAMP 0</span>
+          <span data-apron-nav-pickups>CHART 0 / KEY 0</span>
+          <span data-apron-nav-interior>CORRIDOR --</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function formatApronNavigatorDistance(cells: number): string {
+  if (!Number.isFinite(cells)) {
+    return "-- CELLS";
+  }
+  if (cells < 10) {
+    return `${cells.toFixed(1)} CELLS`;
+  }
+  return `${Math.round(cells)} CELLS`;
+}
+
+function getApronInteriorVariantLabel(value: unknown): string {
+  switch (value) {
+    case "cave":
+      return "CAVE";
+    case "structure":
+      return "HATCH";
+    case "service_tunnel":
+      return "TUNNEL";
+    default:
+      return "CORRIDOR";
+  }
+}
+
+function getNearestVisibleApronInteriorEntranceSignal(
+  map: FieldMap,
+  playerWorld: { x: number; y: number },
+): { worldX: number; worldY: number; distancePx: number; variant: unknown; completed: boolean } | null {
+  let best: { worldX: number; worldY: number; distancePx: number; variant: unknown; completed: boolean } | null = null;
+
+  map.objects.forEach((object) => {
+    if (object.metadata?.outerDeckInteriorEntrance !== true) {
+      return;
+    }
+
+    const worldTileX = Number(object.metadata.worldTileX);
+    const worldTileY = Number(object.metadata.worldTileY);
+    const localCenter = {
+      x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
+      y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
+    };
+    const fallbackWorld = outerDeckLocalPixelToWorld(map, localCenter.x, localCenter.y);
+    const worldX = Number.isFinite(worldTileX)
+      ? (worldTileX + 0.5) * FIELD_TILE_SIZE
+      : fallbackWorld.x;
+    const worldY = Number.isFinite(worldTileY)
+      ? (worldTileY + 0.5) * FIELD_TILE_SIZE
+      : fallbackWorld.y;
+    const distancePx = Math.hypot(worldX - playerWorld.x, worldY - playerWorld.y);
+    if (best && distancePx >= best.distancePx) {
+      return;
+    }
+
+    best = {
+      worldX,
+      worldY,
+      distancePx,
+      variant: object.metadata?.variant,
+      completed: object.metadata?.completed === true,
+    };
+  });
+
+  return best;
+}
+
+function syncHaven3DApronNavigator(currentTime: number): void {
+  const navigator = document.querySelector<HTMLElement>("[data-haven3d-apron-nav]");
+  if (!navigator) {
+    return;
+  }
+
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    navigator.hidden = true;
+    return;
+  }
+
+  const avatar = getRuntimeFieldAvatar("P1") ?? fieldState.player;
+  const playerWorld = outerDeckLocalPixelToWorld(currentMap, avatar.x, avatar.y);
+  const havenWorld = {
+    x: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * FIELD_TILE_SIZE,
+    y: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * FIELD_TILE_SIZE,
+  };
+  const dx = havenWorld.x - playerWorld.x;
+  const dy = havenWorld.y - playerWorld.y;
+  const distancePx = Math.hypot(dx, dy);
+  const distanceCells = distancePx / FIELD_TILE_SIZE;
+  const cameraYaw = haven3DFieldController?.getCameraState().yaw ?? 0;
+  const unitX = distancePx > 0.001 ? dx / distancePx : 0;
+  const unitY = distancePx > 0.001 ? dy / distancePx : -1;
+  const forwardX = -Math.sin(cameraYaw);
+  const forwardY = -Math.cos(cameraYaw);
+  const rightX = Math.cos(cameraYaw);
+  const rightY = -Math.sin(cameraYaw);
+  const bearing = Math.atan2((unitX * rightX) + (unitY * rightY), (unitX * forwardX) + (unitY * forwardY));
+  const getCameraRelativeBearing = (targetWorldX: number, targetWorldY: number): number => {
+    const targetDx = targetWorldX - playerWorld.x;
+    const targetDy = targetWorldY - playerWorld.y;
+    const targetDistance = Math.hypot(targetDx, targetDy);
+    const targetUnitX = targetDistance > 0.001 ? targetDx / targetDistance : 0;
+    const targetUnitY = targetDistance > 0.001 ? targetDy / targetDistance : -1;
+    return Math.atan2(
+      (targetUnitX * rightX) + (targetUnitY * rightY),
+      (targetUnitX * forwardX) + (targetUnitY * forwardY),
+    );
+  };
+
+  const openWorld = getOuterDeckOpenWorldState(getGameState());
+  const visibleInteriorSignal = getNearestVisibleApronInteriorEntranceSignal(currentMap, playerWorld);
+  const generatedInteriorSignal = visibleInteriorSignal
+    ? null
+    : findNearestOuterDeckInteriorEntranceSignal(openWorld, playerWorld.x, playerWorld.y);
+  const interiorSignal = visibleInteriorSignal ?? generatedInteriorSignal;
+  const interiorBearing = interiorSignal
+    ? getCameraRelativeBearing(interiorSignal.worldX, interiorSignal.worldY)
+    : 0;
+  const interiorDistanceCells = interiorSignal
+    ? interiorSignal.distancePx / FIELD_TILE_SIZE
+    : Number.POSITIVE_INFINITY;
+  const interiorVariantText = getApronInteriorVariantLabel(interiorSignal?.variant);
+  const interiorText = interiorSignal
+    ? `${visibleInteriorSignal ? "CORRIDOR" : "SIGNAL"} ${formatApronNavigatorDistance(interiorDistanceCells)} ${interiorVariantText}${interiorSignal.completed ? " SECURED" : ""}`
+    : "CORRIDOR --";
+  const routeSources = getApronLightSources(currentTime).filter((source) => source.kind !== "hand");
+  let nearestRouteDistancePx = Number.POSITIVE_INFINITY;
+  let insideRouteLight = false;
+  routeSources.forEach((source) => {
+    const distanceToSource = Math.hypot(avatar.x - source.x, avatar.y - source.y);
+    const distanceToEdge = distanceToSource - source.radius;
+    nearestRouteDistancePx = Math.min(nearestRouteDistancePx, distanceToEdge);
+    if (distanceToSource <= source.radius) {
+      insideRouteLight = true;
+    }
+  });
+  const routeLightText = insideRouteLight
+    ? "ROUTE LIT"
+    : Number.isFinite(nearestRouteDistancePx)
+      ? `ROUTE +${Math.max(1, Math.ceil(nearestRouteDistancePx / FIELD_TILE_SIZE))} CELLS`
+      : "HAND LIGHT";
+  const distanceText = formatApronNavigatorDistance(distanceCells);
+  const lanternText = `LAMP ${openWorld.placedLanterns.length}`;
+  const pickupText = `CHART ${openWorld.collectedTheaterChartKeys.length} / KEY ${openWorld.collectedApronKeyKeys.length}`;
+  const isNearHaven = distanceCells <= APRON_NAV_NEAR_HAVEN_CELLS;
+  const textKey = `${distanceText}|${routeLightText}|${lanternText}|${pickupText}|${interiorText}|${isNearHaven ? "1" : "0"}`;
+
+  navigator.hidden = false;
+  navigator.style.setProperty("--apron-bearing", `${bearing}rad`);
+  navigator.style.setProperty("--apron-interior-bearing", `${interiorBearing}rad`);
+  navigator.classList.toggle("haven3d-apron-nav--interior-visible", Boolean(visibleInteriorSignal));
+  navigator.classList.toggle("haven3d-apron-nav--interior-missing", !interiorSignal);
+  if (textKey === lastHaven3DApronNavigatorTextKey) {
+    return;
+  }
+
+  lastHaven3DApronNavigatorTextKey = textKey;
+  navigator.classList.toggle("haven3d-apron-nav--near", isNearHaven);
+  navigator.querySelector<HTMLElement>("[data-apron-nav-distance]")!.textContent = distanceText;
+  navigator.querySelector<HTMLElement>("[data-apron-nav-light]")!.textContent = routeLightText;
+  navigator.querySelector<HTMLElement>("[data-apron-nav-lanterns]")!.textContent = lanternText;
+  navigator.querySelector<HTMLElement>("[data-apron-nav-pickups]")!.textContent = pickupText;
+  navigator.querySelector<HTMLElement>("[data-apron-nav-interior]")!.textContent = interiorText;
+}
+
+function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void {
+  if (!fieldState || !currentMap) {
+    return;
+  }
+
+  if (fieldState.isPaused) {
+    resetFieldControllerActionTracking();
+    return;
+  }
+
+  const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
+
+  if (fieldState.npcs) {
+    const map = currentMap;
+    fieldState.npcs = fieldState.npcs.map((npc) => updateNpc(npc, map, deltaTime, currentTime));
+  }
+
+  updateFieldCombat(deltaTime, currentTime);
+  updateFieldLootOrbs(deltaTime, currentTime);
+  processFieldControllerActions();
+  maybeTriggerAutoInteraction();
+  activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
+  syncMountedFieldStateMeters();
+  syncHaven3DApronNavigator(currentTime);
+  syncFieldMinimapExploration();
+  flushFieldAvatarPositionsToGameState();
+  if (refreshOuterDeckStreamWindowIfNeeded()) {
+    return;
+  }
+  drawPinnedMinimapOverlay({ currentTime });
+}
+
+function mountHaven3DFieldRuntime(root: HTMLElement): void {
+  if (!currentMap || !fieldState) {
+    return;
+  }
+
+  stopHaven3DFieldRuntime();
+
+  const existingPanel = root.querySelector("#allNodesPanel");
+  root.innerHTML = "";
+  if (existingPanel) {
+    root.appendChild(existingPanel);
+  }
+
+  const fieldRoot = document.createElement("div");
+  fieldRoot.className = "field-root field-root--haven3d";
+  fieldRoot.innerHTML = `
+    <div class="haven3d-root">
+      <div class="haven3d-scene" data-haven3d-scene></div>
+      <div class="haven3d-hud">
+        ${renderFieldStateMeterHtml()}
+        ${renderHaven3DApronNavigatorHtml()}
+        <div class="haven3d-corner-controls">
+          ${renderHaven3DGearbladeModeStripHtml("blade")}
+        </div>
+        <div class="haven3d-prompt" data-haven3d-prompt></div>
+      </div>
+    </div>
+  `;
+  root.insertBefore(fieldRoot, root.firstChild);
+
+  const sceneHost = fieldRoot.querySelector<HTMLElement>("[data-haven3d-scene]");
+  if (!sceneHost) {
+    return;
+  }
+
+  const map = currentMap;
+  haven3DFieldController = new Haven3DFieldController({
+    host: sceneHost,
+    map,
+    initialCameraState: haven3DFieldCameraStates.get(String(map.id)) ?? null,
+    getNpcs: () => fieldState?.npcs ?? [],
+    getEnemies: () => fieldState?.fieldEnemies ?? [],
+    getFieldProjectiles: () => fieldState?.projectiles ?? [],
+    getLootOrbs: () => fieldState?.lootOrbs ?? [],
+    getCompanion: () => fieldState?.companion ?? null,
+    getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
+    isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
+    isPaused: () => Boolean(fieldState?.isPaused),
+    setPlayerAvatar: (playerId, x, y, facing) => {
+      setRuntimeFieldAvatarPosition(playerId, x, y, facing);
+    },
+    constrainPlayerPosition: (playerId, desired, previous) => {
+      const otherPlayerId: PlayerId = playerId === "P1" ? "P2" : "P1";
+      const otherAvatar = isFieldPlayerActive(otherPlayerId)
+        ? getRuntimeFieldAvatar(otherPlayerId)
+        : null;
+      if (!otherAvatar) {
+        return desired;
+      }
+
+      const constrained = applyTetherConstraint(previous, desired, otherAvatar);
+      return {
+        ...desired,
+        x: constrained.x,
+        y: constrained.y,
+      };
+    },
+    getPrompt: () => activeInteractionPrompt,
+    onInteractPressed: (playerId) => handleInteractKey(playerId),
+    onOpenMenu: () => toggleAllNodesPanel(),
+    onFrame: (deltaTime, currentTime) => updateHaven3DFieldRuntime(deltaTime, currentTime),
+    isFieldObjectVisible: (objectId, fieldObject) => {
+      fieldObject ??= currentMap?.objects.find((object) => object.id === objectId);
+      if (fieldObject?.type !== "resource") {
+        return true;
+      }
+      return !(fieldState?.collectedResourceObjectIds ?? []).includes(objectId);
+    },
+    onPlayerFootstep: () => playPlaceholderSfx("ui-move"),
+    onBladeStrike: (strike) => handleHaven3DBladeStrike(strike),
+    onLauncherFire: (fire) => handleHaven3DLauncherFire(fire),
+    onLauncherImpact: (impact) => handleHaven3DLauncherImpact(impact),
+    onGrappleImpact: (impact) => handleHaven3DGrappleImpact(impact),
+    canUseGlider: (playerId) => playerId === "P1" && hasApronGlider(getGameState()),
+    hasApronUtility: (playerId, utilityItemId) => playerId === "P1" && hasWeaponsmithUtilityItem(getGameState(), utilityItemId),
+    enableGearbladeModes: true,
+    enabledGearbladeModes: ["blade", "launcher", "grapple"],
+  });
+  haven3DFieldController.start();
+
+  ensureFieldFeedbackListener();
+  registerFieldControllerContext();
+  scheduleFieldFocusableRefresh();
+}
+
 function syncFieldMinimapExploration(): void {
   if (!fieldState || !currentMap) {
     return;
@@ -2196,19 +3102,277 @@ function syncFieldMinimapExploration(): void {
     return;
   }
 
-  const revealKey = `${currentMap.id}:${tileX}:${tileY}`;
+  const outerDeckMetadata = getOuterDeckStreamMetadata(currentMap);
+  const worldTileX = tileX + Math.floor(Number(outerDeckMetadata?.worldOriginTileX ?? 0));
+  const worldTileY = tileY + Math.floor(Number(outerDeckMetadata?.worldOriginTileY ?? 0));
+  const revealKey = `${currentMap.id}:${worldTileX}:${worldTileY}`;
   if (revealKey === lastMinimapRevealKey) {
     return;
   }
 
+  const now = performance.now();
+  if (
+    isOuterDeckOpenWorldMap(currentMap)
+    && now - lastMinimapRevealAtMs < OUTER_DECK_MINIMAP_REVEAL_INTERVAL_MS
+  ) {
+    return;
+  }
+
   lastMinimapRevealKey = revealKey;
-  revealFieldMinimapArea(currentMap.id, tileX, tileY, FIELD_MINIMAP_REVEAL_RADIUS, {
+  lastMinimapRevealAtMs = now;
+  const didReveal = revealFieldMinimapArea(currentMap.id, tileX, tileY, FIELD_MINIMAP_REVEAL_RADIUS, {
     width: currentMap.width,
     height: currentMap.height,
+    worldOriginTileX: outerDeckMetadata?.worldOriginTileX,
+    worldOriginTileY: outerDeckMetadata?.worldOriginTileY,
+  });
+  if (didReveal) {
+    lastPinnedMinimapOverlayDrawKey = "";
+  }
+}
+
+type StreamedEnemySnapshot = {
+  persistentKey: string;
+  hp: number;
+  facing: FieldEnemy["facing"];
+  worldX: number;
+  worldY: number;
+  roamHomeWorldX?: number;
+  roamHomeWorldY?: number;
+  roamTargetWorldX?: number;
+  roamTargetWorldY?: number;
+  nextRoamAt?: number;
+  gearbladeDefenseBroken?: boolean;
+};
+
+function getStreamedEnemySnapshots(map: FieldMap, enemies: FieldEnemy[] = []): StreamedEnemySnapshot[] {
+  return enemies
+    .filter((enemy) => enemy.hp > 0)
+    .map((enemy) => {
+      const world = outerDeckLocalPixelToWorld(map, enemy.x, enemy.y);
+      const roamHomeWorld = Number.isFinite(Number(enemy.roamHomeX)) && Number.isFinite(Number(enemy.roamHomeY))
+        ? outerDeckLocalPixelToWorld(map, Number(enemy.roamHomeX), Number(enemy.roamHomeY))
+        : null;
+      const roamTargetWorld = Number.isFinite(Number(enemy.roamTargetX)) && Number.isFinite(Number(enemy.roamTargetY))
+        ? outerDeckLocalPixelToWorld(map, Number(enemy.roamTargetX), Number(enemy.roamTargetY))
+        : null;
+      return {
+        persistentKey: getPersistentFieldEnemyKey(enemy, map),
+        hp: enemy.hp,
+        facing: enemy.facing,
+        worldX: world.x,
+        worldY: world.y,
+        roamHomeWorldX: roamHomeWorld?.x,
+        roamHomeWorldY: roamHomeWorld?.y,
+        roamTargetWorldX: roamTargetWorld?.x,
+        roamTargetWorldY: roamTargetWorld?.y,
+        nextRoamAt: enemy.nextRoamAt,
+        gearbladeDefenseBroken: enemy.gearbladeDefenseBroken,
+      };
+    });
+}
+
+function syncFieldEnemiesForStreamedOuterDeckMap(map: FieldMap, previousSnapshots: StreamedEnemySnapshot[]): FieldEnemy[] {
+  const snapshotByKey = new Map(previousSnapshots.map((snapshot) => [snapshot.persistentKey, snapshot]));
+  return syncFieldEnemiesForMap(map).map((enemy) => {
+    const snapshot = snapshotByKey.get(getPersistentFieldEnemyKey(enemy, map));
+    if (!snapshot) {
+      return enemy;
+    }
+    const local = outerDeckWorldPixelToLocal(map, snapshot.worldX, snapshot.worldY);
+    const localRoamHome = Number.isFinite(Number(snapshot.roamHomeWorldX)) && Number.isFinite(Number(snapshot.roamHomeWorldY))
+      ? outerDeckWorldPixelToLocal(map, Number(snapshot.roamHomeWorldX), Number(snapshot.roamHomeWorldY))
+      : null;
+    const localRoamTarget = Number.isFinite(Number(snapshot.roamTargetWorldX)) && Number.isFinite(Number(snapshot.roamTargetWorldY))
+      ? outerDeckWorldPixelToLocal(map, Number(snapshot.roamTargetWorldX), Number(snapshot.roamTargetWorldY))
+      : null;
+    const canUseLocalPosition = canMoveEntityOnMap(map, local.x, local.y, enemy.width, enemy.height);
+    return {
+      ...enemy,
+      x: canUseLocalPosition ? local.x : enemy.x,
+      y: canUseLocalPosition ? local.y : enemy.y,
+      hp: Math.max(1, Math.min(enemy.maxHp, snapshot.hp)),
+      facing: snapshot.facing,
+      roamHomeX: localRoamHome?.x ?? enemy.roamHomeX,
+      roamHomeY: localRoamHome?.y ?? enemy.roamHomeY,
+      roamTargetX: localRoamTarget?.x ?? enemy.roamTargetX,
+      roamTargetY: localRoamTarget?.y ?? enemy.roamTargetY,
+      nextRoamAt: snapshot.nextRoamAt ?? enemy.nextRoamAt,
+      gearbladeDefenseBroken: snapshot.gearbladeDefenseBroken ?? enemy.gearbladeDefenseBroken,
+    };
   });
 }
 
-function drawPinnedMinimapOverlay(): void {
+function rebaseOuterDeckLootOrbsForMap(
+  previousMap: FieldMap,
+  nextMap: FieldMap,
+  lootOrbs: FieldLootOrb[] = [],
+): FieldLootOrb[] {
+  if (lootOrbs.length === 0) {
+    return [];
+  }
+
+  return lootOrbs.flatMap((orb) => {
+    const world = outerDeckLocalPixelToWorld(previousMap, orb.x, orb.y);
+    const local = outerDeckWorldPixelToLocal(nextMap, world.x, world.y);
+    if (
+      local.x < 0
+      || local.y < 0
+      || local.x > nextMap.width * FIELD_TILE_SIZE
+      || local.y > nextMap.height * FIELD_TILE_SIZE
+    ) {
+      return [];
+    }
+
+    return [{
+      ...orb,
+      ...clampLocalOuterDeckPosition(nextMap, local),
+    }];
+  });
+}
+
+function clampLocalOuterDeckPosition(map: FieldMap, position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.max(FIELD_TILE_SIZE / 2, Math.min((map.width * FIELD_TILE_SIZE) - (FIELD_TILE_SIZE / 2), position.x)),
+    y: Math.max(FIELD_TILE_SIZE / 2, Math.min((map.height * FIELD_TILE_SIZE) - (FIELD_TILE_SIZE / 2), position.y)),
+  };
+}
+
+function rebuildOuterDeckStreamWindow(): boolean {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return false;
+  }
+
+  const previousMap = currentMap;
+  const playerWorld = outerDeckLocalPixelToWorld(previousMap, fieldState.player.x, fieldState.player.y);
+  const companionWorld = fieldState.companion
+    ? outerDeckLocalPixelToWorld(previousMap, fieldState.companion.x, fieldState.companion.y)
+    : null;
+  const p2World = fieldRuntimeP2Avatar
+    ? outerDeckLocalPixelToWorld(previousMap, fieldRuntimeP2Avatar.x, fieldRuntimeP2Avatar.y)
+    : null;
+  const enemySnapshots = getStreamedEnemySnapshots(previousMap, fieldState.fieldEnemies ?? []);
+  const wasUsingHaven3D = isHaven3DFieldRuntimeActive();
+
+  persistOuterDeckOpenWorldRuntimeState(true);
+  const nextMap = getFieldMap(previousMap.id);
+  if (!isOuterDeckOpenWorldMap(nextMap)) {
+    return false;
+  }
+
+  const nextPlayerLocal = clampLocalOuterDeckPosition(nextMap, outerDeckWorldPixelToLocal(nextMap, playerWorld.x, playerWorld.y));
+  const nextCompanionLocal = companionWorld
+    ? clampLocalOuterDeckPosition(nextMap, outerDeckWorldPixelToLocal(nextMap, companionWorld.x, companionWorld.y))
+    : null;
+  const nextP2Local = p2World
+    ? clampLocalOuterDeckPosition(nextMap, outerDeckWorldPixelToLocal(nextMap, p2World.x, p2World.y))
+    : null;
+
+  currentMap = nextMap;
+  fieldState = {
+    ...fieldState,
+    currentMap: nextMap.id,
+    player: normalizeFieldPlayerState({
+      ...fieldState.player,
+      x: nextPlayerLocal.x,
+      y: nextPlayerLocal.y,
+    }),
+    companion: fieldState.companion && nextCompanionLocal
+      ? {
+          ...fieldState.companion,
+          x: nextCompanionLocal.x,
+          y: nextCompanionLocal.y,
+        }
+      : fieldState.companion,
+    npcs: syncFieldNpcsForMap(nextMap.id, fieldState.npcs ?? []),
+    fieldEnemies: syncFieldEnemiesForStreamedOuterDeckMap(nextMap, enemySnapshots),
+    projectiles: [],
+    lootOrbs: rebaseOuterDeckLootOrbsForMap(previousMap, nextMap, fieldState.lootOrbs ?? []),
+    collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
+  };
+
+  if (nextP2Local && fieldRuntimeP2Avatar) {
+    fieldRuntimeP2Avatar = {
+      ...fieldRuntimeP2Avatar,
+      x: nextP2Local.x,
+      y: nextP2Local.y,
+    };
+  }
+
+  activeAutoInteractionZoneKey = null;
+  suppressedAutoInteractionZoneKey = null;
+  apronRuntimeFlares = [];
+  lastMinimapRevealKey = "";
+  lastMinimapRevealAtMs = Number.NEGATIVE_INFINITY;
+  lastPinnedMinimapOverlayDrawKey = "";
+  lastPinnedMinimapOverlayDrawAtMs = Number.NEGATIVE_INFINITY;
+  lastHaven3DApronNavigatorTextKey = "";
+  syncFieldMinimapExploration();
+  lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
+  lastFieldAvatarSyncKey = "";
+  lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
+  lastOuterDeckRuntimePersistKey = "";
+
+  if (wasUsingHaven3D) {
+    haven3DFieldController?.replaceMap(nextMap);
+    syncMountedFieldStateMeters();
+    requestAnimationFrame(() => drawPinnedMinimapOverlay());
+  } else {
+    render();
+    requestAnimationFrame(() => drawPinnedMinimapOverlay());
+  }
+
+  return true;
+}
+
+function refreshOuterDeckStreamWindowIfNeeded(): boolean {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return false;
+  }
+
+  const world = outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y);
+  if (!shouldRecenterOuterDeckStreamWindow(currentMap, world.x, world.y)) {
+    return false;
+  }
+
+  return rebuildOuterDeckStreamWindow();
+}
+
+function refreshCurrentOuterDeckMapFromState(): void {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    syncCurrentMapFromState();
+    render();
+    return;
+  }
+
+  const previousMap = currentMap;
+  const enemySnapshots = getStreamedEnemySnapshots(previousMap, fieldState.fieldEnemies ?? []);
+  const nextMap = getFieldMap(previousMap.id);
+  if (!isOuterDeckOpenWorldMap(nextMap)) {
+    syncCurrentMapFromState();
+    render();
+    return;
+  }
+
+  currentMap = nextMap;
+  fieldState = {
+    ...fieldState,
+    currentMap: nextMap.id,
+    fieldEnemies: syncFieldEnemiesForStreamedOuterDeckMap(nextMap, enemySnapshots),
+  };
+
+  if (isHaven3DFieldRuntimeActive()) {
+    haven3DFieldController?.replaceMap(nextMap);
+    syncMountedFieldStateMeters();
+    requestAnimationFrame(() => drawPinnedMinimapOverlay());
+    return;
+  }
+
+  render();
+  requestAnimationFrame(() => drawPinnedMinimapOverlay());
+}
+
+function drawPinnedMinimapOverlay(options: { force?: boolean; currentTime?: number } = {}): void {
   const overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay || !currentMap || !fieldState) {
     return;
@@ -2219,6 +3383,36 @@ function drawPinnedMinimapOverlay(): void {
     return;
   }
 
+  const avatar = getRuntimeFieldAvatar("P1") ?? fieldState.player;
+  const outerDeckMetadata = getOuterDeckStreamMetadata(currentMap);
+  const playerTileX = Math.floor(avatar.x / FIELD_TILE_SIZE);
+  const playerTileY = Math.floor(avatar.y / FIELD_TILE_SIZE);
+  const drawKey = [
+    currentMap.id,
+    currentMap.width,
+    currentMap.height,
+    Math.floor(Number(outerDeckMetadata?.worldOriginTileX ?? 0)),
+    Math.floor(Number(outerDeckMetadata?.worldOriginTileY ?? 0)),
+    playerTileX,
+    playerTileY,
+    avatar.facing,
+    fieldState.collectedResourceObjectIds?.length ?? 0,
+    fieldState.fieldEnemies?.filter((enemy) => enemy.hp > 0).length ?? 0,
+    lastMinimapRevealKey,
+    Math.round(canvas.clientWidth || 0),
+    Math.round(canvas.clientHeight || 0),
+  ].join("|");
+  const now = options.currentTime ?? performance.now();
+  if (
+    !options.force
+    && drawKey === lastPinnedMinimapOverlayDrawKey
+    && now - lastPinnedMinimapOverlayDrawAtMs < PINNED_MINIMAP_OVERLAY_REFRESH_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastPinnedMinimapOverlayDrawKey = drawKey;
+  lastPinnedMinimapOverlayDrawAtMs = now;
   drawFieldMinimapCanvas(
     canvas,
     buildFieldMinimapModel(currentMap.id, {
@@ -2270,7 +3464,8 @@ function processFieldControllerActions(): void {
   }
 
   const combatActive = isFieldCombatActive();
-  const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const state = getGameState();
+  const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => isFieldPlayerActive(playerId, state));
 
   for (const playerId of activePlayers) {
     const previous = previousFieldControllerActions[playerId];
@@ -2301,7 +3496,7 @@ function processFieldControllerActions(): void {
 }
 
 function createRuntimeAvatar(playerId: PlayerId): PlayerAvatar | null {
-  const avatar = getGameState().players[playerId]?.avatar;
+  const avatar = getRuntimeFieldAvatar(playerId);
   if (!avatar) {
     return null;
   }
@@ -2351,7 +3546,7 @@ function getPlayerInteractionContext(playerId: PlayerId): InteractionActorContex
 
 function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
   const candidates = (["P1", "P2"] as PlayerId[])
-    .filter((playerId) => getGameState().players[playerId]?.active)
+    .filter((playerId) => isFieldPlayerActive(playerId))
     .map((playerId) => {
       const avatar = createRuntimeAvatar(playerId);
       if (!avatar) {
@@ -2383,6 +3578,217 @@ function buildAutoInteractionZoneKey(
   zoneId: string,
 ): string {
   return `${mapId}:${playerId}:${zoneId}`;
+}
+
+function shouldPrepareFieldReturnFromInteraction(zone: InteractionZone): boolean {
+  if (!isAutoTriggerZone(zone)) {
+    return false;
+  }
+
+  switch (zone.action) {
+    case "shop":
+    case "roster":
+    case "loadout":
+    case "ops_terminal":
+    case "quest_board":
+    case "tavern":
+    case "gear_workbench":
+    case "port":
+    case "dispatch":
+    case "black_market":
+    case "stable":
+    case "schema":
+    case "foundry-annex":
+    case "comms-array":
+      return true;
+    case "custom":
+      return zone.metadata?.handlerId === "weaponsmith_workshop";
+    default:
+      return false;
+  }
+}
+
+function getDoorExitFacing(zone: InteractionZone): PlayerAvatar["facing"] | null {
+  switch (zone.metadata?.doorFacing) {
+    case "north":
+      return "north";
+    case "east":
+      return "east";
+    case "west":
+      return "west";
+    case "south":
+      return "south";
+    default:
+      return null;
+  }
+}
+
+function resolveInteractionExitPosition(
+  zone: InteractionZone,
+  savedPlayerPos: { x: number; y: number },
+): { x: number; y: number; facing?: PlayerAvatar["facing"] } {
+  const tileSize = FIELD_TILE_SIZE;
+  const zoneLeft = zone.x * tileSize;
+  const zoneTop = zone.y * tileSize;
+  const zoneRight = (zone.x + zone.width) * tileSize;
+  const zoneBottom = (zone.y + zone.height) * tileSize;
+  const exitFacing = getDoorExitFacing(zone);
+  const clampXToZone = () => Math.max(zoneLeft + (tileSize / 2), Math.min(zoneRight - (tileSize / 2), savedPlayerPos.x));
+  const clampYToZone = () => Math.max(zoneTop + (tileSize / 2), Math.min(zoneBottom - (tileSize / 2), savedPlayerPos.y));
+
+  switch (zone.metadata?.doorFacing) {
+    case "north":
+      return { x: clampXToZone(), y: zoneTop - (tileSize / 2), facing: exitFacing ?? undefined };
+    case "east":
+      return { x: zoneRight + (tileSize / 2), y: clampYToZone(), facing: exitFacing ?? undefined };
+    case "west":
+      return { x: zoneLeft - (tileSize / 2), y: clampYToZone(), facing: exitFacing ?? undefined };
+    case "south":
+      return { x: clampXToZone(), y: zoneBottom + (tileSize / 2), facing: exitFacing ?? undefined };
+    default:
+      break;
+  }
+
+  const pushPadding = 28;
+  const nearestBoundary = [
+    { axis: "x" as const, value: zoneLeft - pushPadding, distance: Math.abs(savedPlayerPos.x - zoneLeft) },
+    { axis: "x" as const, value: zoneRight + pushPadding, distance: Math.abs(savedPlayerPos.x - zoneRight) },
+    { axis: "y" as const, value: zoneTop - pushPadding, distance: Math.abs(savedPlayerPos.y - zoneTop) },
+    { axis: "y" as const, value: zoneBottom + pushPadding, distance: Math.abs(savedPlayerPos.y - zoneBottom) },
+  ].sort((left, right) => left.distance - right.distance)[0];
+
+  if (nearestBoundary?.axis === "x") {
+    return {
+      x: nearestBoundary.value,
+      y: Math.max(zoneTop - tileSize, Math.min(zoneBottom + tileSize, savedPlayerPos.y)),
+    };
+  }
+
+  if (nearestBoundary?.axis === "y") {
+    return {
+      x: Math.max(zoneLeft - tileSize, Math.min(zoneRight + tileSize, savedPlayerPos.x)),
+      y: nearestBoundary.value,
+    };
+  }
+
+  return { ...savedPlayerPos };
+}
+
+function isInteractionExitTilePassable(map: FieldMap, tileX: number, tileY: number): boolean {
+  if (tileX < 0 || tileX >= map.width || tileY < 0 || tileY >= map.height) {
+    return false;
+  }
+  const tile = map.tiles[tileY]?.[tileX];
+  return Boolean(tile?.walkable);
+}
+
+function isTileInsideInteractionZone(zone: InteractionZone, tileX: number, tileY: number): boolean {
+  return tileX >= zone.x
+    && tileX < zone.x + zone.width
+    && tileY >= zone.y
+    && tileY < zone.y + zone.height;
+}
+
+function getInteractionExitSearchLine(
+  zone: InteractionZone,
+  requestedTile: { x: number; y: number },
+  radius: number,
+): Array<{ x: number; y: number }> {
+  const sortByRequestedX = (left: number, right: number): number => Math.abs(left - requestedTile.x) - Math.abs(right - requestedTile.x);
+  const sortByRequestedY = (left: number, right: number): number => Math.abs(left - requestedTile.y) - Math.abs(right - requestedTile.y);
+  const expandedLeft = zone.x - radius;
+  const expandedRight = zone.x + zone.width - 1 + radius;
+  const expandedTop = zone.y - radius;
+  const expandedBottom = zone.y + zone.height - 1 + radius;
+
+  switch (zone.metadata?.doorFacing) {
+    case "north":
+      return Array.from({ length: Math.max(0, expandedRight - expandedLeft + 1) }, (_, index) => expandedLeft + index)
+        .sort(sortByRequestedX)
+        .map((x) => ({ x, y: zone.y - 1 - radius }));
+    case "east":
+      return Array.from({ length: Math.max(0, expandedBottom - expandedTop + 1) }, (_, index) => expandedTop + index)
+        .sort(sortByRequestedY)
+        .map((y) => ({ x: zone.x + zone.width + radius, y }));
+    case "west":
+      return Array.from({ length: Math.max(0, expandedBottom - expandedTop + 1) }, (_, index) => expandedTop + index)
+        .sort(sortByRequestedY)
+        .map((y) => ({ x: zone.x - 1 - radius, y }));
+    case "south":
+    default:
+      return Array.from({ length: Math.max(0, expandedRight - expandedLeft + 1) }, (_, index) => expandedLeft + index)
+        .sort(sortByRequestedX)
+        .map((x) => ({ x, y: zone.y + zone.height + radius }));
+  }
+}
+
+function findSafeInteractionExitTile(
+  map: FieldMap,
+  zone: InteractionZone,
+  requestedTile: { x: number; y: number },
+): { x: number; y: number } | null {
+  const isCandidate = (tile: { x: number; y: number }): boolean => (
+    !isTileInsideInteractionZone(zone, tile.x, tile.y)
+    && isInteractionExitTilePassable(map, tile.x, tile.y)
+  );
+
+  if (isCandidate(requestedTile)) {
+    return requestedTile;
+  }
+
+  for (let radius = 0; radius <= 8; radius += 1) {
+    const lineCandidate = getInteractionExitSearchLine(zone, requestedTile, radius).find(isCandidate);
+    if (lineCandidate) {
+      return lineCandidate;
+    }
+  }
+
+  for (let radius = 1; radius <= 12; radius += 1) {
+    const candidates: Array<{ x: number; y: number }> = [];
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) {
+          continue;
+        }
+        candidates.push({ x: requestedTile.x + dx, y: requestedTile.y + dy });
+      }
+    }
+
+    const nearestCandidate = candidates
+      .sort((left, right) => {
+        const leftDistance = Math.hypot(left.x - requestedTile.x, left.y - requestedTile.y);
+        const rightDistance = Math.hypot(right.x - requestedTile.x, right.y - requestedTile.y);
+        return leftDistance - rightDistance;
+      })
+      .find(isCandidate);
+    if (nearestCandidate) {
+      return nearestCandidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveSafeInteractionExitPosition(
+  map: FieldMap,
+  zone: InteractionZone,
+  savedPlayerPos: { x: number; y: number },
+): { x: number; y: number; facing?: PlayerAvatar["facing"] } {
+  const exitPosition = resolveInteractionExitPosition(zone, savedPlayerPos);
+  const requestedTile = {
+    x: Math.floor(exitPosition.x / FIELD_TILE_SIZE),
+    y: Math.floor(exitPosition.y / FIELD_TILE_SIZE),
+  };
+  const safeTile = findSafeInteractionExitTile(map, zone, requestedTile);
+  if (!safeTile) {
+    return exitPosition;
+  }
+
+  return {
+    x: safeTile.x * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+    y: safeTile.y * FIELD_TILE_SIZE + FIELD_TILE_SIZE / 2,
+    facing: exitPosition.facing,
+  };
 }
 
 function getCombinedInteractionPrompt(): string | null {
@@ -2500,6 +3906,15 @@ function triggerZoneInteraction(playerId: PlayerId, zone: InteractionZone, avata
 
   const savedPlayerPos = { x: avatar.x, y: avatar.y };
   const interactionKey = buildAutoInteractionZoneKey(String(currentMap.id), playerId, zone.id);
+  if (shouldPrepareFieldReturnFromInteraction(zone)) {
+    pendingFieldReturnFromInteraction = {
+      mapId: String(currentMap.id),
+      playerId,
+      savedPlayerPos,
+      zoneId: zone.id,
+      interactionKey,
+    };
+  }
   fieldState.isPaused = true;
 
   void handleInteraction(zone, currentMap, () => {
@@ -2521,7 +3936,8 @@ function maybeTriggerAutoInteraction(): void {
     return;
   }
 
-  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => getGameState().players[playerId]?.active);
+  const state = getGameState();
+  const orderedPlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => isFieldPlayerActive(playerId, state));
   const autoContext = orderedPlayers
     .map((playerId) => getPlayerInteractionContext(playerId))
     .find((context): context is InteractionActorContext => {
@@ -2579,31 +3995,19 @@ function resumeFieldAfterInteraction(
     return;
   }
 
+  if (pendingFieldReturnFromInteraction?.interactionKey === interactionKey) {
+    pendingFieldReturnFromInteraction = null;
+  }
+
   fieldState.isPaused = false;
   const tileSize = 64;
   let nextX = savedPlayerPos.x;
   let nextY = savedPlayerPos.y;
 
   if (zone && isAutoTriggerZone(zone)) {
-    const zoneLeft = zone.x * tileSize;
-    const zoneTop = zone.y * tileSize;
-    const zoneRight = (zone.x + zone.width) * tileSize;
-    const zoneBottom = (zone.y + zone.height) * tileSize;
-    const pushPadding = 28;
-    const nearestBoundary = [
-      { axis: "x" as const, value: zoneLeft - pushPadding, distance: Math.abs(savedPlayerPos.x - zoneLeft) },
-      { axis: "x" as const, value: zoneRight + pushPadding, distance: Math.abs(savedPlayerPos.x - zoneRight) },
-      { axis: "y" as const, value: zoneTop - pushPadding, distance: Math.abs(savedPlayerPos.y - zoneTop) },
-      { axis: "y" as const, value: zoneBottom + pushPadding, distance: Math.abs(savedPlayerPos.y - zoneBottom) },
-    ].sort((left, right) => left.distance - right.distance)[0];
-
-    if (nearestBoundary?.axis === "x") {
-      nextX = nearestBoundary.value;
-      nextY = Math.max(zoneTop - tileSize, Math.min(zoneBottom + tileSize, savedPlayerPos.y));
-    } else if (nearestBoundary?.axis === "y") {
-      nextY = nearestBoundary.value;
-      nextX = Math.max(zoneLeft - tileSize, Math.min(zoneRight + tileSize, savedPlayerPos.x));
-    }
+    const exitPosition = resolveSafeInteractionExitPosition(currentMap, zone, savedPlayerPos);
+    nextX = exitPosition.x;
+    nextY = exitPosition.y;
 
     nextX = Math.max(32, Math.min((currentMap.width * tileSize) - 32, nextX));
     nextY = Math.max(32, Math.min((currentMap.height * tileSize) - 32, nextY));
@@ -2615,32 +4019,9 @@ function resumeFieldAfterInteraction(
     nextY = savedPlayerPos.y + offsetY;
   }
 
-  updateGameState((state) => {
-    const avatar = state.players[playerId].avatar;
-    if (!avatar) {
-      return state;
-    }
-
-    return {
-      ...state,
-      players: {
-        ...state.players,
-        [playerId]: {
-          ...state.players[playerId],
-          avatar: {
-            ...avatar,
-            x: nextX,
-            y: nextY,
-          },
-        },
-      },
-    };
-  });
-
-  if (playerId === "P1") {
-    fieldState.player.x = nextX;
-    fieldState.player.y = nextY;
-  }
+  const currentAvatar = getRuntimeFieldAvatar(playerId);
+  setRuntimeFieldAvatarPosition(playerId, nextX, nextY, currentAvatar?.facing);
+  flushFieldAvatarPositionsToGameState(true);
 
   if (zone && isAutoTriggerZone(zone)) {
     render();
@@ -2858,13 +4239,27 @@ export function renderFieldScreen(
   if (previousMapId !== mapId) {
     activeAutoInteractionZoneKey = null;
     suppressedAutoInteractionZoneKey = null;
+    apronRuntimeFlares = [];
     fieldTurretLastFireAtMs.clear();
   }
 
+  maybeBankOuterDeckRunSnapshot(previousMapId, mapId);
   setBaseCampFieldReturnMap(mapId);
 
   // Load map
   currentMap = getFieldMap(mapId);
+  maybeBeginOuterDeckRunSnapshot(currentMap);
+  const outerDeckOpenWorldSpawn = isOuterDeckOpenWorldMap(currentMap)
+    ? (() => {
+        const openWorld = getOuterDeckOpenWorldState(getGameState());
+        const local = outerDeckWorldPixelToLocal(currentMap!, openWorld.playerWorldX, openWorld.playerWorldY);
+        return {
+          x: local.x,
+          y: local.y,
+          facing: openWorld.playerFacing,
+        };
+      })()
+    : null;
 
   // Initialize or restore player avatars from game state
   const tileSize = 64;
@@ -2875,6 +4270,10 @@ export function renderFieldScreen(
   const fieldSpawnOverride = pendingFieldSpawnOverride && pendingFieldSpawnOverride.mapId === mapId
     ? pendingFieldSpawnOverride
     : null;
+  const fieldReturnFromInteraction = pendingFieldReturnFromInteraction?.mapId === String(mapId)
+    ? pendingFieldReturnFromInteraction
+    : null;
+  let playerFacing: PlayerAvatar["facing"] | undefined = fieldSpawnOverride?.facing ?? outerDeckOpenWorldSpawn?.facing;
 
   // Detect spawn source (FCP = key room entry, normal = everything else)
   const spawnSource: SpawnSource = (typeof mapId === "string" && mapId.startsWith("keyroom_")) ? "FCP" : "normal";
@@ -2882,6 +4281,7 @@ export function renderFieldScreen(
   // Check if we have a stored interaction zone position (returning from a node) - prioritize this over resume
   if (fieldSpawnOverride) {
     pendingFieldSpawnOverride = null;
+    pendingFieldReturnFromInteraction = null;
     if (mapId === "quarters") {
       playerX = fieldSpawnOverride.x;
       playerY = fieldSpawnOverride.y;
@@ -2894,6 +4294,34 @@ export function renderFieldScreen(
       playerX = spawnResult.x;
       playerY = spawnResult.y;
     }
+  } else if (fieldReturnFromInteraction) {
+    pendingFieldReturnFromInteraction = null;
+    const returnZone = getInteractionZone(currentMap, fieldReturnFromInteraction.zoneId);
+    const fallbackExitPosition: { x: number; y: number; facing?: PlayerAvatar["facing"] } = {
+      ...fieldReturnFromInteraction.savedPlayerPos,
+    };
+    const exitPosition = returnZone
+      ? resolveSafeInteractionExitPosition(currentMap, returnZone, fieldReturnFromInteraction.savedPlayerPos)
+      : fallbackExitPosition;
+    const spawnResult = resolvePlayerSpawn(
+      spawnSource,
+      currentMap,
+      { x: exitPosition.x, y: exitPosition.y },
+    );
+    playerX = spawnResult.x;
+    playerY = spawnResult.y;
+    playerFacing = exitPosition.facing ?? fieldState?.player.facing ?? "south";
+    suppressedAutoInteractionZoneKey = fieldReturnFromInteraction.interactionKey;
+    activeAutoInteractionZoneKey = null;
+  } else if (outerDeckOpenWorldSpawn) {
+    const spawnResult = resolvePlayerSpawn(
+      spawnSource,
+      currentMap,
+      { x: outerDeckOpenWorldSpawn.x, y: outerDeckOpenWorldSpawn.y },
+    );
+    playerX = spawnResult.x;
+    playerY = spawnResult.y;
+    playerFacing = outerDeckOpenWorldSpawn.facing;
   } else if (mapId === "base_camp" && lastInteractionZonePosition) {
     // Use the stored interaction zone position
     const storedX = lastInteractionZonePosition.x;
@@ -2909,8 +4337,8 @@ export function renderFieldScreen(
     playerX = spawnResult.x;
     playerY = spawnResult.y;
   } else if (isResuming && mapId !== "quarters") {
-    // Restore from fieldState if available, but revalidate lobby spawns so stale wall positions do not persist.
-    if (mapId === "network_lobby") {
+    // Restore from fieldState if available, but revalidate maps whose walkable layout can change.
+    if (mapId === "network_lobby" || mapId === "base_camp") {
       const fallbackSpawn = getPreferredFieldSpawnPosition(mapId, tileSize);
       const spawnResult = resolvePlayerSpawn(
         spawnSource,
@@ -2946,10 +4374,9 @@ export function renderFieldScreen(
       requestedX = spawnTileX * tileSize + tileSize / 2;
       requestedY = spawnTileY * tileSize + tileSize / 2;
     } else if (mapId === "base_camp") {
-      // Quarters station is at x:7, y:3 (size 2x2)
-      // Spawn in front of quarters
-      requestedX = 7 * tileSize + tileSize / 2;
-      requestedY = 5 * tileSize + tileSize / 2;
+      // Spawn in the main HAVEN concourse, clear of building collision.
+      requestedX = 41 * tileSize + tileSize / 2;
+      requestedY = 27 * tileSize + tileSize / 2;
     } else {
       // Default: center of map (avoiding edge tiles which are typically walls)
       // Use floor to ensure we're not on the right edge (width-1) or bottom edge (height-1)
@@ -3018,7 +4445,12 @@ export function renderFieldScreen(
 
     // Always update position for quarters, FCP maps (keyroom_*), or initialize if missing
     const isFCPMap = typeof mapId === "string" && mapId.startsWith("keyroom_");
-    const shouldUpdatePosition = Boolean(fieldSpawnOverride) || mapId === "quarters" || mapId === "network_lobby" || isFCPMap || !players.P1.avatar;
+    const shouldUpdatePosition = Boolean(fieldSpawnOverride || fieldReturnFromInteraction)
+      || isOuterDeckOpenWorldMap(currentMap)
+      || mapId === "quarters"
+      || mapId === "network_lobby"
+      || isFCPMap
+      || !players.P1.avatar;
 
     return {
       ...s,
@@ -3030,7 +4462,7 @@ export function renderFieldScreen(
           avatar: shouldUpdatePosition ? {
             x: playerX,
             y: playerY,
-            facing: fieldSpawnOverride?.facing ?? "south",
+            facing: playerFacing ?? "south",
             spriteId: "aeriss_p1",
           } : players.P1.avatar,
         },
@@ -3050,7 +4482,7 @@ export function renderFieldScreen(
         ...fieldState.player,
         x: playerX,
         y: playerY,
-        facing: fieldSpawnOverride?.facing ?? fieldState.player.facing,
+        facing: playerFacing ?? fieldState.player.facing,
       }),
       isPaused: false,
       activeInteraction: null,
@@ -3059,6 +4491,7 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(fieldState.combat ?? createDefaultFieldCombatState()),
       projectiles: fieldState.projectiles ?? [],
+      lootOrbs: fieldState.lootOrbs ?? [],
       collectedResourceObjectIds: fieldState.collectedResourceObjectIds ?? [],
     };
   } else {
@@ -3070,7 +4503,7 @@ export function renderFieldScreen(
       currentMap: mapId,
       player: normalizeFieldPlayerState({
         ...createPlayerAvatar(playerX, playerY),
-        facing: fieldSpawnOverride?.facing ?? "south",
+        facing: playerFacing ?? "south",
       }),
       isPaused: false,
       activeInteraction: null,
@@ -3079,11 +4512,26 @@ export function renderFieldScreen(
       fieldEnemies: nextFieldEnemies,
       combat: normalizeFieldCombatState(createDefaultFieldCombatState()),
       projectiles: [],
+      lootOrbs: [],
       collectedResourceObjectIds: [],
     };
   }
 
+  const persistedPlayers = getGameState().players;
+  fieldRuntimeP2Avatar = persistedPlayers.P2.active && persistedPlayers.P2.avatar
+    ? { ...persistedPlayers.P2.avatar }
+    : null;
+  lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
+  lastFieldAvatarSyncKey = "";
+  lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
+  lastOuterDeckRuntimePersistKey = "";
+
   lastMinimapRevealKey = "";
+  lastMinimapRevealAtMs = Number.NEGATIVE_INFINITY;
+  lastPinnedMinimapOverlayDrawKey = "";
+  lastPinnedMinimapOverlayDrawAtMs = Number.NEGATIVE_INFINITY;
+  lastMountedFieldStateMeterSyncKey = "";
+  lastHaven3DApronNavigatorTextKey = "";
   syncFieldMinimapExploration();
 
   // Setup input handlers (only once)
@@ -3094,17 +4542,21 @@ export function renderFieldScreen(
     stopGameLoop();
   }
 
-  movementInput = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    dash: false,
-  };
-  resetFieldControllerActionTracking();
+  resetFieldMovementInputState();
 
   // Create panel first (outside field-root)
   createAllNodesPanel();
+
+  if (shouldUseHaven3DFieldRuntime(mapId, options)) {
+    activeInteractionPrompt = getCombinedInteractionPrompt();
+    mountHaven3DFieldRuntime(root);
+    createPinnedNodesOverlay();
+    requestAnimationFrame(() => drawPinnedMinimapOverlay());
+    if (previousMapId !== mapId) {
+      maybeShowFieldTutorials(mapId);
+    }
+    return;
+  }
 
   startGameLoop();
   render();
@@ -3129,7 +4581,45 @@ function formatBuildResourceCost(cost?: { metalScrap?: number; wood?: number; ch
 }
 
 function renderFieldObjectContents(obj: FieldMap["objects"][number]): string {
+  if (obj.sprite === "doorway") {
+    const beacon = obj.metadata?.returnBeacon === true
+      ? `<span class="field-object-doorway__beacon"></span>`
+      : "";
+    return `
+      <div class="field-object-doorway" aria-hidden="true">
+        ${beacon}
+        <span class="field-object-doorway__lintel"></span>
+        <span class="field-object-doorway__post field-object-doorway__post--left"></span>
+        <span class="field-object-doorway__post field-object-doorway__post--right"></span>
+        <span class="field-object-doorway__threshold"></span>
+      </div>
+    `;
+  }
+
+  if (obj.sprite === "theater_chart") {
+    return `<div class="field-object-placeholder field-object-placeholder--theater-chart">CHART</div>`;
+  }
+
+  if (obj.sprite === "apron_key") {
+    return `<div class="field-object-placeholder field-object-placeholder--apron-key">KEY</div>`;
+  }
+
+  if (obj.sprite === "apron_lantern") {
+    return `<div class="field-object-placeholder field-object-placeholder--apron-lantern">LANTERN</div>`;
+  }
+
+  if (obj.sprite === "zipline_track") {
+    return `<div class="field-object-placeholder field-object-placeholder--zipline">ZIPLINE</div>`;
+  }
+
   if (obj.type === "decoration") {
+    if (obj.metadata?.grappleAnchor === true) {
+      return `
+        <div class="field-object-placeholder field-object-placeholder--grapple">
+          <span>GRAPPLE</span>
+        </div>
+      `;
+    }
     const decor = getDecorItemById(String(obj.metadata?.decorId ?? ""));
     const rotationQuarterTurns = normalizeFieldDecorRotationQuarterTurns(Number(obj.metadata?.rotationQuarterTurns ?? 0));
     const rotationDegrees = rotationQuarterTurns * 90;
@@ -3150,8 +4640,8 @@ function getTrackedFieldCenter(): { x: number; y: number } {
   }
 
   const state = getGameState();
-  const p1Avatar = state.players.P1.avatar;
-  const p2Avatar = state.players.P2.active ? state.players.P2.avatar : null;
+  const p1Avatar = getRuntimeFieldAvatar("P1", state);
+  const p2Avatar = isFieldPlayerActive("P2", state) ? getRuntimeFieldAvatar("P2", state) : null;
 
   if (p1Avatar && p2Avatar) {
     return {
@@ -3356,6 +4846,7 @@ function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
   }
 
   const rects: string[] = [];
+  const elevationRects: string[] = [];
   const mapPixelWidth = map.width * tileSize;
   const mapPixelHeight = map.height * tileSize;
   const patternDefs = (Object.entries(FIELD_TILE_PATTERN_STYLES) as Array<[FieldTilePatternKey, { fill: string; stroke: string }]>)
@@ -3425,6 +4916,43 @@ function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
     flushSegment();
   }
 
+  for (let y = 0; y < map.height; y += 1) {
+    const row = map.tiles[y];
+    if (!row || row.length === 0) {
+      continue;
+    }
+
+    let segmentElevation: number | null = null;
+    let segmentStartX = 0;
+    let segmentLength = 0;
+    const flushElevationSegment = (): void => {
+      if (!segmentElevation || segmentLength <= 0) {
+        return;
+      }
+      const opacity = Math.min(0.4, 0.08 + (segmentElevation * 0.055));
+      elevationRects.push(
+        `<rect x="${segmentStartX * tileSize}" y="${y * tileSize}" width="${segmentLength * tileSize}" height="${tileSize}" fill="rgba(236, 196, 126, ${opacity.toFixed(3)})"></rect>`,
+        `<path d="M ${segmentStartX * tileSize} ${(y + 1) * tileSize - 3} H ${(segmentStartX + segmentLength) * tileSize}" stroke="rgba(5, 6, 8, ${Math.min(0.5, 0.16 + segmentElevation * 0.05).toFixed(3)})" stroke-width="3"></path>`,
+      );
+    };
+
+    for (let x = 0; x < map.width; x += 1) {
+      const tile = row[x];
+      const elevation = tile?.walkable ? Math.max(0, Math.floor(Number(tile.elevation ?? 0))) : 0;
+      if (elevation === segmentElevation) {
+        segmentLength += 1;
+        continue;
+      }
+
+      flushElevationSegment();
+      segmentElevation = elevation;
+      segmentStartX = x;
+      segmentLength = 1;
+    }
+
+    flushElevationSegment();
+  }
+
   const html = `
     <svg
       class="field-tile-layer"
@@ -3438,6 +4966,7 @@ function getFieldTilesHtml(map: FieldMap, tileSize: number): string {
       <defs>${patternDefs}</defs>
       <rect width="${mapPixelWidth}" height="${mapPixelHeight}" fill="${FIELD_TILE_BACKGROUND_COLOR}"></rect>
       ${rects.join("")}
+      ${elevationRects.join("")}
     </svg>
   `;
   fieldTileHtmlCache.set(map, html);
@@ -3464,6 +4993,10 @@ function render(): void {
   let objectsHtml = "";
   for (const obj of displayObjects) {
     const associatedZone = currentMap.interactionZones.find((zone) => {
+      if (zone.metadata?.doorForObjectId === obj.id) {
+        return true;
+      }
+
       const zoneCenterX = zone.x + zone.width / 2;
       const zoneCenterY = zone.y + zone.height / 2;
       const objCenterX = obj.x + obj.width / 2;
@@ -3483,6 +5016,9 @@ function render(): void {
       : associatedZone
         ? "cursor: pointer;"
         : "";
+    const spriteClass = obj.sprite
+      ? ` field-object--sprite-${String(obj.sprite).replace(/[^a-z0-9_-]/gi, "_")}`
+      : "";
     const buildControls = isHavenBuildModeEnabled() && buildMeta
       ? `
         <div class="field-build-object-controls">
@@ -3495,7 +5031,7 @@ function render(): void {
       : "";
 
     objectsHtml += `
-      <div class="field-object field-object-${obj.type} ${buildMeta ? "field-object--buildable" : ""} ${isHavenBuildModeEnabled() ? "field-object--build-active" : ""}"
+      <div class="field-object field-object-${obj.type}${spriteClass} ${buildMeta ? "field-object--buildable" : ""} ${isHavenBuildModeEnabled() ? "field-object--build-active" : ""}"
            style="left: ${obj.x * tileSize}px; top: ${obj.y * tileSize}px; width: ${obj.width * tileSize}px; height: ${obj.height * tileSize}px; ${cursorStyle}"
            title="${obj.metadata?.name || obj.type}${associatedZone ? " (Click to interact)" : ""}"
            ${clickAction}
@@ -3511,6 +5047,7 @@ function render(): void {
 
   // Player avatars (P1 and P2)
   const state = getGameState();
+  syncRuntimeFieldAvatarsFromState(state);
   const fieldLobby = getRenderableLobbyForCurrentField();
   const networkLobby = isNetworkLobbyMapActive() ? fieldLobby : null;
   const currentTime = performance.now();
@@ -3522,8 +5059,8 @@ function render(): void {
   const p1DashActive = Boolean(players.P1.active && getPlayerInput("P1").special1);
   const p2DashActive = Boolean(players.P2.active && getPlayerInput("P2").special1);
   const stepPulseClass = currentTime < fieldStepPulseUntilMs ? " field-player--step" : "";
-  const p1Avatar = players.P1.avatar;
-  const p2Avatar = players.P2.active ? players.P2.avatar : null;
+  const p1Avatar = getRuntimeFieldAvatar("P1", state);
+  const p2Avatar = players.P2.active ? getRuntimeFieldAvatar("P2", state) : null;
 
   let playerHtml = "";
 
@@ -3583,7 +5120,14 @@ function render(): void {
     combatActive && p1Avatar && fieldState.combat?.isAttacking
       ? renderFieldAttackEffect(p1Avatar)
       : "";
-  const weaponWindowHtml = combatActive ? renderFieldWeaponWindow(fieldState.combat ?? createDefaultFieldCombatState()) : "";
+  const combatState = fieldState.combat ?? createDefaultFieldCombatState();
+  const fieldCornerControlsHtml = combatActive
+    ? `
+      <div class="field-corner-controls">
+        ${combatActive ? renderFieldGearbladeModeStrip(combatState) : ""}
+      </div>
+    `
+    : "";
 
   // Sable companion (Headline 15a)
   const companionHtml = fieldState.companion ? `
@@ -3624,7 +5168,7 @@ function render(): void {
     ? `<div class="field-build-mode-header">BUILD MODE ACTIVE</div>`
     : "";
   const controllerHudInstructions = combatActive
-    ? `${moveLabel} to move • ${dashLabel} to dash • ${attackLabel} to attack • ${dashLabel} to toggle melee/ranged • Clear hostiles to interact`
+    ? `${moveLabel} to move • ${dashLabel} to dash • ${attackLabel} to attack • 1/2/3 or Tab to switch Gearblade • Clear hostiles to interact`
     : `${moveLabel} to move • ${dashLabel} to dash • ${interactLabel} to interact • Hold ${cancelLabel} for Inventory`;
   const promptHtml = !combatActive && activeInteractionPrompt
     ? `<div class="field-interaction-prompt">${activeInteractionPrompt}</div>`
@@ -3635,7 +5179,7 @@ function render(): void {
   void promptHtml;
   void hudInstructions;
   const combatStatusHtml = combatActive
-    ? `<div class="field-hud-combat-status">HP ${Math.max(0, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP))}/${Math.max(1, Number(fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP))} • HOSTILES ${liveEnemyCount} • ${fieldState.combat?.isRangedMode ? "RANGED" : "MELEE"} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
+    ? `<div class="field-hud-combat-status">HOSTILES ${liveEnemyCount} • ${getFieldGearbladeMode(fieldState.combat).toUpperCase()} • CELLS ${fieldState.combat?.energyCells ?? 0}/${fieldState.combat?.maxEnergyCells ?? 5}</div>`
     : "";
 
   // Get field-root container or create it
@@ -3653,6 +5197,7 @@ function render(): void {
     fieldRoot.className = "field-root";
     root.insertBefore(fieldRoot, root.firstChild);
   }
+  fieldRoot.classList.remove("field-root--haven3d");
 
   // Update only the field-root content (preserves panel)
   fieldRoot.innerHTML = `
@@ -3671,10 +5216,11 @@ function render(): void {
       </div>
     </div>
 
-    ${weaponWindowHtml}
+    ${fieldCornerControlsHtml}
 
     <div class="field-hud">
       ${getFieldBetaMarkerHtml(currentMap.id)}
+      ${renderFieldStateMeterHtml()}
       ${combatStatusHtml}
       <div class="field-hud-instructions">
         ${isHavenBuildModeEnabled() ? buildModeHudInstructions : controllerHudInstructions}
@@ -4013,11 +5559,15 @@ function renderFieldEnemies(enemies: NonNullable<FieldState["fieldEnemies"]>): s
     .filter((enemy) => enemy.hp > 0 || enemy.deathAnimTime)
     .map((enemy) => {
       const isDying = enemy.deathAnimTime !== undefined && enemy.hp <= 0;
+      const telegraphHtml = !isDying ? renderFieldEnemyTelegraph(enemy) : "";
+      const attackStateClass = enemy.attackState ? ` field-node-enemy--${enemy.attackState}` : "";
+      const attackStyleClass = enemy.attackStyle ? ` field-node-enemy--${enemy.attackStyle}` : "";
       const spriteHtml = enemy.spritePath
         ? `<div class="enemy-sprite"><img class="field-enemy-sprite-image" src="${enemy.spritePath}" alt="" /></div>`
         : `<div class="enemy-sprite">👾</div>`;
       return `
-        <div class="field-node-enemy ${isDying ? "enemy-dying" : ""}" style="
+        ${telegraphHtml}
+        <div class="field-node-enemy ${isDying ? "enemy-dying" : ""}${attackStateClass}${attackStyleClass}" style="
           left: ${enemy.x - enemy.width / 2}px;
           top: ${enemy.y - enemy.height / 2}px;
           width: ${enemy.width}px;
@@ -4035,46 +5585,72 @@ function renderFieldEnemies(enemies: NonNullable<FieldState["fieldEnemies"]>): s
     .join("");
 }
 
+function renderFieldEnemyTelegraph(enemy: FieldEnemy): string {
+  if (enemy.attackState !== "windup" && enemy.attackState !== "recovery") {
+    return "";
+  }
+
+  const profile = getHaven3DEnemyAttackProfile(enemy);
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const originX = enemy.attackOriginX ?? enemy.x;
+  const originY = enemy.attackOriginY ?? enemy.y;
+  const rotationDeg = (Math.atan2(directionY, directionX) * 180 / Math.PI) - 90;
+  const width = Math.max(28, (profile.halfWidth * 2) + enemy.width);
+  const height = Math.max(36, profile.reach + (enemy.height * 0.5));
+  const currentTime = performance.now();
+  const elapsed = Math.max(0, currentTime - Number(enemy.attackStartedAt ?? currentTime));
+  const progress = enemy.attackState === "windup"
+    ? Math.max(0, Math.min(1, elapsed / Math.max(1, profile.windupMs)))
+    : 1 - Math.max(0, Math.min(1, elapsed / Math.max(1, profile.recoveryMs)));
+
+  return `
+    <div
+      class="field-enemy-telegraph field-enemy-telegraph--${enemy.attackState} field-enemy-telegraph--${profile.style}"
+      style="
+        left: ${originX}px;
+        top: ${originY}px;
+        width: ${width}px;
+        height: ${height}px;
+        transform: translateX(-50%) rotate(${rotationDeg.toFixed(2)}deg);
+        --telegraph-progress: ${progress.toFixed(3)};
+      "
+    ></div>
+  `;
+}
+
 function renderFieldProjectiles(projectiles: FieldProjectile[]): string {
   return projectiles
     .map(
-      (projectile) => `
-        <div class="field-node-projectile"
-             style="left: ${projectile.x - 4}px; top: ${projectile.y - 4}px; width: 8px; height: 8px;"></div>
-      `
+      (projectile) => {
+        const radius = Math.max(4, Number(projectile.radius ?? 4));
+        const angle = Math.atan2(projectile.vy, projectile.vx) * 180 / Math.PI;
+        return `
+          <div class="field-node-projectile ${projectile.hostile ? "field-node-projectile--hostile" : "field-node-projectile--friendly"}"
+               style="
+                left: ${projectile.x - radius}px;
+                top: ${projectile.y - radius}px;
+                width: ${radius * 2}px;
+                height: ${radius * 2}px;
+                transform: rotate(${angle.toFixed(2)}deg);
+               "></div>
+        `;
+      }
     )
     .join("");
 }
 
-function renderFieldWeaponWindow(combat: NonNullable<FieldState["combat"]>): string {
-  const toggleModeLabel = getPlayerActionLabel("P1", "special1");
-  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
-  const installedUpgradeCount = getWeaponsmithInstalledUpgradeIds(getGameState()).length;
+function renderFieldGearbladeModeStrip(combat: NonNullable<FieldState["combat"]>): string {
+  const activeMode = getFieldGearbladeMode(combat);
   return `
-    <div class="field-node-weapon-window">
-      <div class="weapon-window-title">BOWBLADE</div>
-      <div class="weapon-window-mode ${combat.isRangedMode ? "weapon-window-mode--ranged" : "weapon-window-mode--melee"}">
-        ${combat.isRangedMode ? "RANGED" : "MELEE"}
-      </div>
-      <div class="weapon-window-energy">
-        <div class="weapon-window-energy-label">ENERGY CELLS</div>
-        <div class="weapon-window-energy-bar">
-          <div class="weapon-window-energy-fill" style="width: ${(combat.energyCells / combat.maxEnergyCells) * 100}%"></div>
-        </div>
-        <div class="weapon-window-energy-value">${combat.energyCells} / ${combat.maxEnergyCells}</div>
-      </div>
-      ${combat.isRangedMode && combat.energyCells <= 0 ? `
-        <div class="weapon-window-warning">NO ENERGY - USE MELEE TO CHARGE</div>
-      ` : ""}
-      <div class="weapon-window-empty-copy">
-        UPGRADES ${installedUpgradeCount} // MELEE +${bowbladeFieldProfile.meleeDamageBonus} // RANGED +${bowbladeFieldProfile.rangedDamageBonus}
-      </div>
-      <div class="weapon-window-hint"><span class="key-hint">${toggleModeLabel}</span> Switch Mode</div>
+    <div class="haven3d-mode-strip field-gearblade-mode-strip" aria-label="Gearblade modes">
+      ${renderGearbladeModeSelectorHtml(activeMode, "data-field-gearblade-mode", "field-gearblade-mode-selector")}
     </div>
   `;
 }
 
 function renderFieldAttackEffect(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): string {
+  const activeMode = getFieldGearbladeMode(fieldState?.combat);
   const attackOffset = {
     north: { x: 0, y: -35, rotation: -45 },
     south: { x: 0, y: 35, rotation: 135 },
@@ -4084,7 +5660,7 @@ function renderFieldAttackEffect(player: { x: number; y: number; facing: "north"
 
   const offset = attackOffset[player.facing];
   return `
-    <div class="field-node-attack-effect field-node-sword-slash"
+    <div class="field-node-attack-effect field-node-sword-slash field-node-sword-slash--${activeMode}"
          data-facing="${player.facing}"
          style="
            left: ${player.x + offset.x - 40}px;
@@ -4329,7 +5905,7 @@ function updateAllNodesPanelContent(): void {
       const mode = (btn as HTMLElement).dataset.mode;
       if (mode === "basecamp") {
         toggleAllNodesPanel();
-        renderAllNodesMenuScreen();
+        openAllNodesMenuFromField();
       } else if (mode === "field") {
         toggleAllNodesPanel();
         // Use current map if in field mode, otherwise default to base_camp
@@ -4379,6 +5955,8 @@ function toggleAllNodesPanel(): void {
 
   // Stop the game loop and cleanup
   stopGameLoop();
+  stopHaven3DFieldRuntime();
+  resetFieldMovementInputState();
   cleanupGlobalListeners();
 
   // Remove the overlay panel if it exists
@@ -4392,7 +5970,7 @@ function toggleAllNodesPanel(): void {
   isPanelOpen = false;
 
   // Navigate to the All Nodes Menu Screen
-  renderAllNodesMenuScreen(currentMapId);
+  openAllNodesMenuFromField(currentMapId);
 }
 
 function closeAllNodesPanel(): void {
@@ -4540,6 +6118,7 @@ function renderPinnedNodeCard(node: PinnedNodeDefinition): string {
 }
 
 function renderPinnedResourceCard(wad: number, resources: ResourceWallet): string {
+  const state = getGameState();
   return `
     <div class="all-nodes-item-shell all-nodes-item-shell--resource">
       ${renderPinnedOverlayToolbar(PINNED_RESOURCE_LAYOUT_ID, "resource tracker")}
@@ -4560,6 +6139,18 @@ function renderPinnedResourceCard(wad: number, resources: ResourceWallet): strin
               <span class="all-nodes-balance-value">${entry.amount}</span>
             </div>
           `).join("")}
+        </div>
+        <div class="all-nodes-balance-advanced">
+          <div class="all-nodes-balance-section-title">Advanced Materials</div>
+          <div class="all-nodes-balance-grid all-nodes-balance-grid--advanced">
+            ${getMaterialRefineryRecipes().map((recipe) => `
+              <div class="all-nodes-balance-item">
+                <span class="all-nodes-balance-icon">${recipe.name.slice(0, 2)}</span>
+                <span class="all-nodes-balance-label">${recipe.name}</span>
+                <span class="all-nodes-balance-value">${countAdvancedMaterialOwned(state, recipe.id)}</span>
+              </div>
+            `).join("")}
+          </div>
         </div>
       </section>
     </div>
@@ -4846,6 +6437,17 @@ function renderPinnedOverlayItem(itemId: string, frame: BaseCampPinnedItemFrame,
   `;
 }
 
+function refreshPinnedResourceBalanceCard(): void {
+  const resourceItem = document.querySelector<HTMLElement>(`[data-pinned-item-id="${PINNED_RESOURCE_LAYOUT_ID}"]`);
+  if (!resourceItem) {
+    return;
+  }
+
+  const state = getGameState();
+  resourceItem.innerHTML = renderPinnedResourceCard(state.wad ?? 0, state.resources ?? createEmptyResourceWallet());
+  enhanceTerminalUiButtons(resourceItem);
+}
+
 function updatePinnedNodesOverlay(): void {
   const overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay) return;
@@ -4937,7 +6539,7 @@ function handlePinnedOverlayClick(e: MouseEvent): void {
         baseCampTheaterAutoTickEnabled: enabled,
       },
     }));
-    ensureTheaterAutoTickStateSync();
+    syncFieldTheaterAutoTickState();
     showSystemPing({
       type: enabled ? "success" : "info",
       title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
@@ -4975,10 +6577,36 @@ function handlePinnedOverlaySubmit(e: SubmitEvent): void {
   if (!input || !status) return;
 
   const rawCommand = input.value;
+  const normalizedCommand = rawCommand.trim().toLowerCase().replace(/\s+/g, " ");
+
+  if (normalizedCommand.startsWith("/")) {
+    const result = runQuacDebugCommand(getGameState(), rawCommand);
+    if (!result.handled) {
+      fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "/dev".`;
+      renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
+      input.select();
+      return;
+    }
+
+    updateGameState(() => result.state);
+    fieldPinnedQuacFeedback = result.statusText;
+    renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, !result.success);
+    if (result.success) {
+      input.value = "";
+      if (result.ping) {
+        showSystemPing(result.ping);
+      }
+      updatePinnedNodesOverlay();
+    } else {
+      input.select();
+    }
+    return;
+  }
+
   const resolvedAction = resolvePinnedQuacCommand(rawCommand);
 
   if (!resolvedAction) {
-    fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", or "port".`;
+    fieldPinnedQuacFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "unit roster", "loadout", "inventory", "shop", "port", or "/dev".`;
     renderPinnedQuacStatus(status, fieldPinnedQuacFeedback, true);
     input.select();
     return;
@@ -5004,7 +6632,7 @@ function handlePinnedOverlayInput(e: Event): void {
   const status = input.closest(".all-nodes-item-shell")?.querySelector<HTMLElement>("[data-field-quac-status]");
   if (!status || !status.classList.contains("all-nodes-cli-status--error")) return;
 
-  fieldPinnedQuacFeedback = 'Type a node name, then press ENTER. Example: "unit roster" or "inventory".';
+  fieldPinnedQuacFeedback = PINNED_QUAC_HELP_TEXT;
   renderPinnedQuacStatus(status, fieldPinnedQuacFeedback);
 }
 
@@ -5012,7 +6640,7 @@ function createPinnedNodesOverlay(): void {
   const root = document.getElementById("app");
   if (!root) return;
 
-  ensureTheaterAutoTickStateSync();
+  syncFieldTheaterAutoTickState();
 
   let overlay = document.getElementById("fieldPinnedOverlay");
   if (!overlay) {
@@ -5052,16 +6680,72 @@ function removePinnedNodesOverlay(): void {
   }
 }
 
+function getFieldGearbladeMode(combat: FieldState["combat"] | null | undefined): Haven3DGearbladeMode {
+  if (combat?.gearbladeMode === "blade" || combat?.gearbladeMode === "launcher" || combat?.gearbladeMode === "grapple") {
+    return combat.gearbladeMode;
+  }
+  return combat?.isRangedMode ? "launcher" : "blade";
+}
+
+function setFieldGearbladeMode(mode: Haven3DGearbladeMode): void {
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
+
+  if (!fieldState?.combat || !isFieldCombatActive()) {
+    return;
+  }
+
+  fieldState.combat.gearbladeMode = mode;
+  fieldState.combat.isRangedMode = mode === "launcher";
+  render();
+}
+
+function cycleFieldGearbladeMode(): void {
+  if (!fieldState?.combat || !isFieldCombatActive()) {
+    return;
+  }
+
+  const modes: Haven3DGearbladeMode[] = ["blade", "launcher", "grapple"];
+  const currentMode = getFieldGearbladeMode(fieldState.combat);
+  const currentIndex = Math.max(0, modes.indexOf(currentMode));
+  setFieldGearbladeMode(modes[(currentIndex + 1) % modes.length]);
+}
+
 function toggleFieldCombatRangedMode(): void {
   if (!fieldState?.combat || !isFieldCombatActive()) {
     return;
   }
 
-  fieldState.combat.isRangedMode = !fieldState.combat.isRangedMode;
-  render();
+  setFieldGearbladeMode(getFieldGearbladeMode(fieldState.combat) === "launcher" ? "blade" : "launcher");
+}
+
+function handleFieldGearbladeModePointerDown(event: PointerEvent): void {
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
+
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest<HTMLElement>("[data-field-gearblade-mode]");
+  if (!button || !document.querySelector(".field-root")) {
+    return;
+  }
+
+  const mode = button.dataset.fieldGearbladeMode as Haven3DGearbladeMode | undefined;
+  if (mode !== "blade" && mode !== "launcher" && mode !== "grapple") {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  setFieldGearbladeMode(mode);
 }
 
 function triggerFieldCombatAttack(): void {
+  if (fieldFailureTransitionPending) {
+    return;
+  }
+
   if (!fieldState?.combat || !isFieldCombatActive()) {
     return;
   }
@@ -5070,12 +6754,13 @@ function triggerFieldCombatAttack(): void {
     return;
   }
 
-  const player = getGameState().players.P1.avatar;
+  const player = getRuntimeFieldAvatar("P1");
   if (!player) {
     return;
   }
 
-  if (fieldState.combat.isRangedMode) {
+  const mode = getFieldGearbladeMode(fieldState.combat);
+  if (mode === "launcher") {
     if (fieldState.combat.energyCells <= 0) {
       showSystemPing({
         type: "info",
@@ -5088,6 +6773,8 @@ function triggerFieldCombatAttack(): void {
     }
 
     performFieldRangedAttack(player);
+  } else if (mode === "grapple") {
+    performFieldGrappleAttack(player);
   } else {
     performFieldMeleeAttack(player);
   }
@@ -5116,6 +6803,78 @@ function isBasicFieldResourceKey(resourceKey: ResourceKey): resourceKey is (type
   return (BASIC_RESOURCE_KEYS as readonly ResourceKey[]).includes(resourceKey);
 }
 
+function collectApronSpecialPickup(
+  targetObject: FieldMap["objects"][number],
+  source: "player" | "sable",
+  pickupType: "theaterChart" | "apronKey",
+): void {
+  if (!fieldState) {
+    return;
+  }
+
+  const persistentKey = String(targetObject.metadata?.persistentKey ?? targetObject.id);
+  const collectorPosition = source === "sable" && fieldState.companion
+    ? { x: fieldState.companion.x, y: fieldState.companion.y }
+    : { x: fieldState.player.x, y: fieldState.player.y };
+  const pickupCenter = {
+    x: (targetObject.x + (targetObject.width / 2)) * FIELD_TILE_SIZE,
+    y: (targetObject.y + (targetObject.height / 2)) * FIELD_TILE_SIZE,
+  };
+
+  fieldState.collectedResourceObjectIds = Array.from(new Set([...(fieldState.collectedResourceObjectIds ?? []), targetObject.id]));
+
+  if (pickupType === "theaterChart") {
+    applyTheaterChartToCurrentAtlasFloor();
+  } else {
+    applyApronKeyToCurrentAtlasFloor();
+  }
+  updateGameState((state) => {
+    if (!currentMap || !isOuterDeckOpenWorldMap(currentMap)) {
+      return state;
+    }
+    return pickupType === "theaterChart"
+      ? markOuterDeckOpenWorldTheaterChartCollected(state, persistentKey)
+      : markOuterDeckOpenWorldApronKeyCollected(state, persistentKey);
+  });
+
+  if (source === "sable") {
+    playSablePickupBark(performance.now());
+  }
+
+  const pickupText = pickupType === "theaterChart" ? "+1 theater chart" : "+1 apron key";
+
+  triggerFeedback({
+    type: "resource",
+    source: "field",
+    intensity: source === "sable" ? 2 : 1,
+    position: {
+      x: pickupCenter.x,
+      y: pickupCenter.y,
+      space: "field-world",
+    },
+    targetPosition: {
+      x: collectorPosition.x,
+      y: collectorPosition.y,
+      space: "field-world",
+    },
+    text: pickupText,
+    channel: "field-apron-pickup",
+    meta: {
+      pickupType,
+      source,
+      objectId: targetObject.id,
+    },
+  });
+
+  showSystemPing({
+    type: "success",
+    message: pickupText,
+    durationMs: 1400,
+    channel: "field-apron-pickup",
+    replaceChannel: true,
+  });
+}
+
 function collectFieldResourceObject(resourceObjectId: string, source: "player" | "sable"): void {
   if (!fieldState) {
     return;
@@ -5126,6 +6885,12 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
     return;
   }
 
+  const apronPickupType = String(targetObject.metadata?.apronPickupType ?? "");
+  if (apronPickupType === "theaterChart" || apronPickupType === "apronKey") {
+    collectApronSpecialPickup(targetObject, source, apronPickupType);
+    return;
+  }
+
   const resourceType = String(targetObject.metadata?.resourceType ?? "") as ResourceKey;
   if (!isBasicFieldResourceKey(resourceType)) {
     return;
@@ -5133,6 +6898,7 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
 
   const amount = Math.max(1, Math.floor(Number(targetObject.metadata?.amount ?? 1)));
   const resourceLabel = formatFieldEnemyResourceName(resourceType as "metalScrap" | "wood" | "chaosShards" | "steamComponents");
+  const pickupText = `+${amount} ${resourceLabel.toLowerCase()}`;
   const collectorPosition = source === "sable" && fieldState.companion
     ? { x: fieldState.companion.x, y: fieldState.companion.y }
     : { x: fieldState.player.x, y: fieldState.player.y };
@@ -5142,14 +6908,21 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
   };
   fieldState.collectedResourceObjectIds = Array.from(new Set([...(fieldState.collectedResourceObjectIds ?? []), resourceObjectId]));
 
-  updateGameState((state) => grantSessionResources(state, {
-    resources: {
-      [resourceType]: amount,
-    } as Partial<ResourceWallet>,
-  }));
+  const persistentResourceKey = String(targetObject.metadata?.persistentKey ?? targetObject.id);
+  updateGameState((state) => {
+    const rewardedState = grantSessionResources(state, {
+      resources: {
+        [resourceType]: amount,
+      } as Partial<ResourceWallet>,
+    });
+    return currentMap && isOuterDeckOpenWorldMap(currentMap)
+      ? markOuterDeckOpenWorldResourceCollected(rewardedState, persistentResourceKey)
+      : rewardedState;
+  });
+  refreshPinnedResourceBalanceCard();
 
   if (source === "sable") {
-    playSableBark(performance.now(), "pickup");
+    playSablePickupBark(performance.now());
   }
 
   triggerFeedback({
@@ -5166,7 +6939,7 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
       y: collectorPosition.y,
       space: "field-world",
     },
-    text: `+${amount} ${resourceLabel}`,
+    text: pickupText,
     channel: "field-resource-pickup",
     meta: {
       resourceType,
@@ -5177,17 +6950,355 @@ function collectFieldResourceObject(resourceObjectId: string, source: "player" |
 
   showSystemPing({
     type: "success",
-    title: source === "sable" ? "SABLE RECOVERED SALVAGE" : "SALVAGE RECOVERED",
-    message: `${targetObject.metadata?.name ?? resourceLabel} secured.`,
-    detail: `+${amount} ${resourceLabel}`,
-    durationMs: 2600,
+    message: pickupText,
+    durationMs: 1400,
     channel: "field-resource-pickup",
     replaceChannel: true,
   });
 }
 
-function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
-  const drops = enemy.drops;
+type ApronLanternPlacementTile = {
+  worldTileX: number;
+  worldTileY: number;
+  localTileX: number;
+  localTileY: number;
+};
+
+function getApronLanternPlacementCandidate(
+  map: FieldMap,
+  worldTileX: number,
+  worldTileY: number,
+): ApronLanternPlacementTile | null {
+  const metadata = getOuterDeckStreamMetadata(map);
+  if (!metadata) {
+    return null;
+  }
+
+  const localTileX = worldTileX - metadata.worldOriginTileX;
+  const localTileY = worldTileY - metadata.worldOriginTileY;
+  if (localTileX < 0 || localTileY < 0 || localTileX >= map.width || localTileY >= map.height) {
+    return null;
+  }
+
+  const tile = map.tiles[localTileY]?.[localTileX];
+  if (!tile || tile.render3d === false || (!tile.walkable && tile.standable3d !== true)) {
+    return null;
+  }
+
+  const occupiedByObject = map.objects.some((object) => {
+    if (object.type === "enemy" || object.metadata?.ziplineTrack === true || object.metadata?.havenCargoElevatorExterior === true) {
+      return false;
+    }
+    return localTileX >= object.x
+      && localTileX < object.x + object.width
+      && localTileY >= object.y
+      && localTileY < object.y + object.height;
+  });
+  if (occupiedByObject) {
+    return null;
+  }
+
+  return {
+    worldTileX,
+    worldTileY,
+    localTileX,
+    localTileY,
+  };
+}
+
+function findApronLanternPlacementTile(map: FieldMap, avatar: Pick<PlayerAvatar, "x" | "y" | "facing">): ApronLanternPlacementTile | null {
+  const world = outerDeckLocalPixelToWorld(map, avatar.x, avatar.y);
+  const playerWorldTileX = Math.floor(world.x / FIELD_TILE_SIZE);
+  const playerWorldTileY = Math.floor(world.y / FIELD_TILE_SIZE);
+  const forward = getFieldFacingUnitVector(avatar.facing);
+  const side = { x: -forward.y, y: forward.x };
+  const offsets = [
+    { x: forward.x, y: forward.y },
+    { x: forward.x + side.x, y: forward.y + side.y },
+    { x: forward.x - side.x, y: forward.y - side.y },
+    { x: 0, y: 0 },
+    { x: side.x, y: side.y },
+    { x: -side.x, y: -side.y },
+    { x: -forward.x, y: -forward.y },
+  ];
+  const visited = new Set<string>();
+
+  for (const offset of offsets) {
+    const worldTileX = playerWorldTileX + offset.x;
+    const worldTileY = playerWorldTileY + offset.y;
+    const key = `${worldTileX}:${worldTileY}`;
+    if (visited.has(key)) {
+      continue;
+    }
+    visited.add(key);
+
+    const candidate = getApronLanternPlacementCandidate(map, worldTileX, worldTileY);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function placeApronLanternAtPlayer(): void {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return;
+  }
+
+  const avatar = getRuntimeFieldAvatar("P1") ?? fieldState.player;
+  const placement = findApronLanternPlacementTile(currentMap, avatar);
+  if (!placement) {
+    showSystemPing({
+      type: "info",
+      title: "NO CLEAR LANTERN SPOT",
+      message: "Aeriss needs a clear nearby Apron tile to set a route light.",
+      channel: "field-apron-lantern",
+      replaceChannel: true,
+    });
+    playPlaceholderSfx("system-error");
+    return;
+  }
+
+  const { worldTileX, worldTileY } = placement;
+  const lanternId = `apron_lantern:${worldTileX}:${worldTileY}`;
+  const openWorld = getOuterDeckOpenWorldState(getGameState());
+  if (openWorld.placedLanterns.some((lantern) => lantern.worldTileX === worldTileX && lantern.worldTileY === worldTileY)) {
+    showSystemPing({
+      type: "info",
+      title: "LANTERN ALREADY SET",
+      message: "This Apron tile already has route light.",
+      channel: "field-apron-lantern",
+      replaceChannel: true,
+    });
+    return;
+  }
+
+  let didPlace = false;
+  updateGameState((state) => {
+    const spend = spendSessionCost(state, { resources: APRON_LANTERN_RESOURCE_COST });
+    if (!spend.success) {
+      return state;
+    }
+
+    didPlace = true;
+    return placeOuterDeckOpenWorldLantern(spend.state, {
+      id: lanternId,
+      worldTileX,
+      worldTileY,
+    });
+  });
+  refreshPinnedResourceBalanceCard();
+
+  if (!didPlace) {
+    showSystemPing({
+      type: "error",
+      title: "LANTERN NEEDS SUPPLIES",
+      message: "Placed lanterns cost 1 Wood and 1 Metal Scrap.",
+      channel: "field-apron-lantern",
+      replaceChannel: true,
+    });
+    playPlaceholderSfx("system-error");
+    return;
+  }
+
+  showSystemPing({
+    type: "success",
+    title: "LANTERN PLACED",
+    message: "Route light set nearby in the Apron.",
+    detail: "-1 Wood / -1 Metal Scrap",
+    durationMs: 3200,
+    channel: "field-apron-lantern",
+    replaceChannel: true,
+  });
+  playPlaceholderSfx("ui-confirm");
+  refreshCurrentOuterDeckMapFromState();
+}
+
+function hasFieldEnemyDrops(drops: FieldEnemy["drops"] | undefined): boolean {
+  if (!drops) {
+    return false;
+  }
+
+  const wad = Math.max(0, Math.floor(Number(drops.wad ?? 0)));
+  if (wad > 0) {
+    return true;
+  }
+
+  if (BASIC_RESOURCE_KEYS.some((key) => Math.max(0, Math.floor(Number(drops.resources?.[key] ?? 0))) > 0)) {
+    return true;
+  }
+
+  return (drops.items ?? []).some((item) => item.id && item.quantity > 0 && item.chance > 0);
+}
+
+function cloneFieldEnemyDrops(drops: FieldEnemy["drops"] | undefined): FieldEnemy["drops"] | undefined {
+  if (!drops) {
+    return undefined;
+  }
+
+  return {
+    wad: drops.wad,
+    resources: drops.resources ? { ...drops.resources } : undefined,
+    items: drops.items?.map((item) => ({ ...item })),
+  };
+}
+
+function fieldLootOrbGravitySmoothstep(value: number): number {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - (2 * t));
+}
+
+function canDriftLootOrbTo(x: number, y: number): boolean {
+  if (!currentMap) {
+    return false;
+  }
+
+  return canMoveEntityOnMap(
+    currentMap,
+    x,
+    y,
+    FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE,
+    FIELD_LOOT_ORB_DRIFT_COLLISION_SIZE,
+  );
+}
+
+function getNearestLootOrbGravityTarget(orb: FieldLootOrb): Pick<PlayerAvatar, "x" | "y"> | null {
+  const state = getGameState();
+  let bestTarget: Pick<PlayerAvatar, "x" | "y"> | null = null;
+  let bestDistance = FIELD_LOOT_ORB_GRAVITY_RADIUS;
+
+  (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+    if (!isFieldPlayerActive(playerId, state)) {
+      return;
+    }
+
+    const avatar = getRuntimeFieldAvatar(playerId, state);
+    if (!avatar) {
+      return;
+    }
+
+    const distance = Math.hypot(avatar.x - orb.x, avatar.y - orb.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestTarget = avatar;
+    }
+  });
+
+  return bestTarget;
+}
+
+function updateFieldLootOrbs(deltaTime: number, currentTime: number): void {
+  if (!fieldState?.lootOrbs || fieldState.lootOrbs.length === 0 || !currentMap) {
+    return;
+  }
+
+  const seconds = Math.min(0.05, Math.max(0, deltaTime / 1000));
+  if (seconds <= 0) {
+    return;
+  }
+
+  for (const orb of fieldState.lootOrbs) {
+    let vx = Number(orb.vx ?? 0);
+    let vy = Number(orb.vy ?? 0);
+    const ageMs = currentTime - orb.spawnedAt;
+    const target = ageMs >= FIELD_LOOT_ORB_GRAVITY_SETTLE_DELAY_MS
+      ? getNearestLootOrbGravityTarget(orb)
+      : null;
+
+    if (target) {
+      const dx = target.x - orb.x;
+      const dy = target.y - orb.y;
+      const distance = Math.max(0.001, Math.hypot(dx, dy));
+      if (distance > FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS) {
+        const rangeT = 1 - ((distance - FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS)
+          / Math.max(1, FIELD_LOOT_ORB_GRAVITY_RADIUS - FIELD_LOOT_ORB_GRAVITY_HOLD_RADIUS));
+        const pull = fieldLootOrbGravitySmoothstep(rangeT);
+        vx += (dx / distance) * FIELD_LOOT_ORB_GRAVITY_ACCELERATION * pull * seconds;
+        vy += (dy / distance) * FIELD_LOOT_ORB_GRAVITY_ACCELERATION * pull * seconds;
+      }
+    }
+
+    const speed = Math.hypot(vx, vy);
+    if (speed > FIELD_LOOT_ORB_GRAVITY_MAX_SPEED) {
+      const speedScale = FIELD_LOOT_ORB_GRAVITY_MAX_SPEED / speed;
+      vx *= speedScale;
+      vy *= speedScale;
+    }
+
+    const damping = target ? Math.pow(0.18, seconds) : Math.pow(0.035, seconds);
+    vx *= damping;
+    vy *= damping;
+
+    if (Math.abs(vx) < 0.02) {
+      vx = 0;
+    }
+    if (Math.abs(vy) < 0.02) {
+      vy = 0;
+    }
+
+    const nextX = orb.x + vx * seconds;
+    const nextY = orb.y + vy * seconds;
+    if (vx !== 0 && canDriftLootOrbTo(nextX, orb.y)) {
+      orb.x = nextX;
+    } else {
+      vx = 0;
+    }
+    if (vy !== 0 && canDriftLootOrbTo(orb.x, nextY)) {
+      orb.y = nextY;
+    } else {
+      vy = 0;
+    }
+
+    orb.vx = vx;
+    orb.vy = vy;
+  }
+}
+
+function shouldSpawnLootOrbForEnemy(enemy: FieldEnemy): boolean {
+  return Boolean(
+    currentMap
+      && fieldState
+      && isHaven3DFieldRuntimeActive()
+      && getOuterDeckFieldContext(String(currentMap.id)) !== "haven"
+      && hasFieldEnemyDrops(enemy.drops),
+  );
+}
+
+function spawnFieldEnemyLootOrb(enemy: FieldEnemy): void {
+  if (!fieldState || !hasFieldEnemyDrops(enemy.drops)) {
+    return;
+  }
+
+  const now = performance.now();
+  const orb: FieldLootOrb = {
+    id: `field_loot_orb_${enemy.id}_${Math.round(now)}`,
+    x: enemy.x,
+    y: enemy.y,
+    radius: FIELD_LOOT_ORB_RADIUS,
+    drops: cloneFieldEnemyDrops(enemy.drops),
+    sourceEnemyId: enemy.id,
+    sourceEnemyName: enemy.name,
+    spawnedAt: now,
+  };
+
+  fieldState.lootOrbs = [
+    ...(fieldState.lootOrbs ?? []).filter((existing) => existing.sourceEnemyId !== enemy.id),
+    orb,
+  ];
+
+  showSystemPing({
+    type: "info",
+    title: "LOOT ORB FORMED",
+    message: enemy.name,
+    detail: "Break it with the Gearblade to claim the drop.",
+    durationMs: 2600,
+    channel: "field-enemy-drops",
+    replaceChannel: true,
+  });
+}
+
+function awardFieldDrops(drops: FieldEnemy["drops"] | undefined): string[] {
   if (!drops) {
     return [];
   }
@@ -5292,8 +7403,13 @@ function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
       },
     };
   });
+  refreshPinnedResourceBalanceCard();
 
   return rewardLines;
+}
+
+function awardFieldEnemyDrops(enemy: FieldEnemy): string[] {
+  return awardFieldDrops(enemy.drops);
 }
 
 function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
@@ -5306,7 +7422,9 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
 
   updateQuestProgress("kill_enemies", 1, 1);
 
-  const rewardLines = awardFieldEnemyDrops(enemy);
+  const rewardLines = shouldSpawnLootOrbForEnemy(enemy)
+    ? (spawnFieldEnemyLootOrb(enemy), [])
+    : awardFieldEnemyDrops(enemy);
   if (rewardLines.length > 0) {
     showSystemPing({
       type: "success",
@@ -5317,6 +7435,33 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
       channel: "field-enemy-drops",
       replaceChannel: true,
     });
+  }
+
+  if (currentMap && isOuterDeckOpenWorldMap(currentMap)) {
+    const sourceObject = getFieldObjectForEnemy(enemy);
+    const bossKey = String(sourceObject?.metadata?.bossKey ?? "");
+    if (bossKey) {
+      const bossResult = claimOuterDeckWorldBossDefeat(
+        getGameState(),
+        bossKey,
+        normalizeOuterDeckZoneId(sourceObject?.metadata?.bossZoneId),
+      );
+      updateGameState(() => bossResult.state);
+      showSystemPing({
+        type: "success",
+        title: "WORLD BOSS DEFEATED",
+        message: enemy.name,
+        detail: bossResult.awardedRecipeId
+          ? `Recovered ${bossResult.awardedRecipeId.replace(/^recipe_/, "").replace(/_/g, " ").toUpperCase()}.`
+          : "Boss salvage transferred to HAVEN.",
+        durationMs: 5200,
+        channel: "outer-deck-world-boss",
+        replaceChannel: true,
+      });
+    } else {
+      const persistentKey = getPersistentFieldEnemyKey(enemy);
+      updateGameState((state) => markOuterDeckOpenWorldEnemyDefeated(state, persistentKey));
+    }
   }
 
   if (currentMap && isOuterDeckBranchMap(String(currentMap.id))) {
@@ -5330,6 +7475,27 @@ function handleFieldEnemyDefeat(enemy: FieldEnemy): void {
         message: subarea.title,
         detail: "Route gate and recovery interactions are now available.",
         channel: "outer-deck-subarea-clear",
+        replaceChannel: true,
+      });
+    }
+  }
+
+  if (currentMap && isOuterDeckInteriorMap(String(currentMap.id))) {
+    const ref = parseOuterDeckInteriorMapId(String(currentMap.id));
+    const roomKey = ref ? getOuterDeckInteriorRoomKey(ref) : "";
+    const roomCleared = Boolean(ref) && Boolean(fieldState?.fieldEnemies?.every((fieldEnemy) => fieldEnemy.hp <= 0));
+    if (
+      ref
+      && roomCleared
+      && !getGameState().outerDecks?.openWorld?.clearedInteriorRoomKeys?.includes(roomKey)
+    ) {
+      updateGameState((state) => markOuterDeckInteriorRoomCleared(state, roomKey));
+      showSystemPing({
+        type: "success",
+        title: "CORRIDOR SECURED",
+        message: currentMap.name,
+        detail: "The deeper route and cache interactions are now available.",
+        channel: "outer-deck-interior-clear",
         replaceChannel: true,
       });
     }
@@ -5365,7 +7531,13 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       continue;
     }
 
-    enemy.hp -= meleeDamage;
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "blade");
+    if (defenseResult.blocked) {
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      continue;
+    }
+
+    enemy.hp -= meleeDamage * defenseResult.damageMultiplier;
     fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + meleeEnergyGain);
 
     const dx = enemy.x - player.x;
@@ -5381,6 +7553,550 @@ function performFieldMeleeAttack(player: { x: number; y: number; facing: "north"
       handleFieldEnemyDefeat(enemy);
     }
   }
+}
+
+function performFieldGrappleAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {
+  if (!fieldState?.fieldEnemies) {
+    return;
+  }
+
+  const target = getNearestFieldEnemyInRange(player, FIELD_GRAPPLE_RANGE, -0.18);
+  if (!target) {
+    showSystemPing({
+      type: "info",
+      title: "NO GRAPPLE TARGET",
+      message: "Face a hostile within tether range.",
+      channel: "field-combat-grapple",
+      replaceChannel: true,
+    });
+    playPlaceholderSfx("ui-move");
+    return;
+  }
+
+  const defenseResult = resolveHaven3DGearbladeDamage(target, "grapple");
+  if (defenseResult.blocked) {
+    showHaven3DDefensePing(target, defenseResult.defense, defenseResult.requiredBreaker);
+    playPlaceholderSfx("ui-move");
+    return;
+  }
+  if (defenseResult.breaksDefense) {
+    target.gearbladeDefenseBroken = true;
+    showHaven3DDefenseBreakPing(target, defenseResult.defense);
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const damage = (FIELD_GRAPPLE_DAMAGE + Math.max(0, Math.floor(bowbladeFieldProfile.meleeDamageBonus * 0.35))) * defenseResult.damageMultiplier;
+  target.hp -= damage;
+
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  target.vx = -(dx / distance) * FIELD_GRAPPLE_PULL_FORCE;
+  target.vy = -(dy / distance) * FIELD_GRAPPLE_PULL_FORCE;
+  target.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION * 1.45;
+  target.facing = getFieldFacingFromDelta(player.x - target.x, player.y - target.y, target.facing);
+
+  if (target.hp <= 0) {
+    handleFieldEnemyDefeat(target);
+  }
+  playPlaceholderSfx("ui-confirm");
+}
+
+function getFieldFacingUnitVector(facing: "north" | "south" | "east" | "west"): { x: number; y: number } {
+  switch (facing) {
+    case "north":
+      return { x: 0, y: -1 };
+    case "south":
+      return { x: 0, y: 1 };
+    case "east":
+      return { x: 1, y: 0 };
+    case "west":
+      return { x: -1, y: 0 };
+    default:
+      return { x: 0, y: 1 };
+  }
+}
+
+function getFieldFacingFromDelta(
+  dx: number,
+  dy: number,
+  fallback: "north" | "south" | "east" | "west",
+): "north" | "south" | "east" | "west" {
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+    return fallback;
+  }
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? "east" : "west";
+  }
+  return dy >= 0 ? "south" : "north";
+}
+
+function getNearestFieldEnemyInRange(
+  origin: Pick<PlayerAvatar, "x" | "y" | "facing">,
+  range: number,
+  minForwardDot = -1,
+): FieldEnemy | null {
+  if (!fieldState?.fieldEnemies) {
+    return null;
+  }
+
+  const direction = getFieldFacingUnitVector(origin.facing);
+  let nearestEnemy: FieldEnemy | null = null;
+  let nearestDistance = range;
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - origin.x;
+    const dy = enemy.y - origin.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 0.001 || distance > nearestDistance) {
+      continue;
+    }
+
+    const dot = ((dx / distance) * direction.x) + ((dy / distance) * direction.y);
+    if (dot < minForwardDot) {
+      continue;
+    }
+
+    nearestEnemy = enemy;
+    nearestDistance = distance;
+  }
+  return nearestEnemy;
+}
+
+type FieldEnemyPingTone = "info" | "warning" | "success" | "danger";
+
+function showFieldEnemyPing(
+  enemy: FieldEnemy,
+  title: string,
+  detail: string | null,
+  tone: FieldEnemyPingTone,
+): void {
+  if (isHaven3DFieldRuntimeActive() && haven3DFieldController?.showEnemyPing(enemy.id, title, detail, tone)) {
+    return;
+  }
+
+  const text = detail ? `${title} // ${detail}` : title;
+  triggerFeedback({
+    type: tone === "success" ? "ui_confirm" : tone === "danger" ? "hit" : "warning",
+    source: "field",
+    intensity: tone === "danger" ? 2 : 1,
+    position: {
+      x: enemy.x,
+      y: enemy.y - Math.max(FIELD_ENEMY_PING_2D_CLEARANCE, enemy.height * 1.32),
+      space: "field-world",
+    },
+    text,
+    channel: `field-enemy-ping-${enemy.id}`,
+    audioHook: null,
+    haptic: null,
+    meta: {
+      tone,
+      enemyId: enemy.id,
+    },
+  });
+}
+
+function showHaven3DDefensePing(enemy: FieldEnemy, defense: Haven3DEnemyDefense, requiredMode: string | null): void {
+  if (defense === "none" || !requiredMode) {
+    return;
+  }
+
+  showFieldEnemyPing(
+    enemy,
+    defense === "shield" ? "SHIELD HELD" : "ARMOR HELD",
+    `USE ${requiredMode.toUpperCase()}`,
+    "warning",
+  );
+}
+
+function showHaven3DDefenseBreakPing(enemy: FieldEnemy, defense: Haven3DEnemyDefense): void {
+  if (defense === "none") {
+    return;
+  }
+
+  showFieldEnemyPing(
+    enemy,
+    defense === "shield" ? "SHIELD RIPPED" : "ARMOR CRACKED",
+    "VULNERABLE",
+    "success",
+  );
+}
+
+function getDistanceToSegmentPx(
+  pointX: number,
+  pointY: number,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): number {
+  const segmentX = endX - startX;
+  const segmentY = endY - startY;
+  const segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY);
+  if (segmentLengthSquared <= 0.001) {
+    return Math.hypot(pointX - startX, pointY - startY);
+  }
+
+  const rawT = (((pointX - startX) * segmentX) + ((pointY - startY) * segmentY)) / segmentLengthSquared;
+  const t = Math.max(0, Math.min(1, rawT));
+  const closestX = startX + segmentX * t;
+  const closestY = startY + segmentY * t;
+  return Math.hypot(pointX - closestX, pointY - closestY);
+}
+
+function breakFieldLootOrb(orb: FieldLootOrb, strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+}): boolean {
+  if (!fieldState?.lootOrbs) {
+    return false;
+  }
+
+  const index = fieldState.lootOrbs.findIndex((entry) => entry.id === orb.id);
+  if (index < 0) {
+    return false;
+  }
+
+  const drops = cloneFieldEnemyDrops(orb.drops);
+  fieldState.lootOrbs.splice(index, 1);
+  const rewardLines = awardFieldDrops(drops);
+  const detail = rewardLines.length > 0
+    ? rewardLines.join(" | ")
+    : "No usable salvage remained.";
+
+  triggerFeedback({
+    type: "resource",
+    source: "field",
+    intensity: 2,
+    position: {
+      x: orb.x,
+      y: orb.y,
+      space: "field-world",
+    },
+    targetPosition: {
+      x: strike.x,
+      y: strike.y,
+      space: "field-world",
+    },
+    text: rewardLines.length > 0 ? rewardLines.join(" ") : "ORB BROKEN",
+    channel: `field-loot-orb-${orb.id}`,
+    meta: {
+      sourceEnemyId: orb.sourceEnemyId,
+      playerId: strike.playerId,
+    },
+  });
+
+  showSystemPing({
+    type: rewardLines.length > 0 ? "success" : "info",
+    title: "LOOT ORB BROKEN",
+    message: orb.sourceEnemyName ?? "Apron salvage",
+    detail,
+    durationMs: rewardLines.length > 0 ? 4200 : 2400,
+    channel: "field-enemy-drops",
+    replaceChannel: true,
+  });
+  playPlaceholderSfx("ui-confirm");
+  return true;
+}
+
+function breakLootOrbsWithBladeStrike(strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  hiltX: number;
+  hiltY: number;
+  tipX: number;
+  tipY: number;
+  bladeHalfWidth: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+}): boolean {
+  if (!fieldState?.lootOrbs || fieldState.lootOrbs.length === 0) {
+    return false;
+  }
+
+  let didBreak = false;
+  for (const orb of [...fieldState.lootOrbs]) {
+    const bladeDistance = getDistanceToSegmentPx(
+      orb.x,
+      orb.y,
+      strike.hiltX,
+      strike.hiltY,
+      strike.tipX,
+      strike.tipY,
+    );
+    const distance = Math.hypot(orb.x - strike.x, orb.y - strike.y);
+    const isLockedTarget = strike.target?.kind === "loot-orb" && strike.target.id === orb.id;
+    const lockAssistWidth = isLockedTarget ? 22 : 0;
+    const lockAssistReach = isLockedTarget ? 24 : 0;
+    if (bladeDistance > strike.bladeHalfWidth + orb.radius + lockAssistWidth) {
+      continue;
+    }
+    if (distance > strike.radius + orb.radius + lockAssistReach) {
+      continue;
+    }
+
+    didBreak = breakFieldLootOrb(orb, strike) || didBreak;
+  }
+
+  return didBreak;
+}
+
+function handleHaven3DBladeStrike(strike: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  facing: "north" | "south" | "east" | "west";
+  directionX: number;
+  directionY: number;
+  hiltX: number;
+  hiltY: number;
+  tipX: number;
+  tipY: number;
+  bladeHalfWidth: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  arcRadians: number;
+  damage: number;
+  knockback: number;
+}): boolean {
+  if (!fieldState) {
+    return false;
+  }
+
+  const brokeLootOrb = breakLootOrbsWithBladeStrike(strike);
+  if (!fieldState.fieldEnemies) {
+    return brokeLootOrb;
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const baseDamage = strike.damage + bowbladeFieldProfile.meleeDamageBonus;
+  const knockback = strike.knockback + bowbladeFieldProfile.meleeKnockbackBonus;
+  const energyGain = BOWBLADE_BASE_MELEE_CHARGE_GAIN + bowbladeFieldProfile.meleeEnergyGainBonus;
+  let didHit = brokeLootOrb;
+
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - strike.x;
+    const dy = enemy.y - strike.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const isLockedTarget = strike.target?.kind === "enemy" && strike.target.id === enemy.id;
+    const bladeDistance = getDistanceToSegmentPx(
+      enemy.x,
+      enemy.y,
+      strike.hiltX,
+      strike.hiltY,
+      strike.tipX,
+      strike.tipY,
+    );
+    const enemyRadius = Math.max(enemy.width, enemy.height) * 0.48;
+    const lockAssistWidth = isLockedTarget ? 32 : 0;
+    const lockAssistReach = isLockedTarget ? 34 : 0;
+    if (bladeDistance > strike.bladeHalfWidth + enemyRadius + lockAssistWidth) {
+      continue;
+    }
+    if (
+      distance > strike.radius + enemyRadius + lockAssistReach
+    ) {
+      continue;
+    }
+
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "blade");
+    if (defenseResult.blocked) {
+      didHit = true;
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      continue;
+    }
+
+    const damage = baseDamage * defenseResult.damageMultiplier;
+    didHit = true;
+    enemy.hp -= damage;
+    if (fieldState.combat) {
+      fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
+    }
+    enemy.vx = (dx / distance) * knockback;
+    enemy.vy = (dy / distance) * knockback;
+    enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+
+    if (enemy.hp <= 0) {
+      handleFieldEnemyDefeat(enemy);
+    }
+  }
+
+  playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
+  return didHit;
+}
+
+function handleHaven3DLauncherFire(fire: {
+  playerId: PlayerId;
+  utility: "attack" | "flare";
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+}): boolean {
+  if (fire.utility !== "flare" || !currentMap || !isOuterDeckOpenWorldMap(currentMap)) {
+    return true;
+  }
+
+  let didSpend = false;
+  updateGameState((state) => {
+    const spend = spendSessionCost(state, { resources: APRON_FLARE_RESOURCE_COST });
+    if (!spend.success) {
+      return state;
+    }
+
+    didSpend = true;
+    return spend.state;
+  });
+  refreshPinnedResourceBalanceCard();
+
+  if (!didSpend) {
+    showSystemPing({
+      type: "error",
+      title: "NO STEAM",
+      message: "Launcher flares cost 1 Steam Component.",
+      channel: "field-apron-flare",
+      replaceChannel: true,
+    });
+    playPlaceholderSfx("system-error");
+    return false;
+  }
+
+  showSystemPing({
+    type: "info",
+    title: "FLARE FIRED",
+    message: "Temporary route light launched into the Apron.",
+    detail: "-1 Steam Component",
+    durationMs: 2400,
+    channel: "field-apron-flare",
+    replaceChannel: true,
+  });
+  return true;
+}
+
+function handleHaven3DLauncherImpact(impact: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  damage: number;
+  knockback: number;
+  utility?: "attack" | "flare";
+}): boolean {
+  if (impact.utility === "flare") {
+    apronRuntimeFlares.push({
+      x: impact.x,
+      y: impact.y,
+      radius: APRON_FLARE_LIGHT_RADIUS_PX,
+      expiresAt: performance.now() + APRON_FLARE_DURATION_MS,
+    });
+    playPlaceholderSfx("system-info");
+    return true;
+  }
+
+  if (!fieldState?.fieldEnemies || !fieldState.combat) {
+    return false;
+  }
+
+  const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
+  const baseDamage = impact.damage + bowbladeFieldProfile.rangedDamageBonus;
+  const knockback = impact.knockback;
+  let didHit = false;
+
+  for (const enemy of fieldState.fieldEnemies) {
+    if (enemy.hp <= 0) {
+      continue;
+    }
+
+    const dx = enemy.x - impact.x;
+    const dy = enemy.y - impact.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const isLockedTarget = impact.target?.kind === "enemy" && impact.target.id === enemy.id;
+    if (!isLockedTarget && distance > impact.radius + Math.max(enemy.width, enemy.height) * 0.5) {
+      continue;
+    }
+    if (isLockedTarget && distance > impact.radius * 2.8) {
+      continue;
+    }
+
+    const defenseResult = resolveHaven3DGearbladeDamage(enemy, "launcher");
+    if (defenseResult.blocked) {
+      didHit = true;
+      showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+      break;
+    }
+    if (defenseResult.breaksDefense) {
+      enemy.gearbladeDefenseBroken = true;
+      showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+    }
+
+    const damage = baseDamage * defenseResult.damageMultiplier;
+    didHit = true;
+    enemy.hp -= damage;
+    enemy.vx = (dx / distance) * knockback;
+    enemy.vy = (dy / distance) * knockback;
+    enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
+
+    if (enemy.hp <= 0) {
+      handleFieldEnemyDefeat(enemy);
+    }
+    break;
+  }
+
+  playPlaceholderSfx(didHit ? "ui-confirm" : "ui-move");
+  return didHit;
+}
+
+function handleHaven3DGrappleImpact(impact: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef;
+  damage: number;
+  knockback: number;
+}): boolean {
+  if (!fieldState?.fieldEnemies || impact.target.kind !== "enemy") {
+    return false;
+  }
+
+  const enemy = fieldState.fieldEnemies.find((entry) => entry.id === impact.target.id && entry.hp > 0);
+  if (!enemy) {
+    return false;
+  }
+
+  const defenseResult = resolveHaven3DGearbladeDamage(enemy, "grapple");
+  if (defenseResult.blocked) {
+    showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+    playPlaceholderSfx("ui-move");
+    return true;
+  }
+  if (defenseResult.breaksDefense) {
+    enemy.gearbladeDefenseBroken = true;
+    showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+  }
+
+  const dx = enemy.x - impact.x;
+  const dy = enemy.y - impact.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  enemy.hp -= impact.damage * defenseResult.damageMultiplier;
+  enemy.vx = (dx / distance) * impact.knockback;
+  enemy.vy = (dy / distance) * impact.knockback;
+  enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION * 1.35;
+
+  if (enemy.hp <= 0) {
+    handleFieldEnemyDefeat(enemy);
+  }
+
+  playPlaceholderSfx("ui-confirm");
+  return true;
 }
 
 function performFieldRangedAttack(player: { x: number; y: number; facing: "north" | "south" | "east" | "west" }): void {
@@ -5438,6 +8154,7 @@ function performFieldRangedAttack(player: { x: number; y: number; facing: "north
     damage: rangedDamage,
     lifetime: 0,
     maxLifetime: FIELD_PROJECTILE_LIFETIME,
+    gearbladeMode: "launcher",
   });
 }
 
@@ -5503,15 +8220,19 @@ function updateFieldAutoTurrets(currentTime: number): void {
 }
 
 function updateFieldCombat(deltaTime: number, currentTime: number): void {
-  if (!fieldState?.combat || !fieldState.fieldEnemies || !fieldState.projectiles || !currentMap) {
+  if (fieldFailureTransitionPending) {
     return;
   }
 
-  if (fieldState.combat.attackCooldown > 0) {
+  if (!fieldState || !fieldState.fieldEnemies || !fieldState.projectiles || !currentMap) {
+    return;
+  }
+
+  if (fieldState.combat && fieldState.combat.attackCooldown > 0) {
     fieldState.combat.attackCooldown = Math.max(0, fieldState.combat.attackCooldown - deltaTime);
   }
 
-  if (fieldState.combat.isAttacking) {
+  if (fieldState.combat?.isAttacking) {
     fieldState.combat.attackAnimTime -= deltaTime;
     if (fieldState.combat.attackAnimTime <= 0) {
       fieldState.combat.attackAnimTime = 0;
@@ -5550,6 +8271,29 @@ function updateFieldProjectiles(deltaTime: number): void {
       continue;
     }
 
+    if (projectile.hostile) {
+      const sourceEnemy = fieldState.fieldEnemies.find((enemy) => enemy.id === projectile.sourceEnemyId && enemy.hp > 0);
+      if (!sourceEnemy) {
+        fieldState.projectiles.splice(index, 1);
+        continue;
+      }
+
+      const player = fieldState.player;
+      const hitRadius = Math.max(4, Number(projectile.radius ?? FIELD_ENEMY_PROJECTILE_RADIUS)) + Math.max(player.width, player.height) * 0.48;
+      const distance = Math.hypot(player.x - projectile.x, player.y - projectile.y);
+      if (distance <= hitRadius) {
+        applyFieldPlayerDamage(
+          sourceEnemy,
+          projectile.damage,
+          getHaven3DEnemyAttackProfile(sourceEnemy).knockbackForce,
+          { x: projectile.vx, y: projectile.vy },
+          getHaven3DEnemyAttackLabel("shot"),
+        );
+        fieldState.projectiles.splice(index, 1);
+      }
+      continue;
+    }
+
     for (const enemy of fieldState.fieldEnemies) {
       if (enemy.hp <= 0) {
         continue;
@@ -5560,7 +8304,22 @@ function updateFieldProjectiles(deltaTime: number): void {
         continue;
       }
 
-      enemy.hp -= projectile.damage;
+      let damageMultiplier = 1;
+      if (projectile.gearbladeMode === "launcher") {
+        const defenseResult = resolveHaven3DGearbladeDamage(enemy, "launcher");
+        if (defenseResult.blocked) {
+          showHaven3DDefensePing(enemy, defenseResult.defense, defenseResult.requiredBreaker);
+          fieldState.projectiles.splice(index, 1);
+          break;
+        }
+        if (defenseResult.breaksDefense) {
+          enemy.gearbladeDefenseBroken = true;
+          showHaven3DDefenseBreakPing(enemy, defenseResult.defense);
+        }
+        damageMultiplier = defenseResult.damageMultiplier;
+      }
+
+      enemy.hp -= projectile.damage * damageMultiplier;
       if (distance > 0) {
         enemy.vx = ((enemy.x - projectile.x) / distance) * (FIELD_ENEMY_KNOCKBACK_FORCE * 0.5);
         enemy.vy = ((enemy.y - projectile.y) / distance) * (FIELD_ENEMY_KNOCKBACK_FORCE * 0.5);
@@ -5575,6 +8334,474 @@ function updateFieldProjectiles(deltaTime: number): void {
       break;
     }
   }
+}
+
+function handleFieldPlayerDefeat(sourceEnemy: FieldEnemy | null): void {
+  if (!fieldState || fieldFailureTransitionPending) {
+    return;
+  }
+
+  fieldFailureTransitionPending = true;
+  fieldState.isPaused = true;
+  fieldState.player.hp = 0;
+  fieldState.player.vx = 0;
+  fieldState.player.vy = 0;
+
+  const failureMapId = currentMap?.id ?? fieldState.currentMap;
+  const isOuterDeckFailure = getOuterDeckFieldContext(String(failureMapId)) !== "haven";
+  const snapshot = isOuterDeckFailure ? outerDeckRunSnapshot : null;
+  const lossDetail = isOuterDeckFailure
+    ? formatOuterDeckRunLossSummary(snapshot, getGameState())
+    : "Recovered to HAVEN medical after field collapse.";
+  const sourceName = sourceEnemy?.name ? `Collapsed under ${sourceEnemy.name} pressure.` : "Field state collapsed.";
+
+  playPlaceholderSfx("battle-defeat");
+  suppressOuterDeckRuntimePersist = true;
+
+  try {
+    updateGameState((state) => {
+      const restored = snapshot ? restoreOuterDeckRunSnapshot(state, snapshot) : state;
+      return isOuterDeckFailure ? abortOuterDeckExpedition(restored) : restored;
+    });
+    outerDeckRunSnapshot = null;
+    setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
+    renderFieldScreen("base_camp");
+  } finally {
+    suppressOuterDeckRuntimePersist = false;
+    window.setTimeout(() => {
+      fieldFailureTransitionPending = false;
+    }, 0);
+  }
+
+  showSystemPing({
+    type: "error",
+    title: isOuterDeckFailure ? "APRON SURVEY FAILED" : "FIELD STATE BROKEN",
+    message: sourceName,
+    detail: lossDetail,
+    durationMs: 6200,
+    channel: "field-player-defeat",
+    replaceChannel: true,
+  });
+}
+
+function applyFieldPlayerDamage(
+  enemy: FieldEnemy,
+  amount: number,
+  knockbackForce: number,
+  direction: { x: number; y: number },
+  title: string,
+): void {
+  if (!fieldState || fieldFailureTransitionPending || (fieldState.player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  const player = fieldState.player;
+  const maxHp = Math.max(1, Number(player.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const nextHp = Math.max(0, Number(player.hp ?? maxHp) - Math.max(0, amount));
+  player.hp = nextHp;
+  player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
+
+  const knockbackDistance = Math.max(0.001, Math.hypot(direction.x, direction.y));
+  player.vx = (direction.x / knockbackDistance) * knockbackForce;
+  player.vy = (direction.y / knockbackDistance) * knockbackForce;
+
+  showFieldEnemyPing(
+    enemy,
+    title,
+    `STATE ${player.hp}/${player.maxHp}`,
+    "danger",
+  );
+  syncMountedFieldStateMeters();
+
+  if (nextHp <= 0) {
+    handleFieldPlayerDefeat(enemy);
+  }
+}
+
+function clearHaven3DEnemyAttack(enemy: FieldEnemy): void {
+  delete enemy.attackState;
+  delete enemy.attackStartedAt;
+  delete enemy.attackDidStrike;
+  delete enemy.attackLungeProgress;
+  delete enemy.attackOriginX;
+  delete enemy.attackOriginY;
+  delete enemy.attackTargetX;
+  delete enemy.attackTargetY;
+  delete enemy.attackDirectionX;
+  delete enemy.attackDirectionY;
+}
+
+function startHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): void {
+  const profile = getHaven3DEnemyAttackProfile(enemy);
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const distance = Math.max(0.001, Math.hypot(dx, dy));
+  enemy.attackStyle = profile.style;
+  enemy.attackState = "windup";
+  enemy.attackStartedAt = currentTime;
+  enemy.attackDidStrike = false;
+  enemy.attackLungeProgress = 0;
+  enemy.attackOriginX = enemy.x;
+  enemy.attackOriginY = enemy.y;
+  enemy.attackTargetX = player.x;
+  enemy.attackTargetY = player.y;
+  enemy.attackDirectionX = dx / distance;
+  enemy.attackDirectionY = dy / distance;
+  enemy.facing = getFieldFacingFromDelta(dx, dy, enemy.facing);
+}
+
+function spawnFieldEnemyProjectile(
+  enemy: FieldEnemy,
+  profile: ReturnType<typeof getHaven3DEnemyAttackProfile>,
+  currentTime: number,
+): void {
+  if (!fieldState?.projectiles) {
+    return;
+  }
+
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const directionLength = Math.max(0.001, Math.hypot(directionX, directionY));
+  const normalizedX = directionX / directionLength;
+  const normalizedY = directionY / directionLength;
+  const muzzleOffset = Math.max(enemy.width, enemy.height) * 0.62;
+  const speed = FIELD_ENEMY_PROJECTILE_SPEED;
+  const lifetime = Math.max(
+    900,
+    Math.min(FIELD_ENEMY_PROJECTILE_LIFETIME + 700, ((profile.reach + 96) / speed) * 1000),
+  );
+
+  fieldState.projectiles.push({
+    id: `field_enemy_projectile_${enemy.id}_${Math.round(currentTime)}_${Math.random().toString(36).slice(2)}`,
+    x: enemy.x + normalizedX * muzzleOffset,
+    y: enemy.y + normalizedY * muzzleOffset,
+    vx: normalizedX * speed,
+    vy: normalizedY * speed,
+    damage: profile.damage,
+    lifetime: 0,
+    maxLifetime: lifetime,
+    hostile: true,
+    sourceEnemyId: enemy.id,
+    radius: FIELD_ENEMY_PROJECTILE_RADIUS,
+  });
+}
+
+function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
+  if (!fieldState) {
+    return;
+  }
+
+  enemy.lastAttackAt = currentTime;
+  const player = fieldState.player;
+  const profile = getHaven3DEnemyAttackProfile(enemy);
+  if (profile.style === "shot") {
+    spawnFieldEnemyProjectile(enemy, profile, currentTime);
+    return;
+  }
+
+  if ((player.invulnerabilityTime ?? 0) > 0) {
+    return;
+  }
+
+  const originX = enemy.attackOriginX ?? enemy.x;
+  const originY = enemy.attackOriginY ?? enemy.y;
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const dx = player.x - originX;
+  const dy = player.y - originY;
+  const forwardDistance = (dx * directionX) + (dy * directionY);
+  const lateralDistance = Math.abs((dx * directionY) - (dy * directionX));
+  const wasHit = forwardDistance >= 0
+    && forwardDistance <= profile.reach + (player.height / 2)
+    && lateralDistance <= profile.halfWidth + (player.width / 2);
+
+  if (!wasHit) {
+    return;
+  }
+
+  applyFieldPlayerDamage(
+    enemy,
+    profile.damage,
+    profile.knockbackForce,
+    { x: dx, y: dy },
+    getHaven3DEnemyAttackLabel(profile.style),
+  );
+}
+
+function updateHaven3DEnemyAttackLunge(enemy: FieldEnemy, profile: ReturnType<typeof getHaven3DEnemyAttackProfile>, elapsed: number): void {
+  if (!profile.lungeDistancePx || !profile.lungeStartMs || !profile.lungeEndMs || profile.lungeEndMs <= profile.lungeStartMs) {
+    return;
+  }
+
+  const rawProgress = (elapsed - profile.lungeStartMs) / (profile.lungeEndMs - profile.lungeStartMs);
+  const clampedProgress = Math.max(0, Math.min(1, rawProgress));
+  const easedProgress = clampedProgress * clampedProgress * (3 - (2 * clampedProgress));
+  const previousProgress = Math.max(0, Math.min(1, Number(enemy.attackLungeProgress ?? 0)));
+  const progressDelta = Math.max(0, easedProgress - previousProgress);
+  if (progressDelta <= 0) {
+    enemy.attackLungeProgress = Math.max(previousProgress, easedProgress);
+    return;
+  }
+
+  const directionX = enemy.attackDirectionX ?? getFieldFacingUnitVector(enemy.facing).x;
+  const directionY = enemy.attackDirectionY ?? getFieldFacingUnitVector(enemy.facing).y;
+  const moveDistance = profile.lungeDistancePx * progressDelta;
+  const nextX = enemy.x + directionX * moveDistance;
+  const nextY = enemy.y + directionY * moveDistance;
+  if (canMoveEntityTo(nextX, enemy.y, enemy.width, enemy.height)) {
+    enemy.x = nextX;
+  }
+  if (canMoveEntityTo(enemy.x, nextY, enemy.width, enemy.height)) {
+    enemy.y = nextY;
+  }
+  enemy.attackLungeProgress = easedProgress;
+}
+
+function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): boolean {
+  const profile = getHaven3DEnemyAttackProfile(enemy);
+  if (enemy.attackState === "windup") {
+    const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
+    updateHaven3DEnemyAttackLunge(enemy, profile, elapsed);
+    if (!enemy.attackDidStrike && elapsed >= profile.windupMs) {
+      enemy.attackDidStrike = true;
+      applyHaven3DEnemyStrike(enemy, currentTime);
+      enemy.attackState = "recovery";
+      enemy.attackStartedAt = currentTime;
+    }
+    return true;
+  }
+
+  if (enemy.attackState === "recovery") {
+    const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
+    if (elapsed >= profile.recoveryMs) {
+      clearHaven3DEnemyAttack(enemy);
+    }
+    return true;
+  }
+
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const distance = Math.hypot(dx, dy);
+  const timeSinceLastAttack = currentTime - Number(enemy.lastAttackAt ?? Number.NEGATIVE_INFINITY);
+  if (
+    distance <= profile.triggerRange
+    && timeSinceLastAttack >= profile.cooldownMs
+  ) {
+    startHaven3DEnemyAttack(enemy, player, currentTime);
+    return true;
+  }
+
+  return false;
+}
+
+function getFiniteEnemyNumber(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function scheduleOuterDeckEnemyRoam(enemy: FieldEnemy, currentTime: number, retrySoon = false): void {
+  const delay = retrySoon
+    ? FIELD_OUTER_DECK_ENEMY_ROAM_RETRY_MS
+    : FIELD_OUTER_DECK_ENEMY_ROAM_INTERVAL_MIN_MS
+      + Math.random() * (FIELD_OUTER_DECK_ENEMY_ROAM_INTERVAL_MAX_MS - FIELD_OUTER_DECK_ENEMY_ROAM_INTERVAL_MIN_MS);
+  enemy.nextRoamAt = currentTime + delay;
+}
+
+function setOuterDeckEnemyRoamTarget(enemy: FieldEnemy, currentTime: number): boolean {
+  const radius = getFiniteEnemyNumber(enemy.roamRadius, 0);
+  if (radius <= 0) {
+    return false;
+  }
+
+  const homeX = getFiniteEnemyNumber(enemy.roamHomeX, enemy.x);
+  const homeY = getFiniteEnemyNumber(enemy.roamHomeY, enemy.y);
+  enemy.roamHomeX = homeX;
+  enemy.roamHomeY = homeY;
+
+  const distanceFromHome = Math.hypot(enemy.x - homeX, enemy.y - homeY);
+  if (distanceFromHome > radius * 1.18 && canMoveEntityTo(homeX, homeY, enemy.width, enemy.height)) {
+    enemy.roamTargetX = homeX;
+    enemy.roamTargetY = homeY;
+    return true;
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = radius * (0.28 + Math.random() * 0.72);
+    const targetX = homeX + Math.cos(angle) * distance;
+    const targetY = homeY + Math.sin(angle) * distance;
+    if (!canMoveEntityTo(targetX, targetY, enemy.width, enemy.height)) {
+      continue;
+    }
+
+    enemy.roamTargetX = targetX;
+    enemy.roamTargetY = targetY;
+    return true;
+  }
+
+  enemy.roamTargetX = undefined;
+  enemy.roamTargetY = undefined;
+  scheduleOuterDeckEnemyRoam(enemy, currentTime, true);
+  return false;
+}
+
+function updateOuterDeckEnemyRoam(enemy: FieldEnemy, movementDeltaMs: number, currentTime: number): boolean {
+  if (!currentMap || !isOuterDeckOpenWorldMap(currentMap) || getFiniteEnemyNumber(enemy.roamRadius, 0) <= 0) {
+    return false;
+  }
+
+  if (!Number.isFinite(Number(enemy.nextRoamAt))) {
+    enemy.nextRoamAt = currentTime;
+  }
+
+  let targetX = Number(enemy.roamTargetX);
+  let targetY = Number(enemy.roamTargetY);
+  if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+    if (currentTime < getFiniteEnemyNumber(enemy.nextRoamAt, currentTime)) {
+      return false;
+    }
+    if (!setOuterDeckEnemyRoamTarget(enemy, currentTime)) {
+      return false;
+    }
+    targetX = Number(enemy.roamTargetX);
+    targetY = Number(enemy.roamTargetY);
+  }
+
+  const dx = targetX - enemy.x;
+  const dy = targetY - enemy.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance <= FIELD_OUTER_DECK_ENEMY_ROAM_ARRIVAL_PX) {
+    enemy.roamTargetX = undefined;
+    enemy.roamTargetY = undefined;
+    scheduleOuterDeckEnemyRoam(enemy, currentTime);
+    return false;
+  }
+
+  const speedMultiplier = getFiniteEnemyNumber(enemy.roamSpeedMultiplier, 0.85);
+  const movementSeconds = Math.min(0.36, Math.max(0, movementDeltaMs / 1000));
+  const step = Math.min(distance, enemy.speed * speedMultiplier * movementSeconds);
+  if (step <= 0) {
+    return false;
+  }
+
+  const moveX = (dx / distance) * step;
+  const moveY = (dy / distance) * step;
+  const nextX = enemy.x + moveX;
+  const nextY = enemy.y + moveY;
+  let moved = false;
+
+  if (canMoveEntityTo(nextX, enemy.y, enemy.width, enemy.height)) {
+    enemy.x = nextX;
+    moved = true;
+  }
+  if (canMoveEntityTo(enemy.x, nextY, enemy.width, enemy.height)) {
+    enemy.y = nextY;
+    moved = true;
+  }
+
+  if (!moved) {
+    enemy.roamTargetX = undefined;
+    enemy.roamTargetY = undefined;
+    scheduleOuterDeckEnemyRoam(enemy, currentTime, true);
+    return false;
+  }
+
+  enemy.facing = getFieldFacingFromDelta(moveX, moveY, enemy.facing);
+  return true;
+}
+
+function pruneApronRuntimeFlares(currentTime: number): void {
+  apronRuntimeFlares = apronRuntimeFlares.filter((flare) => flare.expiresAt > currentTime);
+}
+
+function getApronLightSources(currentTime: number): Array<{ x: number; y: number; radius: number; kind: "hand" | "lantern" | "flare" }> {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return [];
+  }
+
+  pruneApronRuntimeFlares(currentTime);
+  const sources: Array<{ x: number; y: number; radius: number; kind: "hand" | "lantern" | "flare" }> = [];
+  const p1Avatar = getRuntimeFieldAvatar("P1");
+  if (p1Avatar) {
+    sources.push({ x: p1Avatar.x, y: p1Avatar.y, radius: getApronHandLanternLightRadius("P1"), kind: "hand" });
+  } else {
+    sources.push({ x: fieldState.player.x, y: fieldState.player.y, radius: getApronHandLanternLightRadius("P1"), kind: "hand" });
+  }
+
+  const state = getGameState();
+  const p2Avatar = isFieldPlayerActive("P2", state) ? getRuntimeFieldAvatar("P2", state) : null;
+  if (p2Avatar) {
+    sources.push({ x: p2Avatar.x, y: p2Avatar.y, radius: getApronHandLanternLightRadius("P2"), kind: "hand" });
+  }
+
+  currentMap.objects.forEach((object) => {
+    if (object.metadata?.apronLightSource !== true) {
+      return;
+    }
+
+    sources.push({
+      x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
+      y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
+      radius: Math.max(120, Number(object.metadata.lightRadiusPx ?? APRON_PLACED_LANTERN_LIGHT_RADIUS_PX)),
+      kind: "lantern",
+    });
+  });
+
+  apronRuntimeFlares.forEach((flare) => {
+    sources.push({ x: flare.x, y: flare.y, radius: flare.radius, kind: "flare" });
+  });
+
+  return sources;
+}
+
+function getNearestApronLightSource(
+  enemy: FieldEnemy,
+  currentTime: number,
+): { x: number; y: number; radius: number; distance: number } | null {
+  let nearest: { x: number; y: number; radius: number; distance: number } | null = null;
+  getApronLightSources(currentTime).forEach((source) => {
+    const distance = Math.hypot(enemy.x - source.x, enemy.y - source.y);
+    if (distance > source.radius) {
+      return;
+    }
+    if (!nearest || distance < nearest.distance) {
+      nearest = { ...source, distance };
+    }
+  });
+  return nearest;
+}
+
+function repelFieldEnemyFromApronLight(
+  enemy: FieldEnemy,
+  source: { x: number; y: number; radius: number; distance: number },
+  movementDeltaMs: number,
+): boolean {
+  const distance = Math.max(0.001, source.distance);
+  const awayX = distance <= 0.01 ? (enemy.facing === "east" ? 1 : enemy.facing === "west" ? -1 : 0.65) : (enemy.x - source.x) / distance;
+  const awayY = distance <= 0.01 ? (enemy.facing === "south" ? 1 : enemy.facing === "north" ? -1 : 0.65) : (enemy.y - source.y) / distance;
+  const pressure = 1 + Math.max(0, 1 - (distance / source.radius)) * 0.9;
+  const movementSeconds = Math.min(0.36, Math.max(FIELD_ENEMY_MOVE_STEP_MS, movementDeltaMs) / 1000);
+  const step = Math.max(18, enemy.speed * pressure * movementSeconds);
+  const nextX = enemy.x + awayX * step;
+  const nextY = enemy.y + awayY * step;
+  let moved = false;
+
+  if (canMoveEntityTo(nextX, enemy.y, enemy.width, enemy.height)) {
+    enemy.x = nextX;
+    moved = true;
+  }
+  if (canMoveEntityTo(enemy.x, nextY, enemy.width, enemy.height)) {
+    enemy.y = nextY;
+    moved = true;
+  }
+
+  if (moved) {
+    enemy.facing = getFieldFacingFromDelta(awayX, awayY, enemy.facing);
+    enemy.roamTargetX = undefined;
+    enemy.roamTargetY = undefined;
+  }
+
+  return moved;
 }
 
 function updateFieldEnemies(deltaTime: number, currentTime: number): void {
@@ -5592,11 +8819,13 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     return currentTime - enemy.deathAnimTime < 500;
   });
 
-  const player = getGameState().players.P1.avatar;
+  const player = getRuntimeFieldAvatar("P1");
   if (!player) {
     return;
   }
 
+  const useTelegraphedAttacks = true;
+  const useApronLightPressure = isOuterDeckOpenWorldMap(currentMap);
   for (const enemy of fieldState.fieldEnemies) {
     if (enemy.hp <= 0) {
       continue;
@@ -5629,10 +8858,34 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     }
 
     if (enemy.knockbackTime > 0) {
+      if (useTelegraphedAttacks) {
+        clearHaven3DEnemyAttack(enemy);
+      }
       continue;
     }
 
-    if (currentTime - enemy.lastMoveTime < 280) {
+    const hasCompatibleMoveTime = Number.isFinite(Number(enemy.lastMoveTime))
+      && enemy.lastMoveTime <= currentTime + 1000;
+    const previousMoveTime = hasCompatibleMoveTime
+      ? enemy.lastMoveTime
+      : currentTime - FIELD_ENEMY_MOVE_STEP_MS;
+    const movementDeltaMs = Math.max(deltaTime, currentTime - previousMoveTime);
+
+    const nearbyLight = useApronLightPressure ? getNearestApronLightSource(enemy, currentTime) : null;
+    if (nearbyLight) {
+      clearHaven3DEnemyAttack(enemy);
+      if (movementDeltaMs >= FIELD_ENEMY_MOVE_STEP_MS) {
+        enemy.lastMoveTime = currentTime;
+        repelFieldEnemyFromApronLight(enemy, nearbyLight, movementDeltaMs);
+      }
+      continue;
+    }
+
+    if (useTelegraphedAttacks && updateHaven3DEnemyAttack(enemy, player, currentTime)) {
+      continue;
+    }
+
+    if (movementDeltaMs < FIELD_ENEMY_MOVE_STEP_MS) {
       continue;
     }
 
@@ -5642,11 +8895,14 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     const distance = Math.hypot(dx, dy);
 
     if (distance <= 0 || distance > enemy.aggroRange) {
+      updateOuterDeckEnemyRoam(enemy, movementDeltaMs, currentTime);
       continue;
     }
 
-    const moveX = (dx / distance) * enemy.speed * (deltaTime / 1000) * 5;
-    const moveY = (dy / distance) * enemy.speed * (deltaTime / 1000) * 5;
+    const movementSeconds = Math.min(0.36, movementDeltaMs / 1000);
+    const chaseStep = Math.min(distance, enemy.speed * movementSeconds);
+    const moveX = (dx / distance) * chaseStep;
+    const moveY = (dy / distance) * chaseStep;
     const nextX = enemy.x + moveX;
     const nextY = enemy.y + moveY;
 
@@ -5708,59 +8964,15 @@ function updateFieldPlayerPressure(deltaTime: number): void {
   for (const resourceObject of getUncollectedFieldResourceObjects()) {
     const resourceCenterX = (resourceObject.x + (resourceObject.width / 2)) * FIELD_TILE_SIZE;
     const resourceCenterY = (resourceObject.y + (resourceObject.height / 2)) * FIELD_TILE_SIZE;
-    if (Math.hypot(resourceCenterX - fieldState.player.x, resourceCenterY - fieldState.player.y) <= 36) {
+    if (
+      Math.hypot(resourceCenterX - fieldState.player.x, resourceCenterY - fieldState.player.y)
+      <= getFieldResourcePickupRadius(resourceObject)
+    ) {
       collectFieldResourceObject(resourceObject.id, "player");
     }
   }
 
-  if ((fieldState.player.invulnerabilityTime ?? 0) > 0) {
-    return;
-  }
-
-  for (const enemy of fieldState.fieldEnemies ?? []) {
-    if (enemy.hp <= 0) {
-      continue;
-    }
-
-    const playerLeft = fieldState.player.x - fieldState.player.width / 2;
-    const playerRight = fieldState.player.x + fieldState.player.width / 2;
-    const playerTop = fieldState.player.y - fieldState.player.height / 2;
-    const playerBottom = fieldState.player.y + fieldState.player.height / 2;
-    const enemyLeft = enemy.x - enemy.width / 2;
-    const enemyRight = enemy.x + enemy.width / 2;
-    const enemyTop = enemy.y - enemy.height / 2;
-    const enemyBottom = enemy.y + enemy.height / 2;
-
-    const isColliding =
-      playerRight > enemyLeft
-      && playerLeft < enemyRight
-      && playerBottom > enemyTop
-      && playerTop < enemyBottom;
-
-    if (!isColliding) {
-      continue;
-    }
-
-    fieldState.player.hp = Math.max(1, Number(fieldState.player.hp ?? FIELD_PLAYER_MAX_HP) - FIELD_PLAYER_DAMAGE_ON_CONTACT);
-    fieldState.player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
-
-    const dx = fieldState.player.x - enemy.x;
-    const dy = fieldState.player.y - enemy.y;
-    const distance = Math.max(Math.hypot(dx, dy), 1);
-    fieldState.player.vx = (dx / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
-    fieldState.player.vy = (dy / distance) * FIELD_PLAYER_KNOCKBACK_FORCE;
-
-    showSystemPing({
-      type: "error",
-      title: "HOSTILE CONTACT",
-      message: `${enemy.name} struck the lane.`,
-      detail: `HP ${fieldState.player.hp}/${fieldState.player.maxHp}`,
-      durationMs: 1800,
-      channel: "field-player-damage",
-      replaceChannel: true,
-    });
-    break;
-  }
+  // Field hostiles now damage through telegraphed attacks instead of passive body contact.
 }
 
 function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): void {
@@ -5770,96 +8982,17 @@ function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): v
 
   const player = fieldState.player;
   const companion = fieldState.companion;
-  const availableResources = getUncollectedFieldResourceObjects().map((object) => ({
-    id: object.id,
-    x: (object.x + (object.width / 2)) * FIELD_TILE_SIZE,
-    y: (object.y + (object.height / 2)) * FIELD_TILE_SIZE,
-    collected: false,
-  }));
-  const liveEnemies = (fieldState.fieldEnemies ?? [])
-    .filter((enemy) => enemy.hp > 0)
-    .map((enemy) => ({
-      id: enemy.id,
-      x: enemy.x,
-      y: enemy.y,
-      hp: enemy.hp,
-    }));
+
+  if (companion.state === "attack" || companion.state === "fetch") {
+    companion.state = "follow";
+    companion.target = undefined;
+    companion.attackCooldown = 0;
+  }
 
   if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
     companion.lastBehaviorTime = currentTime;
-
-    const nearestEnemy = findNearestEnemy(companion, player, liveEnemies, currentMap);
-    if (nearestEnemy) {
-      companion.state = "attack";
-      companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
-    } else {
-      const nearestResource = findNearestResource(companion, player, availableResources, currentMap);
-      if (nearestResource) {
-        companion.state = "fetch";
-        companion.target = { x: nearestResource.x, y: nearestResource.y, id: nearestResource.id };
-      } else {
-        companion.state = "follow";
-        companion.target = undefined;
-      }
-    }
-  }
-
-  if (companion.state === "attack" && companion.target) {
-    const targetEnemy = (fieldState.fieldEnemies ?? []).find((enemy) => enemy.id === companion.target?.id && enemy.hp > 0) ?? null;
-    if (!targetEnemy) {
-      companion.state = "follow";
-      companion.target = undefined;
-    } else {
-      companion.attackCooldown = Math.max(0, Number(companion.attackCooldown ?? 0) - deltaTime);
-      fieldState.companion = updateCompanionAttack(
-        companion,
-        player,
-        { x: targetEnemy.x, y: targetEnemy.y, id: targetEnemy.id },
-        deltaTime,
-        currentMap,
-      );
-
-      const activeCompanion = fieldState.companion;
-      const distance = Math.hypot(targetEnemy.x - activeCompanion.x, targetEnemy.y - activeCompanion.y);
-      if (distance <= FIELD_COMPANION_ATTACK_RANGE && activeCompanion.attackCooldown <= 0) {
-        targetEnemy.hp -= Math.max(1, FIELD_ATTACK_DAMAGE);
-        playSableAttackFeedback(currentTime);
-        if (distance > 0) {
-          targetEnemy.vx = ((targetEnemy.x - activeCompanion.x) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
-          targetEnemy.vy = ((targetEnemy.y - activeCompanion.y) / distance) * FIELD_ENEMY_KNOCKBACK_FORCE;
-          targetEnemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
-        }
-        activeCompanion.attackCooldown = getFieldAttackCooldown();
-        if (targetEnemy.hp <= 0) {
-          handleFieldEnemyDefeat(targetEnemy);
-          activeCompanion.state = "follow";
-          activeCompanion.target = undefined;
-        }
-      }
-      return;
-    }
-  }
-
-  if (companion.state === "fetch" && companion.target) {
-    const targetResource = availableResources.find((resource) => resource.id === companion.target?.id) ?? null;
-    if (!targetResource) {
-      companion.state = "follow";
-      companion.target = undefined;
-    } else {
-      fieldState.companion = updateCompanionFetch(
-        companion,
-        player,
-        { x: targetResource.x, y: targetResource.y, id: targetResource.id },
-        deltaTime,
-        currentMap,
-      );
-      if (checkCompanionReachedTarget(fieldState.companion, targetResource.id, 24)) {
-        collectFieldResourceObject(targetResource.id, "sable");
-        fieldState.companion.state = "follow";
-        fieldState.companion.target = undefined;
-      }
-      return;
-    }
+    companion.state = "follow";
+    companion.target = undefined;
   }
 
   fieldState.companion = updateCompanionFollow(
@@ -5870,11 +9003,7 @@ function updateFieldCompanionBehavior(deltaTime: number, currentTime: number): v
   );
 }
 
-function canMoveEntityTo(x: number, y: number, width: number, height: number): boolean {
-  if (!currentMap) {
-    return false;
-  }
-
+function canMoveEntityOnMap(map: FieldMap, x: number, y: number, width: number, height: number): boolean {
   const halfW = width / 2;
   const halfH = height / 2;
   const corners = [
@@ -5887,15 +9016,23 @@ function canMoveEntityTo(x: number, y: number, width: number, height: number): b
   for (const corner of corners) {
     const tileX = Math.floor(corner.x / FIELD_TILE_SIZE);
     const tileY = Math.floor(corner.y / FIELD_TILE_SIZE);
-    if (tileY < 0 || tileY >= currentMap.height || tileX < 0 || tileX >= currentMap.width) {
+    if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) {
       return false;
     }
-    if (!currentMap.tiles[tileY][tileX]?.walkable) {
+    if (!map.tiles[tileY][tileX]?.walkable) {
       return false;
     }
   }
 
   return true;
+}
+
+function canMoveEntityTo(x: number, y: number, width: number, height: number): boolean {
+  if (!currentMap) {
+    return false;
+  }
+
+  return canMoveEntityOnMap(currentMap, x, y, width, height);
 }
 
 // ============================================================================
@@ -5907,6 +9044,9 @@ function setupGlobalListeners(): void {
 
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);
+  window.addEventListener("blur", handleFieldInputRelease);
+  document.addEventListener("visibilitychange", handleFieldVisibilityChange);
+  document.addEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.addEventListener("click", handleFieldObjectClick, true);
 
   // Also add document-level click handler for All Nodes button as fallback
@@ -5919,6 +9059,16 @@ function setupGlobalListeners(): void {
   }
 
   globalListenersAttached = true;
+}
+
+function handleFieldInputRelease(): void {
+  resetFieldMovementInputState();
+}
+
+function handleFieldVisibilityChange(): void {
+  if (document.visibilityState === "hidden") {
+    resetFieldMovementInputState();
+  }
 }
 
 function handleWheelZoom(e: WheelEvent): void {
@@ -5954,6 +9104,9 @@ function cleanupGlobalListeners(): void {
 
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keyup", handleKeyUp);
+  window.removeEventListener("blur", handleFieldInputRelease);
+  document.removeEventListener("visibilitychange", handleFieldVisibilityChange);
+  document.removeEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.removeEventListener("click", handleFieldObjectClick, true);
   document.removeEventListener("click", handleAllNodesButtonClick, true);
 
@@ -6071,11 +9224,35 @@ function handleKeyDown(e: KeyboardEvent): void {
   // Update player input system
   handlePlayerInputKeyDown(e);
 
+  if (!e.repeat && (key === "l" || e.code === "KeyL") && currentMap && isOuterDeckOpenWorldMap(currentMap)) {
+    e.preventDefault();
+    e.stopPropagation();
+    placeApronLanternAtPlayer();
+    return;
+  }
+
+  if (isHaven3DFieldRuntimeActive()) {
+    return;
+  }
+
   if (!e.repeat && isFieldCombatActive()) {
-    if (key === "tab" || e.code === "Tab") {
+    const requestedGearbladeMode =
+      e.code === "Digit1" || e.code === "Numpad1" ? "blade"
+        : e.code === "Digit2" || e.code === "Numpad2" ? "launcher"
+          : e.code === "Digit3" || e.code === "Numpad3" ? "grapple"
+            : null;
+
+    if (requestedGearbladeMode) {
       e.preventDefault();
       e.stopPropagation();
-      toggleFieldCombatRangedMode();
+      setFieldGearbladeMode(requestedGearbladeMode);
+      return;
+    }
+
+    if (key === "tab" || e.code === "Tab" || key === "q" || e.code === "KeyQ") {
+      e.preventDefault();
+      e.stopPropagation();
+      cycleFieldGearbladeMode();
       return;
     }
 
@@ -6273,35 +9450,39 @@ function handleInteractKey(playerId: PlayerId): void {
   if (fieldState.npcs) {
     const nearbyNpc = getNpcInRange(actorAvatar, fieldState.npcs);
     if (nearbyNpc && nearbyNpc.dialogueId) {
-      const openedImportedDialogue = showNpcDialogue(
-        nearbyNpc.dialogueId,
-        nearbyNpc.name,
-        nearbyNpc.id,
-        () => {
+      fieldState.isPaused = true;
+      void import("../ui/screens/DialogueScreen").then(({ showDialogue, showNpcDialogue }) => {
+        const openedImportedDialogue = showNpcDialogue(
+          nearbyNpc.dialogueId!,
+          nearbyNpc.name,
+          nearbyNpc.id,
+          () => {
+            if (fieldState) {
+              fieldState.isPaused = false;
+            }
+          },
+        );
+
+        if (openedImportedDialogue) {
+          return;
+        }
+
+        const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId!] || [
+          "Hello there!",
+          "This is placeholder dialogue.",
+        ];
+
+        showDialogue(nearbyNpc.name, dialogueLines, () => {
           if (fieldState) {
             fieldState.isPaused = false;
           }
-        }
-      );
-
-      if (openedImportedDialogue) {
-        return;
-      }
-
-      const dialogueLines = NPC_DIALOGUE[nearbyNpc.dialogueId] || [
-        "Hello there!",
-        "This is placeholder dialogue.",
-      ];
-
-      // Pause field movement while in dialogue
-      fieldState.isPaused = true;
-
-      showDialogue(nearbyNpc.name, dialogueLines, () => {
-        // Resume field movement after dialogue
+        }, nearbyNpc.id);
+      }).catch((error) => {
+        console.error("[FIELD] Failed to load dialogue screen:", error);
         if (fieldState) {
           fieldState.isPaused = false;
         }
-      }, nearbyNpc.id);
+      });
 
       return;
     }
@@ -6322,7 +9503,7 @@ async function handleNodeAction(action: string): Promise<void> {
   if (isFieldEscNodeAction(action) && !isEscActionEnabled(action, getFieldEscAvailabilityContext())) {
     showSystemPing({
       type: "info",
-      title: "OUTER DECK EXPEDITION",
+      title: "APRON SURVEY",
       message: getEscExpeditionRestrictionMessage(action),
       channel: "outer-deck-field-esc-lock",
       replaceChannel: true,
@@ -6339,7 +9520,7 @@ async function handleNodeAction(action: string): Promise<void> {
         baseCampTheaterAutoTickEnabled: enabled,
       },
     }));
-    ensureTheaterAutoTickStateSync();
+    syncFieldTheaterAutoTickState();
     showSystemPing({
       type: enabled ? "success" : "info",
       title: enabled ? "THEATER CLOCK ONLINE" : "THEATER CLOCK OFFLINE",
@@ -6425,7 +9606,7 @@ async function handleNodeAction(action: string): Promise<void> {
       });
       break;
     case "materials-refinery":
-      renderAllNodesMenuScreen(fieldState?.currentMap ?? "base_camp");
+      openAllNodesMenuFromField(fieldState?.currentMap ?? "base_camp");
       break;
     case "port":
       import("../ui/screens/PortScreen").then(({ renderPortScreen }) => {
@@ -6507,6 +9688,7 @@ function gameLoop(currentTime: number): void {
 
   if (!fieldState.isPaused) {
     const state = getGameState();
+    syncRuntimeFieldAvatarsFromState(state);
     const aerissFieldSpeedBonus = getAerissFieldMovementSpeedBonus(state.stable);
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
@@ -6515,9 +9697,11 @@ function gameLoop(currentTime: number): void {
     };
     const p1 = players.P1;
     const p2 = players.P2;
+    const p1Avatar = getRuntimeFieldAvatar("P1", state);
+    const p2Avatar = p2.active ? getRuntimeFieldAvatar("P2", state) : null;
 
     // Update P1 avatar movement
-    if (p1.active && p1.avatar) {
+    if (p1.active && p1Avatar) {
       const p1Input = getPlayerInput("P1");
       const p1MovementInput = {
         up: p1Input.up,
@@ -6529,12 +9713,12 @@ function gameLoop(currentTime: number): void {
 
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p1PlayerAvatar = {
-        x: p1.avatar.x,
-        y: p1.avatar.y,
+        x: p1Avatar.x,
+        y: p1Avatar.y,
         width: 32,
         height: 32,
         speed: 240 + aerissFieldSpeedBonus,
-        facing: p1.avatar.facing,
+        facing: p1Avatar.facing,
       };
 
       let newP1Avatar = updatePlayerMovement(
@@ -6545,35 +9729,21 @@ function gameLoop(currentTime: number): void {
       );
 
       // Apply tether constraint if P2 is active
-      if (p2.active && p2.avatar) {
+      if (p2.active && p2Avatar) {
         const constrained = applyTetherConstraint(
           { x: newP1Avatar.x, y: newP1Avatar.y },
           { x: newP1Avatar.x, y: newP1Avatar.y },
-          p2.avatar
+          p2Avatar,
         );
         newP1Avatar.x = constrained.x;
         newP1Avatar.y = constrained.y;
       }
 
-      // Update P1 avatar in game state
-      updateGameState(s => ({
-        ...s,
-        players: {
-          ...s.players,
-          P1: {
-            ...s.players.P1,
-            avatar: {
-              x: newP1Avatar.x,
-              y: newP1Avatar.y,
-              facing: newP1Avatar.facing,
-            },
-          },
-        },
-      }));
+      setRuntimeFieldAvatarPosition("P1", newP1Avatar.x, newP1Avatar.y, newP1Avatar.facing);
     }
 
     // Update P2 avatar movement
-    if (p2.active && p2.avatar) {
+    if (p2.active && p2Avatar) {
       const p2Input = getPlayerInput("P2");
       const p2MovementInput = {
         up: p2Input.up,
@@ -6585,12 +9755,12 @@ function gameLoop(currentTime: number): void {
 
       // Convert FieldAvatar to PlayerAvatar for movement function
       const p2PlayerAvatar = {
-        x: p2.avatar.x,
-        y: p2.avatar.y,
+        x: p2Avatar.x,
+        y: p2Avatar.y,
         width: 32,
         height: 32,
         speed: 240,
-        facing: p2.avatar.facing,
+        facing: p2Avatar.facing,
       };
 
       let newP2Avatar = updatePlayerMovement(
@@ -6601,43 +9771,25 @@ function gameLoop(currentTime: number): void {
       );
 
       // Apply tether constraint (P2 constrained by P1)
-      if (p1.active && p1.avatar) {
+      if (p1.active && p1Avatar) {
         const constrained = applyTetherConstraint(
           { x: newP2Avatar.x, y: newP2Avatar.y },
           { x: newP2Avatar.x, y: newP2Avatar.y },
-          p1.avatar
+          p1Avatar,
         );
         newP2Avatar.x = constrained.x;
         newP2Avatar.y = constrained.y;
       }
 
-      // Update P2 avatar in game state
-      updateGameState(s => ({
-        ...s,
-        players: {
-          ...s.players,
-          P2: {
-            ...s.players.P2,
-            avatar: {
-              x: newP2Avatar.x,
-              y: newP2Avatar.y,
-              facing: newP2Avatar.facing,
-            },
-          },
-        },
-      }));
+      setRuntimeFieldAvatarPosition("P2", newP2Avatar.x, newP2Avatar.y, newP2Avatar.facing);
     }
 
-    // Update legacy fieldState.player for backward compatibility (use P1 position)
-    const updatedState = getGameState();
-    if (updatedState.players.P1.avatar) {
-      fieldState.player = {
-        ...fieldState.player,
-        x: updatedState.players.P1.avatar.x,
-        y: updatedState.players.P1.avatar.y,
-        facing: updatedState.players.P1.avatar.facing as any,
-      };
+    flushFieldAvatarPositionsToGameState();
+    if (refreshOuterDeckStreamWindowIfNeeded()) {
+      animationFrameId = requestAnimationFrame(gameLoop);
+      return;
     }
+    const updatedP1Avatar = getRuntimeFieldAvatar("P1", state);
     syncFieldMinimapExploration();
 
       const activeLobby = getGameState().lobby;
@@ -6652,8 +9804,8 @@ function gameLoop(currentTime: number): void {
         && localSelectedForCoop
         && (isNetworkLobbyMapActive() || isActiveCoopOperationsLobby(activeLobby)),
       );
-      if (shouldSyncLobbyAvatar && updatedState.players.P1.avatar && currentMap?.id) {
-        const avatar = updatedState.players.P1.avatar;
+      if (shouldSyncLobbyAvatar && updatedP1Avatar && currentMap?.id) {
+        const avatar = updatedP1Avatar;
         const syncKey = `${currentMap.id}:${Math.round(avatar.x)}:${Math.round(avatar.y)}:${avatar.facing}`;
         if (syncKey !== lastNetworkLobbyAvatarSyncKey) {
           lastNetworkLobbyAvatarSyncKey = syncKey;
@@ -6664,16 +9816,6 @@ function gameLoop(currentTime: number): void {
       } else {
         lastNetworkLobbyAvatarSyncKey = "";
       }
-
-    // Keep field player state synchronized with the live avatar; combat logic layers on top later.
-    if (fieldState && currentMap && updatedState.players.P1.avatar) {
-      fieldState.player = normalizeFieldPlayerState({
-        ...fieldState.player,
-        x: updatedState.players.P1.avatar.x,
-        y: updatedState.players.P1.avatar.y,
-        facing: updatedState.players.P1.avatar.facing as any,
-      });
-    }
 
     updateFieldMovementFeedback(
       currentTime,
@@ -6710,8 +9852,10 @@ function stopGameLoop(): void {
 }
 
 export function teardownFieldMode(): void {
+  flushFieldAvatarPositionsToGameState(true);
   stopGameLoop();
-  resetFieldControllerActionTracking();
+  stopHaven3DFieldRuntime();
+  resetFieldMovementInputState();
   cleanupGlobalListeners();
   if (fieldFocusableRefreshTimerId !== null) {
     window.clearTimeout(fieldFocusableRefreshTimerId);
@@ -6726,7 +9870,6 @@ export function teardownFieldMode(): void {
   lastMinimapRevealKey = "";
   havenBuildModeActive = false;
   havenBuildResumePaused = false;
-  resetHavenBuildPanState();
   resetFieldFeedbackState();
   havenBuildPaletteSelection = null;
   havenBuildDragState = null;
@@ -6737,6 +9880,7 @@ export function teardownFieldMode(): void {
   cleanupFieldControllerContext = null;
   cleanupFieldFeedbackListener?.();
   cleanupFieldFeedbackListener = null;
+  fieldRuntimeP2Avatar = null;
 }
 
 // ============================================================================
@@ -6746,8 +9890,8 @@ export function teardownFieldMode(): void {
 export function exitFieldMode(returnToOpMap?: boolean): void {
   teardownFieldMode();
   if (returnToOpMap) {
-    renderOperationMapScreen();
+    openOperationMapFromField();
   } else {
-    renderAllNodesMenuScreen();
+    openAllNodesMenuFromField();
   }
 }

@@ -1,3 +1,5 @@
+import { initializeFpsCounter } from "./ui/fpsCounter";
+
 const STARTUP_TIMEOUT_MS = 2500;
 let startupBootRendered = false;
 
@@ -141,6 +143,7 @@ markBootProgress("module-loaded");
 
 async function startApplication(): Promise<void> {
   markBootProgress("dom-ready");
+  initializeFpsCounter();
   try {
     await renderInitialSplash();
     startupBootRendered = true;

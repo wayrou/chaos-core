@@ -67,6 +67,10 @@ import {
   hasTheaterOperation,
 } from "../../core/theaterSystem";
 import {
+  forceBattleVictory,
+  isQuacDebugAutoWinBattlesEnabled,
+} from "../../core/quacDevCommands";
+import {
   clearControllerContext,
   getControllerActionLabel,
   registerControllerContext,
@@ -86,9 +90,12 @@ import {
   type FeedbackPosition,
   type FeedbackRequest,
 } from "../../core/feedback";
-import { BattleSceneController } from "../battle3d/BattleSceneController";
-import { createBattleBoardSnapshot } from "../battle3d/snapshot";
-import type { BattleBoardPick, BattleBoardPoint } from "../battle3d/types";
+import type { BattleSceneController } from "../battle3d/BattleSceneController";
+import type {
+  BattleBoardPick,
+  BattleBoardPoint,
+  BattleSceneInteractionHandlers,
+} from "../battle3d/types";
 // Mount system imports
 import { isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
@@ -151,6 +158,10 @@ let cleanupBattleFeedbackListener: (() => void) | null = null;
 let battleHitStopUntilMs = 0;
 let battleHitStopTimerId: number | null = null;
 let battleSceneController: BattleSceneController | null = null;
+let battle3dModulesPromise: Promise<Battle3dModules> | null = null;
+let pendingBattleSceneInteractionHandlers: BattleSceneInteractionHandlers = {};
+let pendingBattleSceneViewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
+let battleBoardSyncRequestId = 0;
 const BATTLE_VIEW_SLOT_COUNT = 2;
 const DEFAULT_BATTLE_VIEW_PRESETS: BattleCameraViewPreset[] = [
   {
@@ -180,6 +191,63 @@ let battleViewPersistTimerId: number | null = null;
 let battleLastAppliedViewSignature: string | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
+type Battle3dModules = {
+  BattleSceneController: typeof import("../battle3d/BattleSceneController").BattleSceneController;
+  createBattleBoardSnapshot: typeof import("../battle3d/snapshot").createBattleBoardSnapshot;
+};
+
+type BattleSceneTools = {
+  scene: BattleSceneController;
+  createBattleBoardSnapshot: Battle3dModules["createBattleBoardSnapshot"];
+};
+
+function reportBattle3dLoadError(error: unknown): void {
+  console.error("[BATTLE] Failed to load the 3D battle scene.", error);
+}
+
+function loadBattle3dModules(): Promise<Battle3dModules> {
+  if (!battle3dModulesPromise) {
+    battle3dModulesPromise = Promise.all([
+      import("../battle3d/BattleSceneController"),
+      import("../battle3d/snapshot"),
+    ]).then(([controllerModule, snapshotModule]) => ({
+      BattleSceneController: controllerModule.BattleSceneController,
+      createBattleBoardSnapshot: snapshotModule.createBattleBoardSnapshot,
+    })).catch((error) => {
+      battle3dModulesPromise = null;
+      throw error;
+    });
+  }
+  return battle3dModulesPromise;
+}
+
+function preloadBattle3dModules(): void {
+  void loadBattle3dModules().catch(reportBattle3dLoadError);
+}
+
+async function getBattleSceneTools(): Promise<BattleSceneTools> {
+  const modules = await loadBattle3dModules();
+  if (!battleSceneController) {
+    battleSceneController = new modules.BattleSceneController();
+    battleSceneController.setInteractionHandlers(pendingBattleSceneInteractionHandlers);
+    battleSceneController.setViewChangeHandler(pendingBattleSceneViewChangeHandler);
+    battleSceneController.setZoomFactor(battleZoom);
+  }
+  return {
+    scene: battleSceneController,
+    createBattleBoardSnapshot: modules.createBattleBoardSnapshot,
+  };
+}
+
+function setBattleSceneInteractionHandlers(handlers: BattleSceneInteractionHandlers): void {
+  pendingBattleSceneInteractionHandlers = handlers;
+  battleSceneController?.setInteractionHandlers(handlers);
+}
+
+function setBattleSceneViewChangeHandler(handler: ((view: BattleCameraViewPreset) => void) | null): void {
+  pendingBattleSceneViewChangeHandler = handler;
+  battleSceneController?.setViewChangeHandler(handler);
+}
 
 function clampBattleViewIndex(index: number): number {
   return Math.max(0, Math.min(BATTLE_VIEW_SLOT_COUNT - 1, index));
@@ -1576,13 +1644,6 @@ function getBattleBoardHost(): HTMLElement | null {
   return document.getElementById("battleBoard3dHost") as HTMLElement | null;
 }
 
-function getBattleSceneControllerInstance(): BattleSceneController {
-  if (!battleSceneController) {
-    battleSceneController = new BattleSceneController();
-  }
-  return battleSceneController;
-}
-
 function getOriginalBattleUnitElement(unitId: string): HTMLElement | null {
   void unitId;
   return null;
@@ -2399,8 +2460,11 @@ function resetBattleUiSessionState(): void {
   resetTurnStateForUnit(null);
   resetBattlePan();
   uiPanelsMinimized = false;
-  battleSceneController?.setViewChangeHandler(null);
+  battleBoardSyncRequestId += 1;
+  pendingBattleSceneInteractionHandlers = {};
+  setBattleSceneViewChangeHandler(null);
   resetBattleViewPresetSessionState();
+  currentBattleBoardRenderState = null;
   battleSceneController?.dispose();
   battleSceneController = null;
 }
@@ -5579,8 +5643,27 @@ export function renderBattleScreen() {
     }
   }
 
+  if (
+    localBattleState
+    && isQuacDebugAutoWinBattlesEnabled(state)
+    && localBattleState.phase !== "victory"
+    && localBattleState.phase !== "defeat"
+  ) {
+    setBattleState(forceBattleVictory(localBattleState));
+    showSystemPing({
+      type: "info",
+      title: "QUAC AUTO WIN",
+      message: "Battle resolved immediately for dev testing.",
+      channel: "quac-auto-win-battle",
+      replaceChannel: true,
+    });
+    renderBattleScreen();
+    return;
+  }
+
   if (localBattleState) {
     syncBattleAudioState(localBattleState);
+    preloadBattle3dModules();
   }
 
   const battle = localBattleState as BattleState;
@@ -6886,6 +6969,17 @@ function renderBattleResultOverlay(battle: BattleState): string {
       : isTheaterOperationBattle
         ? "ROOM SECURED"
         : "HOSTILES BROKEN";
+    const battleChannelLabel = isDefenseBattle
+      ? "DEFENSE GRID"
+      : isTheaterOperationBattle
+        ? "THEATER LINK"
+        : "TACTICAL LINK";
+    const rewardChannelLabel = `${rewardPacketTypes} CHANNEL${rewardPacketTypes === 1 ? "" : "S"}`;
+    const victoryFooterNote = isDefenseBattle
+      ? "Perimeter stabilized. Recovery and reward transfer channels are standing by."
+      : isTheaterOperationBattle
+        ? "Room secured. Claim the packet and continue the operation route."
+        : "The route is clear. Claim the packet and continue the tactical push.";
 
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
@@ -6901,69 +6995,104 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
     return `
       <div class="battle-result-overlay">
-        <div class="battle-result-card">
-          <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
-          <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
-          ${isDefenseBattle ? `
-            <div class="battle-defense-success">
-              Facility perimeter held. Defensive line remains intact.
+        <div class="battle-result-card battle-result-card--victory">
+          <div class="battle-result-victory-header">
+            <div class="battle-result-victory-header-main">
+              <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
+              <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
+              ${isDefenseBattle ? `
+                <div class="battle-defense-success">
+                  Facility perimeter held. Defensive line remains intact.
+                </div>
+              ` : `
+                <div class="battle-result-copy">
+                  Hostile resistance broken. Claim the reward package and continue the operation.
+                </div>
+              `}
             </div>
-          ` : `
-            <div class="battle-result-copy">
-              Hostile resistance broken. Claim the reward package and continue the operation.
+            <div class="battle-result-victory-status-strip">
+              <div class="battle-result-victory-badge">${victoryStatusLabel}</div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Link</div>
+                <div class="battle-result-victory-strip-value">${battleChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Packet</div>
+                <div class="battle-result-victory-strip-value">${rewardChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item battle-result-victory-strip-item--wide">
+                <div class="battle-result-victory-strip-label">Combat Note</div>
+                <div class="battle-result-victory-strip-value battle-result-victory-strip-value--note">${escapeBattleText(latestBattleNote)}</div>
+              </div>
             </div>
-          `}
-          <div class="battle-result-message">${escapeBattleText(latestBattleNote)}</div>
-          <div class="battle-result-summary">
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">SURVIVORS</div>
-              <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
-              <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">INTEGRITY</div>
-              <div class="battle-result-summary-card__value">${integrityPercent}%</div>
-              <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">TURN COUNT</div>
-              <div class="battle-result-summary-card__value">${battle.turnCount}</div>
-              <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">STATUS</div>
-              <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
-              <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
-            </article>
           </div>
-          <div class="battle-result-section-title">Reward Packet</div>
-          <div class="battle-reward-grid">
-            <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
-            <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
-            ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
-            ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
-            ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
-            ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
-            ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
-            ${resolvedGearRewards.map((reward) => `
-              <div class="battle-reward-item battle-reward-item--gear">
-                <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
-                <div class="reward-value">${escapeBattleText(reward.name)}</div>
-                <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+          <div class="battle-result-dashboard">
+            <section class="battle-result-panel battle-result-panel--summary">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Squad Debrief</div>
+                <div class="battle-result-panel-meta">ENGAGEMENT DATA</div>
               </div>
-            `).join("")}
-            ${unlockableId && unlockableId !== "pending" && unlockableName ? `
-              <div class="battle-reward-item battle-reward-item--unlockable">
-                <div class="reward-label">NEW UNLOCK</div>
-                <div class="reward-value">${unlockableName}</div>
+              <div class="battle-result-summary">
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">SURVIVORS</div>
+                  <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
+                  <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">INTEGRITY</div>
+                  <div class="battle-result-summary-card__value">${integrityPercent}%</div>
+                  <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">TURN COUNT</div>
+                  <div class="battle-result-summary-card__value">${battle.turnCount}</div>
+                  <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">STATUS</div>
+                  <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
+                  <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
+                </article>
               </div>
-            ` : ""}
+            </section>
+            <section class="battle-result-panel battle-result-panel--rewards">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Reward Packet</div>
+                <div class="battle-result-panel-meta">TRANSFER READY</div>
+              </div>
+              <div class="battle-reward-grid">
+                <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
+                <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
+                ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
+                ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
+                ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
+                ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
+                ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
+                ${resolvedGearRewards.map((reward) => `
+                  <div class="battle-reward-item battle-reward-item--gear">
+                    <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
+                    <div class="reward-value">${escapeBattleText(reward.name)}</div>
+                    <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+                  </div>
+                `).join("")}
+                ${unlockableId && unlockableId !== "pending" && unlockableName ? `
+                  <div class="battle-reward-item battle-reward-item--unlockable">
+                    <div class="reward-label">NEW UNLOCK</div>
+                    <div class="reward-value">${unlockableName}</div>
+                  </div>
+                ` : ""}
+              </div>
+            </section>
           </div>
           <div class="battle-result-footer">
+            <div class="battle-result-footer-copy">
+              <div class="battle-result-footer-label">Transfer Channel</div>
+              <div class="battle-result-footer-note">${victoryFooterNote}</div>
+            </div>
             <button class="battle-result-btn battle-result-btn--claim" id="claimRewardsBtn">CLAIM REWARDS AND CONTINUE</button>
           </div>
         </div>
@@ -7491,32 +7620,39 @@ function syncBattleBoardScene(
     isPlacementPhase,
   );
   currentBattleBoardRenderState = renderState;
-
-  const scene = getBattleSceneControllerInstance();
-  scene.mount(host);
-  scene.setViewChangeHandler((view) => {
+  const syncRequestId = ++battleBoardSyncRequestId;
+  setBattleSceneViewChangeHandler((view) => {
     captureActiveBattleViewPreset(view);
   });
-  scene.sync(createBattleBoardSnapshot(battle, {
-    moveTiles: renderState.moveTiles,
-    attackTiles: renderState.attackTiles,
-    placementTiles: renderState.placementTiles,
-    facingTiles: renderState.facingTiles,
-    hoveredTile,
-    hiddenUnitIds: renderState.hiddenUnitIds,
-    echoFieldPlacements: renderState.echoPlacements,
-    selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
-    focusTile: renderState.focusTile,
-  }));
 
-  const activeViewIndex = getActiveBattleViewIndex();
-  const activeViewSignature = `${battle.id}:${activeViewIndex}`;
-  if (battleLastAppliedViewSignature !== activeViewSignature) {
-    const activeViewPreset = getActiveBattleViewPreset();
-    battleZoom = activeViewPreset.zoomFactor;
-    scene.applyViewState(activeViewPreset, false);
-    battleLastAppliedViewSignature = activeViewSignature;
-  }
+  void getBattleSceneTools().then(({ scene, createBattleBoardSnapshot }) => {
+    const activeHost = getBattleBoardHost();
+    if (!activeHost || syncRequestId !== battleBoardSyncRequestId) {
+      return;
+    }
+
+    scene.mount(activeHost);
+    scene.sync(createBattleBoardSnapshot(battle, {
+      moveTiles: renderState.moveTiles,
+      attackTiles: renderState.attackTiles,
+      placementTiles: renderState.placementTiles,
+      facingTiles: renderState.facingTiles,
+      hoveredTile,
+      hiddenUnitIds: renderState.hiddenUnitIds,
+      echoFieldPlacements: renderState.echoPlacements,
+      selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
+      focusTile: renderState.focusTile,
+    }));
+
+    const activeViewIndex = getActiveBattleViewIndex();
+    const activeViewSignature = `${battle.id}:${activeViewIndex}`;
+    if (battleLastAppliedViewSignature !== activeViewSignature) {
+      const activeViewPreset = getActiveBattleViewPreset();
+      battleZoom = activeViewPreset.zoomFactor;
+      scene.applyViewState(activeViewPreset, false);
+      battleLastAppliedViewSignature = activeViewSignature;
+    }
+  }).catch(reportBattle3dLoadError);
 }
 
 function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
@@ -8067,7 +8203,7 @@ function attachBattleListeners() {
       placementPanel.addEventListener("click", placementPanelHandler);
     }
 
-    getBattleSceneControllerInstance().setInteractionHandlers({
+    setBattleSceneInteractionHandlers({
       onPrimaryPick: (pick) => handleBattleBoardPlacementPick(pick, battle, isClientNetworkPlacement),
       onHoverTile: (tile) => updateHoveredBattleTile(tile),
     });
@@ -8076,7 +8212,7 @@ function attachBattleListeners() {
     return;
   }
 
-  getBattleSceneControllerInstance().setInteractionHandlers({
+  setBattleSceneInteractionHandlers({
     onPrimaryPick: (pick) => handleBattleBoardActionPick(pick, battle, activeUnit, isPlayerTurn),
     onHoverTile: (tile) => updateHoveredBattleTile(tile),
   });

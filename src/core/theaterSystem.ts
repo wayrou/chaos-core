@@ -841,6 +841,7 @@ function cloneTheater(theater: TheaterNetworkState): TheaterNetworkState {
     ),
     currentRoomId: theater.currentRoomId,
     selectedRoomId: theater.selectedRoomId,
+    resourceDecayEnabled: theater.resourceDecayEnabled !== false,
     currentNodeId: theater.currentNodeId ?? theater.currentRoomId,
     selectedNodeId: theater.selectedNodeId ?? theater.selectedRoomId,
     annexesById: normalizeTheaterAnnexes(theater.annexesById),
@@ -1753,6 +1754,50 @@ export function isTheaterPassagePowered(theater: TheaterNetworkState, fromRoomId
     return true;
   }
   return Math.max(fromRoom.powerFlow ?? 0, toRoom.powerFlow ?? 0) >= requirement;
+}
+
+function clearTheaterPassagePowerGate(
+  theater: TheaterNetworkState,
+  fromRoomId: RoomId,
+  toRoomId: RoomId,
+): boolean {
+  const fromRoom = theater.rooms[fromRoomId];
+  const toRoom = theater.rooms[toRoomId];
+  if (!fromRoom || !toRoom) {
+    return false;
+  }
+
+  const clearRoomGate = (room: TheaterRoom, adjacentId: RoomId): boolean => {
+    if (!room.powerGateWatts || !Object.prototype.hasOwnProperty.call(room.powerGateWatts, adjacentId)) {
+      return false;
+    }
+    const nextGateWatts = { ...room.powerGateWatts };
+    delete nextGateWatts[adjacentId];
+    room.powerGateWatts = nextGateWatts;
+    return true;
+  };
+
+  const clearedForward = clearRoomGate(fromRoom, toRoomId);
+  const clearedReverse = clearRoomGate(toRoom, fromRoomId);
+  return clearedForward || clearedReverse;
+}
+
+function clearTraversedTheaterPowerGates(
+  theater: TheaterNetworkState,
+  roomPath: RoomId[],
+): boolean {
+  let clearedAny = false;
+  for (let index = 0; index < roomPath.length - 1; index += 1) {
+    const fromRoomId = roomPath[index];
+    const toRoomId = roomPath[index + 1];
+    if (!fromRoomId || !toRoomId || fromRoomId === toRoomId) {
+      continue;
+    }
+    if (clearTheaterPassagePowerGate(theater, fromRoomId, toRoomId)) {
+      clearedAny = true;
+    }
+  }
+  return clearedAny;
 }
 
 function addTheaterEvent(theater: TheaterNetworkState, message: string): TheaterNetworkState {
@@ -2674,6 +2719,23 @@ function getSupplyTraversalDecay(currentRoom: TheaterRoom, adjacentRoom: Theater
     : SUPPLY_FALLOFF_PER_ROOM;
 }
 
+function isTheaterResourceDecayEnabled(theater: TheaterNetworkState): boolean {
+  return theater.resourceDecayEnabled !== false;
+}
+
+function resolveOperationTheaterResourceDecayEnabled(
+  operation: OperationRun,
+  theater?: TheaterNetworkState | null,
+): boolean {
+  if (typeof operation.theaterResourceDecayEnabled === "boolean") {
+    return operation.theaterResourceDecayEnabled;
+  }
+  if (theater) {
+    return theater.resourceDecayEnabled !== false;
+  }
+  return true;
+}
+
 function roomHasOperationalCore(room: TheaterRoom): boolean {
   return getRoomOperationalCoreAssignments(room).length > 0;
 }
@@ -3019,6 +3081,10 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
   const rooms = next.rooms;
   const ingressId = next.definition.ingressRoomId;
   const ingress = rooms[ingressId];
+  const resourceDecayEnabled = isTheaterResourceDecayEnabled(next);
+  const supplyTraversalDecay = resourceDecayEnabled ? SUPPLY_FALLOFF_PER_ROOM : 0;
+  const powerFalloffPerRoom = resourceDecayEnabled ? POWER_FALLOFF_PER_ROOM : 0;
+  const commsFalloffPerRoom = resourceDecayEnabled ? COMMS_FALLOFF_PER_ROOM : 0;
 
   Object.values(rooms).forEach((room) => {
     syncRoomPrimaryCoreAssignment(room);
@@ -3080,7 +3146,11 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
           return;
         }
 
-        const nextLoss = current.loss + getSupplyTraversalDecay(currentRoom, adjacentRoom);
+        const nextLoss = current.loss + (
+          supplyTraversalDecay <= 0
+            ? 0
+            : getSupplyTraversalDecay(currentRoom, adjacentRoom)
+        );
         if (Math.max(0, sourceCrates - nextLoss) <= 0) {
           return;
         }
@@ -3120,7 +3190,7 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
         continue;
       }
 
-      const watts = Math.max(0, sourceWatts - (current.depth * POWER_FALLOFF_PER_ROOM));
+      const watts = Math.max(0, sourceWatts - (current.depth * powerFalloffPerRoom));
       if (watts <= 0) {
         continue;
       }
@@ -3128,7 +3198,7 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
       currentRoom.powerFlow += watts;
       currentRoom.powered = currentRoom.powerFlow > 0;
 
-      if (watts <= POWER_FALLOFF_PER_ROOM) {
+      if (powerFalloffPerRoom > 0 && watts <= powerFalloffPerRoom) {
         continue;
       }
 
@@ -3205,7 +3275,7 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
         continue;
       }
 
-      const bandwidth = Math.max(0, sourceBandwidth - (current.depth * COMMS_FALLOFF_PER_ROOM));
+      const bandwidth = Math.max(0, sourceBandwidth - (current.depth * commsFalloffPerRoom));
       if (bandwidth <= 0) {
         continue;
       }
@@ -3214,7 +3284,7 @@ function recomputeSupplyAndPower(theater: TheaterNetworkState): TheaterNetworkSt
       currentRoom.connected = true;
       currentRoom.commsFlow = Math.max(currentRoom.commsFlow, bandwidth);
 
-      if (bandwidth <= COMMS_FALLOFF_PER_ROOM) {
+      if (commsFalloffPerRoom > 0 && bandwidth <= commsFalloffPerRoom) {
         continue;
       }
 
@@ -3461,6 +3531,11 @@ function resolveOperationFields(operation: OperationRun, theater: TheaterNetwork
     operation.atlasFloorId && operation.floors.length <= 1
       ? 0
       : Math.max(0, (theater.definition.floorOrdinal ?? 1) - 1);
+  const resourceDecayEnabled = resolveOperationTheaterResourceDecayEnabled(operation, theater);
+  const theaterWithResolvedDecay: TheaterNetworkState = {
+    ...theater,
+    resourceDecayEnabled,
+  };
   return {
     ...operation,
     objective: theater.definition.objective,
@@ -3469,10 +3544,11 @@ function resolveOperationFields(operation: OperationRun, theater: TheaterNetwork
     endState: theater.definition.endState,
     currentFloorIndex: floorIndex,
     currentRoomId: theater.currentRoomId,
-    theater,
+    theater: theaterWithResolvedDecay,
+    theaterResourceDecayEnabled: resourceDecayEnabled,
     theaterFloors: {
       ...(operation.theaterFloors ?? {}),
-      [floorIndex]: cloneTheater(theater),
+      [floorIndex]: cloneTheater(theaterWithResolvedDecay),
     },
   };
 }
@@ -3518,10 +3594,16 @@ function prepareTheaterForOperation(theater: TheaterNetworkState): TheaterNetwor
 
 function generateTheaterForFloor(operation: OperationRun, floorIndex: number): TheaterNetworkState {
   try {
-    return createGeneratedTheaterFloor(operation, floorIndex);
+    return {
+      ...createGeneratedTheaterFloor(operation, floorIndex),
+      resourceDecayEnabled: resolveOperationTheaterResourceDecayEnabled(operation),
+    };
   } catch (error) {
     console.error("[THEATER] generated floor fallback", operation.id, floorIndex, error);
-    return createIronGateTheater(operation);
+    return {
+      ...createIronGateTheater(operation),
+      resourceDecayEnabled: resolveOperationTheaterResourceDecayEnabled(operation),
+    };
   }
 }
 
@@ -4739,6 +4821,7 @@ export function moveToTheaterNode(state: GameState, nodeId: string): TheaterMove
   const economyResolution = applyTheaterSessionEconomyForTicks(state, theater, tickCost);
   let nextState = economyResolution.state;
   let nextTheater = economyResolution.theater;
+  clearTraversedTheaterPowerGates(nextTheater, roomPath);
 
   nextTheater.currentRoomId = destinationRootRoomId;
   nextTheater.selectedRoomId = destinationRootRoomId;
@@ -4994,6 +5077,7 @@ export function moveToTheaterRoom(state: GameState, roomId: RoomId): TheaterMove
   const economyResolution = applyTheaterSessionEconomyForTicks(state, theater, tickCost);
   let nextState = economyResolution.state;
   let nextTheater = economyResolution.theater;
+  clearTraversedTheaterPowerGates(nextTheater, route);
   const destinationRoom = nextTheater.rooms[roomId];
 
   nextTheater.currentRoomId = roomId;
@@ -5408,6 +5492,7 @@ function runAutoSquadStep(state: GameState, squadId: string, mode: "undaring" | 
     if (nearestMedicalWard && nearestMedicalWard.route.length > 1) {
       const nextRoomId = nearestMedicalWard.route[1];
       const nextTheater = cloneTheater(theater);
+      clearTraversedTheaterPowerGates(nextTheater, nearestMedicalWard.route.slice(0, 2));
       const nextSquad = findSquad(nextTheater, squad.squadId);
       if (nextSquad) {
         nextSquad.currentRoomId = nextRoomId;
@@ -5475,6 +5560,7 @@ function runAutoSquadStep(state: GameState, squadId: string, mode: "undaring" | 
     if (route && route.length > 1) {
       const nextRoomId = route[1];
       const nextTheater = cloneTheater(theater);
+      clearTraversedTheaterPowerGates(nextTheater, route.slice(0, 2));
       const nextSquad = findSquad(nextTheater, squad.squadId);
       if (nextSquad) {
         nextSquad.currentRoomId = nextRoomId;
@@ -5503,6 +5589,7 @@ function runAutoSquadStep(state: GameState, squadId: string, mode: "undaring" | 
     ));
   if (adjacentPushTarget) {
     const stagedTheater = cloneTheater(theater);
+    clearTraversedTheaterPowerGates(stagedTheater, [room.id, adjacentPushTarget.id]);
     const stagedSquad = findSquad(stagedTheater, squad.squadId);
     if (stagedSquad) {
       stagedSquad.currentRoomId = adjacentPushTarget.id;
@@ -7581,4 +7668,56 @@ export function hasCompletedTheaterObjective(theater: TheaterNetworkState): bool
 
 export function recomputeTheaterNetwork(theater: TheaterNetworkState): TheaterNetworkState {
   return applySandboxSlice(recomputeSupplyAndPower(theater));
+}
+
+export function setActiveTheaterResourceDecayEnabled(
+  state: GameState,
+  enabled: boolean,
+): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+
+  const nextTheater = recomputeTheaterNetwork({
+    ...cloneTheater(theater),
+    resourceDecayEnabled: enabled,
+  });
+  const resolvedOperation = resolveOperationFields(
+    {
+      ...operation,
+      theaterResourceDecayEnabled: enabled,
+    },
+    nextTheater,
+  );
+  const nextTheaterFloors: Record<number, TheaterNetworkState> = {
+    ...(operation.theaterFloors ?? {}),
+    [resolvedOperation.currentFloorIndex]: cloneTheater(nextTheater),
+  };
+
+  Object.entries(operation.theaterFloors ?? {}).forEach(([floorIndex, floorTheater]) => {
+    const numericFloorIndex = Number(floorIndex);
+    if (numericFloorIndex === resolvedOperation.currentFloorIndex) {
+      return;
+    }
+    nextTheaterFloors[numericFloorIndex] = {
+      ...cloneTheater(floorTheater),
+      resourceDecayEnabled: enabled,
+    };
+  });
+
+  return {
+    state: {
+      ...state,
+      operation: {
+        ...resolvedOperation,
+        theaterFloors: nextTheaterFloors,
+      },
+    },
+    success: true,
+    message: enabled
+      ? "Room-to-room decay restored for crates, wattage, and bandwidth."
+      : "Room-to-room decay disabled for crates, wattage, and bandwidth.",
+  };
 }
