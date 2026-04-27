@@ -5005,7 +5005,7 @@ function renderCoreWindow(theater: TheaterNetworkState): string {
 function renderFeedWindow(theater: TheaterNetworkState): string {
   const body = `
     <div class="theater-feed-panel">
-      <div class="theater-feed-log" id="theaterFeedLog" data-theater-feed-log="true">
+      <div class="theater-feed-log theater-feed-log--window" id="theaterFeedLog" data-theater-feed-log="true">
         ${theater.recentEvents
           .map((entry) => `<div class="theater-feed-line">${escapeHtmlAttribute(entry)}</div>`)
           .join("")}
@@ -5033,13 +5033,48 @@ function renderFeedWindow(theater: TheaterNetworkState): string {
       </div>
     </div>
   `;
-  return renderWindowShell("feed", THEATER_WINDOW_DEFS.feed.title, THEATER_WINDOW_DEFS.feed.kicker, body, theater);
+  return renderWindowShell(
+    "feed",
+    THEATER_WINDOW_DEFS.feed.title,
+    THEATER_WINDOW_DEFS.feed.kicker,
+    body,
+    theater,
+    { bodyClassName: "theater-window-body--feed" },
+  );
+}
+
+function focusTheaterFeedCliInput(options: { select?: boolean } = {}): void {
+  const input = document.getElementById("theaterFeedCliInput") as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  input.focus({ preventScroll: true });
+  if (options.select) {
+    input.select();
+    return;
+  }
+
+  const caret = input.value.length;
+  try {
+    input.setSelectionRange(caret, caret);
+  } catch {
+    // Ignore selection failures for non-text-capable states.
+  }
+}
+
+function requestTheaterFeedCliFocus(options: { select?: boolean } = {}): void {
+  window.requestAnimationFrame(() => {
+    focusTheaterFeedCliInput(options);
+  });
 }
 
 function syncTheaterFeedWindowToLatest(): void {
   const feedLog = document.getElementById("theaterFeedLog");
   if (feedLog) {
-    feedLog.scrollTop = 0;
+    window.requestAnimationFrame(() => {
+      feedLog.scrollTop = feedLog.scrollHeight;
+    });
   }
 }
 
@@ -6332,6 +6367,13 @@ function renderTheaterStyles(): string {
         overflow: hidden;
       }
 
+      .theater-window-body--feed {
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+        overflow: hidden;
+      }
+
       .theater-window[data-theater-window="quests"] .theater-quest-tracker-window {
         border: 0;
         border-radius: 0;
@@ -6954,8 +6996,14 @@ function renderTheaterStyles(): string {
       .theater-feed-panel {
         display: flex;
         flex-direction: column;
-        min-height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 14px;
         gap: 12px;
+      }
+
+      .theater-feed-log--window {
+        margin-top: 0;
       }
 
       .theater-feed-line {
@@ -6970,6 +7018,7 @@ function renderTheaterStyles(): string {
 
       .theater-feed-cli-shell {
         margin-top: auto;
+        flex-shrink: 0;
         border-radius: 12px;
         border: 1px solid var(--all-nodes-surface-border, rgba(255, 255, 255, 0.08));
         background: rgba(0, 0, 0, 0.22);
@@ -9250,21 +9299,20 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
   attachWindowHandlers();
   ensureTheaterMapControls();
 
-  const theaterFeedCliShell = document.querySelector<HTMLElement>("[data-theater-feed-cli-shell='true']");
+  const theaterFeedPanel = document.querySelector<HTMLElement>("[data-theater-window='feed'] .theater-feed-panel");
   const theaterFeedCliForm = document.getElementById("theaterFeedCliForm") as HTMLFormElement | null;
   const theaterFeedCliInput = document.getElementById("theaterFeedCliInput") as HTMLInputElement | null;
   const theaterFeedCliStatus = document.getElementById("theaterFeedCliStatus");
 
-  if (theaterFeedCliShell && theaterFeedCliInput) {
-    theaterFeedCliShell.addEventListener("pointerdown", (event) => {
+  if (theaterFeedPanel && theaterFeedCliInput) {
+    theaterFeedPanel.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("#theaterFeedCliInput")) {
         return;
       }
-      window.requestAnimationFrame(() => {
-        theaterFeedCliInput.focus({ preventScroll: true });
-      });
+      requestTheaterFeedCliFocus();
     });
+    requestTheaterFeedCliFocus();
   }
 
   if (theaterFeedCliForm && theaterFeedCliInput instanceof HTMLInputElement && theaterFeedCliStatus instanceof HTMLElement) {
@@ -9294,9 +9342,6 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
           showSystemPing(result.ping);
         }
         renderTheaterCommandScreen();
-        window.requestAnimationFrame(() => {
-          document.getElementById("theaterFeedCliInput")?.focus({ preventScroll: true });
-        });
       } else {
         theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
         theaterFeedCliStatus.classList.add("theater-feed-cli-status--error");

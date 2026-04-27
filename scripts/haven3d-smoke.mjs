@@ -6,7 +6,10 @@ import { PNG } from "pngjs";
 
 const port = Number(process.env.HAVEN3D_SMOKE_PORT ?? 1431);
 const baseUrl = `http://127.0.0.1:${port}`;
-const screenshotPath = join(tmpdir(), "chaos-haven3d-smoke.png");
+const sharedScreenshotPath = join(tmpdir(), "chaos-haven3d-shared.png");
+const splitScreenshotPath = join(tmpdir(), "chaos-haven3d-split.png");
+const p2ShopScreenshotPath = join(tmpdir(), "chaos-haven3d-p2-shop.png");
+const screenshotPath = sharedScreenshotPath;
 const canvasPath = join(tmpdir(), "chaos-haven3d-smoke-canvas.png");
 
 function wait(ms) {
@@ -98,6 +101,19 @@ function angleDeltaRadians(a, b) {
   return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 }
 
+function getActiveCameraView(state, playerId = "P1") {
+  if (!state) {
+    return null;
+  }
+  if (typeof state.distance === "number") {
+    return state;
+  }
+  if (state.mode === "split") {
+    return state.split?.[playerId] ?? state.shared ?? null;
+  }
+  return state.shared ?? null;
+}
+
 async function triggerPrimaryAction(page, canvas) {
   const box = await canvas.boundingBox();
   assertSmoke(Boolean(box), "HAVEN 3D canvas was not measurable for primary action.");
@@ -114,6 +130,126 @@ async function triggerPrimaryAction(page, canvas) {
       view: window,
     }));
   });
+}
+
+async function readHaven3DCameraState(page, attempts = 6) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const state = await page.evaluate(async () => {
+      const field = await import("/src/field/FieldScreen.ts");
+      return field.getCurrentHaven3DFieldCameraState();
+    });
+    if (state) {
+      return state;
+    }
+    await page.waitForTimeout(100);
+  }
+
+  const debugState = await page.evaluate(() => ({
+    screen: document.body.dataset.screen ?? null,
+    hasFieldRoot: Boolean(document.querySelector(".field-root--haven3d")),
+    hasCanvas: Boolean(document.querySelector("canvas.haven3d-canvas")),
+    prompt: document.querySelector("[data-haven3d-prompt]")?.textContent ?? null,
+  }));
+  return { __debug: debugState };
+}
+
+async function readHaven3DPlayerCombatStates(page, attempts = 6) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const state = await page.evaluate(async () => {
+      const field = await import("/src/field/FieldScreen.ts");
+      return field.getCurrentHaven3DPlayerCombatStates?.() ?? null;
+    });
+    if (state) {
+      return state;
+    }
+    await page.waitForTimeout(80);
+  }
+  return null;
+}
+
+async function ensureSplitHudMode(page, playerId, requestedMode) {
+  const selector = `.haven3d-split-pane[data-haven3d-player="${playerId}"] [data-gearblade-mode-selector]`;
+  const activeMode = await page.locator(selector).getAttribute("data-active-mode");
+  if (activeMode === requestedMode) {
+    return;
+  }
+
+  const clicked = await page.evaluate(({ playerId: requestedPlayerId, requestedMode: mode }) => {
+    const button = document.querySelector(
+      `.haven3d-split-pane[data-haven3d-player="${requestedPlayerId}"] [data-haven3d-mode="${mode}"]`,
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      return false;
+    }
+    button.click();
+    return true;
+  }, { playerId, requestedMode });
+  assertSmoke(clicked, `Missing split HUD mode button for ${playerId} -> ${requestedMode}.`);
+  await page.waitForFunction(
+    ({ playerId: requestedPlayerId, mode }) => document
+      .querySelector(`.haven3d-split-pane[data-haven3d-player="${requestedPlayerId}"] [data-gearblade-mode-selector]`)
+      ?.getAttribute("data-active-mode") === mode,
+    { playerId, mode: requestedMode },
+    { timeout: 2000 },
+  );
+}
+
+async function joinLocalCoopP2(page) {
+  const joined = await page.evaluate(async () => {
+    const coop = await import("/src/core/coop.ts");
+    return coop.tryJoinAsP2();
+  });
+  assertSmoke(joined, "Player 2 failed to join local co-op.");
+  await page.waitForFunction(async () => {
+    const store = await import("/src/state/gameStore.ts");
+    const state = store.getGameState();
+    return Boolean(state.players.P2.active && state.players.P2.avatar);
+  }, null, { timeout: 5000 });
+  await page.waitForTimeout(220);
+}
+
+async function dropLocalCoopP2(page) {
+  const dropped = await page.evaluate(async () => {
+    const coop = await import("/src/core/coop.ts");
+    return coop.dropOutP2();
+  });
+  assertSmoke(dropped, "Player 2 failed to drop out of local co-op.");
+  await page.waitForFunction(async () => {
+    const store = await import("/src/state/gameStore.ts");
+    return store.getGameState().players.P2.active === false;
+  }, null, { timeout: 5000 });
+  await page.waitForTimeout(220);
+}
+
+async function movePlayersForP2ShopEntry(page) {
+  const moved = await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+
+    const tileSize = 64;
+    const map = field.getCurrentFieldRuntimeMap();
+    const shopZone = map?.interactionZones.find((zone) => zone.id === "interact_shop");
+    if (!map || !shopZone) {
+      return false;
+    }
+
+    const p1Avatar = {
+      x: 20.5 * tileSize,
+      y: 18.5 * tileSize,
+      facing: "south",
+    };
+    const p2Avatar = {
+      x: (shopZone.x + shopZone.width / 2) * tileSize,
+      y: (shopZone.y + shopZone.height / 2) * tileSize,
+      facing: "north",
+    };
+
+    return (
+      field.setCurrentFieldPlayerPosition("P1", p1Avatar.x, p1Avatar.y, p1Avatar.facing)
+      && field.setCurrentFieldPlayerPosition("P2", p2Avatar.x, p2Avatar.y, p2Avatar.facing)
+    );
+  });
+  assertSmoke(moved, "Could not stage Player 2 shop entry.");
+  await page.waitForTimeout(180);
 }
 
 async function setGearbladeMode(page, mode, key) {
@@ -206,9 +342,195 @@ async function runSmoke() {
 
   const canvas = page.locator(".haven3d-canvas").first();
   const canvasShot = await canvas.screenshot({ path: canvasPath });
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+  await page.screenshot({ path: sharedScreenshotPath, fullPage: false });
   const canvasStats = getCanvasStats(canvasShot);
   assertSmoke(canvasStats.coloredRatio > 0.5, `HAVEN 3D canvas looks blank: ${JSON.stringify(canvasStats)}`);
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".haven3d-canvas");
+    canvas?.focus();
+    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v",
+      code: "KeyV",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+  await page.waitForTimeout(180);
+  const splitCameraState = await readHaven3DCameraState(page);
+  const splitHudState = await page.evaluate(() => ({
+    sharedHidden: (document.querySelector("[data-haven3d-shared-ui]") instanceof HTMLElement)
+      ? document.querySelector("[data-haven3d-shared-ui]").hidden
+      : null,
+    splitHidden: (document.querySelector("[data-haven3d-split-ui]") instanceof HTMLElement)
+      ? document.querySelector("[data-haven3d-split-ui]").hidden
+      : null,
+  }));
+  assertSmoke(
+    splitCameraState?.mode === "split"
+      && splitHudState.sharedHidden === true
+      && splitHudState.splitHidden === false,
+    `Split camera toggle did not activate: ${JSON.stringify({ splitCameraState, splitHudState })}`,
+  );
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".haven3d-canvas");
+    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v",
+      code: "KeyV",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+  await page.waitForTimeout(180);
+  const sharedCameraState = await readHaven3DCameraState(page);
+  const sharedHudState = await page.evaluate(() => ({
+    sharedHidden: (document.querySelector("[data-haven3d-shared-ui]") instanceof HTMLElement)
+      ? document.querySelector("[data-haven3d-shared-ui]").hidden
+      : null,
+    splitHidden: (document.querySelector("[data-haven3d-split-ui]") instanceof HTMLElement)
+      ? document.querySelector("[data-haven3d-split-ui]").hidden
+      : null,
+  }));
+  assertSmoke(
+    sharedCameraState?.mode === "shared"
+      && sharedHudState.sharedHidden === false
+      && sharedHudState.splitHidden === true,
+    `Shared camera toggle did not restore: ${JSON.stringify({ sharedCameraState, sharedHudState })}`,
+  );
+
+  await joinLocalCoopP2(page);
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".haven3d-canvas");
+    canvas?.focus();
+    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v",
+      code: "KeyV",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+  await page.waitForTimeout(220);
+  const coopSplitCameraState = await readHaven3DCameraState(page);
+  assertSmoke(coopSplitCameraState?.mode === "split", `Co-op split camera did not activate: ${JSON.stringify(coopSplitCameraState)}`);
+
+  await ensureSplitHudMode(page, "P1", "launcher");
+  await ensureSplitHudMode(page, "P2", "grapple");
+  await page.waitForTimeout(120);
+
+  const splitModeHudState = await page.evaluate(() => ({
+    P1: document
+      .querySelector('.haven3d-split-pane[data-haven3d-player="P1"] [data-gearblade-mode-selector]')
+      ?.getAttribute("data-active-mode") ?? null,
+    P2: document
+      .querySelector('.haven3d-split-pane[data-haven3d-player="P2"] [data-gearblade-mode-selector]')
+      ?.getAttribute("data-active-mode") ?? null,
+  }));
+  const splitCombatState = await readHaven3DPlayerCombatStates(page);
+  assertSmoke(
+    splitModeHudState.P1 === "launcher"
+      && splitModeHudState.P2 === "grapple"
+      && splitCombatState?.P1?.gearbladeMode === "launcher"
+      && splitCombatState?.P2?.gearbladeMode === "grapple",
+    `Split per-player modes did not persist independently: ${JSON.stringify({ splitModeHudState, splitCombatState })}`,
+  );
+  await page.screenshot({ path: splitScreenshotPath, fullPage: false });
+
+  await triggerPrimaryAction(page, canvas);
+  await page.waitForTimeout(100);
+  const afterP1ActionState = await readHaven3DPlayerCombatStates(page);
+  assertSmoke(
+    (afterP1ActionState?.P1?.attackCooldown ?? 0) > 0
+      && (afterP1ActionState?.P1?.gearbladeMode ?? null) === "launcher",
+    `P1 action did not update independent combat state: ${JSON.stringify(afterP1ActionState)}`,
+  );
+
+  await ensureSplitHudMode(page, "P2", "blade");
+  await page.keyboard.press("Numpad0");
+  await page.waitForTimeout(60);
+  const afterP2ActionState = await readHaven3DPlayerCombatStates(page);
+  assertSmoke(
+    ((afterP2ActionState?.P2?.attackCooldown ?? 0) > 0 || (afterP2ActionState?.P2?.isAttacking ?? false))
+      && (afterP2ActionState?.P2?.gearbladeMode ?? null) === "blade",
+    `P2 action did not update independent combat state: ${JSON.stringify(afterP2ActionState)}`,
+  );
+
+  await movePlayersForP2ShopEntry(page);
+  const p2ShopTriggerState = await page.evaluate(async () => {
+    if (document.querySelector(".shop-root")) {
+      return { opened: true, triggered: false };
+    }
+    const field = await import("/src/field/FieldScreen.ts");
+    return {
+      opened: false,
+      triggered: field.triggerFieldInteractionForPlayer("P2"),
+    };
+  });
+  assertSmoke(
+    p2ShopTriggerState.opened || p2ShopTriggerState.triggered,
+    `P2 could not trigger the current HAVEN field interaction: ${JSON.stringify(p2ShopTriggerState)}`,
+  );
+  await page.waitForSelector(".shop-root", { timeout: 10000 });
+  await page.waitForTimeout(180);
+  const p2ShopScreenState = await page.evaluate(() => ({
+    screen: document.body.dataset.screen ?? null,
+    hasShopRoot: Boolean(document.querySelector(".shop-root")),
+    backButton: Boolean(document.querySelector("#backBtn")),
+  }));
+  assertSmoke(
+    p2ShopScreenState.screen === "shop"
+      && p2ShopScreenState.hasShopRoot
+      && p2ShopScreenState.backButton,
+    `P2 HAVEN building interaction did not open the shared shop screen: ${JSON.stringify(p2ShopScreenState)}`,
+  );
+  await page.screenshot({ path: p2ShopScreenshotPath, fullPage: false });
+  await page.locator("#backBtn").click();
+  await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
+  await page.waitForTimeout(420);
+  const postP2ReturnState = await page.evaluate(() => ({
+    screen: document.body.dataset.screen ?? null,
+    hasShopRoot: Boolean(document.querySelector(".shop-root")),
+    hasFieldCanvas: Boolean(document.querySelector(".field-root--haven3d canvas.haven3d-canvas")),
+  }));
+  const postP2ReturnCameraState = await readHaven3DCameraState(page);
+  assertSmoke(
+    postP2ReturnState.hasFieldCanvas
+      && !postP2ReturnState.hasShopRoot
+      && postP2ReturnCameraState?.mode === "split",
+    `P2 field return did not restore the split HAVEN runtime cleanly: ${JSON.stringify({ postP2ReturnState, postP2ReturnCameraState })}`,
+  );
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".haven3d-canvas");
+    canvas?.focus();
+    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v",
+      code: "KeyV",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+  await page.waitForTimeout(180);
+  const restoredSharedAfterCoopState = await readHaven3DCameraState(page);
+  assertSmoke(
+    restoredSharedAfterCoopState?.mode === "shared",
+    `Co-op smoke cleanup did not restore shared camera mode: ${JSON.stringify(restoredSharedAfterCoopState)}`,
+  );
+
+  await dropLocalCoopP2(page);
+  const postDropState = await page.evaluate(async () => {
+    const store = await import("/src/state/gameStore.ts");
+    const state = store.getGameState();
+    return {
+      p2Active: state.players.P2.active,
+      p2Avatar: state.players.P2.avatar,
+    };
+  });
+  assertSmoke(
+    postDropState.p2Active === false && postDropState.p2Avatar === null,
+    `P2 drop-out did not cleanly clear local co-op state: ${JSON.stringify(postDropState)}`,
+  );
 
   const havenBuildingCollision = await page.evaluate(async () => {
     const maps = await import("/src/field/maps.ts");
@@ -939,6 +1261,41 @@ async function runSmoke() {
   });
   await page.waitForSelector("#dialoguePanel", { state: "detached", timeout: 10000 });
 
+  await page.evaluate(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    const maps = await import("/src/field/maps.ts");
+    const runtime = field.getCurrentFieldRuntimeState();
+    const mapId = field.getCurrentFieldMap() ?? "base_camp";
+    const map = maps.getFieldMap(mapId);
+    if (!runtime) {
+      return;
+    }
+    runtime.npcs = [];
+    let safePoint = null;
+    for (let y = 4; y < map.height - 4 && !safePoint; y += 1) {
+      for (let x = 4; x < map.width - 4; x += 1) {
+        const tile = map.tiles[y]?.[x];
+        if (!tile?.walkable) {
+          continue;
+        }
+        const insideInteractionZone = map.interactionZones.some((zone) => (
+          x >= zone.x
+          && x < zone.x + zone.width
+          && y >= zone.y
+          && y < zone.y + zone.height
+        ));
+        if (!insideInteractionZone) {
+          safePoint = { x: x * 64 + 32, y: y * 64 + 32 };
+          break;
+        }
+      }
+    }
+    if (safePoint) {
+      runtime.player.x = safePoint.x;
+      runtime.player.y = safePoint.y;
+    }
+  });
+
   const beforeMove = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
     const runtime = field.getCurrentFieldRuntimeState();
@@ -968,7 +1325,22 @@ async function runSmoke() {
   assertSmoke(moveDistance > 20, `WASD movement did not move enough: ${moveDistance.toFixed(2)}px`);
   assertSmoke(Math.abs((afterMove?.x ?? 0) - (beforeMove?.x ?? 0)) > 4, "Right-drag free camera did not affect camera-relative movement.");
 
-  await page.keyboard.press("Tab");
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".haven3d-canvas");
+    canvas?.focus();
+    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Tab",
+      code: "Tab",
+      bubbles: true,
+      cancelable: true,
+    }));
+    canvas?.dispatchEvent(new KeyboardEvent("keyup", {
+      key: "Tab",
+      code: "Tab",
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
   await page.evaluate(() => {
     document.querySelector("canvas.haven3d-canvas")?.dispatchEvent(new WheelEvent("wheel", {
       bubbles: true,
@@ -977,12 +1349,10 @@ async function runSmoke() {
     }));
   });
   await page.waitForTimeout(360);
-  const cameraBeforeScreenRoundTrip = await page.evaluate(async () => {
-    const field = await import("/src/field/FieldScreen.ts");
-    return field.getCurrentHaven3DFieldCameraState();
-  });
+  const cameraBeforeScreenRoundTrip = await readHaven3DCameraState(page);
+  const activeCameraBeforeScreenRoundTrip = getActiveCameraView(cameraBeforeScreenRoundTrip, "P1");
   assertSmoke(
-    cameraBeforeScreenRoundTrip?.distance > 9.2,
+    activeCameraBeforeScreenRoundTrip?.distance > 9.2,
     `HAVEN 3D camera zoom did not change before remount: ${JSON.stringify(cameraBeforeScreenRoundTrip)}`,
   );
   await page.evaluate(async () => {
@@ -990,15 +1360,14 @@ async function runSmoke() {
     field.renderFieldScreen(field.getCurrentFieldMap() ?? "base_camp");
   });
   await page.waitForSelector(".field-root--haven3d canvas.haven3d-canvas", { timeout: 10000 });
-  const cameraAfterScreenRoundTrip = await page.evaluate(async () => {
-    const field = await import("/src/field/FieldScreen.ts");
-    return field.getCurrentHaven3DFieldCameraState();
-  });
+  const cameraAfterScreenRoundTrip = await readHaven3DCameraState(page);
+  const activeCameraAfterScreenRoundTrip = getActiveCameraView(cameraAfterScreenRoundTrip, "P1");
   assertSmoke(Boolean(cameraAfterScreenRoundTrip), "HAVEN 3D camera was not available after field remount.");
   assertSmoke(
-    Math.abs(cameraAfterScreenRoundTrip.distance - cameraBeforeScreenRoundTrip.distance) < 0.01
-      && Math.abs(cameraAfterScreenRoundTrip.pitch - cameraBeforeScreenRoundTrip.pitch) < 0.01
-      && angleDeltaRadians(cameraAfterScreenRoundTrip.yaw, cameraBeforeScreenRoundTrip.yaw) < 0.02,
+    Boolean(activeCameraBeforeScreenRoundTrip && activeCameraAfterScreenRoundTrip)
+      && Math.abs(activeCameraAfterScreenRoundTrip.distance - activeCameraBeforeScreenRoundTrip.distance) < 0.01
+      && Math.abs(activeCameraAfterScreenRoundTrip.pitch - activeCameraBeforeScreenRoundTrip.pitch) < 0.01
+      && angleDeltaRadians(activeCameraAfterScreenRoundTrip.yaw, activeCameraBeforeScreenRoundTrip.yaw) < 0.02,
     `HAVEN 3D camera reset after screen round-trip: ${JSON.stringify({ before: cameraBeforeScreenRoundTrip, after: cameraAfterScreenRoundTrip })}`,
   );
 
@@ -1487,6 +1856,9 @@ async function runSmoke() {
     canvasStats,
     moveDistance: Number(moveDistance.toFixed(2)),
     screenshotPath,
+    sharedScreenshotPath,
+    splitScreenshotPath,
+    p2ShopScreenshotPath,
     canvasPath,
   };
 }

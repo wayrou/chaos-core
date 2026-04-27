@@ -7,7 +7,16 @@ import {
   handleKeyUp as handlePlayerInputKeyUp,
   isPlayerInputActionEvent,
 } from "../../core/playerInput";
-import type { FieldEnemy, FieldLootOrb, FieldMap, FieldNpc, FieldObject, FieldProjectile, PlayerAvatar } from "../types";
+import type {
+  FieldEnemy,
+  FieldLootOrb,
+  FieldMap,
+  FieldNpc,
+  FieldObject,
+  FieldPlayerCombatState,
+  FieldProjectile,
+  PlayerAvatar,
+} from "../types";
 import type { Companion } from "../companion";
 import {
   HAVEN3D_FIELD_TILE_SIZE,
@@ -145,7 +154,6 @@ type Haven3DLauncherImpact = {
   radius: number;
   damage: number;
   knockback: number;
-  utility?: "attack" | "flare";
 };
 
 type Haven3DLauncherFire = {
@@ -153,7 +161,6 @@ type Haven3DLauncherFire = {
   x: number;
   y: number;
   target: Haven3DTargetRef | null;
-  utility: "attack" | "flare";
 };
 
 type Haven3DGrappleImpact = {
@@ -212,6 +219,7 @@ type GearbladeTransformSnapshot = GearbladeTransformState & {
 };
 
 type LauncherProjectile = {
+  playerId: PlayerId;
   mesh: THREE.Object3D;
   x: number;
   y: number;
@@ -219,7 +227,6 @@ type LauncherProjectile = {
   vy: number;
   ttlMs: number;
   target: Haven3DTargetRef | null;
-  utility: "attack" | "flare";
   radius: number;
   damage: number;
   knockback: number;
@@ -343,6 +350,7 @@ type GrappleZiplineTargetRef = {
 };
 
 type GrappleMoveState = {
+  playerId: PlayerId;
   startedAt: number;
   target: Haven3DTargetRef | GrappleAnchorTargetRef | GrappleZiplineTargetRef;
   targetPoint: { x: number; y: number };
@@ -404,10 +412,18 @@ type CameraYawPan = {
   toYaw: number;
 };
 
-export type Haven3DFieldCameraState = {
+export type Haven3DFieldCameraMode = "shared" | "split";
+
+export type Haven3DFieldCameraViewState = {
   yaw: number;
   pitch: number;
   distance: number;
+};
+
+export type Haven3DFieldCameraState = {
+  mode: Haven3DFieldCameraMode;
+  shared: Haven3DFieldCameraViewState;
+  split: Record<PlayerId, Haven3DFieldCameraViewState>;
 };
 
 type Haven3DMapCameraProfile = {
@@ -451,6 +467,7 @@ type Haven3DFieldControllerOptions = {
   host: HTMLElement;
   map: FieldMap;
   initialCameraState?: Haven3DFieldCameraState | null;
+  initialPlayerCombatStates?: Partial<Record<PlayerId, FieldPlayerCombatState>>;
   getNpcs: () => FieldNpc[];
   getEnemies: () => FieldEnemy[];
   getFieldProjectiles?: () => FieldProjectile[];
@@ -466,6 +483,7 @@ type Haven3DFieldControllerOptions = {
     previous: FieldAvatarView,
   ) => FieldAvatarView;
   getPrompt: () => string | null;
+  getPlayerPrompt?: (playerId: PlayerId) => string | null;
   onInteractPressed: (playerId: PlayerId) => void;
   onOpenMenu: () => void;
   onFrame: (deltaMs: number, currentTime: number) => void;
@@ -490,6 +508,18 @@ const CAMERA_MAX_PITCH = 0.62;
 const CAMERA_DEFAULT_DISTANCE = 8.8;
 const CAMERA_MIN_DISTANCE = 5.4;
 const CAMERA_MAX_DISTANCE = 15.5;
+const CAMERA_FOLLOW_ELEVATION_LERP_BASE = 0.00005;
+const LAUNCHER_CAMERA_MIN_PITCH = -0.24;
+const LAUNCHER_CAMERA_MAX_PITCH = 0.12;
+const LAUNCHER_CAMERA_DEFAULT_PITCH = 0;
+const LAUNCHER_CAMERA_DISTANCE_MIN = 4.9;
+const LAUNCHER_CAMERA_DISTANCE_MAX = 7.2;
+const LAUNCHER_CAMERA_FOCUS_AHEAD = 24;
+const LAUNCHER_CAMERA_SHOULDER_OFFSET = 1.08;
+const LAUNCHER_CAMERA_HEIGHT_OFFSET = 0.92;
+const LAUNCHER_CAMERA_ANCHOR_LIFT = 0.16;
+const LAUNCHER_CAMERA_LOOK_LIFT = 0.18;
+const LAUNCHER_CAMERA_LOCKED_LOOK_LIFT = 0.34;
 const HAVEN3D_BASE_MAP_PROFILE: Haven3DMapProfile = {
   camera: {
     defaultPitch: 0.24,
@@ -1025,26 +1055,40 @@ function isFiniteCameraValue(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function normalizeHaven3DCameraState(
-  state: Haven3DFieldCameraState | null | undefined,
+function normalizeHaven3DCameraViewState(
+  state: Haven3DFieldCameraViewState | null | undefined,
   profile: Haven3DMapProfile,
-): Haven3DFieldCameraState | null {
-  if (!state || !isFiniteCameraValue(state.yaw)) {
-    return null;
-  }
-
+): Haven3DFieldCameraViewState {
   return {
-    yaw: state.yaw,
+    yaw: isFiniteCameraValue(state?.yaw) ? state.yaw : 0,
     pitch: THREE.MathUtils.clamp(
-      isFiniteCameraValue(state.pitch) ? state.pitch : profile.camera.defaultPitch,
+      isFiniteCameraValue(state?.pitch) ? state.pitch : profile.camera.defaultPitch,
       CAMERA_MIN_PITCH,
       CAMERA_MAX_PITCH,
     ),
     distance: THREE.MathUtils.clamp(
-      isFiniteCameraValue(state.distance) ? state.distance : profile.camera.defaultDistance,
+      isFiniteCameraValue(state?.distance) ? state.distance : profile.camera.defaultDistance,
       profile.camera.minDistance,
       profile.camera.maxDistance,
     ),
+  };
+}
+
+function normalizeHaven3DCameraState(
+  state: Haven3DFieldCameraState | null | undefined,
+  profile: Haven3DMapProfile,
+): Haven3DFieldCameraState | null {
+  if (!state) {
+    return null;
+  }
+
+  return {
+    mode: state.mode === "split" ? "split" : "shared",
+    shared: normalizeHaven3DCameraViewState(state.shared, profile),
+    split: {
+      P1: normalizeHaven3DCameraViewState(state.split?.P1 ?? state.shared, profile),
+      P2: normalizeHaven3DCameraViewState(state.split?.P2 ?? state.shared, profile),
+    },
   };
 }
 
@@ -1699,6 +1743,10 @@ export class Haven3DFieldController implements Haven3DModeController {
   private readonly lootOrbActors = new Map<string, THREE.Object3D>();
   private readonly fieldObjectGroups = new Map<string, THREE.Object3D>();
   private readonly fieldObjectsById = new Map<string, FieldObject>();
+  private readonly splitCameras = {
+    P1: new THREE.PerspectiveCamera(62, 1, 0.1, 260),
+    P2: new THREE.PerspectiveCamera(62, 1, 0.1, 260),
+  };
   private distantHavenLandmark: THREE.Group | null = null;
   private companionActor: Actor | null = null;
   private companionVerticalState: CompanionVerticalState | null = null;
@@ -1708,14 +1756,27 @@ export class Haven3DFieldController implements Haven3DModeController {
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
   private lastFrameTime = 0;
+  private cameraMode: Haven3DFieldCameraMode = "shared";
   private yaw = 0;
   private pitch = 0.2;
   private cameraDistance = CAMERA_DEFAULT_DISTANCE;
+  private p2ActiveGearbladeMode: Haven3DGearbladeMode | null = null;
+  private p2TargetLock: Haven3DTargetRef | null = null;
+  private p2TargetOrbitYawOffset = 0;
+  private p2ActionCooldownUntil = 0;
+  private p2LauncherRecoilStartedAt = Number.NEGATIVE_INFINITY;
+  private p2BladeSwing: BladeSwingState | null = null;
+  private p2NextBladeSwingComboStep: BladeSwingComboStep = 0;
+  private p2BladeComboExpiresAt = Number.NEGATIVE_INFINITY;
+  private p2GearbladeTransform: GearbladeTransformState | null = null;
+  private p2GrappleMove: GrappleMoveState | null = null;
+  private p2ZiplineDismountDrift: ZiplineDismountDrift | null = null;
   private mouseDx = 0;
   private mouseDy = 0;
   private rightMouseDown = false;
   private pointerLocked = false;
   private promptElement: HTMLElement | null = null;
+  private reticleElement: HTMLElement | null = null;
   private disposed = false;
   private targetLock: Haven3DTargetRef | null = null;
   private targetOrbitYawOffset = 0;
@@ -1740,7 +1801,25 @@ export class Haven3DFieldController implements Haven3DModeController {
   private currentFrameTime = 0;
   private hitstopRemainingMs = 0;
   private cameraYawPan: CameraYawPan | null = null;
+  private cameraFollowWorldY: number | null = null;
   private snapCameraNextFrame = true;
+  private splitCameraStates: Record<PlayerId, Haven3DFieldCameraViewState> = {
+    P1: { yaw: 0, pitch: 0.2, distance: CAMERA_DEFAULT_DISTANCE },
+    P2: { yaw: 0, pitch: 0.2, distance: CAMERA_DEFAULT_DISTANCE },
+  };
+  private splitCameraYawPans: Record<PlayerId, CameraYawPan | null> = {
+    P1: null,
+    P2: null,
+  };
+  private splitCameraFollowWorldY: Record<PlayerId, number | null> = {
+    P1: null,
+    P2: null,
+  };
+  private splitCameraSnapNextFrame: Record<PlayerId, boolean> = {
+    P1: true,
+    P2: true,
+  };
+  private hasUsedSplitCamera = false;
   private clearSkyboxBackground: (() => void) | null = null;
 
   private readonly handleResize = () => this.resize();
@@ -1759,6 +1838,20 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
     event.preventDefault();
+    if (this.cameraMode === "split") {
+      const bounds = this.renderer.domElement.getBoundingClientRect();
+      const targetPlayerId: PlayerId = event.clientX >= bounds.left + (bounds.width / 2) ? "P2" : "P1";
+      const current = this.splitCameraStates[targetPlayerId];
+      this.splitCameraStates[targetPlayerId] = {
+        ...current,
+        distance: THREE.MathUtils.clamp(
+          current.distance + event.deltaY * 0.008,
+          this.mapProfile.camera.minDistance,
+          this.mapProfile.camera.maxDistance,
+        ),
+      };
+      return;
+    }
     this.cameraDistance = THREE.MathUtils.clamp(
       this.cameraDistance + event.deltaY * 0.008,
       this.mapProfile.camera.minDistance,
@@ -1783,7 +1876,10 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     event.preventDefault();
     event.stopPropagation();
-    this.setGearbladeMode(mode);
+    const playerId = target.closest<HTMLElement>("[data-haven3d-player]")?.dataset.haven3dPlayer === "P2"
+      ? "P2"
+      : "P1";
+    this.setGearbladeMode(playerId, mode);
     this.renderer.domElement.focus();
   };
   private readonly handleKeyDown = (event: KeyboardEvent) => {
@@ -1802,25 +1898,34 @@ export class Haven3DFieldController implements Haven3DModeController {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
-        this.snapCameraToPlayerFacing();
+        this.snapCameraToPlayerFacing("P1");
       }
       return;
     }
 
-    if (event.code === "KeyZ" || event.key === "z" || event.key === "Z") {
+    if (event.code === "KeyZ" || event.key === "z" || event.key === "Z" || event.code === "NumpadDecimal") {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
-        this.selectNextTarget(event.shiftKey);
+        this.selectNextTarget(event.code === "NumpadDecimal" ? "P2" : "P1", event.shiftKey);
       }
       return;
     }
 
-    if (event.code === "Space" || event.key === " ") {
+    if (event.code === "Space" || event.key === " " || event.code === "NumpadEnter") {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
-        this.tryStartPlayerJump("P1");
+        this.tryStartPlayerJump(event.code === "NumpadEnter" ? "P2" : "P1");
+      }
+      return;
+    }
+
+    if (event.code === "KeyV" || event.key === "v" || event.key === "V") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) {
+        this.toggleCameraMode();
       }
       return;
     }
@@ -1829,27 +1934,38 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (requestedMode) {
       event.preventDefault();
       event.stopPropagation();
-      this.setGearbladeMode(requestedMode);
+      this.setGearbladeMode(event.code.startsWith("Numpad") ? "P2" : "P1", requestedMode);
       return;
     }
 
-    if (event.code === "KeyQ" || event.key === "q" || event.key === "Q") {
+    if (event.code === "KeyQ" || event.key === "q" || event.key === "Q" || event.code === "NumpadAdd") {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
-        this.cycleGearbladeMode();
+        this.cycleGearbladeMode(event.code === "NumpadAdd" ? "P2" : "P1");
       }
       return;
     }
 
     if (
-      this.activeMode !== null
+      this.getPlayerActiveMode("P1") !== null
       && !event.repeat
       && isPlayerInputActionEvent(event, "P1", "attack")
     ) {
       event.preventDefault();
       event.stopPropagation();
-      this.triggerPrimaryAction();
+      this.triggerPrimaryAction("P1");
+      return;
+    }
+
+    if (
+      this.getPlayerActiveMode("P2") !== null
+      && !event.repeat
+      && isPlayerInputActionEvent(event, "P2", "attack")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.triggerPrimaryAction("P2");
       return;
     }
 
@@ -1881,15 +1997,35 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.options = options;
     this.mapProfile = getHaven3DMapProfile(options.map);
     const initialCameraState = normalizeHaven3DCameraState(options.initialCameraState, this.mapProfile);
-    this.yaw = initialCameraState?.yaw ?? 0;
-    this.pitch = initialCameraState?.pitch ?? this.mapProfile.camera.defaultPitch;
-    this.cameraDistance = initialCameraState?.distance ?? this.mapProfile.camera.defaultDistance;
+    const sharedCameraState = initialCameraState?.shared ?? normalizeHaven3DCameraViewState(null, this.mapProfile);
+    this.cameraMode = initialCameraState?.mode ?? "shared";
+    this.yaw = sharedCameraState.yaw;
+    this.pitch = sharedCameraState.pitch;
+    this.cameraDistance = sharedCameraState.distance;
+    this.hasUsedSplitCamera = Boolean(initialCameraState);
+    this.splitCameraStates = {
+      P1: initialCameraState?.split.P1 ?? sharedCameraState,
+      P2: initialCameraState?.split.P2 ?? sharedCameraState,
+    };
     this.modeController = createHaven3DModeController({
       enableGearbladeModes: options.enableGearbladeModes === true,
       enabledModes: options.enabledGearbladeModes,
       initialMode: "blade",
     });
     this.activeGearbladeMode = this.modeController.activeMode;
+    this.p2ActiveGearbladeMode = options.initialPlayerCombatStates?.P2?.gearbladeMode
+      ?? options.initialPlayerCombatStates?.P1?.gearbladeMode
+      ?? this.modeController.activeMode;
+    this.activeGearbladeMode = options.initialPlayerCombatStates?.P1?.gearbladeMode ?? this.activeGearbladeMode;
+    const p1CombatState = options.initialPlayerCombatStates?.P1;
+    const p2CombatState = options.initialPlayerCombatStates?.P2;
+    const now = performance.now();
+    if (p1CombatState) {
+      this.actionCooldownUntil = now + Math.max(0, Number(p1CombatState.attackCooldown ?? 0));
+    }
+    if (p2CombatState) {
+      this.p2ActionCooldownUntil = now + Math.max(0, Number(p2CombatState.attackCooldown ?? 0));
+    }
     this.configureCameraForMap();
     applyArdyciaToonRendererStyle(this.renderer);
     this.renderer.shadowMap.enabled = false;
@@ -1911,12 +2047,203 @@ export class Haven3DFieldController implements Haven3DModeController {
     return this.options.map.id;
   }
 
+  private getPlayerActiveMode(playerId: PlayerId): Haven3DGearbladeMode | null {
+    return playerId === "P1" ? this.activeGearbladeMode : this.p2ActiveGearbladeMode;
+  }
+
+  private setPlayerActiveMode(playerId: PlayerId, mode: Haven3DGearbladeMode | null): void {
+    if (playerId === "P1") {
+      this.activeGearbladeMode = mode;
+      return;
+    }
+    this.p2ActiveGearbladeMode = mode;
+  }
+
+  private getPlayerTargetLock(playerId: PlayerId): Haven3DTargetRef | null {
+    return playerId === "P1" ? this.targetLock : this.p2TargetLock;
+  }
+
+  private setPlayerTargetLock(playerId: PlayerId, targetLock: Haven3DTargetRef | null): void {
+    if (playerId === "P1") {
+      this.targetLock = targetLock;
+      return;
+    }
+    this.p2TargetLock = targetLock;
+  }
+
+  private getPlayerTargetOrbitYawOffset(playerId: PlayerId): number {
+    return playerId === "P1" ? this.targetOrbitYawOffset : this.p2TargetOrbitYawOffset;
+  }
+
+  private setPlayerTargetOrbitYawOffset(playerId: PlayerId, offset: number): void {
+    if (playerId === "P1") {
+      this.targetOrbitYawOffset = offset;
+      return;
+    }
+    this.p2TargetOrbitYawOffset = offset;
+  }
+
+  private getPlayerActionCooldownUntil(playerId: PlayerId): number {
+    return playerId === "P1" ? this.actionCooldownUntil : this.p2ActionCooldownUntil;
+  }
+
+  private setPlayerActionCooldownUntil(playerId: PlayerId, nextCooldownUntil: number): void {
+    if (playerId === "P1") {
+      this.actionCooldownUntil = nextCooldownUntil;
+      return;
+    }
+    this.p2ActionCooldownUntil = nextCooldownUntil;
+  }
+
+  private getPlayerLauncherRecoilStartedAt(playerId: PlayerId): number {
+    return playerId === "P1" ? this.launcherRecoilStartedAt : this.p2LauncherRecoilStartedAt;
+  }
+
+  private setPlayerLauncherRecoilStartedAt(playerId: PlayerId, startedAt: number): void {
+    if (playerId === "P1") {
+      this.launcherRecoilStartedAt = startedAt;
+      return;
+    }
+    this.p2LauncherRecoilStartedAt = startedAt;
+  }
+
+  private getPlayerBladeSwing(playerId: PlayerId): BladeSwingState | null {
+    return playerId === "P1" ? this.bladeSwing : this.p2BladeSwing;
+  }
+
+  private setPlayerBladeSwing(playerId: PlayerId, swing: BladeSwingState | null): void {
+    if (playerId === "P1") {
+      this.bladeSwing = swing;
+      return;
+    }
+    this.p2BladeSwing = swing;
+  }
+
+  private getPlayerNextBladeSwingComboStep(playerId: PlayerId): BladeSwingComboStep {
+    return playerId === "P1" ? this.nextBladeSwingComboStep : this.p2NextBladeSwingComboStep;
+  }
+
+  private setPlayerNextBladeSwingComboStep(playerId: PlayerId, comboStep: BladeSwingComboStep): void {
+    if (playerId === "P1") {
+      this.nextBladeSwingComboStep = comboStep;
+      return;
+    }
+    this.p2NextBladeSwingComboStep = comboStep;
+  }
+
+  private getPlayerBladeComboExpiresAt(playerId: PlayerId): number {
+    return playerId === "P1" ? this.bladeComboExpiresAt : this.p2BladeComboExpiresAt;
+  }
+
+  private setPlayerBladeComboExpiresAt(playerId: PlayerId, expiresAt: number): void {
+    if (playerId === "P1") {
+      this.bladeComboExpiresAt = expiresAt;
+      return;
+    }
+    this.p2BladeComboExpiresAt = expiresAt;
+  }
+
+  private getPlayerGearbladeTransform(playerId: PlayerId): GearbladeTransformState | null {
+    return playerId === "P1" ? this.gearbladeTransform : this.p2GearbladeTransform;
+  }
+
+  private setPlayerGearbladeTransform(playerId: PlayerId, transform: GearbladeTransformState | null): void {
+    if (playerId === "P1") {
+      this.gearbladeTransform = transform;
+      return;
+    }
+    this.p2GearbladeTransform = transform;
+  }
+
+  private getPlayerGrappleMove(playerId: PlayerId): GrappleMoveState | null {
+    return playerId === "P1" ? this.grappleMove : this.p2GrappleMove;
+  }
+
+  private setPlayerGrappleMove(playerId: PlayerId, grappleMove: GrappleMoveState | null): void {
+    if (playerId === "P1") {
+      this.grappleMove = grappleMove;
+      return;
+    }
+    this.p2GrappleMove = grappleMove;
+  }
+
+  private getPlayerZiplineDismountDrift(playerId: PlayerId): ZiplineDismountDrift | null {
+    return playerId === "P1" ? this.ziplineDismountDrift : this.p2ZiplineDismountDrift;
+  }
+
+  private setPlayerZiplineDismountDrift(playerId: PlayerId, drift: ZiplineDismountDrift | null): void {
+    if (playerId === "P1") {
+      this.ziplineDismountDrift = drift;
+      return;
+    }
+    this.p2ZiplineDismountDrift = drift;
+  }
+
+  getPlayerCombatStates(): Partial<Record<PlayerId, FieldPlayerCombatState>> {
+    const now = this.currentFrameTime || performance.now();
+    const buildPlayerCombatState = (playerId: PlayerId): FieldPlayerCombatState => {
+      const activeMode = this.getPlayerActiveMode(playerId) ?? "blade";
+      const cooldownRemaining = Math.max(0, this.getPlayerActionCooldownUntil(playerId) - now);
+      const bladeSwing = this.getPlayerBladeSwing(playerId);
+      return {
+        isAttacking: Boolean(bladeSwing),
+        attackCooldown: cooldownRemaining,
+        attackAnimTime: bladeSwing ? Math.max(0, BLADE_SWING_TOTAL_MS - (now - bladeSwing.startedAt)) : 0,
+        isRangedMode: activeMode === "launcher",
+        gearbladeMode: activeMode,
+        energyCells: this.options.initialPlayerCombatStates?.[playerId]?.energyCells ?? 0,
+        maxEnergyCells: this.options.initialPlayerCombatStates?.[playerId]?.maxEnergyCells ?? 0,
+      };
+    };
+
+    return {
+      P1: buildPlayerCombatState("P1"),
+      P2: buildPlayerCombatState("P2"),
+    };
+  }
+
   getCameraState(): Haven3DFieldCameraState {
     return {
-      yaw: this.getSnapshotYaw(),
-      pitch: this.pitch,
-      distance: this.cameraDistance,
+      mode: this.cameraMode,
+      shared: {
+        yaw: this.getSnapshotYaw(),
+        pitch: this.pitch,
+        distance: this.cameraDistance,
+      },
+      split: {
+        P1: { ...this.splitCameraStates.P1 },
+        P2: { ...this.splitCameraStates.P2 },
+      },
     };
+  }
+
+  private getCameraYawForPlayerControls(playerId: PlayerId): number {
+    if (this.cameraMode === "split") {
+      return this.splitCameraStates[playerId].yaw;
+    }
+    return this.getSnapshotYaw();
+  }
+
+  private getCameraBasis(playerId: PlayerId): {
+    forwardX: number;
+    forwardY: number;
+    rightX: number;
+    rightY: number;
+  } {
+    const yaw = this.getCameraYawForPlayerControls(playerId);
+    return {
+      forwardX: -Math.sin(yaw),
+      forwardY: -Math.cos(yaw),
+      rightX: Math.cos(yaw),
+      rightY: -Math.sin(yaw),
+    };
+  }
+
+  private isTargetLockedByAnyPlayer(kind: Haven3DTargetKind, id: string): boolean {
+    return (["P1", "P2"] as PlayerId[]).some((playerId) => {
+      const targetLock = this.getPlayerTargetLock(playerId);
+      return targetLock?.kind === kind && targetLock.id === id;
+    });
   }
 
   replaceMap(map: FieldMap): void {
@@ -1924,7 +2251,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    this.finishGrappleMove(false);
+    this.finishGrappleMove("P1", false);
     this.clearMapBoundTransients();
     this.options.map = map;
     this.mapProfile = getHaven3DMapProfile(map);
@@ -1940,6 +2267,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.syncFieldProjectiles();
     this.syncLootOrbs();
     this.resize();
+    this.cameraFollowWorldY = null;
     this.snapCameraNextFrame = true;
   }
 
@@ -1954,7 +2282,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   getPreferredGrappleAnchorState(rangePx = GRAPPLE_RANGE_PX): GrappleAnchorState | null {
-    const anchor = this.findGrappleAnchor(rangePx);
+    const anchor = this.findGrappleAnchor("P1", rangePx);
     return anchor ? this.getGrappleAnchorState(anchor) : null;
   }
 
@@ -1978,41 +2306,55 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
   }
 
-  private setGearbladeMode(mode: Haven3DGearbladeMode): void {
-    if (!this.enabledModes.has(mode) || this.activeGearbladeMode === mode) {
+  private setGearbladeMode(
+    playerOrMode: PlayerId | Haven3DGearbladeMode,
+    maybeMode?: Haven3DGearbladeMode,
+  ): void {
+    const playerId: PlayerId = maybeMode ? playerOrMode as PlayerId : "P1";
+    const mode = (maybeMode ?? playerOrMode) as Haven3DGearbladeMode;
+    const activeMode = this.getPlayerActiveMode(playerId);
+    if (!this.enabledModes.has(mode) || activeMode === mode) {
       return;
     }
 
-    const previousMode = this.activeGearbladeMode;
-    this.activeGearbladeMode = mode;
+    const previousMode = activeMode;
+    this.setPlayerActiveMode(playerId, mode);
     if (previousMode) {
-      this.gearbladeTransform = {
+      this.setPlayerGearbladeTransform(playerId, {
         from: previousMode,
         to: mode,
         startedAt: this.currentFrameTime || performance.now(),
         durationMs: GEARBLADE_TRANSFORM_MS,
-      };
-      this.cameraImpulse.y += 0.025;
+      });
+      if (playerId === "P1") {
+        this.cameraImpulse.y += 0.025;
+      }
     }
     if (mode !== "blade") {
-      this.bladeSwing = null;
-      this.resetBladeCombo();
+      this.setPlayerBladeSwing(playerId, null);
+      this.resetBladeCombo(playerId);
     }
     if (mode !== "grapple") {
-      this.finishGrappleMove(false);
+      this.finishGrappleMove(playerId, false);
+    }
+    if (playerId === "P1" && mode === "launcher") {
+      this.pitch = Math.min(this.pitch, LAUNCHER_CAMERA_DEFAULT_PITCH);
     }
     this.updateModeHud();
   }
 
-  private readGearbladeTransform(now = this.currentFrameTime || performance.now()): GearbladeTransformSnapshot | null {
-    const transform = this.gearbladeTransform;
+  private readGearbladeTransform(
+    playerId: PlayerId = "P1",
+    now = this.currentFrameTime || performance.now(),
+  ): GearbladeTransformSnapshot | null {
+    const transform = this.getPlayerGearbladeTransform(playerId);
     if (!transform) {
       return null;
     }
 
     const t = THREE.MathUtils.clamp((now - transform.startedAt) / transform.durationMs, 0, 1);
     if (t >= 1) {
-      this.gearbladeTransform = null;
+      this.setPlayerGearbladeTransform(playerId, null);
       return null;
     }
 
@@ -2025,23 +2367,26 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
-  private cycleGearbladeMode(): void {
+  private cycleGearbladeMode(playerId: PlayerId = "P1"): void {
     const enabledModes = Array.from(this.enabledModes);
     if (enabledModes.length === 0) {
       return;
     }
 
-    const currentIndex = this.activeGearbladeMode
-      ? enabledModes.indexOf(this.activeGearbladeMode)
+    const activeMode = this.getPlayerActiveMode(playerId);
+    const currentIndex = activeMode
+      ? enabledModes.indexOf(activeMode)
       : -1;
-    this.setGearbladeMode(enabledModes[(currentIndex + 1 + enabledModes.length) % enabledModes.length]);
+    this.setGearbladeMode(playerId, enabledModes[(currentIndex + 1 + enabledModes.length) % enabledModes.length]);
   }
 
   start(): void {
     this.disposed = false;
     this.options.host.innerHTML = "";
     this.options.host.appendChild(this.renderer.domElement);
+    this.renderer.domElement.focus({ preventScroll: true });
     this.promptElement = document.querySelector<HTMLElement>("[data-haven3d-prompt]");
+    this.reticleElement = document.querySelector<HTMLElement>("[data-haven3d-reticle]");
     this.bindEvents();
     this.resize();
     this.lastFrameTime = performance.now();
@@ -2061,6 +2406,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.renderer.domElement.removeEventListener("wheel", this.handleWheel);
     this.modeElements.forEach((element) => element.removeEventListener("click", this.handleModeButtonClick));
     this.modeElements = [];
+    this.reticleElement = null;
+    this.cameraFollowWorldY = null;
     this.clearSkyboxBackground?.();
     this.clearSkyboxBackground = null;
     window.removeEventListener("resize", this.handleResize);
@@ -2104,7 +2451,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         if (lockRequest && typeof lockRequest.catch === "function") {
           void lockRequest.catch(() => undefined);
         }
-        this.triggerPrimaryAction();
+        this.triggerPrimaryAction("P1");
       } else if (event.button === 2) {
         this.rightMouseDown = true;
       }
@@ -2128,11 +2475,16 @@ export class Haven3DFieldController implements Haven3DModeController {
   private configureCameraForMap(): void {
     const worldWidth = this.options.map.width * HAVEN3D_WORLD_TILE_SIZE;
     const worldDepth = this.options.map.height * HAVEN3D_WORLD_TILE_SIZE;
-    this.camera.far = Math.max(
+    const far = Math.max(
       this.mapProfile.camera.farMin,
       Math.hypot(worldWidth, worldDepth) * this.mapProfile.camera.farScale,
     );
+    this.camera.far = far;
     this.camera.updateProjectionMatrix();
+    this.splitCameras.P1.far = far;
+    this.splitCameras.P2.far = far;
+    this.splitCameras.P1.updateProjectionMatrix();
+    this.splitCameras.P2.updateProjectionMatrix();
   }
 
   private buildScene(): void {
@@ -2174,12 +2526,22 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private clearMapBoundTransients(): void {
     this.ziplineDismountDrift = null;
+    this.p2ZiplineDismountDrift = null;
     this.companionVerticalState = null;
     this.bladeSwing = null;
-    this.resetBladeCombo();
+    this.p2BladeSwing = null;
+    this.resetBladeCombo("P1");
+    this.resetBladeCombo("P2");
     this.targetLock = null;
+    this.p2TargetLock = null;
     this.targetOrbitYawOffset = 0;
+    this.p2TargetOrbitYawOffset = 0;
     this.actionCooldownUntil = 0;
+    this.p2ActionCooldownUntil = 0;
+    this.gearbladeTransform = null;
+    this.p2GearbladeTransform = null;
+    this.finishGrappleMove("P1", false);
+    this.finishGrappleMove("P2", false);
 
     for (let index = this.launcherProjectiles.length - 1; index >= 0; index -= 1) {
       this.removeLauncherProjectile(index);
@@ -4193,7 +4555,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.syncFieldProjectiles();
     this.syncLootOrbs();
     this.updatePrompt();
-    this.renderer.render(this.scene, this.camera);
+    this.renderScene();
     if (this.disposed) {
       return;
     }
@@ -4206,7 +4568,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       if (!this.options.isPlayerActive(playerId)) {
         return;
       }
-      if (playerId === "P1" && this.grappleMove) {
+      if (this.getPlayerGrappleMove(playerId)) {
         return;
       }
 
@@ -4231,7 +4593,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       const moveY = movement.y;
       let nextX = avatar.x + moveX * step;
       let nextY = avatar.y + moveY * step;
-      const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
+      const lockedTarget = this.getLockedTargetCandidate(playerId);
       const facing = lockedTarget
         ? fieldFacingFromDelta(lockedTarget.x - avatar.x, lockedTarget.y - avatar.y, avatar.facing)
         : fieldFacingFromDelta(nextX - avatar.x, nextY - avatar.y, avatar.facing);
@@ -4254,79 +4616,82 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateZiplineDismountDrift(deltaMs: number, currentTime: number): void {
-    const drift = this.ziplineDismountDrift;
-    if (!drift) {
-      return;
-    }
-    if (this.grappleMove || !this.options.isPlayerActive(drift.playerId)) {
-      this.ziplineDismountDrift = null;
-      return;
-    }
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const drift = this.getPlayerZiplineDismountDrift(playerId);
+      if (!drift) {
+        return;
+      }
+      if (this.getPlayerGrappleMove(playerId) || !this.options.isPlayerActive(drift.playerId)) {
+        this.setPlayerZiplineDismountDrift(playerId, null);
+        return;
+      }
 
-    const avatar = this.options.getPlayerAvatar(drift.playerId);
-    if (!avatar) {
-      this.ziplineDismountDrift = null;
-      return;
-    }
+      const avatar = this.options.getPlayerAvatar(drift.playerId);
+      if (!avatar) {
+        this.setPlayerZiplineDismountDrift(playerId, null);
+        return;
+      }
 
-    const vertical = this.getPlayerVerticalState(drift.playerId);
-    const elapsed = Math.max(0, currentTime - drift.startedAt);
-    if (vertical.grounded || elapsed >= drift.durationMs) {
-      this.ziplineDismountDrift = null;
-      return;
-    }
+      const vertical = this.getPlayerVerticalState(drift.playerId);
+      const elapsed = Math.max(0, currentTime - drift.startedAt);
+      if (vertical.grounded || elapsed >= drift.durationMs) {
+        this.setPlayerZiplineDismountDrift(playerId, null);
+        return;
+      }
 
-    const t = THREE.MathUtils.clamp(elapsed / Math.max(1, drift.durationMs), 0, 1);
-    const falloff = 1 - smoothstep(t);
-    const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
-    const moveX = drift.vx * falloff * deltaSeconds;
-    const moveY = drift.vy * falloff * deltaSeconds;
-    if (Math.hypot(moveX, moveY) < 0.01) {
-      this.ziplineDismountDrift = null;
-      return;
-    }
+      const t = THREE.MathUtils.clamp(elapsed / Math.max(1, drift.durationMs), 0, 1);
+      const falloff = 1 - smoothstep(t);
+      const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
+      const moveX = drift.vx * falloff * deltaSeconds;
+      const moveY = drift.vy * falloff * deltaSeconds;
+      if (Math.hypot(moveX, moveY) < 0.01) {
+        this.setPlayerZiplineDismountDrift(playerId, null);
+        return;
+      }
 
-    let nextX = avatar.x + moveX;
-    let nextY = avatar.y + moveY;
-    const facing = fieldFacingFromDelta(drift.vx, drift.vy, avatar.facing);
-    if (!this.canPlayerMoveTo(drift.playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-      nextX = avatar.x;
-    }
-    if (!this.canPlayerMoveTo(drift.playerId, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-      nextY = avatar.y;
-    }
-    if (nextX === avatar.x && nextY === avatar.y) {
-      this.ziplineDismountDrift = null;
-      return;
-    }
+      let nextX = avatar.x + moveX;
+      let nextY = avatar.y + moveY;
+      const facing = fieldFacingFromDelta(drift.vx, drift.vy, avatar.facing);
+      if (!this.canPlayerMoveTo(drift.playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+        nextX = avatar.x;
+      }
+      if (!this.canPlayerMoveTo(drift.playerId, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+        nextY = avatar.y;
+      }
+      if (nextX === avatar.x && nextY === avatar.y) {
+        this.setPlayerZiplineDismountDrift(playerId, null);
+        return;
+      }
 
-    const constrained = this.options.constrainPlayerPosition?.(
-      drift.playerId,
-      { x: nextX, y: nextY, facing },
-      avatar,
-    ) ?? { x: nextX, y: nextY, facing };
-    this.options.setPlayerAvatar(drift.playerId, constrained.x, constrained.y, constrained.facing);
+      const constrained = this.options.constrainPlayerPosition?.(
+        drift.playerId,
+        { x: nextX, y: nextY, facing },
+        avatar,
+      ) ?? { x: nextX, y: nextY, facing };
+      this.options.setPlayerAvatar(drift.playerId, constrained.x, constrained.y, constrained.facing);
+    });
   }
 
   private getPlayerMovementInputVector(playerId: PlayerId): { x: number; y: number } | null {
     const input = getPlayerInput(playerId);
+    const basis = this.getCameraBasis(playerId);
     let moveX = 0;
     let moveY = 0;
     if (input.up) {
-      moveX += this.clockForward.x;
-      moveY += this.clockForward.z;
+      moveX += basis.forwardX;
+      moveY += basis.forwardY;
     }
     if (input.down) {
-      moveX -= this.clockForward.x;
-      moveY -= this.clockForward.z;
+      moveX -= basis.forwardX;
+      moveY -= basis.forwardY;
     }
     if (input.right) {
-      moveX += this.clockRight.x;
-      moveY += this.clockRight.z;
+      moveX += basis.rightX;
+      moveY += basis.rightY;
     }
     if (input.left) {
-      moveX -= this.clockRight.x;
-      moveY -= this.clockRight.z;
+      moveX -= basis.rightX;
+      moveY -= basis.rightY;
     }
 
     const length = Math.hypot(moveX, moveY);
@@ -4429,7 +4794,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (this.options.isPaused() || !this.options.isPlayerActive(playerId)) {
       return;
     }
-    if (playerId === "P1" && this.grappleMove) {
+    if (this.getPlayerGrappleMove(playerId)) {
       return;
     }
 
@@ -4482,7 +4847,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     ) {
       return false;
     }
-    if (playerId === "P1" && this.grappleMove) {
+    if (this.getPlayerGrappleMove(playerId)) {
       return false;
     }
 
@@ -4511,11 +4876,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private shouldUseBackflipForJump(playerId: PlayerId, avatar: FieldAvatarView): boolean {
-    if (playerId !== "P1") {
-      return false;
-    }
-
-    const lockedTarget = this.getLockedTargetCandidate();
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     if (!lockedTarget) {
       return false;
     }
@@ -4543,10 +4904,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const deltaSeconds = Math.min(0.05, Math.max(0, deltaMs / 1000));
     (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
       const state = this.getPlayerVerticalState(playerId);
-      if (
-        playerId === "P1"
-        && (this.grappleMove?.target.kind === "grapple-node" || this.grappleMove?.target.kind === "zipline-track")
-      ) {
+      const grappleMove = this.getPlayerGrappleMove(playerId);
+      if (grappleMove?.target.kind === "grapple-node" || grappleMove?.target.kind === "zipline-track") {
         return;
       }
       const avatar = this.options.getPlayerAvatar(playerId);
@@ -4624,13 +4983,14 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private releasePlayerFromZipline(
+    playerId: PlayerId,
     point: { x: number; y: number },
     riderWorldHeight: number,
     direction: { x: number; y: number },
     verticalVelocity: number,
     currentTime: number,
   ): void {
-    const state = this.getPlayerVerticalState("P1");
+    const state = this.getPlayerVerticalState(playerId);
     const groundElevation = this.getGroundElevationAtPoint(point);
     const worldElevation = Math.max(riderWorldHeight, groundElevation + 0.18);
     const directionLength = Math.max(0.001, Math.hypot(direction.x, direction.y));
@@ -4641,7 +5001,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     state.grounded = false;
     state.gliding = false;
-    this.capturePlayerAirborneDashState("P1", state);
+    this.capturePlayerAirborneDashState(playerId, state);
     state.groundElevation = groundElevation;
     state.worldElevation = worldElevation;
     state.elevation = Math.max(0.18, worldElevation - groundElevation);
@@ -4656,13 +5016,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     state.jumpStartedAt = currentTime;
     state.jumpFlipDirection = 1;
 
-    this.ziplineDismountDrift = {
-      playerId: "P1",
+    this.setPlayerZiplineDismountDrift(playerId, {
+      playerId,
       vx: exitDirection.x * GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND,
       vy: exitDirection.y * GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND,
       startedAt: currentTime,
       durationMs: GRAPPLE_ZIPLINE_DISMOUNT_DURATION_MS,
-    };
+    });
   }
 
   private landPlayerVertical(playerId: PlayerId): void {
@@ -4809,11 +5169,12 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private getActionMovementMultiplier(playerId: PlayerId): number {
-    if (playerId !== "P1" || !this.bladeSwing) {
+    const bladeSwing = this.getPlayerBladeSwing(playerId);
+    if (!bladeSwing) {
       return 1;
     }
 
-    const elapsed = this.currentFrameTime - this.bladeSwing.startedAt;
+    const elapsed = this.currentFrameTime - bladeSwing.startedAt;
     if (elapsed < BLADE_SWING_WINDUP_MS) {
       return 0.36;
     }
@@ -4823,41 +5184,77 @@ export class Haven3DFieldController implements Haven3DModeController {
     return 0.42;
   }
 
-  private resetBladeCombo(): void {
-    this.nextBladeSwingComboStep = 0;
-    this.bladeComboExpiresAt = Number.NEGATIVE_INFINITY;
+  private resetBladeCombo(playerId: PlayerId = "P1"): void {
+    this.setPlayerNextBladeSwingComboStep(playerId, 0);
+    this.setPlayerBladeComboExpiresAt(playerId, Number.NEGATIVE_INFINITY);
   }
 
   private isVerticalBladeFinisher(swing: BladeSwingState): boolean {
     return swing.comboStep === 2;
   }
 
-  private getNextBladeSwingPlan(currentTime: number): Pick<BladeSwingState, "comboStep" | "side"> {
-    const comboStep = currentTime <= this.bladeComboExpiresAt
-      ? this.nextBladeSwingComboStep
+  private getNextBladeSwingPlan(
+    playerId: PlayerId,
+    currentTime: number,
+  ): Pick<BladeSwingState, "comboStep" | "side"> {
+    const comboStep = currentTime <= this.getPlayerBladeComboExpiresAt(playerId)
+      ? this.getPlayerNextBladeSwingComboStep(playerId)
       : 0;
-    this.nextBladeSwingComboStep = ((comboStep + 1) % 3) as BladeSwingComboStep;
-    this.bladeComboExpiresAt = currentTime + BLADE_COMBO_RESET_MS;
+    this.setPlayerNextBladeSwingComboStep(playerId, ((comboStep + 1) % 3) as BladeSwingComboStep);
+    this.setPlayerBladeComboExpiresAt(playerId, currentTime + BLADE_COMBO_RESET_MS);
     return {
       comboStep,
       side: comboStep === 1 ? -1 : 1,
     };
   }
 
-  private triggerPrimaryAction(): void {
-    if (this.options.isPaused() || !this.activeMode) {
+  toggleCameraMode(): void {
+    this.cameraMode = this.cameraMode === "shared" ? "split" : "shared";
+    if (this.cameraMode === "shared") {
+      this.yaw = lerpAngleRadians(this.splitCameraStates.P1.yaw, this.splitCameraStates.P2.yaw, 0.5);
+      this.pitch = (this.splitCameraStates.P1.pitch + this.splitCameraStates.P2.pitch) / 2;
+      this.cameraDistance = Math.max(this.splitCameraStates.P1.distance, this.splitCameraStates.P2.distance);
+      this.snapCameraNextFrame = true;
+      this.cameraFollowWorldY = null;
+    } else {
+      if (!this.hasUsedSplitCamera) {
+        this.splitCameraStates.P1 = {
+          yaw: this.yaw,
+          pitch: this.pitch,
+          distance: this.cameraDistance,
+        };
+        this.splitCameraStates.P2 = {
+          yaw: this.yaw,
+          pitch: this.pitch,
+          distance: this.cameraDistance,
+        };
+      }
+      this.hasUsedSplitCamera = true;
+      this.splitCameraSnapNextFrame.P1 = true;
+      this.splitCameraSnapNextFrame.P2 = true;
+      this.splitCameraFollowWorldY.P1 = null;
+      this.splitCameraFollowWorldY.P2 = null;
+    }
+    this.resize();
+    this.updateModeHud();
+    this.updatePrompt();
+  }
+
+  private triggerPrimaryAction(playerId: PlayerId = "P1"): void {
+    const activeMode = this.getPlayerActiveMode(playerId);
+    if (this.options.isPaused() || !activeMode) {
       return;
     }
 
-    switch (this.activeMode) {
+    switch (activeMode) {
       case "blade":
-        this.triggerBladeSwing();
+        this.triggerBladeSwing(playerId);
         break;
       case "launcher":
-        this.fireLauncher();
+        this.fireLauncher(playerId);
         break;
       case "grapple":
-        this.fireGrapple();
+        this.fireGrapple(playerId);
         break;
       default:
         break;
@@ -4865,12 +5262,14 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private getActionDirection(
+    playerId: PlayerId,
     avatar: FieldAvatarView,
     target: Pick<Haven3DTargetCandidate, "x" | "y"> | null = null,
   ): { x: number; y: number } {
+    const basis = this.getCameraBasis(playerId);
     const rawDirection = target
       ? { x: target.x - avatar.x, y: target.y - avatar.y }
-      : { x: this.clockForward.x, y: this.clockForward.z };
+      : { x: basis.forwardX, y: basis.forwardY };
     const length = Math.hypot(rawDirection.x, rawDirection.y);
     if (length > 0.001) {
       return { x: rawDirection.x / length, y: rawDirection.y / length };
@@ -4880,19 +5279,20 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private findEnemyActionTarget(
+    playerId: PlayerId,
     avatar: FieldAvatarView,
     rangePx: number,
     minForwardDot: number,
   ): Haven3DTargetCandidate | null {
-    const lockedTarget = this.getLockedTargetCandidate();
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     if (lockedTarget?.kind === "enemy" && lockedTarget.distance <= rangePx) {
       return lockedTarget;
     }
 
-    const direction = this.getActionDirection(avatar);
+    const direction = this.getActionDirection(playerId, avatar);
     let best: Haven3DTargetCandidate | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
-    for (const candidate of this.getTargetCandidates()) {
+    for (const candidate of this.getTargetCandidates(playerId)) {
       if (candidate.kind !== "enemy" || candidate.distance > rangePx) {
         continue;
       }
@@ -4915,11 +5315,12 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private findBladeActionTarget(
+    playerId: PlayerId,
     avatar: FieldAvatarView,
     rangePx: number,
     minForwardDot: number,
   ): Haven3DTargetCandidate | null {
-    const lockedTarget = this.getLockedTargetCandidate();
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     if (
       lockedTarget
       && (lockedTarget.kind === "enemy" || lockedTarget.kind === "loot-orb")
@@ -4928,10 +5329,10 @@ export class Haven3DFieldController implements Haven3DModeController {
       return lockedTarget;
     }
 
-    const direction = this.getActionDirection(avatar);
+    const direction = this.getActionDirection(playerId, avatar);
     let best: Haven3DTargetCandidate | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
-    for (const candidate of this.getTargetCandidates()) {
+    for (const candidate of this.getTargetCandidates(playerId)) {
       if ((candidate.kind !== "enemy" && candidate.kind !== "loot-orb") || candidate.distance > rangePx) {
         continue;
       }
@@ -4954,21 +5355,21 @@ export class Haven3DFieldController implements Haven3DModeController {
     return best;
   }
 
-  private findActionTarget(rangePx: number): Haven3DTargetCandidate | null {
-    const avatar = this.options.getPlayerAvatar("P1");
+  private findActionTarget(playerId: PlayerId, rangePx: number): Haven3DTargetCandidate | null {
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar) {
       return null;
     }
 
-    const lockedTarget = this.getLockedTargetCandidate();
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     if (lockedTarget && lockedTarget.kind !== "loot-orb" && lockedTarget.distance <= rangePx) {
       return lockedTarget;
     }
 
-    const direction = this.getActionDirection(avatar);
+    const direction = this.getActionDirection(playerId, avatar);
     let best: Haven3DTargetCandidate | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
-    for (const candidate of this.getTargetCandidates()) {
+    for (const candidate of this.getTargetCandidates(playerId)) {
       if (candidate.kind === "loot-orb" || candidate.distance > rangePx) {
         continue;
       }
@@ -5029,13 +5430,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     return endT;
   }
 
-  private findGrappleZiplineTarget(rangePx: number): GrappleZiplineTarget | null {
-    const avatar = this.options.getPlayerAvatar("P1");
+  private findGrappleZiplineTarget(playerId: PlayerId, rangePx: number): GrappleZiplineTarget | null {
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar || this.grappleZiplineSegments.size === 0) {
       return null;
     }
 
-    const direction = this.getActionDirection(avatar);
+    const direction = this.getActionDirection(playerId, avatar);
     const maxRange = Math.max(rangePx, GRAPPLE_ZIPLINE_ATTACH_RANGE_PX);
     let best: GrappleZiplineTarget | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
@@ -5144,13 +5545,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     return best;
   }
 
-  private findGrappleAnchor(rangePx: number): GrappleAnchor | null {
-    const avatar = this.options.getPlayerAvatar("P1");
+  private findGrappleAnchor(playerId: PlayerId, rangePx: number): GrappleAnchor | null {
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar || this.grappleAnchors.size === 0) {
       return null;
     }
 
-    const direction = this.getActionDirection(avatar);
+    const direction = this.getActionDirection(playerId, avatar);
     const linkedRouteAnchor = this.findLinkedRouteGrappleAnchor(avatar, direction, rangePx);
     if (linkedRouteAnchor) {
       return linkedRouteAnchor;
@@ -5194,26 +5595,26 @@ export class Haven3DFieldController implements Haven3DModeController {
     return best;
   }
 
-  private findTargetForRef(target: Haven3DTargetRef): Haven3DTargetCandidate | null {
-    return this.getTargetCandidates().find((candidate) => candidate.key === target.key) ?? null;
+  private findTargetForRef(target: Haven3DTargetRef, playerId: PlayerId = "P1"): Haven3DTargetCandidate | null {
+    return this.getTargetCandidates(playerId).find((candidate) => candidate.key === target.key) ?? null;
   }
 
-  private triggerBladeSwing(): void {
-    if (this.activeMode !== "blade" || this.options.isPaused() || this.bladeSwing) {
+  private triggerBladeSwing(playerId: PlayerId = "P1"): void {
+    if (this.getPlayerActiveMode(playerId) !== "blade" || this.options.isPaused() || this.getPlayerBladeSwing(playerId)) {
       return;
     }
 
-    const avatar = this.options.getPlayerAvatar("P1");
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar) {
       return;
     }
 
-    const target = this.findBladeActionTarget(avatar, BLADE_SWING_RANGE_PX * 1.45, -0.18);
-    const direction = this.getActionDirection(avatar, target);
+    const target = this.findBladeActionTarget(playerId, avatar, BLADE_SWING_RANGE_PX * 1.45, -0.18);
+    const direction = this.getActionDirection(playerId, avatar, target);
     const directionLength = Math.max(0.001, Math.hypot(direction.x, direction.y));
     const startedAt = performance.now();
-    const { comboStep, side } = this.getNextBladeSwingPlan(startedAt);
-    this.bladeSwing = {
+    const { comboStep, side } = this.getNextBladeSwingPlan(playerId, startedAt);
+    const swing: BladeSwingState = {
       startedAt,
       struck: false,
       target,
@@ -5224,10 +5625,11 @@ export class Haven3DFieldController implements Haven3DModeController {
       side,
       comboStep,
     };
-    this.spawnBladeDrawSmear(avatar, this.bladeSwing.direction, this.bladeSwing);
+    this.setPlayerBladeSwing(playerId, swing);
+    this.spawnBladeDrawSmear(avatar, swing.direction, swing);
 
     this.options.setPlayerAvatar(
-      "P1",
+      playerId,
       avatar.x,
       avatar.y,
       fieldFacingFromDelta(direction.x, direction.y, avatar.facing),
@@ -5235,78 +5637,81 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateBladeSwing(deltaMs: number, currentTime: number): void {
-    if (!this.bladeSwing) {
-      return;
-    }
-
-    const elapsed = currentTime - this.bladeSwing.startedAt;
-    const avatar = this.options.getPlayerAvatar("P1");
-    if (!avatar) {
-      this.bladeSwing = null;
-      return;
-    }
-
-    if (elapsed >= BLADE_LUNGE_START_MS && elapsed <= BLADE_LUNGE_END_MS) {
-      const step = BLADE_LUNGE_SPEED_PX_PER_SECOND * (deltaMs / 1000);
-      const nextX = avatar.x + this.bladeSwing.direction.x * step;
-      const nextY = avatar.y + this.bladeSwing.direction.y * step;
-      let lungeX = avatar.x;
-      let lungeY = avatar.y;
-      if (this.canPlayerMoveTo("P1", nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-        lungeX = nextX;
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const bladeSwing = this.getPlayerBladeSwing(playerId);
+      if (!bladeSwing) {
+        return;
       }
-      if (this.canPlayerMoveTo("P1", lungeX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-        lungeY = nextY;
-      }
-      this.options.setPlayerAvatar("P1", lungeX, lungeY, avatar.facing);
-    }
 
-    if (!this.bladeSwing.struck && elapsed >= BLADE_SWING_IMPACT_MS) {
-      this.bladeSwing.struck = true;
-      const strikeLine = this.getBladeStrikeLine(avatar, this.bladeSwing);
-      const verticalFinisher = this.isVerticalBladeFinisher(this.bladeSwing);
-      const didHit = this.options.onBladeStrike?.({
-        playerId: "P1",
-        x: avatar.x,
-        y: avatar.y,
-        facing: avatar.facing,
-        directionX: strikeLine.bladeDirection.x,
-        directionY: strikeLine.bladeDirection.y,
-        hiltX: strikeLine.hilt.x,
-        hiltY: strikeLine.hilt.y,
-        tipX: strikeLine.tip.x,
-        tipY: strikeLine.tip.y,
-        bladeHalfWidth: BLADE_SWING_HIT_WIDTH_PX,
-        target: this.bladeSwing.target,
-        radius: Math.max(
-          BLADE_SWING_RANGE_PX,
-          Math.hypot(strikeLine.hilt.x - avatar.x, strikeLine.hilt.y - avatar.y),
-          Math.hypot(strikeLine.tip.x - avatar.x, strikeLine.tip.y - avatar.y),
-        ),
-        arcRadians: verticalFinisher ? Math.PI * 0.78 : BLADE_SWING_ARC_RADIANS,
-        damage: BLADE_SWING_DAMAGE,
-        knockback: BLADE_SWING_KNOCKBACK,
-      }) ?? false;
-      this.spawnBladeSlashEffect(strikeLine, this.bladeSwing, didHit);
-      if (didHit) {
-        this.spawnHitSpark(
-          {
+      const elapsed = currentTime - bladeSwing.startedAt;
+      const avatar = this.options.getPlayerAvatar(playerId);
+      if (!avatar) {
+        this.setPlayerBladeSwing(playerId, null);
+        return;
+      }
+
+      if (elapsed >= BLADE_LUNGE_START_MS && elapsed <= BLADE_LUNGE_END_MS) {
+        const step = BLADE_LUNGE_SPEED_PX_PER_SECOND * (deltaMs / 1000);
+        const nextX = avatar.x + bladeSwing.direction.x * step;
+        const nextY = avatar.y + bladeSwing.direction.y * step;
+        let lungeX = avatar.x;
+        let lungeY = avatar.y;
+        if (this.canPlayerMoveTo(playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+          lungeX = nextX;
+        }
+        if (this.canPlayerMoveTo(playerId, lungeX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+          lungeY = nextY;
+        }
+        this.options.setPlayerAvatar(playerId, lungeX, lungeY, avatar.facing);
+      }
+
+      if (!bladeSwing.struck && elapsed >= BLADE_SWING_IMPACT_MS) {
+        bladeSwing.struck = true;
+        const strikeLine = this.getBladeStrikeLine(avatar, bladeSwing);
+        const verticalFinisher = this.isVerticalBladeFinisher(bladeSwing);
+        const didHit = this.options.onBladeStrike?.({
+          playerId,
+          x: avatar.x,
+          y: avatar.y,
+          facing: avatar.facing,
+          directionX: strikeLine.bladeDirection.x,
+          directionY: strikeLine.bladeDirection.y,
+          hiltX: strikeLine.hilt.x,
+          hiltY: strikeLine.hilt.y,
+          tipX: strikeLine.tip.x,
+          tipY: strikeLine.tip.y,
+          bladeHalfWidth: BLADE_SWING_HIT_WIDTH_PX,
+          target: bladeSwing.target,
+          radius: Math.max(
+            BLADE_SWING_RANGE_PX,
+            Math.hypot(strikeLine.hilt.x - avatar.x, strikeLine.hilt.y - avatar.y),
+            Math.hypot(strikeLine.tip.x - avatar.x, strikeLine.tip.y - avatar.y),
+          ),
+          arcRadians: verticalFinisher ? Math.PI * 0.78 : BLADE_SWING_ARC_RADIANS,
+          damage: BLADE_SWING_DAMAGE,
+          knockback: BLADE_SWING_KNOCKBACK,
+        }) ?? false;
+        this.spawnBladeSlashEffect(strikeLine, bladeSwing, didHit);
+        if (didHit) {
+          this.spawnHitSpark(
+            {
+              x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
+              y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
+            },
+            0xf2b04d,
+            this.getBladeSlashNormal(strikeLine, bladeSwing.side),
+          );
+          this.beginImpactFeedback({
             x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
             y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
-          },
-          0xf2b04d,
-          this.getBladeSlashNormal(strikeLine, this.bladeSwing.side),
-        );
-        this.beginImpactFeedback({
-          x: (strikeLine.hilt.x + strikeLine.tip.x) / 2,
-          y: (strikeLine.hilt.y + strikeLine.tip.y) / 2,
-        }, 1);
+          }, 1);
+        }
       }
-    }
 
-    if (elapsed >= BLADE_SWING_TOTAL_MS) {
-      this.bladeSwing = null;
-    }
+      if (elapsed >= BLADE_SWING_TOTAL_MS) {
+        this.setPlayerBladeSwing(playerId, null);
+      }
+    });
   }
 
   private getBladeStrikeLine(
@@ -5408,29 +5813,27 @@ export class Haven3DFieldController implements Haven3DModeController {
     return THREE.MathUtils.lerp(0.94, 1, followThrough);
   }
 
-  private fireLauncher(): void {
+  private fireLauncher(playerId: PlayerId = "P1"): void {
     const now = this.currentFrameTime || performance.now();
-    if (this.activeMode !== "launcher" || now < this.actionCooldownUntil) {
+    if (this.getPlayerActiveMode(playerId) !== "launcher" || now < this.getPlayerActionCooldownUntil(playerId)) {
       return;
     }
 
-    const avatar = this.options.getPlayerAvatar("P1");
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar) {
       return;
     }
 
-    const target = this.findEnemyActionTarget(avatar, LAUNCHER_RANGE_PX, 0.12);
-    const direction = this.getActionDirection(avatar, target);
+    const target = this.findEnemyActionTarget(playerId, avatar, LAUNCHER_RANGE_PX, 0.12);
+    const direction = this.getActionDirection(playerId, avatar, target);
     const originX = avatar.x + direction.x * 36;
     const originY = avatar.y + direction.y * 36;
     const originPoint = { x: originX, y: originY };
-    const utility: "attack" | "flare" = target?.kind === "enemy" ? "attack" : "flare";
     const canFire = this.options.onLauncherFire?.({
-      playerId: "P1",
+      playerId,
       x: originX,
       y: originY,
       target,
-      utility,
     }) ?? true;
     if (!canFire) {
       return;
@@ -5438,24 +5841,21 @@ export class Haven3DFieldController implements Haven3DModeController {
 
     const projectileGroup = new THREE.Group();
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(utility === "flare" ? 0.18 : 0.14, 14, 10),
+      new THREE.SphereGeometry(0.14, 14, 10),
       createArdyciaToonMaterial({
-        color: utility === "flare" ? 0x8af0ff : 0xf2b04d,
-        emissive: utility === "flare" ? 0x31b4d2 : 0x8c3f10,
-        emissiveIntensity: utility === "flare" ? 2.3 : 1.8,
+        color: 0xf2b04d,
+        emissive: 0x8c3f10,
+        emissiveIntensity: 1.8,
       }),
     );
     projectileGroup.add(mesh);
-    if (utility === "flare") {
-      const flareLight = new THREE.PointLight(0x8af0ff, 1.8, 5.8, 1.55);
-      projectileGroup.add(flareLight);
-    }
     const world = fieldToHavenWorld(this.options.map, originPoint, this.getGroundElevationAtPoint(originPoint) + 1.12);
     projectileGroup.position.set(world.x, world.y, world.z);
     mesh.castShadow = true;
     this.dynamicGroup.add(projectileGroup);
 
     this.launcherProjectiles.push({
+      playerId,
       mesh: projectileGroup,
       x: originX,
       y: originY,
@@ -5463,19 +5863,21 @@ export class Haven3DFieldController implements Haven3DModeController {
       vy: direction.y * LAUNCHER_SPEED_PX_PER_SECOND,
       ttlMs: (LAUNCHER_RANGE_PX / LAUNCHER_SPEED_PX_PER_SECOND) * 1000,
       target,
-      utility,
       radius: LAUNCHER_HIT_RADIUS_PX,
       damage: LAUNCHER_DAMAGE,
       knockback: LAUNCHER_KNOCKBACK,
     });
 
-    this.actionCooldownUntil = now + LAUNCHER_COOLDOWN_MS;
-    this.launcherRecoilStartedAt = now;
-    this.options.setPlayerAvatar("P1", avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+    this.setPlayerActionCooldownUntil(playerId, now + LAUNCHER_COOLDOWN_MS);
+    this.setPlayerLauncherRecoilStartedAt(playerId, now);
+    this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
   }
 
-  private getLauncherRecoilAmount(now = this.currentFrameTime || performance.now()): number {
-    const elapsed = now - this.launcherRecoilStartedAt;
+  private getLauncherRecoilAmount(
+    playerId: PlayerId = "P1",
+    now = this.currentFrameTime || performance.now(),
+  ): number {
+    const elapsed = now - this.getPlayerLauncherRecoilStartedAt(playerId);
     if (elapsed < 0 || elapsed >= LAUNCHER_RECOIL_MS) {
       return 0;
     }
@@ -5491,7 +5893,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       const projectile = this.launcherProjectiles[index];
       projectile.ttlMs -= deltaMs;
 
-      const target = projectile.target ? this.findTargetForRef(projectile.target) : null;
+      const target = projectile.target ? this.findTargetForRef(projectile.target, projectile.playerId) : null;
       if (target?.kind === "enemy") {
         const toTargetX = target.x - projectile.x;
         const toTargetY = target.y - projectile.y;
@@ -5508,14 +5910,12 @@ export class Haven3DFieldController implements Haven3DModeController {
       const world = fieldToHavenWorld(this.options.map, projectilePoint, this.getGroundElevationAtPoint(projectilePoint) + 1.12);
       projectile.mesh.position.set(world.x, world.y, world.z);
 
-      const hitEnemy = projectile.utility === "attack"
-        ? this.options.getEnemies()
-            .filter((enemy) => enemy.hp > 0)
-            .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5)
-        : null;
+      const hitEnemy = this.options.getEnemies()
+        .filter((enemy) => enemy.hp > 0)
+        .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5);
       if (hitEnemy) {
         const didHit = this.options.onLauncherImpact?.({
-          playerId: "P1",
+          playerId: projectile.playerId,
           x: projectile.x,
           y: projectile.y,
           target: {
@@ -5526,7 +5926,6 @@ export class Haven3DFieldController implements Haven3DModeController {
           radius: projectile.radius,
           damage: projectile.damage,
           knockback: projectile.knockback,
-          utility: projectile.utility,
         }) ?? false;
         this.spawnHitSpark({ x: projectile.x, y: projectile.y }, didHit ? 0xf2b04d : 0x6f6a5d);
         if (didHit) {
@@ -5537,21 +5936,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
 
       if (projectile.ttlMs <= 0) {
-        if (projectile.utility === "flare") {
-          this.options.onLauncherImpact?.({
-            playerId: "P1",
-            x: projectile.x,
-            y: projectile.y,
-            target: null,
-            radius: projectile.radius,
-            damage: 0,
-            knockback: 0,
-            utility: "flare",
-          });
-          this.spawnFlareBeacon({ x: projectile.x, y: projectile.y });
-        } else {
-          this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0x6f6a5d);
-        }
+        this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0x6f6a5d);
         this.removeLauncherProjectile(index);
       }
     }
@@ -5568,26 +5953,30 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.launcherProjectiles.splice(index, 1);
   }
 
-  private fireGrapple(): void {
+  private fireGrapple(playerId: PlayerId = "P1"): void {
     const now = this.currentFrameTime || performance.now();
-    if (this.activeMode !== "grapple" || now < this.actionCooldownUntil || this.grappleMove) {
+    if (
+      this.getPlayerActiveMode(playerId) !== "grapple"
+      || now < this.getPlayerActionCooldownUntil(playerId)
+      || this.getPlayerGrappleMove(playerId)
+    ) {
       return;
     }
 
-    const avatar = this.options.getPlayerAvatar("P1");
-    const lockedTarget = this.getLockedTargetCandidate();
+    const avatar = this.options.getPlayerAvatar(playerId);
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     const lockedActionTarget = lockedTarget && lockedTarget.kind !== "loot-orb" && lockedTarget.distance <= GRAPPLE_RANGE_PX
       ? lockedTarget
       : null;
-    const ziplineTarget = lockedActionTarget ? null : this.findGrappleZiplineTarget(GRAPPLE_RANGE_PX);
-    const anchor = lockedActionTarget || ziplineTarget ? null : this.findGrappleAnchor(GRAPPLE_RANGE_PX);
-    const actionTarget = lockedActionTarget ?? (ziplineTarget || anchor ? null : this.findActionTarget(GRAPPLE_RANGE_PX));
+    const ziplineTarget = lockedActionTarget ? null : this.findGrappleZiplineTarget(playerId, GRAPPLE_RANGE_PX);
+    const anchor = lockedActionTarget || ziplineTarget ? null : this.findGrappleAnchor(playerId, GRAPPLE_RANGE_PX);
+    const actionTarget = lockedActionTarget ?? (ziplineTarget || anchor ? null : this.findActionTarget(playerId, GRAPPLE_RANGE_PX));
     if (!avatar || (!ziplineTarget && !anchor && !actionTarget)) {
-      this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS * 0.45;
+      this.setPlayerActionCooldownUntil(playerId, now + GRAPPLE_COOLDOWN_MS * 0.45);
       return;
     }
 
-    this.ziplineDismountDrift = null;
+    this.setPlayerZiplineDismountDrift(playerId, null);
 
     const targetPoint = ziplineTarget
       ? ziplineTarget.attachPoint
@@ -5603,7 +5992,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         id: actionTarget!.id,
         key: actionTarget!.key,
       };
-    const direction = this.getActionDirection(avatar, targetPoint);
+    const direction = this.getActionDirection(playerId, avatar, targetPoint);
     const ziplineRideDistance = ziplineTarget
       ? Math.hypot(ziplineTarget.endPoint.x - ziplineTarget.attachPoint.x, ziplineTarget.endPoint.y - ziplineTarget.attachPoint.y)
       : 0;
@@ -5646,7 +6035,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     hook.rotation.x = Math.PI / 2;
     this.dynamicGroup.add(line, hook);
 
-    this.grappleMove = {
+    this.setPlayerGrappleMove(playerId, {
+      playerId,
       startedAt: now,
       target: targetRef,
       targetPoint,
@@ -5667,7 +6057,7 @@ export class Haven3DFieldController implements Haven3DModeController {
           segmentKey: ziplineTarget.segment.key,
           startX: avatar.x,
           startY: avatar.y,
-          startHeight: this.getPlayerVisualWorldElevation("P1", { x: avatar.x, y: avatar.y }),
+          startHeight: this.getPlayerVisualWorldElevation(playerId, { x: avatar.x, y: avatar.y }),
           attachX: ziplineTarget.attachPoint.x,
           attachY: ziplineTarget.attachPoint.y,
           attachHeight: ziplineTarget.attachHeight,
@@ -5680,111 +6070,115 @@ export class Haven3DFieldController implements Haven3DModeController {
           rideDurationMs: ziplineRideDurationMs,
         }
         : undefined,
-    };
-    this.actionCooldownUntil = now + GRAPPLE_COOLDOWN_MS;
-    this.options.setPlayerAvatar("P1", avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
-    this.updateGrappleLine();
+    });
+    this.setPlayerActionCooldownUntil(playerId, now + GRAPPLE_COOLDOWN_MS);
+    this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+    this.updateGrappleLine(playerId);
   }
 
   private updateGrappleMove(deltaMs: number, currentTime: number): void {
-    if (!this.grappleMove) {
-      return;
-    }
-
-    const avatar = this.options.getPlayerAvatar("P1");
-    if (!avatar) {
-      this.finishGrappleMove(false);
-      return;
-    }
-
-    if (this.grappleMove.target.kind === "zipline-track") {
-      this.updateGrappleZipline(currentTime, avatar);
-      return;
-    }
-
-    if (this.grappleMove.target.kind === "grapple-node") {
-      this.updateGrappleSwing(currentTime, avatar);
-      return;
-    }
-
-    const liveTarget = this.findTargetForRef(this.grappleMove.target);
-    if (liveTarget) {
-      this.grappleMove.targetPoint = { x: liveTarget.x, y: liveTarget.y };
-    }
-
-    if (!this.grappleMove.impacted && this.grappleMove.target.kind === "enemy") {
-      this.grappleMove.impacted = true;
-      const didHit = this.options.onGrappleImpact?.({
-        playerId: "P1",
-        x: avatar.x,
-        y: avatar.y,
-        target: this.grappleMove.target,
-        damage: GRAPPLE_DAMAGE,
-        knockback: GRAPPLE_KNOCKBACK,
-      }) ?? false;
-      if (didHit) {
-        this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
-        this.beginImpactFeedback(this.grappleMove.targetPoint, 0.72);
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const move = this.getPlayerGrappleMove(playerId);
+      if (!move) {
+        return;
       }
-    }
 
-    const dx = this.grappleMove.targetPoint.x - avatar.x;
-    const dy = this.grappleMove.targetPoint.y - avatar.y;
-    const distance = Math.hypot(dx, dy);
-    const elapsed = currentTime - this.grappleMove.startedAt;
-    if (distance <= GRAPPLE_STOP_DISTANCE_PX || elapsed >= GRAPPLE_MAX_DURATION_MS) {
-      this.finishGrappleMove(true);
-      return;
-    }
+      const avatar = this.options.getPlayerAvatar(playerId);
+      if (!avatar) {
+        this.finishGrappleMove(playerId, false);
+        return;
+      }
 
-    const step = Math.min(distance - GRAPPLE_STOP_DISTANCE_PX, GRAPPLE_PULL_SPEED_PX_PER_SECOND * (deltaMs / 1000));
-    const moveX = (dx / Math.max(0.001, distance)) * step;
-    const moveY = (dy / Math.max(0.001, distance)) * step;
-    let nextX = avatar.x + moveX;
-    let nextY = avatar.y + moveY;
-    if (!this.canPlayerMoveTo("P1", nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-      nextX = avatar.x;
-    }
-    if (!this.canPlayerMoveTo("P1", nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
-      nextY = avatar.y;
-    }
+      if (move.target.kind === "zipline-track") {
+        this.updateGrappleZipline(playerId, currentTime, avatar);
+        return;
+      }
 
-    this.options.setPlayerAvatar("P1", nextX, nextY, fieldFacingFromDelta(dx, dy, avatar.facing));
-    this.updateGrappleLine();
+      if (move.target.kind === "grapple-node") {
+        this.updateGrappleSwing(playerId, currentTime, avatar);
+        return;
+      }
+
+      const liveTarget = this.findTargetForRef(move.target, playerId);
+      if (liveTarget) {
+        move.targetPoint = { x: liveTarget.x, y: liveTarget.y };
+      }
+
+      if (!move.impacted && move.target.kind === "enemy") {
+        move.impacted = true;
+        const didHit = this.options.onGrappleImpact?.({
+          playerId,
+          x: avatar.x,
+          y: avatar.y,
+          target: move.target,
+          damage: GRAPPLE_DAMAGE,
+          knockback: GRAPPLE_KNOCKBACK,
+        }) ?? false;
+        if (didHit) {
+          this.spawnHitSpark(move.targetPoint, 0x4fb4a4);
+          this.beginImpactFeedback(move.targetPoint, 0.72);
+        }
+      }
+
+      const dx = move.targetPoint.x - avatar.x;
+      const dy = move.targetPoint.y - avatar.y;
+      const distance = Math.hypot(dx, dy);
+      const elapsed = currentTime - move.startedAt;
+      if (distance <= GRAPPLE_STOP_DISTANCE_PX || elapsed >= GRAPPLE_MAX_DURATION_MS) {
+        this.finishGrappleMove(playerId, true);
+        return;
+      }
+
+      const step = Math.min(distance - GRAPPLE_STOP_DISTANCE_PX, GRAPPLE_PULL_SPEED_PX_PER_SECOND * (deltaMs / 1000));
+      const moveX = (dx / Math.max(0.001, distance)) * step;
+      const moveY = (dy / Math.max(0.001, distance)) * step;
+      let nextX = avatar.x + moveX;
+      let nextY = avatar.y + moveY;
+      if (!this.canPlayerMoveTo(playerId, nextX, avatar.y, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+        nextX = avatar.x;
+      }
+      if (!this.canPlayerMoveTo(playerId, nextX, nextY, PLAYER_WIDTH, PLAYER_HEIGHT)) {
+        nextY = avatar.y;
+      }
+
+      this.options.setPlayerAvatar(playerId, nextX, nextY, fieldFacingFromDelta(dx, dy, avatar.facing));
+      this.updateGrappleLine(playerId);
+    });
   }
 
-  private updateGrappleSwing(currentTime: number, avatar: FieldAvatarView): void {
-    if (!this.grappleMove?.swing) {
-      this.finishGrappleMove(false);
+  private updateGrappleSwing(playerId: PlayerId, currentTime: number, avatar: FieldAvatarView): void {
+    const move = this.getPlayerGrappleMove(playerId);
+    if (!move?.swing) {
+      this.finishGrappleMove(playerId, false);
       return;
     }
 
-    const elapsed = currentTime - this.grappleMove.startedAt;
-    const progress = THREE.MathUtils.clamp(elapsed / this.grappleMove.swing.durationMs, 0, 1);
+    const elapsed = currentTime - move.startedAt;
+    const progress = THREE.MathUtils.clamp(elapsed / move.swing.durationMs, 0, 1);
     const easedProgress = smoothstep(progress);
-    const startX = this.grappleMove.swing.startX;
-    const startY = this.grappleMove.swing.startY;
-    const targetX = this.grappleMove.targetPoint.x;
-    const targetY = this.grappleMove.targetPoint.y;
+    const startX = move.swing.startX;
+    const startY = move.swing.startY;
+    const targetX = move.targetPoint.x;
+    const targetY = move.targetPoint.y;
     const nextX = THREE.MathUtils.lerp(startX, targetX, easedProgress);
     const nextY = THREE.MathUtils.lerp(startY, targetY, easedProgress);
-    const lift = Math.sin(progress * Math.PI) * this.grappleMove.swing.arcHeight;
+    const lift = Math.sin(progress * Math.PI) * move.swing.arcHeight;
     const facing = fieldFacingFromDelta(targetX - avatar.x, targetY - avatar.y, avatar.facing);
 
-    this.options.setPlayerAvatar("P1", nextX, nextY, facing);
-    this.setPlayerSwingElevation("P1", lift);
-    this.updateGrappleLine();
+    this.options.setPlayerAvatar(playerId, nextX, nextY, facing);
+    this.setPlayerSwingElevation(playerId, lift);
+    this.updateGrappleLine(playerId);
 
     if (progress >= 1) {
-      this.finishGrappleMove(true);
+      this.finishGrappleMove(playerId, true);
     }
   }
 
-  private updateGrappleZipline(currentTime: number, avatar: FieldAvatarView): void {
-    const move = this.grappleMove;
+  private updateGrappleZipline(playerId: PlayerId, currentTime: number, avatar: FieldAvatarView): void {
+    const move = this.getPlayerGrappleMove(playerId);
     const zipline = move?.zipline;
     if (!move || !zipline) {
-      this.finishGrappleMove(false);
+      this.finishGrappleMove(playerId, false);
       return;
     }
 
@@ -5835,68 +6229,75 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     this.options.setPlayerAvatar(
-      "P1",
+      playerId,
       nextX,
       nextY,
       fieldFacingFromDelta(rideVector.x, rideVector.y, avatar.facing),
     );
     const groundElevation = this.getGroundElevationAtPoint({ x: nextX, y: nextY });
-    this.setPlayerSwingElevation("P1", Math.max(0, riderWorldHeight - groundElevation));
-    this.updateGrappleLine();
+    this.setPlayerSwingElevation(playerId, Math.max(0, riderWorldHeight - groundElevation));
+    this.updateGrappleLine(playerId);
 
     if (rideComplete) {
       this.releasePlayerFromZipline(
+        playerId,
         { x: nextX, y: nextY },
         riderWorldHeight,
         rideVector,
         rideVerticalVelocity,
         currentTime,
       );
-      this.finishGrappleMove(true, { preserveAirborne: true });
+      this.finishGrappleMove(playerId, true, { preserveAirborne: true });
     }
   }
 
-  private updateGrappleLine(): void {
-    if (!this.grappleMove) {
+  private updateGrappleLine(playerId: PlayerId = "P1"): void {
+    const move = this.getPlayerGrappleMove(playerId);
+    if (!move) {
       return;
     }
 
-    const avatar = this.options.getPlayerAvatar("P1");
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar) {
       return;
     }
 
     const avatarPoint = { x: avatar.x, y: avatar.y };
-    const playerWorldElevation = this.getPlayerVisualWorldElevation("P1", avatarPoint);
-    const lineStartHeight = this.grappleMove.target.kind === "zipline-track"
+    const playerWorldElevation = this.getPlayerVisualWorldElevation(playerId, avatarPoint);
+    const lineStartHeight = move.target.kind === "zipline-track"
       ? playerWorldElevation + GRAPPLE_ZIPLINE_RIDER_HAND_OFFSET_WORLD
       : playerWorldElevation + 1.18;
     const from = fieldToHavenWorld(this.options.map, avatarPoint, lineStartHeight);
-    const to = fieldToHavenWorld(this.options.map, this.grappleMove.targetPoint, this.grappleMove.targetHeight);
-    this.grappleMove.line.geometry.setFromPoints([
+    const to = fieldToHavenWorld(this.options.map, move.targetPoint, move.targetHeight);
+    move.line.geometry.setFromPoints([
       new THREE.Vector3(from.x, from.y, from.z),
       new THREE.Vector3(to.x, to.y, to.z),
     ]);
-    this.grappleMove.hook.position.set(to.x, to.y, to.z);
-    this.grappleMove.hook.rotation.z += 0.18;
+    move.hook.position.set(to.x, to.y, to.z);
+    move.hook.rotation.z += 0.18;
   }
 
-  private finishGrappleMove(spawnSpark: boolean, options: FinishGrappleMoveOptions = {}): void {
-    if (!this.grappleMove) {
+  private finishGrappleMove(
+    playerId: PlayerId = "P1",
+    spawnSpark = false,
+    options: FinishGrappleMoveOptions = {},
+  ): void {
+    const move = this.getPlayerGrappleMove(playerId);
+    if (!move) {
       return;
     }
 
-    const wasAirborneGrapple = this.grappleMove.target.kind === "grapple-node"
-      || this.grappleMove.target.kind === "zipline-track";
+    const wasAirborneGrapple = move.target.kind === "grapple-node"
+      || move.target.kind === "zipline-track";
     if (spawnSpark) {
-      this.spawnHitSpark(this.grappleMove.targetPoint, 0x4fb4a4);
+      this.spawnHitSpark(move.targetPoint, 0x4fb4a4);
     }
-    this.dynamicGroup.remove(this.grappleMove.line, this.grappleMove.hook);
-    disposeObject(this.grappleMove.line);
-    disposeObject(this.grappleMove.hook);
-    this.grappleMove = null;
+    this.dynamicGroup.remove(move.line, move.hook);
+    disposeObject(move.line);
+    disposeObject(move.hook);
+    this.setPlayerGrappleMove(playerId, null);
     if (wasAirborneGrapple && !options.preserveAirborne) {
-      this.landPlayerVertical("P1");
+      this.landPlayerVertical(playerId);
     }
   }
 
@@ -6097,8 +6498,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       chibi.rightCapePanel?.rotation.set(0, -0.08 + capeFlutter * 0.6, 0.08 - capeFlutter * 0.95);
     }
 
-    const leftWalkArm = counterSwing * 0.4 * walkAmount;
-    const rightWalkArm = swing * 0.4 * walkAmount;
+    const leftWalkArm = swing * 0.4 * walkAmount;
+    const rightWalkArm = counterSwing * 0.4 * walkAmount;
     const armStream = Math.sin((cycle * 2) + 0.34) * streamPoseBlend;
     const leftLegSwing = swing;
     const rightLegSwing = counterSwing;
@@ -6704,12 +7105,16 @@ export class Haven3DFieldController implements Haven3DModeController {
     const hitstopMs = IMPACT_HITSTOP_MS * THREE.MathUtils.clamp(intensity, 0.35, 1.35);
     this.hitstopRemainingMs = Math.max(this.hitstopRemainingMs, hitstopMs);
 
-    if (this.bladeSwing) {
-      this.bladeSwing.startedAt += hitstopMs;
-    }
-    if (this.grappleMove) {
-      this.grappleMove.startedAt += hitstopMs;
-    }
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const bladeSwing = this.getPlayerBladeSwing(playerId);
+      if (bladeSwing) {
+        bladeSwing.startedAt += hitstopMs;
+      }
+      const grappleMove = this.getPlayerGrappleMove(playerId);
+      if (grappleMove) {
+        grappleMove.startedAt += hitstopMs;
+      }
+    });
 
     const avatar = this.options.getPlayerAvatar("P1");
     if (!avatar) {
@@ -7155,7 +7560,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateGrappleAnchors(currentTime: number): void {
-    const visible = this.activeMode === "grapple";
+    const visible = this.getPlayerActiveMode("P1") === "grapple" || this.getPlayerActiveMode("P2") === "grapple";
     for (const anchor of this.grappleAnchors.values()) {
       anchor.group.visible = visible;
       if (!visible) {
@@ -7178,60 +7583,119 @@ export class Haven3DFieldController implements Haven3DModeController {
   private updateCamera(dt: number): void {
     const mouseSensitivity = 0.003;
     const yawDelta = -this.mouseDx * mouseSensitivity;
-    if (Math.abs(yawDelta) > 0.000001) {
-      this.cameraYawPan = null;
-    }
-    this.pitch = THREE.MathUtils.clamp(
-      this.pitch - this.mouseDy * mouseSensitivity,
-      CAMERA_MIN_PITCH,
-      CAMERA_MAX_PITCH,
-    );
+    const pitchDelta = -this.mouseDy * mouseSensitivity;
     this.mouseDx = 0;
     this.mouseDy = 0;
 
-    const avatar = this.options.getPlayerAvatar("P1");
-    const playerPoint = avatar ? { x: avatar.x, y: avatar.y } : null;
-    const playerWorld = avatar && playerPoint
-      ? fieldToHavenWorld(this.options.map, playerPoint, this.getPlayerVisualWorldElevation("P1", playerPoint) + 1.15)
+    if (this.cameraMode === "split") {
+      this.camera.fov = 62;
+      this.camera.updateProjectionMatrix();
+      this.updateSplitCamera("P1", this.splitCameras.P1, dt, yawDelta, pitchDelta, true);
+      this.updateSplitCamera("P2", this.splitCameras.P2, dt, 0, 0, false);
+      return;
+    }
+
+    this.updateSharedCamera(dt, yawDelta, pitchDelta);
+  }
+
+  private updateSharedCamera(dt: number, yawDelta: number, pitchDelta: number): void {
+    if (Math.abs(yawDelta) > 0.000001) {
+      this.cameraYawPan = null;
+    }
+    this.pitch = THREE.MathUtils.clamp(this.pitch + pitchDelta, CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+
+    const activePlayers = (["P1", "P2"] as PlayerId[])
+      .filter((playerId) => this.options.isPlayerActive(playerId))
+      .map((playerId) => ({
+        playerId,
+        avatar: this.options.getPlayerAvatar(playerId),
+      }))
+      .filter((entry): entry is { playerId: PlayerId; avatar: FieldAvatarView } => Boolean(entry.avatar));
+    const primaryEntry = activePlayers.find((entry) => entry.playerId === "P1") ?? activePlayers[0] ?? null;
+    const sharedControlPlayerId = primaryEntry?.playerId ?? "P1";
+    const avatar = primaryEntry?.avatar ?? null;
+    const midpoint = activePlayers.length > 0
+      ? activePlayers.reduce((sum, entry) => ({
+        x: sum.x + entry.avatar.x,
+        y: sum.y + entry.avatar.y,
+      }), { x: 0, y: 0 })
+      : { x: 0, y: 0 };
+    const playerPoint = activePlayers.length > 0
+      ? { x: midpoint.x / activePlayers.length, y: midpoint.y / activePlayers.length }
+      : null;
+    const playerWorld = playerPoint
+      ? fieldToHavenWorld(this.options.map, playerPoint, activePlayers.reduce((sum, entry) =>
+        sum + this.getPlayerVisualWorldElevation(entry.playerId, { x: entry.avatar.x, y: entry.avatar.y }), 0,
+      ) / activePlayers.length + 1.15)
       : { x: 0, y: 1.15, z: 0 };
-    const lockedTarget = this.getLockedTargetCandidate();
+    if (!avatar || this.snapCameraNextFrame || !Number.isFinite(this.cameraFollowWorldY ?? Number.NaN)) {
+      this.cameraFollowWorldY = playerWorld.y;
+    } else {
+      const heightSmoothing = dt > 0 ? 1 - Math.pow(CAMERA_FOLLOW_ELEVATION_LERP_BASE, dt) : 1;
+      this.cameraFollowWorldY = THREE.MathUtils.lerp(this.cameraFollowWorldY ?? playerWorld.y, playerWorld.y, heightSmoothing);
+    }
+    const cameraPlayerWorld = new THREE.Vector3(playerWorld.x, this.cameraFollowWorldY ?? playerWorld.y, playerWorld.z);
+    const lockedTarget = this.getLockedTargetCandidate(sharedControlPlayerId);
+    const launcherAimMode = Boolean(avatar && this.getPlayerActiveMode(sharedControlPlayerId) === "launcher");
     const cameraProfile = this.mapProfile.camera;
-    const cameraDistance = THREE.MathUtils.clamp(
+    const baseCameraDistance = THREE.MathUtils.clamp(
       this.cameraDistance,
       cameraProfile.minDistance,
       cameraProfile.maxDistance,
     );
+    const separationPx = activePlayers.length >= 2
+      ? Math.hypot(
+        activePlayers[0].avatar.x - activePlayers[1].avatar.x,
+        activePlayers[0].avatar.y - activePlayers[1].avatar.y,
+      )
+      : 0;
+    const separationDistanceBoost = THREE.MathUtils.clamp(separationPx * 0.0125, 0, 8.4);
+    const separationFovBoost = THREE.MathUtils.clamp(separationPx / 18, 0, 14);
 
     let cameraYaw = this.yaw + yawDelta;
-    let focus = new THREE.Vector3(playerWorld.x, playerWorld.y, playerWorld.z);
-    let distance = cameraDistance;
+    let focus = cameraPlayerWorld.clone();
+    let cameraAnchor = cameraPlayerWorld.clone();
+    let distance = THREE.MathUtils.clamp(baseCameraDistance + separationDistanceBoost, cameraProfile.minDistance, cameraProfile.maxDistance);
     let forwardPanActive = false;
+    let lockedTargetWorld: THREE.Vector3 | null = null;
 
     if (avatar && lockedTarget) {
       this.cameraYawPan = null;
-      this.targetOrbitYawOffset += yawDelta;
+      this.setPlayerTargetOrbitYawOffset(
+        sharedControlPlayerId,
+        this.getPlayerTargetOrbitYawOffset(sharedControlPlayerId) + yawDelta,
+      );
       const targetPoint = { x: lockedTarget.x, y: lockedTarget.y };
       const targetWorld = fieldToHavenWorld(this.options.map, targetPoint, this.getGroundElevationAtPoint(targetPoint) + 1.1);
+      lockedTargetWorld = new THREE.Vector3(targetWorld.x, targetWorld.y, targetWorld.z);
       const playerToTargetX = targetWorld.x - playerWorld.x;
       const playerToTargetZ = targetWorld.z - playerWorld.z;
       const targetDistance = Math.hypot(playerToTargetX, playerToTargetZ);
       const lockYaw = targetDistance > 0.001
         ? -Math.atan2(playerToTargetX, -playerToTargetZ)
         : this.yaw;
-      this.targetOrbitYawOffset = THREE.MathUtils.clamp(this.targetOrbitYawOffset, -0.72, 0.72);
-      cameraYaw = lockYaw + this.targetOrbitYawOffset;
+      const orbitOffset = THREE.MathUtils.clamp(
+        this.getPlayerTargetOrbitYawOffset(sharedControlPlayerId),
+        -0.72,
+        0.72,
+      );
+      this.setPlayerTargetOrbitYawOffset(sharedControlPlayerId, orbitOffset);
+      cameraYaw = lockYaw + orbitOffset;
       const lockPitch = THREE.MathUtils.clamp(this.pitch, -0.12, 0.34);
       this.pitch = THREE.MathUtils.lerp(this.pitch, lockPitch, 1 - Math.pow(0.0005, dt));
       distance = THREE.MathUtils.clamp(
-        cameraProfile.lockedBaseDistance + Math.min(cameraProfile.lockedTargetAddMax, targetDistance * cameraProfile.lockedTargetScale),
+        cameraProfile.lockedBaseDistance
+          + Math.min(cameraProfile.lockedTargetAddMax, targetDistance * cameraProfile.lockedTargetScale)
+          + separationDistanceBoost,
         cameraProfile.lockedMinDistance,
         cameraProfile.lockedMaxDistance,
       );
       focus = new THREE.Vector3(
-        (playerWorld.x * 0.64) + (targetWorld.x * 0.36),
-        Math.max(playerWorld.y, targetWorld.y) + 0.28,
-        (playerWorld.z * 0.64) + (targetWorld.z * 0.36),
+        (cameraPlayerWorld.x * 0.68) + (targetWorld.x * 0.32),
+        Math.max(cameraPlayerWorld.y, targetWorld.y) + 0.28,
+        (cameraPlayerWorld.z * 0.68) + (targetWorld.z * 0.32),
       );
+      cameraAnchor = focus.clone();
     } else {
       if (this.cameraYawPan) {
         const elapsed = (this.currentFrameTime || performance.now()) - this.cameraYawPan.startedAt;
@@ -7243,20 +7707,57 @@ export class Haven3DFieldController implements Haven3DModeController {
           this.cameraYawPan = null;
         }
       }
-      this.yaw = cameraYaw;
-      this.targetOrbitYawOffset = 0;
+      this.setPlayerTargetOrbitYawOffset(sharedControlPlayerId, 0);
+      cameraAnchor = focus.clone();
+    }
+
+    if (launcherAimMode && avatar) {
+      const launcherPitch = THREE.MathUtils.clamp(this.pitch, LAUNCHER_CAMERA_MIN_PITCH, LAUNCHER_CAMERA_MAX_PITCH);
+      this.pitch = THREE.MathUtils.lerp(this.pitch, launcherPitch, 1 - Math.pow(0.0007, dt));
+      const aimForward = new THREE.Vector3(
+        -Math.sin(cameraYaw) * Math.cos(this.pitch),
+        -Math.sin(this.pitch),
+        -Math.cos(cameraYaw) * Math.cos(this.pitch),
+      ).normalize();
+      cameraAnchor = cameraPlayerWorld.clone();
+      cameraAnchor.y += LAUNCHER_CAMERA_ANCHOR_LIFT;
+      if (lockedTargetWorld) {
+        focus = lockedTargetWorld.clone();
+        focus.y += LAUNCHER_CAMERA_LOCKED_LOOK_LIFT;
+        distance = THREE.MathUtils.clamp(
+          distance * 0.78,
+          LAUNCHER_CAMERA_DISTANCE_MIN,
+          LAUNCHER_CAMERA_DISTANCE_MAX,
+        );
+      } else {
+        focus = cameraPlayerWorld.clone();
+        focus.y += LAUNCHER_CAMERA_LOOK_LIFT;
+        focus.addScaledVector(aimForward, LAUNCHER_CAMERA_FOCUS_AHEAD);
+        distance = THREE.MathUtils.clamp(
+          baseCameraDistance * 0.7,
+          LAUNCHER_CAMERA_DISTANCE_MIN,
+          LAUNCHER_CAMERA_DISTANCE_MAX,
+        );
+      }
     }
 
     const cosPitch = Math.cos(this.pitch);
+    const heightOffset = launcherAimMode ? LAUNCHER_CAMERA_HEIGHT_OFFSET : cameraProfile.heightOffset;
     const offset = new THREE.Vector3(
       Math.sin(cameraYaw) * distance * cosPitch,
-      cameraProfile.heightOffset + Math.sin(this.pitch) * distance,
+      heightOffset + Math.sin(this.pitch) * distance,
       Math.cos(cameraYaw) * distance * cosPitch,
     );
-    const shoulderOffset = lockedTarget
-      ? new THREE.Vector3(Math.cos(cameraYaw) * 0.62, 0, -Math.sin(cameraYaw) * 0.62)
-      : new THREE.Vector3();
-    const desired = focus.clone().add(offset).add(shoulderOffset);
+    const shoulderOffset = launcherAimMode
+      ? new THREE.Vector3(
+        Math.cos(cameraYaw) * LAUNCHER_CAMERA_SHOULDER_OFFSET,
+        0.18,
+        -Math.sin(cameraYaw) * LAUNCHER_CAMERA_SHOULDER_OFFSET,
+      )
+      : lockedTarget
+        ? new THREE.Vector3(Math.cos(cameraYaw) * 0.62, 0, -Math.sin(cameraYaw) * 0.62)
+        : new THREE.Vector3();
+    const desired = cameraAnchor.clone().add(offset).add(shoulderOffset);
     const positionLerpBase = forwardPanActive ? 0.00002 : 0.001;
     if (this.snapCameraNextFrame) {
       this.camera.position.copy(desired);
@@ -7273,9 +7774,207 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
     }
 
+    this.camera.fov = 62 + separationFovBoost;
+    this.camera.updateProjectionMatrix();
     this.yaw = cameraYaw;
     this.clockForward.set(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw)).normalize();
     this.clockRight.set(Math.cos(cameraYaw), 0, -Math.sin(cameraYaw)).normalize();
+  }
+
+  private updateSplitCamera(
+    playerId: PlayerId,
+    camera: THREE.PerspectiveCamera,
+    dt: number,
+    yawDelta: number,
+    pitchDelta: number,
+    allowManualLook: boolean,
+  ): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    const viewState = this.splitCameraStates[playerId];
+    let viewYaw = viewState.yaw;
+    let viewPitch = viewState.pitch;
+    const cameraProfile = this.mapProfile.camera;
+    if (!avatar) {
+      camera.fov = 62;
+      camera.updateProjectionMatrix();
+      return;
+    }
+
+    const avatarPoint = { x: avatar.x, y: avatar.y };
+    const playerWorld = fieldToHavenWorld(this.options.map, avatarPoint, this.getPlayerVisualWorldElevation(playerId, avatarPoint) + 1.15);
+    if (this.splitCameraSnapNextFrame[playerId] || !Number.isFinite(this.splitCameraFollowWorldY[playerId] ?? Number.NaN)) {
+      this.splitCameraFollowWorldY[playerId] = playerWorld.y;
+    } else {
+      const heightSmoothing = dt > 0 ? 1 - Math.pow(CAMERA_FOLLOW_ELEVATION_LERP_BASE, dt) : 1;
+      this.splitCameraFollowWorldY[playerId] = THREE.MathUtils.lerp(
+        this.splitCameraFollowWorldY[playerId] ?? playerWorld.y,
+        playerWorld.y,
+        heightSmoothing,
+      );
+    }
+    const cameraPlayerWorld = new THREE.Vector3(
+      playerWorld.x,
+      this.splitCameraFollowWorldY[playerId] ?? playerWorld.y,
+      playerWorld.z,
+    );
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
+    const activeMode = this.getPlayerActiveMode(playerId);
+    let distance = THREE.MathUtils.clamp(viewState.distance, cameraProfile.minDistance, cameraProfile.maxDistance);
+    let focus = cameraPlayerWorld.clone();
+    let cameraAnchor = cameraPlayerWorld.clone();
+    let forwardPanActive = false;
+    let lockedTargetWorld: THREE.Vector3 | null = null;
+
+    if (allowManualLook && Math.abs(yawDelta) > 0.000001) {
+      this.splitCameraYawPans[playerId] = null;
+    }
+    if (allowManualLook) {
+      viewYaw += yawDelta;
+      viewPitch = THREE.MathUtils.clamp(viewPitch + pitchDelta, CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+    }
+
+    if (lockedTarget) {
+      const targetPoint = { x: lockedTarget.x, y: lockedTarget.y };
+      const targetWorld = fieldToHavenWorld(this.options.map, targetPoint, this.getGroundElevationAtPoint(targetPoint) + 1.1);
+      lockedTargetWorld = new THREE.Vector3(targetWorld.x, targetWorld.y, targetWorld.z);
+      const playerToTargetX = targetWorld.x - playerWorld.x;
+      const playerToTargetZ = targetWorld.z - playerWorld.z;
+      const targetDistance = Math.hypot(playerToTargetX, playerToTargetZ);
+      const lockYaw = targetDistance > 0.001
+        ? -Math.atan2(playerToTargetX, -playerToTargetZ)
+        : viewYaw;
+      const orbitOffset = THREE.MathUtils.clamp(
+        this.getPlayerTargetOrbitYawOffset(playerId) + (allowManualLook ? yawDelta : 0),
+        -0.72,
+        0.72,
+      );
+      this.setPlayerTargetOrbitYawOffset(playerId, orbitOffset);
+      viewYaw = lockYaw + orbitOffset;
+      const lockPitch = THREE.MathUtils.clamp(viewPitch, -0.12, 0.34);
+      viewPitch = THREE.MathUtils.lerp(viewPitch, lockPitch, 1 - Math.pow(0.0005, dt));
+      distance = THREE.MathUtils.clamp(
+        cameraProfile.lockedBaseDistance + Math.min(cameraProfile.lockedTargetAddMax, targetDistance * cameraProfile.lockedTargetScale),
+        cameraProfile.lockedMinDistance,
+        cameraProfile.lockedMaxDistance,
+      );
+      focus = new THREE.Vector3(
+        (cameraPlayerWorld.x * 0.64) + (targetWorld.x * 0.36),
+        Math.max(cameraPlayerWorld.y, targetWorld.y) + 0.28,
+        (cameraPlayerWorld.z * 0.64) + (targetWorld.z * 0.36),
+      );
+      cameraAnchor = focus.clone();
+    } else {
+      const pan = this.splitCameraYawPans[playerId];
+      if (pan) {
+        const elapsed = (this.currentFrameTime || performance.now()) - pan.startedAt;
+        const amount = smoothstep(elapsed / pan.durationMs);
+        viewYaw = lerpAngleRadians(pan.fromYaw, pan.toYaw, amount);
+        forwardPanActive = amount < 1;
+        if (!forwardPanActive) {
+          viewYaw = pan.toYaw;
+          this.splitCameraYawPans[playerId] = null;
+        }
+      } else if (!allowManualLook) {
+        viewYaw = lerpAngleRadians(viewYaw, getCameraYawForFacing(avatar.facing), 1 - Math.pow(0.0015, dt));
+      }
+      this.setPlayerTargetOrbitYawOffset(playerId, 0);
+    }
+
+    const launcherAimMode = activeMode === "launcher";
+    if (launcherAimMode) {
+      const launcherPitch = THREE.MathUtils.clamp(viewPitch, LAUNCHER_CAMERA_MIN_PITCH, LAUNCHER_CAMERA_MAX_PITCH);
+      viewPitch = THREE.MathUtils.lerp(viewPitch, launcherPitch, 1 - Math.pow(0.0007, dt));
+      const aimForward = new THREE.Vector3(
+        -Math.sin(viewYaw) * Math.cos(viewPitch),
+        -Math.sin(viewPitch),
+        -Math.cos(viewYaw) * Math.cos(viewPitch),
+      ).normalize();
+      cameraAnchor = cameraPlayerWorld.clone();
+      cameraAnchor.y += LAUNCHER_CAMERA_ANCHOR_LIFT;
+      if (lockedTargetWorld) {
+        focus = lockedTargetWorld.clone();
+        focus.y += LAUNCHER_CAMERA_LOCKED_LOOK_LIFT;
+        distance = THREE.MathUtils.clamp(distance * 0.78, LAUNCHER_CAMERA_DISTANCE_MIN, LAUNCHER_CAMERA_DISTANCE_MAX);
+      } else {
+        focus = cameraPlayerWorld.clone();
+        focus.y += LAUNCHER_CAMERA_LOOK_LIFT;
+        focus.addScaledVector(aimForward, LAUNCHER_CAMERA_FOCUS_AHEAD);
+        distance = THREE.MathUtils.clamp(distance * 0.7, LAUNCHER_CAMERA_DISTANCE_MIN, LAUNCHER_CAMERA_DISTANCE_MAX);
+      }
+    }
+
+    const cosPitch = Math.cos(viewPitch);
+    const heightOffset = launcherAimMode ? LAUNCHER_CAMERA_HEIGHT_OFFSET : cameraProfile.heightOffset;
+    const offset = new THREE.Vector3(
+      Math.sin(viewYaw) * distance * cosPitch,
+      heightOffset + Math.sin(viewPitch) * distance,
+      Math.cos(viewYaw) * distance * cosPitch,
+    );
+    const shoulderOffset = launcherAimMode
+      ? new THREE.Vector3(
+        Math.cos(viewYaw) * LAUNCHER_CAMERA_SHOULDER_OFFSET,
+        0.18,
+        -Math.sin(viewYaw) * LAUNCHER_CAMERA_SHOULDER_OFFSET,
+      )
+      : lockedTarget
+        ? new THREE.Vector3(Math.cos(viewYaw) * 0.62, 0, -Math.sin(viewYaw) * 0.62)
+        : new THREE.Vector3();
+    const desired = cameraAnchor.clone().add(offset).add(shoulderOffset);
+    const positionLerpBase = forwardPanActive ? 0.00002 : 0.001;
+    if (this.splitCameraSnapNextFrame[playerId]) {
+      camera.position.copy(desired);
+      this.splitCameraSnapNextFrame[playerId] = false;
+    } else {
+      camera.position.lerp(desired, 1 - Math.pow(positionLerpBase, dt));
+    }
+    camera.lookAt(focus);
+    if (playerId === "P1" && this.cameraImpulse.lengthSq() > 0.000001) {
+      camera.position.add(this.cameraImpulse);
+      this.cameraImpulse.multiplyScalar(Math.pow(0.02, dt));
+      if (this.cameraImpulse.lengthSq() < 0.00001) {
+        this.cameraImpulse.set(0, 0, 0);
+      }
+    }
+
+    camera.fov = 62;
+    camera.updateProjectionMatrix();
+    this.splitCameraStates[playerId] = {
+      yaw: viewYaw,
+      pitch: viewPitch,
+      distance,
+    };
+    if (playerId === "P1") {
+      this.clockForward.set(-Math.sin(viewYaw), 0, -Math.cos(viewYaw)).normalize();
+      this.clockRight.set(Math.cos(viewYaw), 0, -Math.sin(viewYaw)).normalize();
+    }
+  }
+
+  private renderScene(): void {
+    if (this.cameraMode !== "split") {
+      this.renderer.setScissorTest(false);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    const width = Math.max(1, this.options.host.clientWidth || window.innerWidth);
+    const height = Math.max(1, this.options.host.clientHeight || window.innerHeight);
+    const leftWidth = Math.max(1, Math.floor(width / 2));
+    const rightWidth = Math.max(1, width - leftWidth);
+    const previousAutoClear = this.renderer.autoClear;
+    this.renderer.setScissorTest(true);
+    this.renderer.autoClear = true;
+    this.renderer.setViewport(0, 0, width, height);
+    this.renderer.setScissor(0, 0, width, height);
+    this.renderer.clear();
+    this.renderer.autoClear = false;
+    this.renderer.setViewport(0, 0, leftWidth, height);
+    this.renderer.setScissor(0, 0, leftWidth, height);
+    this.renderer.render(this.scene, this.splitCameras.P1);
+    this.renderer.setViewport(leftWidth, 0, rightWidth, height);
+    this.renderer.setScissor(leftWidth, 0, rightWidth, height);
+    this.renderer.render(this.scene, this.splitCameras.P2);
+    this.renderer.autoClear = previousAutoClear;
+    this.renderer.setScissorTest(false);
   }
 
   private syncDynamicActors(): void {
@@ -7459,7 +8158,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       applyLootOrbMaterial(object.getObjectByName(LOOT_ORB_SPARKLE_NAME), palette.sparkle);
       const targetRing = object.getObjectByName(LOOT_ORB_TARGET_RING_NAME);
       if (targetRing) {
-        targetRing.visible = this.targetLock?.kind === "loot-orb" && this.targetLock.id === orb.id;
+        targetRing.visible = this.isTargetLockedByAnyPlayer("loot-orb", orb.id);
         applyLootOrbMaterial(targetRing, palette.ring, palette.ringOpacity);
       }
       object.scale.setScalar(radiusScale * pulse);
@@ -7484,13 +8183,16 @@ export class Haven3DFieldController implements Haven3DModeController {
     const verticalWorldElevation = this.getPlayerVisualWorldElevation(playerId, avatarPoint);
     const world = fieldToHavenWorld(this.options.map, avatarPoint, verticalWorldElevation + 0.04);
     const vertical = this.getPlayerVerticalState(playerId);
-    const lockedTarget = playerId === "P1" ? this.getLockedTargetCandidate() : null;
+    const lockedTarget = this.getLockedTargetCandidate(playerId);
     actor.group.position.set(world.x, world.y, world.z);
-    const bladeLookDirection = playerId === "P1" && this.bladeSwing
-      ? this.bladeSwing.direction
+    const bladeSwing = this.getPlayerBladeSwing(playerId);
+    const activeMode = this.getPlayerActiveMode(playerId);
+    const grappleMove = this.getPlayerGrappleMove(playerId);
+    const bladeLookDirection = bladeSwing
+      ? bladeSwing.direction
       : null;
-    const launcherLookDirection = playerId === "P1" && this.activeMode === "launcher"
-      ? this.getActionDirection(avatar, lockedTarget)
+    const launcherLookDirection = activeMode === "launcher"
+      ? this.getActionDirection(playerId, avatar, lockedTarget)
       : null;
     const lookDirection = lockedTarget
       ? { x: lockedTarget.x - avatar.x, y: lockedTarget.y - avatar.y }
@@ -7526,13 +8228,15 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    const activeMode = playerId === "P1" ? this.activeMode : "blade";
-    const isTargetReady = playerId === "P1" && Boolean(lockedTarget) && activeMode !== null;
-    const transform = playerId === "P1" ? this.readGearbladeTransform() : null;
+    const activeMode = this.getPlayerActiveMode(playerId);
+    const isTargetReady = Boolean(lockedTarget) && activeMode !== null;
+    const transform = this.readGearbladeTransform(playerId);
     const vertical = this.getPlayerVerticalState(playerId);
+    const grappleMove = this.getPlayerGrappleMove(playerId);
+    const bladeSwing = this.getPlayerBladeSwing(playerId);
     this.updatePlayerWeaponForm(actor, activeMode, transform);
     if (activeMode === "launcher") {
-      const recoil = playerId === "P1" ? this.getLauncherRecoilAmount() : 0;
+      const recoil = this.getLauncherRecoilAmount(playerId);
       const launcherAirborne = !vertical.grounded;
       if (!launcherAirborne) {
         this.applyLauncherReadyBodyPose(actor, recoil, transform);
@@ -7543,7 +8247,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
     if (activeMode !== "blade") {
-      if (playerId === "P1" && activeMode === "grapple" && this.grappleMove?.target.kind === "zipline-track") {
+      if (activeMode === "grapple" && grappleMove?.target.kind === "zipline-track") {
         this.applyZiplineRidePose(actor);
         this.updateZiplineGrappleGripPose(actor);
       } else if (isTargetReady && activeMode) {
@@ -7554,7 +8258,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    if (activeMode && transform && !this.bladeSwing) {
+    if (activeMode && transform && !bladeSwing) {
       actor.blade.visible = true;
       this.applyGearbladeTransformBodyPose(actor, transform);
       this.mountBladeOnSwingHand(actor);
@@ -7563,7 +8267,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    const swing = playerId === "P1" ? this.bladeSwing : null;
+    const swing = bladeSwing;
     if (!swing) {
       actor.blade.visible = true;
       if (isTargetReady && activeMode) {
@@ -8831,8 +9535,10 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    const avatar = this.options.getPlayerAvatar("P1");
-    if (!avatar) {
+    const avatars = (["P1", "P2"] as PlayerId[])
+      .map((playerId) => this.options.isPlayerActive(playerId) ? this.options.getPlayerAvatar(playerId) : null)
+      .filter((entry): entry is FieldAvatarView => Boolean(entry));
+    if (avatars.length <= 0) {
       actor.telegraph.visible = false;
       return;
     }
@@ -8841,8 +9547,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     const profile = getHaven3DEnemyAttackProfile(enemy);
     const isWindup = enemy.attackState === "windup";
     const isRecovery = enemy.attackState === "recovery";
-    const distance = Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y);
-    const isLocked = this.targetLock?.kind === "enemy" && this.targetLock.id === enemy.id;
+    const distance = avatars.reduce((best, avatar) => Math.min(best, Math.hypot(enemy.x - avatar.x, enemy.y - avatar.y)), Number.POSITIVE_INFINITY);
+    const isLocked = this.isTargetLockedByAnyPlayer("enemy", enemy.id);
     const telegraphRange = Math.max(ENEMY_TELEGRAPH_RANGE_PX, profile.triggerRange);
     const dangerRange = Math.min(ENEMY_DANGER_RANGE_PX, profile.triggerRange * 0.62);
     const shouldShow = isWindup || isRecovery || distance <= telegraphRange || (isLocked && distance <= telegraphRange * 1.35);
@@ -8878,11 +9584,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (!actor.targetRing) {
       return;
     }
-    actor.targetRing.visible = this.targetLock?.kind === kind && this.targetLock.id === id;
+    actor.targetRing.visible = this.isTargetLockedByAnyPlayer(kind, id);
   }
 
-  private getTargetCandidates(): Haven3DTargetCandidate[] {
-    const avatar = this.options.getPlayerAvatar("P1");
+  private getTargetCandidates(playerId: PlayerId = "P1"): Haven3DTargetCandidate[] {
+    const avatar = this.options.getPlayerAvatar(playerId);
     return createHaven3DTargetCandidates(
       avatar,
       this.options.getNpcs(),
@@ -8891,43 +9597,55 @@ export class Haven3DFieldController implements Haven3DModeController {
     );
   }
 
-  private getLockedTargetCandidate(): Haven3DTargetCandidate | null {
-    if (!this.targetLock) {
+  private getLockedTargetCandidate(playerId: PlayerId = "P1"): Haven3DTargetCandidate | null {
+    const targetLock = this.getPlayerTargetLock(playerId);
+    if (!targetLock) {
       return null;
     }
 
-    const target = this.getTargetCandidates().find((candidate) => candidate.key === this.targetLock?.key) ?? null;
+    const target = this.getTargetCandidates(playerId).find((candidate) => candidate.key === targetLock.key) ?? null;
     if (!target || target.distance > TARGET_LOCK_BREAK_DISTANCE_PX) {
-      this.targetLock = null;
-      this.targetOrbitYawOffset = 0;
+      this.setPlayerTargetLock(playerId, null);
+      this.setPlayerTargetOrbitYawOffset(playerId, 0);
       return null;
     }
     return target;
   }
 
-  private selectNextTarget(reverse = false): void {
-    const targets = this.getTargetCandidates();
-    this.targetLock = selectNextHaven3DTarget(targets, this.targetLock, reverse);
-    this.targetOrbitYawOffset = 0;
-    this.cameraYawPan = null;
+  private selectNextTarget(playerOrReverse: PlayerId | boolean = "P1", maybeReverse = false): void {
+    const playerId: PlayerId = typeof playerOrReverse === "boolean" ? "P1" : playerOrReverse;
+    const reverse = typeof playerOrReverse === "boolean" ? playerOrReverse : maybeReverse;
+    const targets = this.getTargetCandidates(playerId);
+    this.setPlayerTargetLock(playerId, selectNextHaven3DTarget(targets, this.getPlayerTargetLock(playerId), reverse));
+    this.setPlayerTargetOrbitYawOffset(playerId, 0);
+    if (playerId === "P1") {
+      this.cameraYawPan = null;
+    } else {
+      this.splitCameraYawPans.P2 = null;
+    }
   }
 
-  private snapCameraToPlayerFacing(): void {
-    const avatar = this.options.getPlayerAvatar("P1");
+  private snapCameraToPlayerFacing(playerId: PlayerId = "P1"): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
     if (!avatar) {
       return;
     }
 
-    this.targetLock = null;
-    this.targetOrbitYawOffset = 0;
+    this.setPlayerTargetLock(playerId, null);
+    this.setPlayerTargetOrbitYawOffset(playerId, 0);
     this.mouseDx = 0;
     this.mouseDy = 0;
-    this.cameraYawPan = {
+    const pan: CameraYawPan = {
       startedAt: this.currentFrameTime || performance.now(),
       durationMs: CAMERA_FORWARD_PAN_DURATION_MS,
-      fromYaw: this.yaw,
+      fromYaw: playerId === "P1" ? this.yaw : this.splitCameraStates[playerId].yaw,
       toYaw: getCameraYawForFacing(avatar.facing),
     };
+    if (playerId === "P1") {
+      this.cameraYawPan = pan;
+    } else {
+      this.splitCameraYawPans[playerId] = pan;
+    }
   }
 
   private getRotationForFacing(facing: PlayerAvatar["facing"]): number {
@@ -8946,8 +9664,20 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateModeHud(): void {
-    const activeMode = this.activeMode ?? "blade";
+    const sharedUi = document.querySelector<HTMLElement>("[data-haven3d-shared-ui]");
+    const splitUi = document.querySelector<HTMLElement>("[data-haven3d-split-ui]");
+    if (sharedUi) {
+      sharedUi.hidden = this.cameraMode === "split";
+    }
+    if (splitUi) {
+      splitUi.hidden = this.cameraMode !== "split";
+    }
+
     document.querySelectorAll<HTMLElement>("[data-gearblade-mode-selector]").forEach((selector) => {
+      const playerId = selector.closest<HTMLElement>("[data-haven3d-player]")?.dataset.haven3dPlayer === "P2"
+        ? "P2"
+        : "P1";
+      const activeMode = this.getPlayerActiveMode(playerId) ?? "blade";
       const activeMeta = GEARBLADE_MODE_UI[activeMode];
       selector.dataset.activeMode = activeMode;
       const icon = selector.querySelector<HTMLImageElement>("[data-gearblade-mode-selector-icon]");
@@ -8983,20 +9713,46 @@ export class Haven3DFieldController implements Haven3DModeController {
         element.disabled = !isEnabled;
       }
     });
+
+    document.querySelectorAll<HTMLElement>("[data-haven3d-reticle]").forEach((reticle) => {
+      const playerId = reticle.dataset.haven3dReticlePlayer === "P2"
+        ? "P2"
+        : "P1";
+      const showReticle = this.getPlayerActiveMode(playerId) === "launcher"
+        && (this.cameraMode === "split" || playerId === "P1");
+      reticle.classList.toggle("haven3d-reticle--visible", showReticle);
+      reticle.setAttribute("aria-hidden", showReticle ? "false" : "true");
+    });
   }
 
   private updatePrompt(): void {
-    if (!this.promptElement) {
-      return;
+    const buildPromptText = (playerId: PlayerId, basePrompt: string | null): string => {
+      const target = this.getLockedTargetCandidate(playerId);
+      const targetText = target ? `TARGET :: ${target.label.toUpperCase()}` : null;
+      const activeMode = this.getPlayerActiveMode(playerId);
+      const modeText = activeMode ? `MODE :: ${activeMode.toUpperCase()}` : null;
+      return [basePrompt, targetText, modeText].filter(Boolean).join(" | ");
+    };
+
+    if (this.promptElement) {
+      const promptText = this.cameraMode === "shared"
+        ? buildPromptText("P1", this.options.getPrompt())
+        : "";
+      this.promptElement.textContent = promptText;
+      this.promptElement.classList.toggle("haven3d-prompt--visible", Boolean(promptText));
     }
 
-    const prompt = this.options.getPrompt();
-    const target = this.getLockedTargetCandidate();
-    const targetText = target ? `TARGET :: ${target.label.toUpperCase()}` : null;
-    const modeText = this.activeMode ? `MODE :: ${this.activeMode.toUpperCase()}` : null;
-    const promptText = [prompt, targetText, modeText].filter(Boolean).join(" | ");
-    this.promptElement.textContent = promptText;
-    this.promptElement.classList.toggle("haven3d-prompt--visible", Boolean(promptText));
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const promptElement = document.querySelector<HTMLElement>(`[data-haven3d-prompt-player="${playerId}"]`);
+      if (!promptElement) {
+        return;
+      }
+      const promptText = this.cameraMode === "split"
+        ? buildPromptText(playerId, this.options.getPlayerPrompt?.(playerId) ?? this.options.getPrompt())
+        : "";
+      promptElement.textContent = promptText;
+      promptElement.classList.toggle("haven3d-prompt--visible", Boolean(promptText));
+    });
   }
 
   private resize(): void {
@@ -9004,6 +9760,11 @@ export class Haven3DFieldController implements Haven3DModeController {
     const height = Math.max(1, this.options.host.clientHeight || window.innerHeight);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    const splitAspect = Math.max(1, width / 2) / height;
+    this.splitCameras.P1.aspect = splitAspect;
+    this.splitCameras.P2.aspect = splitAspect;
+    this.splitCameras.P1.updateProjectionMatrix();
+    this.splitCameras.P2.updateProjectionMatrix();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1));
     this.renderer.setSize(width, height, false);
   }

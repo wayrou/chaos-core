@@ -3,7 +3,19 @@
 // ============================================================================
 
 import "./field.css";
-import { FieldEnemy, FieldLootOrb, FieldMap, FieldNpc, FieldObject, FieldProjectile, FieldState, InteractionZone, PlayerAvatar } from "./types";
+import {
+  FieldCombatState,
+  FieldEnemy,
+  FieldLootOrb,
+  FieldMap,
+  FieldNpc,
+  FieldObject,
+  FieldPlayerCombatState,
+  FieldProjectile,
+  FieldState,
+  InteractionZone,
+  PlayerAvatar,
+} from "./types";
 import { getImportedItem } from "../content/technica";
 import { getFieldMap } from "./maps";
 import {
@@ -357,7 +369,7 @@ function syncFieldNpcsForMap(mapId: FieldMap["id"], currentNpcs: FieldNpc[] = []
   });
 }
 
-function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
+function createDefaultFieldPlayerCombatState(): FieldPlayerCombatState {
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   return {
     isAttacking: false,
@@ -370,18 +382,109 @@ function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
   };
 }
 
-function normalizeFieldCombatState(
-  combat: FieldState["combat"] | null | undefined,
-): NonNullable<FieldState["combat"]> {
-  const nextCombat = combat ? { ...combat } : createDefaultFieldCombatState();
+function normalizeFieldPlayerCombatState(
+  combat: Partial<FieldPlayerCombatState> | null | undefined,
+): FieldPlayerCombatState {
+  const nextCombat = {
+    ...createDefaultFieldPlayerCombatState(),
+    ...(combat ?? {}),
+  };
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
   if (!nextCombat.gearbladeMode) {
     nextCombat.gearbladeMode = nextCombat.isRangedMode ? "launcher" : "blade";
   }
+  nextCombat.attackCooldown = Math.max(0, Number(nextCombat.attackCooldown ?? 0));
+  nextCombat.attackAnimTime = Math.max(0, Number(nextCombat.attackAnimTime ?? 0));
   nextCombat.isRangedMode = nextCombat.gearbladeMode === "launcher";
   nextCombat.maxEnergyCells = Math.max(1, BOWBLADE_BASE_MAX_ENERGY_CELLS + bowbladeFieldProfile.maxEnergyCellsBonus);
   nextCombat.energyCells = Math.max(0, Math.min(nextCombat.energyCells, nextCombat.maxEnergyCells));
+  if (nextCombat.attackAnimTime <= 0) {
+    nextCombat.attackAnimTime = 0;
+    nextCombat.isAttacking = false;
+  }
   return nextCombat;
+}
+
+function syncLegacyFieldCombatState(
+  combat: NonNullable<FieldState["combat"]>,
+): NonNullable<FieldState["combat"]> {
+  const p1Combat = combat.players?.P1
+    ? normalizeFieldPlayerCombatState(combat.players.P1)
+    : createDefaultFieldPlayerCombatState();
+  combat.players = {
+    ...(combat.players ?? {}),
+    P1: p1Combat,
+    P2: combat.players?.P2 ? normalizeFieldPlayerCombatState(combat.players.P2) : createDefaultFieldPlayerCombatState(),
+  };
+  combat.isAttacking = p1Combat.isAttacking;
+  combat.attackCooldown = p1Combat.attackCooldown;
+  combat.attackAnimTime = p1Combat.attackAnimTime;
+  combat.isRangedMode = p1Combat.isRangedMode;
+  combat.gearbladeMode = p1Combat.gearbladeMode;
+  combat.energyCells = p1Combat.energyCells;
+  combat.maxEnergyCells = p1Combat.maxEnergyCells;
+  return combat;
+}
+
+function createDefaultFieldCombatState(): NonNullable<FieldState["combat"]> {
+  const p1Combat = createDefaultFieldPlayerCombatState();
+  const p2Combat = createDefaultFieldPlayerCombatState();
+  return syncLegacyFieldCombatState({
+    ...p1Combat,
+    players: {
+      P1: { ...p1Combat },
+      P2: { ...p2Combat },
+    },
+  });
+}
+
+function normalizeFieldCombatState(
+  combat: FieldState["combat"] | null | undefined,
+): NonNullable<FieldState["combat"]> {
+  const nextCombat = combat ? { ...combat } : createDefaultFieldCombatState();
+  const p1Combat = normalizeFieldPlayerCombatState(combat?.players?.P1 ?? combat ?? null);
+  const p2Combat = normalizeFieldPlayerCombatState(combat?.players?.P2 ?? null);
+  nextCombat.players = {
+    ...(combat?.players ?? {}),
+    P1: p1Combat,
+    P2: p2Combat,
+  };
+  return syncLegacyFieldCombatState(nextCombat);
+}
+
+function ensureFieldCombatState(): NonNullable<FieldState["combat"]> | null {
+  if (!fieldState) {
+    return null;
+  }
+  fieldState.combat = normalizeFieldCombatState(fieldState.combat ?? createDefaultFieldCombatState());
+  return fieldState.combat;
+}
+
+function getFieldPlayerCombatState(
+  playerId: PlayerId,
+  combat: FieldState["combat"] | null | undefined = fieldState?.combat,
+): FieldPlayerCombatState {
+  const normalized = normalizeFieldCombatState(combat ?? createDefaultFieldCombatState());
+  return {
+    ...(normalized.players?.[playerId] ?? normalized.players?.P1 ?? createDefaultFieldPlayerCombatState()),
+  };
+}
+
+function updateFieldPlayerCombatState(
+  playerId: PlayerId,
+  updater: (combat: FieldPlayerCombatState) => FieldPlayerCombatState,
+): FieldPlayerCombatState | null {
+  const combat = ensureFieldCombatState();
+  if (!combat) {
+    return null;
+  }
+  const current = getFieldPlayerCombatState(playerId, combat);
+  combat.players = {
+    ...(combat.players ?? {}),
+    [playerId]: normalizeFieldPlayerCombatState(updater(current)),
+  };
+  syncLegacyFieldCombatState(combat);
+  return combat.players[playerId] ?? null;
 }
 
 function normalizeFieldPlayerState(player: PlayerAvatar): PlayerAvatar {
@@ -443,10 +546,27 @@ function renderGearbladeModeSelectorHtml(
   `;
 }
 
-function renderHaven3DGearbladeModeStripHtml(activeMode: Haven3DGearbladeMode = "blade"): string {
+function renderHaven3DGearbladeModeStripHtml(
+  activeMode: Haven3DGearbladeMode = "blade",
+  playerId: PlayerId = "P1",
+): string {
   return `
-    <div class="haven3d-mode-strip" aria-label="Gearblade modes">
+    <div class="haven3d-mode-strip" data-haven3d-player="${playerId}" aria-label="Gearblade modes">
       ${renderGearbladeModeSelectorHtml(activeMode, "data-haven3d-mode")}
+    </div>
+  `;
+}
+
+function renderHaven3DReticleHtml(playerId?: PlayerId): string {
+  const playerAttr = playerId ? ` data-haven3d-player="${playerId}" data-haven3d-reticle-player="${playerId}"` : "";
+  return `
+    <div class="haven3d-reticle" data-haven3d-reticle${playerAttr} aria-hidden="true">
+      <span class="haven3d-reticle__ring"></span>
+      <span class="haven3d-reticle__dot"></span>
+      <span class="haven3d-reticle__tick haven3d-reticle__tick--top"></span>
+      <span class="haven3d-reticle__tick haven3d-reticle__tick--right"></span>
+      <span class="haven3d-reticle__tick haven3d-reticle__tick--bottom"></span>
+      <span class="haven3d-reticle__tick haven3d-reticle__tick--left"></span>
     </div>
   `;
 }
@@ -462,6 +582,18 @@ function getFieldPlayerStateVitals(): { hp: number; maxHp: number; ratio: number
     ratio,
     critical: ratio <= 0.3,
   };
+}
+
+function renderHaven3DSplitPaneHudHtml(playerId: PlayerId): string {
+  return `
+    <div class="haven3d-split-pane haven3d-split-pane--${playerId === "P1" ? "left" : "right"}" data-haven3d-player="${playerId}">
+      ${renderHaven3DReticleHtml(playerId)}
+      <div class="haven3d-corner-controls haven3d-corner-controls--split">
+        ${renderHaven3DGearbladeModeStripHtml("blade", playerId)}
+      </div>
+      <div class="haven3d-prompt haven3d-prompt--split" data-haven3d-prompt-player="${playerId}"></div>
+    </div>
+  `;
 }
 
 function renderFieldStateMeterHtml(): string {
@@ -1054,7 +1186,6 @@ const APRON_PLACED_LANTERN_LIGHT_RADIUS_PX = 390;
 const APRON_FLARE_LIGHT_RADIUS_PX = 440;
 const APRON_FLARE_DURATION_MS = 8500;
 const APRON_LANTERN_RESOURCE_COST: Partial<ResourceWallet> = { wood: 1, metalScrap: 1 };
-const APRON_FLARE_RESOURCE_COST: Partial<ResourceWallet> = { steamComponents: 1 };
 const FIELD_RESOURCE_PICKUP_RADIUS_PX = 36;
 const FIELD_SCRAP_MAGNET_PICKUP_RADIUS_PX = 128;
 const APRON_NAV_NEAR_HAVEN_CELLS = 12;
@@ -1108,7 +1239,7 @@ function maybeShowFieldTutorials(mapId: FieldMap["id"]): void {
       id: "tutorial_apron_survey",
       title: "The Apron",
       message: "The Apron is the cavernous dark belt around HAVEN. Light marks routes, buys safety, and keeps hostiles from pressing into your path.",
-      detail: "Press L to place a lantern for 1 Wood and 1 Metal Scrap. Launcher flares cost 1 Steam Component.",
+      detail: "Press L to place a lantern for 1 Wood and 1 Metal Scrap.",
       durationMs: 9000,
       channel: "tutorial-field",
     });
@@ -1790,6 +1921,11 @@ function registerFieldControllerContext(): void {
     onAction: (action) => {
       if (!document.querySelector(".field-root")) {
         return false;
+      }
+
+      if (action === "toggleLayoutMode" && haven3DFieldController) {
+        haven3DFieldController.toggleCameraMode();
+        return true;
       }
 
       if (action === "pause" || action === "menu") {
@@ -2702,6 +2838,21 @@ export function getCurrentFieldRuntimeState(): FieldState | null {
   return fieldState;
 }
 
+export function setCurrentFieldPlayerPosition(
+  playerId: PlayerId,
+  x: number,
+  y: number,
+  facing: PlayerAvatar["facing"] = "south",
+): boolean {
+  if (!fieldState) {
+    return false;
+  }
+
+  setRuntimeFieldAvatarPosition(playerId, x, y, facing);
+  flushFieldAvatarPositionsToGameState(true);
+  return true;
+}
+
 export function isCurrentHaven3DFieldObjectVisible(objectId: string): boolean {
   return haven3DFieldController?.isFieldObjectVisible(objectId) ?? false;
 }
@@ -2744,6 +2895,25 @@ export function storeInteractionZonePosition(zoneId: string, x: number, y: numbe
 function stopHaven3DFieldRuntime(): void {
   if (haven3DFieldController) {
     haven3DFieldCameraStates.set(String(haven3DFieldController.mapId), haven3DFieldController.getCameraState());
+    if (fieldState?.combat) {
+      const combatStates = haven3DFieldController.getPlayerCombatStates();
+      const currentP1 = getFieldPlayerCombatState("P1", fieldState.combat);
+      const currentP2 = getFieldPlayerCombatState("P2", fieldState.combat);
+      fieldState.combat.players = {
+        ...(fieldState.combat.players ?? {}),
+        P1: combatStates.P1 ? {
+          ...combatStates.P1,
+          energyCells: currentP1.energyCells,
+          maxEnergyCells: currentP1.maxEnergyCells,
+        } : currentP1,
+        P2: combatStates.P2 ? {
+          ...combatStates.P2,
+          energyCells: currentP2.energyCells,
+          maxEnergyCells: currentP2.maxEnergyCells,
+        } : currentP2,
+      };
+      syncLegacyFieldCombatState(fieldState.combat);
+    }
   }
   haven3DFieldController?.dispose();
   haven3DFieldController = null;
@@ -2751,6 +2921,10 @@ function stopHaven3DFieldRuntime(): void {
 
 export function getCurrentHaven3DFieldCameraState(): Haven3DFieldCameraState | null {
   return haven3DFieldController?.getCameraState() ?? null;
+}
+
+export function getCurrentHaven3DPlayerCombatStates(): FieldCombatState["players"] | null {
+  return haven3DFieldController?.getPlayerCombatStates() ?? null;
 }
 
 export function getCurrentHaven3DGrappleRouteAnchorState(): ReturnType<
@@ -2887,7 +3061,10 @@ function syncHaven3DApronNavigator(currentTime: number): void {
   const dy = havenWorld.y - playerWorld.y;
   const distancePx = Math.hypot(dx, dy);
   const distanceCells = distancePx / FIELD_TILE_SIZE;
-  const cameraYaw = haven3DFieldController?.getCameraState().yaw ?? 0;
+  const havenCameraState = haven3DFieldController?.getCameraState() ?? null;
+  const cameraYaw = havenCameraState
+    ? (havenCameraState.mode === "split" ? havenCameraState.split.P1.yaw : havenCameraState.shared.yaw)
+    : 0;
   const unitX = distancePx > 0.001 ? dx / distancePx : 0;
   const unitY = distancePx > 0.001 ? dy / distancePx : -1;
   const forwardX = -Math.sin(cameraYaw);
@@ -3017,10 +3194,17 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
       <div class="haven3d-hud">
         ${renderFieldStateMeterHtml()}
         ${renderHaven3DApronNavigatorHtml()}
-        <div class="haven3d-corner-controls">
-          ${renderHaven3DGearbladeModeStripHtml("blade")}
+        <div class="haven3d-shared-ui" data-haven3d-shared-ui>
+          ${renderHaven3DReticleHtml()}
+          <div class="haven3d-corner-controls">
+            ${renderHaven3DGearbladeModeStripHtml("blade", "P1")}
+          </div>
+          <div class="haven3d-prompt" data-haven3d-prompt></div>
         </div>
-        <div class="haven3d-prompt" data-haven3d-prompt></div>
+        <div class="haven3d-split-ui" data-haven3d-split-ui hidden>
+          ${renderHaven3DSplitPaneHudHtml("P1")}
+          ${renderHaven3DSplitPaneHudHtml("P2")}
+        </div>
       </div>
     </div>
   `;
@@ -3044,6 +3228,10 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
     isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
     isPaused: () => Boolean(fieldState?.isPaused),
+    initialPlayerCombatStates: {
+      P1: getFieldPlayerCombatState("P1"),
+      P2: getFieldPlayerCombatState("P2"),
+    },
     setPlayerAvatar: (playerId, x, y, facing) => {
       setRuntimeFieldAvatarPosition(playerId, x, y, facing);
     },
@@ -3064,6 +3252,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
       };
     },
     getPrompt: () => activeInteractionPrompt,
+    getPlayerPrompt: (playerId) => getPlayerInteractionPrompt(playerId),
     onInteractPressed: (playerId) => handleInteractKey(playerId),
     onOpenMenu: () => toggleAllNodesPanel(),
     onFrame: (deltaTime, currentTime) => updateHaven3DFieldRuntime(deltaTime, currentTime),
@@ -3079,8 +3268,8 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     onLauncherFire: (fire) => handleHaven3DLauncherFire(fire),
     onLauncherImpact: (impact) => handleHaven3DLauncherImpact(impact),
     onGrappleImpact: (impact) => handleHaven3DGrappleImpact(impact),
-    canUseGlider: (playerId) => playerId === "P1" && hasApronGlider(getGameState()),
-    hasApronUtility: (playerId, utilityItemId) => playerId === "P1" && hasWeaponsmithUtilityItem(getGameState(), utilityItemId),
+    canUseGlider: () => hasApronGlider(getGameState()),
+    hasApronUtility: (_playerId, utilityItemId) => hasWeaponsmithUtilityItem(getGameState(), utilityItemId),
     enableGearbladeModes: true,
     enabledGearbladeModes: ["blade", "launcher", "grapple"],
   });
@@ -3828,6 +4017,14 @@ function getCombinedInteractionPrompt(): string | null {
   });
 
   return promptParts.join(" | ");
+}
+
+function getPlayerInteractionPrompt(playerId: PlayerId): string | null {
+  const context = getPlayerInteractionContext(playerId);
+  if (!context || isAutoTriggerZone(context.zone)) {
+    return null;
+  }
+  return `${getPlayerInteractLabel(playerId)} :: ${context.zone.label}`;
 }
 
 function getFieldInteractionPromptOverlayPoint(promptEl: HTMLElement): { x: number; y: number } | null {
@@ -7918,9 +8115,10 @@ function handleHaven3DBladeStrike(strike: {
     const damage = baseDamage * defenseResult.damageMultiplier;
     didHit = true;
     enemy.hp -= damage;
-    if (fieldState.combat) {
-      fieldState.combat.energyCells = Math.min(fieldState.combat.maxEnergyCells, fieldState.combat.energyCells + energyGain);
-    }
+    updateFieldPlayerCombatState(strike.playerId, (combat) => ({
+      ...combat,
+      energyCells: Math.min(combat.maxEnergyCells, combat.energyCells + energyGain),
+    }));
     enemy.vx = (dx / distance) * knockback;
     enemy.vy = (dy / distance) * knockback;
     enemy.knockbackTime = FIELD_ENEMY_KNOCKBACK_DURATION;
@@ -7936,48 +8134,10 @@ function handleHaven3DBladeStrike(strike: {
 
 function handleHaven3DLauncherFire(fire: {
   playerId: PlayerId;
-  utility: "attack" | "flare";
   x: number;
   y: number;
   target: Haven3DTargetRef | null;
 }): boolean {
-  if (fire.utility !== "flare" || !currentMap || !isOuterDeckOpenWorldMap(currentMap)) {
-    return true;
-  }
-
-  let didSpend = false;
-  updateGameState((state) => {
-    const spend = spendSessionCost(state, { resources: APRON_FLARE_RESOURCE_COST });
-    if (!spend.success) {
-      return state;
-    }
-
-    didSpend = true;
-    return spend.state;
-  });
-  refreshPinnedResourceBalanceCard();
-
-  if (!didSpend) {
-    showSystemPing({
-      type: "error",
-      title: "NO STEAM",
-      message: "Launcher flares cost 1 Steam Component.",
-      channel: "field-apron-flare",
-      replaceChannel: true,
-    });
-    playPlaceholderSfx("system-error");
-    return false;
-  }
-
-  showSystemPing({
-    type: "info",
-    title: "FLARE FIRED",
-    message: "Temporary route light launched into the Apron.",
-    detail: "-1 Steam Component",
-    durationMs: 2400,
-    channel: "field-apron-flare",
-    replaceChannel: true,
-  });
   return true;
 }
 
@@ -7989,19 +8149,7 @@ function handleHaven3DLauncherImpact(impact: {
   radius: number;
   damage: number;
   knockback: number;
-  utility?: "attack" | "flare";
 }): boolean {
-  if (impact.utility === "flare") {
-    apronRuntimeFlares.push({
-      x: impact.x,
-      y: impact.y,
-      radius: APRON_FLARE_LIGHT_RADIUS_PX,
-      expiresAt: performance.now() + APRON_FLARE_DURATION_MS,
-    });
-    playPlaceholderSfx("system-info");
-    return true;
-  }
-
   if (!fieldState?.fieldEnemies || !fieldState.combat) {
     return false;
   }
@@ -9493,6 +9641,21 @@ function handleInteractKey(playerId: PlayerId): void {
   const zone = interactionContext.zone;
   if (isAutoTriggerZone(zone)) return;
   triggerZoneInteraction(playerId, zone, actorAvatar);
+}
+
+export function triggerFieldInteractionForPlayer(playerId: PlayerId): boolean {
+  if (isHavenBuildModeEnabled() || !fieldState || !currentMap || fieldState.isPaused || isFieldCombatActive()) {
+    return false;
+  }
+
+  const actorAvatar = createRuntimeAvatar(playerId);
+  const interactionContext = getPlayerInteractionContext(playerId);
+  if (!actorAvatar || !interactionContext) {
+    return false;
+  }
+
+  triggerZoneInteraction(playerId, interactionContext.zone, actorAvatar);
+  return true;
 }
 
 // ============================================================================

@@ -2,6 +2,8 @@
 // FIELD SYSTEM - TYPES
 // ============================================================================
 
+import type { PlayerId } from "../core/types";
+
 export type FieldMapId = "base_camp" | "free_zone_1" | "free_zone_2" | "quarters" | string; // Allow dynamic key room maps
 
 export interface FieldMap {
@@ -174,6 +176,17 @@ export interface FieldLootOrb {
 }
 
 export interface FieldCombatState {
+  isAttacking: boolean;
+  attackCooldown: number;
+  attackAnimTime: number;
+  isRangedMode: boolean;
+  gearbladeMode?: "blade" | "launcher" | "grapple";
+  energyCells: number;
+  maxEnergyCells: number;
+  players?: Partial<Record<PlayerId, FieldPlayerCombatState>>;
+}
+
+export interface FieldPlayerCombatState {
   isAttacking: boolean;
   attackCooldown: number;
   attackAnimTime: number;

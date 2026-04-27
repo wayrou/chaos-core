@@ -166,6 +166,37 @@
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.72);
 }
 
+.haven3d-shared-ui {
+  position: absolute;
+  inset: 0;
+}
+
+.haven3d-split-ui {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.haven3d-split-ui::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(245, 234, 210, 0.16), rgba(245, 234, 210, 0.44), rgba(245, 234, 210, 0.16));
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.4);
+}
+
+.haven3d-split-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
 .haven3d-corner-controls {
   position: absolute;
   right: clamp(22px, 3.6vw, 54px);
@@ -175,6 +206,13 @@
   align-items: flex-end;
   gap: 8px;
   pointer-events: auto;
+}
+
+.haven3d-corner-controls--split {
+  right: clamp(14px, 2vw, 24px);
+  bottom: clamp(12px, 1.8vw, 18px);
+  transform: scale(0.92);
+  transform-origin: bottom right;
 }
 
 .field-corner-controls {
@@ -194,6 +232,86 @@
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.haven3d-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  transform: translate(-50%, -50%) scale(0.92);
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 180ms ease;
+  pointer-events: none;
+}
+
+.haven3d-split-pane .haven3d-reticle {
+  left: 50%;
+  top: 50%;
+}
+
+.haven3d-reticle--visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.haven3d-reticle__ring,
+.haven3d-reticle__dot,
+.haven3d-reticle__tick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  transform: translate(-50%, -50%);
+}
+
+.haven3d-reticle__ring {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(138, 240, 255, 0.9);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(8, 17, 24, 0.52),
+    0 0 20px rgba(102, 219, 201, 0.22);
+}
+
+.haven3d-reticle__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 245, 221, 0.96);
+  box-shadow: 0 0 10px rgba(255, 231, 180, 0.3);
+}
+
+.haven3d-reticle__tick {
+  width: 3px;
+  height: 11px;
+  border-radius: 999px;
+  background: rgba(138, 240, 255, 0.94);
+  box-shadow: 0 0 12px rgba(102, 219, 201, 0.24);
+}
+
+.haven3d-reticle__tick--top {
+  margin-top: -20px;
+}
+
+.haven3d-reticle__tick--right {
+  width: 11px;
+  height: 3px;
+  margin-left: 20px;
+}
+
+.haven3d-reticle__tick--bottom {
+  margin-top: 20px;
+}
+
+.haven3d-reticle__tick--left {
+  width: 11px;
+  height: 3px;
+  margin-left: -20px;
 }
 
 .field-state-meter {
@@ -479,6 +597,14 @@
 .haven3d-prompt--visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+.haven3d-prompt--split {
+  bottom: 16px;
+  max-width: min(290px, calc(50vw - 28px));
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 0.68rem;
 }
 
 /* Tiles - Earthy Adventure Gothic */
