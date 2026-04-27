@@ -68,7 +68,6 @@ import { tryJoinAsP2, dropOutP2, applyTetherConstraint } from "../core/coop";
 import { resolvePlayerSpawn, SpawnSource } from "./spawnResolver";
 import {
   NETWORK_PLAYER_SLOTS,
-  SESSION_PLAYER_SLOTS,
   type BaseCampLayoutLoadout,
   type BaseCampPinnedItemFrame,
   type FieldAvatar,
@@ -76,6 +75,7 @@ import {
   type LobbyState,
   type NetworkPlayerSlot,
   type PlayerId,
+  type SessionPlayerSlot,
   type SkirmishObjectiveType,
 } from "../core/types";
 import { setBaseCampFieldReturnMap } from "../ui/screens/baseCampReturn";
@@ -309,6 +309,14 @@ let lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
 let lastFieldAvatarSyncKey = "";
 const FIELD_AVATAR_SYNC_INTERVAL_MS = 120;
 const OUTER_DECK_AVATAR_SYNC_INTERVAL_MS = 300;
+let lastCoopFieldRuntimeCommandAtMs = Number.NEGATIVE_INFINITY;
+let lastCoopFieldRuntimeCommandSignature = "";
+const COOP_FIELD_RUNTIME_COMMAND_INTERVAL_MS = 80;
+let lastCoopFieldRuntimeSnapshotAtMs = Number.NEGATIVE_INFINITY;
+let lastCoopFieldRuntimeSnapshotSignature = "";
+const COOP_FIELD_RUNTIME_SNAPSHOT_INTERVAL_MS = 100;
+const COOP_FIELD_REMOTE_INTERPOLATION_MS = 90;
+const COOP_FIELD_REMOTE_SNAP_DISTANCE_PX = 160;
 let lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
 let lastOuterDeckRuntimePersistKey = "";
 const OUTER_DECK_RUNTIME_PERSIST_INTERVAL_MS = 500;
@@ -319,6 +327,210 @@ let lastMinimapRevealAtMs = Number.NEGATIVE_INFINITY;
 const OUTER_DECK_MINIMAP_REVEAL_INTERVAL_MS = 450;
 let lastMountedFieldStateMeterSyncKey = "";
 let lastHaven3DApronNavigatorTextKey = "";
+let lastHaven3DCoopControlsSyncKey = "";
+
+const COOP_FIELD_RUNTIME_PLAYER_IDS: PlayerId[] = ["P1", "P2"];
+
+type CoopFieldRuntimeAvatarCommandPayload = {
+  type: "avatar";
+  mapId: string;
+  x: number;
+  y: number;
+  facing: FieldAvatar["facing"];
+  gearbladeMode?: Haven3DGearbladeMode;
+  cameraMode?: "shared" | "split";
+  sentAt: number;
+};
+
+type CoopFieldRuntimeBladeActionCommandPayload = {
+  type: "blade_action";
+  mapId: string;
+  x: number;
+  y: number;
+  facing: FieldAvatar["facing"];
+  directionX: number;
+  directionY: number;
+  target: Haven3DTargetRef | null;
+  comboStep?: 0 | 1 | 2;
+  sentAt: number;
+};
+
+type CoopFieldRuntimeBladeStrikeCommandPayload = {
+  type: "blade_strike";
+  mapId: string;
+  x: number;
+  y: number;
+  facing: FieldAvatar["facing"];
+  directionX: number;
+  directionY: number;
+  hiltX: number;
+  hiltY: number;
+  tipX: number;
+  tipY: number;
+  bladeHalfWidth: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  arcRadians: number;
+  damage: number;
+  knockback: number;
+  sentAt: number;
+};
+
+type CoopFieldRuntimeLauncherImpactCommandPayload = {
+  type: "launcher_impact";
+  mapId: string;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  radius: number;
+  damage: number;
+  knockback: number;
+  sentAt: number;
+};
+
+type CoopFieldRuntimeLauncherFireCommandPayload = {
+  type: "launcher_fire";
+  mapId: string;
+  x: number;
+  y: number;
+  directionX: number;
+  directionY: number;
+  target: Haven3DTargetRef | null;
+  sentAt: number;
+};
+
+type CoopFieldRuntimeGrappleActionCommandPayload = {
+  type: "grapple_action";
+  mapId: string;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  targetX: number;
+  targetY: number;
+  targetHeight: number;
+  grappleKind: "target" | "anchor" | "zipline";
+  swing?: {
+    durationMs: number;
+    arcHeight: number;
+  };
+  zipline?: {
+    segmentKey: string;
+    startX: number;
+    startY: number;
+    startHeight: number;
+    attachX: number;
+    attachY: number;
+    attachHeight: number;
+    attachT: number;
+    endX: number;
+    endY: number;
+    endHeight: number;
+    endT: 0 | 1;
+    attachDurationMs: number;
+    rideDurationMs: number;
+  };
+  sentAt: number;
+};
+
+type CoopFieldRuntimeGrappleImpactCommandPayload = {
+  type: "grapple_impact";
+  mapId: string;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef;
+  damage: number;
+  knockback: number;
+  sentAt: number;
+};
+
+type CoopFieldRuntimeCommandPayload =
+  | CoopFieldRuntimeAvatarCommandPayload
+  | CoopFieldRuntimeBladeActionCommandPayload
+  | CoopFieldRuntimeBladeStrikeCommandPayload
+  | CoopFieldRuntimeLauncherFireCommandPayload
+  | CoopFieldRuntimeLauncherImpactCommandPayload
+  | CoopFieldRuntimeGrappleActionCommandPayload
+  | CoopFieldRuntimeGrappleImpactCommandPayload;
+
+type CoopFieldRuntimeEventPayload = CoopFieldRuntimeCommandPayload & {
+  sourcePlayerId: PlayerId;
+};
+
+type CoopFieldRuntimePlayerSnapshot = {
+  active: boolean;
+  x: number;
+  y: number;
+  facing: FieldAvatar["facing"];
+  gearbladeMode?: Haven3DGearbladeMode;
+  hp?: number;
+  maxHp?: number;
+  invulnerabilityTime?: number;
+};
+
+type CoopFieldRuntimeEnemySnapshot = Pick<
+  FieldEnemy,
+  | "id"
+  | "x"
+  | "y"
+  | "hp"
+  | "maxHp"
+  | "facing"
+  | "lastMoveTime"
+  | "deathAnimTime"
+  | "vx"
+  | "vy"
+  | "knockbackTime"
+  | "gearbladeDefenseBroken"
+  | "attackState"
+  | "attackStartedAt"
+  | "attackDidStrike"
+  | "attackLungeProgress"
+  | "attackOriginX"
+  | "attackOriginY"
+  | "attackTargetX"
+  | "attackTargetY"
+  | "attackTargetPlayerId"
+  | "attackDirectionX"
+  | "attackDirectionY"
+  | "lastAttackAt"
+>;
+
+type CoopFieldRuntimeProjectileSnapshot = FieldProjectile;
+type CoopFieldRuntimeLootOrbSnapshot = FieldLootOrb;
+
+type CoopFieldRuntimeSnapshotPayload = {
+  type: "snapshot";
+  mapId: string;
+  players: Partial<Record<PlayerId, CoopFieldRuntimePlayerSnapshot>>;
+  enemies: CoopFieldRuntimeEnemySnapshot[];
+  projectiles: CoopFieldRuntimeProjectileSnapshot[];
+  lootOrbs: CoopFieldRuntimeLootOrbSnapshot[];
+  sentAt: number;
+};
+
+type RemoteCoopFieldAvatarTarget = {
+  x: number;
+  y: number;
+  facing: FieldAvatar["facing"];
+  gearbladeMode?: Haven3DGearbladeMode;
+  receivedAt: number;
+};
+
+type RuntimeFieldPlayerVitals = {
+  hp: number;
+  maxHp: number;
+  invulnerabilityTime: number;
+  vx: number;
+  vy: number;
+  downedAt?: number;
+};
+
+type FieldEnemyPlayerTarget = Pick<PlayerAvatar, "x" | "y" | "facing" | "width" | "height"> & {
+  playerId: PlayerId;
+};
+
+const remoteCoopFieldAvatarTargets = new Map<PlayerId, RemoteCoopFieldAvatarTarget>();
+const fieldRuntimePlayerVitals: Partial<Record<PlayerId, RuntimeFieldPlayerVitals>> = {};
 
 function resetFieldMovementInputState(): void {
   movementInput = {
@@ -571,10 +783,105 @@ function renderHaven3DReticleHtml(playerId?: PlayerId): string {
   `;
 }
 
-function getFieldPlayerStateVitals(): { hp: number; maxHp: number; ratio: number; critical: boolean } {
-  const player = fieldState?.player;
-  const maxHp = Math.max(1, Number(player?.maxHp ?? FIELD_PLAYER_MAX_HP));
-  const hp = Math.max(0, Math.min(maxHp, Number(player?.hp ?? maxHp)));
+function renderHaven3DCoopControlsHtml(): string {
+  const p2Active = Boolean(getGameState().players.P2.active);
+  return `
+    <div class="haven3d-coop-controls" data-haven3d-coop-controls aria-label="Split screen controls">
+      <button
+        class="haven3d-coop-control ${p2Active ? "haven3d-coop-control--active" : ""}"
+        type="button"
+        data-haven3d-coop-action="toggle-p2"
+        aria-pressed="${p2Active ? "true" : "false"}"
+      >
+        <span class="haven3d-coop-control__kicker">LOCAL</span>
+        <span class="haven3d-coop-control__label" data-haven3d-coop-p2-label>${p2Active ? "P2 Leave" : "P2 Join"}</span>
+      </button>
+      <button
+        class="haven3d-coop-control"
+        type="button"
+        data-haven3d-coop-action="toggle-split"
+        aria-pressed="false"
+      >
+        <span class="haven3d-coop-control__kicker">CAMERA</span>
+        <span class="haven3d-coop-control__label" data-haven3d-coop-camera-label>Split View</span>
+      </button>
+    </div>
+  `;
+}
+
+function createDefaultRuntimeFieldPlayerVitals(): RuntimeFieldPlayerVitals {
+  return {
+    hp: FIELD_PLAYER_MAX_HP,
+    maxHp: FIELD_PLAYER_MAX_HP,
+    invulnerabilityTime: 0,
+    vx: 0,
+    vy: 0,
+    downedAt: undefined,
+  };
+}
+
+function getRuntimeFieldPlayerVitals(playerId: PlayerId): RuntimeFieldPlayerVitals {
+  if (playerId === "P1") {
+    const player = fieldState?.player;
+    const maxHp = Math.max(1, Number(player?.maxHp ?? FIELD_PLAYER_MAX_HP));
+    return {
+      hp: Math.max(0, Math.min(maxHp, Number(player?.hp ?? maxHp))),
+      maxHp,
+      invulnerabilityTime: Math.max(0, Number(player?.invulnerabilityTime ?? 0)),
+      vx: Number(player?.vx ?? 0),
+      vy: Number(player?.vy ?? 0),
+      downedAt: undefined,
+    };
+  }
+
+  const existing = fieldRuntimePlayerVitals[playerId] ?? createDefaultRuntimeFieldPlayerVitals();
+  const maxHp = Math.max(1, Number(existing.maxHp ?? FIELD_PLAYER_MAX_HP));
+  return {
+    hp: Math.max(0, Math.min(maxHp, Number(existing.hp ?? maxHp))),
+    maxHp,
+    invulnerabilityTime: Math.max(0, Number(existing.invulnerabilityTime ?? 0)),
+    vx: Number(existing.vx ?? 0),
+    vy: Number(existing.vy ?? 0),
+    downedAt: Number.isFinite(Number(existing.downedAt)) ? Number(existing.downedAt) : undefined,
+  };
+}
+
+function setRuntimeFieldPlayerVitals(playerId: PlayerId, vitals: RuntimeFieldPlayerVitals): void {
+  const maxHp = Math.max(1, Number(vitals.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const normalized: RuntimeFieldPlayerVitals = {
+    hp: Math.max(0, Math.min(maxHp, Number(vitals.hp ?? maxHp))),
+    maxHp,
+    invulnerabilityTime: Math.max(0, Number(vitals.invulnerabilityTime ?? 0)),
+    vx: Number(vitals.vx ?? 0),
+    vy: Number(vitals.vy ?? 0),
+    downedAt: Number.isFinite(Number(vitals.downedAt)) ? Number(vitals.downedAt) : undefined,
+  };
+
+  if (playerId === "P1") {
+    if (!fieldState) {
+      return;
+    }
+    fieldState.player.hp = normalized.hp;
+    fieldState.player.maxHp = normalized.maxHp;
+    fieldState.player.invulnerabilityTime = normalized.invulnerabilityTime;
+    fieldState.player.vx = normalized.vx;
+    fieldState.player.vy = normalized.vy;
+    return;
+  }
+
+  fieldRuntimePlayerVitals[playerId] = normalized;
+}
+
+function ensureRuntimeFieldPlayerVitals(playerId: PlayerId): RuntimeFieldPlayerVitals {
+  const current = getRuntimeFieldPlayerVitals(playerId);
+  setRuntimeFieldPlayerVitals(playerId, current);
+  return current;
+}
+
+function getFieldPlayerStateVitals(playerId: PlayerId = "P1"): { hp: number; maxHp: number; ratio: number; critical: boolean } {
+  const vitals = getRuntimeFieldPlayerVitals(playerId);
+  const maxHp = Math.max(1, Number(vitals.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const hp = Math.max(0, Math.min(maxHp, Number(vitals.hp ?? maxHp)));
   const ratio = Math.max(0, Math.min(1, hp / maxHp));
   return {
     hp,
@@ -918,7 +1225,11 @@ function setRuntimeFieldAvatarPosition(
 }
 
 function isFieldPlayerActive(playerId: PlayerId, state = getGameState()): boolean {
-  return Boolean(state.players[playerId]?.active);
+  return Boolean(state.players[playerId]?.active && getRuntimeFieldPlayerVitals(playerId).hp > 0);
+}
+
+function isFieldPlayerPresent(playerId: PlayerId, state = getGameState()): boolean {
+  return Boolean(state.players[playerId]?.active && getRuntimeFieldAvatar(playerId, state));
 }
 
 function flushFieldAvatarPositionsToGameState(force = false): void {
@@ -1174,6 +1485,11 @@ const FIELD_ENEMY_MOVE_STEP_MS = 180;
 const FIELD_PLAYER_DAMAGE_ON_CONTACT = 10;
 const FIELD_PLAYER_INVULNERABILITY_DURATION = 900;
 const FIELD_PLAYER_KNOCKBACK_FORCE = 420;
+const FIELD_PLAYER_REVIVE_RADIUS_PX = 92;
+const FIELD_PLAYER_REVIVE_HP_RATIO = 0.55;
+const FIELD_PLAYER_AUTO_RESPAWN_DELAY_MS = 6500;
+const FIELD_PLAYER_AUTO_RESPAWN_HP_RATIO = 0.35;
+const FIELD_PLAYER_RESPAWN_INVULNERABILITY_MS = 1400;
 const FIELD_CAMERA_SMOOTHING = 0.2;
 const FIELD_TURRET_PROJECTILE_LIFETIME = 1600;
 const FIELD_FOOTSTEP_DISTANCE = 82;
@@ -1545,7 +1861,7 @@ function setHavenBuildMode(active: boolean): void {
     }
   }
 
-  activeInteractionPrompt = active ? null : getCombinedInteractionPrompt();
+  activeInteractionPrompt = active ? null : getCombinedFieldRevivePrompt() ?? getCombinedInteractionPrompt();
   syncCurrentMapFromState();
   render();
 }
@@ -1925,6 +2241,7 @@ function registerFieldControllerContext(): void {
 
       if (action === "toggleLayoutMode" && haven3DFieldController) {
         haven3DFieldController.toggleCameraMode();
+        syncHaven3DCoopControls();
         return true;
       }
 
@@ -3152,6 +3469,8 @@ function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void
 
   const state = getGameState();
   syncRuntimeFieldAvatarsFromState(state);
+  updateRemoteCoopFieldAvatarInterpolation(deltaTime);
+  syncHaven3DCoopControls();
 
   if (fieldState.npcs) {
     const map = currentMap;
@@ -3159,14 +3478,20 @@ function updateHaven3DFieldRuntime(deltaTime: number, currentTime: number): void
   }
 
   updateFieldCombat(deltaTime, currentTime);
+  updateDownedFieldPlayerRecovery(currentTime);
   updateFieldLootOrbs(deltaTime, currentTime);
   processFieldControllerActions();
   maybeTriggerAutoInteraction();
-  activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
+  activeInteractionPrompt = getCombinedFieldRevivePrompt() ?? (isFieldCombatActive() ? null : getCombinedInteractionPrompt());
   syncMountedFieldStateMeters();
   syncHaven3DApronNavigator(currentTime);
   syncFieldMinimapExploration();
   flushFieldAvatarPositionsToGameState();
+  const updatedP1Avatar = getRuntimeFieldAvatar("P1");
+  if (updatedP1Avatar) {
+    syncCoopFieldRuntimeCommandFromField(state, updatedP1Avatar, currentTime);
+  }
+  syncCoopFieldRuntimeSnapshotFromField(state, currentTime);
   if (refreshOuterDeckStreamWindowIfNeeded()) {
     return;
   }
@@ -3205,6 +3530,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
           ${renderHaven3DSplitPaneHudHtml("P1")}
           ${renderHaven3DSplitPaneHudHtml("P2")}
         </div>
+        ${renderHaven3DCoopControlsHtml()}
       </div>
     </div>
   `;
@@ -3226,7 +3552,8 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     getLootOrbs: () => fieldState?.lootOrbs ?? [],
     getCompanion: () => fieldState?.companion ?? null,
     getPlayerAvatar: (playerId) => getRuntimeFieldAvatar(playerId),
-    isPlayerActive: (playerId) => isFieldPlayerActive(playerId),
+    isPlayerActive: (playerId) => isFieldPlayerPresent(playerId),
+    isPlayerControllable: (playerId) => isFieldPlayerActive(playerId),
     isPaused: () => Boolean(fieldState?.isPaused),
     initialPlayerCombatStates: {
       P1: getFieldPlayerCombatState("P1"),
@@ -3264,8 +3591,10 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
       return !(fieldState?.collectedResourceObjectIds ?? []).includes(objectId);
     },
     onPlayerFootstep: () => playPlaceholderSfx("ui-move"),
+    onBladeSwingStart: (swing) => handleHaven3DBladeSwingStart(swing),
     onBladeStrike: (strike) => handleHaven3DBladeStrike(strike),
     onLauncherFire: (fire) => handleHaven3DLauncherFire(fire),
+    onGrappleFire: (fire) => handleHaven3DGrappleFire(fire),
     onLauncherImpact: (impact) => handleHaven3DLauncherImpact(impact),
     onGrappleImpact: (impact) => handleHaven3DGrappleImpact(impact),
     canUseGlider: () => hasApronGlider(getGameState()),
@@ -3274,6 +3603,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     enabledGearbladeModes: ["blade", "launcher", "grapple"],
   });
   haven3DFieldController.start();
+  syncHaven3DCoopControls();
 
   ensureFieldFeedbackListener();
   registerFieldControllerContext();
@@ -3496,9 +3826,16 @@ function rebuildOuterDeckStreamWindow(): boolean {
   lastPinnedMinimapOverlayDrawKey = "";
   lastPinnedMinimapOverlayDrawAtMs = Number.NEGATIVE_INFINITY;
   lastHaven3DApronNavigatorTextKey = "";
+  lastHaven3DCoopControlsSyncKey = "";
   syncFieldMinimapExploration();
   lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
   lastFieldAvatarSyncKey = "";
+  lastCoopFieldRuntimeCommandAtMs = Number.NEGATIVE_INFINITY;
+  lastCoopFieldRuntimeCommandSignature = "";
+  lastCoopFieldRuntimeSnapshotAtMs = Number.NEGATIVE_INFINITY;
+  lastCoopFieldRuntimeSnapshotSignature = "";
+  remoteCoopFieldAvatarTargets.clear();
+  delete fieldRuntimePlayerVitals.P2;
   lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
   lastOuterDeckRuntimePersistKey = "";
 
@@ -3666,6 +4003,14 @@ function processFieldControllerActions(): void {
 
     previousFieldControllerActions[playerId] = next;
 
+    if (interactPressed) {
+      const reviveContext = getFieldPlayerReviveContext(playerId);
+      if (reviveContext) {
+        reviveFieldPlayer(reviveContext, "manual");
+        break;
+      }
+    }
+
     if (combatActive) {
       if (playerId === "P1" && specialPressed) {
         toggleFieldCombatRangedMode();
@@ -3682,6 +4027,992 @@ function processFieldControllerActions(): void {
       break;
     }
   }
+}
+
+function isHaven3DSplitCameraActive(): boolean {
+  return haven3DFieldController?.getCameraState().mode === "split";
+}
+
+function setHaven3DSplitCameraActive(active: boolean): void {
+  if (!haven3DFieldController || isHaven3DSplitCameraActive() === active) {
+    syncHaven3DCoopControls();
+    return;
+  }
+  haven3DFieldController.toggleCameraMode();
+  syncHaven3DCoopControls();
+}
+
+function syncHaven3DCoopControls(root: ParentNode = document): void {
+  const p2Active = Boolean(getGameState().players.P2.active);
+  const splitActive = isHaven3DSplitCameraActive();
+  const syncKey = `${p2Active ? "1" : "0"}:${splitActive ? "1" : "0"}`;
+  if (root === document && syncKey === lastHaven3DCoopControlsSyncKey) {
+    return;
+  }
+  if (root === document) {
+    lastHaven3DCoopControlsSyncKey = syncKey;
+  }
+
+  root.querySelectorAll<HTMLElement>("[data-haven3d-coop-p2-label]").forEach((label) => {
+    label.textContent = p2Active ? "P2 Leave" : "P2 Join";
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-p2']").forEach((button) => {
+    button.classList.toggle("haven3d-coop-control--active", p2Active);
+    button.setAttribute("aria-pressed", p2Active ? "true" : "false");
+  });
+  root.querySelectorAll<HTMLElement>("[data-haven3d-coop-camera-label]").forEach((label) => {
+    label.textContent = splitActive ? "Shared View" : "Split View";
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-split']").forEach((button) => {
+    button.classList.toggle("haven3d-coop-control--active", splitActive);
+    button.setAttribute("aria-pressed", splitActive ? "true" : "false");
+  });
+}
+
+function setLocalP2ActiveFromField(active: boolean): void {
+  const p2ActiveBefore = Boolean(getGameState().players.P2.active);
+  if (active === p2ActiveBefore) {
+    syncHaven3DCoopControls();
+    return;
+  }
+
+  const changed = active ? tryJoinAsP2() : dropOutP2();
+  if (!changed) {
+    syncHaven3DCoopControls();
+    return;
+  }
+
+  if (active) {
+    ensureRuntimeFieldPlayerVitals("P2");
+  } else {
+    delete fieldRuntimePlayerVitals.P2;
+  }
+  syncRuntimeFieldAvatarsFromState();
+  flushFieldAvatarPositionsToGameState(true);
+  setHaven3DSplitCameraActive(active);
+  syncHaven3DCoopControls();
+}
+
+function handleHaven3DCoopControlClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest<HTMLButtonElement>("[data-haven3d-coop-action]");
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const action = button.dataset.haven3dCoopAction;
+  if (action === "toggle-p2") {
+    setLocalP2ActiveFromField(!getGameState().players.P2.active);
+    return;
+  }
+  if (action === "toggle-split") {
+    setHaven3DSplitCameraActive(!isHaven3DSplitCameraActive());
+  }
+}
+
+function isCoopFieldRuntimeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isCoopFieldRuntimeFacing(value: unknown): value is FieldAvatar["facing"] {
+  return value === "north" || value === "south" || value === "east" || value === "west";
+}
+
+function parseCoopFieldRuntimeGearbladeMode(value: unknown): Haven3DGearbladeMode | undefined {
+  return value === "blade" || value === "launcher" || value === "grapple" ? value : undefined;
+}
+
+function parseCoopFieldRuntimeComboStep(value: unknown): 0 | 1 | 2 | undefined {
+  return value === 0 || value === 1 || value === 2 ? value : undefined;
+}
+
+function parseCoopFieldRuntimeGrappleKind(value: unknown): CoopFieldRuntimeGrappleActionCommandPayload["grappleKind"] {
+  return value === "anchor" || value === "zipline" || value === "target" ? value : "target";
+}
+
+function parseCoopFieldRuntimeGrappleSwing(
+  value: unknown,
+): CoopFieldRuntimeGrappleActionCommandPayload["swing"] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const swing = value as Partial<NonNullable<CoopFieldRuntimeGrappleActionCommandPayload["swing"]>>;
+  if (!isCoopFieldRuntimeNumber(swing.durationMs) || !isCoopFieldRuntimeNumber(swing.arcHeight)) {
+    return undefined;
+  }
+  return {
+    durationMs: swing.durationMs,
+    arcHeight: swing.arcHeight,
+  };
+}
+
+function parseCoopFieldRuntimeGrappleZipline(
+  value: unknown,
+): CoopFieldRuntimeGrappleActionCommandPayload["zipline"] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const zipline = value as Partial<NonNullable<CoopFieldRuntimeGrappleActionCommandPayload["zipline"]>>;
+  if (
+    typeof zipline.segmentKey !== "string"
+    || !zipline.segmentKey
+    || !isCoopFieldRuntimeNumber(zipline.startX)
+    || !isCoopFieldRuntimeNumber(zipline.startY)
+    || !isCoopFieldRuntimeNumber(zipline.startHeight)
+    || !isCoopFieldRuntimeNumber(zipline.attachX)
+    || !isCoopFieldRuntimeNumber(zipline.attachY)
+    || !isCoopFieldRuntimeNumber(zipline.attachHeight)
+    || !isCoopFieldRuntimeNumber(zipline.attachT)
+    || !isCoopFieldRuntimeNumber(zipline.endX)
+    || !isCoopFieldRuntimeNumber(zipline.endY)
+    || !isCoopFieldRuntimeNumber(zipline.endHeight)
+    || (zipline.endT !== 0 && zipline.endT !== 1)
+    || !isCoopFieldRuntimeNumber(zipline.attachDurationMs)
+    || !isCoopFieldRuntimeNumber(zipline.rideDurationMs)
+  ) {
+    return undefined;
+  }
+  return {
+    segmentKey: zipline.segmentKey,
+    startX: zipline.startX,
+    startY: zipline.startY,
+    startHeight: zipline.startHeight,
+    attachX: zipline.attachX,
+    attachY: zipline.attachY,
+    attachHeight: zipline.attachHeight,
+    attachT: zipline.attachT,
+    endX: zipline.endX,
+    endY: zipline.endY,
+    endHeight: zipline.endHeight,
+    endT: zipline.endT,
+    attachDurationMs: zipline.attachDurationMs,
+    rideDurationMs: zipline.rideDurationMs,
+  };
+}
+
+function parseCoopFieldRuntimeTargetRef(value: unknown): Haven3DTargetRef | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const target = value as Partial<Haven3DTargetRef>;
+  const kind = target.kind === "npc" || target.kind === "enemy" || target.kind === "loot-orb"
+    ? target.kind
+    : null;
+  if (!kind || typeof target.id !== "string" || !target.id) {
+    return null;
+  }
+  return {
+    kind,
+    id: target.id,
+    key: typeof target.key === "string" && target.key ? target.key : `${kind}:${target.id}`,
+  };
+}
+
+function getLocalCoopSessionPlayerId(state: GameState): PlayerId | null {
+  const lobby = state.lobby;
+  const localSlot = lobby?.localSlot ?? null;
+  if (!lobby || !localSlot || lobby.activity.kind !== "coop_operations") {
+    return null;
+  }
+
+  const sessionSlot = lobby.activity.coopOperations.participants[localSlot]?.sessionSlot ?? null;
+  return sessionSlot === "P1" || sessionSlot === "P2" ? sessionSlot : null;
+}
+
+function isRemoteCoopOperationsClient(state: GameState): boolean {
+  const lobby = state.lobby;
+  return Boolean(
+    state.session.mode === "coop_operations"
+    && lobby
+    && lobby.activity.kind === "coop_operations"
+    && lobby.activity.coopOperations.status === "active"
+    && lobby.localSlot
+    && lobby.hostSlot
+    && lobby.localSlot !== lobby.hostSlot,
+  );
+}
+
+function isCoopFieldRuntimeHost(state: GameState): boolean {
+  const lobby = state.lobby;
+  return Boolean(
+    currentMap
+    && state.session.mode === "coop_operations"
+    && state.session.authorityRole === "host"
+    && lobby
+    && lobby.activity.kind === "coop_operations"
+    && lobby.activity.coopOperations.status === "active",
+  );
+}
+
+function shouldSendCoopFieldRuntimeCommandFromField(state: GameState): boolean {
+  return Boolean(
+    currentMap
+    && state.session.mode === "coop_operations"
+    && state.session.authorityRole === "client"
+    && state.lobby?.activity.kind === "coop_operations"
+    && state.lobby.activity.coopOperations.status === "active",
+  );
+}
+
+function getCoopFieldRuntimeDisplayPlayerId(snapshotPlayerId: PlayerId, state: GameState): PlayerId | null {
+  if (!isRemoteCoopOperationsClient(state)) {
+    return snapshotPlayerId;
+  }
+
+  const localSessionPlayerId = getLocalCoopSessionPlayerId(state);
+  if (snapshotPlayerId === localSessionPlayerId) {
+    return null;
+  }
+
+  return "P2";
+}
+
+function queueRemoteCoopFieldAvatarTarget(
+  playerId: PlayerId,
+  target: Omit<RemoteCoopFieldAvatarTarget, "receivedAt">,
+): void {
+  const receivedAt = performance.now();
+  remoteCoopFieldAvatarTargets.set(playerId, {
+    ...target,
+    receivedAt,
+  });
+
+  const currentAvatar = getRuntimeFieldAvatar(playerId);
+  const distance = currentAvatar
+    ? Math.hypot(currentAvatar.x - target.x, currentAvatar.y - target.y)
+    : Number.POSITIVE_INFINITY;
+  if (!currentAvatar || distance > COOP_FIELD_REMOTE_SNAP_DISTANCE_PX) {
+    setRuntimeFieldAvatarPosition(playerId, target.x, target.y, target.facing);
+  }
+
+  ensureRuntimeFieldPlayerVitals(playerId);
+  updateFieldPlayerCombatState(playerId, (combat) => ({
+    ...combat,
+    gearbladeMode: target.gearbladeMode ?? combat.gearbladeMode,
+    isRangedMode: (target.gearbladeMode ?? combat.gearbladeMode) === "launcher",
+  }));
+  haven3DFieldController?.setExternalPlayerGearbladeMode(playerId, target.gearbladeMode);
+  updateGameState((state) => ({
+    ...state,
+    players: {
+      ...state.players,
+      [playerId]: {
+        ...state.players[playerId],
+        active: true,
+        presence: "remote",
+        inputSource: "remote",
+        avatar: {
+          x: target.x,
+          y: target.y,
+          facing: target.facing,
+        },
+      },
+    },
+  }));
+}
+
+function updateRemoteCoopFieldAvatarInterpolation(deltaTime: number): void {
+  if (remoteCoopFieldAvatarTargets.size === 0) {
+    return;
+  }
+
+  const alpha = Math.min(1, 1 - Math.exp(-Math.max(0, deltaTime) / COOP_FIELD_REMOTE_INTERPOLATION_MS));
+  for (const [playerId, target] of remoteCoopFieldAvatarTargets.entries()) {
+    const currentAvatar = getRuntimeFieldAvatar(playerId);
+    if (!currentAvatar) {
+      setRuntimeFieldAvatarPosition(playerId, target.x, target.y, target.facing);
+      continue;
+    }
+
+    const distance = Math.hypot(currentAvatar.x - target.x, currentAvatar.y - target.y);
+    if (distance > COOP_FIELD_REMOTE_SNAP_DISTANCE_PX) {
+      setRuntimeFieldAvatarPosition(playerId, target.x, target.y, target.facing);
+      continue;
+    }
+
+    if (distance <= 0.75) {
+      setRuntimeFieldAvatarPosition(playerId, target.x, target.y, target.facing);
+      continue;
+    }
+
+    setRuntimeFieldAvatarPosition(
+      playerId,
+      currentAvatar.x + ((target.x - currentAvatar.x) * alpha),
+      currentAvatar.y + ((target.y - currentAvatar.y) * alpha),
+      target.facing,
+    );
+  }
+}
+
+function getCoopFieldRuntimePlayerVitals(playerId: PlayerId): Pick<
+  CoopFieldRuntimePlayerSnapshot,
+  "hp" | "maxHp" | "invulnerabilityTime"
+> {
+  if (!fieldState) {
+    return {};
+  }
+
+  const vitals = getRuntimeFieldPlayerVitals(playerId);
+  const maxHp = Math.max(1, Number(vitals.maxHp ?? FIELD_PLAYER_MAX_HP));
+  return {
+    hp: Math.max(0, Math.min(maxHp, Number(vitals.hp ?? maxHp))),
+    maxHp,
+    invulnerabilityTime: Math.max(0, Number(vitals.invulnerabilityTime ?? 0)),
+  };
+}
+
+function applyCoopFieldRuntimeLocalVitals(player: CoopFieldRuntimePlayerSnapshot | null | undefined): void {
+  if (!fieldState || !player) {
+    return;
+  }
+
+  const maxHp = Math.max(1, Number(player.maxHp ?? fieldState.player.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const hp = Math.max(0, Math.min(maxHp, Number(player.hp ?? fieldState.player.hp ?? maxHp)));
+  fieldState.player.maxHp = maxHp;
+  fieldState.player.hp = hp;
+  fieldState.player.invulnerabilityTime = Math.max(
+    0,
+    Number(player.invulnerabilityTime ?? fieldState.player.invulnerabilityTime ?? 0),
+  );
+  syncMountedFieldStateMeters();
+}
+
+function parseCoopFieldRuntimeCommandPayload(payload: string): CoopFieldRuntimeCommandPayload | null {
+  try {
+    const parsed = JSON.parse(payload) as Partial<CoopFieldRuntimeCommandPayload>;
+    if (parsed.type === "avatar") {
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeFacing(parsed.facing)
+      ) {
+        return null;
+      }
+      return {
+        type: "avatar",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        facing: parsed.facing,
+        gearbladeMode: parseCoopFieldRuntimeGearbladeMode(parsed.gearbladeMode),
+        cameraMode: parsed.cameraMode === "split" ? "split" : parsed.cameraMode === "shared" ? "shared" : undefined,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "blade_action") {
+      const target = parsed.target ? parseCoopFieldRuntimeTargetRef(parsed.target) : null;
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeFacing(parsed.facing)
+        || !isCoopFieldRuntimeNumber(parsed.directionX)
+        || !isCoopFieldRuntimeNumber(parsed.directionY)
+      ) {
+        return null;
+      }
+      return {
+        type: "blade_action",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        facing: parsed.facing,
+        directionX: parsed.directionX,
+        directionY: parsed.directionY,
+        target,
+        comboStep: parseCoopFieldRuntimeComboStep(parsed.comboStep),
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "blade_strike") {
+      const target = parsed.target ? parseCoopFieldRuntimeTargetRef(parsed.target) : null;
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeFacing(parsed.facing)
+        || !isCoopFieldRuntimeNumber(parsed.directionX)
+        || !isCoopFieldRuntimeNumber(parsed.directionY)
+        || !isCoopFieldRuntimeNumber(parsed.hiltX)
+        || !isCoopFieldRuntimeNumber(parsed.hiltY)
+        || !isCoopFieldRuntimeNumber(parsed.tipX)
+        || !isCoopFieldRuntimeNumber(parsed.tipY)
+        || !isCoopFieldRuntimeNumber(parsed.bladeHalfWidth)
+        || !isCoopFieldRuntimeNumber(parsed.radius)
+        || !isCoopFieldRuntimeNumber(parsed.arcRadians)
+        || !isCoopFieldRuntimeNumber(parsed.damage)
+        || !isCoopFieldRuntimeNumber(parsed.knockback)
+      ) {
+        return null;
+      }
+      return {
+        type: "blade_strike",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        facing: parsed.facing,
+        directionX: parsed.directionX,
+        directionY: parsed.directionY,
+        hiltX: parsed.hiltX,
+        hiltY: parsed.hiltY,
+        tipX: parsed.tipX,
+        tipY: parsed.tipY,
+        bladeHalfWidth: parsed.bladeHalfWidth,
+        target,
+        radius: parsed.radius,
+        arcRadians: parsed.arcRadians,
+        damage: parsed.damage,
+        knockback: parsed.knockback,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "launcher_fire") {
+      const target = parsed.target ? parseCoopFieldRuntimeTargetRef(parsed.target) : null;
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeNumber(parsed.directionX)
+        || !isCoopFieldRuntimeNumber(parsed.directionY)
+      ) {
+        return null;
+      }
+      return {
+        type: "launcher_fire",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        directionX: parsed.directionX,
+        directionY: parsed.directionY,
+        target,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "launcher_impact") {
+      const target = parsed.target ? parseCoopFieldRuntimeTargetRef(parsed.target) : null;
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeNumber(parsed.radius)
+        || !isCoopFieldRuntimeNumber(parsed.damage)
+        || !isCoopFieldRuntimeNumber(parsed.knockback)
+      ) {
+        return null;
+      }
+      return {
+        type: "launcher_impact",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        target,
+        radius: parsed.radius,
+        damage: parsed.damage,
+        knockback: parsed.knockback,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "grapple_action") {
+      const target = parsed.target ? parseCoopFieldRuntimeTargetRef(parsed.target) : null;
+      const grappleKind = parseCoopFieldRuntimeGrappleKind(parsed.grappleKind);
+      const swing = parseCoopFieldRuntimeGrappleSwing(parsed.swing);
+      const zipline = parseCoopFieldRuntimeGrappleZipline(parsed.zipline);
+      if (
+        typeof parsed.mapId !== "string"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeNumber(parsed.targetX)
+        || !isCoopFieldRuntimeNumber(parsed.targetY)
+      ) {
+        return null;
+      }
+      return {
+        type: "grapple_action",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        target,
+        targetX: parsed.targetX,
+        targetY: parsed.targetY,
+        targetHeight: isCoopFieldRuntimeNumber(parsed.targetHeight) ? parsed.targetHeight : 0,
+        grappleKind,
+        swing,
+        zipline,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    if (parsed.type === "grapple_impact") {
+      const target = parseCoopFieldRuntimeTargetRef(parsed.target);
+      if (
+        typeof parsed.mapId !== "string"
+        || !target
+        || target.kind !== "enemy"
+        || !isCoopFieldRuntimeNumber(parsed.x)
+        || !isCoopFieldRuntimeNumber(parsed.y)
+        || !isCoopFieldRuntimeNumber(parsed.damage)
+        || !isCoopFieldRuntimeNumber(parsed.knockback)
+      ) {
+        return null;
+      }
+      return {
+        type: "grapple_impact",
+        mapId: parsed.mapId,
+        x: parsed.x,
+        y: parsed.y,
+        target,
+        damage: parsed.damage,
+        knockback: parsed.knockback,
+        sentAt: Number(parsed.sentAt ?? Date.now()),
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function applyRemoteCoopFieldCommandDeferred(sourceSlot: SessionPlayerSlot, payload: string): void {
+  const command = parseCoopFieldRuntimeCommandPayload(payload);
+  if (!command || (sourceSlot !== "P1" && sourceSlot !== "P2")) {
+    return;
+  }
+  const sourcePlayerId = sourceSlot as PlayerId;
+  if (command.mapId !== currentMap?.id) {
+    return;
+  }
+
+  if (command.type === "avatar") {
+    queueRemoteCoopFieldAvatarTarget(sourcePlayerId, {
+      x: command.x,
+      y: command.y,
+      facing: command.facing,
+      gearbladeMode: command.gearbladeMode,
+    });
+    syncHaven3DCoopControls();
+    return;
+  }
+
+  if (command.type === "blade_action") {
+    playCoopFieldRuntimeVisualEvent(sourcePlayerId, command);
+    broadcastCoopFieldRuntimeEventPayloadFromField({ ...command, sourcePlayerId });
+    return;
+  }
+
+  if (command.type === "blade_strike") {
+    handleHaven3DBladeStrike({ ...command, playerId: sourcePlayerId });
+    return;
+  }
+
+  if (command.type === "launcher_fire") {
+    playCoopFieldRuntimeVisualEvent(sourcePlayerId, command);
+    broadcastCoopFieldRuntimeEventPayloadFromField({ ...command, sourcePlayerId });
+    return;
+  }
+
+  if (command.type === "launcher_impact") {
+    handleHaven3DLauncherImpact({ ...command, playerId: sourcePlayerId });
+    return;
+  }
+
+  if (command.type === "grapple_action") {
+    playCoopFieldRuntimeVisualEvent(sourcePlayerId, command);
+    broadcastCoopFieldRuntimeEventPayloadFromField({ ...command, sourcePlayerId });
+    return;
+  }
+
+  if (command.type === "grapple_impact") {
+    handleHaven3DGrappleImpact({ ...command, playerId: sourcePlayerId });
+  }
+}
+
+function playCoopFieldRuntimeVisualEvent(playerId: PlayerId, command: CoopFieldRuntimeCommandPayload): void {
+  if (command.mapId !== currentMap?.id || !haven3DFieldController) {
+    return;
+  }
+
+  if (command.type === "blade_action") {
+    haven3DFieldController.playExternalBladeSwing(playerId, {
+      directionX: command.directionX,
+      directionY: command.directionY,
+      target: command.target,
+      comboStep: command.comboStep,
+    });
+    return;
+  }
+
+  if (command.type === "launcher_fire") {
+    haven3DFieldController.playExternalLauncherFire(playerId, {
+      x: command.x,
+      y: command.y,
+      directionX: command.directionX,
+      directionY: command.directionY,
+      target: command.target,
+    });
+    return;
+  }
+
+  if (command.type === "grapple_action") {
+    haven3DFieldController.playExternalGrappleFire(playerId, {
+      x: command.x,
+      y: command.y,
+      target: command.target,
+      targetX: command.targetX,
+      targetY: command.targetY,
+      targetHeight: command.targetHeight,
+      grappleKind: command.grappleKind,
+      swing: command.swing,
+      zipline: command.zipline,
+    });
+  }
+}
+
+function parseCoopFieldRuntimeEventPayload(payload: string): CoopFieldRuntimeEventPayload | null {
+  try {
+    const parsed = JSON.parse(payload) as Partial<CoopFieldRuntimeEventPayload>;
+    if (parsed.sourcePlayerId !== "P1" && parsed.sourcePlayerId !== "P2") {
+      return null;
+    }
+    const command = parseCoopFieldRuntimeCommandPayload(JSON.stringify(parsed));
+    return command ? { ...command, sourcePlayerId: parsed.sourcePlayerId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function applyRemoteCoopFieldEventDeferred(payload: string): void {
+  const event = parseCoopFieldRuntimeEventPayload(payload);
+  if (!event || event.mapId !== currentMap?.id) {
+    return;
+  }
+
+  const displayPlayerId = getCoopFieldRuntimeDisplayPlayerId(event.sourcePlayerId, getGameState());
+  if (!displayPlayerId) {
+    return;
+  }
+
+  playCoopFieldRuntimeVisualEvent(displayPlayerId, event);
+}
+
+function parseCoopFieldRuntimeSnapshotPayload(payload: string): CoopFieldRuntimeSnapshotPayload | null {
+  try {
+    const parsed = JSON.parse(payload) as Partial<CoopFieldRuntimeSnapshotPayload>;
+    if (parsed.type !== "snapshot" || typeof parsed.mapId !== "string") {
+      return null;
+    }
+
+    const players: Partial<Record<PlayerId, CoopFieldRuntimePlayerSnapshot>> = {};
+    for (const playerId of COOP_FIELD_RUNTIME_PLAYER_IDS) {
+      const player = parsed.players?.[playerId];
+      if (
+        !player
+        || player.active !== true
+        || !isCoopFieldRuntimeNumber(player.x)
+        || !isCoopFieldRuntimeNumber(player.y)
+        || !isCoopFieldRuntimeFacing(player.facing)
+      ) {
+        continue;
+      }
+      players[playerId] = {
+        active: true,
+        x: player.x,
+        y: player.y,
+        facing: player.facing,
+        gearbladeMode: parseCoopFieldRuntimeGearbladeMode(player.gearbladeMode),
+        hp: isCoopFieldRuntimeNumber(player.hp) ? player.hp : undefined,
+        maxHp: isCoopFieldRuntimeNumber(player.maxHp) ? player.maxHp : undefined,
+        invulnerabilityTime: isCoopFieldRuntimeNumber(player.invulnerabilityTime)
+          ? player.invulnerabilityTime
+          : undefined,
+      };
+    }
+
+    return {
+      type: "snapshot",
+      mapId: parsed.mapId,
+      players,
+      enemies: Array.isArray(parsed.enemies)
+        ? parsed.enemies.filter((enemy) => typeof enemy.id === "string")
+        : [],
+      projectiles: Array.isArray(parsed.projectiles)
+        ? parsed.projectiles.filter((projectile) => typeof projectile.id === "string")
+        : [],
+      lootOrbs: Array.isArray(parsed.lootOrbs)
+        ? parsed.lootOrbs.filter((orb) => typeof orb.id === "string")
+        : [],
+      sentAt: Number(parsed.sentAt ?? Date.now()),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function applyCoopFieldRuntimeWorldSnapshot(snapshot: CoopFieldRuntimeSnapshotPayload): void {
+  if (!fieldState) {
+    return;
+  }
+
+  if (fieldState.fieldEnemies) {
+    const enemySnapshots = new Map(snapshot.enemies.map((enemy) => [enemy.id, enemy]));
+    fieldState.fieldEnemies = fieldState.fieldEnemies.flatMap((enemy) => {
+      const nextEnemy = enemySnapshots.get(enemy.id);
+      return nextEnemy ? [{ ...enemy, ...nextEnemy }] : [];
+    });
+  }
+
+  fieldState.projectiles = snapshot.projectiles.map((projectile) => ({ ...projectile }));
+  fieldState.lootOrbs = snapshot.lootOrbs.map((orb) => ({
+    ...orb,
+    drops: cloneFieldEnemyDrops(orb.drops),
+  }));
+}
+
+export function applyRemoteCoopFieldSnapshotDeferred(payload: string): void {
+  const snapshot = parseCoopFieldRuntimeSnapshotPayload(payload);
+  if (!snapshot || snapshot.mapId !== currentMap?.id || !fieldState) {
+    return;
+  }
+
+  const state = getGameState();
+  for (const playerId of COOP_FIELD_RUNTIME_PLAYER_IDS) {
+    const player = snapshot.players[playerId];
+    if (!player?.active) {
+      continue;
+    }
+
+    const displayPlayerId = getCoopFieldRuntimeDisplayPlayerId(playerId, state);
+    if (!displayPlayerId) {
+      applyCoopFieldRuntimeLocalVitals(player);
+      continue;
+    }
+
+    queueRemoteCoopFieldAvatarTarget(displayPlayerId, {
+      x: player.x,
+      y: player.y,
+      facing: player.facing,
+      gearbladeMode: player.gearbladeMode,
+    });
+    if (isCoopFieldRuntimeNumber(player.hp) || isCoopFieldRuntimeNumber(player.maxHp)) {
+      const currentVitals = getRuntimeFieldPlayerVitals(displayPlayerId);
+      setRuntimeFieldPlayerVitals(displayPlayerId, {
+        ...currentVitals,
+        hp: isCoopFieldRuntimeNumber(player.hp) ? player.hp : currentVitals.hp,
+        maxHp: isCoopFieldRuntimeNumber(player.maxHp) ? player.maxHp : currentVitals.maxHp,
+        invulnerabilityTime: isCoopFieldRuntimeNumber(player.invulnerabilityTime)
+          ? player.invulnerabilityTime
+          : currentVitals.invulnerabilityTime,
+      });
+    }
+  }
+
+  applyCoopFieldRuntimeWorldSnapshot(snapshot);
+  syncHaven3DCoopControls();
+}
+
+function sendCoopFieldRuntimeCommandPayloadFromField(payload: CoopFieldRuntimeCommandPayload): void {
+  const state = getGameState();
+  if (!shouldSendCoopFieldRuntimeCommandFromField(state)) {
+    return;
+  }
+
+  import("../ui/screens/CommsArrayScreen").then(({ sendCoopFieldRuntimeCommandFromField }) => {
+    void sendCoopFieldRuntimeCommandFromField(JSON.stringify(payload));
+  });
+}
+
+function broadcastCoopFieldRuntimeEventPayloadFromField(payload: CoopFieldRuntimeEventPayload): void {
+  const state = getGameState();
+  if (!isCoopFieldRuntimeHost(state)) {
+    return;
+  }
+
+  import("../ui/screens/CommsArrayScreen").then(({ broadcastCoopFieldRuntimeEventFromField }) => {
+    void broadcastCoopFieldRuntimeEventFromField(JSON.stringify(payload));
+  });
+}
+
+function syncCoopFieldRuntimeCommandFromField(state: GameState, avatar: FieldAvatar, currentTime: number): void {
+  if (!currentMap || !shouldSendCoopFieldRuntimeCommandFromField(state)) {
+    lastCoopFieldRuntimeCommandSignature = "";
+    return;
+  }
+
+  const lobby = state.lobby;
+  const localSlot = lobby?.localSlot ?? null;
+  const localParticipant =
+    lobby?.activity.kind === "coop_operations" && localSlot
+      ? lobby.activity.coopOperations.participants[localSlot]
+      : null;
+  if (
+    !lobby
+    || lobby.activity.kind !== "coop_operations"
+    || lobby.activity.coopOperations.status !== "active"
+    || !localParticipant?.selected
+    || !localParticipant.sessionSlot
+    || localParticipant.standby
+  ) {
+    lastCoopFieldRuntimeCommandSignature = "";
+    return;
+  }
+
+  const roundedX = Math.round(avatar.x);
+  const roundedY = Math.round(avatar.y);
+  const combat = getFieldPlayerCombatState("P1", fieldState?.combat);
+  const cameraMode = haven3DFieldController?.getCameraState().mode;
+  const signature = [
+    localParticipant.sessionSlot,
+    currentMap.id,
+    roundedX,
+    roundedY,
+    avatar.facing,
+    combat.gearbladeMode ?? "blade",
+    cameraMode ?? "shared",
+  ].join(":");
+
+  if (currentTime - lastCoopFieldRuntimeCommandAtMs < COOP_FIELD_RUNTIME_COMMAND_INTERVAL_MS) {
+    return;
+  }
+
+  lastCoopFieldRuntimeCommandSignature = signature;
+  lastCoopFieldRuntimeCommandAtMs = currentTime;
+  const payload: CoopFieldRuntimeCommandPayload = {
+    type: "avatar",
+    mapId: currentMap.id,
+    x: roundedX,
+    y: roundedY,
+    facing: avatar.facing,
+    gearbladeMode: combat.gearbladeMode,
+    cameraMode,
+    sentAt: Date.now(),
+  };
+
+  sendCoopFieldRuntimeCommandPayloadFromField(payload);
+}
+
+function createCoopFieldRuntimeSnapshotPayload(state: GameState): CoopFieldRuntimeSnapshotPayload | null {
+  if (!currentMap || !fieldState) {
+    return null;
+  }
+
+  const players: Partial<Record<PlayerId, CoopFieldRuntimePlayerSnapshot>> = {};
+  for (const playerId of COOP_FIELD_RUNTIME_PLAYER_IDS) {
+    const avatar = getRuntimeFieldAvatar(playerId, state);
+    if (!state.players[playerId].active || !avatar) {
+      continue;
+    }
+
+    players[playerId] = {
+      active: true,
+      x: Math.round(avatar.x),
+      y: Math.round(avatar.y),
+      facing: avatar.facing,
+      gearbladeMode: getFieldPlayerCombatState(playerId, fieldState.combat).gearbladeMode,
+      ...getCoopFieldRuntimePlayerVitals(playerId),
+    };
+  }
+
+  return {
+    type: "snapshot",
+    mapId: currentMap.id,
+    players,
+    enemies: (fieldState.fieldEnemies ?? []).map((enemy) => ({
+      id: enemy.id,
+      x: enemy.x,
+      y: enemy.y,
+      hp: enemy.hp,
+      maxHp: enemy.maxHp,
+      facing: enemy.facing,
+      lastMoveTime: enemy.lastMoveTime,
+      deathAnimTime: enemy.deathAnimTime,
+      vx: enemy.vx,
+      vy: enemy.vy,
+      knockbackTime: enemy.knockbackTime,
+      gearbladeDefenseBroken: enemy.gearbladeDefenseBroken,
+      attackState: enemy.attackState,
+      attackStartedAt: enemy.attackStartedAt,
+      attackDidStrike: enemy.attackDidStrike,
+      attackLungeProgress: enemy.attackLungeProgress,
+      attackOriginX: enemy.attackOriginX,
+      attackOriginY: enemy.attackOriginY,
+      attackTargetX: enemy.attackTargetX,
+      attackTargetY: enemy.attackTargetY,
+      attackTargetPlayerId: enemy.attackTargetPlayerId,
+      attackDirectionX: enemy.attackDirectionX,
+      attackDirectionY: enemy.attackDirectionY,
+      lastAttackAt: enemy.lastAttackAt,
+    })),
+    projectiles: (fieldState.projectiles ?? []).map((projectile) => ({ ...projectile })),
+    lootOrbs: (fieldState.lootOrbs ?? []).map((orb) => ({
+      ...orb,
+      drops: cloneFieldEnemyDrops(orb.drops),
+    })),
+    sentAt: Date.now(),
+  };
+}
+
+function getCoopFieldRuntimeSnapshotSignature(snapshot: CoopFieldRuntimeSnapshotPayload): string {
+  const players = COOP_FIELD_RUNTIME_PLAYER_IDS
+    .map((playerId) => {
+      const player = snapshot.players[playerId];
+      return player
+        ? [
+          playerId,
+          Math.round(player.x),
+          Math.round(player.y),
+          player.facing,
+          player.gearbladeMode ?? "blade",
+          Math.round(Number(player.hp ?? -1)),
+          Math.round(Number(player.maxHp ?? -1)),
+        ].join(":")
+        : `${playerId}:off`;
+    })
+    .join("|");
+  const enemies = snapshot.enemies
+    .map((enemy) => `${enemy.id}:${Math.round(enemy.x)}:${Math.round(enemy.y)}:${Math.round(enemy.hp)}`)
+    .join("|");
+  const projectiles = snapshot.projectiles
+    .map((projectile) => `${projectile.id}:${Math.round(projectile.x)}:${Math.round(projectile.y)}`)
+    .join("|");
+  const lootOrbs = snapshot.lootOrbs
+    .map((orb) => `${orb.id}:${Math.round(orb.x)}:${Math.round(orb.y)}`)
+    .join("|");
+  return `${snapshot.mapId}::${players}::${enemies}::${projectiles}::${lootOrbs}`;
+}
+
+function syncCoopFieldRuntimeSnapshotFromField(state: GameState, currentTime: number): void {
+  if (!isCoopFieldRuntimeHost(state)) {
+    lastCoopFieldRuntimeSnapshotSignature = "";
+    return;
+  }
+
+  if (currentTime - lastCoopFieldRuntimeSnapshotAtMs < COOP_FIELD_RUNTIME_SNAPSHOT_INTERVAL_MS) {
+    return;
+  }
+
+  const snapshot = createCoopFieldRuntimeSnapshotPayload(state);
+  if (!snapshot) {
+    return;
+  }
+
+  const signature = getCoopFieldRuntimeSnapshotSignature(snapshot);
+  if (signature === lastCoopFieldRuntimeSnapshotSignature) {
+    return;
+  }
+
+  lastCoopFieldRuntimeSnapshotSignature = signature;
+  lastCoopFieldRuntimeSnapshotAtMs = currentTime;
+  import("../ui/screens/CommsArrayScreen").then(({ broadcastCoopFieldRuntimeSnapshotFromField }) => {
+    void broadcastCoopFieldRuntimeSnapshotFromField(JSON.stringify(snapshot));
+  });
 }
 
 function createRuntimeAvatar(playerId: PlayerId): PlayerAvatar | null {
@@ -3704,6 +5035,14 @@ type InteractionActorContext = {
   playerId: PlayerId;
   avatar: PlayerAvatar;
   zone: InteractionZone;
+};
+
+type FieldPlayerReviveContext = {
+  reviverId: PlayerId;
+  downedPlayerId: PlayerId;
+  reviverAvatar: PlayerAvatar;
+  downedAvatar: PlayerAvatar;
+  distance: number;
 };
 
 function getPlayerInteractionContext(playerId: PlayerId): InteractionActorContext | null {
@@ -3755,6 +5094,155 @@ function getNearestPlayerToZone(zone: InteractionZone): PlayerId | null {
 
   candidates.sort((left, right) => left.distance - right.distance);
   return candidates[0]?.playerId ?? null;
+}
+
+function isFieldPlayerDowned(playerId: PlayerId, state = getGameState()): boolean {
+  return Boolean(
+    state.players[playerId]?.active
+    && getRuntimeFieldPlayerVitals(playerId).hp <= 0
+    && getRuntimeFieldAvatar(playerId, state),
+  );
+}
+
+function getFieldPlayerReviveContext(reviverId: PlayerId): FieldPlayerReviveContext | null {
+  if (!isFieldPlayerActive(reviverId)) {
+    return null;
+  }
+
+  const reviverAvatar = createRuntimeAvatar(reviverId);
+  const downedPlayerId: PlayerId = "P2";
+  const downedAvatar = createRuntimeAvatar(downedPlayerId);
+  if (!reviverAvatar || !downedAvatar || reviverId === downedPlayerId || !isFieldPlayerDowned(downedPlayerId)) {
+    return null;
+  }
+
+  const distance = Math.hypot(reviverAvatar.x - downedAvatar.x, reviverAvatar.y - downedAvatar.y);
+  if (distance > FIELD_PLAYER_REVIVE_RADIUS_PX) {
+    return null;
+  }
+
+  return {
+    reviverId,
+    downedPlayerId,
+    reviverAvatar,
+    downedAvatar,
+    distance,
+  };
+}
+
+function getFieldRevivePrompt(playerId: PlayerId): string | null {
+  const context = getFieldPlayerReviveContext(playerId);
+  if (!context) {
+    return null;
+  }
+  return `${getPlayerInteractLabel(playerId)} :: REVIVE ${context.downedPlayerId}`;
+}
+
+function getCombinedFieldRevivePrompt(): string | null {
+  const contexts = (["P1", "P2"] as PlayerId[])
+    .map((playerId) => getFieldPlayerReviveContext(playerId))
+    .filter((context): context is FieldPlayerReviveContext => Boolean(context));
+  if (contexts.length === 0) {
+    return null;
+  }
+  return contexts
+    .map((context) => `${getPlayerControllerLabel(context.reviverId)} [${getPlayerInteractLabel(context.reviverId)}] :: REVIVE ${context.downedPlayerId}`)
+    .join(" | ");
+}
+
+function reviveFieldPlayer(context: FieldPlayerReviveContext, source: "manual" | "auto"): void {
+  const currentVitals = getRuntimeFieldPlayerVitals(context.downedPlayerId);
+  const maxHp = Math.max(1, Number(currentVitals.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const hpRatio = source === "auto" ? FIELD_PLAYER_AUTO_RESPAWN_HP_RATIO : FIELD_PLAYER_REVIVE_HP_RATIO;
+  setRuntimeFieldPlayerVitals(context.downedPlayerId, {
+    ...currentVitals,
+    hp: Math.max(1, Math.round(maxHp * hpRatio)),
+    maxHp,
+    invulnerabilityTime: Math.max(currentVitals.invulnerabilityTime, FIELD_PLAYER_RESPAWN_INVULNERABILITY_MS),
+    vx: 0,
+    vy: 0,
+    downedAt: undefined,
+  });
+  showSystemPing({
+    type: source === "auto" ? "info" : "success",
+    title: source === "auto" ? `${context.downedPlayerId} RE-LINKED` : `${context.downedPlayerId} REVIVED`,
+    message: source === "auto"
+      ? `${context.downedPlayerId} respawned at the active field link.`
+      : `${getPlayerControllerLabel(context.reviverId)} stabilized ${context.downedPlayerId}.`,
+    channel: `field-player-revive-${context.downedPlayerId}`,
+    replaceChannel: true,
+    durationMs: 3600,
+  });
+  syncMountedFieldStateMeters();
+}
+
+function findSafeFieldPlayerRespawnPosition(anchor: FieldAvatar): { x: number; y: number } {
+  const facing = getFieldFacingUnitVector(anchor.facing);
+  const side = { x: -facing.y, y: facing.x };
+  const offsets = [
+    { x: -facing.x * 58, y: -facing.y * 58 },
+    { x: side.x * 58, y: side.y * 58 },
+    { x: -side.x * 58, y: -side.y * 58 },
+    { x: facing.x * 58, y: facing.y * 58 },
+    { x: -facing.x * 92, y: -facing.y * 92 },
+    { x: side.x * 92, y: side.y * 92 },
+    { x: -side.x * 92, y: -side.y * 92 },
+    { x: 0, y: 0 },
+  ];
+  for (const offset of offsets) {
+    const candidate = { x: anchor.x + offset.x, y: anchor.y + offset.y };
+    if (canMoveEntityTo(candidate.x, candidate.y, 32, 32)) {
+      return candidate;
+    }
+  }
+  return { x: anchor.x, y: anchor.y };
+}
+
+function updateDownedFieldPlayerRecovery(currentTime: number): void {
+  if (!fieldState || !isFieldPlayerDowned("P2")) {
+    return;
+  }
+
+  const p2Vitals = getRuntimeFieldPlayerVitals("P2");
+  if (!Number.isFinite(Number(p2Vitals.downedAt))) {
+    setRuntimeFieldPlayerVitals("P2", {
+      ...p2Vitals,
+      downedAt: currentTime,
+    });
+    return;
+  }
+
+  if (currentTime - Number(p2Vitals.downedAt) < FIELD_PLAYER_AUTO_RESPAWN_DELAY_MS) {
+    return;
+  }
+
+  const p1Avatar = getRuntimeFieldAvatar("P1");
+  const p2Avatar = getRuntimeFieldAvatar("P2");
+  if (!p1Avatar || !p2Avatar) {
+    return;
+  }
+
+  const respawnPosition = findSafeFieldPlayerRespawnPosition(p1Avatar);
+  setRuntimeFieldAvatarPosition("P2", respawnPosition.x, respawnPosition.y, p1Avatar.facing);
+  reviveFieldPlayer({
+    reviverId: "P1",
+    downedPlayerId: "P2",
+    reviverAvatar: createRuntimeAvatar("P1") ?? {
+      ...fieldState.player,
+      x: p1Avatar.x,
+      y: p1Avatar.y,
+      facing: p1Avatar.facing,
+    },
+    downedAvatar: {
+      x: p2Avatar.x,
+      y: p2Avatar.y,
+      width: 32,
+      height: 32,
+      speed: 240,
+      facing: p2Avatar.facing,
+    },
+    distance: Math.hypot(p1Avatar.x - p2Avatar.x, p1Avatar.y - p2Avatar.y),
+  }, "auto");
 }
 
 function isAutoTriggerZone(zone: InteractionZone | null | undefined): boolean {
@@ -3981,6 +5469,11 @@ function resolveSafeInteractionExitPosition(
 }
 
 function getCombinedInteractionPrompt(): string | null {
+  const revivePrompt = getCombinedFieldRevivePrompt();
+  if (revivePrompt) {
+    return revivePrompt;
+  }
+
   const state = getGameState();
   if (!isLocalCoopActive(state)) {
     const soloContext = getPlayerInteractionContext("P1");
@@ -4020,6 +5513,11 @@ function getCombinedInteractionPrompt(): string | null {
 }
 
 function getPlayerInteractionPrompt(playerId: PlayerId): string | null {
+  const revivePrompt = getFieldRevivePrompt(playerId);
+  if (revivePrompt) {
+    return revivePrompt;
+  }
+
   const context = getPlayerInteractionContext(playerId);
   if (!context || isAutoTriggerZone(context.zone)) {
     return null;
@@ -4720,6 +6218,12 @@ export function renderFieldScreen(
     : null;
   lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
   lastFieldAvatarSyncKey = "";
+  lastCoopFieldRuntimeCommandAtMs = Number.NEGATIVE_INFINITY;
+  lastCoopFieldRuntimeCommandSignature = "";
+  lastCoopFieldRuntimeSnapshotAtMs = Number.NEGATIVE_INFINITY;
+  lastCoopFieldRuntimeSnapshotSignature = "";
+  remoteCoopFieldAvatarTargets.clear();
+  delete fieldRuntimePlayerVitals.P2;
   lastOuterDeckRuntimePersistAtMs = Number.NEGATIVE_INFINITY;
   lastOuterDeckRuntimePersistKey = "";
 
@@ -4729,6 +6233,7 @@ export function renderFieldScreen(
   lastPinnedMinimapOverlayDrawAtMs = Number.NEGATIVE_INFINITY;
   lastMountedFieldStateMeterSyncKey = "";
   lastHaven3DApronNavigatorTextKey = "";
+  lastHaven3DCoopControlsSyncKey = "";
   syncFieldMinimapExploration();
 
   // Setup input handlers (only once)
@@ -4745,7 +6250,7 @@ export function renderFieldScreen(
   createAllNodesPanel();
 
   if (shouldUseHaven3DFieldRuntime(mapId, options)) {
-    activeInteractionPrompt = getCombinedInteractionPrompt();
+    activeInteractionPrompt = getCombinedFieldRevivePrompt() ?? getCombinedInteractionPrompt();
     mountHaven3DFieldRuntime(root);
     createPinnedNodesOverlay();
     requestAnimationFrame(() => drawPinnedMinimapOverlay());
@@ -5254,7 +6759,8 @@ function render(): void {
     P2: { id: "P2", slot: "P2", active: false, color: "#6849c2", inputSource: "none" as const, presence: "inactive" as const, authorityRole: "local" as const, avatar: null, controlledUnitIds: [] },
   };
   const p1DashActive = Boolean(players.P1.active && getPlayerInput("P1").special1);
-  const p2DashActive = Boolean(players.P2.active && getPlayerInput("P2").special1);
+  const p2Downed = isFieldPlayerDowned("P2", state);
+  const p2DashActive = Boolean(isFieldPlayerActive("P2", state) && getPlayerInput("P2").special1);
   const stepPulseClass = currentTime < fieldStepPulseUntilMs ? " field-player--step" : "";
   const p1Avatar = getRuntimeFieldAvatar("P1", state);
   const p2Avatar = players.P2.active ? getRuntimeFieldAvatar("P2", state) : null;
@@ -5279,8 +6785,9 @@ function render(): void {
   // P2 Avatar (if active)
   if (p2Avatar) {
     const dashClass = p2DashActive ? " field-player--dash" : "";
+    const downedClass = p2Downed ? " field-player--downed" : "";
     playerHtml += `
-      <div class="field-player field-player-p2${dashClass}${stepPulseClass}" 
+      <div class="field-player field-player-p2${dashClass}${downedClass}${stepPulseClass}"
            style="left: ${p2Avatar.x - 16}px; top: ${p2Avatar.y - 16}px; width: 32px; height: 32px;"
            data-facing="${p2Avatar.facing}">
         <div class="field-player-sprite"></div>
@@ -8043,6 +9550,44 @@ function breakLootOrbsWithBladeStrike(strike: {
   return didBreak;
 }
 
+function publishLocalCoopFieldRuntimeAction(payload: CoopFieldRuntimeCommandPayload): void {
+  const state = getGameState();
+  if (state.session.authorityRole === "host" && isCoopFieldRuntimeHost(state)) {
+    broadcastCoopFieldRuntimeEventPayloadFromField({ ...payload, sourcePlayerId: "P1" });
+    return;
+  }
+
+  sendCoopFieldRuntimeCommandPayloadFromField(payload);
+}
+
+function handleHaven3DBladeSwingStart(swing: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  facing: "north" | "south" | "east" | "west";
+  directionX: number;
+  directionY: number;
+  target: Haven3DTargetRef | null;
+  comboStep: 0 | 1 | 2;
+}): void {
+  if (!currentMap || swing.playerId !== "P1") {
+    return;
+  }
+
+  publishLocalCoopFieldRuntimeAction({
+    type: "blade_action",
+    mapId: currentMap.id,
+    x: swing.x,
+    y: swing.y,
+    facing: swing.facing,
+    directionX: swing.directionX,
+    directionY: swing.directionY,
+    target: swing.target,
+    comboStep: swing.comboStep,
+    sentAt: Date.now(),
+  });
+}
+
 function handleHaven3DBladeStrike(strike: {
   playerId: PlayerId;
   x: number;
@@ -8063,6 +9608,29 @@ function handleHaven3DBladeStrike(strike: {
 }): boolean {
   if (!fieldState) {
     return false;
+  }
+
+  if (currentMap && strike.playerId === "P1") {
+    sendCoopFieldRuntimeCommandPayloadFromField({
+      type: "blade_strike",
+      mapId: currentMap.id,
+      x: strike.x,
+      y: strike.y,
+      facing: strike.facing,
+      directionX: strike.directionX,
+      directionY: strike.directionY,
+      hiltX: strike.hiltX,
+      hiltY: strike.hiltY,
+      tipX: strike.tipX,
+      tipY: strike.tipY,
+      bladeHalfWidth: strike.bladeHalfWidth,
+      target: strike.target,
+      radius: strike.radius,
+      arcRadians: strike.arcRadians,
+      damage: strike.damage,
+      knockback: strike.knockback,
+      sentAt: Date.now(),
+    });
   }
 
   const brokeLootOrb = breakLootOrbsWithBladeStrike(strike);
@@ -8136,9 +9704,55 @@ function handleHaven3DLauncherFire(fire: {
   playerId: PlayerId;
   x: number;
   y: number;
+  directionX: number;
+  directionY: number;
   target: Haven3DTargetRef | null;
 }): boolean {
+  if (currentMap && fire.playerId === "P1") {
+    publishLocalCoopFieldRuntimeAction({
+      type: "launcher_fire",
+      mapId: currentMap.id,
+      x: fire.x,
+      y: fire.y,
+      directionX: fire.directionX,
+      directionY: fire.directionY,
+      target: fire.target,
+      sentAt: Date.now(),
+    });
+  }
   return true;
+}
+
+function handleHaven3DGrappleFire(fire: {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  targetX: number;
+  targetY: number;
+  targetHeight: number;
+  grappleKind: CoopFieldRuntimeGrappleActionCommandPayload["grappleKind"];
+  swing?: CoopFieldRuntimeGrappleActionCommandPayload["swing"];
+  zipline?: CoopFieldRuntimeGrappleActionCommandPayload["zipline"];
+}): void {
+  if (!currentMap || fire.playerId !== "P1") {
+    return;
+  }
+
+  publishLocalCoopFieldRuntimeAction({
+    type: "grapple_action",
+    mapId: currentMap.id,
+    x: fire.x,
+    y: fire.y,
+    target: fire.target,
+    targetX: fire.targetX,
+    targetY: fire.targetY,
+    targetHeight: fire.targetHeight,
+    grappleKind: fire.grappleKind,
+    swing: fire.swing,
+    zipline: fire.zipline,
+    sentAt: Date.now(),
+  });
 }
 
 function handleHaven3DLauncherImpact(impact: {
@@ -8152,6 +9766,20 @@ function handleHaven3DLauncherImpact(impact: {
 }): boolean {
   if (!fieldState?.fieldEnemies || !fieldState.combat) {
     return false;
+  }
+
+  if (currentMap && impact.playerId === "P1") {
+    sendCoopFieldRuntimeCommandPayloadFromField({
+      type: "launcher_impact",
+      mapId: currentMap.id,
+      x: impact.x,
+      y: impact.y,
+      target: impact.target,
+      radius: impact.radius,
+      damage: impact.damage,
+      knockback: impact.knockback,
+      sentAt: Date.now(),
+    });
   }
 
   const bowbladeFieldProfile = getBowbladeFieldProfile(getGameState());
@@ -8213,6 +9841,19 @@ function handleHaven3DGrappleImpact(impact: {
 }): boolean {
   if (!fieldState?.fieldEnemies || impact.target.kind !== "enemy") {
     return false;
+  }
+
+  if (currentMap && impact.playerId === "P1") {
+    sendCoopFieldRuntimeCommandPayloadFromField({
+      type: "grapple_impact",
+      mapId: currentMap.id,
+      x: impact.x,
+      y: impact.y,
+      target: impact.target,
+      damage: impact.damage,
+      knockback: impact.knockback,
+      sentAt: Date.now(),
+    });
   }
 
   const enemy = fieldState.fieldEnemies.find((entry) => entry.id === impact.target.id && entry.hp > 0);
@@ -8426,11 +10067,18 @@ function updateFieldProjectiles(deltaTime: number): void {
         continue;
       }
 
-      const player = fieldState.player;
-      const hitRadius = Math.max(4, Number(projectile.radius ?? FIELD_ENEMY_PROJECTILE_RADIUS)) + Math.max(player.width, player.height) * 0.48;
-      const distance = Math.hypot(player.x - projectile.x, player.y - projectile.y);
-      if (distance <= hitRadius) {
+      let hitTarget: FieldEnemyPlayerTarget | null = null;
+      for (const player of getActiveFieldEnemyPlayerTargets()) {
+        const hitRadius = Math.max(4, Number(projectile.radius ?? FIELD_ENEMY_PROJECTILE_RADIUS)) + Math.max(player.width, player.height) * 0.48;
+        const distance = Math.hypot(player.x - projectile.x, player.y - projectile.y);
+        if (distance <= hitRadius) {
+          hitTarget = player;
+          break;
+        }
+      }
+      if (hitTarget) {
         applyFieldPlayerDamage(
+          hitTarget.playerId,
           sourceEnemy,
           projectile.damage,
           getHaven3DEnemyAttackProfile(sourceEnemy).knockbackForce,
@@ -8484,8 +10132,30 @@ function updateFieldProjectiles(deltaTime: number): void {
   }
 }
 
-function handleFieldPlayerDefeat(sourceEnemy: FieldEnemy | null): void {
+function handleFieldPlayerDefeat(playerId: PlayerId, sourceEnemy: FieldEnemy | null): void {
   if (!fieldState || fieldFailureTransitionPending) {
+    return;
+  }
+
+  if (playerId !== "P1") {
+    const currentVitals = getRuntimeFieldPlayerVitals(playerId);
+    setRuntimeFieldPlayerVitals(playerId, {
+      ...currentVitals,
+      hp: 0,
+      vx: 0,
+      vy: 0,
+      downedAt: performance.now(),
+    });
+    syncMountedFieldStateMeters();
+    showSystemPing({
+      type: "info",
+      title: "ALLY FIELD STATE BROKEN",
+      message: sourceEnemy?.name ? `${playerId} collapsed under ${sourceEnemy.name} pressure.` : `${playerId} field state collapsed.`,
+      detail: "They remain linked but cannot draw enemy threat until refreshed.",
+      durationMs: 4200,
+      channel: `field-player-defeat-${playerId}`,
+      replaceChannel: true,
+    });
     return;
   }
 
@@ -8533,36 +10203,46 @@ function handleFieldPlayerDefeat(sourceEnemy: FieldEnemy | null): void {
 }
 
 function applyFieldPlayerDamage(
+  playerId: PlayerId,
   enemy: FieldEnemy,
   amount: number,
   knockbackForce: number,
   direction: { x: number; y: number },
   title: string,
 ): void {
-  if (!fieldState || fieldFailureTransitionPending || (fieldState.player.invulnerabilityTime ?? 0) > 0) {
+  if (!fieldState || fieldFailureTransitionPending) {
     return;
   }
 
-  const player = fieldState.player;
-  const maxHp = Math.max(1, Number(player.maxHp ?? FIELD_PLAYER_MAX_HP));
-  const nextHp = Math.max(0, Number(player.hp ?? maxHp) - Math.max(0, amount));
-  player.hp = nextHp;
-  player.invulnerabilityTime = FIELD_PLAYER_INVULNERABILITY_DURATION;
+  const vitals = getRuntimeFieldPlayerVitals(playerId);
+  if (vitals.invulnerabilityTime > 0 || vitals.hp <= 0) {
+    return;
+  }
+
+  const maxHp = Math.max(1, Number(vitals.maxHp ?? FIELD_PLAYER_MAX_HP));
+  const nextHp = Math.max(0, Number(vitals.hp ?? maxHp) - Math.max(0, amount));
+  const nextVitals: RuntimeFieldPlayerVitals = {
+    ...vitals,
+    hp: nextHp,
+    maxHp,
+    invulnerabilityTime: FIELD_PLAYER_INVULNERABILITY_DURATION,
+  };
 
   const knockbackDistance = Math.max(0.001, Math.hypot(direction.x, direction.y));
-  player.vx = (direction.x / knockbackDistance) * knockbackForce;
-  player.vy = (direction.y / knockbackDistance) * knockbackForce;
+  nextVitals.vx = (direction.x / knockbackDistance) * knockbackForce;
+  nextVitals.vy = (direction.y / knockbackDistance) * knockbackForce;
+  setRuntimeFieldPlayerVitals(playerId, nextVitals);
 
   showFieldEnemyPing(
     enemy,
     title,
-    `STATE ${player.hp}/${player.maxHp}`,
+    `${playerId} STATE ${nextHp}/${maxHp}`,
     "danger",
   );
   syncMountedFieldStateMeters();
 
   if (nextHp <= 0) {
-    handleFieldPlayerDefeat(enemy);
+    handleFieldPlayerDefeat(playerId, enemy);
   }
 }
 
@@ -8575,11 +10255,12 @@ function clearHaven3DEnemyAttack(enemy: FieldEnemy): void {
   delete enemy.attackOriginY;
   delete enemy.attackTargetX;
   delete enemy.attackTargetY;
+  delete enemy.attackTargetPlayerId;
   delete enemy.attackDirectionX;
   delete enemy.attackDirectionY;
 }
 
-function startHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): void {
+function startHaven3DEnemyAttack(enemy: FieldEnemy, player: FieldEnemyPlayerTarget, currentTime: number): void {
   const profile = getHaven3DEnemyAttackProfile(enemy);
   const dx = player.x - enemy.x;
   const dy = player.y - enemy.y;
@@ -8593,6 +10274,7 @@ function startHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "
   enemy.attackOriginY = enemy.y;
   enemy.attackTargetX = player.x;
   enemy.attackTargetY = player.y;
+  enemy.attackTargetPlayerId = player.playerId;
   enemy.attackDirectionX = dx / distance;
   enemy.attackDirectionY = dy / distance;
   enemy.facing = getFieldFacingFromDelta(dx, dy, enemy.facing);
@@ -8640,14 +10322,17 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
   }
 
   enemy.lastAttackAt = currentTime;
-  const player = fieldState.player;
+  const player = getFieldEnemyAttackTarget(enemy);
   const profile = getHaven3DEnemyAttackProfile(enemy);
+  if (!player) {
+    return;
+  }
   if (profile.style === "shot") {
     spawnFieldEnemyProjectile(enemy, profile, currentTime);
     return;
   }
 
-  if ((player.invulnerabilityTime ?? 0) > 0) {
+  if (getRuntimeFieldPlayerVitals(player.playerId).invulnerabilityTime > 0) {
     return;
   }
 
@@ -8668,6 +10353,7 @@ function applyHaven3DEnemyStrike(enemy: FieldEnemy, currentTime: number): void {
   }
 
   applyFieldPlayerDamage(
+    player.playerId,
     enemy,
     profile.damage,
     profile.knockbackForce,
@@ -8705,7 +10391,7 @@ function updateHaven3DEnemyAttackLunge(enemy: FieldEnemy, profile: ReturnType<ty
   enemy.attackLungeProgress = easedProgress;
 }
 
-function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: Pick<PlayerAvatar, "x" | "y" | "facing">, currentTime: number): boolean {
+function updateHaven3DEnemyAttack(enemy: FieldEnemy, player: FieldEnemyPlayerTarget, currentTime: number): boolean {
   const profile = getHaven3DEnemyAttackProfile(enemy);
   if (enemy.attackState === "windup") {
     const elapsed = currentTime - Number(enemy.attackStartedAt ?? currentTime);
@@ -8919,6 +10605,63 @@ function getNearestApronLightSource(
   return nearest;
 }
 
+function getActiveFieldEnemyPlayerTargets(): FieldEnemyPlayerTarget[] {
+  if (!fieldState) {
+    return [];
+  }
+
+  const state = getGameState();
+  const targets: FieldEnemyPlayerTarget[] = [];
+  for (const playerId of COOP_FIELD_RUNTIME_PLAYER_IDS) {
+    if (!isFieldPlayerActive(playerId, state)) {
+      continue;
+    }
+
+    const avatar = getRuntimeFieldAvatar(playerId, state);
+    if (!avatar) {
+      continue;
+    }
+
+    targets.push({
+      playerId,
+      x: avatar.x,
+      y: avatar.y,
+      facing: avatar.facing,
+      width: fieldState.player.width,
+      height: fieldState.player.height,
+    });
+  }
+  return targets;
+}
+
+function getFieldEnemyPlayerTargetById(playerId: PlayerId): FieldEnemyPlayerTarget | null {
+  return getActiveFieldEnemyPlayerTargets().find((target) => target.playerId === playerId) ?? null;
+}
+
+function getNearestFieldEnemyPlayerTarget(enemy: Pick<FieldEnemy, "x" | "y">): FieldEnemyPlayerTarget | null {
+  let nearest: FieldEnemyPlayerTarget | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const target of getActiveFieldEnemyPlayerTargets()) {
+    const distance = Math.hypot(target.x - enemy.x, target.y - enemy.y);
+    if (distance < nearestDistance) {
+      nearest = target;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function getFieldEnemyAttackTarget(enemy: FieldEnemy): FieldEnemyPlayerTarget | null {
+  if (enemy.attackTargetPlayerId) {
+    const lockedTarget = getFieldEnemyPlayerTargetById(enemy.attackTargetPlayerId);
+    if (lockedTarget) {
+      return lockedTarget;
+    }
+    clearHaven3DEnemyAttack(enemy);
+  }
+  return getNearestFieldEnemyPlayerTarget(enemy);
+}
+
 function repelFieldEnemyFromApronLight(
   enemy: FieldEnemy,
   source: { x: number; y: number; radius: number; distance: number },
@@ -8966,11 +10709,6 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
     }
     return currentTime - enemy.deathAnimTime < 500;
   });
-
-  const player = getRuntimeFieldAvatar("P1");
-  if (!player) {
-    return;
-  }
 
   const useTelegraphedAttacks = true;
   const useApronLightPressure = isOuterDeckOpenWorldMap(currentMap);
@@ -9026,6 +10764,13 @@ function updateFieldEnemies(deltaTime: number, currentTime: number): void {
         enemy.lastMoveTime = currentTime;
         repelFieldEnemyFromApronLight(enemy, nearbyLight, movementDeltaMs);
       }
+      continue;
+    }
+
+    const player = getFieldEnemyAttackTarget(enemy);
+    if (!player) {
+      clearHaven3DEnemyAttack(enemy);
+      updateOuterDeckEnemyRoam(enemy, movementDeltaMs, currentTime);
       continue;
     }
 
@@ -9107,6 +10852,46 @@ function updateFieldPlayerPressure(deltaTime: number): void {
     if (Math.abs(Number(fieldState.player.vy ?? 0)) < 1) fieldState.player.vy = 0;
 
     syncP1AvatarPosition(fieldState.player.x, fieldState.player.y);
+  }
+
+  const p2Avatar = isFieldPlayerActive("P2") ? getRuntimeFieldAvatar("P2") : null;
+  if (p2Avatar) {
+    const p2Vitals = getRuntimeFieldPlayerVitals("P2");
+    let changed = false;
+    if (p2Vitals.invulnerabilityTime > 0) {
+      p2Vitals.invulnerabilityTime = Math.max(0, p2Vitals.invulnerabilityTime - deltaTime);
+      changed = true;
+    }
+
+    if (p2Vitals.vx !== 0 || p2Vitals.vy !== 0) {
+      const knockbackX = p2Vitals.vx * (deltaTime / 1000);
+      const knockbackY = p2Vitals.vy * (deltaTime / 1000);
+      let nextX = p2Avatar.x;
+      let nextY = p2Avatar.y;
+
+      if (canMoveEntityTo(p2Avatar.x + knockbackX, p2Avatar.y, fieldState.player.width, fieldState.player.height)) {
+        nextX = p2Avatar.x + knockbackX;
+      } else {
+        p2Vitals.vx = 0;
+      }
+
+      if (canMoveEntityTo(nextX, p2Avatar.y + knockbackY, fieldState.player.width, fieldState.player.height)) {
+        nextY = p2Avatar.y + knockbackY;
+      } else {
+        p2Vitals.vy = 0;
+      }
+
+      p2Vitals.vx *= Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+      p2Vitals.vy *= Math.pow(FIELD_KNOCKBACK_DAMPING, deltaTime / 16);
+      if (Math.abs(p2Vitals.vx) < 1) p2Vitals.vx = 0;
+      if (Math.abs(p2Vitals.vy) < 1) p2Vitals.vy = 0;
+      setRuntimeFieldAvatarPosition("P2", nextX, nextY, p2Avatar.facing);
+      changed = true;
+    }
+
+    if (changed) {
+      setRuntimeFieldPlayerVitals("P2", p2Vitals);
+    }
   }
 
   for (const resourceObject of getUncollectedFieldResourceObjects()) {
@@ -9196,6 +10981,7 @@ function setupGlobalListeners(): void {
   document.addEventListener("visibilitychange", handleFieldVisibilityChange);
   document.addEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.addEventListener("click", handleFieldObjectClick, true);
+  document.addEventListener("click", handleHaven3DCoopControlClick, true);
 
   // Also add document-level click handler for All Nodes button as fallback
   document.addEventListener("click", handleAllNodesButtonClick, true);
@@ -9256,6 +11042,7 @@ function cleanupGlobalListeners(): void {
   document.removeEventListener("visibilitychange", handleFieldVisibilityChange);
   document.removeEventListener("pointerdown", handleFieldGearbladeModePointerDown, true);
   document.removeEventListener("click", handleFieldObjectClick, true);
+  document.removeEventListener("click", handleHaven3DCoopControlClick, true);
   document.removeEventListener("click", handleAllNodesButtonClick, true);
 
   globalListenersAttached = false;
@@ -9356,7 +11143,7 @@ function handleKeyDown(e: KeyboardEvent): void {
     if (key === "j" || key === "J") {
       e.preventDefault();
       e.stopPropagation();
-      tryJoinAsP2();
+      setLocalP2ActiveFromField(true);
       return;
     }
 
@@ -9364,7 +11151,7 @@ function handleKeyDown(e: KeyboardEvent): void {
     if (key === "k" || key === "K") {
       e.preventDefault();
       e.stopPropagation();
-      dropOutP2();
+      setLocalP2ActiveFromField(false);
       return;
     }
   }
@@ -9584,13 +11371,19 @@ function handleInteractKey(playerId: PlayerId): void {
 
   if (!fieldState || !currentMap || fieldState.isPaused) return;
 
-  if (isFieldCombatActive()) {
-    showFieldCombatLockPing();
+  const actorAvatar = createRuntimeAvatar(playerId);
+  if (!actorAvatar) {
     return;
   }
 
-  const actorAvatar = createRuntimeAvatar(playerId);
-  if (!actorAvatar) {
+  const reviveContext = getFieldPlayerReviveContext(playerId);
+  if (reviveContext) {
+    reviveFieldPlayer(reviveContext, "manual");
+    return;
+  }
+
+  if (isFieldCombatActive()) {
+    showFieldCombatLockPing();
     return;
   }
 
@@ -9644,11 +11437,21 @@ function handleInteractKey(playerId: PlayerId): void {
 }
 
 export function triggerFieldInteractionForPlayer(playerId: PlayerId): boolean {
-  if (isHavenBuildModeEnabled() || !fieldState || !currentMap || fieldState.isPaused || isFieldCombatActive()) {
+  if (isHavenBuildModeEnabled() || !fieldState || !currentMap || fieldState.isPaused) {
     return false;
   }
 
   const actorAvatar = createRuntimeAvatar(playerId);
+  const reviveContext = getFieldPlayerReviveContext(playerId);
+  if (actorAvatar && reviveContext) {
+    reviveFieldPlayer(reviveContext, "manual");
+    return true;
+  }
+
+  if (isFieldCombatActive()) {
+    return false;
+  }
+
   const interactionContext = getPlayerInteractionContext(playerId);
   if (!actorAvatar || !interactionContext) {
     return false;
@@ -9852,6 +11655,7 @@ function gameLoop(currentTime: number): void {
   if (!fieldState.isPaused) {
     const state = getGameState();
     syncRuntimeFieldAvatarsFromState(state);
+    syncHaven3DCoopControls();
     const aerissFieldSpeedBonus = getAerissFieldMovementSpeedBonus(state.stable);
     // Ensure players object exists (backward compatibility)
     const players = state.players || {
@@ -9976,8 +11780,10 @@ function gameLoop(currentTime: number): void {
             void syncLocalLobbyAvatarFromField(currentMap!.id, avatar.x, avatar.y, avatar.facing);
           });
         }
+        syncCoopFieldRuntimeCommandFromField(state, avatar, currentTime);
       } else {
         lastNetworkLobbyAvatarSyncKey = "";
+        lastCoopFieldRuntimeCommandSignature = "";
       }
 
     updateFieldMovementFeedback(
@@ -9994,10 +11800,11 @@ function gameLoop(currentTime: number): void {
     }
 
     updateFieldCombat(deltaTime, currentTime);
+    updateDownedFieldPlayerRecovery(currentTime);
     processFieldControllerActions();
     maybeTriggerAutoInteraction();
 
-    activeInteractionPrompt = isFieldCombatActive() ? null : getCombinedInteractionPrompt();
+    activeInteractionPrompt = getCombinedFieldRevivePrompt() ?? (isFieldCombatActive() ? null : getCombinedInteractionPrompt());
 
     render();
   } else if (buildPanChanged) {
@@ -10044,6 +11851,8 @@ export function teardownFieldMode(): void {
   cleanupFieldFeedbackListener?.();
   cleanupFieldFeedbackListener = null;
   fieldRuntimeP2Avatar = null;
+  remoteCoopFieldAvatarTargets.clear();
+  delete fieldRuntimePlayerVitals.P2;
 }
 
 // ============================================================================

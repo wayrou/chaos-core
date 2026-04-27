@@ -122,6 +122,7 @@ export interface FieldEnemy {
   attackOriginY?: number;
   attackTargetX?: number;
   attackTargetY?: number;
+  attackTargetPlayerId?: PlayerId;
   attackDirectionX?: number;
   attackDirectionY?: number;
   lastAttackAt?: number;

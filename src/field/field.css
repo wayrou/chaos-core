@@ -197,6 +197,72 @@
   min-height: 0;
 }
 
+.haven3d-coop-controls {
+  position: absolute;
+  left: clamp(18px, 2.5vw, 34px);
+  top: clamp(18px, 2.5vw, 34px);
+  z-index: 32;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.haven3d-coop-control {
+  min-width: 104px;
+  border: 1px solid rgba(245, 234, 210, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(245, 234, 210, 0.1), rgba(245, 234, 210, 0)),
+    rgba(15, 18, 16, 0.78);
+  color: #f5ead2;
+  padding: 8px 10px;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.haven3d-coop-control:hover,
+.haven3d-coop-control:focus-visible {
+  border-color: rgba(138, 240, 255, 0.58);
+  outline: none;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.34),
+    0 0 0 3px rgba(138, 240, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.haven3d-coop-control--active {
+  border-color: rgba(126, 104, 222, 0.68);
+  background:
+    linear-gradient(180deg, rgba(126, 104, 222, 0.2), rgba(126, 104, 222, 0.02)),
+    rgba(24, 19, 43, 0.82);
+}
+
+.haven3d-coop-control__kicker,
+.haven3d-coop-control__label {
+  display: block;
+  line-height: 1;
+}
+
+.haven3d-coop-control__kicker {
+  margin-bottom: 5px;
+  color: rgba(245, 234, 210, 0.56);
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.haven3d-coop-control__label {
+  color: #f5ead2;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
 .haven3d-corner-controls {
   position: absolute;
   right: clamp(22px, 3.6vw, 54px);
@@ -898,6 +964,16 @@
 
 .field-player--step .field-player-sprite {
   animation: fieldPlayerStepPulse 0.15s ease-out;
+}
+
+.field-player--downed .field-player-sprite {
+  filter: grayscale(0.45) brightness(0.72);
+  opacity: 0.68;
+  transform: rotate(24deg) scale(0.88);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.26),
+    0 0 0 7px rgba(79, 180, 164, 0.12),
+    0 6px 12px rgba(0, 0, 0, 0.34);
 }
 
 @keyframes fieldPlayerStepPulse {

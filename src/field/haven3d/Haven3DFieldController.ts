@@ -160,6 +160,8 @@ type Haven3DLauncherFire = {
   playerId: PlayerId;
   x: number;
   y: number;
+  directionX: number;
+  directionY: number;
   target: Haven3DTargetRef | null;
 };
 
@@ -172,6 +174,43 @@ type Haven3DGrappleImpact = {
   knockback: number;
 };
 
+type Haven3DGrappleKind = "target" | "anchor" | "zipline";
+
+type Haven3DGrappleFireSwing = {
+  durationMs: number;
+  arcHeight: number;
+};
+
+type Haven3DGrappleFireZipline = {
+  segmentKey: string;
+  startX: number;
+  startY: number;
+  startHeight: number;
+  attachX: number;
+  attachY: number;
+  attachHeight: number;
+  attachT: number;
+  endX: number;
+  endY: number;
+  endHeight: number;
+  endT: 0 | 1;
+  attachDurationMs: number;
+  rideDurationMs: number;
+};
+
+type Haven3DGrappleFire = {
+  playerId: PlayerId;
+  x: number;
+  y: number;
+  target: Haven3DTargetRef | null;
+  targetX: number;
+  targetY: number;
+  targetHeight: number;
+  grappleKind: Haven3DGrappleKind;
+  swing?: Haven3DGrappleFireSwing;
+  zipline?: Haven3DGrappleFireZipline;
+};
+
 type BladeSwingComboStep = 0 | 1 | 2;
 
 type BladeSwingState = {
@@ -181,6 +220,7 @@ type BladeSwingState = {
   direction: { x: number; y: number };
   side: 1 | -1;
   comboStep: BladeSwingComboStep;
+  visualOnly?: boolean;
 };
 
 type BladeSwingPose = {
@@ -230,6 +270,7 @@ type LauncherProjectile = {
   radius: number;
   damage: number;
   knockback: number;
+  visualOnly?: boolean;
 };
 
 type PlayerVerticalState = {
@@ -358,6 +399,7 @@ type GrappleMoveState = {
   impacted: boolean;
   line: THREE.Line;
   hook: THREE.Mesh;
+  visualOnly?: boolean;
   swing?: {
     startX: number;
     startY: number;
@@ -475,6 +517,7 @@ type Haven3DFieldControllerOptions = {
   getCompanion?: () => Companion | null | undefined;
   getPlayerAvatar: (playerId: PlayerId) => FieldAvatarView | null;
   isPlayerActive: (playerId: PlayerId) => boolean;
+  isPlayerControllable?: (playerId: PlayerId) => boolean;
   isPaused: () => boolean;
   setPlayerAvatar: (playerId: PlayerId, x: number, y: number, facing: PlayerAvatar["facing"]) => void;
   constrainPlayerPosition?: (
@@ -489,8 +532,19 @@ type Haven3DFieldControllerOptions = {
   onFrame: (deltaMs: number, currentTime: number) => void;
   isFieldObjectVisible?: (objectId: string, object?: FieldObject) => boolean;
   onPlayerFootstep?: (playerId: PlayerId, side: "left" | "right", speedRatio: number) => void;
+  onBladeSwingStart?: (swing: {
+    playerId: PlayerId;
+    x: number;
+    y: number;
+    facing: PlayerAvatar["facing"];
+    directionX: number;
+    directionY: number;
+    target: Haven3DTargetRef | null;
+    comboStep: BladeSwingComboStep;
+  }) => void;
   onBladeStrike?: (strike: Haven3DBladeStrike) => boolean;
   onLauncherFire?: (fire: Haven3DLauncherFire) => boolean;
+  onGrappleFire?: (fire: Haven3DGrappleFire) => void;
   onLauncherImpact?: (impact: Haven3DLauncherImpact) => boolean;
   onGrappleImpact?: (impact: Haven3DGrappleImpact) => boolean;
   canUseGlider?: (playerId: PlayerId) => boolean;
@@ -2047,6 +2101,158 @@ export class Haven3DFieldController implements Haven3DModeController {
     return this.options.map.id;
   }
 
+  setExternalPlayerGearbladeMode(playerId: PlayerId, mode: Haven3DGearbladeMode | null | undefined): void {
+    if (!mode || !this.enabledModes.has(mode) || this.getPlayerActiveMode(playerId) === mode) {
+      return;
+    }
+    const previousMode = this.getPlayerActiveMode(playerId);
+    this.setPlayerActiveMode(playerId, mode);
+    if (previousMode) {
+      this.setPlayerGearbladeTransform(playerId, {
+        from: previousMode,
+        to: mode,
+        startedAt: this.currentFrameTime || performance.now(),
+        durationMs: GEARBLADE_TRANSFORM_MS,
+      });
+    }
+    this.updateModeHud();
+  }
+
+  playExternalBladeSwing(
+    playerId: PlayerId,
+    options: {
+      directionX: number;
+      directionY: number;
+      target?: Haven3DTargetRef | null;
+      comboStep?: BladeSwingComboStep;
+    },
+  ): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar || this.options.isPaused()) {
+      return;
+    }
+    this.setExternalPlayerGearbladeMode(playerId, "blade");
+    const directionLength = Math.max(0.001, Math.hypot(options.directionX, options.directionY));
+    const startedAt = this.currentFrameTime || performance.now();
+    const comboStep = options.comboStep ?? this.getPlayerNextBladeSwingComboStep(playerId);
+    const side = comboStep === 1 ? -1 : 1;
+    const swing: BladeSwingState = {
+      startedAt,
+      struck: false,
+      target: options.target ?? null,
+      direction: {
+        x: options.directionX / directionLength,
+        y: options.directionY / directionLength,
+      },
+      side,
+      comboStep,
+      visualOnly: true,
+    };
+    this.setPlayerBladeSwing(playerId, swing);
+    this.setPlayerNextBladeSwingComboStep(playerId, ((comboStep + 1) % 3) as BladeSwingComboStep);
+    this.spawnBladeDrawSmear(avatar, swing.direction, swing);
+    this.options.setPlayerAvatar(
+      playerId,
+      avatar.x,
+      avatar.y,
+      fieldFacingFromDelta(swing.direction.x, swing.direction.y, avatar.facing),
+    );
+  }
+
+  playExternalLauncherFire(
+    playerId: PlayerId,
+    options: {
+      x?: number;
+      y?: number;
+      directionX: number;
+      directionY: number;
+      target?: Haven3DTargetRef | null;
+    },
+  ): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar || this.options.isPaused()) {
+      return;
+    }
+    this.setExternalPlayerGearbladeMode(playerId, "launcher");
+    const directionLength = Math.max(0.001, Math.hypot(options.directionX, options.directionY));
+    const direction = {
+      x: options.directionX / directionLength,
+      y: options.directionY / directionLength,
+    };
+    const originX = Number.isFinite(Number(options.x)) ? Number(options.x) : avatar.x + direction.x * 36;
+    const originY = Number.isFinite(Number(options.y)) ? Number(options.y) : avatar.y + direction.y * 36;
+    this.spawnLauncherProjectile(playerId, originX, originY, direction, options.target ?? null, true);
+    this.setPlayerLauncherRecoilStartedAt(playerId, this.currentFrameTime || performance.now());
+    this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+  }
+
+  playExternalGrappleFire(
+    playerId: PlayerId,
+    options: {
+      x?: number;
+      y?: number;
+      target?: Haven3DTargetRef | null;
+      targetX: number;
+      targetY: number;
+      targetHeight?: number;
+      grappleKind?: Haven3DGrappleKind;
+      swing?: Haven3DGrappleFireSwing;
+      zipline?: Haven3DGrappleFireZipline;
+    },
+  ): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar || this.options.isPaused()) {
+      return;
+    }
+    const now = this.currentFrameTime || performance.now();
+    this.finishGrappleMove(playerId, false);
+    this.setExternalPlayerGearbladeMode(playerId, "grapple");
+    this.setPlayerZiplineDismountDrift(playerId, null);
+    const targetPoint = { x: options.targetX, y: options.targetY };
+    const targetHeight = Number.isFinite(Number(options.targetHeight)) && Number(options.targetHeight) > 0
+      ? Number(options.targetHeight)
+      : this.getGroundElevationAtPoint(targetPoint) + 1.08;
+    const grappleKind = options.grappleKind ?? "target";
+    const fallbackKey = `remote-${playerId}-${Math.round(options.targetX)}-${Math.round(options.targetY)}`;
+    const shouldUseSyntheticAnchor = grappleKind === "anchor" || (!options.target && grappleKind !== "zipline");
+    const targetRef: Haven3DTargetRef | GrappleAnchorTargetRef | GrappleZiplineTargetRef = grappleKind === "zipline"
+      ? { kind: "zipline-track", id: options.zipline?.segmentKey ?? fallbackKey, key: options.zipline?.segmentKey ?? fallbackKey }
+      : shouldUseSyntheticAnchor
+      ? { kind: "grapple-node", id: fallbackKey, key: fallbackKey }
+      : options.target!;
+    const swing = shouldUseSyntheticAnchor
+      ? {
+        startX: Number.isFinite(Number(options.x)) ? Number(options.x) : avatar.x,
+        startY: Number.isFinite(Number(options.y)) ? Number(options.y) : avatar.y,
+        durationMs: options.swing?.durationMs ?? GRAPPLE_SWING_DURATION_MS,
+        arcHeight: options.swing?.arcHeight ?? GRAPPLE_SWING_ARC_HEIGHT,
+      }
+      : undefined;
+    const zipline = grappleKind === "zipline" && options.zipline ? { ...options.zipline } : undefined;
+    const { line, hook } = this.createGrappleLineVisuals();
+    this.setPlayerGrappleMove(playerId, {
+      playerId,
+      startedAt: now,
+      target: targetRef,
+      targetPoint,
+      targetHeight,
+      impacted: false,
+      line,
+      hook,
+      visualOnly: true,
+      swing,
+      zipline,
+    });
+    this.setPlayerActionCooldownUntil(playerId, now + GRAPPLE_COOLDOWN_MS);
+    this.options.setPlayerAvatar(
+      playerId,
+      avatar.x,
+      avatar.y,
+      fieldFacingFromDelta(options.targetX - avatar.x, options.targetY - avatar.y, avatar.facing),
+    );
+    this.updateGrappleLine(playerId);
+  }
+
   private getPlayerActiveMode(playerId: PlayerId): Haven3DGearbladeMode | null {
     return playerId === "P1" ? this.activeGearbladeMode : this.p2ActiveGearbladeMode;
   }
@@ -2217,6 +2423,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
+  private isPlayerControllable(playerId: PlayerId): boolean {
+    return this.options.isPlayerControllable?.(playerId) ?? this.options.isPlayerActive(playerId);
+  }
+
   private getCameraYawForPlayerControls(playerId: PlayerId): number {
     if (this.cameraMode === "split") {
       return this.splitCameraStates[playerId].yaw;
@@ -2313,7 +2523,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     const playerId: PlayerId = maybeMode ? playerOrMode as PlayerId : "P1";
     const mode = (maybeMode ?? playerOrMode) as Haven3DGearbladeMode;
     const activeMode = this.getPlayerActiveMode(playerId);
-    if (!this.enabledModes.has(mode) || activeMode === mode) {
+    if (!this.isPlayerControllable(playerId) || !this.enabledModes.has(mode) || activeMode === mode) {
       return;
     }
 
@@ -2369,7 +2579,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private cycleGearbladeMode(playerId: PlayerId = "P1"): void {
     const enabledModes = Array.from(this.enabledModes);
-    if (enabledModes.length === 0) {
+    if (!this.isPlayerControllable(playerId) || enabledModes.length === 0) {
       return;
     }
 
@@ -4565,7 +4775,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private movePlayers(deltaMs: number): void {
     (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
-      if (!this.options.isPlayerActive(playerId)) {
+      if (!this.isPlayerControllable(playerId)) {
         return;
       }
       if (this.getPlayerGrappleMove(playerId)) {
@@ -4621,7 +4831,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       if (!drift) {
         return;
       }
-      if (this.getPlayerGrappleMove(playerId) || !this.options.isPlayerActive(drift.playerId)) {
+      if (this.getPlayerGrappleMove(playerId) || !this.isPlayerControllable(drift.playerId)) {
         this.setPlayerZiplineDismountDrift(playerId, null);
         return;
       }
@@ -4791,7 +5001,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private tryStartPlayerJump(playerId: PlayerId): void {
-    if (this.options.isPaused() || !this.options.isPlayerActive(playerId)) {
+    if (this.options.isPaused() || !this.isPlayerControllable(playerId)) {
       return;
     }
     if (this.getPlayerGrappleMove(playerId)) {
@@ -4842,7 +5052,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   private tryDeployPlayerGlider(playerId: PlayerId): boolean {
     if (
       this.options.isPaused()
-      || !this.options.isPlayerActive(playerId)
+      || !this.isPlayerControllable(playerId)
       || !this.playerHasApronUtility(playerId, "apron_glider")
     ) {
       return false;
@@ -5242,7 +5452,7 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private triggerPrimaryAction(playerId: PlayerId = "P1"): void {
     const activeMode = this.getPlayerActiveMode(playerId);
-    if (this.options.isPaused() || !activeMode) {
+    if (this.options.isPaused() || !this.isPlayerControllable(playerId) || !activeMode) {
       return;
     }
 
@@ -5627,6 +5837,16 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
     this.setPlayerBladeSwing(playerId, swing);
     this.spawnBladeDrawSmear(avatar, swing.direction, swing);
+    this.options.onBladeSwingStart?.({
+      playerId,
+      x: avatar.x,
+      y: avatar.y,
+      facing: avatar.facing,
+      directionX: swing.direction.x,
+      directionY: swing.direction.y,
+      target: swing.target,
+      comboStep: swing.comboStep,
+    });
 
     this.options.setPlayerAvatar(
       playerId,
@@ -5669,28 +5889,30 @@ export class Haven3DFieldController implements Haven3DModeController {
         bladeSwing.struck = true;
         const strikeLine = this.getBladeStrikeLine(avatar, bladeSwing);
         const verticalFinisher = this.isVerticalBladeFinisher(bladeSwing);
-        const didHit = this.options.onBladeStrike?.({
-          playerId,
-          x: avatar.x,
-          y: avatar.y,
-          facing: avatar.facing,
-          directionX: strikeLine.bladeDirection.x,
-          directionY: strikeLine.bladeDirection.y,
-          hiltX: strikeLine.hilt.x,
-          hiltY: strikeLine.hilt.y,
-          tipX: strikeLine.tip.x,
-          tipY: strikeLine.tip.y,
-          bladeHalfWidth: BLADE_SWING_HIT_WIDTH_PX,
-          target: bladeSwing.target,
-          radius: Math.max(
-            BLADE_SWING_RANGE_PX,
-            Math.hypot(strikeLine.hilt.x - avatar.x, strikeLine.hilt.y - avatar.y),
-            Math.hypot(strikeLine.tip.x - avatar.x, strikeLine.tip.y - avatar.y),
-          ),
-          arcRadians: verticalFinisher ? Math.PI * 0.78 : BLADE_SWING_ARC_RADIANS,
-          damage: BLADE_SWING_DAMAGE,
-          knockback: BLADE_SWING_KNOCKBACK,
-        }) ?? false;
+        const didHit = bladeSwing.visualOnly
+          ? false
+          : this.options.onBladeStrike?.({
+            playerId,
+            x: avatar.x,
+            y: avatar.y,
+            facing: avatar.facing,
+            directionX: strikeLine.bladeDirection.x,
+            directionY: strikeLine.bladeDirection.y,
+            hiltX: strikeLine.hilt.x,
+            hiltY: strikeLine.hilt.y,
+            tipX: strikeLine.tip.x,
+            tipY: strikeLine.tip.y,
+            bladeHalfWidth: BLADE_SWING_HIT_WIDTH_PX,
+            target: bladeSwing.target,
+            radius: Math.max(
+              BLADE_SWING_RANGE_PX,
+              Math.hypot(strikeLine.hilt.x - avatar.x, strikeLine.hilt.y - avatar.y),
+              Math.hypot(strikeLine.tip.x - avatar.x, strikeLine.tip.y - avatar.y),
+            ),
+            arcRadians: verticalFinisher ? Math.PI * 0.78 : BLADE_SWING_ARC_RADIANS,
+            damage: BLADE_SWING_DAMAGE,
+            knockback: BLADE_SWING_KNOCKBACK,
+          }) ?? false;
         this.spawnBladeSlashEffect(strikeLine, bladeSwing, didHit);
         if (didHit) {
           this.spawnHitSpark(
@@ -5828,17 +6050,33 @@ export class Haven3DFieldController implements Haven3DModeController {
     const direction = this.getActionDirection(playerId, avatar, target);
     const originX = avatar.x + direction.x * 36;
     const originY = avatar.y + direction.y * 36;
-    const originPoint = { x: originX, y: originY };
     const canFire = this.options.onLauncherFire?.({
       playerId,
       x: originX,
       y: originY,
+      directionX: direction.x,
+      directionY: direction.y,
       target,
     }) ?? true;
     if (!canFire) {
       return;
     }
 
+    this.spawnLauncherProjectile(playerId, originX, originY, direction, target, false);
+    this.setPlayerActionCooldownUntil(playerId, now + LAUNCHER_COOLDOWN_MS);
+    this.setPlayerLauncherRecoilStartedAt(playerId, now);
+    this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+  }
+
+  private spawnLauncherProjectile(
+    playerId: PlayerId,
+    originX: number,
+    originY: number,
+    direction: { x: number; y: number },
+    target: Haven3DTargetRef | null,
+    visualOnly: boolean,
+  ): void {
+    const originPoint = { x: originX, y: originY };
     const projectileGroup = new THREE.Group();
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.14, 14, 10),
@@ -5866,11 +6104,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       radius: LAUNCHER_HIT_RADIUS_PX,
       damage: LAUNCHER_DAMAGE,
       knockback: LAUNCHER_KNOCKBACK,
+      visualOnly,
     });
-
-    this.setPlayerActionCooldownUntil(playerId, now + LAUNCHER_COOLDOWN_MS);
-    this.setPlayerLauncherRecoilStartedAt(playerId, now);
-    this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
   }
 
   private getLauncherRecoilAmount(
@@ -5914,6 +6149,11 @@ export class Haven3DFieldController implements Haven3DModeController {
         .filter((enemy) => enemy.hp > 0)
         .find((enemy) => Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= projectile.radius + Math.max(enemy.width, enemy.height) * 0.5);
       if (hitEnemy) {
+        if (projectile.visualOnly) {
+          this.spawnHitSpark({ x: projectile.x, y: projectile.y }, 0xf2b04d);
+          this.removeLauncherProjectile(index);
+          continue;
+        }
         const didHit = this.options.onLauncherImpact?.({
           playerId: projectile.playerId,
           x: projectile.x,
@@ -5951,6 +6191,31 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.dynamicGroup.remove(projectile.mesh);
     disposeObject(projectile.mesh);
     this.launcherProjectiles.splice(index, 1);
+  }
+
+  private createGrappleLineVisuals(): { line: THREE.Line; hook: THREE.Mesh } {
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0x4fb4a4,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+    ]), lineMaterial);
+    line.renderOrder = 20;
+    const hook = new THREE.Mesh(
+      new THREE.TorusGeometry(0.18, 0.035, 8, 16, Math.PI * 1.35),
+      new THREE.MeshBasicMaterial({
+        color: 0x66dbc9,
+        transparent: true,
+        opacity: 0.96,
+        depthWrite: false,
+      }),
+    );
+    hook.rotation.x = Math.PI / 2;
+    this.dynamicGroup.add(line, hook);
+    return { line, hook };
   }
 
   private fireGrapple(playerId: PlayerId = "P1"): void {
@@ -6013,66 +6278,72 @@ export class Haven3DFieldController implements Haven3DModeController {
         GRAPPLE_ZIPLINE_MAX_RIDE_DURATION_MS,
       )
       : 0;
-    const lineMaterial = new THREE.LineBasicMaterial({
-      color: 0x4fb4a4,
-      transparent: true,
-      opacity: 0.9,
-    });
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(),
-      new THREE.Vector3(),
-    ]), lineMaterial);
-    line.renderOrder = 20;
-    const hook = new THREE.Mesh(
-      new THREE.TorusGeometry(0.18, 0.035, 8, 16, Math.PI * 1.35),
-      new THREE.MeshBasicMaterial({
-        color: 0x66dbc9,
-        transparent: true,
-        opacity: 0.96,
-        depthWrite: false,
-      }),
-    );
-    hook.rotation.x = Math.PI / 2;
-    this.dynamicGroup.add(line, hook);
+    const targetHeight = ziplineTarget?.attachHeight ?? anchor?.height ?? this.getGroundElevationAtPoint(targetPoint) + 1.08;
+    const swing = anchor
+      ? {
+        startX: avatar.x,
+        startY: avatar.y,
+        durationMs: GRAPPLE_SWING_DURATION_MS,
+        arcHeight: GRAPPLE_SWING_ARC_HEIGHT,
+      }
+      : undefined;
+    const zipline = ziplineTarget
+      ? {
+        segmentKey: ziplineTarget.segment.key,
+        startX: avatar.x,
+        startY: avatar.y,
+        startHeight: this.getPlayerVisualWorldElevation(playerId, { x: avatar.x, y: avatar.y }),
+        attachX: ziplineTarget.attachPoint.x,
+        attachY: ziplineTarget.attachPoint.y,
+        attachHeight: ziplineTarget.attachHeight,
+        attachT: ziplineTarget.attachT,
+        endX: ziplineTarget.endPoint.x,
+        endY: ziplineTarget.endPoint.y,
+        endHeight: ziplineTarget.endHeight,
+        endT: ziplineTarget.endT,
+        attachDurationMs: ziplineAttachDurationMs,
+        rideDurationMs: ziplineRideDurationMs,
+      }
+      : undefined;
+    const { line, hook } = this.createGrappleLineVisuals();
 
     this.setPlayerGrappleMove(playerId, {
       playerId,
       startedAt: now,
       target: targetRef,
       targetPoint,
-      targetHeight: ziplineTarget?.attachHeight ?? anchor?.height ?? this.getGroundElevationAtPoint(targetPoint) + 1.08,
+      targetHeight,
       impacted: false,
       line,
       hook,
-      swing: anchor
-        ? {
-          startX: avatar.x,
-          startY: avatar.y,
-          durationMs: GRAPPLE_SWING_DURATION_MS,
-          arcHeight: GRAPPLE_SWING_ARC_HEIGHT,
-        }
-        : undefined,
-      zipline: ziplineTarget
-        ? {
-          segmentKey: ziplineTarget.segment.key,
-          startX: avatar.x,
-          startY: avatar.y,
-          startHeight: this.getPlayerVisualWorldElevation(playerId, { x: avatar.x, y: avatar.y }),
-          attachX: ziplineTarget.attachPoint.x,
-          attachY: ziplineTarget.attachPoint.y,
-          attachHeight: ziplineTarget.attachHeight,
-          attachT: ziplineTarget.attachT,
-          endX: ziplineTarget.endPoint.x,
-          endY: ziplineTarget.endPoint.y,
-          endHeight: ziplineTarget.endHeight,
-          endT: ziplineTarget.endT,
-          attachDurationMs: ziplineAttachDurationMs,
-          rideDurationMs: ziplineRideDurationMs,
-        }
-        : undefined,
+      swing,
+      zipline,
     });
     this.setPlayerActionCooldownUntil(playerId, now + GRAPPLE_COOLDOWN_MS);
     this.options.setPlayerAvatar(playerId, avatar.x, avatar.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+    this.options.onGrappleFire?.({
+      playerId,
+      x: avatar.x,
+      y: avatar.y,
+      target: actionTarget
+        ? {
+          kind: actionTarget.kind,
+          id: actionTarget.id,
+          key: actionTarget.key,
+        }
+        : null,
+      targetX: targetPoint.x,
+      targetY: targetPoint.y,
+      targetHeight,
+      grappleKind: ziplineTarget ? "zipline" : anchor ? "anchor" : "target",
+      swing: swing
+        ? {
+          durationMs: swing.durationMs,
+          arcHeight: swing.arcHeight,
+        }
+        : undefined,
+      zipline,
+    });
     this.updateGrappleLine(playerId);
   }
 
@@ -6106,14 +6377,16 @@ export class Haven3DFieldController implements Haven3DModeController {
 
       if (!move.impacted && move.target.kind === "enemy") {
         move.impacted = true;
-        const didHit = this.options.onGrappleImpact?.({
-          playerId,
-          x: avatar.x,
-          y: avatar.y,
-          target: move.target,
-          damage: GRAPPLE_DAMAGE,
-          knockback: GRAPPLE_KNOCKBACK,
-        }) ?? false;
+        const didHit = move.visualOnly
+          ? false
+          : (this.options.onGrappleImpact?.({
+            playerId,
+            x: avatar.x,
+            y: avatar.y,
+            target: move.target,
+            damage: GRAPPLE_DAMAGE,
+            knockback: GRAPPLE_KNOCKBACK,
+          }) ?? false);
         if (didHit) {
           this.spawnHitSpark(move.targetPoint, 0x4fb4a4);
           this.beginImpactFeedback(move.targetPoint, 0.72);
@@ -9536,7 +9809,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     const avatars = (["P1", "P2"] as PlayerId[])
-      .map((playerId) => this.options.isPlayerActive(playerId) ? this.options.getPlayerAvatar(playerId) : null)
+      .map((playerId) => this.isPlayerControllable(playerId) ? this.options.getPlayerAvatar(playerId) : null)
       .filter((entry): entry is FieldAvatarView => Boolean(entry));
     if (avatars.length <= 0) {
       actor.telegraph.visible = false;
@@ -9615,6 +9888,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   private selectNextTarget(playerOrReverse: PlayerId | boolean = "P1", maybeReverse = false): void {
     const playerId: PlayerId = typeof playerOrReverse === "boolean" ? "P1" : playerOrReverse;
     const reverse = typeof playerOrReverse === "boolean" ? playerOrReverse : maybeReverse;
+    if (!this.isPlayerControllable(playerId)) {
+      return;
+    }
     const targets = this.getTargetCandidates(playerId);
     this.setPlayerTargetLock(playerId, selectNextHaven3DTarget(targets, this.getPlayerTargetLock(playerId), reverse));
     this.setPlayerTargetOrbitYawOffset(playerId, 0);
@@ -9672,6 +9948,13 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (splitUi) {
       splitUi.hidden = this.cameraMode !== "split";
     }
+    document.querySelectorAll<HTMLElement>("[data-haven3d-coop-camera-label]").forEach((label) => {
+      label.textContent = this.cameraMode === "split" ? "Shared View" : "Split View";
+    });
+    document.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-split']").forEach((button) => {
+      button.classList.toggle("haven3d-coop-control--active", this.cameraMode === "split");
+      button.setAttribute("aria-pressed", this.cameraMode === "split" ? "true" : "false");
+    });
 
     document.querySelectorAll<HTMLElement>("[data-gearblade-mode-selector]").forEach((selector) => {
       const playerId = selector.closest<HTMLElement>("[data-haven3d-player]")?.dataset.haven3dPlayer === "P2"

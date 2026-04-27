@@ -1829,6 +1829,7 @@ type LobbyCommand =
   | { type: "skirmish_next_round"; decision: LobbySkirmishIntermissionDecision }
   | { type: "coop_theater_command"; command: CoopTheaterCommand }
   | { type: "coop_battle_command"; payload: string }
+  | { type: "coop_field_command"; payload: string }
   | { type: "request_lobby_snapshot" };
 
 function parseLobbyCommand(payload: string): LobbyCommand | null {
@@ -2499,6 +2500,7 @@ async function requestRemoteLobbyReconnectHandshake(): Promise<void> {
 
 let lastLobbyAvatarBroadcastAt = 0;
 let lastLobbyAvatarSignature = "";
+let lastCoopFieldRuntimeSnapshotPayload: string | null = null;
 
 export async function hostOrPreviewMultiplayerLobby(callsign = getPreferredLobbyOperatorCallsign()): Promise<LobbyState | null> {
   ensureCoopOperationsStateSync();
@@ -2589,6 +2591,7 @@ export async function disconnectMultiplayerLobby(renderAfterDisconnect = true): 
   pendingRemoteSkirmishBattlePayload = null;
   shouldAutoResumeRemoteSkirmishBattle = false;
   shouldAutoResumeRemoteCoopOperations = false;
+  lastCoopFieldRuntimeSnapshotPayload = null;
   clearSquadMatchState();
   clearLobbyState();
   updateGameState((state) => {
@@ -2667,6 +2670,64 @@ export async function syncLocalLobbyAvatarFromField(
       facing,
     });
   }
+}
+
+export async function sendCoopFieldRuntimeCommandFromField(payload: string): Promise<void> {
+  const lobby = getResolvedLobbyState();
+  const localParticipant = getLocalCoopParticipant(lobby);
+  if (
+    !lobby
+    || lobby.activity.kind !== "coop_operations"
+    || lobby.activity.coopOperations.status !== "active"
+    || !localParticipant?.selected
+    || !localParticipant.sessionSlot
+    || localParticipant.standby
+    || squadTransportStatus.role !== "client"
+  ) {
+    return;
+  }
+
+  await sendLobbyCommandToHost({
+    type: "coop_field_command",
+    payload,
+  });
+}
+
+export async function broadcastCoopFieldRuntimeSnapshotFromField(
+  payload: string,
+  targetPeerId?: string | null,
+): Promise<void> {
+  const lobby = getResolvedLobbyState();
+  if (
+    !lobby
+    || lobby.activity.kind !== "coop_operations"
+    || lobby.activity.coopOperations.status !== "active"
+    || !isTauriSquadTransportAvailable()
+    || squadTransportStatus.role !== "host"
+  ) {
+    return;
+  }
+
+  lastCoopFieldRuntimeSnapshotPayload = payload;
+  await sendSquadTransportMessage("coop_field_snapshot", payload, targetPeerId ?? null);
+}
+
+export async function broadcastCoopFieldRuntimeEventFromField(
+  payload: string,
+  targetPeerId?: string | null,
+): Promise<void> {
+  const lobby = getResolvedLobbyState();
+  if (
+    !lobby
+    || lobby.activity.kind !== "coop_operations"
+    || lobby.activity.coopOperations.status !== "active"
+    || !isTauriSquadTransportAvailable()
+    || squadTransportStatus.role !== "host"
+  ) {
+    return;
+  }
+
+  await sendSquadTransportMessage("coop_field_event", payload, targetPeerId ?? null);
 }
 
 export async function requestLobbySkirmishChallenge(
@@ -3037,6 +3098,24 @@ async function handleRemoteLobbyCommand(sourcePeerId: string, payload: string): 
       applyRemoteCoopBattleCommandDeferred(participant.sessionSlot, command.payload);
       return;
     }
+    case "coop_field_command": {
+      const sourceSlot = lobbyRemotePeerSlots.get(sourcePeerId) ?? null;
+      if (
+        !currentLobby
+        || currentLobby.activity.kind !== "coop_operations"
+        || currentLobby.activity.coopOperations.status !== "active"
+        || !sourceSlot
+      ) {
+        return;
+      }
+      const participant = currentLobby.activity.coopOperations.participants[sourceSlot];
+      if (!participant?.selected || !participant.sessionSlot) {
+        return;
+      }
+      const { applyRemoteCoopFieldCommandDeferred } = await import("../../field/FieldScreen");
+      applyRemoteCoopFieldCommandDeferred(participant.sessionSlot, command.payload);
+      return;
+    }
     case "request_lobby_snapshot": {
       await broadcastLobbySnapshot(currentLobby, sourcePeerId);
       return;
@@ -3106,6 +3185,7 @@ async function handleSquadTransportMessage(event: SquadTransportEvent): Promise<
       pendingRemoteSkirmishBattlePayload = null;
       shouldAutoResumeRemoteSkirmishBattle = false;
       shouldAutoResumeRemoteCoopOperations = false;
+      lastCoopFieldRuntimeSnapshotPayload = null;
       clearSquadMatchState();
       activeSkirmishSurface = "comms";
       if (getGameState().currentBattle?.modeContext?.kind === "squad") {
@@ -3158,6 +3238,13 @@ async function handleSquadTransportMessage(event: SquadTransportEvent): Promise<
       const currentLobby = getResolvedLobbyState();
       await broadcastLobbySnapshot(currentLobby, event.sourcePeerId);
       await broadcastSquadSnapshot(currentMatch ? getTransportAwareMatchState(currentMatch, "P1") : null, event.sourcePeerId);
+      if (lastCoopFieldRuntimeSnapshotPayload && squadTransportStatus.role === "host") {
+        await sendSquadTransportMessage(
+          "coop_field_snapshot",
+          lastCoopFieldRuntimeSnapshotPayload,
+          event.sourcePeerId,
+        );
+      }
       const currentBattle = getGameState().currentBattle;
       if (currentMatch && currentBattle?.modeContext?.kind === "squad") {
         await sendSquadTransportMessage(
@@ -3166,6 +3253,22 @@ async function handleSquadTransportMessage(event: SquadTransportEvent): Promise<
           event.sourcePeerId,
         );
       }
+      return;
+    }
+    case "coop_field_snapshot": {
+      if (squadTransportStatus.role !== "client" || !event.payload) {
+        return;
+      }
+      const { applyRemoteCoopFieldSnapshotDeferred } = await import("../../field/FieldScreen");
+      applyRemoteCoopFieldSnapshotDeferred(event.payload);
+      return;
+    }
+    case "coop_field_event": {
+      if (squadTransportStatus.role !== "client" || !event.payload) {
+        return;
+      }
+      const { applyRemoteCoopFieldEventDeferred } = await import("../../field/FieldScreen");
+      applyRemoteCoopFieldEventDeferred(event.payload);
       return;
     }
     case "battle_start": {
@@ -3240,6 +3343,13 @@ async function handleSquadTransportEvent(event: SquadTransportEvent): Promise<vo
       const currentLobby = getResolvedLobbyState();
       if (currentLobby) {
         await broadcastLobbySnapshot(currentLobby, event.sourcePeerId);
+      }
+      if (lastCoopFieldRuntimeSnapshotPayload && squadTransportStatus.role === "host") {
+        await sendSquadTransportMessage(
+          "coop_field_snapshot",
+          lastCoopFieldRuntimeSnapshotPayload,
+          event.sourcePeerId,
+        );
       }
       const currentMatch = getSquadMatchState();
       if (currentMatch) {
