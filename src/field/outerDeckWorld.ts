@@ -90,6 +90,13 @@ type ZiplineSegmentPlan = {
   score: number;
 };
 
+type GrindRailSegmentPlan = {
+  start: GrappleRouteNode;
+  end: GrappleRouteNode;
+  need: ZiplineTraversalNeed;
+  score: number;
+};
+
 type RouteCandidateTile = {
   localX: number;
   localY: number;
@@ -229,6 +236,13 @@ const OUTER_DECK_ROAMING_ENEMY_DENSITY = 0.2;
 const OUTER_DECK_INTERIOR_SUPERCELL_SIZE = 3;
 const OUTER_DECK_INTERIOR_SPAWN_THRESHOLD = 0.48;
 const OUTER_DECK_GRAPPLE_ROUTE_CHUNK_STRIDE = 5;
+const OUTER_DECK_GRIND_RAIL_ROUTE_CHUNK_STRIDE = 2;
+const OUTER_DECK_GRIND_RAIL_MAX_SEGMENTS_PER_CHUNK = 2;
+const OUTER_DECK_GRIND_RAIL_MIN_SPAN_TILES = 5;
+const OUTER_DECK_GRIND_RAIL_CHASM_MIN_SPAN_TILES = 5;
+const OUTER_DECK_GRIND_RAIL_CHASM_MIN_BLOCKED_TILES = 2;
+const OUTER_DECK_GRIND_RAIL_CHASM_MIN_CONTIGUOUS_BLOCKED_TILES = 1;
+const OUTER_DECK_GRIND_RAIL_ELEVATION_DELTA = 8;
 const OUTER_DECK_ZIPLINE_MAX_SEGMENTS_PER_ROUTE = 1;
 const OUTER_DECK_ZIPLINE_MIN_SPAN_TILES = 6;
 const OUTER_DECK_ZIPLINE_CHASM_MIN_SPAN_TILES = 8;
@@ -619,6 +633,10 @@ function shouldGenerateChunkGrappleRoute(seed: number, chunkX: number, chunkY: n
   return mod(hash32(seed, chunkX, chunkY, 4090), OUTER_DECK_GRAPPLE_ROUTE_CHUNK_STRIDE) === 0;
 }
 
+function shouldGenerateChunkGrindRailRoute(seed: number, chunkX: number, chunkY: number): boolean {
+  return mod(hash32(seed, chunkX, chunkY, 4062), OUTER_DECK_GRIND_RAIL_ROUTE_CHUNK_STRIDE) !== 0;
+}
+
 function getRouteCandidateHazardScore(tiles: FieldMap["tiles"], localX: number, localY: number): number {
   let score = 0;
   for (let y = localY - 2; y <= localY + 2; y += 1) {
@@ -810,6 +828,57 @@ function getZiplineTraversalNeed(
   };
 }
 
+function getGrindRailTraversalNeed(
+  tiles: FieldMap["tiles"],
+  metadata: OuterDeckStreamMetadata,
+  start: GrappleRouteNode,
+  end: GrappleRouteNode,
+): ZiplineTraversalNeed | null {
+  const spanTiles = Math.hypot(end.worldTileX - start.worldTileX, end.worldTileY - start.worldTileY);
+  if (spanTiles < OUTER_DECK_GRIND_RAIL_MIN_SPAN_TILES) {
+    return null;
+  }
+
+  const elevationDelta = Math.abs(end.elevation - start.elevation);
+  const samples = getSegmentTileSamples(tiles, metadata, start, end);
+  let blockedTiles = 0;
+  let contiguousBlockedTiles = 0;
+  let maxContiguousBlockedTiles = 0;
+
+  samples.forEach((tile) => {
+    const blocked = !tile.walkable && tile.standable3d !== true;
+    if (blocked) {
+      blockedTiles += 1;
+      contiguousBlockedTiles += 1;
+      maxContiguousBlockedTiles = Math.max(maxContiguousBlockedTiles, contiguousBlockedTiles);
+      return;
+    }
+    contiguousBlockedTiles = 0;
+  });
+
+  const crossesChasm = spanTiles >= OUTER_DECK_GRIND_RAIL_CHASM_MIN_SPAN_TILES
+    && blockedTiles >= OUTER_DECK_GRIND_RAIL_CHASM_MIN_BLOCKED_TILES
+    && maxContiguousBlockedTiles >= OUTER_DECK_GRIND_RAIL_CHASM_MIN_CONTIGUOUS_BLOCKED_TILES;
+  const crossesElevation = elevationDelta >= OUTER_DECK_GRIND_RAIL_ELEVATION_DELTA;
+  if (!crossesChasm && !crossesElevation) {
+    return null;
+  }
+
+  const kind = crossesElevation && (!crossesChasm || elevationDelta >= blockedTiles)
+    ? "elevation"
+    : "chasm";
+  return {
+    kind,
+    spanTiles,
+    elevationDelta,
+    blockedTiles,
+    maxContiguousBlockedTiles,
+    score: (crossesChasm ? blockedTiles * 1.5 + maxContiguousBlockedTiles * 1.8 : 0)
+      + (crossesElevation ? elevationDelta * 1.2 : 0)
+      + spanTiles * 0.14,
+  };
+}
+
 function buildChunkZiplinePlans(
   seed: number,
   tiles: FieldMap["tiles"],
@@ -852,6 +921,54 @@ function buildChunkZiplinePlans(
         return;
       }
 
+      selected.push(plan);
+      usedAnchors.add(plan.start.id);
+      usedAnchors.add(plan.end.id);
+    });
+
+  return selected;
+}
+
+function buildChunkGrindRailPlans(
+  seed: number,
+  tiles: FieldMap["tiles"],
+  metadata: OuterDeckStreamMetadata,
+  occupied: Set<string>,
+  chunkX: number,
+  chunkY: number,
+  routeId: string,
+): GrindRailSegmentPlan[] {
+  const candidates = collectChunkRouteCandidates(seed, tiles, metadata, occupied, chunkX, chunkY, routeId);
+  const plans: GrindRailSegmentPlan[] = [];
+  for (let startIndex = 0; startIndex < candidates.length; startIndex += 1) {
+    for (let endIndex = startIndex + 1; endIndex < candidates.length; endIndex += 1) {
+      const start = candidates[startIndex]!;
+      const end = candidates[endIndex]!;
+      const need = getGrindRailTraversalNeed(tiles, metadata, start, end);
+      if (!need) {
+        continue;
+      }
+
+      plans.push({
+        start,
+        end,
+        need,
+        score: need.score + (random01(seed, start.worldTileX + end.worldTileX, start.worldTileY + end.worldTileY, 4520) * 0.38),
+      });
+    }
+  }
+
+  const selected: GrindRailSegmentPlan[] = [];
+  const usedAnchors = new Set<string>();
+  plans
+    .sort((a, b) => b.score - a.score)
+    .forEach((plan) => {
+      if (selected.length >= OUTER_DECK_GRIND_RAIL_MAX_SEGMENTS_PER_CHUNK) {
+        return;
+      }
+      if (usedAnchors.has(plan.start.id) || usedAnchors.has(plan.end.id)) {
+        return;
+      }
       selected.push(plan);
       usedAnchors.add(plan.start.id);
       usedAnchors.add(plan.end.id);
@@ -1450,6 +1567,59 @@ function addChunkGrappleNodes(
   });
 }
 
+function addChunkGrindRails(
+  openWorld: OuterDeckOpenWorldState,
+  tiles: FieldMap["tiles"],
+  metadata: OuterDeckStreamMetadata,
+  objects: FieldObject[],
+  occupied: Set<string>,
+  chunkX: number,
+  chunkY: number,
+): void {
+  const seed = openWorld.seed;
+  if (!shouldGenerateChunkGrindRailRoute(seed, chunkX, chunkY)) {
+    return;
+  }
+
+  const routeId = `${objectPrefix(chunkX, chunkY)}_grind_route`;
+  const plans = buildChunkGrindRailPlans(seed, tiles, metadata, occupied, chunkX, chunkY, routeId);
+  plans.forEach((plan, index) => {
+    const segmentRouteId = `${routeId}_${index}`;
+    const startHeight = 0.56 + (plan.start.elevation * 0.42);
+    const endHeight = 0.56 + (plan.end.elevation * 0.42);
+    objects.push({
+      id: `${segmentRouteId}_segment_0`,
+      x: Math.min(plan.start.localX, plan.end.localX),
+      y: Math.min(plan.start.localY, plan.end.localY),
+      width: Math.max(1, Math.abs(plan.end.localX - plan.start.localX) + 1),
+      height: Math.max(1, Math.abs(plan.end.localY - plan.start.localY) + 1),
+      type: "decoration",
+      sprite: "grind_rail",
+      metadata: {
+        name: "Grind Rail",
+        grindRail: true,
+        railRouteId: segmentRouteId,
+        segmentIndex: 0,
+        startWorldTileX: plan.start.worldTileX + 0.5,
+        startWorldTileY: plan.start.worldTileY + 0.5,
+        endWorldTileX: plan.end.worldTileX + 0.5,
+        endWorldTileY: plan.end.worldTileY + 0.5,
+        startHeight,
+        endHeight,
+        launchAtEnd: true,
+        traversalNeed: plan.need.kind,
+        traversalSpanTiles: Number(plan.need.spanTiles.toFixed(2)),
+        traversalElevationDelta: plan.need.elevationDelta,
+        traversalBlockedTiles: plan.need.blockedTiles,
+        traversalMaxBlockedRunTiles: plan.need.maxContiguousBlockedTiles,
+        elevation: Math.max(plan.start.elevation, plan.end.elevation),
+      },
+    });
+    markOccupied(occupied, plan.start.localX, plan.start.localY);
+    markOccupied(occupied, plan.end.localX, plan.end.localY);
+  });
+}
+
 function addPlacedLanterns(
   openWorld: OuterDeckOpenWorldState,
   tiles: FieldMap["tiles"],
@@ -1658,6 +1828,7 @@ function addChunkContent(
   addChunkApronPickups(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkInteriorEntrance(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
   addChunkEnemies(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
+  addChunkGrindRails(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
   addChunkGrappleNodes(openWorld, tiles, metadata, objects, occupied, chunkX, chunkY);
 }
 

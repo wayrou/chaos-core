@@ -254,6 +254,9 @@ export function initControllerSupport(): void {
 
   window.addEventListener("gamepadconnected", onGamepadConnected);
   window.addEventListener("gamepaddisconnected", onGamepadDisconnected);
+  window.addEventListener("blur", handleControllerWindowBlur);
+  window.addEventListener("focus", handleControllerWindowFocus);
+  document.addEventListener("visibilitychange", handleControllerVisibilityChange);
   startPolling();
   if (CONTROLLER_UI_FOCUS_ENABLED && CONTROLLER_UI_FOCUS_OBSERVER_ENABLED) {
     ensureFocusObserver();
@@ -271,6 +274,9 @@ export function shutdownControllerSupport(): void {
   clearScheduledFocusRefresh();
   window.removeEventListener("gamepadconnected", onGamepadConnected);
   window.removeEventListener("gamepaddisconnected", onGamepadDisconnected);
+  window.removeEventListener("blur", handleControllerWindowBlur);
+  window.removeEventListener("focus", handleControllerWindowFocus);
+  document.removeEventListener("visibilitychange", handleControllerVisibilityChange);
   currentContext = null;
   focusableElements = [];
   initialized = false;
@@ -325,12 +331,60 @@ function pollLoop(): void {
   }
 
   const gamepads = navigator.getGamepads();
+  const controllerInputAllowed = hasControllerInputFocus();
   for (let index = 0; index < gamepads.length; index++) {
     const gamepad = gamepads[index];
     if (!gamepad) {
       continue;
     }
+    if (!controllerInputAllowed) {
+      cacheGamepadTransientState(gamepad, index);
+      continue;
+    }
     processGamepad(gamepad, index);
+  }
+}
+
+function hasControllerInputFocus(): boolean {
+  return document.visibilityState !== "hidden" && document.hasFocus();
+}
+
+function getCurrentActionStates(gamepad: Gamepad): Partial<Record<GameAction, boolean>> {
+  const currentActionStates: Partial<Record<GameAction, boolean>> = {};
+  for (const action of GAME_ACTIONS) {
+    currentActionStates[action] = isActionActiveForGamepad(gamepad, action);
+  }
+  return currentActionStates;
+}
+
+function cacheGamepadTransientState(gamepad: Gamepad, gamepadIndex: number): void {
+  previousActionStatesByPad[gamepadIndex] = getCurrentActionStates(gamepad);
+  updatePreviousRawStates(gamepad, gamepadIndex);
+}
+
+function clearControllerTransientState(): void {
+  navCooldown = 0;
+  Object.keys(previousActionStatesByPad).forEach((key) => {
+    delete previousActionStatesByPad[Number(key)];
+  });
+  previousButtonStatesByPad.length = 0;
+  Object.keys(previousAxisDigitalByPad).forEach((key) => {
+    delete previousAxisDigitalByPad[Number(key)];
+  });
+}
+
+function primeControllerTransientState(): void {
+  navCooldown = 0;
+  if (typeof navigator.getGamepads !== "function") {
+    return;
+  }
+  const gamepads = navigator.getGamepads();
+  for (let index = 0; index < gamepads.length; index += 1) {
+    const gamepad = gamepads[index];
+    if (!gamepad) {
+      continue;
+    }
+    cacheGamepadTransientState(gamepad, index);
   }
 }
 
@@ -352,10 +406,9 @@ function processGamepad(gamepad: Gamepad, gamepadIndex: number): void {
     return;
   }
 
-  const currentActionStates: Partial<Record<GameAction, boolean>> = {};
+  const currentActionStates = getCurrentActionStates(gamepad);
   for (const action of GAME_ACTIONS) {
-    const active = isActionActiveForGamepad(gamepad, action);
-    currentActionStates[action] = active;
+    const active = Boolean(currentActionStates[action]);
     const wasActive = Boolean(previousActionStates[action]);
 
     if (isNavigationAction(action)) {
@@ -1271,6 +1324,9 @@ export function getAssignedGamepad(playerId: PlayerSlot): Gamepad | null {
 }
 
 export function isGamepadActionActive(playerId: PlayerSlot, action: GameAction): boolean {
+  if (!hasControllerInputFocus()) {
+    return false;
+  }
   const gamepad = getAssignedGamepad(playerId);
   if (!gamepad || !isEnabled) {
     return false;
@@ -1422,6 +1478,25 @@ function onGamepadDisconnected(event: GamepadEvent): void {
   });
   scheduleFocusRefresh();
   syncDebugOverlay();
+}
+
+function handleControllerWindowBlur(): void {
+  clearControllerTransientState();
+}
+
+function handleControllerWindowFocus(): void {
+  if (!hasControllerInputFocus()) {
+    return;
+  }
+  primeControllerTransientState();
+}
+
+function handleControllerVisibilityChange(): void {
+  if (hasControllerInputFocus()) {
+    primeControllerTransientState();
+    return;
+  }
+  clearControllerTransientState();
 }
 
 export function onControllerAction(listener: (action: GameAction, playerId?: PlayerSlot) => void): () => void {

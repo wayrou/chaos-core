@@ -57,6 +57,25 @@ function tileSignature(map) {
     .join("|");
 }
 
+function railSignature(map) {
+  return map.objects
+    .filter((object) => object.metadata?.grindRail === true)
+    .map((object) => [
+      object.id,
+      object.metadata?.railRouteId,
+      object.metadata?.segmentIndex,
+      object.metadata?.startWorldTileX,
+      object.metadata?.startWorldTileY,
+      object.metadata?.endWorldTileX,
+      object.metadata?.endWorldTileY,
+      object.metadata?.startHeight,
+      object.metadata?.endHeight,
+      object.metadata?.nextSegmentIndex ?? "",
+    ].join(":"))
+    .sort()
+    .join("|");
+}
+
 function hasElevationRun(map, minimumElevation, minimumLength) {
   const isMountainTile = (tile) => tile.render3d !== false && Number(tile.elevation ?? 0) >= minimumElevation;
   const hasRun = (tiles) => {
@@ -265,6 +284,36 @@ describe("outerDeckMaps", () => {
     });
   });
 
+  it("generates deterministic grind rail layouts per seed", () => {
+    const first = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, createSeededState(7777));
+    const second = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, createSeededState(7777));
+    const third = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, createSeededState(8888));
+
+    expect(railSignature(first)).toBe(railSignature(second));
+    expect(railSignature(first)).not.toBe(railSignature(third));
+  });
+
+  it("keeps Apron grind rails tied to elevation breaks and chasms", () => {
+    const overworld = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, createSeededState(7777));
+    const grindRails = overworld.objects.filter((object) => object.metadata?.grindRail === true);
+
+    expect(grindRails.length).toBeGreaterThan(0);
+    expect(grindRails.every((object) => object.sprite === "grind_rail")).toBe(true);
+    expect(grindRails.every((object) => object.metadata?.railRouteId)).toBe(true);
+    expect(grindRails.every((object) => Number.isFinite(Number(object.metadata?.startHeight)))).toBe(true);
+    expect(grindRails.every((object) => Number.isFinite(Number(object.metadata?.endHeight)))).toBe(true);
+    grindRails.forEach((object) => {
+      const need = object.metadata?.traversalNeed;
+      expect(["chasm", "elevation"]).toContain(need);
+      if (need === "chasm") {
+        expect(Number(object.metadata?.traversalSpanTiles ?? 0)).toBeGreaterThanOrEqual(5);
+        expect(Number(object.metadata?.traversalBlockedTiles ?? 0)).toBeGreaterThanOrEqual(2);
+      } else {
+        expect(Number(object.metadata?.traversalElevationDelta ?? 0)).toBeGreaterThanOrEqual(8);
+      }
+    });
+  });
+
   it("keeps the HAVEN exterior footprint blocked after generic map cleanup", () => {
     setGameState(createSeededState(12345));
     const overworld = getFieldMap(OUTER_DECK_OVERWORLD_MAP_ID);
@@ -300,6 +349,22 @@ describe("outerDeckMaps", () => {
       anchorIds.has(object.metadata?.startAnchorId)
       && anchorIds.has(object.metadata?.endAnchorId)
     ))).toBe(true);
+  });
+
+  it("adds HAVEN grind rails without replacing the HAVEN ziplines", () => {
+    setGameState(createNewGameState());
+    const haven = getFieldMap("base_camp");
+    const grindRails = haven.objects.filter((object) => object.metadata?.grindRail === true);
+    const ziplineTracks = haven.objects.filter((object) => object.metadata?.ziplineTrack === true);
+    const routeIds = new Set(grindRails.map((object) => object.metadata?.railRouteId));
+
+    expect(grindRails).toHaveLength(4);
+    expect(routeIds.size).toBe(3);
+    expect(grindRails.every((object) => object.sprite === "grind_rail")).toBe(true);
+    expect(grindRails.some((object) => Number.isFinite(Number(object.metadata?.nextSegmentIndex)))).toBe(true);
+    expect(grindRails.every((object) => Number.isFinite(Number(object.metadata?.startWorldTileX)))).toBe(true);
+    expect(grindRails.every((object) => Number.isFinite(Number(object.metadata?.endWorldTileY)))).toBe(true);
+    expect(ziplineTracks).toHaveLength(4);
   });
 
   it("streams a window through the enlarged finite Apron dome", () => {

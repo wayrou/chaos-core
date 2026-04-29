@@ -96,6 +96,23 @@ type HavenZiplineAnchorSpec = {
   anchorHeight: number;
 };
 
+type HavenGrindRailSegmentSpec = {
+  startTileX: number;
+  startTileY: number;
+  endTileX: number;
+  endTileY: number;
+  startHeight: number;
+  endHeight: number;
+  nextSegmentIndex?: number;
+  launchAtEnd?: boolean;
+};
+
+type HavenGrindRailRouteSpec = {
+  routeId: string;
+  name: string;
+  segments: HavenGrindRailSegmentSpec[];
+};
+
 const HAVEN_ZIPLINE_ROUTE_ID = "haven_campus_zipline";
 const HAVEN_ZIPLINE_ANCHORS: HavenZiplineAnchorSpec[] = [
   { id: "haven_zipline_anchor_west", name: "West Zipline Node", x: 8, y: 31, routeIndex: 0, anchorHeight: 4.35 },
@@ -110,6 +127,60 @@ const HAVEN_ZIPLINE_LINKS = [
   ["haven_zipline_anchor_center", "haven_zipline_anchor_east"],
   ["haven_zipline_anchor_center", "haven_zipline_anchor_south"],
 ] as const;
+
+const HAVEN_GRIND_RAIL_ROUTES: HavenGrindRailRouteSpec[] = [
+  {
+    routeId: "haven_campus_grind_south_arc",
+    name: "HAVEN Grind Rail",
+    segments: [
+      {
+        startTileX: 14.5,
+        startTileY: 34.5,
+        endTileX: 28.5,
+        endTileY: 27.5,
+        startHeight: 1.82,
+        endHeight: 2.38,
+        nextSegmentIndex: 1,
+      },
+      {
+        startTileX: 28.5,
+        startTileY: 27.5,
+        endTileX: 43.5,
+        endTileY: 19.5,
+        startHeight: 2.38,
+        endHeight: 2.96,
+      },
+    ],
+  },
+  {
+    routeId: "haven_campus_grind_east_line",
+    name: "HAVEN Grind Rail",
+    segments: [
+      {
+        startTileX: 52.5,
+        startTileY: 35.5,
+        endTileX: 69.5,
+        endTileY: 25.5,
+        startHeight: 2.04,
+        endHeight: 2.72,
+      },
+    ],
+  },
+  {
+    routeId: "haven_campus_grind_gate_return",
+    name: "HAVEN Grind Rail",
+    segments: [
+      {
+        startTileX: 34.5,
+        startTileY: 46.5,
+        endTileX: 49.5,
+        endTileY: 40.5,
+        startHeight: 1.68,
+        endHeight: 2.18,
+      },
+    ],
+  },
+];
 
 function setMapAreaWalkable(map: FieldMap, left: number, top: number, width: number, height: number): void {
   for (let y = top; y < top + height; y += 1) {
@@ -328,6 +399,41 @@ function addHavenZiplineRoute(map: FieldMap): void {
         startAnchorId,
         endAnchorId,
       },
+    });
+  });
+}
+
+function addHavenGrindRails(map: FieldMap): void {
+  HAVEN_GRIND_RAIL_ROUTES.forEach((route) => {
+    route.segments.forEach((segment, index) => {
+      const id = `${route.routeId}_segment_${index}`;
+      if (map.objects.some((object) => object.id === id)) {
+        return;
+      }
+
+      map.objects.push({
+        id,
+        x: Math.floor(Math.min(segment.startTileX, segment.endTileX)),
+        y: Math.floor(Math.min(segment.startTileY, segment.endTileY)),
+        width: Math.max(1, Math.ceil(Math.abs(segment.endTileX - segment.startTileX)) + 1),
+        height: Math.max(1, Math.ceil(Math.abs(segment.endTileY - segment.startTileY)) + 1),
+        type: "decoration",
+        sprite: "grind_rail",
+        metadata: {
+          name: route.name,
+          grindRail: true,
+          railRouteId: route.routeId,
+          segmentIndex: index,
+          nextSegmentIndex: segment.nextSegmentIndex,
+          startWorldTileX: segment.startTileX,
+          startWorldTileY: segment.startTileY,
+          endWorldTileX: segment.endTileX,
+          endWorldTileY: segment.endTileY,
+          startHeight: segment.startHeight,
+          endHeight: segment.endHeight,
+          launchAtEnd: segment.launchAtEnd !== false,
+        },
+      });
     });
   });
 }
@@ -8423,6 +8529,7 @@ function createConfiguredBaseCampMap(): FieldMap {
 
   applyBaseCampBuildLayout(map);
   addHavenZiplineRoute(map);
+  addHavenGrindRails(map);
 
   map.objects.push({
     id: OUTER_DECK_HAVEN_EXIT_OBJECT_ID,

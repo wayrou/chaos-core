@@ -221,6 +221,17 @@ async function dropLocalCoopP2(page) {
   await page.waitForTimeout(220);
 }
 
+async function setFieldPlayerPositions(page, positions) {
+  const moved = await page.evaluate(async (requestedPositions) => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return requestedPositions.every((entry) =>
+      field.setCurrentFieldPlayerPosition(entry.playerId, entry.x, entry.y, entry.facing),
+    );
+  }, positions);
+  assertSmoke(moved, `Could not place field players: ${JSON.stringify(positions)}`);
+  await page.waitForTimeout(220);
+}
+
 async function movePlayersForP2ShopEntry(page) {
   const moved = await page.evaluate(async () => {
     const field = await import("/src/field/FieldScreen.ts");
@@ -365,41 +376,32 @@ async function runSmoke() {
     splitHidden: (document.querySelector("[data-haven3d-split-ui]") instanceof HTMLElement)
       ? document.querySelector("[data-haven3d-split-ui]").hidden
       : null,
-  }));
-  assertSmoke(
-    splitCameraState?.mode === "split"
-      && splitHudState.sharedHidden === true
-      && splitHudState.splitHidden === false,
-    `Split camera toggle did not activate: ${JSON.stringify({ splitCameraState, splitHudState })}`,
-  );
-
-  await page.evaluate(() => {
-    const canvas = document.querySelector(".haven3d-canvas");
-    canvas?.dispatchEvent(new KeyboardEvent("keydown", {
-      key: "v",
-      code: "KeyV",
-      bubbles: true,
-      cancelable: true,
-    }));
-  });
-  await page.waitForTimeout(180);
-  const sharedCameraState = await readHaven3DCameraState(page);
-  const sharedHudState = await page.evaluate(() => ({
-    sharedHidden: (document.querySelector("[data-haven3d-shared-ui]") instanceof HTMLElement)
-      ? document.querySelector("[data-haven3d-shared-ui]").hidden
+    sharedDisplay: (document.querySelector("[data-haven3d-shared-ui]") instanceof HTMLElement)
+      ? getComputedStyle(document.querySelector("[data-haven3d-shared-ui]")).display
       : null,
-    splitHidden: (document.querySelector("[data-haven3d-split-ui]") instanceof HTMLElement)
-      ? document.querySelector("[data-haven3d-split-ui]").hidden
+    splitDisplay: (document.querySelector("[data-haven3d-split-ui]") instanceof HTMLElement)
+      ? getComputedStyle(document.querySelector("[data-haven3d-split-ui]")).display
+      : null,
+    splitToggleDisabled: (document.querySelector("[data-haven3d-coop-action='toggle-split']") instanceof HTMLButtonElement)
+      ? document.querySelector("[data-haven3d-coop-action='toggle-split']").disabled
       : null,
   }));
   assertSmoke(
-    sharedCameraState?.mode === "shared"
-      && sharedHudState.sharedHidden === false
-      && sharedHudState.splitHidden === true,
-    `Shared camera toggle did not restore: ${JSON.stringify({ sharedCameraState, sharedHudState })}`,
+    splitCameraState?.mode === "shared"
+      && splitCameraState?.behavior === "shared"
+      && splitHudState.sharedHidden === false
+      && splitHudState.splitHidden === true
+      && splitHudState.sharedDisplay !== "none"
+      && splitHudState.splitDisplay === "none"
+      && splitHudState.splitToggleDisabled === true,
+    `Solo HAVEN 3D should stay in shared mode with split HUD hidden: ${JSON.stringify({ splitCameraState, splitHudState })}`,
   );
 
   await joinLocalCoopP2(page);
+  await setFieldPlayerPositions(page, [
+    { playerId: "P1", x: 18.5 * 64, y: 18.5 * 64, facing: "south" },
+    { playerId: "P2", x: 20 * 64, y: 18.5 * 64, facing: "south" },
+  ]);
 
   await page.evaluate(() => {
     const canvas = document.querySelector(".haven3d-canvas");
@@ -412,8 +414,27 @@ async function runSmoke() {
     }));
   });
   await page.waitForTimeout(220);
+  const hybridCameraState = await readHaven3DCameraState(page);
+  assertSmoke(
+    hybridCameraState?.behavior === "hybrid"
+      && hybridCameraState?.mode === "shared",
+    `Co-op hybrid camera did not enable from a close regroup: ${JSON.stringify(hybridCameraState)}`,
+  );
+
+  await setFieldPlayerPositions(page, [
+    { playerId: "P1", x: 18.5 * 64, y: 18.5 * 64, facing: "south" },
+    { playerId: "P2", x: 24 * 64, y: 18.5 * 64, facing: "south" },
+  ]);
+  await page.waitForFunction(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return field.getCurrentHaven3DFieldCameraState()?.mode === "split";
+  }, null, { timeout: 3000 });
   const coopSplitCameraState = await readHaven3DCameraState(page);
-  assertSmoke(coopSplitCameraState?.mode === "split", `Co-op split camera did not activate: ${JSON.stringify(coopSplitCameraState)}`);
+  assertSmoke(
+    coopSplitCameraState?.behavior === "hybrid"
+      && coopSplitCameraState?.mode === "split",
+    `Co-op hybrid camera did not auto-split when players separated: ${JSON.stringify(coopSplitCameraState)}`,
+  );
 
   await ensureSplitHudMode(page, "P1", "launcher");
   await ensureSplitHudMode(page, "P2", "grapple");
@@ -497,8 +518,24 @@ async function runSmoke() {
   assertSmoke(
     postP2ReturnState.hasFieldCanvas
       && !postP2ReturnState.hasShopRoot
-      && postP2ReturnCameraState?.mode === "split",
-    `P2 field return did not restore the split HAVEN runtime cleanly: ${JSON.stringify({ postP2ReturnState, postP2ReturnCameraState })}`,
+      && postP2ReturnCameraState?.behavior === "hybrid"
+      && (postP2ReturnCameraState?.mode === "shared" || postP2ReturnCameraState?.mode === "split"),
+    `P2 field return did not restore the hybrid HAVEN runtime cleanly: ${JSON.stringify({ postP2ReturnState, postP2ReturnCameraState })}`,
+  );
+
+  await setFieldPlayerPositions(page, [
+    { playerId: "P1", x: 22 * 64, y: 18.5 * 64, facing: "south" },
+    { playerId: "P2", x: 23.8 * 64, y: 18.5 * 64, facing: "south" },
+  ]);
+  await page.waitForFunction(async () => {
+    const field = await import("/src/field/FieldScreen.ts");
+    return field.getCurrentHaven3DFieldCameraState()?.mode === "shared";
+  }, null, { timeout: 3000 });
+  const regroupedHybridCameraState = await readHaven3DCameraState(page);
+  assertSmoke(
+    regroupedHybridCameraState?.behavior === "hybrid"
+      && regroupedHybridCameraState?.mode === "shared",
+    `Hybrid HAVEN camera did not merge back to shared after regrouping: ${JSON.stringify(regroupedHybridCameraState)}`,
   );
 
   await page.evaluate(() => {
@@ -514,7 +551,8 @@ async function runSmoke() {
   await page.waitForTimeout(180);
   const restoredSharedAfterCoopState = await readHaven3DCameraState(page);
   assertSmoke(
-    restoredSharedAfterCoopState?.mode === "shared",
+    restoredSharedAfterCoopState?.behavior === "shared"
+      && restoredSharedAfterCoopState?.mode === "shared",
     `Co-op smoke cleanup did not restore shared camera mode: ${JSON.stringify(restoredSharedAfterCoopState)}`,
   );
 

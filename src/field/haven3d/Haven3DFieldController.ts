@@ -284,6 +284,7 @@ type PlayerVerticalState = {
   jumpFlipDirection: 1 | -1;
   groundElevation: number;
   worldElevation: number;
+  lastAirborneAt: number;
 };
 
 type CompanionVerticalState = {
@@ -390,6 +391,12 @@ type GrappleZiplineTargetRef = {
   key: string;
 };
 
+type GrindRailTargetRef = {
+  kind: "grind-rail";
+  id: string;
+  key: string;
+};
+
 type GrappleMoveState = {
   playerId: PlayerId;
   startedAt: number;
@@ -424,6 +431,59 @@ type GrappleMoveState = {
   };
 };
 
+type GrindRailSegment = {
+  id: string;
+  key: string;
+  routeId?: string;
+  segmentIndex: number;
+  nextSegmentIndex?: number;
+  launchAtEnd: boolean;
+  start: ZiplineEndpoint;
+  end: ZiplineEndpoint;
+  length: number;
+  directionX: number;
+  directionY: number;
+};
+
+type GrindRailAttachCandidate = {
+  segment: GrindRailSegment;
+  attachT: number;
+  attachPoint: { x: number; y: number };
+  attachHeight: number;
+  direction: 1 | -1;
+  score: number;
+};
+
+type RailRideState = {
+  playerId: PlayerId;
+  startedAt: number;
+  segmentKey: string;
+  routeId?: string;
+  segmentIndex: number;
+  direction: 1 | -1;
+  t: number;
+  speedPxPerSecond: number;
+  previousMode: Haven3DGearbladeMode | null;
+  lastSparkAt: number;
+};
+
+type RailRideSnapshot = {
+  playerId: PlayerId;
+  segmentKey: string;
+  routeId?: string;
+  segmentIndex: number;
+  direction: 1 | -1;
+  t: number;
+  speedPxPerSecond: number;
+  previousMode: Haven3DGearbladeMode | null;
+  lastSparkAt: number;
+};
+
+type LinkedGrindRailSegmentResult = {
+  segmentKey: string;
+  direction: 1 | -1;
+};
+
 type ReactiveMaterial = {
   material: THREE.MeshToonMaterial;
   baseEmissive: number;
@@ -455,6 +515,7 @@ type CameraYawPan = {
 };
 
 export type Haven3DFieldCameraMode = "shared" | "split";
+export type Haven3DFieldCameraBehavior = "shared" | "hybrid";
 
 export type Haven3DFieldCameraViewState = {
   yaw: number;
@@ -464,6 +525,7 @@ export type Haven3DFieldCameraViewState = {
 
 export type Haven3DFieldCameraState = {
   mode: Haven3DFieldCameraMode;
+  behavior: Haven3DFieldCameraBehavior;
   shared: Haven3DFieldCameraViewState;
   split: Record<PlayerId, Haven3DFieldCameraViewState>;
 };
@@ -496,6 +558,100 @@ type Haven3DMapProfile = {
   camera: Haven3DMapCameraProfile;
   scene: Haven3DMapSceneProfile;
 };
+
+export function projectPointOntoGrindRailSegment(
+  point: { x: number; y: number },
+  segment: Pick<GrindRailSegment, "start" | "end" | "length">,
+): { t: number; point: { x: number; y: number }; distancePx: number; height: number } {
+  const dx = segment.end.fieldPoint.x - segment.start.fieldPoint.x;
+  const dy = segment.end.fieldPoint.y - segment.start.fieldPoint.y;
+  const lengthSquared = Math.max(0.001, (dx * dx) + (dy * dy));
+  const t = THREE.MathUtils.clamp(
+    (((point.x - segment.start.fieldPoint.x) * dx) + ((point.y - segment.start.fieldPoint.y) * dy)) / lengthSquared,
+    0,
+    1,
+  );
+  const closestPoint = {
+    x: segment.start.fieldPoint.x + (dx * t),
+    y: segment.start.fieldPoint.y + (dy * t),
+  };
+  return {
+    t,
+    point: closestPoint,
+    distancePx: Math.hypot(point.x - closestPoint.x, point.y - closestPoint.y),
+    height: THREE.MathUtils.lerp(segment.start.height, segment.end.height, t),
+  };
+}
+
+export function resolveGrindRailDirectionFromVector(
+  segment: Pick<GrindRailSegment, "directionX" | "directionY">,
+  vector: { x: number; y: number } | null,
+  fallbackFacing: PlayerAvatar["facing"] = "south",
+): 1 | -1 {
+  const fallbackVector = (() => {
+    switch (fallbackFacing) {
+      case "north":
+        return { x: 0, y: -1 };
+      case "south":
+        return { x: 0, y: 1 };
+      case "east":
+        return { x: 1, y: 0 };
+      case "west":
+        return { x: -1, y: 0 };
+      default:
+        return { x: 0, y: 1 };
+    }
+  })();
+  const source = vector && Math.hypot(vector.x, vector.y) > 0.001 ? vector : fallbackVector;
+  const alignment = (source.x * segment.directionX) + (source.y * segment.directionY);
+  return alignment >= 0 ? 1 : -1;
+}
+
+export function resolveLinkedGrindRailSegment(
+  activeSegment: Pick<GrindRailSegment, "routeId" | "segmentIndex" | "nextSegmentIndex" | "start" | "end">,
+  activeDirection: 1 | -1,
+  segments: ReadonlyMap<string, GrindRailSegment>,
+): LinkedGrindRailSegmentResult | null {
+  const activeEndpoint = activeDirection > 0 ? activeSegment.end.fieldPoint : activeSegment.start.fieldPoint;
+  const targetIndex = activeDirection > 0
+    ? activeSegment.nextSegmentIndex
+    : null;
+  if (activeDirection > 0 && activeSegment.routeId && Number.isFinite(Number(targetIndex))) {
+    for (const [segmentKey, segment] of segments.entries()) {
+      if (segment.routeId !== activeSegment.routeId || segment.segmentIndex !== targetIndex) {
+        continue;
+      }
+      const startDistance = Math.hypot(segment.start.fieldPoint.x - activeEndpoint.x, segment.start.fieldPoint.y - activeEndpoint.y);
+      if (startDistance <= 6) {
+        return { segmentKey, direction: 1 };
+      }
+      const endDistance = Math.hypot(segment.end.fieldPoint.x - activeEndpoint.x, segment.end.fieldPoint.y - activeEndpoint.y);
+      if (endDistance <= 6) {
+        return { segmentKey, direction: -1 };
+      }
+    }
+  }
+
+  if (!activeSegment.routeId || activeDirection > 0) {
+    return null;
+  }
+
+  for (const [segmentKey, segment] of segments.entries()) {
+    if (segment.routeId !== activeSegment.routeId || segment.nextSegmentIndex !== activeSegment.segmentIndex) {
+      continue;
+    }
+    const startDistance = Math.hypot(segment.start.fieldPoint.x - activeEndpoint.x, segment.start.fieldPoint.y - activeEndpoint.y);
+    if (startDistance <= 6) {
+      return { segmentKey, direction: 1 };
+    }
+    const endDistance = Math.hypot(segment.end.fieldPoint.x - activeEndpoint.x, segment.end.fieldPoint.y - activeEndpoint.y);
+    if (endDistance <= 6) {
+      return { segmentKey, direction: -1 };
+    }
+  }
+
+  return null;
+}
 
 type HavenBuildingPalette = {
   wall: number;
@@ -563,6 +719,8 @@ const CAMERA_DEFAULT_DISTANCE = 8.8;
 const CAMERA_MIN_DISTANCE = 5.4;
 const CAMERA_MAX_DISTANCE = 15.5;
 const CAMERA_FOLLOW_ELEVATION_LERP_BASE = 0.00005;
+const HYBRID_CAMERA_SPLIT_ENTER_DISTANCE_PX = HAVEN3D_FIELD_TILE_SIZE * 4.25;
+const HYBRID_CAMERA_SPLIT_EXIT_DISTANCE_PX = HAVEN3D_FIELD_TILE_SIZE * 3.25;
 const LAUNCHER_CAMERA_MIN_PITCH = -0.24;
 const LAUNCHER_CAMERA_MAX_PITCH = 0.12;
 const LAUNCHER_CAMERA_DEFAULT_PITCH = 0;
@@ -710,6 +868,21 @@ const GRAPPLE_ZIPLINE_DISMOUNT_SPEED_PX_PER_SECOND = 720;
 const GRAPPLE_ZIPLINE_DISMOUNT_DURATION_MS = 620;
 const GRAPPLE_ZIPLINE_DISMOUNT_UPWARD_VELOCITY = 0.55;
 const GRAPPLE_ZIPLINE_DISMOUNT_MIN_FLIP_VELOCITY = 1.15;
+const GRIND_RAIL_ATTACH_RANGE_PX = 44;
+const GRIND_RAIL_ATTACH_HEIGHT_TOLERANCE_WORLD = 1.08;
+const GRIND_RAIL_APPROACH_TRAVEL_DEADZONE_PX = 8;
+const GRIND_RAIL_INPUT_ALIGNMENT_THRESHOLD = 0.68;
+const GRIND_RAIL_FACING_ALIGNMENT_THRESHOLD = 0.84;
+const GRIND_RAIL_FIXED_SPEED_PX_PER_SECOND = 940;
+const GRIND_RAIL_END_LAUNCH_SPEED_PX_PER_SECOND = 780;
+const GRIND_RAIL_END_LAUNCH_UPWARD_VELOCITY = 0.96;
+const GRIND_RAIL_JUMP_OFF_SPEED_PX_PER_SECOND = 710;
+const GRIND_RAIL_JUMP_OFF_UPWARD_VELOCITY = 3.75;
+const GRIND_RAIL_ATTACH_COOLDOWN_MS = 220;
+const GRIND_RAIL_AIRBORNE_GRACE_MS = 110;
+const GRIND_RAIL_SPARK_INTERVAL_MS = 56;
+const GRIND_RAIL_CAMERA_YAW_BIAS_STRENGTH = 0.22;
+const GRIND_RAIL_CAMERA_FOCUS_AHEAD = 1.28;
 const PLAYER_JUMP_HEIGHT_MULTIPLIER = 5;
 const PLAYER_JUMP_VELOCITY = 5.1 * Math.sqrt(PLAYER_JUMP_HEIGHT_MULTIPLIER);
 const PLAYER_COUNTERWEIGHT_BOOTS_JUMP_VELOCITY_MULTIPLIER = 1.18;
@@ -1091,6 +1264,13 @@ function getYawFromFieldDelta(dx: number, dy: number, fallback = 0): number {
   return Math.atan2(dx, dy);
 }
 
+function getCameraYawFromFieldDelta(dx: number, dy: number, fallback = 0): number {
+  if (Math.hypot(dx, dy) <= 0.001) {
+    return fallback;
+  }
+  return -Math.atan2(dx, -dy);
+}
+
 function getCameraYawForFacing(facing: PlayerAvatar["facing"]): number {
   const vector = getFacingVector(facing);
   return -Math.atan2(vector.x, -vector.y);
@@ -1138,12 +1318,67 @@ function normalizeHaven3DCameraState(
 
   return {
     mode: state.mode === "split" ? "split" : "shared",
+    behavior: state.behavior === "hybrid"
+      ? "hybrid"
+      : state.mode === "split"
+        ? "hybrid"
+        : "shared",
     shared: normalizeHaven3DCameraViewState(state.shared, profile),
     split: {
       P1: normalizeHaven3DCameraViewState(state.split?.P1 ?? state.shared, profile),
       P2: normalizeHaven3DCameraViewState(state.split?.P2 ?? state.shared, profile),
     },
   };
+}
+
+function getOuterDeckOpenWorldRuntimeKey(map: FieldMap): string | null {
+  const metadata = map.metadata;
+  if (metadata?.kind !== "outerDeckOpenWorld") {
+    return null;
+  }
+  return [
+    map.id,
+    metadata.seed,
+    metadata.generationVersion,
+    metadata.floorOrdinal,
+  ].join(":");
+}
+
+function getOuterDeckOpenWorldCameraRebaseDelta(previousMap: FieldMap, nextMap: FieldMap): THREE.Vector3 | null {
+  if (getOuterDeckOpenWorldRuntimeKey(previousMap) !== getOuterDeckOpenWorldRuntimeKey(nextMap)) {
+    return null;
+  }
+
+  const previousMetadata = previousMap.metadata;
+  const nextMetadata = nextMap.metadata;
+  if (previousMetadata?.kind !== "outerDeckOpenWorld" || nextMetadata?.kind !== "outerDeckOpenWorld") {
+    return null;
+  }
+
+  const previousOriginTileX = Number(previousMetadata.worldOriginTileX);
+  const previousOriginTileY = Number(previousMetadata.worldOriginTileY);
+  const nextOriginTileX = Number(nextMetadata.worldOriginTileX);
+  const nextOriginTileY = Number(nextMetadata.worldOriginTileY);
+  if (
+    !Number.isFinite(previousOriginTileX)
+    || !Number.isFinite(previousOriginTileY)
+    || !Number.isFinite(nextOriginTileX)
+    || !Number.isFinite(nextOriginTileY)
+  ) {
+    return null;
+  }
+
+  const deltaTileX = previousOriginTileX - nextOriginTileX;
+  const deltaTileY = previousOriginTileY - nextOriginTileY;
+  if (Math.abs(deltaTileX) < 0.0001 && Math.abs(deltaTileY) < 0.0001) {
+    return null;
+  }
+
+  return new THREE.Vector3(
+    deltaTileX * HAVEN3D_WORLD_TILE_SIZE,
+    0,
+    deltaTileY * HAVEN3D_WORLD_TILE_SIZE,
+  );
 }
 
 function getHaven3DTileColor(type: FieldMap["tiles"][number][number]["type"]): number {
@@ -1810,7 +2045,9 @@ export class Haven3DFieldController implements Haven3DModeController {
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
   private lastFrameTime = 0;
-  private cameraMode: Haven3DFieldCameraMode = "shared";
+  private cameraBehavior: Haven3DFieldCameraBehavior = "shared";
+  private effectiveCameraMode: Haven3DFieldCameraMode = "shared";
+  private hybridSplitActive = false;
   private yaw = 0;
   private pitch = 0.2;
   private cameraDistance = CAMERA_DEFAULT_DISTANCE;
@@ -1825,6 +2062,8 @@ export class Haven3DFieldController implements Haven3DModeController {
   private p2GearbladeTransform: GearbladeTransformState | null = null;
   private p2GrappleMove: GrappleMoveState | null = null;
   private p2ZiplineDismountDrift: ZiplineDismountDrift | null = null;
+  private p2RailRide: RailRideState | null = null;
+  private p2RailAttachCooldownUntil = 0;
   private mouseDx = 0;
   private mouseDy = 0;
   private rightMouseDown = false;
@@ -1843,6 +2082,8 @@ export class Haven3DFieldController implements Haven3DModeController {
   private gearbladeTransform: GearbladeTransformState | null = null;
   private grappleMove: GrappleMoveState | null = null;
   private ziplineDismountDrift: ZiplineDismountDrift | null = null;
+  private railRide: RailRideState | null = null;
+  private railAttachCooldownUntil = 0;
   private readonly launcherProjectiles: LauncherProjectile[] = [];
   private readonly enemyHpSnapshot = new Map<string, number>();
   private readonly enemyHitReactions = new Map<string, EnemyHitReaction>();
@@ -1850,6 +2091,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   private readonly playerVerticalStates = new Map<PlayerId, PlayerVerticalState>();
   private readonly grappleAnchors = new Map<string, GrappleAnchor>();
   private readonly grappleZiplineSegments = new Map<string, GrappleZiplineSegment>();
+  private readonly grindRailSegments = new Map<string, GrindRailSegment>();
   private readonly cameraImpulse = new THREE.Vector3();
   private modeElements: HTMLElement[] = [];
   private currentFrameTime = 0;
@@ -1873,7 +2115,6 @@ export class Haven3DFieldController implements Haven3DModeController {
     P1: true,
     P2: true,
   };
-  private hasUsedSplitCamera = false;
   private clearSkyboxBackground: (() => void) | null = null;
 
   private readonly handleResize = () => this.resize();
@@ -1892,7 +2133,8 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
     event.preventDefault();
-    if (this.cameraMode === "split") {
+    this.refreshEffectiveCameraMode();
+    if (this.getEffectiveCameraMode() === "split") {
       const bounds = this.renderer.domElement.getBoundingClientRect();
       const targetPlayerId: PlayerId = event.clientX >= bounds.left + (bounds.width / 2) ? "P2" : "P1";
       const current = this.splitCameraStates[targetPlayerId];
@@ -2052,11 +2294,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.mapProfile = getHaven3DMapProfile(options.map);
     const initialCameraState = normalizeHaven3DCameraState(options.initialCameraState, this.mapProfile);
     const sharedCameraState = initialCameraState?.shared ?? normalizeHaven3DCameraViewState(null, this.mapProfile);
-    this.cameraMode = initialCameraState?.mode ?? "shared";
+    this.cameraBehavior = initialCameraState?.behavior ?? "shared";
+    this.effectiveCameraMode = initialCameraState?.mode ?? "shared";
+    this.hybridSplitActive = this.cameraBehavior === "hybrid" && this.effectiveCameraMode === "split";
     this.yaw = sharedCameraState.yaw;
     this.pitch = sharedCameraState.pitch;
     this.cameraDistance = sharedCameraState.distance;
-    this.hasUsedSplitCamera = Boolean(initialCameraState);
     this.splitCameraStates = {
       P1: initialCameraState?.split.P1 ?? sharedCameraState,
       P2: initialCameraState?.split.P2 ?? sharedCameraState,
@@ -2385,6 +2628,34 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.p2ZiplineDismountDrift = drift;
   }
 
+  private getPlayerRailRide(playerId: PlayerId): RailRideState | null {
+    return playerId === "P1" ? this.railRide : this.p2RailRide;
+  }
+
+  private setPlayerRailRide(playerId: PlayerId, railRide: RailRideState | null): void {
+    if (playerId === "P1") {
+      this.railRide = railRide;
+      return;
+    }
+    this.p2RailRide = railRide;
+  }
+
+  private getPlayerRailAttachCooldownUntil(playerId: PlayerId): number {
+    return playerId === "P1" ? this.railAttachCooldownUntil : this.p2RailAttachCooldownUntil;
+  }
+
+  private setPlayerRailAttachCooldownUntil(playerId: PlayerId, cooldownUntil: number): void {
+    if (playerId === "P1") {
+      this.railAttachCooldownUntil = cooldownUntil;
+      return;
+    }
+    this.p2RailAttachCooldownUntil = cooldownUntil;
+  }
+
+  private isPlayerGrinding(playerId: PlayerId): boolean {
+    return Boolean(this.getPlayerRailRide(playerId));
+  }
+
   getPlayerCombatStates(): Partial<Record<PlayerId, FieldPlayerCombatState>> {
     const now = this.currentFrameTime || performance.now();
     const buildPlayerCombatState = (playerId: PlayerId): FieldPlayerCombatState => {
@@ -2409,8 +2680,11 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   getCameraState(): Haven3DFieldCameraState {
+    this.refreshEffectiveCameraMode();
+    const cameraMode = this.getEffectiveCameraMode();
     return {
-      mode: this.cameraMode,
+      mode: cameraMode,
+      behavior: this.cameraBehavior,
       shared: {
         yaw: this.getSnapshotYaw(),
         pitch: this.pitch,
@@ -2423,12 +2697,100 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
+  getCameraBehavior(): Haven3DFieldCameraBehavior {
+    return this.cameraBehavior;
+  }
+
+  setCameraBehavior(behavior: Haven3DFieldCameraBehavior): void {
+    const nextBehavior = this.options.isPlayerActive("P2")
+      ? behavior
+      : "shared";
+    const previousMode = this.effectiveCameraMode;
+    this.cameraBehavior = nextBehavior;
+    this.refreshEffectiveCameraMode(previousMode);
+    this.resize();
+    this.updateModeHud();
+    this.updatePrompt();
+  }
+
+  private getEffectiveCameraMode(): Haven3DFieldCameraMode {
+    return this.effectiveCameraMode;
+  }
+
+  private getPlayerSeparationPx(): number {
+    const p1Avatar = this.options.isPlayerActive("P1")
+      ? this.options.getPlayerAvatar("P1")
+      : null;
+    const p2Avatar = this.options.isPlayerActive("P2")
+      ? this.options.getPlayerAvatar("P2")
+      : null;
+    if (!p1Avatar || !p2Avatar) {
+      return 0;
+    }
+    return Math.hypot(p1Avatar.x - p2Avatar.x, p1Avatar.y - p2Avatar.y);
+  }
+
+  private transitionToSharedCameraLayout(): void {
+    this.yaw = lerpAngleRadians(this.splitCameraStates.P1.yaw, this.splitCameraStates.P2.yaw, 0.5);
+    this.pitch = (this.splitCameraStates.P1.pitch + this.splitCameraStates.P2.pitch) / 2;
+    this.cameraDistance = Math.max(this.splitCameraStates.P1.distance, this.splitCameraStates.P2.distance);
+    this.snapCameraNextFrame = true;
+    this.cameraFollowWorldY = null;
+  }
+
+  private transitionToSplitCameraLayout(): void {
+    this.splitCameraStates.P1 = {
+      yaw: this.yaw,
+      pitch: this.pitch,
+      distance: this.cameraDistance,
+    };
+    this.splitCameraStates.P2 = {
+      yaw: this.yaw,
+      pitch: this.pitch,
+      distance: this.cameraDistance,
+    };
+    this.splitCameraSnapNextFrame.P1 = true;
+    this.splitCameraSnapNextFrame.P2 = true;
+    this.splitCameraFollowWorldY.P1 = null;
+    this.splitCameraFollowWorldY.P2 = null;
+  }
+
+  private refreshEffectiveCameraMode(previousModeOverride?: Haven3DFieldCameraMode): Haven3DFieldCameraMode {
+    const previousMode = previousModeOverride ?? this.effectiveCameraMode;
+    let nextMode: Haven3DFieldCameraMode = "shared";
+    if (!this.options.isPlayerActive("P2")) {
+      this.cameraBehavior = "shared";
+      this.hybridSplitActive = false;
+    } else if (this.cameraBehavior === "hybrid") {
+      const separationPx = this.getPlayerSeparationPx();
+      if (this.hybridSplitActive) {
+        this.hybridSplitActive = separationPx > HYBRID_CAMERA_SPLIT_EXIT_DISTANCE_PX;
+      } else {
+        this.hybridSplitActive = separationPx >= HYBRID_CAMERA_SPLIT_ENTER_DISTANCE_PX;
+      }
+      nextMode = this.hybridSplitActive ? "split" : "shared";
+    } else {
+      this.hybridSplitActive = false;
+    }
+
+    if (nextMode !== previousMode) {
+      if (nextMode === "split") {
+        this.transitionToSplitCameraLayout();
+      } else {
+        this.transitionToSharedCameraLayout();
+      }
+    }
+
+    this.effectiveCameraMode = nextMode;
+    return this.effectiveCameraMode;
+  }
+
   private isPlayerControllable(playerId: PlayerId): boolean {
     return this.options.isPlayerControllable?.(playerId) ?? this.options.isPlayerActive(playerId);
   }
 
   private getCameraYawForPlayerControls(playerId: PlayerId): number {
-    if (this.cameraMode === "split") {
+    if (this.getEffectiveCameraMode() === "split") {
       return this.splitCameraStates[playerId].yaw;
     }
     return this.getSnapshotYaw();
@@ -2449,6 +2811,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
+  private rebaseStreamedOuterDeckCameraPositions(delta: THREE.Vector3): void {
+    this.camera.position.add(delta);
+    this.splitCameras.P1.position.add(delta);
+    this.splitCameras.P2.position.add(delta);
+  }
+
   private isTargetLockedByAnyPlayer(kind: Haven3DTargetKind, id: string): boolean {
     return (["P1", "P2"] as PlayerId[]).some((playerId) => {
       const targetLock = this.getPlayerTargetLock(playerId);
@@ -2461,8 +2829,17 @@ export class Haven3DFieldController implements Haven3DModeController {
       return;
     }
 
-    this.finishGrappleMove("P1", false);
-    this.clearMapBoundTransients();
+    const previousMap = this.options.map;
+    const preserveOuterDeckOpenWorldRuntime = getOuterDeckOpenWorldRuntimeKey(previousMap) !== null
+      && getOuterDeckOpenWorldRuntimeKey(previousMap) === getOuterDeckOpenWorldRuntimeKey(map);
+    const streamedOuterDeckCameraRebase = preserveOuterDeckOpenWorldRuntime
+      ? getOuterDeckOpenWorldCameraRebaseDelta(previousMap, map)
+      : null;
+    const preserveRailRide = preserveOuterDeckOpenWorldRuntime;
+    const preservedRailRideSnapshots = preserveRailRide
+      ? this.captureRailRideSnapshots()
+      : [];
+    this.clearMapBoundTransients({ preserveRailRide });
     this.options.map = map;
     this.mapProfile = getHaven3DMapProfile(map);
     this.cameraDistance = THREE.MathUtils.clamp(
@@ -2473,12 +2850,28 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.configureCameraForMap();
     this.resetActorMotionSnapshots();
     this.rebuildWorldScene();
+    if (streamedOuterDeckCameraRebase) {
+      this.rebaseStreamedOuterDeckCameraPositions(streamedOuterDeckCameraRebase);
+    }
+    if (preserveRailRide) {
+      this.restoreRailRideSnapshots(preservedRailRideSnapshots);
+    }
     this.syncDynamicActors();
     this.syncFieldProjectiles();
     this.syncLootOrbs();
     this.resize();
-    this.cameraFollowWorldY = null;
-    this.snapCameraNextFrame = true;
+    if (preserveOuterDeckOpenWorldRuntime) {
+      this.snapCameraNextFrame = false;
+      this.splitCameraSnapNextFrame.P1 = false;
+      this.splitCameraSnapNextFrame.P2 = false;
+    } else {
+      this.cameraFollowWorldY = null;
+      this.snapCameraNextFrame = true;
+      this.splitCameraFollowWorldY.P1 = null;
+      this.splitCameraFollowWorldY.P2 = null;
+      this.splitCameraSnapNextFrame.P1 = true;
+      this.splitCameraSnapNextFrame.P2 = true;
+    }
   }
 
   isFieldObjectVisible(objectId: string): boolean {
@@ -2523,7 +2916,12 @@ export class Haven3DFieldController implements Haven3DModeController {
     const playerId: PlayerId = maybeMode ? playerOrMode as PlayerId : "P1";
     const mode = (maybeMode ?? playerOrMode) as Haven3DGearbladeMode;
     const activeMode = this.getPlayerActiveMode(playerId);
-    if (!this.isPlayerControllable(playerId) || !this.enabledModes.has(mode) || activeMode === mode) {
+    if (
+      !this.isPlayerControllable(playerId)
+      || this.isPlayerGrinding(playerId)
+      || !this.enabledModes.has(mode)
+      || activeMode === mode
+    ) {
       return;
     }
 
@@ -2600,6 +2998,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.bindEvents();
     this.resize();
     this.lastFrameTime = performance.now();
+    this.refreshEffectiveCameraMode();
     this.updateModeHud();
     this.animationFrameId = requestAnimationFrame((time) => this.loop(time));
   }
@@ -2714,6 +3113,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.buildFieldObjects();
     this.buildGrappleAnchors();
     this.buildGrappleZiplineSegments();
+    this.buildGrindRailSegments();
     this.buildDistantHavenLandmark();
   }
 
@@ -2726,6 +3126,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.fieldObjectsById.clear();
     this.grappleAnchors.clear();
     this.grappleZiplineSegments.clear();
+    this.grindRailSegments.clear();
     this.distantHavenLandmark = null;
   }
 
@@ -2734,7 +3135,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.buildWorldScene();
   }
 
-  private clearMapBoundTransients(): void {
+  private clearMapBoundTransients(options: { preserveRailRide?: boolean } = {}): void {
     this.ziplineDismountDrift = null;
     this.p2ZiplineDismountDrift = null;
     this.companionVerticalState = null;
@@ -2752,6 +3153,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.p2GearbladeTransform = null;
     this.finishGrappleMove("P1", false);
     this.finishGrappleMove("P2", false);
+    if (!options.preserveRailRide) {
+      this.finishRailRide("P1", { suppressLaunch: true, keepCooldown: true });
+      this.finishRailRide("P2", { suppressLaunch: true, keepCooldown: true });
+    }
 
     for (let index = this.launcherProjectiles.length - 1; index >= 0; index -= 1) {
       this.removeLauncherProjectile(index);
@@ -3151,6 +3556,44 @@ export class Haven3DFieldController implements Haven3DModeController {
       });
   }
 
+  private buildGrindRailSegments(): void {
+    this.grindRailSegments.clear();
+    this.options.map.objects
+      .filter((object) => object.metadata?.grindRail === true)
+      .forEach((object) => {
+        const endpoints = this.getGrindRailTrackEndpoints(object.metadata ?? {});
+        if (!endpoints) {
+          return;
+        }
+
+        const dx = endpoints.end.fieldPoint.x - endpoints.start.fieldPoint.x;
+        const dy = endpoints.end.fieldPoint.y - endpoints.start.fieldPoint.y;
+        const length = Math.hypot(dx, dy);
+        if (length < GRAPPLE_ROUTE_MIN_TARGET_DISTANCE_PX) {
+          return;
+        }
+
+        const segmentIndex = Math.max(0, Number(object.metadata?.segmentIndex ?? 0));
+        const nextSegmentIndex = Number(object.metadata?.nextSegmentIndex);
+        const key = `grind-rail:${object.id}`;
+        this.grindRailSegments.set(key, {
+          id: object.id,
+          key,
+          routeId: typeof object.metadata?.railRouteId === "string"
+            ? object.metadata.railRouteId
+            : undefined,
+          segmentIndex,
+          nextSegmentIndex: Number.isFinite(nextSegmentIndex) ? Math.max(0, Math.round(nextSegmentIndex)) : undefined,
+          launchAtEnd: object.metadata?.launchAtEnd !== false,
+          start: endpoints.start,
+          end: endpoints.end,
+          length,
+          directionX: dx / length,
+          directionY: dy / length,
+        });
+      });
+  }
+
   private getGrappleAnchorState(anchor: GrappleAnchor): GrappleAnchorState {
     return {
       id: anchor.id,
@@ -3216,6 +3659,19 @@ export class Haven3DFieldController implements Haven3DModeController {
     };
   }
 
+  private getMapTileFieldPoint(tileX: number, tileY: number): { x: number; y: number } | null {
+    if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) {
+      return null;
+    }
+    if (this.isOuterDeckOpenWorldRuntimeMap()) {
+      return this.getOuterDeckWorldTileFieldPoint(tileX, tileY);
+    }
+    return {
+      x: tileX * HAVEN3D_FIELD_TILE_SIZE,
+      y: tileY * HAVEN3D_FIELD_TILE_SIZE,
+    };
+  }
+
   private getZiplineTrackEndpoints(metadata: Record<string, unknown>): ZiplineTrackEndpoints | null {
     const startWorldTileX = Number(metadata.startWorldTileX);
     const startWorldTileY = Number(metadata.startWorldTileY);
@@ -3258,6 +3714,44 @@ export class Haven3DFieldController implements Haven3DModeController {
     return startEndpoint && endEndpoint
       ? { start: startEndpoint, end: endEndpoint }
       : null;
+  }
+
+  private getGrindRailTrackEndpoints(metadata: Record<string, unknown>): ZiplineTrackEndpoints | null {
+    const startWorldTileX = Number(metadata.startWorldTileX);
+    const startWorldTileY = Number(metadata.startWorldTileY);
+    const endWorldTileX = Number(metadata.endWorldTileX);
+    const endWorldTileY = Number(metadata.endWorldTileY);
+    const startHeight = Number(metadata.startHeight);
+    const endHeight = Number(metadata.endHeight);
+    if (
+      !Number.isFinite(startWorldTileX)
+      || !Number.isFinite(startWorldTileY)
+      || !Number.isFinite(endWorldTileX)
+      || !Number.isFinite(endWorldTileY)
+    ) {
+      return null;
+    }
+
+    const startField = this.getMapTileFieldPoint(startWorldTileX, startWorldTileY);
+    const endField = this.getMapTileFieldPoint(endWorldTileX, endWorldTileY);
+    if (!startField || !endField) {
+      return null;
+    }
+
+    return {
+      start: {
+        fieldPoint: startField,
+        height: Number.isFinite(startHeight)
+          ? startHeight
+          : this.getGroundElevationAtPoint(startField) + 0.62,
+      },
+      end: {
+        fieldPoint: endField,
+        height: Number.isFinite(endHeight)
+          ? endHeight
+          : this.getGroundElevationAtPoint(endField) + 0.62,
+      },
+    };
   }
 
   private createZiplineTrackVisual(
@@ -3341,6 +3835,121 @@ export class Haven3DFieldController implements Haven3DModeController {
     return group;
   }
 
+  private createGrindRailVisual(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group | null {
+    const metadata = sourceObject?.metadata ?? {};
+    const endpoints = this.getGrindRailTrackEndpoints(metadata);
+    if (!endpoints) {
+      return null;
+    }
+
+    const startWorld = fieldToHavenWorld(
+      this.options.map,
+      endpoints.start.fieldPoint,
+      endpoints.start.height,
+    );
+    const endWorld = fieldToHavenWorld(
+      this.options.map,
+      endpoints.end.fieldPoint,
+      endpoints.end.height,
+    );
+    const toLocal = (world: THREE.Vector3) => new THREE.Vector3(
+      world.x - placement.worldCenter.x,
+      world.y - placement.worldCenter.y,
+      world.z - placement.worldCenter.z,
+    );
+    const start = toLocal(new THREE.Vector3(startWorld.x, startWorld.y, startWorld.z));
+    const end = toLocal(new THREE.Vector3(endWorld.x, endWorld.y, endWorld.z));
+
+    const group = new THREE.Group();
+    group.name = `GrindRail:${sourceObject?.id ?? placement.id}`;
+    const railColor = 0x8ec9d0;
+    const railShadow = 0x24454d;
+    const braceColor = 0x4b3723;
+
+    const createBeamBetween = (
+      from: THREE.Vector3,
+      to: THREE.Vector3,
+      radius: number,
+      color: number,
+      emissive?: number,
+      emissiveIntensity?: number,
+    ): THREE.Mesh => {
+      const delta = to.clone().sub(from);
+      const length = Math.max(0.001, delta.length());
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius, radius, length, 8),
+        createArdyciaToonMaterial({
+          color,
+          emissive,
+          emissiveIntensity,
+        }),
+      );
+      mesh.position.copy(from.clone().lerp(to, 0.5));
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.clone().normalize());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+
+    const railBeam = createBeamBetween(start, end, 0.065, railColor, 0x1e5e67, 0.48);
+    const undersideBeam = createBeamBetween(
+      start.clone().add(new THREE.Vector3(0, -0.08, 0)),
+      end.clone().add(new THREE.Vector3(0, -0.08, 0)),
+      0.04,
+      railShadow,
+      0x0f2024,
+      0.24,
+    );
+    const highlightBeam = createBeamBetween(
+      start.clone().add(new THREE.Vector3(0, 0.035, 0)),
+      end.clone().add(new THREE.Vector3(0, 0.035, 0)),
+      0.018,
+      0xd7faff,
+      0x7eefff,
+      0.52,
+    );
+    group.add(railBeam, undersideBeam, highlightBeam);
+
+    const addSupport = (t: number, side: -1 | 1): void => {
+      const fieldPoint = {
+        x: THREE.MathUtils.lerp(endpoints.start.fieldPoint.x, endpoints.end.fieldPoint.x, t),
+        y: THREE.MathUtils.lerp(endpoints.start.fieldPoint.y, endpoints.end.fieldPoint.y, t),
+      };
+      const railHeight = THREE.MathUtils.lerp(endpoints.start.height, endpoints.end.height, t);
+      const groundHeight = this.getGroundElevationAtPoint(fieldPoint);
+      const groundWorld = fieldToHavenWorld(this.options.map, fieldPoint, groundHeight);
+      const railWorld = fieldToHavenWorld(this.options.map, fieldPoint, railHeight);
+      const localGround = toLocal(new THREE.Vector3(groundWorld.x, groundWorld.y, groundWorld.z));
+      const localRail = toLocal(new THREE.Vector3(railWorld.x, railWorld.y, railWorld.z));
+      const supportHeight = Math.max(0.24, localRail.y - localGround.y);
+      const forward = end.clone().sub(start).normalize();
+      const sideVector = new THREE.Vector3(forward.z, 0, -forward.x).normalize().multiplyScalar(0.18 * side);
+      group.add(
+        this.createFieldObjectBox(
+          [0.08, supportHeight, 0.08],
+          [localRail.x + sideVector.x, localGround.y + (supportHeight / 2), localRail.z + sideVector.z],
+          braceColor,
+        ),
+        this.createFieldObjectBox(
+          [0.34, 0.08, 0.12],
+          [localRail.x, localRail.y - 0.08, localRail.z],
+          railShadow,
+          { rotation: [0, Math.atan2(-(end.z - start.z), end.x - start.x), 0] },
+        ),
+      );
+    };
+
+    addSupport(0, -1);
+    addSupport(0.5, 1);
+    addSupport(1, -1);
+    group.renderOrder = 7;
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.prop);
+    return group;
+  }
+
   private createFieldObjectBox(
     size: THREE.Vector3Tuple,
     position: THREE.Vector3Tuple,
@@ -3400,6 +4009,10 @@ export class Haven3DFieldController implements Haven3DModeController {
     placement: Haven3DSceneObjectPlacement,
     sourceObject: FieldObject | undefined,
   ): THREE.Group | null {
+    if (sourceObject?.metadata?.grindRail === true || sourceObject?.sprite === "grind_rail") {
+      return this.createGrindRailVisual(placement, sourceObject) ?? new THREE.Group();
+    }
+
     if (sourceObject?.metadata?.ziplineTrack === true || sourceObject?.sprite === "zipline_track") {
       return this.createZiplineTrackVisual(placement, sourceObject) ?? new THREE.Group();
     }
@@ -4743,6 +5356,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     if (!this.options.isPaused() && !hitstopped) {
       this.updatePlayerVertical(deltaMs);
       this.movePlayers(deltaMs);
+      this.updateRailRides(deltaMs, currentTime);
       this.updateBladeSwing(deltaMs, currentTime);
       this.updateGrappleMove(deltaMs, currentTime);
       this.updateZiplineDismountDrift(deltaMs, currentTime);
@@ -4758,6 +5372,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
 
     this.syncFieldObjectVisibility();
+    this.refreshEffectiveCameraMode();
     this.updateCamera(deltaMs / 1000);
     this.updateDistantHavenLandmark();
     this.updateGrappleAnchors(currentTime);
@@ -4778,7 +5393,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       if (!this.isPlayerControllable(playerId)) {
         return;
       }
-      if (this.getPlayerGrappleMove(playerId)) {
+      if (this.getPlayerGrappleMove(playerId) || this.getPlayerRailRide(playerId)) {
         return;
       }
 
@@ -4882,6 +5497,411 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private updateRailRides(deltaMs: number, currentTime: number): void {
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      if (this.getPlayerRailRide(playerId)) {
+        this.advanceRailRide(playerId, deltaMs, currentTime);
+        return;
+      }
+      this.tryAutoAttachPlayerToRail(playerId, currentTime);
+    });
+  }
+
+  private tryAutoAttachPlayerToRail(playerId: PlayerId, currentTime: number): void {
+    if (
+      !this.isPlayerControllable(playerId)
+      || this.options.isPaused()
+      || this.getPlayerGrappleMove(playerId)
+      || currentTime < this.getPlayerRailAttachCooldownUntil(playerId)
+    ) {
+      return;
+    }
+    const candidate = this.findGrindRailAttachCandidate(playerId, currentTime);
+    if (!candidate) {
+      return;
+    }
+    this.beginRailRide(playerId, candidate, currentTime);
+  }
+
+  private findGrindRailAttachCandidate(playerId: PlayerId, currentTime: number): GrindRailAttachCandidate | null {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar) {
+      return null;
+    }
+
+    const vertical = this.getPlayerVerticalState(playerId);
+    const withinAirborneGrace = currentTime - vertical.lastAirborneAt <= GRIND_RAIL_AIRBORNE_GRACE_MS;
+    if (vertical.grounded && !withinAirborneGrace) {
+      return null;
+    }
+
+    const avatarPoint = { x: avatar.x, y: avatar.y };
+    const playerWorldElevation = this.getPlayerVisualWorldElevation(playerId, avatarPoint);
+    const incomingVector = this.getPlayerIncomingRailVector(playerId, avatar);
+    const actor = this.playerActors.get(playerId);
+    const motion = actor?.motion;
+    const facingVector = getFacingVector(avatar.facing);
+    let best: GrindRailAttachCandidate | null = null;
+
+    for (const segment of this.grindRailSegments.values()) {
+      const projection = projectPointOntoGrindRailSegment(avatarPoint, segment);
+      if (projection.distancePx > GRIND_RAIL_ATTACH_RANGE_PX) {
+        continue;
+      }
+      const heightDelta = Math.abs(playerWorldElevation - projection.height);
+      if (heightDelta > GRIND_RAIL_ATTACH_HEIGHT_TOLERANCE_WORLD) {
+        continue;
+      }
+      if (vertical.velocity > 0.45 && playerWorldElevation < projection.height - 0.1) {
+        continue;
+      }
+
+      const projectedTravelPx = motion
+        ? (
+          (projection.t - projectPointOntoGrindRailSegment(
+            { x: motion.lastX, y: motion.lastY },
+            segment,
+          ).t) * segment.length
+        )
+        : 0;
+      const incomingAlignment = incomingVector
+        ? ((incomingVector.x * segment.directionX) + (incomingVector.y * segment.directionY))
+        : 0;
+      const facingAlignment = (facingVector.x * segment.directionX) + (facingVector.y * segment.directionY);
+      let direction: 1 | -1;
+      if (Math.abs(projectedTravelPx) >= GRIND_RAIL_APPROACH_TRAVEL_DEADZONE_PX) {
+        direction = projectedTravelPx >= 0 ? 1 : -1;
+      } else if (Math.abs(incomingAlignment) >= GRIND_RAIL_INPUT_ALIGNMENT_THRESHOLD) {
+        direction = incomingAlignment >= 0 ? 1 : -1;
+      } else if (Math.abs(facingAlignment) >= GRIND_RAIL_FACING_ALIGNMENT_THRESHOLD) {
+        direction = facingAlignment >= 0 ? 1 : -1;
+      } else {
+        direction = projection.t <= 0.5 ? 1 : -1;
+      }
+      const alignmentScore = Math.max(
+        0,
+        Math.abs(projectedTravelPx) >= GRIND_RAIL_APPROACH_TRAVEL_DEADZONE_PX
+          ? (projectedTravelPx / Math.max(1, segment.length)) * direction
+          : incomingVector
+            ? incomingAlignment * direction
+            : facingAlignment * direction,
+      );
+      const rideLengthPx = direction > 0
+        ? (1 - projection.t) * segment.length
+        : projection.t * segment.length;
+      const score = (
+        (GRIND_RAIL_ATTACH_RANGE_PX - projection.distancePx) * 2.2
+        + ((GRIND_RAIL_ATTACH_HEIGHT_TOLERANCE_WORLD - heightDelta) * 64)
+        + (alignmentScore * 18)
+        + (rideLengthPx * 0.012)
+      );
+      if (!best || score > best.score) {
+        best = {
+          segment,
+          attachT: projection.t,
+          attachPoint: projection.point,
+          attachHeight: projection.height,
+          direction,
+          score,
+        };
+      }
+    }
+
+    return best;
+  }
+
+  private getPlayerIncomingRailVector(playerId: PlayerId, avatar: FieldAvatarView): { x: number; y: number } | null {
+    const actor = this.playerActors.get(playerId);
+    const motion = actor?.motion;
+    if (motion) {
+      const deltaX = avatar.x - motion.lastX;
+      const deltaY = avatar.y - motion.lastY;
+      const deltaLength = Math.hypot(deltaX, deltaY);
+      if (deltaLength > 1.5) {
+        return { x: deltaX / deltaLength, y: deltaY / deltaLength };
+      }
+    }
+
+    const inputMovement = this.getPlayerMovementInputVector(playerId);
+    if (inputMovement) {
+      return inputMovement;
+    }
+
+    switch (avatar.facing) {
+      case "north":
+        return { x: 0, y: -1 };
+      case "south":
+        return { x: 0, y: 1 };
+      case "east":
+        return { x: 1, y: 0 };
+      case "west":
+        return { x: -1, y: 0 };
+      default:
+        return null;
+    }
+  }
+
+  private beginRailRide(playerId: PlayerId, candidate: GrindRailAttachCandidate, currentTime: number): void {
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar) {
+      return;
+    }
+    const previousMode = this.getPlayerActiveMode(playerId);
+    const facing = fieldFacingFromDelta(
+      candidate.segment.directionX * candidate.direction,
+      candidate.segment.directionY * candidate.direction,
+      avatar.facing,
+    );
+    this.setPlayerTargetLock(playerId, null);
+    this.setPlayerTargetOrbitYawOffset(playerId, 0);
+    if (playerId === "P1") {
+      this.cameraYawPan = null;
+    } else {
+      this.splitCameraYawPans[playerId] = null;
+    }
+    this.setPlayerZiplineDismountDrift(playerId, null);
+    this.stowPlayerGlider(playerId);
+    this.setPlayerBladeSwing(playerId, null);
+    this.resetBladeCombo(playerId);
+    this.options.setPlayerAvatar(playerId, candidate.attachPoint.x, candidate.attachPoint.y, facing);
+    this.setPlayerRailWorldElevation(playerId, candidate.attachPoint, candidate.attachHeight);
+    this.setPlayerRailRide(playerId, {
+      playerId,
+      startedAt: currentTime,
+      segmentKey: candidate.segment.key,
+      routeId: candidate.segment.routeId,
+      segmentIndex: candidate.segment.segmentIndex,
+      direction: candidate.direction,
+      t: candidate.attachT,
+      speedPxPerSecond: GRIND_RAIL_FIXED_SPEED_PX_PER_SECOND,
+      previousMode,
+      lastSparkAt: Number.NEGATIVE_INFINITY,
+    });
+    this.setPlayerRailAttachCooldownUntil(playerId, currentTime + GRIND_RAIL_ATTACH_COOLDOWN_MS);
+    this.updateModeHud();
+  }
+
+  private advanceRailRide(playerId: PlayerId, deltaMs: number, currentTime: number): void {
+    const railRide = this.getPlayerRailRide(playerId);
+    if (!railRide) {
+      return;
+    }
+
+    let segment = this.resolveGrindRailSegment(railRide);
+    if (!segment) {
+      this.finishRailRide(playerId, { suppressLaunch: true, keepCooldown: true });
+      return;
+    }
+
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!avatar) {
+      this.finishRailRide(playerId, { suppressLaunch: true, keepCooldown: true });
+      return;
+    }
+
+    let remainingDistance = railRide.speedPxPerSecond * Math.min(0.05, Math.max(0, deltaMs / 1000));
+    while (segment && remainingDistance > 0) {
+      const distanceToEnd = railRide.direction > 0
+        ? (1 - railRide.t) * segment.length
+        : railRide.t * segment.length;
+      if (remainingDistance < distanceToEnd) {
+        railRide.t += (remainingDistance / Math.max(1, segment.length)) * railRide.direction;
+        remainingDistance = 0;
+        break;
+      }
+
+      railRide.t = railRide.direction > 0 ? 1 : 0;
+      remainingDistance -= distanceToEnd;
+      const continuation = resolveLinkedGrindRailSegment(segment, railRide.direction, this.grindRailSegments);
+      if (!continuation) {
+        this.syncRailRideTransform(playerId, railRide, segment, currentTime);
+        this.finishRailRide(playerId);
+        return;
+      }
+
+      const nextSegment = this.grindRailSegments.get(continuation.segmentKey);
+      if (!nextSegment) {
+        this.syncRailRideTransform(playerId, railRide, segment, currentTime);
+        this.finishRailRide(playerId);
+        return;
+      }
+
+      railRide.segmentKey = continuation.segmentKey;
+      railRide.routeId = nextSegment.routeId;
+      railRide.segmentIndex = nextSegment.segmentIndex;
+      railRide.direction = continuation.direction;
+      railRide.t = continuation.direction > 0 ? 0 : 1;
+      segment = nextSegment;
+    }
+
+    this.syncRailRideTransform(playerId, railRide, segment, currentTime);
+  }
+
+  private syncRailRideTransform(
+    playerId: PlayerId,
+    railRide: RailRideState,
+    segment: GrindRailSegment,
+    currentTime: number,
+  ): void {
+    const point = {
+      x: THREE.MathUtils.lerp(segment.start.fieldPoint.x, segment.end.fieldPoint.x, railRide.t),
+      y: THREE.MathUtils.lerp(segment.start.fieldPoint.y, segment.end.fieldPoint.y, railRide.t),
+    };
+    const height = THREE.MathUtils.lerp(segment.start.height, segment.end.height, railRide.t);
+    const avatar = this.options.getPlayerAvatar(playerId);
+    const facing = fieldFacingFromDelta(
+      segment.directionX * railRide.direction,
+      segment.directionY * railRide.direction,
+      avatar?.facing ?? "south",
+    );
+    this.options.setPlayerAvatar(playerId, point.x, point.y, facing);
+    this.setPlayerRailWorldElevation(playerId, point, height);
+    if (currentTime - railRide.lastSparkAt >= GRIND_RAIL_SPARK_INTERVAL_MS) {
+      railRide.lastSparkAt = currentTime;
+      this.spawnGrindRailSparkBurst(point, height, {
+        x: segment.directionX * railRide.direction,
+        y: segment.directionY * railRide.direction,
+      });
+    }
+  }
+
+  private setPlayerRailWorldElevation(playerId: PlayerId, point: { x: number; y: number }, railHeight: number): void {
+    const state = this.getPlayerVerticalState(playerId);
+    const groundElevation = this.getGroundElevationAtPoint(point);
+    state.grounded = false;
+    state.gliding = false;
+    state.velocity = 0;
+    state.groundElevation = groundElevation;
+    state.worldElevation = Math.max(railHeight, groundElevation + 0.05);
+    state.elevation = Math.max(0, state.worldElevation - groundElevation);
+  }
+
+  private jumpPlayerOffRail(playerId: PlayerId): void {
+    this.finishRailRide(playerId, { jumpOff: true });
+  }
+
+  private finishRailRide(
+    playerId: PlayerId,
+    options: { jumpOff?: boolean; suppressLaunch?: boolean; keepCooldown?: boolean } = {},
+  ): void {
+    const railRide = this.getPlayerRailRide(playerId);
+    this.setPlayerRailRide(playerId, null);
+    if (!railRide) {
+      return;
+    }
+    this.updateModeHud();
+
+    const now = this.currentFrameTime || performance.now();
+    if (!options.keepCooldown) {
+      this.setPlayerRailAttachCooldownUntil(playerId, now + GRIND_RAIL_ATTACH_COOLDOWN_MS);
+    }
+    if (options.suppressLaunch) {
+      return;
+    }
+
+    const segment = this.resolveGrindRailSegment(railRide);
+    const avatar = this.options.getPlayerAvatar(playerId);
+    if (!segment || !avatar) {
+      return;
+    }
+
+    const point = { x: avatar.x, y: avatar.y };
+    const direction = {
+      x: segment.directionX * railRide.direction,
+      y: segment.directionY * railRide.direction,
+    };
+    const speed = options.jumpOff ? GRIND_RAIL_JUMP_OFF_SPEED_PX_PER_SECOND : GRIND_RAIL_END_LAUNCH_SPEED_PX_PER_SECOND;
+    const upwardVelocity = options.jumpOff ? GRIND_RAIL_JUMP_OFF_UPWARD_VELOCITY : GRIND_RAIL_END_LAUNCH_UPWARD_VELOCITY;
+    const state = this.getPlayerVerticalState(playerId);
+    const groundElevation = this.getGroundElevationAtPoint(point);
+    state.grounded = false;
+    state.gliding = false;
+    state.groundElevation = groundElevation;
+    state.worldElevation = Math.max(state.worldElevation, groundElevation + 0.2);
+    state.elevation = Math.max(0.2, state.worldElevation - groundElevation);
+    state.velocity = upwardVelocity;
+    state.jumpStartedAt = now;
+    state.jumpFlipDirection = 1;
+    state.lastAirborneAt = now;
+    this.options.setPlayerAvatar(playerId, point.x, point.y, fieldFacingFromDelta(direction.x, direction.y, avatar.facing));
+    this.setPlayerZiplineDismountDrift(playerId, {
+      playerId,
+      vx: direction.x * speed,
+      vy: direction.y * speed,
+      startedAt: now,
+      durationMs: options.jumpOff ? 340 : 480,
+    });
+  }
+
+  private resolveGrindRailSegment(railRide: RailRideState): GrindRailSegment | null {
+    const direct = this.grindRailSegments.get(railRide.segmentKey);
+    if (direct) {
+      return direct;
+    }
+    for (const [segmentKey, segment] of this.grindRailSegments.entries()) {
+      if (segment.routeId !== railRide.routeId || segment.segmentIndex !== railRide.segmentIndex) {
+        continue;
+      }
+      railRide.segmentKey = segmentKey;
+      return segment;
+    }
+    return null;
+  }
+
+  private captureRailRideSnapshots(): RailRideSnapshot[] {
+    const snapshots: RailRideSnapshot[] = [];
+    (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
+      const railRide = this.getPlayerRailRide(playerId);
+      if (!railRide) {
+        return;
+      }
+      snapshots.push({
+        playerId,
+        segmentKey: railRide.segmentKey,
+        routeId: railRide.routeId,
+        segmentIndex: railRide.segmentIndex,
+        direction: railRide.direction,
+        t: railRide.t,
+        speedPxPerSecond: railRide.speedPxPerSecond,
+        previousMode: railRide.previousMode,
+        lastSparkAt: railRide.lastSparkAt,
+      });
+    });
+    return snapshots;
+  }
+
+  private restoreRailRideSnapshots(snapshots: RailRideSnapshot[]): void {
+    snapshots.forEach((snapshot) => {
+      const segment = this.grindRailSegments.get(snapshot.segmentKey)
+        ?? Array.from(this.grindRailSegments.entries()).find(([, candidate]) => (
+          candidate.routeId === snapshot.routeId
+          && candidate.segmentIndex === snapshot.segmentIndex
+        ))?.[1]
+        ?? null;
+      if (!segment) {
+        return;
+      }
+      const segmentKey = this.grindRailSegments.has(snapshot.segmentKey)
+        ? snapshot.segmentKey
+        : `grind-rail:${segment.id}`;
+      this.setPlayerRailRide(snapshot.playerId, {
+        playerId: snapshot.playerId,
+        startedAt: this.currentFrameTime || performance.now(),
+        segmentKey,
+        routeId: snapshot.routeId,
+        segmentIndex: snapshot.segmentIndex,
+        direction: snapshot.direction,
+        t: THREE.MathUtils.clamp(snapshot.t, 0, 1),
+        speedPxPerSecond: snapshot.speedPxPerSecond,
+        previousMode: snapshot.previousMode,
+        lastSparkAt: snapshot.lastSparkAt,
+      });
+    });
+    if (snapshots.length > 0) {
+      this.updateModeHud();
+    }
+  }
+
   private getPlayerMovementInputVector(playerId: PlayerId): { x: number; y: number } | null {
     const input = getPlayerInput(playerId);
     const basis = this.getCameraBasis(playerId);
@@ -4929,6 +5949,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         jumpFlipDirection: 1,
         groundElevation: 0,
         worldElevation: 0,
+        lastAirborneAt: Number.NEGATIVE_INFINITY,
       };
       this.playerVerticalStates.set(playerId, state);
     }
@@ -4953,6 +5974,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         state.velocity = Math.min(0, state.velocity);
         state.worldElevation = Math.max(state.worldElevation, state.groundElevation);
         state.elevation = Math.max(0, state.worldElevation - groundElevation);
+        state.lastAirborneAt = this.currentFrameTime || performance.now();
       } else {
         state.groundElevation = groundElevation;
         state.worldElevation = groundElevation;
@@ -4982,7 +6004,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private isPlayerDashActive(playerId: PlayerId, state = this.getPlayerVerticalState(playerId)): boolean {
-    if (state.gliding) {
+    if (state.gliding || this.isPlayerGrinding(playerId)) {
       return false;
     }
     if (state.grounded) {
@@ -5002,6 +6024,10 @@ export class Haven3DFieldController implements Haven3DModeController {
 
   private tryStartPlayerJump(playerId: PlayerId): void {
     if (this.options.isPaused() || !this.isPlayerControllable(playerId)) {
+      return;
+    }
+    if (this.isPlayerGrinding(playerId)) {
+      this.jumpPlayerOffRail(playerId);
       return;
     }
     if (this.getPlayerGrappleMove(playerId)) {
@@ -5043,6 +6069,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     );
     state.jumpStartedAt = this.currentFrameTime || performance.now();
     state.jumpFlipDirection = this.shouldUseBackflipForJump(playerId, avatar) ? -1 : 1;
+    state.lastAirborneAt = state.jumpStartedAt;
     this.cameraImpulse.y += playerId === "P1" ? 0.045 : 0;
     if (playerId === "P1") {
       this.tryStartCompanionJump({ nearPoint: avatarPoint, velocity: SABLE_JUMP_VELOCITY });
@@ -5057,7 +6084,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     ) {
       return false;
     }
-    if (this.getPlayerGrappleMove(playerId)) {
+    if (this.getPlayerGrappleMove(playerId) || this.getPlayerRailRide(playerId)) {
       return false;
     }
 
@@ -5115,7 +6142,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     (["P1", "P2"] as PlayerId[]).forEach((playerId) => {
       const state = this.getPlayerVerticalState(playerId);
       const grappleMove = this.getPlayerGrappleMove(playerId);
-      if (grappleMove?.target.kind === "grapple-node" || grappleMove?.target.kind === "zipline-track") {
+      if (this.getPlayerRailRide(playerId) || grappleMove?.target.kind === "grapple-node" || grappleMove?.target.kind === "zipline-track") {
         return;
       }
       const avatar = this.options.getPlayerAvatar(playerId);
@@ -5141,6 +6168,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         state.velocity = Math.min(0, state.velocity);
         state.worldElevation = Math.max(state.worldElevation, state.groundElevation);
         state.elevation = Math.max(0, state.worldElevation - groundElevation);
+        state.lastAirborneAt = this.currentFrameTime || performance.now();
       }
 
       if (state.gliding && !this.playerHasApronUtility(playerId, "apron_glider")) {
@@ -5168,6 +6196,7 @@ export class Haven3DFieldController implements Haven3DModeController {
         state.grounded = false;
         state.groundElevation = groundElevation;
         state.elevation = Math.max(0, state.worldElevation - groundElevation);
+        state.lastAirborneAt = this.currentFrameTime || performance.now();
       }
     });
   }
@@ -5419,40 +6448,22 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   toggleCameraMode(): void {
-    this.cameraMode = this.cameraMode === "shared" ? "split" : "shared";
-    if (this.cameraMode === "shared") {
-      this.yaw = lerpAngleRadians(this.splitCameraStates.P1.yaw, this.splitCameraStates.P2.yaw, 0.5);
-      this.pitch = (this.splitCameraStates.P1.pitch + this.splitCameraStates.P2.pitch) / 2;
-      this.cameraDistance = Math.max(this.splitCameraStates.P1.distance, this.splitCameraStates.P2.distance);
-      this.snapCameraNextFrame = true;
-      this.cameraFollowWorldY = null;
-    } else {
-      if (!this.hasUsedSplitCamera) {
-        this.splitCameraStates.P1 = {
-          yaw: this.yaw,
-          pitch: this.pitch,
-          distance: this.cameraDistance,
-        };
-        this.splitCameraStates.P2 = {
-          yaw: this.yaw,
-          pitch: this.pitch,
-          distance: this.cameraDistance,
-        };
-      }
-      this.hasUsedSplitCamera = true;
-      this.splitCameraSnapNextFrame.P1 = true;
-      this.splitCameraSnapNextFrame.P2 = true;
-      this.splitCameraFollowWorldY.P1 = null;
-      this.splitCameraFollowWorldY.P2 = null;
+    if (!this.options.isPlayerActive("P2")) {
+      this.setCameraBehavior("shared");
+      return;
     }
-    this.resize();
-    this.updateModeHud();
-    this.updatePrompt();
+
+    this.setCameraBehavior(this.cameraBehavior === "shared" ? "hybrid" : "shared");
   }
 
   private triggerPrimaryAction(playerId: PlayerId = "P1"): void {
     const activeMode = this.getPlayerActiveMode(playerId);
-    if (this.options.isPaused() || !this.isPlayerControllable(playerId) || !activeMode) {
+    if (
+      this.options.isPaused()
+      || !this.isPlayerControllable(playerId)
+      || this.isPlayerGrinding(playerId)
+      || !activeMode
+    ) {
       return;
     }
 
@@ -7322,6 +8333,58 @@ export class Haven3DFieldController implements Haven3DModeController {
     });
   }
 
+  private spawnGrindRailSparkBurst(
+    point: { x: number; y: number },
+    railHeight: number,
+    direction: { x: number; y: number },
+  ): void {
+    const world = fieldToHavenWorld(this.options.map, point, railHeight + 0.06);
+    const group = new THREE.Group();
+    group.name = "grind-rail-spark-burst";
+    group.position.set(world.x, world.y, world.z);
+    group.rotation.y = Math.atan2(-direction.y, direction.x);
+    const forward = new THREE.Vector3(direction.x, 0, direction.y).normalize();
+    const lateral = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+    for (let index = 0; index < 4; index += 1) {
+      const spark = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.22 + (index * 0.05), 0.05 + (index * 0.01)),
+        new THREE.MeshBasicMaterial({
+          color: index < 2 ? 0xffefaa : 0xffa24a,
+          transparent: true,
+          opacity: 0.8 - (index * 0.1),
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      spark.position.set(
+        0.08 + (index * 0.07),
+        0.04 + (index * 0.03),
+        (index - 1.5) * 0.06,
+      );
+      spark.rotation.set(
+        (Math.random() - 0.5) * 0.26,
+        0,
+        (Math.random() - 0.5) * 0.52,
+      );
+      group.add(spark);
+    }
+
+    group.renderOrder = 23;
+    this.dynamicGroup.add(group);
+    const velocity = forward.multiplyScalar(1.04).addScaledVector(lateral, (Math.random() - 0.5) * 0.28);
+    velocity.y = 0.84;
+    this.visualEffects.push({
+      object: group,
+      startedAt: this.currentFrameTime || performance.now(),
+      durationMs: 210,
+      velocity,
+      spin: 2.6,
+      baseScale: group.scale.clone(),
+      opacity: 0.86,
+      scaleGrowth: 0.72,
+    });
+  }
+
   private spawnDashBurstEffect(point: { x: number; y: number }, yaw: number): void {
     const world = fieldToHavenWorld(this.options.map, point, this.getGroundElevationAtPoint(point) + 0.1);
     const group = new THREE.Group();
@@ -7860,7 +8923,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     this.mouseDx = 0;
     this.mouseDy = 0;
 
-    if (this.cameraMode === "split") {
+    if (this.getEffectiveCameraMode() === "split") {
       this.camera.fov = 62;
       this.camera.updateProjectionMatrix();
       this.updateSplitCamera("P1", this.splitCameras.P1, dt, yawDelta, pitchDelta, true);
@@ -7909,7 +8972,8 @@ export class Haven3DFieldController implements Haven3DModeController {
     }
     const cameraPlayerWorld = new THREE.Vector3(playerWorld.x, this.cameraFollowWorldY ?? playerWorld.y, playerWorld.z);
     const lockedTarget = this.getLockedTargetCandidate(sharedControlPlayerId);
-    const launcherAimMode = Boolean(avatar && this.getPlayerActiveMode(sharedControlPlayerId) === "launcher");
+    const railRide = avatar ? this.getPlayerRailRide(sharedControlPlayerId) : null;
+    const launcherAimMode = Boolean(avatar && this.getPlayerActiveMode(sharedControlPlayerId) === "launcher" && !railRide);
     const cameraProfile = this.mapProfile.camera;
     const baseCameraDistance = THREE.MathUtils.clamp(
       this.cameraDistance,
@@ -7982,6 +9046,23 @@ export class Haven3DFieldController implements Haven3DModeController {
       }
       this.setPlayerTargetOrbitYawOffset(sharedControlPlayerId, 0);
       cameraAnchor = focus.clone();
+    }
+
+    if (railRide) {
+      const railSegment = this.resolveGrindRailSegment(railRide);
+      if (railSegment) {
+        const railYaw = getCameraYawFromFieldDelta(
+          railSegment.directionX * railRide.direction,
+          railSegment.directionY * railRide.direction,
+          cameraYaw,
+        );
+        cameraYaw = lerpAngleRadians(cameraYaw, railYaw - (GRIND_RAIL_CAMERA_YAW_BIAS_STRENGTH * railRide.direction), 1 - Math.pow(0.0012, dt));
+        const railForward = new THREE.Vector3(-Math.sin(railYaw), 0, -Math.cos(railYaw));
+        focus = cameraPlayerWorld.clone();
+        focus.y += 0.22;
+        focus.addScaledVector(railForward, GRIND_RAIL_CAMERA_FOCUS_AHEAD);
+        cameraAnchor = cameraPlayerWorld.clone();
+      }
     }
 
     if (launcherAimMode && avatar) {
@@ -8092,6 +9173,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     );
     const lockedTarget = this.getLockedTargetCandidate(playerId);
     const activeMode = this.getPlayerActiveMode(playerId);
+    const railRide = this.getPlayerRailRide(playerId);
     let distance = THREE.MathUtils.clamp(viewState.distance, cameraProfile.minDistance, cameraProfile.maxDistance);
     let focus = cameraPlayerWorld.clone();
     let cameraAnchor = cameraPlayerWorld.clone();
@@ -8153,7 +9235,24 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.setPlayerTargetOrbitYawOffset(playerId, 0);
     }
 
-    const launcherAimMode = activeMode === "launcher";
+    if (railRide) {
+      const railSegment = this.resolveGrindRailSegment(railRide);
+      if (railSegment) {
+        const railYaw = getCameraYawFromFieldDelta(
+          railSegment.directionX * railRide.direction,
+          railSegment.directionY * railRide.direction,
+          viewYaw,
+        );
+        viewYaw = lerpAngleRadians(viewYaw, railYaw - (GRIND_RAIL_CAMERA_YAW_BIAS_STRENGTH * railRide.direction), 1 - Math.pow(0.0012, dt));
+        const railForward = new THREE.Vector3(-Math.sin(railYaw), 0, -Math.cos(railYaw));
+        focus = cameraPlayerWorld.clone();
+        focus.y += 0.22;
+        focus.addScaledVector(railForward, GRIND_RAIL_CAMERA_FOCUS_AHEAD);
+        cameraAnchor = cameraPlayerWorld.clone();
+      }
+    }
+
+    const launcherAimMode = activeMode === "launcher" && !railRide;
     if (launcherAimMode) {
       const launcherPitch = THREE.MathUtils.clamp(viewPitch, LAUNCHER_CAMERA_MIN_PITCH, LAUNCHER_CAMERA_MAX_PITCH);
       viewPitch = THREE.MathUtils.lerp(viewPitch, launcherPitch, 1 - Math.pow(0.0007, dt));
@@ -8223,14 +9322,17 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private renderScene(): void {
-    if (this.cameraMode !== "split") {
+    const width = Math.max(1, this.options.host.clientWidth || window.innerWidth);
+    const height = Math.max(1, this.options.host.clientHeight || window.innerHeight);
+    if (this.getEffectiveCameraMode() !== "split") {
       this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, width, height);
+      this.renderer.setScissor(0, 0, width, height);
+      this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
       return;
     }
 
-    const width = Math.max(1, this.options.host.clientWidth || window.innerWidth);
-    const height = Math.max(1, this.options.host.clientHeight || window.innerHeight);
     const leftWidth = Math.max(1, Math.floor(width / 2));
     const rightWidth = Math.max(1, width - leftWidth);
     const previousAutoClear = this.renderer.autoClear;
@@ -8457,19 +9559,27 @@ export class Haven3DFieldController implements Haven3DModeController {
     const world = fieldToHavenWorld(this.options.map, avatarPoint, verticalWorldElevation + 0.04);
     const vertical = this.getPlayerVerticalState(playerId);
     const lockedTarget = this.getLockedTargetCandidate(playerId);
+    const railRide = this.getPlayerRailRide(playerId);
     actor.group.position.set(world.x, world.y, world.z);
     const bladeSwing = this.getPlayerBladeSwing(playerId);
     const activeMode = this.getPlayerActiveMode(playerId);
     const grappleMove = this.getPlayerGrappleMove(playerId);
+    const railSegment = railRide ? this.resolveGrindRailSegment(railRide) : null;
     const bladeLookDirection = bladeSwing
       ? bladeSwing.direction
       : null;
     const launcherLookDirection = activeMode === "launcher"
       ? this.getActionDirection(playerId, avatar, lockedTarget)
       : null;
-    const lookDirection = lockedTarget
+    const railLookDirection = railSegment
+      ? {
+          x: railSegment.directionX * railRide!.direction,
+          y: railSegment.directionY * railRide!.direction,
+        }
+      : null;
+    const lookDirection = railLookDirection ?? (lockedTarget
       ? { x: lockedTarget.x - avatar.x, y: lockedTarget.y - avatar.y }
-      : launcherLookDirection ?? bladeLookDirection;
+      : launcherLookDirection ?? bladeLookDirection);
     const dashActive = this.isPlayerDashActive(playerId, vertical);
     this.updateActorMotion(
       actor,
@@ -8479,10 +9589,17 @@ export class Haven3DFieldController implements Haven3DModeController {
       this.getRotationForFacing(avatar.facing),
       lookDirection,
       dashActive,
-      !vertical.grounded,
+      !vertical.grounded && !railRide,
     );
-    this.applyChibiJumpPose(actor.chibi, vertical);
-    if (vertical.grounded) {
+    if (railRide) {
+      if (actor.motion) {
+        actor.motion.footstepSoundStep = undefined;
+        actor.motion.footDustStep = undefined;
+      }
+    } else {
+      this.applyChibiJumpPose(actor.chibi, vertical);
+    }
+    if (vertical.grounded && !railRide) {
       this.maybeEmitPlayerFootstep(actor, playerId);
       this.maybeSpawnRunDust(actor, avatar.x, avatar.y);
     } else if (actor.motion) {
@@ -8507,7 +9624,15 @@ export class Haven3DFieldController implements Haven3DModeController {
     const vertical = this.getPlayerVerticalState(playerId);
     const grappleMove = this.getPlayerGrappleMove(playerId);
     const bladeSwing = this.getPlayerBladeSwing(playerId);
+    const railRide = this.getPlayerRailRide(playerId);
     this.updatePlayerWeaponForm(actor, activeMode, transform);
+    if (railRide) {
+      this.updatePlayerWeaponForm(actor, null, transform);
+      this.applyGrindRailRidePose(actor, railRide);
+      this.stowBladeOnBack(actor);
+      this.hideBladeTrail(actor);
+      return;
+    }
     if (activeMode === "launcher") {
       const recoil = this.getLauncherRecoilAmount(playerId);
       const launcherAirborne = !vertical.grounded;
@@ -8710,6 +9835,45 @@ export class Haven3DFieldController implements Haven3DModeController {
     chibi.rightHandMount.rotateX(-0.1);
     chibi.rightHandMount.rotateZ(-0.08 * handedSide);
     chibi.rightHand.position.set(0, -0.002, 0.048);
+    chibi.rightHand.scale.set(0.9, 0.72, 0.62);
+  }
+
+  private applyGrindRailRidePose(actor: Actor, railRide: RailRideState): void {
+    const chibi = actor.chibi;
+    if (!chibi) {
+      return;
+    }
+
+    const frameTime = this.currentFrameTime || performance.now();
+    const sway = Math.sin(frameTime * 0.0086) * 0.03;
+    const bob = Math.sin(frameTime * 0.0124) * 0.014;
+    const stanceSide = railRide.direction;
+    chibi.root.position.set(0, 0.15 + bob, 0.02);
+    chibi.root.rotation.set(0.08, 0.88 * stanceSide, -0.08 * stanceSide);
+    chibi.torso.rotation.set(-0.1, -0.26 * stanceSide, -0.18 * stanceSide + sway);
+    chibi.pelvis.rotation.set(0.18, 0.16 * stanceSide, 0.12 * stanceSide - (sway * 0.5));
+    chibi.head.rotation.set(0.04, 0.22 * stanceSide, 0.1 * stanceSide - (sway * 0.32));
+
+    chibi.leftUpperArm.rotation.set(0.34, -0.22, 0.78 + (0.08 * sway));
+    chibi.leftForearm.rotation.set(-0.46, -0.08, 0.44);
+    chibi.rightUpperArm.rotation.set(0.28, 0.26, -0.54 + (0.06 * sway));
+    chibi.rightForearm.rotation.set(-0.36, 0.06, -0.22);
+
+    chibi.leftThigh.rotation.set(-0.12, -0.08, -0.52);
+    chibi.leftShin.rotation.set(0.54, 0.02, -0.08);
+    chibi.leftFoot.position.set(-0.06, -0.27, 0.16);
+    chibi.leftFoot.rotation.set(-0.14, 0.04, 0.1);
+
+    chibi.rightThigh.rotation.set(0.22, 0.08, 0.12);
+    chibi.rightShin.rotation.set(0.28, 0, 0.02);
+    chibi.rightFoot.position.set(0.02, -0.27, 0.16);
+    chibi.rightFoot.rotation.set(0.02, 0, -0.04);
+
+    chibi.rightShoulderPivot.rotation.set(0, 0, 0);
+    chibi.rightForearm.position.set(0, -0.3, 0.03);
+    chibi.rightHandMount.position.set(0, -0.28, 0.04);
+    chibi.rightHandMount.rotation.set(0, 0, 0);
+    chibi.rightHand.position.set(0, 0, 0);
     chibi.rightHand.scale.set(0.9, 0.72, 0.62);
   }
 
@@ -9940,20 +11104,22 @@ export class Haven3DFieldController implements Haven3DModeController {
   }
 
   private updateModeHud(): void {
+    const splitActive = this.getEffectiveCameraMode() === "split";
+    const hybridBehaviorActive = this.cameraBehavior === "hybrid" && this.options.isPlayerActive("P2");
     const sharedUi = document.querySelector<HTMLElement>("[data-haven3d-shared-ui]");
     const splitUi = document.querySelector<HTMLElement>("[data-haven3d-split-ui]");
     if (sharedUi) {
-      sharedUi.hidden = this.cameraMode === "split";
+      sharedUi.hidden = splitActive;
     }
     if (splitUi) {
-      splitUi.hidden = this.cameraMode !== "split";
+      splitUi.hidden = !splitActive;
     }
     document.querySelectorAll<HTMLElement>("[data-haven3d-coop-camera-label]").forEach((label) => {
-      label.textContent = this.cameraMode === "split" ? "Shared View" : "Split View";
+      label.textContent = hybridBehaviorActive ? "Hybrid View" : "Shared View";
     });
     document.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-split']").forEach((button) => {
-      button.classList.toggle("haven3d-coop-control--active", this.cameraMode === "split");
-      button.setAttribute("aria-pressed", this.cameraMode === "split" ? "true" : "false");
+      button.classList.toggle("haven3d-coop-control--active", hybridBehaviorActive);
+      button.setAttribute("aria-pressed", hybridBehaviorActive ? "true" : "false");
     });
 
     document.querySelectorAll<HTMLElement>("[data-gearblade-mode-selector]").forEach((selector) => {
@@ -10002,7 +11168,8 @@ export class Haven3DFieldController implements Haven3DModeController {
         ? "P2"
         : "P1";
       const showReticle = this.getPlayerActiveMode(playerId) === "launcher"
-        && (this.cameraMode === "split" || playerId === "P1");
+        && !this.isPlayerGrinding(playerId)
+        && (splitActive || playerId === "P1");
       reticle.classList.toggle("haven3d-reticle--visible", showReticle);
       reticle.setAttribute("aria-hidden", showReticle ? "false" : "true");
     });
@@ -10017,8 +11184,10 @@ export class Haven3DFieldController implements Haven3DModeController {
       return [basePrompt, targetText, modeText].filter(Boolean).join(" | ");
     };
 
+    const cameraMode = this.getEffectiveCameraMode();
+
     if (this.promptElement) {
-      const promptText = this.cameraMode === "shared"
+      const promptText = cameraMode === "shared"
         ? buildPromptText("P1", this.options.getPrompt())
         : "";
       this.promptElement.textContent = promptText;
@@ -10030,7 +11199,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       if (!promptElement) {
         return;
       }
-      const promptText = this.cameraMode === "split"
+      const promptText = cameraMode === "split"
         ? buildPromptText(playerId, this.options.getPlayerPrompt?.(playerId) ?? this.options.getPrompt())
         : "";
       promptElement.textContent = promptText;

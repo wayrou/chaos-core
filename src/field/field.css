@@ -171,12 +171,20 @@
   inset: 0;
 }
 
+.haven3d-shared-ui[hidden] {
+  display: none !important;
+}
+
 .haven3d-split-ui {
   position: absolute;
   inset: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   pointer-events: none;
+}
+
+.haven3d-split-ui[hidden] {
+  display: none !important;
 }
 
 .haven3d-split-ui::before {
@@ -240,6 +248,16 @@
   background:
     linear-gradient(180deg, rgba(126, 104, 222, 0.2), rgba(126, 104, 222, 0.02)),
     rgba(24, 19, 43, 0.82);
+}
+
+.haven3d-coop-control--disabled,
+.haven3d-coop-control:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  border-color: rgba(245, 234, 210, 0.18);
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .haven3d-coop-control__kicker,
@@ -901,10 +919,32 @@
   box-shadow: 0 0 12px rgba(102, 219, 201, 0.42);
 }
 
+.field-object--sprite-grind_rail {
+  overflow: visible;
+  border-color: rgba(159, 214, 224, 0.58);
+  background: rgba(26, 38, 44, 0.38);
+  box-shadow:
+    0 0 0 1px rgba(224, 249, 255, 0.08) inset,
+    0 0 24px rgba(126, 219, 255, 0.16);
+}
+
+.field-object--sprite-grind_rail::before {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, rgba(120, 171, 184, 0.18), rgba(224, 251, 255, 0.9), rgba(120, 171, 184, 0.18));
+  box-shadow: 0 0 10px rgba(126, 219, 255, 0.28);
+}
+
 .field-object-placeholder--theater-chart,
 .field-object-placeholder--apron-key,
 .field-object-placeholder--apron-lantern,
-.field-object-placeholder--zipline {
+.field-object-placeholder--zipline,
+.field-object-placeholder--grind-rail {
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -916,6 +956,10 @@
 .field-object-placeholder--apron-key,
 .field-object-placeholder--apron-lantern {
   color: #ffe2a3;
+}
+
+.field-object-placeholder--grind-rail {
+  color: #d8f5fb;
 }
 
 /* Player Avatar */

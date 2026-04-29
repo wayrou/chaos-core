@@ -803,7 +803,7 @@ function renderHaven3DCoopControlsHtml(): string {
         aria-pressed="false"
       >
         <span class="haven3d-coop-control__kicker">CAMERA</span>
-        <span class="haven3d-coop-control__label" data-haven3d-coop-camera-label>Split View</span>
+        <span class="haven3d-coop-control__label" data-haven3d-coop-camera-label>Shared View</span>
       </button>
     </div>
   `;
@@ -3563,6 +3563,10 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
       setRuntimeFieldAvatarPosition(playerId, x, y, facing);
     },
     constrainPlayerPosition: (playerId, desired, previous) => {
+      if (isHaven3DSplitCameraActive()) {
+        return desired;
+      }
+
       const otherPlayerId: PlayerId = playerId === "P1" ? "P2" : "P1";
       const otherAvatar = isFieldPlayerActive(otherPlayerId)
         ? getRuntimeFieldAvatar(otherPlayerId)
@@ -4033,19 +4037,28 @@ function isHaven3DSplitCameraActive(): boolean {
   return haven3DFieldController?.getCameraState().mode === "split";
 }
 
-function setHaven3DSplitCameraActive(active: boolean): void {
-  if (!haven3DFieldController || isHaven3DSplitCameraActive() === active) {
+function isHaven3DHybridCameraEnabled(): boolean {
+  return haven3DFieldController?.getCameraBehavior() === "hybrid";
+}
+
+function setHaven3DHybridCameraEnabled(active: boolean): void {
+  if (active && !getGameState().players.P2.active) {
     syncHaven3DCoopControls();
     return;
   }
-  haven3DFieldController.toggleCameraMode();
+  if (!haven3DFieldController || isHaven3DHybridCameraEnabled() === active) {
+    syncHaven3DCoopControls();
+    return;
+  }
+  haven3DFieldController.setCameraBehavior(active ? "hybrid" : "shared");
   syncHaven3DCoopControls();
 }
 
 function syncHaven3DCoopControls(root: ParentNode = document): void {
   const p2Active = Boolean(getGameState().players.P2.active);
+  const hybridActive = isHaven3DHybridCameraEnabled();
   const splitActive = isHaven3DSplitCameraActive();
-  const syncKey = `${p2Active ? "1" : "0"}:${splitActive ? "1" : "0"}`;
+  const syncKey = `${p2Active ? "1" : "0"}:${hybridActive ? "1" : "0"}:${splitActive ? "1" : "0"}`;
   if (root === document && syncKey === lastHaven3DCoopControlsSyncKey) {
     return;
   }
@@ -4061,11 +4074,14 @@ function syncHaven3DCoopControls(root: ParentNode = document): void {
     button.setAttribute("aria-pressed", p2Active ? "true" : "false");
   });
   root.querySelectorAll<HTMLElement>("[data-haven3d-coop-camera-label]").forEach((label) => {
-    label.textContent = splitActive ? "Shared View" : "Split View";
+    label.textContent = hybridActive ? "Hybrid View" : "Shared View";
   });
   root.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-split']").forEach((button) => {
-    button.classList.toggle("haven3d-coop-control--active", splitActive);
-    button.setAttribute("aria-pressed", splitActive ? "true" : "false");
+    button.classList.toggle("haven3d-coop-control--active", hybridActive);
+    button.classList.toggle("haven3d-coop-control--disabled", !p2Active);
+    button.setAttribute("aria-pressed", hybridActive ? "true" : "false");
+    button.setAttribute("aria-disabled", !p2Active ? "true" : "false");
+    button.disabled = !p2Active;
   });
 }
 
@@ -4089,7 +4105,7 @@ function setLocalP2ActiveFromField(active: boolean): void {
   }
   syncRuntimeFieldAvatarsFromState();
   flushFieldAvatarPositionsToGameState(true);
-  setHaven3DSplitCameraActive(active);
+  setHaven3DHybridCameraEnabled(active);
   syncHaven3DCoopControls();
 }
 
@@ -4108,7 +4124,11 @@ function handleHaven3DCoopControlClick(event: MouseEvent): void {
     return;
   }
   if (action === "toggle-split") {
-    setHaven3DSplitCameraActive(!isHaven3DSplitCameraActive());
+    if (!getGameState().players.P2.active) {
+      syncHaven3DCoopControls();
+      return;
+    }
+    setHaven3DHybridCameraEnabled(!isHaven3DHybridCameraEnabled());
   }
 }
 
@@ -6312,6 +6332,10 @@ function renderFieldObjectContents(obj: FieldMap["objects"][number]): string {
 
   if (obj.sprite === "zipline_track") {
     return `<div class="field-object-placeholder field-object-placeholder--zipline">ZIPLINE</div>`;
+  }
+
+  if (obj.sprite === "grind_rail") {
+    return `<div class="field-object-placeholder field-object-placeholder--grind-rail">RAIL</div>`;
   }
 
   if (obj.type === "decoration") {
