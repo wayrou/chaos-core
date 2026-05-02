@@ -100,6 +100,9 @@ export interface OuterDeckOpenWorldState {
   playerWorldX: number;
   playerWorldY: number;
   playerFacing: "north" | "south" | "east" | "west";
+  streamCenterWorldX: number;
+  streamCenterWorldY: number;
+  streamRadiusChunks: number;
   collectedResourceKeys: string[];
   collectedTheaterChartKeys: string[];
   collectedApronKeyKeys: string[];
@@ -397,6 +400,14 @@ function createEntryWorldPosition(): Pick<OuterDeckOpenWorldState, "playerWorldX
   };
 }
 
+function createEntryStreamWindow(): Pick<OuterDeckOpenWorldState, "streamCenterWorldX" | "streamCenterWorldY" | "streamRadiusChunks"> {
+  return {
+    streamCenterWorldX: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+    streamCenterWorldY: (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+    streamRadiusChunks: OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+  };
+}
+
 export function createDefaultOuterDeckOpenWorldState(
   seed: number = generateSeed(),
   floorOrdinal = 1,
@@ -406,6 +417,7 @@ export function createDefaultOuterDeckOpenWorldState(
     generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
     floorOrdinal: Math.max(1, Math.floor(Number(floorOrdinal) || 1)),
     ...createEntryWorldPosition(),
+    ...createEntryStreamWindow(),
     collectedResourceKeys: [],
     collectedTheaterChartKeys: [],
     collectedApronKeyKeys: [],
@@ -485,6 +497,13 @@ function getOpenWorldFloorKey(floorOrdinal: number): string {
   return String(Math.max(1, Math.floor(Number(floorOrdinal) || 1)));
 }
 
+function normalizeOpenWorldStreamRadius(value: unknown): number {
+  const numeric = Math.floor(Number(value));
+  return Number.isFinite(numeric) && numeric >= OUTER_DECK_OPEN_WORLD_STREAM_RADIUS
+    ? numeric
+    : OUTER_DECK_OPEN_WORLD_STREAM_RADIUS;
+}
+
 function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorldState> | null): OuterDeckOpenWorldState {
   const fallback = createDefaultOuterDeckOpenWorldState();
   return {
@@ -500,6 +519,17 @@ function normalizeOuterDeckOpenWorldState(openWorld?: Partial<OuterDeckOpenWorld
       || openWorld?.playerFacing === "west"
         ? openWorld.playerFacing
         : fallback.playerFacing,
+    streamCenterWorldX: Number.isFinite(Number(openWorld?.streamCenterWorldX))
+      ? Number(openWorld?.streamCenterWorldX)
+      : Number.isFinite(Number(openWorld?.playerWorldX))
+        ? Number(openWorld?.playerWorldX)
+        : fallback.streamCenterWorldX,
+    streamCenterWorldY: Number.isFinite(Number(openWorld?.streamCenterWorldY))
+      ? Number(openWorld?.streamCenterWorldY)
+      : Number.isFinite(Number(openWorld?.playerWorldY))
+        ? Number(openWorld?.playerWorldY)
+        : fallback.streamCenterWorldY,
+    streamRadiusChunks: normalizeOpenWorldStreamRadius(openWorld?.streamRadiusChunks),
     collectedResourceKeys: normalizeStringList(openWorld?.collectedResourceKeys),
     collectedTheaterChartKeys: normalizeStringList(openWorld?.collectedTheaterChartKeys),
     collectedApronKeyKeys: normalizeStringList(openWorld?.collectedApronKeyKeys),
@@ -884,6 +914,7 @@ export function prepareOuterDeckOpenWorldEntry(state: GameState, floorOrdinal?: 
       ...floorOpenWorld,
       floorOrdinal: resolvedFloorOrdinal,
       ...createEntryWorldPosition(),
+      ...createEntryStreamWindow(),
     },
   });
 }
@@ -906,6 +937,34 @@ export function setOuterDeckOpenWorldPlayerWorldPosition(
     nextOpenWorld.playerWorldX === outerDecks.openWorld.playerWorldX
     && nextOpenWorld.playerWorldY === outerDecks.openWorld.playerWorldY
     && nextOpenWorld.playerFacing === outerDecks.openWorld.playerFacing
+  ) {
+    return state;
+  }
+
+  return withOuterDecksState(state, {
+    ...outerDecks,
+    openWorld: nextOpenWorld,
+  });
+}
+
+export function setOuterDeckOpenWorldStreamWindow(
+  state: GameState,
+  centerWorldX: number,
+  centerWorldY: number,
+  radiusChunks: number,
+): GameState {
+  const outerDecks = getSafeOuterDecksState(state);
+  const nextOpenWorld: OuterDeckOpenWorldState = {
+    ...outerDecks.openWorld,
+    streamCenterWorldX: Number.isFinite(centerWorldX) ? centerWorldX : outerDecks.openWorld.streamCenterWorldX,
+    streamCenterWorldY: Number.isFinite(centerWorldY) ? centerWorldY : outerDecks.openWorld.streamCenterWorldY,
+    streamRadiusChunks: normalizeOpenWorldStreamRadius(radiusChunks),
+  };
+
+  if (
+    nextOpenWorld.streamCenterWorldX === outerDecks.openWorld.streamCenterWorldX
+    && nextOpenWorld.streamCenterWorldY === outerDecks.openWorld.streamCenterWorldY
+    && nextOpenWorld.streamRadiusChunks === outerDecks.openWorld.streamRadiusChunks
   ) {
     return state;
   }

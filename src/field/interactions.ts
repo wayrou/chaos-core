@@ -23,6 +23,7 @@ import {
   abortOuterDeckExpedition,
   OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
   OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+  OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
   OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE,
   OUTER_DECK_OVERWORLD_MAP_ID,
   beginOuterDeckExpedition,
@@ -45,6 +46,7 @@ import {
   resolveOuterDeckMechanic,
   setOuterDeckCurrentSubarea,
   setOuterDeckOpenWorldPlayerWorldPosition,
+  setOuterDeckOpenWorldStreamWindow,
 } from "../core/outerDecks";
 import { createEmptyResourceWallet, getResourceEntries } from "../core/resources";
 import { grantSessionResources } from "../core/session";
@@ -546,17 +548,33 @@ export async function handleInteraction(
           ? zone.metadata.returnFacing
           : "south";
         if (Number.isFinite(returnWorldTileX) && Number.isFinite(returnWorldTileY)) {
-          updateGameState((state) => setOuterDeckOpenWorldPlayerWorldPosition(
-            state,
-            (returnWorldTileX + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
-            (returnWorldTileY + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE,
-            returnFacing,
-          ));
+          const returnWorldX = (returnWorldTileX + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+          const returnWorldY = (returnWorldTileY + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+          updateGameState((state) => {
+            let nextState = setOuterDeckOpenWorldPlayerWorldPosition(
+              state,
+              returnWorldX,
+              returnWorldY,
+              returnFacing,
+            );
+            nextState = setOuterDeckOpenWorldStreamWindow(
+              nextState,
+              returnWorldX,
+              returnWorldY,
+              OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+            );
+            return nextState;
+          });
         }
 
-        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        const {
+          renderFieldScreen,
+          scheduleOuterDeckOpenWorldCoopRespawn,
+          setNextFieldSpawnOverrideTile,
+        } = await import("./FieldScreen");
         try {
-          setNextFieldSpawnOverrideTile(targetMapId, { x: 2, y: 8, facing: "east" });
+          scheduleOuterDeckOpenWorldCoopRespawn();
+          setNextFieldSpawnOverrideTile(targetMapId, { x: 3, y: 8, facing: "east" });
           renderFieldScreen(targetMapId as any);
         } catch (error) {
           console.error("[FIELD] Failed to enter Apron interior:", error);
@@ -586,8 +604,8 @@ export async function handleInteraction(
         const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
         try {
           setNextFieldSpawnOverrideTile(targetMapId, direction === "back"
-            ? { x: 19, y: 8, facing: "west" }
-            : { x: 2, y: 8, facing: "east" });
+            ? { x: 18, y: 8, facing: "west" }
+            : { x: 3, y: 8, facing: "east" });
           renderFieldScreen(targetMapId as any);
         } catch (error) {
           console.error("[FIELD] Failed to move through Apron interior:", error);

@@ -19,9 +19,11 @@ import { createDefaultCampaignProgress, Difficulty, EnemyDensity, saveCampaignPr
 import {
   type CoopTheaterCommand,
   type EconomyPreset,
+  type FieldAvatar,
   type LobbyCoopParticipantState,
   type LobbySeatPreference,
   NETWORK_PLAYER_SLOTS,
+  type LobbyReturnFieldCameraState,
   type OperationRun,
   type ResourceKey,
   type ResourceLedger,
@@ -128,6 +130,7 @@ import {
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
 import { showSystemPing } from "../components/systemPing";
+import { dropOutP2, tryJoinAsP2 } from "../../core/coop";
 import {
   formatSaveTimestamp,
   getSharedCampaignSlotName,
@@ -1529,7 +1532,7 @@ async function loadSelectedSharedCampaignIntoState(returnTo: CommsReturnTo = act
   const label = result.sharedCampaignMetadata?.label ?? getSharedCampaignSlotName(slot);
   const timestamp = result.sharedCampaignMetadata?.timestamp ?? Date.now();
   const currentState = getGameState();
-  const returnContext = currentState.lobby?.returnContext ?? captureLobbyReturnContext();
+  const returnContext = currentState.lobby?.returnContext ?? await captureLobbyReturnContext();
   const nextState = stampSharedCampaignState(
     {
       ...result.state,
@@ -1934,7 +1937,7 @@ function shouldAttemptRemoteCoopResume(lobby: LobbyState | null | undefined): bo
   );
 }
 
-function captureLobbyReturnContext(): LobbyReturnContext {
+async function captureLobbyReturnContext(): Promise<LobbyReturnContext> {
   if (activeCommsReturnTo === "menu") {
     return { kind: "menu" };
   }
@@ -1943,23 +1946,88 @@ function captureLobbyReturnContext(): LobbyReturnContext {
   }
   const currentFieldMapId = getBaseCampFieldReturnMap();
   const safeFieldMapId = currentFieldMapId === "network_lobby" ? "base_camp" : currentFieldMapId;
-  const avatar = getGameState().players.P1.avatar;
+  const state = getGameState();
+  const canCaptureFieldPositions = safeFieldMapId === currentFieldMapId;
+  let p1Avatar = canCaptureFieldPositions ? state.players.P1.avatar : null;
+  let p2Avatar = canCaptureFieldPositions && state.players.P2.active ? state.players.P2.avatar : null;
+  let cameraState: LobbyReturnFieldCameraState | null = null;
+
+  if (canCaptureFieldPositions) {
+    const globalScope = globalThis as LobbyCommsGlobalScope;
+    const activeController = globalScope[HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY] ?? null;
+    const activeMapId = activeController?.getMap?.()?.id
+      ?? activeController?.options?.map?.id
+      ?? activeController?.mapId
+      ?? null;
+    if (activeController && String(activeMapId) === String(safeFieldMapId)) {
+      p1Avatar = activeController.options?.getPlayerAvatar?.("P1") ?? p1Avatar;
+      p2Avatar = activeController.options?.getPlayerAvatar?.("P2") ?? p2Avatar;
+      cameraState = activeController.getCameraState?.() ?? null;
+    }
+    const storedCameraStates = globalScope[HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY];
+    if (!cameraState && storedCameraStates instanceof Map) {
+      cameraState = storedCameraStates.get(String(safeFieldMapId)) ?? null;
+    }
+    const field = await import("../../field/FieldScreen");
+    p1Avatar = field.getCurrentFieldPlayerAvatar("P1") ?? p1Avatar;
+    p2Avatar = field.getCurrentFieldPlayerAvatar("P2") ?? p2Avatar;
+    cameraState = cameraState ?? field.getStoredHaven3DFieldCameraState(safeFieldMapId);
+  }
+
+  const players = canCaptureFieldPositions
+    ? {
+        ...(p1Avatar ? { P1: { ...p1Avatar } } : {}),
+        ...(p2Avatar ? { P2: { ...p2Avatar } } : {}),
+      }
+    : undefined;
+
   return {
     kind: "field",
     mapId: safeFieldMapId,
-    x: safeFieldMapId === currentFieldMapId ? avatar?.x : undefined,
-    y: safeFieldMapId === currentFieldMapId ? avatar?.y : undefined,
-    facing: safeFieldMapId === currentFieldMapId ? avatar?.facing : undefined,
+    x: p1Avatar?.x,
+    y: p1Avatar?.y,
+    facing: p1Avatar?.facing,
+    players,
+    cameraState,
   };
 }
 
-async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void> {
-  const fallbackContext: LobbyReturnContext = captureLobbyReturnContext();
-  const returnContext = lobby?.returnContext ?? fallbackContext;
+function cloneLobbyReturnContextSnapshot(returnContext: LobbyReturnContext | null | undefined): LobbyReturnContext | null {
+  if (!returnContext) {
+    return null;
+  }
+  if (returnContext.kind !== "field") {
+    return { kind: returnContext.kind };
+  }
+  return {
+    ...returnContext,
+    players: returnContext.players
+      ? {
+          ...(returnContext.players.P1 ? { P1: { ...returnContext.players.P1 } } : {}),
+          ...(returnContext.players.P2 ? { P2: { ...returnContext.players.P2 } } : {}),
+        }
+      : undefined,
+    cameraState: returnContext.cameraState
+      ? {
+          mode: returnContext.cameraState.mode,
+          behavior: returnContext.cameraState.behavior,
+          shared: { ...returnContext.cameraState.shared },
+          split: {
+            P1: { ...returnContext.cameraState.split.P1 },
+            P2: { ...returnContext.cameraState.split.P2 },
+          },
+        }
+      : returnContext.cameraState ?? null,
+  };
+}
+
+async function restoreLobbyReturnContextSnapshot(returnContext: LobbyReturnContext | null | undefined): Promise<void> {
+  const fallbackContext: LobbyReturnContext = await captureLobbyReturnContext();
+  const resolvedReturnContext = cloneLobbyReturnContextSnapshot(returnContext) ?? fallbackContext;
   const normalizedReturnContext: LobbyReturnContext =
-    returnContext.kind === "esc" && fallbackContext.kind === "field"
+    resolvedReturnContext.kind === "esc" && fallbackContext.kind === "field"
       ? fallbackContext
-      : returnContext.kind === "field" && returnContext.mapId === "network_lobby"
+      : resolvedReturnContext.kind === "field" && resolvedReturnContext.mapId === "network_lobby"
         ? (
             fallbackContext.kind === "field" && fallbackContext.mapId !== "network_lobby"
               ? fallbackContext
@@ -1967,8 +2035,7 @@ async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void
                 ? fallbackContext
                 : { kind: "field", mapId: "base_camp" }
           )
-        : returnContext;
-
+        : resolvedReturnContext;
   if (normalizedReturnContext.kind === "menu") {
     if (document.querySelector(".field-root")) {
       const { teardownFieldMode } = await import("../../field/FieldScreen");
@@ -1985,13 +2052,65 @@ async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void
   }
 
   if (normalizedReturnContext.kind === "field") {
-    const { renderFieldScreen, setNextFieldSpawnOverride } = await import("../../field/FieldScreen");
-    if (typeof normalizedReturnContext.x === "number" && typeof normalizedReturnContext.y === "number") {
+    const {
+      renderFieldScreen,
+      setNextFieldPlayerSpawnOverrides,
+      setNextFieldSpawnOverride,
+      setStoredHaven3DFieldCameraState,
+    } = await import("../../field/FieldScreen");
+    const desiredP1Avatar = normalizedReturnContext.players?.P1 ?? (
+      typeof normalizedReturnContext.x === "number" && typeof normalizedReturnContext.y === "number"
+        ? {
+            x: normalizedReturnContext.x,
+            y: normalizedReturnContext.y,
+            facing: normalizedReturnContext.facing ?? "south",
+          }
+        : null
+    );
+    const desiredP2Avatar = normalizedReturnContext.players?.P2 ?? null;
+
+    if (desiredP2Avatar && !getGameState().players.P2.active) {
+      tryJoinAsP2();
+    } else if (!desiredP2Avatar && getGameState().players.P2.active) {
+      dropOutP2();
+    }
+
+    updateGameState((state) => ({
+      ...state,
+      players: {
+        ...state.players,
+        P1: desiredP1Avatar
+          ? {
+              ...state.players.P1,
+              active: true,
+              avatar: { ...desiredP1Avatar },
+            }
+          : state.players.P1,
+        P2: desiredP2Avatar
+          ? {
+              ...state.players.P2,
+              active: true,
+              inputSource: state.players.P2.inputSource === "none" ? "keyboard2" : state.players.P2.inputSource,
+              presence: "local",
+              authorityRole: "local",
+              avatar: { ...desiredP2Avatar },
+            }
+          : state.players.P2,
+      },
+    }));
+
+    if (desiredP1Avatar) {
       setNextFieldSpawnOverride(normalizedReturnContext.mapId as any, {
-        x: normalizedReturnContext.x,
-        y: normalizedReturnContext.y,
-        facing: normalizedReturnContext.facing,
+        x: desiredP1Avatar.x,
+        y: desiredP1Avatar.y,
+        facing: desiredP1Avatar.facing,
       });
+    }
+    if (normalizedReturnContext.players) {
+      setNextFieldPlayerSpawnOverrides(normalizedReturnContext.mapId as any, normalizedReturnContext.players);
+    }
+    if (normalizedReturnContext.cameraState !== undefined) {
+      setStoredHaven3DFieldCameraState(normalizedReturnContext.mapId as any, normalizedReturnContext.cameraState);
     }
     renderFieldScreen(normalizedReturnContext.mapId as any);
     return;
@@ -1999,6 +2118,10 @@ async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void
 
   const { renderAllNodesMenuScreen } = await import("./AllNodesMenuScreen");
   renderAllNodesMenuScreen();
+}
+
+async function restoreLobbyReturnContext(lobby: LobbyState | null): Promise<void> {
+  await restoreLobbyReturnContextSnapshot(lobby?.returnContext ?? null);
 }
 
 async function hostRespondToLobbyChallenge(currentLobby: LobbyState, accepted: boolean): Promise<void> {
@@ -2501,6 +2624,21 @@ async function requestRemoteLobbyReconnectHandshake(): Promise<void> {
 let lastLobbyAvatarBroadcastAt = 0;
 let lastLobbyAvatarSignature = "";
 let lastCoopFieldRuntimeSnapshotPayload: string | null = null;
+const HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY = "__CHAOS_CURRENT_HAVEN3D_FIELD_CONTROLLER__";
+const HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY = "__CHAOS_CURRENT_HAVEN3D_FIELD_CAMERA_STATES__";
+
+type LobbyCommsGlobalScope = typeof globalThis & {
+  [HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY]?: {
+    mapId?: string;
+    getMap?: () => { id: string } | null;
+    getCameraState?: () => LobbyReturnFieldCameraState | null;
+    options?: {
+      map?: { id: string } | null;
+      getPlayerAvatar?: (playerId: "P1" | "P2") => FieldAvatar | null;
+    };
+  } | null;
+  [HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY]?: Map<string, LobbyReturnFieldCameraState>;
+};
 
 export async function hostOrPreviewMultiplayerLobby(callsign = getPreferredLobbyOperatorCallsign()): Promise<LobbyState | null> {
   ensureCoopOperationsStateSync();
@@ -2510,7 +2648,7 @@ export async function hostOrPreviewMultiplayerLobby(callsign = getPreferredLobby
   lobbyClientAssignedSlot = "P1";
   activeSkirmishSurface = "comms";
   clearSquadMatchState();
-  const lobby = createHostedMultiplayerLobby(callsign, captureLobbyReturnContext());
+  const lobby = createHostedMultiplayerLobby(callsign, await captureLobbyReturnContext());
   commitLobbyState(
     lobby,
     isTauriSquadTransportAvailable() && squadTransportStatus.role === "host"
@@ -2576,7 +2714,7 @@ export async function joinMultiplayerLobby(hostAddress: string, callsign = getPr
   shouldAutoResumeRemoteSkirmishBattle = true;
   shouldAutoResumeRemoteCoopOperations = false;
   clearSquadMatchState();
-  const joiningLobby = createJoiningMultiplayerLobby(callsign, captureLobbyReturnContext());
+  const joiningLobby = createJoiningMultiplayerLobby(callsign, await captureLobbyReturnContext());
   commitLobbyState(joiningLobby, undefined, "info", false);
   await sendLobbyCommandToHost({ type: "lobby_join", callsign, preferredSlot: getPreferredLobbyReconnectSlot() });
   await openNetworkLobbyField();
@@ -2612,11 +2750,12 @@ export async function disconnectMultiplayerLobby(renderAfterDisconnect = true): 
 
 export async function leaveCurrentMultiplayerLobby(): Promise<void> {
   const lobby = getResolvedLobbyState();
+  const returnContext = cloneLobbyReturnContextSnapshot(lobby?.returnContext ?? null);
   if (squadTransportStatus.role === "client" && lobby) {
     await sendLobbyCommandToHost({ type: "leave_lobby" });
   }
   await disconnectMultiplayerLobby(false);
-  await restoreLobbyReturnContext(lobby);
+  await restoreLobbyReturnContextSnapshot(returnContext);
 }
 
 export async function syncLocalLobbyAvatarFromField(

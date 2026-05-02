@@ -23,7 +23,11 @@ import {
   updatePlayerMovement,
   getOverlappingInteractionZone,
 } from "./player";
-import { Haven3DFieldController, type Haven3DFieldCameraState } from "./haven3d/Haven3DFieldController";
+import {
+  Haven3DFieldController,
+  type Haven3DFieldCameraState,
+  type Haven3DPlayerTraversalState,
+} from "./haven3d/Haven3DFieldController";
 import type { Haven3DTargetRef } from "./haven3d/targeting";
 import {
   resolveHaven3DGearbladeDamage,
@@ -209,6 +213,7 @@ import {
   type EscNodeAction,
 } from "../core/escAvailability";
 import {
+  OUTER_DECK_OPEN_WORLD_CHUNK_SIZE,
   OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE,
   OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
   abortOuterDeckExpedition,
@@ -233,10 +238,12 @@ import {
   placeOuterDeckOpenWorldLantern,
   setOuterDeckOpenWorldBossHp,
   setOuterDeckOpenWorldPlayerWorldPosition,
+  setOuterDeckOpenWorldStreamWindow,
   type OuterDeckZoneId,
 } from "../core/outerDecks";
 import {
   findNearestOuterDeckInteriorEntranceSignal,
+  getDesiredOuterDeckStreamWindow,
   getOuterDeckChunkCoordsFromWorldPixel,
   getOuterDeckChunkKey,
   getOuterDeckStreamMetadata,
@@ -273,8 +280,13 @@ let fieldState: FieldState | null = null;
 let currentMap: FieldMap | null = null;
 let animationFrameId: number | null = null;
 let haven3DFieldController: Haven3DFieldController | null = null;
+const HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY = "__CHAOS_CURRENT_HAVEN3D_FIELD_CONTROLLER__";
+const HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY = "__CHAOS_CURRENT_HAVEN3D_FIELD_CAMERA_STATES__";
+const OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS_GLOBAL_KEY = "__CHAOS_OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS__";
+const OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY = "__CHAOS_OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN__";
 let lastFrameTime = 0;
-const haven3DFieldCameraStates = new Map<string, Haven3DFieldCameraState>();
+const haven3DFieldCameraStates = getSharedHaven3DFieldCameraStates();
+const outerDeckOpenWorldPlayerSnapshots = getSharedOuterDeckOpenWorldPlayerSnapshots();
 // Legacy movementInput kept for backward compatibility, but we'll use getPlayerInput instead
 let movementInput = {
   up: false,
@@ -292,6 +304,14 @@ type FieldControllerActionSnapshot = {
   attack: boolean;
   special1: boolean;
 };
+
+type OuterDeckOpenWorldWorldAvatar = {
+  worldX: number;
+  worldY: number;
+  facing: PlayerAvatar["facing"];
+};
+
+type OuterDeckOpenWorldPlayerSnapshot = Partial<Record<PlayerId, OuterDeckOpenWorldWorldAvatar>>;
 
 const previousFieldControllerActions: Record<PlayerId, FieldControllerActionSnapshot> = {
   P1: { interact: false, attack: false, special1: false },
@@ -1103,7 +1123,15 @@ function persistOuterDeckOpenWorldRuntimeState(force = false): void {
     return;
   }
 
+  cacheCurrentOuterDeckOpenWorldPlayerPositions();
+
   const world = outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y);
+  const p2Avatar = getGameState().players.P2.active ? getRuntimeFieldAvatar("P2") : null;
+  const streamWorldPositions = [
+    world,
+    ...(p2Avatar ? [outerDeckLocalPixelToWorld(currentMap, p2Avatar.x, p2Avatar.y)] : []),
+  ];
+  const desiredStreamWindow = getDesiredOuterDeckStreamWindow(streamWorldPositions);
   const facing = fieldState.player.facing;
   const bossHpEntries = (fieldState.fieldEnemies ?? [])
     .filter((enemy) => enemy.hp > 0)
@@ -1115,17 +1143,25 @@ function persistOuterDeckOpenWorldRuntimeState(force = false): void {
       }
       return [{ bossKey, hp: enemy.hp }];
     });
-  const chunk = getOuterDeckChunkCoordsFromWorldPixel(world.x, world.y);
-  const exploredChunkKey = getOuterDeckChunkKey(chunk.chunkX, chunk.chunkY);
+  const exploredChunkKeys = Array.from(new Set(
+    streamWorldPositions.map((position) => {
+      const chunk = getOuterDeckChunkCoordsFromWorldPixel(position.x, position.y);
+      return getOuterDeckChunkKey(chunk.chunkX, chunk.chunkY);
+    }),
+  )).sort();
   const bossHpKey = bossHpEntries
     .map((entry) => `${entry.bossKey}:${Math.max(0, Math.round(entry.hp))}`)
     .sort()
     .join(",");
   const persistKey = [
-    Math.round(world.x / FIELD_TILE_SIZE),
-    Math.round(world.y / FIELD_TILE_SIZE),
+    streamWorldPositions
+      .map((position, index) => `${index}:${Math.round(position.x / FIELD_TILE_SIZE)}:${Math.round(position.y / FIELD_TILE_SIZE)}`)
+      .join("|"),
     facing,
-    exploredChunkKey,
+    desiredStreamWindow.centerChunkX,
+    desiredStreamWindow.centerChunkY,
+    desiredStreamWindow.streamRadius,
+    exploredChunkKeys.join(","),
     bossHpKey,
   ].join("|");
   const now = performance.now();
@@ -1143,7 +1179,15 @@ function persistOuterDeckOpenWorldRuntimeState(force = false): void {
 
   updateGameState((state) => {
     let nextState = setOuterDeckOpenWorldPlayerWorldPosition(state, world.x, world.y, facing);
-    nextState = markOuterDeckOpenWorldChunkExplored(nextState, exploredChunkKey);
+    nextState = setOuterDeckOpenWorldStreamWindow(
+      nextState,
+      (desiredStreamWindow.centerChunkX * OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * FIELD_TILE_SIZE) + ((OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * FIELD_TILE_SIZE) / 2),
+      (desiredStreamWindow.centerChunkY * OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * FIELD_TILE_SIZE) + ((OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * FIELD_TILE_SIZE) / 2),
+      desiredStreamWindow.streamRadius,
+    );
+    for (const chunkKey of exploredChunkKeys) {
+      nextState = markOuterDeckOpenWorldChunkExplored(nextState, chunkKey);
+    }
     for (const entry of bossHpEntries) {
       nextState = setOuterDeckOpenWorldBossHp(nextState, entry.bossKey, entry.hp);
     }
@@ -1448,6 +1492,115 @@ let pendingFieldReturnFromInteraction: {
   zoneId: string;
   interactionKey: string;
 } | null = null;
+let pendingFieldPlayerSpawnOverrides: {
+  mapId: FieldMap["id"];
+  players: Partial<Record<PlayerId, FieldAvatar>>;
+} | null = null;
+
+type FieldScreenGlobalScope = typeof globalThis & {
+  [HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY]?: Haven3DFieldController | null;
+  [HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY]?: Map<string, Haven3DFieldCameraState>;
+  [OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS_GLOBAL_KEY]?: Map<string, OuterDeckOpenWorldPlayerSnapshot>;
+  [OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY]?: string | null;
+};
+
+function setSharedHaven3DFieldController(controller: Haven3DFieldController | null): void {
+  (globalThis as FieldScreenGlobalScope)[HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY] = controller;
+}
+
+function getSharedHaven3DFieldController(): Haven3DFieldController | null {
+  return (globalThis as FieldScreenGlobalScope)[HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY]
+    ?? haven3DFieldController
+    ?? null;
+}
+
+function getSharedHaven3DFieldCameraStates(): Map<string, Haven3DFieldCameraState> {
+  const scope = globalThis as FieldScreenGlobalScope;
+  if (!scope[HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY]) {
+    scope[HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY] = new Map<string, Haven3DFieldCameraState>();
+  }
+  return scope[HAVEN3D_FIELD_CAMERA_STATES_GLOBAL_KEY]!;
+}
+
+function cloneHaven3DFieldCameraState(
+  state: Haven3DFieldCameraState | null | undefined,
+): Haven3DFieldCameraState | null {
+  if (!state) {
+    return null;
+  }
+  return {
+    mode: state.mode,
+    behavior: state.behavior,
+    shared: { ...state.shared },
+    split: {
+      P1: { ...state.split.P1 },
+      P2: { ...state.split.P2 },
+    },
+  };
+}
+
+function getSharedOuterDeckOpenWorldPlayerSnapshots(): Map<string, OuterDeckOpenWorldPlayerSnapshot> {
+  const scope = globalThis as FieldScreenGlobalScope;
+  if (!scope[OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS_GLOBAL_KEY]) {
+    scope[OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS_GLOBAL_KEY] = new Map<string, OuterDeckOpenWorldPlayerSnapshot>();
+  }
+  return scope[OUTER_DECK_OPEN_WORLD_PLAYER_SNAPSHOTS_GLOBAL_KEY]!;
+}
+
+function getOuterDeckOpenWorldSnapshotKey(
+  openWorld: Pick<ReturnType<typeof getOuterDeckOpenWorldState>, "floorOrdinal" | "seed"> | null | undefined,
+): string {
+  const floorOrdinal = Math.max(1, Math.floor(Number(openWorld?.floorOrdinal ?? 1) || 1));
+  const seed = Math.max(0, Math.floor(Number(openWorld?.seed ?? 0) || 0));
+  return `outerdeck-open-world:${floorOrdinal}:${seed}`;
+}
+
+function getPendingOuterDeckOpenWorldCoopRespawnKey(): string | null {
+  return (globalThis as FieldScreenGlobalScope)[OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY] ?? null;
+}
+
+function consumePendingOuterDeckOpenWorldCoopRespawn(
+  openWorld: Pick<ReturnType<typeof getOuterDeckOpenWorldState>, "floorOrdinal" | "seed"> | null | undefined,
+): boolean {
+  const scope = globalThis as FieldScreenGlobalScope;
+  const currentKey = getOuterDeckOpenWorldSnapshotKey(openWorld);
+  if (scope[OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY] !== currentKey) {
+    return false;
+  }
+  scope[OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY] = null;
+  return true;
+}
+
+function cacheCurrentOuterDeckOpenWorldPlayerPositions(): void {
+  if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
+    return;
+  }
+
+  const openWorld = getOuterDeckOpenWorldState(getGameState());
+  const nextSnapshot: OuterDeckOpenWorldPlayerSnapshot = {};
+  const p1World = outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y);
+  nextSnapshot.P1 = {
+    worldX: p1World.x,
+    worldY: p1World.y,
+    facing: fieldState.player.facing,
+  };
+  const p2Avatar = getGameState().players.P2.active ? getRuntimeFieldAvatar("P2") : null;
+  if (p2Avatar) {
+    const p2World = outerDeckLocalPixelToWorld(currentMap, p2Avatar.x, p2Avatar.y);
+    nextSnapshot.P2 = {
+      worldX: p2World.x,
+      worldY: p2World.y,
+      facing: p2Avatar.facing,
+    };
+  }
+  outerDeckOpenWorldPlayerSnapshots.set(getOuterDeckOpenWorldSnapshotKey(openWorld), nextSnapshot);
+}
+
+export function scheduleOuterDeckOpenWorldCoopRespawn(): void {
+  const openWorld = getOuterDeckOpenWorldState(getGameState());
+  (globalThis as FieldScreenGlobalScope)[OUTER_DECK_OPEN_WORLD_PENDING_COOP_RESPAWN_GLOBAL_KEY] =
+    getOuterDeckOpenWorldSnapshotKey(openWorld);
+}
 
 const FIELD_TILE_SIZE = 64;
 const FIELD_ATTACK_COOLDOWN = BOWBLADE_BASE_ATTACK_CYCLE_MS;
@@ -3148,11 +3301,15 @@ export function getCurrentFieldMap(): FieldMap["id"] | null {
 }
 
 export function getCurrentFieldRuntimeMap(): FieldMap | null {
-  return currentMap;
+  return getSharedHaven3DFieldController()?.getMap() ?? currentMap;
 }
 
 export function getCurrentFieldRuntimeState(): FieldState | null {
   return fieldState;
+}
+
+export function getCurrentFieldPlayerAvatar(playerId: PlayerId): FieldAvatar | null {
+  return getRuntimeFieldAvatar(playerId);
 }
 
 export function setCurrentFieldPlayerPosition(
@@ -3171,11 +3328,11 @@ export function setCurrentFieldPlayerPosition(
 }
 
 export function isCurrentHaven3DFieldObjectVisible(objectId: string): boolean {
-  return haven3DFieldController?.isFieldObjectVisible(objectId) ?? false;
+  return getSharedHaven3DFieldController()?.isFieldObjectVisible(objectId) ?? false;
 }
 
 export function isCurrentHaven3DDistantHavenLandmarkVisible(): boolean {
-  return haven3DFieldController?.isDistantHavenLandmarkVisible() ?? false;
+  return getSharedHaven3DFieldController()?.isDistantHavenLandmarkVisible() ?? false;
 }
 
 export function setNextFieldSpawnOverride(
@@ -3187,6 +3344,23 @@ export function setNextFieldSpawnOverride(
     x: position.x,
     y: position.y,
     facing: position.facing,
+  };
+}
+
+export function setNextFieldPlayerSpawnOverrides(
+  mapId: FieldMap["id"],
+  players: Partial<Record<PlayerId, FieldAvatar>> | null | undefined,
+): void {
+  if (!players || (!players.P1 && !players.P2)) {
+    pendingFieldPlayerSpawnOverrides = null;
+    return;
+  }
+  pendingFieldPlayerSpawnOverrides = {
+    mapId,
+    players: {
+      ...(players.P1 ? { P1: { ...players.P1 } } : {}),
+      ...(players.P2 ? { P2: { ...players.P2 } } : {}),
+    },
   };
 }
 
@@ -3233,31 +3407,60 @@ function stopHaven3DFieldRuntime(): void {
     }
   }
   haven3DFieldController?.dispose();
+  if (getSharedHaven3DFieldController() === haven3DFieldController) {
+    setSharedHaven3DFieldController(null);
+  }
   haven3DFieldController = null;
 }
 
 export function getCurrentHaven3DFieldCameraState(): Haven3DFieldCameraState | null {
-  return haven3DFieldController?.getCameraState() ?? null;
+  return cloneHaven3DFieldCameraState(getSharedHaven3DFieldController()?.getCameraState() ?? null);
+}
+
+export function getStoredHaven3DFieldCameraState(
+  mapId: FieldMap["id"] | string,
+): Haven3DFieldCameraState | null {
+  const activeController = getSharedHaven3DFieldController();
+  if (activeController && String(activeController.mapId) === String(mapId)) {
+    return cloneHaven3DFieldCameraState(activeController.getCameraState());
+  }
+  return cloneHaven3DFieldCameraState(haven3DFieldCameraStates.get(String(mapId)) ?? null);
+}
+
+export function setStoredHaven3DFieldCameraState(
+  mapId: FieldMap["id"] | string,
+  cameraState: Haven3DFieldCameraState | null | undefined,
+): void {
+  const nextCameraState = cloneHaven3DFieldCameraState(cameraState);
+  if (nextCameraState) {
+    haven3DFieldCameraStates.set(String(mapId), nextCameraState);
+    return;
+  }
+  haven3DFieldCameraStates.delete(String(mapId));
 }
 
 export function getCurrentHaven3DPlayerCombatStates(): FieldCombatState["players"] | null {
-  return haven3DFieldController?.getPlayerCombatStates() ?? null;
+  return getSharedHaven3DFieldController()?.getPlayerCombatStates() ?? null;
+}
+
+export function getCurrentHaven3DPlayerTraversalStates(): Partial<Record<PlayerId, Haven3DPlayerTraversalState>> | null {
+  return getSharedHaven3DFieldController()?.getPlayerTraversalStates() ?? null;
 }
 
 export function getCurrentHaven3DGrappleRouteAnchorState(): ReturnType<
   Haven3DFieldController["getGrappleRouteAnchorState"]
 > {
-  return haven3DFieldController?.getGrappleRouteAnchorState() ?? [];
+  return getSharedHaven3DFieldController()?.getGrappleRouteAnchorState() ?? [];
 }
 
 export function getCurrentHaven3DPreferredGrappleAnchorState(): ReturnType<
   Haven3DFieldController["getPreferredGrappleAnchorState"]
 > {
-  return haven3DFieldController?.getPreferredGrappleAnchorState() ?? null;
+  return getSharedHaven3DFieldController()?.getPreferredGrappleAnchorState() ?? null;
 }
 
 function isHaven3DSupportedMap(mapId: FieldMap["id"] | string | null | undefined): boolean {
-  return mapId === "base_camp" || isOuterDeckAccessibleMap(mapId);
+  return mapId === "base_camp" || mapId === "network_lobby" || isOuterDeckAccessibleMap(mapId);
 }
 
 function shouldUseHaven3DFieldRuntime(mapId: FieldMap["id"] | string, options?: { openBuildMode?: boolean }): boolean {
@@ -3265,7 +3468,7 @@ function shouldUseHaven3DFieldRuntime(mapId: FieldMap["id"] | string, options?: 
 }
 
 function isHaven3DFieldRuntimeActive(): boolean {
-  return Boolean(currentMap && isHaven3DSupportedMap(currentMap.id) && haven3DFieldController);
+  return Boolean(currentMap && isHaven3DSupportedMap(currentMap.id) && getSharedHaven3DFieldController());
 }
 
 function renderHaven3DApronNavigatorHtml(): string {
@@ -3606,6 +3809,7 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
     enableGearbladeModes: true,
     enabledGearbladeModes: ["blade", "launcher", "grapple"],
   });
+  setSharedHaven3DFieldController(haven3DFieldController);
   haven3DFieldController.start();
   syncHaven3DCoopControls();
 
@@ -3619,23 +3823,43 @@ function syncFieldMinimapExploration(): void {
     return;
   }
 
-  const tileX = Math.floor(fieldState.player.x / FIELD_TILE_SIZE);
-  const tileY = Math.floor(fieldState.player.y / FIELD_TILE_SIZE);
-  if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) {
+  const map = currentMap;
+  const revealTargets: Array<{ tileX: number; tileY: number; worldTileX: number; worldTileY: number }> = [];
+  const p1TileX = Math.floor(fieldState.player.x / FIELD_TILE_SIZE);
+  const p1TileY = Math.floor(fieldState.player.y / FIELD_TILE_SIZE);
+  if (!Number.isFinite(p1TileX) || !Number.isFinite(p1TileY)) {
     return;
   }
-
-  const outerDeckMetadata = getOuterDeckStreamMetadata(currentMap);
-  const worldTileX = tileX + Math.floor(Number(outerDeckMetadata?.worldOriginTileX ?? 0));
-  const worldTileY = tileY + Math.floor(Number(outerDeckMetadata?.worldOriginTileY ?? 0));
-  const revealKey = `${currentMap.id}:${worldTileX}:${worldTileY}`;
+  const outerDeckMetadata = getOuterDeckStreamMetadata(map);
+  revealTargets.push({
+    tileX: p1TileX,
+    tileY: p1TileY,
+    worldTileX: p1TileX + Math.floor(Number(outerDeckMetadata?.worldOriginTileX ?? 0)),
+    worldTileY: p1TileY + Math.floor(Number(outerDeckMetadata?.worldOriginTileY ?? 0)),
+  });
+  const p2Avatar = isOuterDeckOpenWorldMap(map) && getGameState().players.P2.active
+    ? getRuntimeFieldAvatar("P2")
+    : null;
+  if (p2Avatar) {
+    const tileX = Math.floor(p2Avatar.x / FIELD_TILE_SIZE);
+    const tileY = Math.floor(p2Avatar.y / FIELD_TILE_SIZE);
+    if (Number.isFinite(tileX) && Number.isFinite(tileY)) {
+      revealTargets.push({
+        tileX,
+        tileY,
+        worldTileX: tileX + Math.floor(Number(outerDeckMetadata?.worldOriginTileX ?? 0)),
+        worldTileY: tileY + Math.floor(Number(outerDeckMetadata?.worldOriginTileY ?? 0)),
+      });
+    }
+  }
+  const revealKey = `${map.id}:${revealTargets.map((target) => `${target.worldTileX}:${target.worldTileY}`).join("|")}`;
   if (revealKey === lastMinimapRevealKey) {
     return;
   }
 
   const now = performance.now();
   if (
-    isOuterDeckOpenWorldMap(currentMap)
+    isOuterDeckOpenWorldMap(map)
     && now - lastMinimapRevealAtMs < OUTER_DECK_MINIMAP_REVEAL_INTERVAL_MS
   ) {
     return;
@@ -3643,12 +3867,18 @@ function syncFieldMinimapExploration(): void {
 
   lastMinimapRevealKey = revealKey;
   lastMinimapRevealAtMs = now;
-  const didReveal = revealFieldMinimapArea(currentMap.id, tileX, tileY, FIELD_MINIMAP_REVEAL_RADIUS, {
-    width: currentMap.width,
-    height: currentMap.height,
-    worldOriginTileX: outerDeckMetadata?.worldOriginTileX,
-    worldOriginTileY: outerDeckMetadata?.worldOriginTileY,
-  });
+  const didReveal = revealTargets.some((target) => revealFieldMinimapArea(
+    map.id,
+    target.tileX,
+    target.tileY,
+    FIELD_MINIMAP_REVEAL_RADIUS,
+    {
+      width: map.width,
+      height: map.height,
+      worldOriginTileX: outerDeckMetadata?.worldOriginTileX,
+      worldOriginTileY: outerDeckMetadata?.worldOriginTileY,
+    },
+  ));
   if (didReveal) {
     lastPinnedMinimapOverlayDrawKey = "";
   }
@@ -3761,6 +3991,46 @@ function clampLocalOuterDeckPosition(map: FieldMap, position: { x: number; y: nu
   };
 }
 
+function resolveNearbyCoopSpawnAvatar(
+  map: FieldMap,
+  spawnSource: SpawnSource,
+  anchorX: number,
+  anchorY: number,
+  facing: PlayerAvatar["facing"] = "south",
+): FieldAvatar {
+  const tileOffset = FIELD_TILE_SIZE;
+  const candidates = [
+    { x: anchorX + tileOffset, y: anchorY },
+    { x: anchorX - tileOffset, y: anchorY },
+    { x: anchorX, y: anchorY + tileOffset },
+    { x: anchorX, y: anchorY - tileOffset },
+    { x: anchorX + tileOffset, y: anchorY + tileOffset },
+    { x: anchorX - tileOffset, y: anchorY + tileOffset },
+    { x: anchorX + tileOffset, y: anchorY - tileOffset },
+    { x: anchorX - tileOffset, y: anchorY - tileOffset },
+  ];
+
+  for (const candidate of candidates) {
+    const resolved = resolvePlayerSpawn(spawnSource, map, candidate);
+    if (
+      resolved.passable
+      && Math.hypot(resolved.x - anchorX, resolved.y - anchorY) >= FIELD_TILE_SIZE * 0.5
+    ) {
+      return {
+        x: resolved.x,
+        y: resolved.y,
+        facing,
+      };
+    }
+  }
+
+  return {
+    x: anchorX,
+    y: anchorY,
+    facing,
+  };
+}
+
 function rebuildOuterDeckStreamWindow(): boolean {
   if (!currentMap || !fieldState || !isOuterDeckOpenWorldMap(currentMap)) {
     return false;
@@ -3860,8 +4130,12 @@ function refreshOuterDeckStreamWindowIfNeeded(): boolean {
     return false;
   }
 
-  const world = outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y);
-  if (!shouldRecenterOuterDeckStreamWindow(currentMap, world.x, world.y)) {
+  const worldPositions = [outerDeckLocalPixelToWorld(currentMap, fieldState.player.x, fieldState.player.y)];
+  const p2Avatar = getGameState().players.P2.active ? getRuntimeFieldAvatar("P2") : null;
+  if (p2Avatar) {
+    worldPositions.push(outerDeckLocalPixelToWorld(currentMap, p2Avatar.x, p2Avatar.y));
+  }
+  if (!shouldRecenterOuterDeckStreamWindow(currentMap, worldPositions)) {
     return false;
   }
 
@@ -5975,6 +6249,15 @@ export function renderFieldScreen(
         };
       })()
     : null;
+  const outerDeckOpenWorldState = isOuterDeckOpenWorldMap(currentMap)
+    ? getOuterDeckOpenWorldState(getGameState())
+    : null;
+  const outerDeckOpenWorldSnapshot = outerDeckOpenWorldState
+    ? outerDeckOpenWorldPlayerSnapshots.get(getOuterDeckOpenWorldSnapshotKey(outerDeckOpenWorldState)) ?? null
+    : null;
+  const shouldUsePendingOuterDeckCoopRespawn = outerDeckOpenWorldState
+    ? consumePendingOuterDeckOpenWorldCoopRespawn(outerDeckOpenWorldState)
+    : false;
 
   // Initialize or restore player avatars from game state
   const tileSize = 64;
@@ -5985,6 +6268,12 @@ export function renderFieldScreen(
   const fieldSpawnOverride = pendingFieldSpawnOverride && pendingFieldSpawnOverride.mapId === mapId
     ? pendingFieldSpawnOverride
     : null;
+  const fieldPlayerSpawnOverrides = pendingFieldPlayerSpawnOverrides?.mapId === mapId
+    ? pendingFieldPlayerSpawnOverrides.players
+    : null;
+  if (fieldPlayerSpawnOverrides) {
+    pendingFieldPlayerSpawnOverrides = null;
+  }
   const fieldReturnFromInteraction = pendingFieldReturnFromInteraction?.mapId === String(mapId)
     ? pendingFieldReturnFromInteraction
     : null;
@@ -5996,6 +6285,7 @@ export function renderFieldScreen(
   // Check if we have a stored interaction zone position (returning from a node) - prioritize this over resume
   if (fieldSpawnOverride) {
     pendingFieldSpawnOverride = null;
+    pendingFieldPlayerSpawnOverrides = null;
     pendingFieldReturnFromInteraction = null;
     if (mapId === "quarters") {
       playerX = fieldSpawnOverride.x;
@@ -6233,9 +6523,50 @@ export function renderFieldScreen(
   }
 
   const persistedPlayers = getGameState().players;
-  fieldRuntimeP2Avatar = persistedPlayers.P2.active && persistedPlayers.P2.avatar
-    ? { ...persistedPlayers.P2.avatar }
-    : null;
+  if (!persistedPlayers.P2.active) {
+    fieldRuntimeP2Avatar = null;
+  } else if (fieldPlayerSpawnOverrides?.P2) {
+    fieldRuntimeP2Avatar = { ...fieldPlayerSpawnOverrides.P2 };
+  } else if (isOuterDeckOpenWorldMap(currentMap)) {
+    if (fieldSpawnOverride || shouldUsePendingOuterDeckCoopRespawn) {
+      fieldRuntimeP2Avatar = resolveNearbyCoopSpawnAvatar(
+        currentMap,
+        spawnSource,
+        playerX,
+        playerY,
+        playerFacing ?? persistedPlayers.P2.avatar?.facing ?? "south",
+      );
+    } else if (outerDeckOpenWorldSnapshot?.P2) {
+      const snapshotLocal = clampLocalOuterDeckPosition(
+        currentMap,
+        outerDeckWorldPixelToLocal(
+          currentMap,
+          outerDeckOpenWorldSnapshot.P2.worldX,
+          outerDeckOpenWorldSnapshot.P2.worldY,
+        ),
+      );
+      fieldRuntimeP2Avatar = {
+        x: snapshotLocal.x,
+        y: snapshotLocal.y,
+        facing: outerDeckOpenWorldSnapshot.P2.facing,
+      };
+    } else {
+      fieldRuntimeP2Avatar = persistedPlayers.P2.avatar
+        ? { ...persistedPlayers.P2.avatar }
+        : resolveNearbyCoopSpawnAvatar(
+            currentMap,
+            spawnSource,
+            playerX,
+            playerY,
+            playerFacing ?? "south",
+          );
+    }
+  } else {
+    fieldRuntimeP2Avatar = persistedPlayers.P2.avatar
+      ? { ...persistedPlayers.P2.avatar }
+      : null;
+  }
+  cacheCurrentOuterDeckOpenWorldPlayerPositions();
   lastFieldAvatarSyncAtMs = Number.NEGATIVE_INFINITY;
   lastFieldAvatarSyncKey = "";
   lastCoopFieldRuntimeCommandAtMs = Number.NEGATIVE_INFINITY;
@@ -11846,6 +12177,7 @@ function stopGameLoop(): void {
 }
 
 export function teardownFieldMode(): void {
+  persistOuterDeckOpenWorldRuntimeState(true);
   flushFieldAvatarPositionsToGameState(true);
   stopGameLoop();
   stopHaven3DFieldRuntime();

@@ -3,6 +3,7 @@ import {
   OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE,
   OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES,
   OUTER_DECK_OPEN_WORLD_CHUNK_SIZE,
+  OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE,
   OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
   OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
   OUTER_DECK_OPEN_WORLD_TILE_SIZE,
@@ -121,13 +122,18 @@ export type OuterDeckInteriorEntranceSignal = {
   completed: boolean;
 };
 
-const WINDOW_CHUNK_SPAN = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2 + 1;
-const WINDOW_TILE_SIZE = OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * WINDOW_CHUNK_SPAN;
 const TILE_SIZE = OUTER_DECK_OPEN_WORLD_TILE_SIZE;
 const OUTER_DECK_MAX_ELEVATION = 136;
 const APRON_DOME_WALL_THICKNESS_TILES = 3;
 const APRON_DOME_VISIBLE_OUTER_MARGIN_TILES = 1.25;
 const APRON_DOME_OUTER_WALL_ELEVATION = 76;
+const OUTER_DECK_DYNAMIC_STREAM_EXTRA_MARGIN_CHUNKS = 1;
+const OUTER_DECK_MAX_DYNAMIC_STREAM_RADIUS = 8;
+
+type OuterDeckStreamFocus = {
+  x: number;
+  y: number;
+};
 
 const LEGACY_BOSS_CHUNKS: Record<string, OuterDeckZoneId> = {
   "0:-2": "counterweight_shaft",
@@ -407,8 +413,26 @@ function getApronDomeDistance(worldTileX: number, worldTileY: number): number {
   );
 }
 
-function isApronDomeFullyLoadedInWindow(radiusTiles = OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES): boolean {
-  return (radiusTiles * 2) + (APRON_DOME_VISIBLE_OUTER_MARGIN_TILES * 2) <= WINDOW_TILE_SIZE;
+function clampOuterDeckStreamRadius(streamRadius: number): number {
+  return Math.max(
+    OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+    Math.min(OUTER_DECK_MAX_DYNAMIC_STREAM_RADIUS, Math.floor(Number(streamRadius) || OUTER_DECK_OPEN_WORLD_STREAM_RADIUS)),
+  );
+}
+
+function getOuterDeckWindowChunkSpan(streamRadius = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS): number {
+  return (clampOuterDeckStreamRadius(streamRadius) * 2) + 1;
+}
+
+function getOuterDeckWindowTileSize(streamRadius = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS): number {
+  return OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * getOuterDeckWindowChunkSpan(streamRadius);
+}
+
+function isApronDomeFullyLoadedInWindow(
+  radiusTiles = OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES,
+  streamRadius = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+): boolean {
+  return (radiusTiles * 2) + (APRON_DOME_VISIBLE_OUTER_MARGIN_TILES * 2) <= getOuterDeckWindowTileSize(streamRadius);
 }
 
 function createTerrainTile(seed: number, localX: number, localY: number, worldTileX: number, worldTileY: number): GeneratedTile {
@@ -506,7 +530,8 @@ function createTerrainTile(seed: number, localX: number, localY: number, worldTi
 function getLocalTileFromWorldTile(metadata: OuterDeckStreamMetadata, worldTileX: number, worldTileY: number): { x: number; y: number } | null {
   const x = worldTileX - metadata.worldOriginTileX;
   const y = worldTileY - metadata.worldOriginTileY;
-  if (x < 0 || y < 0 || x >= WINDOW_TILE_SIZE || y >= WINDOW_TILE_SIZE) {
+  const windowTileSize = getOuterDeckWindowTileSize(metadata.streamRadius);
+  if (x < 0 || y < 0 || x >= windowTileSize || y >= windowTileSize) {
     return null;
   }
   return { x, y };
@@ -1865,31 +1890,70 @@ export function outerDeckWorldPixelToLocal(map: FieldMap, worldX: number, worldY
   };
 }
 
-export function shouldRecenterOuterDeckStreamWindow(map: FieldMap, worldX: number, worldY: number): boolean {
+export function getDesiredOuterDeckStreamWindow(worldPositions: OuterDeckStreamFocus[]): {
+  centerChunkX: number;
+  centerChunkY: number;
+  streamRadius: number;
+} {
+  const validPositions = worldPositions.filter((position) => (
+    Number.isFinite(position?.x) && Number.isFinite(position?.y)
+  ));
+  const fallbackWorldX = (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * TILE_SIZE;
+  const fallbackWorldY = (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * TILE_SIZE;
+  const chunkCoords = (validPositions.length > 0 ? validPositions : [{ x: fallbackWorldX, y: fallbackWorldY }])
+    .map((position) => getOuterDeckChunkCoordsFromWorldPixel(position.x, position.y));
+  const minChunkX = Math.min(...chunkCoords.map((chunk) => chunk.chunkX));
+  const maxChunkX = Math.max(...chunkCoords.map((chunk) => chunk.chunkX));
+  const minChunkY = Math.min(...chunkCoords.map((chunk) => chunk.chunkY));
+  const maxChunkY = Math.max(...chunkCoords.map((chunk) => chunk.chunkY));
+  const centerChunkX = Math.floor((minChunkX + maxChunkX) / 2);
+  const centerChunkY = Math.floor((minChunkY + maxChunkY) / 2);
+  const streamRadius = clampOuterDeckStreamRadius(Math.max(
+    OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+    maxChunkX - centerChunkX + OUTER_DECK_DYNAMIC_STREAM_EXTRA_MARGIN_CHUNKS,
+    centerChunkX - minChunkX + OUTER_DECK_DYNAMIC_STREAM_EXTRA_MARGIN_CHUNKS,
+    maxChunkY - centerChunkY + OUTER_DECK_DYNAMIC_STREAM_EXTRA_MARGIN_CHUNKS,
+    centerChunkY - minChunkY + OUTER_DECK_DYNAMIC_STREAM_EXTRA_MARGIN_CHUNKS,
+  ));
+  return {
+    centerChunkX,
+    centerChunkY,
+    streamRadius,
+  };
+}
+
+export function shouldRecenterOuterDeckStreamWindow(map: FieldMap, worldPositions: OuterDeckStreamFocus[]): boolean {
   const metadata = getOuterDeckStreamMetadata(map);
   if (!metadata) {
     return false;
   }
   if (
     metadata.finiteDome === true
-    && isApronDomeFullyLoadedInWindow(Number(metadata.domeRadiusTiles ?? OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES))
+    && isApronDomeFullyLoadedInWindow(
+      Number(metadata.domeRadiusTiles ?? OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES),
+      metadata.streamRadius,
+    )
   ) {
     return false;
   }
-  const chunk = getOuterDeckChunkCoordsFromWorldPixel(worldX, worldY);
-  return chunk.chunkX !== metadata.centerChunkX || chunk.chunkY !== metadata.centerChunkY;
+  const desired = getDesiredOuterDeckStreamWindow(worldPositions);
+  return desired.centerChunkX !== metadata.centerChunkX
+    || desired.centerChunkY !== metadata.centerChunkY
+    || desired.streamRadius !== metadata.streamRadius;
 }
 
 export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
   const openWorld = getOuterDeckOpenWorldState(state);
-  const centerChunk = isApronDomeFullyLoadedInWindow()
+  const streamRadius = clampOuterDeckStreamRadius(openWorld.streamRadiusChunks);
+  const centerChunk = isApronDomeFullyLoadedInWindow(OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES, streamRadius)
     ? getOuterDeckChunkCoordsFromWorldTile(
       OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE.x,
       OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE.y,
     )
-    : getOuterDeckChunkCoordsFromWorldPixel(openWorld.playerWorldX, openWorld.playerWorldY);
-  const originChunkX = centerChunk.chunkX - OUTER_DECK_OPEN_WORLD_STREAM_RADIUS;
-  const originChunkY = centerChunk.chunkY - OUTER_DECK_OPEN_WORLD_STREAM_RADIUS;
+    : getOuterDeckChunkCoordsFromWorldPixel(openWorld.streamCenterWorldX, openWorld.streamCenterWorldY);
+  const originChunkX = centerChunk.chunkX - streamRadius;
+  const originChunkY = centerChunk.chunkY - streamRadius;
+  const windowTileSize = getOuterDeckWindowTileSize(streamRadius);
   const metadata: OuterDeckStreamMetadata = {
     kind: "outerDeckOpenWorld",
     generationVersion: OUTER_DECK_OPEN_WORLD_GENERATION_VERSION,
@@ -1900,7 +1964,7 @@ export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
     centerChunkX: centerChunk.chunkX,
     centerChunkY: centerChunk.chunkY,
     chunkSize: OUTER_DECK_OPEN_WORLD_CHUNK_SIZE,
-    streamRadius: OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+    streamRadius,
     tileSize: TILE_SIZE,
     finiteDome: true,
     domeCenterWorldTileX: OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE.x,
@@ -1909,9 +1973,9 @@ export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
   };
 
   const tiles: FieldMap["tiles"] = [];
-  for (let localY = 0; localY < WINDOW_TILE_SIZE; localY += 1) {
+  for (let localY = 0; localY < windowTileSize; localY += 1) {
     tiles[localY] = [];
-    for (let localX = 0; localX < WINDOW_TILE_SIZE; localX += 1) {
+    for (let localX = 0; localX < windowTileSize; localX += 1) {
       const worldTileX = metadata.worldOriginTileX + localX;
       const worldTileY = metadata.worldOriginTileY + localY;
       tiles[localY]![localX] = createTerrainTile(openWorld.seed, localX, localY, worldTileX, worldTileY);
@@ -1925,8 +1989,8 @@ export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
   addTravelingMerchant(tiles, metadata, objects, interactionZones, occupied);
   addPlacedLanterns(openWorld, tiles, metadata, objects, occupied);
 
-  for (let chunkY = originChunkY; chunkY <= originChunkY + (OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2); chunkY += 1) {
-    for (let chunkX = originChunkX; chunkX <= originChunkX + (OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2); chunkX += 1) {
+  for (let chunkY = originChunkY; chunkY <= originChunkY + (streamRadius * 2); chunkY += 1) {
+    for (let chunkX = originChunkX; chunkX <= originChunkX + (streamRadius * 2); chunkX += 1) {
       addChunkContent(openWorld, tiles, metadata, objects, interactionZones, occupied, chunkX, chunkY);
     }
   }
@@ -1934,8 +1998,8 @@ export function createOuterDeckOpenWorldFieldMap(state: GameState): FieldMap {
   return {
     id: OUTER_DECK_OVERWORLD_MAP_ID,
     name: "The Apron",
-    width: WINDOW_TILE_SIZE,
-    height: WINDOW_TILE_SIZE,
+    width: windowTileSize,
+    height: windowTileSize,
     tiles,
     objects,
     interactionZones,

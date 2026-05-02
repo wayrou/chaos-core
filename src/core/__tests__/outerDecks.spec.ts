@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { createNewGameState } from "../initialState";
 import {
+  OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
   OUTER_DECK_OVERWORLD_MAP_ID,
   abortOuterDeckExpedition,
   beginOuterDeckExpedition,
@@ -34,6 +35,7 @@ import {
   placeOuterDeckOpenWorldLantern,
   prepareOuterDeckOpenWorldEntry,
   resolveOuterDeckMechanic,
+  setOuterDeckOpenWorldStreamWindow,
 } from "../outerDecks";
 
 describe("outerDecks", () => {
@@ -218,6 +220,22 @@ describe("outerDecks", () => {
     expect(backToFloorOne.outerDecks?.openWorld.placedLanterns.map((lantern) => lantern.id)).toContain("floor_01_lantern");
     expect(backToFloorOne.outerDecks?.openWorld.placedLanterns.map((lantern) => lantern.id)).not.toContain("floor_02_lantern");
     expect(backToFloorOne.outerDecks?.openWorldByFloor["2"].placedLanterns.map((lantern) => lantern.id)).toContain("floor_02_lantern");
+  });
+
+  it("stores Apron stream focus separately from the player return position", () => {
+    const base = createNewGameState();
+    const streamed = setOuterDeckOpenWorldStreamWindow(
+      base,
+      4096,
+      5120,
+      OUTER_DECK_OPEN_WORLD_STREAM_RADIUS + 2,
+    );
+
+    expect(streamed.outerDecks?.openWorld.playerWorldX).toBe(base.outerDecks?.openWorld.playerWorldX);
+    expect(streamed.outerDecks?.openWorld.playerWorldY).toBe(base.outerDecks?.openWorld.playerWorldY);
+    expect(streamed.outerDecks?.openWorld.streamCenterWorldX).toBe(4096);
+    expect(streamed.outerDecks?.openWorld.streamCenterWorldY).toBe(5120);
+    expect(streamed.outerDecks?.openWorld.streamRadiusChunks).toBe(OUTER_DECK_OPEN_WORLD_STREAM_RADIUS + 2);
   });
 
   it("claims legacy open-world boss rewards once", () => {

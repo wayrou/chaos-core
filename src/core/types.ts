@@ -487,6 +487,19 @@ export interface LobbyState {
   updatedAt: number;
 }
 
+export type LobbyReturnFieldCameraViewState = {
+  yaw: number;
+  pitch: number;
+  distance: number;
+};
+
+export type LobbyReturnFieldCameraState = {
+  mode: "shared" | "split";
+  behavior: "shared" | "hybrid";
+  shared: LobbyReturnFieldCameraViewState;
+  split: Record<PlayerId, LobbyReturnFieldCameraViewState>;
+};
+
 export type LobbyReturnContext =
   | { kind: "menu" }
   | { kind: "esc" }
@@ -497,6 +510,8 @@ export type LobbyReturnContext =
       x?: number;
       y?: number;
       facing?: "north" | "south" | "east" | "west";
+      players?: Partial<Record<PlayerId, FieldAvatar>>;
+      cameraState?: LobbyReturnFieldCameraState | null;
     };
 
 export interface BaseCampItemSize {

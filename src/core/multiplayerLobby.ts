@@ -4,6 +4,7 @@ import {
   type AuthorityRole,
   type BattleRuntimeContext,
   type EconomyPreset,
+  type FieldAvatar,
   type GameState,
   type LobbyActivity,
   type LobbyAvatarState,
@@ -13,6 +14,7 @@ import {
   type LobbyCoopParticipantState,
   type LobbyCoopOperationsStatus,
   type LobbyMember,
+  type LobbyReturnFieldCameraState,
   type LobbySeatPreference,
   type PendingTheaterBattleConfirmationState,
   type LobbyReturnContext,
@@ -22,6 +24,7 @@ import {
   type ResourceLedger,
   type LobbyTransportState,
   type NetworkPlayerSlot,
+  type PlayerId,
   type PlayerPresence,
   type SessionPlayerSlot,
   type SkirmishObjectiveType,
@@ -140,12 +143,50 @@ function cloneChallenge(challenge: LobbyChallenge | null | undefined): LobbyChal
   };
 }
 
+function cloneReturnFieldPlayers(
+  players: Partial<Record<PlayerId, FieldAvatar>> | null | undefined,
+): Partial<Record<PlayerId, FieldAvatar>> | undefined {
+  if (!players) {
+    return undefined;
+  }
+  const nextPlayers: Partial<Record<PlayerId, FieldAvatar>> = {};
+  for (const slot of ["P1", "P2"] as const) {
+    const player = players[slot];
+    if (!player) {
+      continue;
+    }
+    nextPlayers[slot] = { ...player };
+  }
+  return Object.keys(nextPlayers).length > 0 ? nextPlayers : undefined;
+}
+
+function cloneReturnFieldCameraState(
+  cameraState: LobbyReturnFieldCameraState | null | undefined,
+): LobbyReturnFieldCameraState | null {
+  if (!cameraState) {
+    return cameraState ?? null;
+  }
+  return {
+    mode: cameraState.mode,
+    behavior: cameraState.behavior,
+    shared: { ...cameraState.shared },
+    split: {
+      P1: { ...cameraState.split.P1 },
+      P2: { ...cameraState.split.P2 },
+    },
+  };
+}
+
 function cloneReturnContext(returnContext: LobbyReturnContext | null | undefined): LobbyReturnContext | null {
   if (!returnContext) {
     return null;
   }
   if (returnContext.kind === "field") {
-    return { ...returnContext };
+    return {
+      ...returnContext,
+      players: cloneReturnFieldPlayers(returnContext.players),
+      cameraState: cloneReturnFieldCameraState(returnContext.cameraState),
+    };
   }
   return { kind: returnContext.kind };
 }

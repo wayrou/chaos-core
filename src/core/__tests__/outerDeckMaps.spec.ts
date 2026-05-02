@@ -21,6 +21,7 @@ import {
   parseOuterDeckInteriorMapId,
   placeOuterDeckOpenWorldLantern,
   resolveOuterDeckMechanic,
+  setOuterDeckOpenWorldStreamWindow,
 } from "../outerDecks";
 import { createOuterDeckFieldMap } from "../../field/outerDeckMaps";
 import { findNearestOuterDeckInteriorEntranceSignal } from "../../field/outerDeckWorld";
@@ -374,6 +375,8 @@ describe("outerDeckMaps", () => {
       OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE.x + OUTER_DECK_OPEN_WORLD_DOME_RADIUS_TILES - 6
     ) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
     farState.outerDecks.openWorld.playerWorldY = OUTER_DECK_OPEN_WORLD_DOME_CENTER_TILE.y * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    farState.outerDecks.openWorld.streamCenterWorldX = farState.outerDecks.openWorld.playerWorldX;
+    farState.outerDecks.openWorld.streamCenterWorldY = farState.outerDecks.openWorld.playerWorldY;
     const nearWall = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, farState);
     const tileAtWorld = (map, worldX, worldY) => (
       map.tiles[worldY - map.metadata.worldOriginTileY]?.[worldX - map.metadata.worldOriginTileX]
@@ -485,5 +488,34 @@ describe("outerDeckMaps", () => {
 
     expect(regenerated.objects.some((object) => object.id === resource.id)).toBe(false);
     expect(regenerated.objects.some((object) => object.id === boss.id)).toBe(false);
+  });
+
+  it("expands the streamed Apron window to cover a separated co-op split", () => {
+    const baseState = createSeededState(24680);
+    const expandedRadius = OUTER_DECK_OPEN_WORLD_STREAM_RADIUS + 3;
+    const chunkSpanPx = OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    const p1WorldX = (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.x + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    const p1WorldY = (OUTER_DECK_OPEN_WORLD_ENTRY_WORLD_TILE.y + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+    const p2WorldX = p1WorldX + (chunkSpanPx * 8);
+    const streamCenterWorldX = (p1WorldX + p2WorldX) / 2;
+    const expandedState = setOuterDeckOpenWorldStreamWindow(
+      baseState,
+      streamCenterWorldX,
+      p1WorldY,
+      expandedRadius,
+    );
+    const overworld = createOuterDeckFieldMap(OUTER_DECK_OVERWORLD_MAP_ID, expandedState);
+    const defaultSize = OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * ((OUTER_DECK_OPEN_WORLD_STREAM_RADIUS * 2) + 1);
+    const p1LocalX = p1WorldX - (overworld.metadata.worldOriginTileX * OUTER_DECK_OPEN_WORLD_TILE_SIZE);
+    const p2LocalX = p2WorldX - (overworld.metadata.worldOriginTileX * OUTER_DECK_OPEN_WORLD_TILE_SIZE);
+
+    expect(overworld.metadata.streamRadius).toBe(expandedRadius);
+    expect(overworld.width).toBeGreaterThan(defaultSize);
+    expect(overworld.height).toBeGreaterThan(defaultSize);
+    expect(overworld.metadata.centerChunkX).toBe(Math.floor(streamCenterWorldX / chunkSpanPx));
+    expect(p1LocalX).toBeGreaterThanOrEqual(0);
+    expect(p1LocalX).toBeLessThan(overworld.width * OUTER_DECK_OPEN_WORLD_TILE_SIZE);
+    expect(p2LocalX).toBeGreaterThanOrEqual(0);
+    expect(p2LocalX).toBeLessThan(overworld.width * OUTER_DECK_OPEN_WORLD_TILE_SIZE);
   });
 });

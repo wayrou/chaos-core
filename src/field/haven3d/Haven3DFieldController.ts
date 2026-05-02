@@ -530,6 +530,15 @@ export type Haven3DFieldCameraState = {
   split: Record<PlayerId, Haven3DFieldCameraViewState>;
 };
 
+export type Haven3DPlayerTraversalState = {
+  grounded: boolean;
+  gliding: boolean;
+  elevation: number;
+  velocity: number;
+  groundElevation: number;
+  worldElevation: number;
+};
+
 type Haven3DMapCameraProfile = {
   defaultPitch: number;
   defaultDistance: number;
@@ -750,6 +759,30 @@ const HAVEN3D_BASE_MAP_PROFILE: Haven3DMapProfile = {
   scene: {
     fogColor: 0x17211e,
     fogDensity: 0.0125,
+  },
+};
+const HAVEN3D_NETWORK_LOBBY_PROFILE: Haven3DMapProfile = {
+  camera: {
+    defaultPitch: 0.2,
+    defaultDistance: 9.4,
+    minDistance: 6.4,
+    maxDistance: 16.5,
+    heightOffset: 2.9,
+    farMin: 180,
+    farScale: 1.18,
+    lockedBaseDistance: 6.8,
+    lockedTargetScale: 0.18,
+    lockedTargetAddMax: 3.4,
+    lockedMinDistance: 5.6,
+    lockedMaxDistance: 11.2,
+  },
+  scene: {
+    fogColor: 0x101718,
+    fogDensity: 0.0185,
+    hemisphereIntensity: 0.22,
+    sunIntensity: 0.56,
+    fillIntensity: 0.3,
+    rimIntensity: 1.18,
   },
 };
 const HAVEN3D_OUTER_DECK_OVERWORLD_PROFILE: Haven3DMapProfile = {
@@ -1399,6 +1432,9 @@ function getHaven3DTileColor(type: FieldMap["tiles"][number][number]["type"]): n
 
 function getHaven3DMapProfile(map: FieldMap): Haven3DMapProfile {
   const mapId = String(map.id);
+  if (mapId === "network_lobby") {
+    return HAVEN3D_NETWORK_LOBBY_PROFILE;
+  }
   if (mapId === "outer_deck_overworld") {
     return HAVEN3D_OUTER_DECK_OVERWORLD_PROFILE;
   }
@@ -2677,6 +2713,29 @@ export class Haven3DFieldController implements Haven3DModeController {
       P1: buildPlayerCombatState("P1"),
       P2: buildPlayerCombatState("P2"),
     };
+  }
+
+  getPlayerTraversalStates(): Partial<Record<PlayerId, Haven3DPlayerTraversalState>> {
+    const buildPlayerTraversalState = (playerId: PlayerId): Haven3DPlayerTraversalState => {
+      const state = this.getPlayerVerticalState(playerId);
+      return {
+        grounded: state.grounded,
+        gliding: state.gliding,
+        elevation: state.elevation,
+        velocity: state.velocity,
+        groundElevation: state.groundElevation,
+        worldElevation: state.worldElevation,
+      };
+    };
+
+    return {
+      ...(this.options.isPlayerActive("P1") ? { P1: buildPlayerTraversalState("P1") } : {}),
+      ...(this.options.isPlayerActive("P2") ? { P2: buildPlayerTraversalState("P2") } : {}),
+    };
+  }
+
+  getMap(): FieldMap {
+    return this.options.map;
   }
 
   getCameraState(): Haven3DFieldCameraState {
