@@ -1,6 +1,7 @@
 import type { EquipmentAcquisition, EquipmentCardType, EquipmentStats, WeaponType } from "../../core/equipment";
 import type { EffectFlowDocument } from "../../core/effectFlow";
 import type { FieldModScope, FieldModRarity, FieldModTrigger, FieldModStackMode } from "../../core/fieldMods";
+import type { MerchantListingSource } from "../../core/merchant";
 import type { ResourceWallet } from "../../core/resources";
 import type { CardEffect, InventoryItem } from "../../core/types";
 import type { FieldMap } from "../../field/types";
@@ -82,6 +83,7 @@ export interface ImportedItem extends InventoryItem {
       unlockFloor?: number;
       notes?: string;
     };
+    merchant?: MerchantListingSource;
     fieldMapResource?: {
       mapId?: string;
       resourceNodeId?: string;
@@ -129,6 +131,7 @@ export interface ImportedChassis {
   unlockAfterFloor?: number;
   availableInHavenShop?: boolean;
   havenShopUnlockAfterFloor?: number;
+  merchant?: MerchantListingSource;
   requiredQuestIds?: string[];
 }
 
@@ -144,6 +147,7 @@ export interface ImportedDoctrine {
   doctrineRules?: string;
   description?: string;
   unlockAfterFloor?: number;
+  merchant?: MerchantListingSource;
   requiredQuestIds?: string[];
 }
 
@@ -201,6 +205,7 @@ export interface ImportedFieldMod {
   cost?: number;
   rarity: FieldModRarity;
   unlockAfterOperationFloor?: number;
+  merchant?: MerchantListingSource;
   requiredQuestIds?: string[];
 }
 

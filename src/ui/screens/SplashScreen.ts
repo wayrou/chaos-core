@@ -7,7 +7,7 @@ import mpSplashVideo from "../../assets/MP_splash.mp4";
 import ardyciaSplashVideo from "../../assets/Ardycia_Splash.mp4";
 import { renderScrollLinkBoot } from "./ScrollLinkBoot";
 
-type SplashClip = {
+type SplashStep = {
   id: string;
   fallbackMs: number;
 } & (
@@ -23,17 +23,9 @@ type SplashClip = {
     }
 );
 
-const SPLASH_SEQUENCE: SplashClip[] = [
+const SPLASH_SEQUENCE: SplashStep[] = [
   { id: "mr-planet", kind: "video", src: mpSplashVideo, fallbackMs: 15000 },
   { id: "ardycia", kind: "video", src: ardyciaSplashVideo, fallbackMs: 15000 },
-  {
-    id: "sprawl-epigraph",
-    kind: "epigraph",
-    fallbackMs: 4200,
-    word: "Sprawl",
-    partOfSpeech: "(v.)",
-    definition: "to spread or develop irregularly, without restraint",
-  },
 ];
 
 let activeSplashTimeout: number | null = null;
@@ -198,10 +190,12 @@ function renderSplashClip(index: number): void {
     `
     : `
       <div class="splash-screen splash-screen--epigraph" data-splash-sequence="${clip.id}">
-        <div class="splash-epigraph">
+        <div class="splash-epigraph" aria-label="${clip.word} epigraph">
           <div class="splash-epigraph__word">${clip.word}</div>
-          <div class="splash-epigraph__part">${clip.partOfSpeech}</div>
-          <div class="splash-epigraph__definition">${clip.definition}</div>
+          <div class="splash-epigraph__definition">
+            <span class="splash-epigraph__part">${clip.partOfSpeech}</span>
+            ${clip.definition}
+          </div>
         </div>
         <button class="splash-skip-btn" id="splashSkipBtn" type="button">SKIP</button>
       </div>

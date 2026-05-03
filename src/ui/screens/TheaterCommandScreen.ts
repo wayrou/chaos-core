@@ -98,6 +98,7 @@ import {
   upgradeTheaterRoomModuleSlots,
   useTheaterConsumable,
 } from "../../core/theaterSystem";
+import { QUAC_DEBUG_INPUT_HINT, runQuacDebugCommand } from "../../core/quacDevCommands";
 import { THEATER_SQUAD_UNIT_LIMIT } from "../../core/theaterDeploymentPreset";
 import {
   clearControllerContext,
@@ -246,6 +247,8 @@ type TheaterMapPanSession = {
   activated: boolean;
 } | null;
 
+type TheaterViewPreset = "map" | "panels";
+
 type TravelAnimationState = {
   fromNodeId: string;
   toNodeId: string;
@@ -318,7 +321,8 @@ const HOLD_POSITION_TICK_MS = 5000;
 const THEATER_MARGIN_X = 14;
 const THEATER_TOP_SAFE = 36;
 const THEATER_BOTTOM_SAFE = 20;
-const THEATER_COMMAND_LAYOUT_VERSION = 7;
+const THEATER_COMMAND_LAYOUT_VERSION = 8;
+const THEATER_ENTRY_FOCUS_ZOOM = 0.72;
 const THEATER_MAP_PAN_MARGIN_X = 140;
 const THEATER_MAP_PAN_MARGIN_Y = 120;
 const THEATER_MAP_OVERSCROLL_X = 2400;
@@ -326,6 +330,7 @@ const THEATER_MAP_OVERSCROLL_Y = 2200;
 const THEATER_CORE_POWER_DISPLAY_THRESHOLD = 50;
 const THEATER_ROUTE_GOOD_THRESHOLD = 25;
 const THEATER_ROUTE_STRONG_THRESHOLD = 100;
+const THEATER_FEED_CLI_HELP_TEXT = QUAC_DEBUG_INPUT_HINT;
 
 const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
   "ops",
@@ -342,6 +347,16 @@ const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
   "consumables",
   "notes",
 ];
+
+const THEATER_MAP_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>();
+const THEATER_PANEL_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>([
+  "ops",
+  "feed",
+  "room",
+  "core",
+  "upkeep",
+  "resources",
+]);
 
 const THEATER_WINDOW_DEFS: Record<TheaterWindowKey, TheaterWindowDefinition> = {
   ops: { title: "THEATER COMMAND", kicker: "S/COM_OS // OPS TERMINAL", minWidth: 280, minHeight: 220, restoreLabel: "OPS" },
@@ -526,6 +541,9 @@ let theaterTacticalFullscreenActive = false;
 let theaterRoomFrameBeforeTacticalFullscreen: TheaterWindowFrame | null = null;
 let skipNextTheaterWindowFrameCapture = false;
 let theaterManageSelectedUnitId: string | null = null;
+let theaterFeedCliDraft = "";
+let theaterFeedCliFeedback = THEATER_FEED_CLI_HELP_TEXT;
+let theaterFeedCliFeedbackHasError = false;
 
 function clonePendingBattleConfirmation(
   pending: PendingTheaterBattleConfirmationState | PendingBattleConfirmationState | null | undefined,
@@ -1323,7 +1341,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: clampNumber(Math.round(viewportHeight * 0.28), THEATER_TOP_SAFE, Math.max(THEATER_TOP_SAFE, viewportHeight - automationHeight - THEATER_BOTTOM_SAFE)),
       width: automationWidth,
       height: automationHeight,
-      minimized: false,
+      minimized: true,
       zIndex: 25,
     },
     core: {
@@ -1331,7 +1349,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: coreY,
       width: coreWidth,
       height: coreHeight,
-      minimized: false,
+      minimized: true,
       zIndex: 26,
     },
     fortify: {
@@ -1347,7 +1365,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: topY,
       width: upkeepWidth,
       height: upkeepHeight,
-      minimized: false,
+      minimized: true,
       zIndex: 28,
     },
     resources: {
@@ -1355,7 +1373,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: resourcesY,
       width: resourcesWidth,
       height: resourcesHeight,
-      minimized: false,
+      minimized: true,
       zIndex: 27,
     },
     consumables: {
@@ -1573,14 +1591,11 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
   }
 
   const defaults = createDefaultTheaterWindowFrames();
-  if (layout.theaterCommandWindowFrames) {
+  const shouldResetSavedLayout = layoutVersion < THEATER_COMMAND_LAYOUT_VERSION;
+  if (layout.theaterCommandWindowFrames && !shouldResetSavedLayout) {
     const savedFrames = layout.theaterCommandWindowFrames;
     theaterWindowFrames = {
-      ops: normalizeTheaterWindowFrame(
-        "ops",
-        layoutVersion < THEATER_COMMAND_LAYOUT_VERSION ? defaults.ops : (savedFrames.ops ?? defaults.ops),
-        defaults.ops,
-      ),
+      ops: normalizeTheaterWindowFrame("ops", savedFrames.ops ?? defaults.ops, defaults.ops),
       squads: normalizeTheaterWindowFrame("squads", savedFrames.squads ?? defaults.squads, defaults.squads),
       manage: normalizeTheaterWindowFrame("manage", savedFrames.manage ?? defaults.manage, defaults.manage),
       quests: normalizeTheaterWindowFrame("quests", savedFrames.quests ?? defaults.quests, defaults.quests),
@@ -1614,7 +1629,7 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
     theaterZCounter = Math.max(...Object.values(theaterWindowFrames).map((frame) => frame.zIndex), theaterZCounter);
   }
 
-  if (layout.theaterCommandWindowColors) {
+  if (layout.theaterCommandWindowColors && !shouldResetSavedLayout) {
     theaterWindowColors = {
       ops: layout.theaterCommandWindowColors.ops ?? getDefaultTheaterWindowColorKey("ops"),
       squads: layout.theaterCommandWindowColors.squads ?? getDefaultTheaterWindowColorKey("squads"),
@@ -1632,7 +1647,7 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
     };
   }
 
-  if (layout.theaterCommandViewport) {
+  if (layout.theaterCommandViewport && !shouldResetSavedLayout) {
     mapPanX = layout.theaterCommandViewport.panX ?? 0;
     mapPanY = layout.theaterCommandViewport.panY ?? 0;
     mapZoom = clampNumber(layout.theaterCommandViewport.zoom ?? 1, MIN_MAP_ZOOM, MAX_MAP_ZOOM);
@@ -1671,8 +1686,8 @@ function hydrateTheaterUiLayoutFromState(signature: string): void {
   hydratedTheaterLayoutSignature = signature;
 }
 
-function persistTheaterUiLayoutToState(): void {
-  if (!activeDragSession) {
+function persistTheaterUiLayoutToState(options: { captureFrames?: boolean } = {}): void {
+  if (!activeDragSession && options.captureFrames !== false) {
     captureWindowFramesFromDom();
   }
   const frames = ensureTheaterWindowFrames();
@@ -1994,14 +2009,22 @@ function getDefaultMapZoom(theater: TheaterNetworkState): number {
   );
 }
 
+function getTheaterEntryMapZoom(theater: TheaterNetworkState): number {
+  return clampNumber(
+    Math.max(getDefaultMapZoom(theater), THEATER_ENTRY_FOCUS_ZOOM),
+    MIN_MAP_ZOOM,
+    MAX_MAP_ZOOM,
+  );
+}
+
 function focusMapOnTheater(theater: TheaterNetworkState, resetZoom = false): void {
   if (resetZoom) {
     mapZoom = clampNumber(getDefaultMapZoom(theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
   }
 
   const bounds = getTheaterContentBounds(theater);
-  mapPanX = Math.round((MAP_WIDTH / 2) - bounds.centerX);
-  mapPanY = Math.round((MAP_HEIGHT / 2) - bounds.centerY);
+  mapPanX = Math.round((MAP_WIDTH / 2) - (bounds.centerX * mapZoom));
+  mapPanY = Math.round((MAP_HEIGHT / 2) - (bounds.centerY * mapZoom));
   clampMapPanToBounds(theater);
 }
 
@@ -2011,8 +2034,8 @@ function focusMapOnRoom(theater: TheaterNetworkState, roomId: string): void {
     return;
   }
 
-  mapPanX = Math.round((MAP_WIDTH / 2) - room.position.x);
-  mapPanY = Math.round((MAP_HEIGHT / 2) - room.position.y);
+  mapPanX = Math.round((MAP_WIDTH / 2) - (room.position.x * mapZoom));
+  mapPanY = Math.round((MAP_HEIGHT / 2) - (room.position.y * mapZoom));
   clampMapPanToBounds(theater);
 }
 
@@ -2022,8 +2045,8 @@ function focusMapOnTheaterNode(theater: TheaterNetworkState, nodeId: string): bo
     return false;
   }
 
-  mapPanX = Math.round((MAP_WIDTH / 2) - node.position.x);
-  mapPanY = Math.round((MAP_HEIGHT / 2) - node.position.y);
+  mapPanX = Math.round((MAP_WIDTH / 2) - (node.position.x * mapZoom));
+  mapPanY = Math.round((MAP_HEIGHT / 2) - (node.position.y * mapZoom));
   clampMapPanToBounds(theater);
   return true;
 }
@@ -2049,6 +2072,20 @@ function getTheaterSquadFocusNodeId(theater: TheaterNetworkState): string | null
   return null;
 }
 
+function getTheaterEntryFocusNodeId(theater: TheaterNetworkState): string | null {
+  const currentNodeId = getDisplayCurrentNodeId(theater);
+  if (currentNodeId && resolveTheaterNode(theater, currentNodeId)) {
+    return currentNodeId;
+  }
+
+  const selectedNodeId = getSelectedNode(theater)?.id ?? theater.selectedNodeId ?? theater.selectedRoomId ?? null;
+  if (selectedNodeId && resolveTheaterNode(theater, selectedNodeId)) {
+    return selectedNodeId;
+  }
+
+  return getTheaterSquadFocusNodeId(theater);
+}
+
 function isAnyTheaterRoomVisibleOnScreen(theater: TheaterNetworkState): boolean {
   const viewportWidth = window.innerWidth || 1920;
   const viewportHeight = window.innerHeight || 1080;
@@ -2056,19 +2093,41 @@ function isAnyTheaterRoomVisibleOnScreen(theater: TheaterNetworkState): boolean 
   const mapCenterY = MAP_HEIGHT / 2;
 
   return Object.values(theater.rooms).some((room) => {
-    const left = (viewportWidth / 2) + (((room.position.x - (room.size.width / 2)) - mapCenterX + mapPanX) * mapZoom);
-    const right = (viewportWidth / 2) + (((room.position.x + (room.size.width / 2)) - mapCenterX + mapPanX) * mapZoom);
-    const top = (viewportHeight / 2) + (((room.position.y - (room.size.height / 2)) - mapCenterY + mapPanY) * mapZoom);
-    const bottom = (viewportHeight / 2) + (((room.position.y + (room.size.height / 2)) - mapCenterY + mapPanY) * mapZoom);
+    const left = (viewportWidth / 2) + mapPanX - mapCenterX + ((room.position.x - (room.size.width / 2)) * mapZoom);
+    const right = (viewportWidth / 2) + mapPanX - mapCenterX + ((room.position.x + (room.size.width / 2)) * mapZoom);
+    const top = (viewportHeight / 2) + mapPanY - mapCenterY + ((room.position.y - (room.size.height / 2)) * mapZoom);
+    const bottom = (viewportHeight / 2) + mapPanY - mapCenterY + ((room.position.y + (room.size.height / 2)) * mapZoom);
 
     return right >= 0 && left <= viewportWidth && bottom >= 0 && top <= viewportHeight;
   });
 }
 
+function isTheaterNodeVisibleOnScreen(theater: TheaterNetworkState, nodeId: string | null | undefined): boolean {
+  if (!nodeId) {
+    return false;
+  }
+
+  const node = resolveTheaterNode(theater, nodeId);
+  if (!node) {
+    return false;
+  }
+
+  const viewportWidth = window.innerWidth || 1920;
+  const viewportHeight = window.innerHeight || 1080;
+  const mapCenterX = MAP_WIDTH / 2;
+  const mapCenterY = MAP_HEIGHT / 2;
+  const left = (viewportWidth / 2) + mapPanX - mapCenterX + ((node.position.x - (node.size.width / 2)) * mapZoom);
+  const right = (viewportWidth / 2) + mapPanX - mapCenterX + ((node.position.x + (node.size.width / 2)) * mapZoom);
+  const top = (viewportHeight / 2) + mapPanY - mapCenterY + ((node.position.y - (node.size.height / 2)) * mapZoom);
+  const bottom = (viewportHeight / 2) + mapPanY - mapCenterY + ((node.position.y + (node.size.height / 2)) * mapZoom);
+
+  return right >= 0 && left <= viewportWidth && bottom >= 0 && top <= viewportHeight;
+}
+
 function resetMapViewportForTheaterEntry(theater: TheaterNetworkState): void {
-  mapZoom = clampNumber(getDefaultMapZoom(theater), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
-  const squadFocusNodeId = getTheaterSquadFocusNodeId(theater);
-  if (squadFocusNodeId && focusMapOnTheaterNode(theater, squadFocusNodeId)) {
+  mapZoom = getTheaterEntryMapZoom(theater);
+  const entryFocusNodeId = getTheaterEntryFocusNodeId(theater);
+  if (entryFocusNodeId && focusMapOnTheaterNode(theater, entryFocusNodeId)) {
     return;
   }
   const defaultFocusRoomId = getDefaultFocusRoomId(theater);
@@ -2101,6 +2160,61 @@ function isTheaterWindowAvailable(key: TheaterWindowKey, _theater: TheaterNetwor
     return false;
   }
   return true;
+}
+
+function getTheaterViewPresetOpenWindows(preset: TheaterViewPreset): Set<TheaterWindowKey> {
+  return preset === "map" ? THEATER_MAP_VIEW_OPEN_WINDOWS : THEATER_PANEL_VIEW_OPEN_WINDOWS;
+}
+
+function isTheaterViewPresetActive(theater: TheaterNetworkState, preset: TheaterViewPreset): boolean {
+  const frames = ensureTheaterWindowFrames();
+  const openWindows = getTheaterViewPresetOpenWindows(preset);
+  return THEATER_WINDOW_ORDER.every((key) => {
+    if (!isTheaterWindowAvailable(key, theater)) {
+      return true;
+    }
+    return frames[key].minimized === !openWindows.has(key);
+  });
+}
+
+function applyTheaterViewPreset(theater: TheaterNetworkState, preset: TheaterViewPreset): void {
+  const defaults = createDefaultTheaterWindowFrames();
+  const openWindows = getTheaterViewPresetOpenWindows(preset);
+  const nextFrames = {} as Record<TheaterWindowKey, TheaterWindowFrame>;
+  let nextZIndex = Math.max(theaterZCounter, ...Object.values(defaults).map((frame) => frame.zIndex));
+
+  THEATER_WINDOW_ORDER.forEach((key) => {
+    const shouldOpen = isTheaterWindowAvailable(key, theater) && openWindows.has(key);
+    const frame = normalizeTheaterWindowFrame(
+      key,
+      {
+        ...defaults[key],
+        minimized: !shouldOpen,
+        zIndex: shouldOpen ? ++nextZIndex : defaults[key].zIndex,
+      },
+      defaults[key],
+    );
+    nextFrames[key] = frame;
+  });
+
+  theaterWindowFrames = nextFrames;
+  theaterZCounter = nextZIndex;
+  if (preset === "map") {
+    resetMapViewportForTheaterEntry(theater);
+  }
+  skipNextTheaterWindowFrameCapture = true;
+  persistTheaterUiLayoutToState({ captureFrames: false });
+}
+
+function focusCurrentTheaterNode(theater: TheaterNetworkState): void {
+  resetMapViewportForTheaterEntry(theater);
+  applyMapViewportToDom();
+  const entryFocusNodeId = getTheaterEntryFocusNodeId(theater);
+  if (entryFocusNodeId) {
+    window.requestAnimationFrame(() => {
+      centerTheaterNodeOnScreen(entryFocusNodeId);
+    });
+  }
 }
 
 function shouldRenderTheaterWindow(key: TheaterWindowKey, theater: TheaterNetworkState): boolean {
@@ -2200,6 +2314,26 @@ function applyMapViewportToDom(shouldPersist = true): void {
   if (shouldPersist) {
     persistTheaterUiLayoutToState();
   }
+}
+
+function centerTheaterNodeOnScreen(nodeId: string): boolean {
+  const nodeElement = document.querySelector<HTMLElement>(`[data-theater-node-id="${nodeId}"]`);
+  if (!nodeElement) {
+    return false;
+  }
+
+  const viewportWidth = window.innerWidth || 1920;
+  const viewportHeight = window.innerHeight || 1080;
+  const rect = nodeElement.getBoundingClientRect();
+  const nodeCenterX = rect.left + (rect.width / 2);
+  const nodeCenterY = rect.top + (rect.height / 2);
+  const desiredCenterX = viewportWidth / 2;
+  const desiredCenterY = viewportHeight / 2;
+
+  mapPanX += Math.round(desiredCenterX - nodeCenterX);
+  mapPanY += Math.round(desiredCenterY - nodeCenterY);
+  applyMapViewportToDom();
+  return true;
 }
 
 function setMapZoom(nextZoom: number): void {
@@ -2806,9 +2940,27 @@ function renderTheaterMap(theater: TheaterNetworkState): string {
     && operation.currentFloorIndex < operation.floors.length - 1
     && theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
   );
+  const mapPresetActive = isTheaterViewPresetActive(theater, "map");
+  const panelsPresetActive = isTheaterViewPresetActive(theater, "panels");
   return `
     <section class="theater-map-wrap" id="theaterMapWrap">
       <div class="theater-map-zoom-controls">
+        <div class="theater-view-preset-toggle" role="group" aria-label="Theater layout preset">
+          <button
+            class="theater-map-mode-btn theater-view-preset-btn ${mapPresetActive ? "theater-map-mode-btn--active" : ""}"
+            type="button"
+            data-theater-view-preset="map"
+          >
+            Map
+          </button>
+          <button
+            class="theater-map-mode-btn theater-view-preset-btn ${panelsPresetActive ? "theater-map-mode-btn--active" : ""}"
+            type="button"
+            data-theater-view-preset="panels"
+          >
+            Panels
+          </button>
+        </div>
         <div class="theater-map-mode-toggle" role="tablist" aria-label="Theater network view">
           ${(["command", "supply", "power", "comms"] as TheaterMapMode[]).map((mode) => `
             <button
@@ -2820,6 +2972,7 @@ function renderTheaterMap(theater: TheaterNetworkState): string {
             </button>
           `).join("")}
         </div>
+        <button class="theater-zoom-btn theater-zoom-btn--focus" type="button" id="theaterFocusCurrentBtn">Focus Current</button>
         <button class="theater-zoom-btn" type="button" id="theaterZoomOutBtn">Zoom Out</button>
         <div class="theater-zoom-value" id="theaterZoomValue">${Math.round(mapZoom * 100)}%</div>
         <button class="theater-zoom-btn" type="button" id="theaterZoomInBtn">Zoom In</button>
@@ -4850,28 +5003,78 @@ function renderCoreWindow(theater: TheaterNetworkState): string {
 }
 
 function renderFeedWindow(theater: TheaterNetworkState): string {
-  const latestFeedEntry = theater.recentEvents[0] ?? "Awaiting fresh theater activity.";
   const body = `
     <div class="theater-feed-panel">
-      <div class="theater-feed-log" id="theaterFeedLog" data-theater-feed-log="true">
+      <div class="theater-feed-log theater-feed-log--window" id="theaterFeedLog" data-theater-feed-log="true">
         ${theater.recentEvents
           .map((entry) => `<div class="theater-feed-line">${escapeHtmlAttribute(entry)}</div>`)
           .join("")}
       </div>
-      <div class="theater-feed-cli" aria-label="Latest theater activity">
-        <span class="theater-feed-cli-prompt">Q.U.A.C.&gt;</span>
-        <span class="theater-feed-cli-text">${escapeHtmlAttribute(latestFeedEntry)}</span>
-        <span class="theater-feed-cli-caret">_</span>
+      <div class="theater-feed-cli-shell" data-theater-feed-cli-shell="true">
+        <div
+          class="theater-feed-cli-status${theaterFeedCliFeedbackHasError ? " theater-feed-cli-status--error" : ""}"
+          id="theaterFeedCliStatus"
+        >${escapeHtmlAttribute(theaterFeedCliFeedback)}</div>
+        <form class="theater-feed-cli" id="theaterFeedCliForm" aria-label="Theater command line">
+          <label class="theater-feed-cli-prompt" for="theaterFeedCliInput">Q.U.A.C.&gt;</label>
+          <input
+            class="theater-feed-cli-input"
+            id="theaterFeedCliInput"
+            name="theaterFeedCliInput"
+            type="text"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            enterkeyhint="send"
+            placeholder="/give 5 healing kit"
+            value="${escapeHtmlAttribute(theaterFeedCliDraft)}"
+          />
+        </form>
       </div>
     </div>
   `;
-  return renderWindowShell("feed", THEATER_WINDOW_DEFS.feed.title, THEATER_WINDOW_DEFS.feed.kicker, body, theater);
+  return renderWindowShell(
+    "feed",
+    THEATER_WINDOW_DEFS.feed.title,
+    THEATER_WINDOW_DEFS.feed.kicker,
+    body,
+    theater,
+    { bodyClassName: "theater-window-body--feed" },
+  );
+}
+
+function focusTheaterFeedCliInput(options: { select?: boolean } = {}): void {
+  const input = document.getElementById("theaterFeedCliInput") as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  input.focus({ preventScroll: true });
+  if (options.select) {
+    input.select();
+    return;
+  }
+
+  const caret = input.value.length;
+  try {
+    input.setSelectionRange(caret, caret);
+  } catch {
+    // Ignore selection failures for non-text-capable states.
+  }
+}
+
+function requestTheaterFeedCliFocus(options: { select?: boolean } = {}): void {
+  window.requestAnimationFrame(() => {
+    focusTheaterFeedCliInput(options);
+  });
 }
 
 function syncTheaterFeedWindowToLatest(): void {
   const feedLog = document.getElementById("theaterFeedLog");
   if (feedLog) {
-    feedLog.scrollTop = 0;
+    window.requestAnimationFrame(() => {
+      feedLog.scrollTop = feedLog.scrollHeight;
+    });
   }
 }
 
@@ -5037,10 +5240,10 @@ function renderTheaterWindowDock(_theater: TheaterNetworkState): string {
           type="button"
           data-theater-window-restore="${key}"
           aria-label="Restore ${THEATER_WINDOW_DEFS[key].title}"
+          title="${THEATER_WINDOW_DEFS[key].title}"
           style="${getTheaterWindowThemeStyle(key)}"
         >
-          <span class="theater-window-dock-kicker">${THEATER_WINDOW_DEFS[key].restoreLabel}</span>
-          <span class="theater-window-dock-label">${THEATER_WINDOW_DEFS[key].title}</span>
+          <span class="theater-window-dock-label">${THEATER_WINDOW_DEFS[key].restoreLabel}</span>
         </button>
       `).join("")}
     </div>
@@ -5439,7 +5642,12 @@ function renderTheaterStyles(): string {
       }
 
       .theater-room-node--current {
-        box-shadow: 0 0 0 4px rgba(255, 204, 110, 0.18), 0 18px 36px rgba(0, 0, 0, 0.4);
+        z-index: 6;
+        border-color: rgba(255, 204, 110, 0.96);
+        box-shadow:
+          0 0 0 4px rgba(255, 204, 110, 0.2),
+          0 0 0 8px rgba(255, 204, 110, 0.08),
+          0 18px 36px rgba(0, 0, 0, 0.4);
       }
 
       .theater-room-node--selected {
@@ -5889,13 +6097,17 @@ function renderTheaterStyles(): string {
         z-index: 20;
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: min(96vw, 1180px);
+        padding: 7px;
         border-radius: 999px;
         border: 1px solid rgba(255, 255, 255, 0.08);
         background: rgba(8, 12, 15, 0.9);
       }
 
+      .theater-view-preset-toggle,
       .theater-map-mode-toggle {
         display: inline-flex;
         align-items: center;
@@ -5903,6 +6115,10 @@ function renderTheaterStyles(): string {
         padding-right: 6px;
         margin-right: 2px;
         border-right: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .theater-view-preset-btn {
+        min-width: 64px;
       }
 
       .theater-map-mode-btn {
@@ -5935,6 +6151,12 @@ function renderTheaterStyles(): string {
         letter-spacing: 0.12em;
         text-transform: uppercase;
         cursor: pointer;
+      }
+
+      .theater-zoom-btn--focus {
+        border-color: rgba(255, 204, 110, 0.48);
+        background: rgba(47, 34, 16, 0.94);
+        color: #ffcc6e;
       }
 
       .theater-zoom-value {
@@ -6141,6 +6363,13 @@ function renderTheaterStyles(): string {
       }
 
       .theater-window[data-theater-window="quests"] .theater-window-body {
+        padding: 0;
+        overflow: hidden;
+      }
+
+      .theater-window-body--feed {
+        display: flex;
+        flex-direction: column;
         padding: 0;
         overflow: hidden;
       }
@@ -6767,8 +6996,14 @@ function renderTheaterStyles(): string {
       .theater-feed-panel {
         display: flex;
         flex-direction: column;
-        min-height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 14px;
         gap: 12px;
+      }
+
+      .theater-feed-log--window {
+        margin-top: 0;
       }
 
       .theater-feed-line {
@@ -6781,12 +7016,23 @@ function renderTheaterStyles(): string {
         color: var(--all-nodes-text, #d5e0e8);
       }
 
-      .theater-feed-cli {
+      .theater-feed-cli-shell {
         margin-top: auto;
+        flex-shrink: 0;
         border-radius: 12px;
         border: 1px solid var(--all-nodes-surface-border, rgba(255, 255, 255, 0.08));
         background: rgba(0, 0, 0, 0.22);
         padding: 10px 12px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .theater-feed-cli-shell:focus-within {
+        border-color: var(--all-nodes-focus, #bfe7ee);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24), 0 0 0 3px var(--all-nodes-accent-soft, rgba(124, 182, 197, 0.16));
+      }
+
+      .theater-feed-cli {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -6795,22 +7041,38 @@ function renderTheaterStyles(): string {
         letter-spacing: 0.08em;
       }
 
+      .theater-feed-cli-status {
+        min-height: 1em;
+        color: rgba(229, 240, 242, 0.62);
+        font-size: 0.56rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .theater-feed-cli-status--error {
+        color: #ffb08a;
+      }
+
       .theater-feed-cli-prompt {
         color: #8cdb9e;
         font-weight: 800;
       }
 
-      .theater-feed-cli-text {
+      .theater-feed-cli-input {
         flex: 1;
         min-width: 0;
-        color: rgba(229, 240, 242, 0.76);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        border: none;
+        background: transparent;
+        padding: 0;
+        color: rgba(229, 240, 242, 0.88);
+        font: inherit;
+        letter-spacing: inherit;
+        outline: none;
       }
 
-      .theater-feed-cli-caret {
-        color: #ffcc6e;
+      .theater-feed-cli-input::placeholder {
+        color: rgba(229, 240, 242, 0.34);
       }
 
       .theater-resource-grid {
@@ -7284,46 +7546,72 @@ function renderTheaterStyles(): string {
 
       .theater-window-dock {
         position: fixed;
-        right: 18px;
-        bottom: 18px;
+        right: 14px;
+        bottom: 14px;
         z-index: 800;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        align-items: flex-end;
+        gap: 6px;
       }
 
       .theater-window-dock-item {
-        min-width: 160px;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 10px 12px;
+        width: 118px;
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        padding: 7px 10px;
         border: 1px solid var(--all-nodes-border, rgba(122, 92, 214, 0.42));
-        border-radius: 10px;
-        background: var(--all-nodes-surface-bg, rgba(13, 14, 28, 0.94));
+        border-radius: 8px;
+        background:
+          linear-gradient(90deg, var(--all-nodes-accent-soft, rgba(192, 179, 255, 0.14)), rgba(11, 14, 28, 0)),
+          var(--all-nodes-surface-bg, rgba(13, 14, 28, 0.94));
         color: var(--all-nodes-text, #f1edff);
         cursor: pointer;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
-        transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.26);
+        transition:
+          transform 0.15s ease,
+          border-color 0.15s ease,
+          background 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+
+      .theater-window-dock-item::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--all-nodes-accent, #ffcc6e);
+        box-shadow: 0 0 10px var(--all-nodes-glow, rgba(168, 124, 69, 0.28));
       }
 
       .theater-window-dock-item:hover {
-        transform: translateY(-1px);
-        background: var(--all-nodes-panel-hover-bg, rgba(25, 20, 46, 0.98));
+        transform: translateX(-2px);
+        background:
+          linear-gradient(90deg, var(--all-nodes-accent-soft, rgba(192, 179, 255, 0.18)), rgba(11, 14, 28, 0)),
+          var(--all-nodes-panel-hover-bg, rgba(25, 20, 46, 0.98));
         border-color: var(--all-nodes-border-hover, rgba(166, 138, 255, 0.62));
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
       }
 
-      .theater-window-dock-kicker {
-        font-size: 9px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--all-nodes-muted, rgba(191, 172, 255, 0.66));
+      .theater-window-dock-item:focus-visible {
+        outline: none;
+        border-color: var(--all-nodes-focus, #bfe7ee);
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.3),
+          0 0 0 3px var(--all-nodes-accent-soft, rgba(124, 182, 197, 0.16));
       }
 
       .theater-window-dock-label {
-        font-size: 12px;
-        letter-spacing: 0.08em;
+        font-size: 0.66rem;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        line-height: 1;
         text-transform: uppercase;
+        color: var(--all-nodes-text, #f1edff);
       }
 
       .theater-room-completion-popup {
@@ -9011,6 +9299,68 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
   attachWindowHandlers();
   ensureTheaterMapControls();
 
+  const theaterFeedPanel = document.querySelector<HTMLElement>("[data-theater-window='feed'] .theater-feed-panel");
+  const theaterFeedCliForm = document.getElementById("theaterFeedCliForm") as HTMLFormElement | null;
+  const theaterFeedCliInput = document.getElementById("theaterFeedCliInput") as HTMLInputElement | null;
+  const theaterFeedCliStatus = document.getElementById("theaterFeedCliStatus");
+
+  if (theaterFeedPanel && theaterFeedCliInput) {
+    theaterFeedPanel.addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("#theaterFeedCliInput")) {
+        return;
+      }
+      requestTheaterFeedCliFocus();
+    });
+    requestTheaterFeedCliFocus();
+  }
+
+  if (theaterFeedCliForm && theaterFeedCliInput instanceof HTMLInputElement && theaterFeedCliStatus instanceof HTMLElement) {
+    theaterFeedCliForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const rawCommand = theaterFeedCliInput.value;
+      theaterFeedCliDraft = rawCommand;
+      const result = runQuacDebugCommand(getGameState(), rawCommand);
+      if (!result.handled) {
+        theaterFeedCliFeedback = `Unknown command: "${rawCommand.trim() || "blank"}". Try "/dev".`;
+        theaterFeedCliFeedbackHasError = true;
+        theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
+        theaterFeedCliStatus.classList.add("theater-feed-cli-status--error");
+        theaterFeedCliInput.select();
+        return;
+      }
+
+      updateGameState(() => result.state);
+      theaterFeedCliFeedback = result.statusText;
+      theaterFeedCliFeedbackHasError = !result.success;
+
+      if (result.success) {
+        theaterFeedCliDraft = "";
+        if (result.ping) {
+          showSystemPing(result.ping);
+        }
+        renderTheaterCommandScreen();
+      } else {
+        theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
+        theaterFeedCliStatus.classList.add("theater-feed-cli-status--error");
+        theaterFeedCliInput.select();
+      }
+    });
+
+    theaterFeedCliInput.addEventListener("input", () => {
+      theaterFeedCliDraft = theaterFeedCliInput.value;
+      if (!theaterFeedCliFeedbackHasError) {
+        return;
+      }
+      theaterFeedCliFeedbackHasError = false;
+      theaterFeedCliFeedback = THEATER_FEED_CLI_HELP_TEXT;
+      theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
+      theaterFeedCliStatus.classList.remove("theater-feed-cli-status--error");
+    });
+  }
+
   document.querySelectorAll<HTMLElement>("[data-theater-map-mode]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -9021,6 +9371,20 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
       }
       theaterMapMode = mode;
       persistTheaterUiLayoutToState();
+      renderTheaterCommandScreen();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-theater-view-preset]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const preset = button.getAttribute("data-theater-view-preset");
+      if (preset !== "map" && preset !== "panels") {
+        return;
+      }
+      const activeTheater = getPreparedTheaterOperation(getGameState())?.theater ?? theater;
+      applyTheaterViewPreset(activeTheater, preset);
       renderTheaterCommandScreen();
     });
   });
@@ -9129,6 +9493,13 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
 
   document.getElementById("theaterZoomOutBtn")?.addEventListener("click", () => {
     setMapZoom(mapZoom - MAP_ZOOM_STEP);
+  });
+
+  document.getElementById("theaterFocusCurrentBtn")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const activeTheater = getPreparedTheaterOperation(getGameState())?.theater ?? theater;
+    focusCurrentTheaterNode(activeTheater);
   });
 
   document.getElementById("theaterMapWrap")?.addEventListener("wheel", (event) => {
@@ -10066,11 +10437,19 @@ export function renderTheaterCommandScreen(): void {
 
   const mountSignature = `${ensuredOperation.id ?? ensuredOperation.codename}:${ensuredOperation.theater.definition.id}`;
   if (lastMountedTheaterSignature !== mountSignature) {
+    theaterFeedCliDraft = "";
+    theaterFeedCliFeedback = THEATER_FEED_CLI_HELP_TEXT;
+    theaterFeedCliFeedbackHasError = false;
   }
   hydrateTheaterUiLayoutFromState(mountSignature);
   normalizeAllTheaterWindowFrames();
   const isFreshTheaterEntry = previousScreen !== "theater-command" || lastMountedTheaterSignature !== mountSignature;
-  if (isFreshTheaterEntry || !isAnyTheaterRoomVisibleOnScreen(ensuredOperation.theater)) {
+  const entryFocusNodeId = getTheaterEntryFocusNodeId(ensuredOperation.theater);
+  const shouldResetViewport =
+    isFreshTheaterEntry
+    || !isTheaterNodeVisibleOnScreen(ensuredOperation.theater, entryFocusNodeId)
+    || !isAnyTheaterRoomVisibleOnScreen(ensuredOperation.theater);
+  if (shouldResetViewport) {
     resetMapViewportForTheaterEntry(ensuredOperation.theater);
   }
 
@@ -10130,6 +10509,10 @@ export function renderTheaterCommandScreen(): void {
       ${renderTheaterExitConfirmModal()}
     </div>
   `;
+
+  if (entryFocusNodeId && shouldResetViewport) {
+    centerTheaterNodeOnScreen(entryFocusNodeId);
+  }
 
   attachTheaterHandlers(theater);
   syncTheaterFeedWindowToLatest();

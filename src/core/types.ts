@@ -2,6 +2,7 @@
 import type { EffectFlowDocument } from "./effectFlow";
 import type { WeaponCardRules } from "./weaponData";
 import type { ResourceWallet } from "./resources";
+import type { UnitAppearance } from "./unitAppearance";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
 export type { ResourceKey, ResourceWallet } from "./resources";
@@ -90,6 +91,8 @@ export interface Card {
 export interface Unit {
   id: UnitId;
   name: string;
+  appearance?: UnitAppearance;
+  notes?: string;
   isEnemy: boolean;
   hp: number;
   maxHp: number;
@@ -220,6 +223,7 @@ export interface OperationRun {
   sprawlDirection?: TheaterSprawlDirection;
   theater?: TheaterNetworkState;
   theaterFloors?: Record<number, TheaterNetworkState>;
+  theaterResourceDecayEnabled?: boolean;
 }
 
 export interface PlayerProfile {
@@ -483,6 +487,31 @@ export interface LobbyState {
   updatedAt: number;
 }
 
+export type LobbyReturnFieldCameraViewState = {
+  yaw: number;
+  pitch: number;
+  distance: number;
+};
+
+export type LobbyReturnFieldCameraState = {
+  mode: "shared" | "split";
+  behavior: "shared" | "hybrid";
+  shared: LobbyReturnFieldCameraViewState;
+  split: Record<PlayerId, LobbyReturnFieldCameraViewState>;
+};
+
+export type LobbyReturnOuterDeckOpenWorldState = {
+  seed: number;
+  generationVersion: number;
+  floorOrdinal: number;
+  playerWorldX: number;
+  playerWorldY: number;
+  playerFacing: "north" | "south" | "east" | "west";
+  streamCenterWorldX: number;
+  streamCenterWorldY: number;
+  streamRadiusChunks: number;
+};
+
 export type LobbyReturnContext =
   | { kind: "menu" }
   | { kind: "esc" }
@@ -493,6 +522,10 @@ export type LobbyReturnContext =
       x?: number;
       y?: number;
       facing?: "north" | "south" | "east" | "west";
+      players?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckWorldPlayers?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckOpenWorldState?: LobbyReturnOuterDeckOpenWorldState | null;
+      cameraState?: LobbyReturnFieldCameraState | null;
     };
 
 export interface BaseCampItemSize {
@@ -645,6 +678,7 @@ export interface UILayoutState {
   opsTerminalAtlasNotesWindowColor?: string;
   opsTerminalAtlasDebugFloorBypass?: boolean;
   escDebugPortStableUnlock?: boolean;
+  quacDebugAutoWinBattles?: boolean;
   theaterDebugDisableEnemyRoomAttacks?: boolean;
   notesState?: PlayerNotesState;
 }
@@ -1287,6 +1321,7 @@ export interface TheaterNetworkState {
   rooms: Record<RoomId, TheaterRoom>;
   currentRoomId: RoomId;
   selectedRoomId: RoomId;
+  resourceDecayEnabled?: boolean;
   currentNodeId?: string;
   selectedNodeId?: string;
   annexesById?: Record<string, AnnexInstance>;

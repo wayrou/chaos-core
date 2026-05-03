@@ -4,6 +4,7 @@ import {
   subtractResourceWallet,
   type ResourceWallet,
 } from "./resources";
+import type { MerchantListingSource } from "./merchant";
 
 export type DecorAnchorId =
   | "wall_left"
@@ -41,6 +42,7 @@ export interface DecorItem {
     shopEligible?: boolean;
     rewardEligible?: boolean;
     craftEligible?: boolean;
+    merchant?: MerchantListingSource;
   };
 }
 

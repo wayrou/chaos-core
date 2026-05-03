@@ -149,6 +149,7 @@ const HOLD_POSITION_TICK_MS = 5000;
 const HAVEN_WIDTH = 320;
 const HAVEN_HEIGHT = 196;
 const HAVEN_TO_INGRESS_DISTANCE = 384;
+const ATLAS_APRON_RADIUS = 340;
 const THEATER_DEPTH_STEP = 330;
 const THEATER_LATERAL_STEP = 236;
 const MAP_PAN_PADDING_X = 360;
@@ -2107,6 +2108,26 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
           style="width:${OPS_ATLAS_MAP_WIDTH}px;height:${OPS_ATLAS_MAP_HEIGHT}px;"
         >
           <svg class="opsatlas-svg" viewBox="0 0 ${OPS_ATLAS_MAP_WIDTH} ${OPS_ATLAS_MAP_HEIGHT}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <g class="opsatlas-apron-zone" aria-hidden="true">
+              <circle
+                class="opsatlas-apron-zone__halo"
+                cx="${OPS_ATLAS_HAVEN_ANCHOR.x}"
+                cy="${OPS_ATLAS_HAVEN_ANCHOR.y}"
+                r="${ATLAS_APRON_RADIUS + 42}"
+              ></circle>
+              <circle
+                class="opsatlas-apron-zone__disc"
+                cx="${OPS_ATLAS_HAVEN_ANCHOR.x}"
+                cy="${OPS_ATLAS_HAVEN_ANCHOR.y}"
+                r="${ATLAS_APRON_RADIUS}"
+              ></circle>
+              <circle
+                class="opsatlas-apron-zone__rim"
+                cx="${OPS_ATLAS_HAVEN_ANCHOR.x}"
+                cy="${OPS_ATLAS_HAVEN_ANCHOR.y}"
+                r="${ATLAS_APRON_RADIUS}"
+              ></circle>
+            </g>
             ${sectorViews.map((view) => {
               const uplink = view.rooms.find((room) => room.room.isUplinkRoom);
               if (!uplink) {

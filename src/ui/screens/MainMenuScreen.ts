@@ -5,9 +5,6 @@
 // ============================================================================
 
 import { getGameState, setGameState, resetToNewGame } from "../../state/gameStore";
-import { renderSettingsScreen } from "./SettingsScreen";
-import { renderFieldScreen } from "../../field/FieldScreen";
-import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import {
   canContinue,
   loadMostRecent,
@@ -271,6 +268,26 @@ async function initializeGame(): Promise<void> {
   console.log("[INIT] Initialization complete");
 }
 
+async function renderBaseCampFromMainMenu(): Promise<void> {
+  const { renderFieldScreen } = await import("../../field/FieldScreen");
+  renderFieldScreen("base_camp");
+}
+
+async function renderEscMenuFromMainMenu(): Promise<void> {
+  const { renderAllNodesMenuScreen } = await import("./AllNodesMenuScreen");
+  renderAllNodesMenuScreen();
+}
+
+async function renderSettingsFromMainMenu(): Promise<void> {
+  const { renderSettingsScreen } = await import("./SettingsScreen");
+  renderSettingsScreen("menu");
+}
+
+async function renderImportContentFromMainMenu(): Promise<void> {
+  const { renderImportContentScreen } = await import("./ImportContentScreen");
+  renderImportContentScreen();
+}
+
 async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
   const state = getGameState();
   if (state.currentBattle?.modeContext?.kind === "echo") {
@@ -286,11 +303,11 @@ async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
   }
 
   if (defaultView === "esc") {
-    renderAllNodesMenuScreen();
+    await renderEscMenuFromMainMenu();
     return;
   }
 
-  renderFieldScreen("base_camp");
+  await renderBaseCampFromMainMenu();
 }
 
 // ----------------------------------------------------------------------------
@@ -349,6 +366,9 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-scanline"></div>
         <div class="mainmenu-vignette"></div>
         <div class="mainmenu-particles"></div>
+      </div>
+      <div class="mainmenu-experimental-tag" aria-label="Experimental build">
+        EXPERIMENTAL BUILD
       </div>
       
       <!-- Two-column layout: Logo/Menu on left, Terminal on right -->
@@ -1587,7 +1607,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
       renderStoryPlaceholderScreen({
         kind: "opening",
         onContinue: () => {
-          renderFieldScreen("base_camp");
+          void renderBaseCampFromMainMenu();
         },
       });
 
@@ -1636,7 +1656,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (settingsBtn) {
     settingsBtn.addEventListener("click", () => {
       teardownMainMenuWorkspace();
-      renderSettingsScreen("menu");
+      void renderSettingsFromMainMenu();
     });
   }
 
@@ -1644,7 +1664,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   if (importContentBtn) {
     importContentBtn.addEventListener("click", () => {
       teardownMainMenuWorkspace();
-      renderImportContentScreen();
+      void renderImportContentFromMainMenu();
     });
   }
 

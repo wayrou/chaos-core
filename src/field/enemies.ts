@@ -6,11 +6,12 @@ import { loadCampaignProgress } from "../core/campaign";
 import { createEmptyResourceWallet, RESOURCE_KEYS } from "../core/resources";
 import type { ImportedFieldEnemyDefinition } from "../content/technica/types";
 import type { FieldEnemy, FieldMap, FieldObject } from "./types";
+import { normalizeHaven3DEnemyAttackStyle } from "./haven3d/enemyMoves";
 
 const TILE_SIZE = 64;
 const DEFAULT_ENEMY_WIDTH = 40;
 const DEFAULT_ENEMY_HEIGHT = 40;
-const DEFAULT_ENEMY_HP = 3;
+const DEFAULT_ENEMY_HP = 72;
 const DEFAULT_ENEMY_SPEED = 90;
 const DEFAULT_AGGRO_RANGE = 200;
 const DEFAULT_IMPORTED_SPAWN_COUNT = 1;
@@ -33,6 +34,43 @@ function coercePositiveNumber(value: unknown, fallback: number) {
   }
 
   return fallback;
+}
+
+function getSignificantEnemyHp(
+  rawHp: unknown,
+  fallback: number,
+  descriptorParts: Array<unknown>,
+): number {
+  const hasExplicitHp = rawHp !== undefined && rawHp !== null && rawHp !== "";
+  const baseHp = coercePositiveNumber(rawHp, fallback);
+  const descriptor = descriptorParts
+    .map((part) => String(part ?? ""))
+    .join(" ")
+    .toLowerCase();
+
+  if (!hasExplicitHp || baseHp >= 48) {
+    return Math.max(fallback, Math.round(baseHp));
+  }
+
+  const isWorldBoss = /\b(worldboss|world_boss|boss)\b/.test(descriptor);
+  const isElite = /\b(elite|overseer|warden|brute|sentinel|beast|construct|defender|heavy|quarantine|containment)\b/.test(descriptor);
+  const isRanged = /\b(sniper|sentry|drone|ranged|shot|marksman|perched)\b/.test(descriptor);
+  const multiplier = isWorldBoss ? 34 : isElite ? 22 : isRanged ? 18 : 20;
+  const floor = isWorldBoss ? 260 : isElite ? 120 : isRanged ? 76 : 84;
+  return Math.max(floor, Math.round(baseHp * multiplier));
+}
+
+function getPreservedEnemyHp(existing: FieldEnemy | undefined, maxHp: number, fallbackHp = maxHp): number {
+  if (!existing) {
+    return Math.max(1, Math.min(maxHp, fallbackHp));
+  }
+
+  const previousMaxHp = Math.max(1, Number(existing.maxHp ?? maxHp));
+  const previousHp = Math.max(0, Number(existing.hp ?? previousMaxHp));
+  const scaledHp = previousMaxHp === maxHp
+    ? previousHp
+    : Math.ceil((previousHp / previousMaxHp) * maxHp);
+  return Math.max(0, Math.min(maxHp, scaledHp));
 }
 
 function coerceNonNegativeInteger(value: unknown, fallback = 0) {
@@ -250,6 +288,14 @@ function buildImportedEnemyDrops(definition: ImportedFieldEnemyDefinition): Fiel
   };
 }
 
+function coerceGearbladeDefense(value: unknown, fallback: FieldEnemy["gearbladeDefense"] = "none"): FieldEnemy["gearbladeDefense"] {
+  return value === "shield" || value === "armor" || value === "none" ? value : fallback;
+}
+
+function coerceEnemyAttackStyle(value: unknown, fallback: FieldEnemy["attackStyle"]): FieldEnemy["attackStyle"] {
+  return normalizeHaven3DEnemyAttackStyle(value, fallback) ?? undefined;
+}
+
 function buildObjectEnemyDrops(object: FieldObject): FieldEnemy["drops"] | undefined {
   const rawDrops = object.metadata?.drops as Record<string, unknown> | undefined;
   if (!rawDrops) {
@@ -297,7 +343,7 @@ function matchesImportedDefinitionForMap(
 export function syncFieldEnemiesForMap(
   map: FieldMap,
   currentEnemies: FieldEnemy[] = [],
-  currentTime = Date.now()
+  currentTime = 0
 ): FieldEnemy[] {
   const currentEnemyByPersistentKey = new Map(
     currentEnemies.map((enemy) => [buildEnemyPersistentKey(enemy), enemy]),
@@ -307,15 +353,29 @@ export function syncFieldEnemiesForMap(
     .filter(isEnemyFieldObject)
     .map((object) => {
       const existing = currentEnemyByPersistentKey.get(createObjectPersistentKey(object.id));
-      const maxHp = coercePositiveNumber(object.metadata?.hp, existing?.maxHp ?? DEFAULT_ENEMY_HP);
+      const enemyKind = typeof object.metadata?.enemyKind === "string" ? object.metadata.enemyKind : "light";
+      const objectCenterX = (object.x + object.width / 2) * TILE_SIZE;
+      const objectCenterY = (object.y + object.height / 2) * TILE_SIZE;
+      const maxHp = getSignificantEnemyHp(object.metadata?.hp, existing?.maxHp ?? DEFAULT_ENEMY_HP, [
+        object.id,
+        object.metadata?.name,
+        enemyKind,
+        object.metadata?.worldBoss ? "world_boss" : "",
+      ]);
+      const startingHp = coercePositiveNumber(object.metadata?.currentHp, maxHp);
+      const roamRadiusTiles = coercePositiveNumber(
+        object.metadata?.roamRadiusTiles,
+        existing?.roamRadius ? existing.roamRadius / TILE_SIZE : 0,
+      );
+      const roamRadius = roamRadiusTiles > 0 ? roamRadiusTiles * TILE_SIZE : undefined;
       const nextBase: FieldEnemy = {
         id: existing?.id ?? `field_enemy_${object.id}`,
         name: getEnemyName(object),
-        x: (object.x + object.width / 2) * TILE_SIZE,
-        y: (object.y + object.height / 2) * TILE_SIZE,
+        x: objectCenterX,
+        y: objectCenterY,
         width: coercePositiveNumber(object.metadata?.width, existing?.width ?? DEFAULT_ENEMY_WIDTH),
         height: coercePositiveNumber(object.metadata?.height, existing?.height ?? DEFAULT_ENEMY_HEIGHT),
-        hp: maxHp,
+        hp: getPreservedEnemyHp(existing, maxHp, startingHp),
         maxHp,
         speed: coercePositiveNumber(object.metadata?.speed, existing?.speed ?? DEFAULT_ENEMY_SPEED),
         facing: existing?.facing ?? "south",
@@ -325,8 +385,20 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(object.metadata?.aggroRange, existing?.aggroRange ?? DEFAULT_AGGRO_RANGE),
+        roamHomeX: roamRadius ? existing?.roamHomeX ?? objectCenterX : undefined,
+        roamHomeY: roamRadius ? existing?.roamHomeY ?? objectCenterY : undefined,
+        roamRadius,
+        roamSpeedMultiplier: roamRadius
+          ? coercePositiveNumber(object.metadata?.roamSpeedMultiplier, existing?.roamSpeedMultiplier ?? 0.85)
+          : undefined,
+        roamTargetX: roamRadius ? existing?.roamTargetX : undefined,
+        roamTargetY: roamRadius ? existing?.roamTargetY : undefined,
+        nextRoamAt: roamRadius ? existing?.nextRoamAt : undefined,
+        gearbladeDefense: coerceGearbladeDefense(object.metadata?.gearbladeDefense, existing?.gearbladeDefense),
+        gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
+        attackStyle: coerceEnemyAttackStyle(object.metadata?.attackStyle, existing?.attackStyle),
         sourceObjectId: object.id,
-        kind: typeof object.metadata?.enemyKind === "string" ? object.metadata.enemyKind : "light",
+        kind: enemyKind,
         spriteKey:
           typeof object.metadata?.spriteKey === "string"
             ? object.metadata.spriteKey
@@ -346,7 +418,7 @@ export function syncFieldEnemiesForMap(
         ...nextBase,
         x: existing.x,
         y: existing.y,
-        hp: Math.min(Math.max(existing.hp, 0), maxHp),
+        hp: getPreservedEnemyHp(existing, maxHp, startingHp),
       };
     });
 
@@ -363,7 +435,11 @@ export function syncFieldEnemiesForMap(
       `${map.id}:${definition.id}`,
       spawnCount,
     );
-    const maxHp = coercePositiveNumber(definition.stats.maxHp, DEFAULT_ENEMY_HP);
+    const maxHp = getSignificantEnemyHp(definition.stats.maxHp, DEFAULT_ENEMY_HP, [
+      definition.id,
+      definition.name,
+      definition.kind,
+    ]);
     const width = coercePositiveNumber(definition.stats.width, DEFAULT_ENEMY_WIDTH);
     const height = coercePositiveNumber(definition.stats.height, DEFAULT_ENEMY_HEIGHT);
     const drops = buildImportedEnemyDrops(definition);
@@ -384,7 +460,7 @@ export function syncFieldEnemiesForMap(
         y: existing?.y ?? spawnPoint?.y ?? 0,
         width,
         height,
-        hp: existing ? Math.min(Math.max(existing.hp, 0), maxHp) : maxHp,
+        hp: getPreservedEnemyHp(existing, maxHp),
         maxHp,
         speed: coercePositiveNumber(definition.stats.speed, DEFAULT_ENEMY_SPEED),
         facing: existing?.facing ?? "south",
@@ -394,6 +470,9 @@ export function syncFieldEnemiesForMap(
         vy: existing?.vy ?? 0,
         knockbackTime: existing?.knockbackTime ?? 0,
         aggroRange: coercePositiveNumber(definition.stats.aggroRange, DEFAULT_AGGRO_RANGE),
+        gearbladeDefense: coerceGearbladeDefense(definition.metadata?.gearbladeDefense, existing?.gearbladeDefense),
+        gearbladeDefenseBroken: existing?.gearbladeDefenseBroken ?? false,
+        attackStyle: coerceEnemyAttackStyle(definition.metadata?.attackStyle, existing?.attackStyle),
         sourceDefinitionId: definition.id,
         spawnKey,
         kind: definition.kind?.trim() || "light",

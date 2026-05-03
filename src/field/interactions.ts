@@ -3,22 +3,6 @@
 // ============================================================================
 
 import { InteractionZone, FieldMap } from "./types";
-import { renderShopScreen } from "../ui/screens/ShopScreen";
-
-import { renderRosterScreen } from "../ui/screens/RosterScreen";
-import { renderInventoryScreen } from "../ui/screens/InventoryScreen";
-import { renderOperationSelectScreen } from "../ui/screens/OperationSelectScreen";
-import { renderQuestBoardScreen } from "../ui/screens/QuestBoardScreen";
-import { renderTavernDialogueScreen } from "../ui/screens/TavernDialogueScreen";
-import { renderGearWorkbenchScreen } from "../ui/screens/GearWorkbenchScreen";
-import { renderPortScreen } from "../ui/screens/PortScreen";
-import { renderQuartersScreen } from "../ui/screens/QuartersScreen";
-import { renderBlackMarketScreen } from "../ui/screens/BlackMarketScreen";
-import { renderStableScreen } from "../ui/screens/StableScreen";
-import { renderDispatchScreen } from "../ui/screens/DispatchScreen";
-import { renderSchemaScreen } from "../ui/screens/SchemaScreen";
-import { renderFoundryAnnexScreen } from "../ui/screens/FoundryAnnexScreen";
-import { showDialogue, showImportedDialogue } from "../ui/screens/DialogueScreen";
 import { getGameState, updateGameState } from "../state/gameStore";
 import {
   BLACK_MARKET_UNLOCK_FLOOR_ORDINAL,
@@ -38,10 +22,14 @@ import {
 import {
   abortOuterDeckExpedition,
   OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
+  OUTER_DECK_OPEN_WORLD_TILE_SIZE,
+  OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
   OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE,
   OUTER_DECK_OVERWORLD_MAP_ID,
   beginOuterDeckExpedition,
   claimOuterDeckCompletion,
+  grantOuterDeckInteriorCacheReward,
+  getOuterDeckInteriorRoomKey,
   getOuterDeckBranchEntrySubarea,
   getOuterDeckNpcEncounterDefinition,
   getOuterDeckOverworldReturnSpawn,
@@ -53,11 +41,16 @@ import {
   isOuterDeckSubareaCleared,
   markOuterDeckCacheClaimed,
   markOuterDeckNpcEncounterSeen,
+  parseOuterDeckInteriorMapId,
+  prepareOuterDeckOpenWorldEntry,
   resolveOuterDeckMechanic,
   setOuterDeckCurrentSubarea,
+  setOuterDeckOpenWorldPlayerWorldPosition,
+  setOuterDeckOpenWorldStreamWindow,
 } from "../core/outerDecks";
-import { createEmptyResourceWallet } from "../core/resources";
+import { createEmptyResourceWallet, getResourceEntries } from "../core/resources";
 import { grantSessionResources } from "../core/session";
+import { getCurrentOpsTerminalAtlasFloor } from "../core/opsTerminalAtlas";
 import { showAlertDialog } from "../ui/components/confirmDialog";
 import { showSystemPing } from "../ui/components/systemPing";
 
@@ -113,6 +106,27 @@ function summarizeOuterDeckRewardBundle(
   return parts.join(" | ");
 }
 
+function isCurrentOuterDeckInteriorRoomCleared(map: FieldMap): boolean {
+  const ref = parseOuterDeckInteriorMapId(String(map.id));
+  if (!ref) {
+    return true;
+  }
+  const roomKey = getOuterDeckInteriorRoomKey(ref);
+  return Boolean(getGameState().outerDecks?.openWorld?.clearedInteriorRoomKeys?.includes(roomKey));
+}
+
+function summarizeOuterDeckInteriorReward(result: ReturnType<typeof grantOuterDeckInteriorCacheReward>): string {
+  const parts = [
+    result.gearReward ? `Gear: ${result.gearReward.name}` : "",
+    result.fieldMod ? `Field Mod: ${result.fieldMod.name}` : "",
+    result.wad > 0 ? `+${result.wad} WAD` : "",
+    ...getResourceEntries(result.resources, { keys: ["metalScrap", "wood", "chaosShards", "steamComponents"] })
+      .map((entry) => `+${entry.amount} ${entry.label}`),
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" | ") : "Cache already secured.";
+}
+
 /**
  * Handle interaction with a zone
  */
@@ -136,6 +150,100 @@ function showFieldTravelPing(title: string, message: string, detail?: string): v
   });
 }
 
+async function renderFieldShopScreen(): Promise<void> {
+  const { renderShopScreen } = await import("../ui/screens/ShopScreen");
+  renderShopScreen("field");
+}
+
+async function renderFieldMerchantShopScreen(floorOrdinal: number): Promise<void> {
+  const { renderMerchantShopScreen } = await import("../ui/screens/ShopScreen");
+  renderMerchantShopScreen("field", floorOrdinal);
+}
+
+async function renderFieldRosterScreen(): Promise<void> {
+  const { renderRosterScreen } = await import("../ui/screens/RosterScreen");
+  renderRosterScreen("field");
+}
+
+async function renderFieldLoadoutScreen(): Promise<void> {
+  const { renderInventoryScreen } = await import("../ui/screens/InventoryScreen");
+  renderInventoryScreen("field");
+}
+
+async function renderFieldOperationSelectScreen(): Promise<void> {
+  const { renderOperationSelectScreen } = await import("../ui/screens/OperationSelectScreen");
+  renderOperationSelectScreen("field");
+}
+
+async function renderFieldQuestBoardScreen(): Promise<void> {
+  const { renderQuestBoardScreen } = await import("../ui/screens/QuestBoardScreen");
+  renderQuestBoardScreen("field");
+}
+
+async function renderFieldTavernScreen(): Promise<void> {
+  const { renderTavernDialogueScreen } = await import("../ui/screens/TavernDialogueScreen");
+  renderTavernDialogueScreen("base_camp_tavern", "Tavern", "field");
+}
+
+async function renderFieldGearWorkbenchScreen(): Promise<void> {
+  const { renderGearWorkbenchScreen } = await import("../ui/screens/GearWorkbenchScreen");
+  renderGearWorkbenchScreen(undefined, undefined, "field");
+}
+
+async function renderFieldPortScreen(): Promise<void> {
+  const { renderPortScreen } = await import("../ui/screens/PortScreen");
+  renderPortScreen("field");
+}
+
+async function renderFieldDispatchScreen(): Promise<void> {
+  const { renderDispatchScreen } = await import("../ui/screens/DispatchScreen");
+  renderDispatchScreen("field");
+}
+
+async function renderFieldQuartersScreen(action?: string): Promise<void> {
+  const { renderQuartersScreen } = await import("../ui/screens/QuartersScreen");
+  renderQuartersScreen("field", action as any);
+}
+
+async function renderFieldBlackMarketScreen(): Promise<void> {
+  const { renderBlackMarketScreen } = await import("../ui/screens/BlackMarketScreen");
+  renderBlackMarketScreen("field");
+}
+
+async function renderFieldStableScreen(): Promise<void> {
+  const { renderStableScreen } = await import("../ui/screens/StableScreen");
+  renderStableScreen("field");
+}
+
+async function renderFieldSchemaScreen(): Promise<void> {
+  const { renderSchemaScreen } = await import("../ui/screens/SchemaScreen");
+  renderSchemaScreen("field");
+}
+
+async function renderFieldFoundryAnnexScreen(): Promise<void> {
+  const { renderFoundryAnnexScreen } = await import("../ui/screens/FoundryAnnexScreen");
+  renderFoundryAnnexScreen("field");
+}
+
+async function showFieldDialogue(
+  title: string,
+  lines: string[],
+  onResume: () => void,
+  dialogueId?: string,
+): Promise<void> {
+  const { showDialogue } = await import("../ui/screens/DialogueScreen");
+  showDialogue(title, lines, onResume, dialogueId);
+}
+
+async function showImportedFieldDialogue(
+  dialogueId: string,
+  onResume: () => void,
+  label: string,
+): Promise<boolean> {
+  const { showImportedDialogue } = await import("../ui/screens/DialogueScreen");
+  return showImportedDialogue(dialogueId, onResume, label);
+}
+
 export async function handleInteraction(
   zone: InteractionZone,
   map: FieldMap,
@@ -146,20 +254,27 @@ export async function handleInteraction(
     beforeScreenOpen?.();
     renderScreen();
   };
+  const openScreenAsync = (renderScreen: () => Promise<void>): void => {
+    beforeScreenOpen?.();
+    void renderScreen().catch((error) => {
+      console.error("[FIELD] Failed to open field interaction screen:", error);
+      onResume();
+    });
+  };
 
   switch (zone.action) {
     case "shop":
-      openScreen(() => renderShopScreen("field"));
+      openScreenAsync(renderFieldShopScreen);
       break;
 
 
 
     case "roster":
-      openScreen(() => renderRosterScreen("field"));
+      openScreenAsync(renderFieldRosterScreen);
       break;
 
     case "loadout":
-      openScreen(() => renderInventoryScreen("field"));
+      openScreenAsync(renderFieldLoadoutScreen);
       break;
 
     case "ops_terminal":
@@ -169,7 +284,7 @@ export async function handleInteraction(
           if (handledByCoop) {
             return;
           }
-          openScreen(() => renderOperationSelectScreen("field"));
+          openScreenAsync(renderFieldOperationSelectScreen);
         } catch (error) {
           console.error("[FIELD] Ops Terminal failed to open:", error);
           await showFieldInteractionAlert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
@@ -181,7 +296,7 @@ export async function handleInteraction(
     case "quest_board":
       console.log("[FIELD] Quest Board interaction triggered");
       try {
-        openScreen(() => renderQuestBoardScreen("field"));
+        openScreenAsync(renderFieldQuestBoardScreen);
       } catch (error) {
         console.error("[FIELD] Error rendering quest board:", error);
         onResume();
@@ -190,11 +305,11 @@ export async function handleInteraction(
 
     case "tavern":
       // Go directly to recruitment screen (no intro dialogue)
-      openScreen(() => renderTavernDialogueScreen("base_camp_tavern", "Tavern", "field"));
+      openScreenAsync(renderFieldTavernScreen);
       break;
 
     case "gear_workbench":
-      openScreen(() => renderGearWorkbenchScreen(undefined, undefined, "field"));
+      openScreenAsync(renderFieldGearWorkbenchScreen);
       break;
 
     case "port":
@@ -203,7 +318,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderPortScreen("field"));
+      openScreenAsync(renderFieldPortScreen);
       break;
 
     case "dispatch":
@@ -212,7 +327,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderDispatchScreen("field"));
+      openScreenAsync(renderFieldDispatchScreen);
       break;
 
     case "quarters":
@@ -228,7 +343,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderBlackMarketScreen("field"));
+      openScreenAsync(renderFieldBlackMarketScreen);
       break;
 
     case "stable":
@@ -237,7 +352,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderStableScreen("field"));
+      openScreenAsync(renderFieldStableScreen);
       break;
 
     case "schema":
@@ -246,7 +361,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderSchemaScreen("field"));
+      openScreenAsync(renderFieldSchemaScreen);
       break;
 
     case "foundry-annex":
@@ -255,7 +370,7 @@ export async function handleInteraction(
         onResume();
         break;
       }
-      openScreen(() => renderFoundryAnnexScreen("field"));
+      openScreenAsync(renderFieldFoundryAnnexScreen);
       break;
 
     case "comms-array":
@@ -325,20 +440,20 @@ export async function handleInteraction(
       if (zone.metadata?.dialogueId) {
         const resumeAfterDialogue = () => {
           if (zone.metadata?.handlerId === "open_board") {
-            openScreen(() => renderQuestBoardScreen("field"));
+            openScreenAsync(renderFieldQuestBoardScreen);
             return;
           }
           onResume();
         };
 
-        const opened = showImportedDialogue(String(zone.metadata.dialogueId), resumeAfterDialogue, zone.label);
+        const opened = await showImportedFieldDialogue(String(zone.metadata.dialogueId), resumeAfterDialogue, zone.label);
         if (opened) {
           break;
         }
       }
 
       if (zone.metadata?.handlerId === "open_board") {
-        openScreen(() => renderQuestBoardScreen("field"));
+        openScreenAsync(renderFieldQuestBoardScreen);
         break;
       }
 
@@ -380,13 +495,14 @@ export async function handleInteraction(
       }
 
       if (zone.metadata?.handlerId === "outer_deck_enter_overworld") {
-        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        const { renderFieldScreen } = await import("./FieldScreen");
         try {
-          setNextFieldSpawnOverrideTile(OUTER_DECK_OVERWORLD_MAP_ID, OUTER_DECK_OVERWORLD_ENTRY_SPAWN_TILE);
+          const apronFloorOrdinal = getCurrentOpsTerminalAtlasFloor().floorOrdinal;
+          updateGameState((state) => prepareOuterDeckOpenWorldEntry(state, apronFloorOrdinal));
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
         } catch (error) {
-          console.error("[FIELD] Failed to enter Outer Deck overworld:", error);
-          showFieldTravelPing("TRAVEL BLOCKED", "Outer Deck route failed to initialize.");
+          console.error("[FIELD] Failed to enter Apron overworld:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "Apron route failed to initialize.");
           onResume();
         }
         break;
@@ -400,10 +516,144 @@ export async function handleInteraction(
           setNextFieldSpawnOverrideTile("base_camp", OUTER_DECK_HAVEN_EXIT_SPAWN_TILE);
           renderFieldScreen("base_camp");
         } catch (error) {
-          console.error("[FIELD] Failed to return from Outer Decks:", error);
+          console.error("[FIELD] Failed to return from the Apron:", error);
           showFieldTravelPing("RETURN BLOCKED", "HAVEN access failed to resolve.");
           onResume();
         }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_traveling_merchant") {
+        const floorOrdinal = Math.max(
+          1,
+          Math.floor(Number(zone.metadata?.floorOrdinal ?? getGameState().outerDecks?.openWorld?.floorOrdinal ?? 1)),
+        );
+        openScreenAsync(() => renderFieldMerchantShopScreen(floorOrdinal));
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_entry") {
+        const targetMapId = typeof zone.metadata?.targetMapId === "string" ? zone.metadata.targetMapId : "";
+        if (!targetMapId) {
+          onResume();
+          break;
+        }
+
+        const returnWorldTileX = Number(zone.metadata?.returnWorldTileX);
+        const returnWorldTileY = Number(zone.metadata?.returnWorldTileY);
+        const returnFacing = zone.metadata?.returnFacing === "north"
+          || zone.metadata?.returnFacing === "south"
+          || zone.metadata?.returnFacing === "east"
+          || zone.metadata?.returnFacing === "west"
+          ? zone.metadata.returnFacing
+          : "south";
+        if (Number.isFinite(returnWorldTileX) && Number.isFinite(returnWorldTileY)) {
+          const returnWorldX = (returnWorldTileX + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+          const returnWorldY = (returnWorldTileY + 0.5) * OUTER_DECK_OPEN_WORLD_TILE_SIZE;
+          updateGameState((state) => {
+            let nextState = setOuterDeckOpenWorldPlayerWorldPosition(
+              state,
+              returnWorldX,
+              returnWorldY,
+              returnFacing,
+            );
+            nextState = setOuterDeckOpenWorldStreamWindow(
+              nextState,
+              returnWorldX,
+              returnWorldY,
+              OUTER_DECK_OPEN_WORLD_STREAM_RADIUS,
+            );
+            return nextState;
+          });
+        }
+
+        const {
+          renderFieldScreen,
+          scheduleOuterDeckOpenWorldCoopRespawn,
+          setNextFieldSpawnOverrideTile,
+        } = await import("./FieldScreen");
+        try {
+          scheduleOuterDeckOpenWorldCoopRespawn();
+          setNextFieldSpawnOverrideTile(targetMapId, { x: 3, y: 8, facing: "east" });
+          renderFieldScreen(targetMapId as any);
+        } catch (error) {
+          console.error("[FIELD] Failed to enter Apron interior:", error);
+          showFieldTravelPing("TRAVEL BLOCKED", "The corridor entrance failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_transition") {
+        const targetMapId = typeof zone.metadata?.targetMapId === "string" ? zone.metadata.targetMapId : "";
+        if (!targetMapId) {
+          onResume();
+          break;
+        }
+
+        if (zone.metadata?.requiresClear && !isCurrentOuterDeckInteriorRoomCleared(map)) {
+          showFieldTravelPing(
+            "ROUTE BLOCKED",
+            "Clear the corridor before pushing deeper.",
+          );
+          onResume();
+          break;
+        }
+
+        const direction = String(zone.metadata?.direction ?? "deeper");
+        const { renderFieldScreen, setNextFieldSpawnOverrideTile } = await import("./FieldScreen");
+        try {
+          setNextFieldSpawnOverrideTile(targetMapId, direction === "back"
+            ? { x: 18, y: 8, facing: "west" }
+            : { x: 3, y: 8, facing: "east" });
+          renderFieldScreen(targetMapId as any);
+        } catch (error) {
+          console.error("[FIELD] Failed to move through Apron interior:", error);
+          showFieldTravelPing("ROUTE BLOCKED", "The next corridor failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_exit") {
+        const { renderFieldScreen } = await import("./FieldScreen");
+        try {
+          renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
+        } catch (error) {
+          console.error("[FIELD] Failed to leave Apron interior:", error);
+          showFieldTravelPing("RETURN BLOCKED", "The surface route failed to initialize.");
+          onResume();
+        }
+        break;
+      }
+
+      if (zone.metadata?.handlerId === "outer_deck_interior_cache") {
+        const ref = parseOuterDeckInteriorMapId(String(map.id));
+        if (!ref) {
+          onResume();
+          break;
+        }
+
+        if (zone.metadata?.requiresClear && !isCurrentOuterDeckInteriorRoomCleared(map)) {
+          await showFieldInteractionAlert("Hostiles remain in the corridor. Secure the area before opening the cache.");
+          onResume();
+          break;
+        }
+
+        const reward = grantOuterDeckInteriorCacheReward(getGameState(), ref);
+        updateGameState(() => reward.state);
+
+        const { renderFieldScreen } = await import("./FieldScreen");
+        renderFieldScreen(map.id);
+        showSystemPing({
+          type: reward.granted ? "success" : "info",
+          title: reward.granted ? "APRON CACHE SECURED" : "CACHE ALREADY SECURED",
+          message: reward.gearReward?.name ?? "Recovered cache",
+          detail: summarizeOuterDeckInteriorReward(reward),
+          durationMs: 5200,
+          channel: "outer-deck-interior-cache",
+          replaceChannel: true,
+        });
         break;
       }
 
@@ -433,7 +683,7 @@ export async function handleInteraction(
           setNextFieldSpawnOverrideTile(entrySubarea.mapId, { x: 3, y: 6, facing: "east" });
           renderFieldScreen(entrySubarea.mapId as any);
         } catch (error) {
-          console.error("[FIELD] Failed to enter Outer Deck branch:", error);
+          console.error("[FIELD] Failed to enter Apron branch:", error);
           showFieldTravelPing("TRAVEL BLOCKED", "The branch route failed to initialize.");
           onResume();
         }
@@ -468,7 +718,7 @@ export async function handleInteraction(
         if (currentSubarea.enemyCount > 0 && !isOuterDeckSubareaCleared(state, currentSubarea.id)) {
           showFieldTravelPing(
             "ROUTE BLOCKED",
-            "Clear the current subarea before advancing deeper into the Outer Decks.",
+            "Clear the current subarea before advancing deeper into the Apron.",
           );
           onResume();
           break;
@@ -487,7 +737,7 @@ export async function handleInteraction(
             : { x: 3, y: 6, facing: "east" });
           renderFieldScreen(targetMapId as any);
         } catch (error) {
-          console.error("[FIELD] Failed to transition Outer Deck subarea:", error);
+          console.error("[FIELD] Failed to transition Apron subarea:", error);
           showFieldTravelPing("ROUTE BLOCKED", "The next subarea failed to initialize.");
           onResume();
         }
@@ -545,7 +795,7 @@ export async function handleInteraction(
         updateGameState((prev) => markOuterDeckCacheClaimed(prev, cacheId));
         showSystemPing({
           type: "success",
-          title: "OUTER DECK CACHE",
+          title: "APRON CACHE",
           message: currentSubarea.title,
           detail: summarizeOuterDeckRewardBundle(zone.metadata?.rewardBundle as Record<string, unknown> | undefined),
           channel: "outer-deck-cache",
@@ -564,7 +814,7 @@ export async function handleInteraction(
 
         const encounter = getOuterDeckNpcEncounterDefinition(encounterId as any);
         updateGameState((prev) => markOuterDeckNpcEncounterSeen(prev, encounter.id));
-        showDialogue(encounter.name, encounter.lines, onResume, encounter.id);
+        await showFieldDialogue(encounter.name, encounter.lines, onResume, encounter.id);
         break;
       }
 
@@ -592,7 +842,7 @@ export async function handleInteraction(
           renderFieldScreen(OUTER_DECK_OVERWORLD_MAP_ID);
           showSystemPing({
             type: "success",
-            title: "OUTER DECK SECURED",
+            title: "APRON ROUTE SECURED",
             message: completionResult.awardedRecipeId
               ? `Recovered ${completionResult.awardedRecipeId.replace(/^recipe_/, "").replace(/_/g, " ").toUpperCase()}.`
               : "Recovery node secured and rewards transferred to HAVEN.",
@@ -601,7 +851,7 @@ export async function handleInteraction(
             replaceChannel: true,
           });
         } catch (error) {
-          console.error("[FIELD] Failed to return to Outer Deck overworld:", error);
+          console.error("[FIELD] Failed to return to Apron overworld:", error);
           showFieldTravelPing("RETURN BLOCKED", "Recovery route failed to initialize.");
           onResume();
         }
@@ -632,7 +882,7 @@ export async function handleInteraction(
           case "footlocker":
           case "sable":
             // Open quarters screen with specific panel
-            renderQuartersScreen("field", quartersAction as any);
+            openScreenAsync(() => renderFieldQuartersScreen(String(quartersAction)));
             break;
           default:
             onResume();

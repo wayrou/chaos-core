@@ -86,6 +86,7 @@ import {
 import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
 import { getEnemyDefinition, pickEnemyIdsForCampaignFloor } from "./enemies";
+import { normalizeUnitAppearance, type UnitAppearance } from "./unitAppearance";
 import type {
   TacticalMapObjectDefinition,
   TacticalMapSurface,
@@ -141,6 +142,7 @@ export interface BattleUnitState {
   id: UnitId;
   baseUnitId: UnitId;
   name: string;
+  appearance?: UnitAppearance;
   classId: string;
   loadout?: UnitLoadout & { weapon?: string | null };
   isEnemy: boolean;
@@ -637,6 +639,7 @@ export function createBattleUnitState(
     id: base.id,
     baseUnitId: base.id,
     name: base.name,
+    appearance: normalizeUnitAppearance((base as { appearance?: UnitAppearance | null }).appearance, base.unitClass),
     classId: base.unitClass ?? "squire",
     loadout: { ...loadout, weapon: loadout.primaryWeapon ?? null },
     isEnemy: opts.isEnemy,

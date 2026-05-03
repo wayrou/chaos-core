@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { UnitId } from "./types";
+import { getUnitStandSpriteVariant, type UnitAppearance } from "./unitAppearance";
 
 const DEFAULT_UNIT_PORTRAIT_PATH = "/assets/portraits/units/core/Test_Portrait.png";
 const DEFAULT_UNIT_MANAGEMENT_STAND_ICON_PATH = "/assets/portraits/units/core/Unit_Stand_Test.png";
@@ -16,6 +17,7 @@ interface BattleBillboardSpriteOptions {
   baseUnitId?: UnitId | string;
   classId?: string | null;
   perspective: BattleBillboardPerspective;
+  standPath?: string | null;
   fallbackPath?: string | null;
 }
 
@@ -91,8 +93,11 @@ export function getUnitPortraitPath(unitId: UnitId | string | undefined): string
   return standardPath;
 }
 
-export function getUnitManagementStandIconPath(unitClass?: string | null): string {
-  return unitClass === "squire"
+export function getUnitManagementStandIconPath(
+  unitClass?: string | null,
+  appearance?: Partial<UnitAppearance> | null,
+): string {
+  return getUnitStandSpriteVariant(appearance, unitClass) === "squire"
     ? SQUIRE_UNIT_MANAGEMENT_STAND_ICON_PATH
     : DEFAULT_UNIT_MANAGEMENT_STAND_ICON_PATH;
 }
@@ -104,6 +109,7 @@ export function getBattleUnitBillboardSpriteCandidates({
   baseUnitId,
   classId,
   perspective,
+  standPath,
   fallbackPath,
 }: BattleBillboardSpriteOptions): string[] {
   const candidates: string[] = [];
@@ -123,6 +129,7 @@ export function getBattleUnitBillboardSpriteCandidates({
     pushUnique(candidates, buildStandSpritePath(token));
   });
 
+  pushUnique(candidates, standPath ?? null);
   pushUnique(candidates, getUnitManagementStandIconPath(classId));
   pushUnique(candidates, fallbackPath ?? null);
   pushUnique(candidates, DEFAULT_UNIT_MANAGEMENT_STAND_ICON_PATH);
