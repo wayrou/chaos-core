@@ -185,6 +185,10 @@ function cloneReturnContext(returnContext: LobbyReturnContext | null | undefined
     return {
       ...returnContext,
       players: cloneReturnFieldPlayers(returnContext.players),
+      outerDeckWorldPlayers: cloneReturnFieldPlayers(returnContext.outerDeckWorldPlayers),
+      outerDeckOpenWorldState: returnContext.outerDeckOpenWorldState
+        ? { ...returnContext.outerDeckOpenWorldState }
+        : returnContext.outerDeckOpenWorldState ?? null,
       cameraState: cloneReturnFieldCameraState(returnContext.cameraState),
     };
   }

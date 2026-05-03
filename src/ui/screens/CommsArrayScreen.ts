@@ -24,6 +24,7 @@ import {
   type LobbySeatPreference,
   NETWORK_PLAYER_SLOTS,
   type LobbyReturnFieldCameraState,
+  type LobbyReturnOuterDeckOpenWorldState,
   type OperationRun,
   type ResourceKey,
   type ResourceLedger,
@@ -59,6 +60,7 @@ import {
   type SquadMatchState,
   type SquadWinCondition,
 } from "../../core/squadOnline";
+import { createDefaultOuterDecksState, getOuterDeckOpenWorldState } from "../../core/outerDecks";
 import {
   advanceLobbySkirmishRound,
   chooseLobbySkirmishNextRoundDecision,
@@ -1950,6 +1952,8 @@ async function captureLobbyReturnContext(): Promise<LobbyReturnContext> {
   const canCaptureFieldPositions = safeFieldMapId === currentFieldMapId;
   let p1Avatar = canCaptureFieldPositions ? state.players.P1.avatar : null;
   let p2Avatar = canCaptureFieldPositions && state.players.P2.active ? state.players.P2.avatar : null;
+  let outerDeckWorldPlayers: Partial<Record<"P1" | "P2", FieldAvatar>> | undefined;
+  let outerDeckOpenWorldState: LobbyReturnOuterDeckOpenWorldState | null = null;
   let cameraState: LobbyReturnFieldCameraState | null = null;
 
   if (canCaptureFieldPositions) {
@@ -1972,6 +1976,44 @@ async function captureLobbyReturnContext(): Promise<LobbyReturnContext> {
     p1Avatar = field.getCurrentFieldPlayerAvatar("P1") ?? p1Avatar;
     p2Avatar = field.getCurrentFieldPlayerAvatar("P2") ?? p2Avatar;
     cameraState = cameraState ?? field.getStoredHaven3DFieldCameraState(safeFieldMapId);
+    if (safeFieldMapId === "outer_deck_overworld") {
+      const outerDeckWorld = await import("../../field/outerDeckWorld");
+      const runtimeMap = field.getCurrentFieldRuntimeMap?.() ?? null;
+      const openWorldMap = runtimeMap && outerDeckWorld.isOuterDeckOpenWorldMap(runtimeMap)
+        ? runtimeMap
+        : null;
+      if (openWorldMap) {
+        outerDeckWorldPlayers = {
+          ...(p1Avatar ? {
+            P1: {
+              ...outerDeckWorld.outerDeckLocalPixelToWorld(openWorldMap, p1Avatar.x, p1Avatar.y),
+              facing: p1Avatar.facing,
+            },
+          } : {}),
+          ...(p2Avatar ? {
+            P2: {
+              ...outerDeckWorld.outerDeckLocalPixelToWorld(openWorldMap, p2Avatar.x, p2Avatar.y),
+              facing: p2Avatar.facing,
+            },
+          } : {}),
+        };
+        if (Object.keys(outerDeckWorldPlayers).length === 0) {
+          outerDeckWorldPlayers = undefined;
+        }
+      }
+      const openWorld = getOuterDeckOpenWorldState(getGameState());
+      outerDeckOpenWorldState = {
+        seed: openWorld.seed,
+        generationVersion: openWorld.generationVersion,
+        floorOrdinal: openWorld.floorOrdinal,
+        playerWorldX: outerDeckWorldPlayers?.P1?.x ?? openWorld.playerWorldX,
+        playerWorldY: outerDeckWorldPlayers?.P1?.y ?? openWorld.playerWorldY,
+        playerFacing: outerDeckWorldPlayers?.P1?.facing ?? openWorld.playerFacing,
+        streamCenterWorldX: openWorld.streamCenterWorldX,
+        streamCenterWorldY: openWorld.streamCenterWorldY,
+        streamRadiusChunks: openWorld.streamRadiusChunks,
+      };
+    }
   }
 
   const players = canCaptureFieldPositions
@@ -1988,6 +2030,8 @@ async function captureLobbyReturnContext(): Promise<LobbyReturnContext> {
     y: p1Avatar?.y,
     facing: p1Avatar?.facing,
     players,
+    outerDeckWorldPlayers,
+    outerDeckOpenWorldState,
     cameraState,
   };
 }
@@ -2007,6 +2051,15 @@ function cloneLobbyReturnContextSnapshot(returnContext: LobbyReturnContext | nul
           ...(returnContext.players.P2 ? { P2: { ...returnContext.players.P2 } } : {}),
         }
       : undefined,
+    outerDeckWorldPlayers: returnContext.outerDeckWorldPlayers
+      ? {
+          ...(returnContext.outerDeckWorldPlayers.P1 ? { P1: { ...returnContext.outerDeckWorldPlayers.P1 } } : {}),
+          ...(returnContext.outerDeckWorldPlayers.P2 ? { P2: { ...returnContext.outerDeckWorldPlayers.P2 } } : {}),
+        }
+      : undefined,
+    outerDeckOpenWorldState: returnContext.outerDeckOpenWorldState
+      ? { ...returnContext.outerDeckOpenWorldState }
+      : returnContext.outerDeckOpenWorldState ?? null,
     cameraState: returnContext.cameraState
       ? {
           mode: returnContext.cameraState.mode,
@@ -2053,6 +2106,7 @@ async function restoreLobbyReturnContextSnapshot(returnContext: LobbyReturnConte
 
   if (normalizedReturnContext.kind === "field") {
     const {
+      primeOuterDeckOpenWorldFieldRestore,
       renderFieldScreen,
       setNextFieldPlayerSpawnOverrides,
       setNextFieldSpawnOverride,
@@ -2068,6 +2122,21 @@ async function restoreLobbyReturnContextSnapshot(returnContext: LobbyReturnConte
         : null
     );
     const desiredP2Avatar = normalizedReturnContext.players?.P2 ?? null;
+    const shouldRestoreOuterDeckWorldPlayers = normalizedReturnContext.mapId === "outer_deck_overworld"
+      && Boolean(normalizedReturnContext.outerDeckWorldPlayers?.P1);
+
+    if (normalizedReturnContext.mapId === "outer_deck_overworld" && normalizedReturnContext.outerDeckOpenWorldState) {
+      updateGameState((state) => ({
+        ...state,
+        outerDecks: {
+          ...(state.outerDecks ?? createDefaultOuterDecksState()),
+          openWorld: {
+            ...(state.outerDecks ?? createDefaultOuterDecksState()).openWorld,
+            ...normalizedReturnContext.outerDeckOpenWorldState,
+          },
+        },
+      }));
+    }
 
     if (desiredP2Avatar && !getGameState().players.P2.active) {
       tryJoinAsP2();
@@ -2099,14 +2168,16 @@ async function restoreLobbyReturnContextSnapshot(returnContext: LobbyReturnConte
       },
     }));
 
-    if (desiredP1Avatar) {
+    if (shouldRestoreOuterDeckWorldPlayers) {
+      primeOuterDeckOpenWorldFieldRestore(normalizedReturnContext.outerDeckWorldPlayers);
+    } else if (desiredP1Avatar) {
       setNextFieldSpawnOverride(normalizedReturnContext.mapId as any, {
         x: desiredP1Avatar.x,
         y: desiredP1Avatar.y,
         facing: desiredP1Avatar.facing,
       });
     }
-    if (normalizedReturnContext.players) {
+    if (!shouldRestoreOuterDeckWorldPlayers && normalizedReturnContext.players) {
       setNextFieldPlayerSpawnOverrides(normalizedReturnContext.mapId as any, normalizedReturnContext.players);
     }
     if (normalizedReturnContext.cameraState !== undefined) {

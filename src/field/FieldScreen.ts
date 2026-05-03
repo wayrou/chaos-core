@@ -17,7 +17,7 @@ import {
   PlayerAvatar,
 } from "./types";
 import { getImportedItem } from "../content/technica";
-import { getFieldMap } from "./maps";
+import { getFieldMap, hasFieldMap } from "./maps";
 import {
   createPlayerAvatar,
   updatePlayerMovement,
@@ -62,7 +62,10 @@ import {
   resetPlayerInput,
 } from "../core/playerInput";
 import {
+  bindControllerToPlayer,
   clearControllerContext,
+  getConnectedControllers,
+  getControllerAssignments,
   getAssignedGamepad,
   isGamepadActionActive,
   registerControllerContext,
@@ -234,6 +237,7 @@ import {
   markOuterDeckOpenWorldResourceCollected,
   markOuterDeckOpenWorldTheaterChartCollected,
   markOuterDeckSubareaCleared,
+  OUTER_DECK_OVERWORLD_MAP_ID,
   parseOuterDeckInteriorMapId,
   placeOuterDeckOpenWorldLantern,
   setOuterDeckOpenWorldBossHp,
@@ -301,6 +305,7 @@ let activeAutoInteractionZoneKey: string | null = null;
 let suppressedAutoInteractionZoneKey: string | null = null;
 type FieldControllerActionSnapshot = {
   interact: boolean;
+  confirm: boolean;
   attack: boolean;
   special1: boolean;
 };
@@ -314,8 +319,8 @@ type OuterDeckOpenWorldWorldAvatar = {
 type OuterDeckOpenWorldPlayerSnapshot = Partial<Record<PlayerId, OuterDeckOpenWorldWorldAvatar>>;
 
 const previousFieldControllerActions: Record<PlayerId, FieldControllerActionSnapshot> = {
-  P1: { interact: false, attack: false, special1: false },
-  P2: { interact: false, attack: false, special1: false },
+  P1: { interact: false, confirm: false, attack: false, special1: false },
+  P2: { interact: false, confirm: false, attack: false, special1: false },
 };
 
 // Panel state - simple boolean
@@ -805,22 +810,29 @@ function renderHaven3DReticleHtml(playerId?: PlayerId): string {
 
 function renderHaven3DCoopControlsHtml(): string {
   const p2Active = Boolean(getGameState().players.P2.active);
+  const p2JoinControllerReady = Boolean(getAvailableSecondControllerForLocalCoop());
+  const showControls = p2Active || p2JoinControllerReady;
+  const confirmLabel = getPlayerActionLabel("P2", "confirm");
   return `
-    <div class="haven3d-coop-controls" data-haven3d-coop-controls aria-label="Split screen controls">
+    <div class="haven3d-coop-controls" data-haven3d-coop-controls aria-label="Split screen controls" ${showControls ? "" : "hidden"}>
       <button
-        class="haven3d-coop-control ${p2Active ? "haven3d-coop-control--active" : ""}"
+        class="haven3d-coop-control ${p2Active ? "haven3d-coop-control--active" : ""} ${!p2Active ? "haven3d-coop-control--disabled" : ""}"
         type="button"
         data-haven3d-coop-action="toggle-p2"
         aria-pressed="${p2Active ? "true" : "false"}"
+        aria-disabled="${p2Active ? "false" : "true"}"
+        ${p2Active ? "" : "disabled"}
       >
         <span class="haven3d-coop-control__kicker">LOCAL</span>
-        <span class="haven3d-coop-control__label" data-haven3d-coop-p2-label>${p2Active ? "P2 Leave" : "P2 Join"}</span>
+        <span class="haven3d-coop-control__label" data-haven3d-coop-p2-label>${p2Active ? "P2 Leave" : `Press ${confirmLabel} to Join`}</span>
       </button>
       <button
-        class="haven3d-coop-control"
+        class="haven3d-coop-control ${!p2Active ? "haven3d-coop-control--disabled" : ""}"
         type="button"
         data-haven3d-coop-action="toggle-split"
         aria-pressed="false"
+        aria-disabled="${p2Active ? "false" : "true"}"
+        ${p2Active ? "" : "disabled"}
       >
         <span class="haven3d-coop-control__kicker">CAMERA</span>
         <span class="haven3d-coop-control__label" data-haven3d-coop-camera-label>Shared View</span>
@@ -1496,6 +1508,7 @@ let pendingFieldPlayerSpawnOverrides: {
   mapId: FieldMap["id"];
   players: Partial<Record<PlayerId, FieldAvatar>>;
 } | null = null;
+let pendingOuterDeckOpenWorldWorldPlayerOverrides: Partial<Record<PlayerId, FieldAvatar>> | null = null;
 
 type FieldScreenGlobalScope = typeof globalThis & {
   [HAVEN3D_FIELD_CONTROLLER_GLOBAL_KEY]?: Haven3DFieldController | null;
@@ -1594,6 +1607,107 @@ function cacheCurrentOuterDeckOpenWorldPlayerPositions(): void {
     };
   }
   outerDeckOpenWorldPlayerSnapshots.set(getOuterDeckOpenWorldSnapshotKey(openWorld), nextSnapshot);
+}
+
+function consumePendingOuterDeckOpenWorldWorldPlayerOverrides(): Partial<Record<PlayerId, FieldAvatar>> | null {
+  const nextOverrides = pendingOuterDeckOpenWorldWorldPlayerOverrides
+    ? {
+        ...(pendingOuterDeckOpenWorldWorldPlayerOverrides.P1 ? { P1: { ...pendingOuterDeckOpenWorldWorldPlayerOverrides.P1 } } : {}),
+        ...(pendingOuterDeckOpenWorldWorldPlayerOverrides.P2 ? { P2: { ...pendingOuterDeckOpenWorldWorldPlayerOverrides.P2 } } : {}),
+      }
+    : null;
+  pendingOuterDeckOpenWorldWorldPlayerOverrides = null;
+  return nextOverrides;
+}
+
+export function primeOuterDeckOpenWorldFieldRestore(
+  worldPlayers: Partial<Record<PlayerId, FieldAvatar>> | null | undefined,
+): void {
+  const p1World = worldPlayers?.P1;
+  if (!p1World) {
+    return;
+  }
+
+  const streamPositions = [
+    { x: p1World.x, y: p1World.y },
+    ...(worldPlayers?.P2 ? [{ x: worldPlayers.P2.x, y: worldPlayers.P2.y }] : []),
+  ];
+  const desiredStreamWindow = getDesiredOuterDeckStreamWindow(streamPositions);
+  const chunkWorldSize = OUTER_DECK_OPEN_WORLD_CHUNK_SIZE * FIELD_TILE_SIZE;
+
+  updateGameState((state) => {
+    let nextState = setOuterDeckOpenWorldPlayerWorldPosition(
+      state,
+      p1World.x,
+      p1World.y,
+      p1World.facing ?? "south",
+    );
+    nextState = setOuterDeckOpenWorldStreamWindow(
+      nextState,
+      (desiredStreamWindow.centerChunkX * chunkWorldSize) + (chunkWorldSize / 2),
+      (desiredStreamWindow.centerChunkY * chunkWorldSize) + (chunkWorldSize / 2),
+      desiredStreamWindow.streamRadius,
+    );
+    return nextState;
+  });
+
+  const openWorld = getOuterDeckOpenWorldState(getGameState());
+  const nextSnapshot: OuterDeckOpenWorldPlayerSnapshot = {
+    P1: {
+      worldX: p1World.x,
+      worldY: p1World.y,
+      facing: p1World.facing ?? "south",
+    },
+  };
+  if (worldPlayers?.P2) {
+    nextSnapshot.P2 = {
+      worldX: worldPlayers.P2.x,
+      worldY: worldPlayers.P2.y,
+      facing: worldPlayers.P2.facing ?? "south",
+    };
+  }
+  outerDeckOpenWorldPlayerSnapshots.set(getOuterDeckOpenWorldSnapshotKey(openWorld), nextSnapshot);
+  pendingOuterDeckOpenWorldWorldPlayerOverrides = {
+    ...(worldPlayers.P1 ? { P1: { ...worldPlayers.P1 } } : {}),
+    ...(worldPlayers.P2 ? { P2: { ...worldPlayers.P2 } } : {}),
+  };
+
+  const previewMap = getFieldMap(OUTER_DECK_OVERWORLD_MAP_ID as FieldMap["id"]);
+  if (!isOuterDeckOpenWorldMap(previewMap)) {
+    return;
+  }
+
+  const p1Local = clampLocalOuterDeckPosition(
+    previewMap,
+    outerDeckWorldPixelToLocal(previewMap, p1World.x, p1World.y),
+  );
+  pendingFieldSpawnOverride = {
+    mapId: OUTER_DECK_OVERWORLD_MAP_ID as FieldMap["id"],
+    x: p1Local.x,
+    y: p1Local.y,
+    facing: p1World.facing ?? "south",
+  };
+  pendingFieldPlayerSpawnOverrides = {
+    mapId: OUTER_DECK_OVERWORLD_MAP_ID as FieldMap["id"],
+    players: {
+      P1: {
+        x: p1Local.x,
+        y: p1Local.y,
+        facing: p1World.facing ?? "south",
+      },
+      ...(worldPlayers.P2
+        ? {
+            P2: {
+              ...clampLocalOuterDeckPosition(
+                previewMap,
+                outerDeckWorldPixelToLocal(previewMap, worldPlayers.P2.x, worldPlayers.P2.y),
+              ),
+              facing: worldPlayers.P2.facing ?? "south",
+            },
+          }
+        : {}),
+    },
+  };
 }
 
 export function scheduleOuterDeckOpenWorldCoopRespawn(): void {
@@ -3460,7 +3574,7 @@ export function getCurrentHaven3DPreferredGrappleAnchorState(): ReturnType<
 }
 
 function isHaven3DSupportedMap(mapId: FieldMap["id"] | string | null | undefined): boolean {
-  return mapId === "base_camp" || mapId === "network_lobby" || isOuterDeckAccessibleMap(mapId);
+  return hasFieldMap(mapId);
 }
 
 function shouldUseHaven3DFieldRuntime(mapId: FieldMap["id"] | string, options?: { openBuildMode?: boolean }): boolean {
@@ -3721,7 +3835,10 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
       <div class="haven3d-scene" data-haven3d-scene></div>
       <div class="haven3d-hud">
         ${renderFieldStateMeterHtml()}
-        ${renderHaven3DApronNavigatorHtml()}
+        <div class="haven3d-top-left-ui">
+          ${renderHaven3DCoopControlsHtml()}
+          ${renderHaven3DApronNavigatorHtml()}
+        </div>
         <div class="haven3d-shared-ui" data-haven3d-shared-ui>
           ${renderHaven3DReticleHtml()}
           <div class="haven3d-corner-controls">
@@ -3733,7 +3850,6 @@ function mountHaven3DFieldRuntime(root: HTMLElement): void {
           ${renderHaven3DSplitPaneHudHtml("P1")}
           ${renderHaven3DSplitPaneHudHtml("P2")}
         </div>
-        ${renderHaven3DCoopControlsHtml()}
       </div>
     </div>
   `;
@@ -4238,14 +4354,34 @@ function getPlayerInteractLabel(playerId: PlayerId): string {
 }
 
 function resetFieldControllerActionTracking(): void {
-  previousFieldControllerActions.P1 = { interact: false, attack: false, special1: false };
-  previousFieldControllerActions.P2 = { interact: false, attack: false, special1: false };
+  previousFieldControllerActions.P1 = { interact: false, confirm: false, attack: false, special1: false };
+  previousFieldControllerActions.P2 = { interact: false, confirm: false, attack: false, special1: false };
+}
+
+function getAvailableSecondControllerForLocalCoop() {
+  const connectedControllers = getConnectedControllers();
+  if (connectedControllers.length < 2) {
+    return null;
+  }
+
+  const assignments = getControllerAssignments();
+  const p1GamepadIndex = assignments.P1;
+  const p2GamepadIndex = assignments.P2;
+  const secondController = connectedControllers.find((controller) => controller.index !== p1GamepadIndex) ?? null;
+  if (!secondController) {
+    return null;
+  }
+  if (p2GamepadIndex !== secondController.index) {
+    bindControllerToPlayer("P2", secondController.index);
+  }
+  return secondController;
 }
 
 function getFieldControllerActionSnapshot(playerId: PlayerId): FieldControllerActionSnapshot {
   if (!getAssignedGamepad(playerId)) {
     return {
       interact: false,
+      confirm: false,
       attack: false,
       special1: false,
     };
@@ -4254,6 +4390,7 @@ function getFieldControllerActionSnapshot(playerId: PlayerId): FieldControllerAc
   return {
     interact: isGamepadActionActive(playerId, "interact")
       || isGamepadActionActive(playerId, "confirm"),
+    confirm: isGamepadActionActive(playerId, "confirm"),
     attack: isGamepadActionActive(playerId, "attack"),
     special1: isGamepadActionActive(playerId, "dash")
       || isGamepadActionActive(playerId, "tabPrev")
@@ -4269,6 +4406,23 @@ function processFieldControllerActions(): void {
 
   const combatActive = isFieldCombatActive();
   const state = getGameState();
+  if (!state.players.P2.active) {
+    const secondController = getAvailableSecondControllerForLocalCoop();
+    const previousP2Snapshot = previousFieldControllerActions.P2;
+    const nextP2Snapshot = secondController
+      ? getFieldControllerActionSnapshot("P2")
+      : {
+          interact: false,
+          confirm: false,
+          attack: false,
+          special1: false,
+        };
+    previousFieldControllerActions.P2 = nextP2Snapshot;
+    if (secondController && nextP2Snapshot.confirm && !previousP2Snapshot.confirm) {
+      setLocalP2ActiveFromField(true);
+      return;
+    }
+  }
   const activePlayers = (["P1", "P2"] as PlayerId[]).filter((playerId) => isFieldPlayerActive(playerId, state));
 
   for (const playerId of activePlayers) {
@@ -4330,9 +4484,12 @@ function setHaven3DHybridCameraEnabled(active: boolean): void {
 
 function syncHaven3DCoopControls(root: ParentNode = document): void {
   const p2Active = Boolean(getGameState().players.P2.active);
+  const secondControllerReady = Boolean(getAvailableSecondControllerForLocalCoop());
+  const showControls = p2Active || secondControllerReady;
+  const joinLabel = p2Active ? "P2 Leave" : `Press ${getPlayerActionLabel("P2", "confirm")} to Join`;
   const hybridActive = isHaven3DHybridCameraEnabled();
   const splitActive = isHaven3DSplitCameraActive();
-  const syncKey = `${p2Active ? "1" : "0"}:${hybridActive ? "1" : "0"}:${splitActive ? "1" : "0"}`;
+  const syncKey = `${showControls ? "1" : "0"}:${p2Active ? "1" : "0"}:${secondControllerReady ? "1" : "0"}:${hybridActive ? "1" : "0"}:${splitActive ? "1" : "0"}:${joinLabel}`;
   if (root === document && syncKey === lastHaven3DCoopControlsSyncKey) {
     return;
   }
@@ -4340,12 +4497,18 @@ function syncHaven3DCoopControls(root: ParentNode = document): void {
     lastHaven3DCoopControlsSyncKey = syncKey;
   }
 
+  root.querySelectorAll<HTMLElement>("[data-haven3d-coop-controls]").forEach((controls) => {
+    controls.hidden = !showControls;
+  });
   root.querySelectorAll<HTMLElement>("[data-haven3d-coop-p2-label]").forEach((label) => {
-    label.textContent = p2Active ? "P2 Leave" : "P2 Join";
+    label.textContent = joinLabel;
   });
   root.querySelectorAll<HTMLButtonElement>("[data-haven3d-coop-action='toggle-p2']").forEach((button) => {
     button.classList.toggle("haven3d-coop-control--active", p2Active);
+    button.classList.toggle("haven3d-coop-control--disabled", !p2Active);
     button.setAttribute("aria-pressed", p2Active ? "true" : "false");
+    button.setAttribute("aria-disabled", !p2Active ? "true" : "false");
+    button.disabled = !p2Active;
   });
   root.querySelectorAll<HTMLElement>("[data-haven3d-coop-camera-label]").forEach((label) => {
     label.textContent = hybridActive ? "Hybrid View" : "Shared View";
@@ -4394,7 +4557,11 @@ function handleHaven3DCoopControlClick(event: MouseEvent): void {
   event.stopPropagation();
   const action = button.dataset.haven3dCoopAction;
   if (action === "toggle-p2") {
-    setLocalP2ActiveFromField(!getGameState().players.P2.active);
+    if (!getGameState().players.P2.active) {
+      syncHaven3DCoopControls();
+      return;
+    }
+    setLocalP2ActiveFromField(false);
     return;
   }
   if (action === "toggle-split") {
@@ -6255,6 +6422,29 @@ export function renderFieldScreen(
   const outerDeckOpenWorldSnapshot = outerDeckOpenWorldState
     ? outerDeckOpenWorldPlayerSnapshots.get(getOuterDeckOpenWorldSnapshotKey(outerDeckOpenWorldState)) ?? null
     : null;
+  const outerDeckOpenWorldWorldPlayerOverrides = isOuterDeckOpenWorldMap(currentMap)
+    ? consumePendingOuterDeckOpenWorldWorldPlayerOverrides()
+    : null;
+  const outerDeckOpenWorldP1OverrideLocal = outerDeckOpenWorldWorldPlayerOverrides?.P1
+    ? clampLocalOuterDeckPosition(
+        currentMap,
+        outerDeckWorldPixelToLocal(
+          currentMap,
+          outerDeckOpenWorldWorldPlayerOverrides.P1.x,
+          outerDeckOpenWorldWorldPlayerOverrides.P1.y,
+        ),
+      )
+    : null;
+  const outerDeckOpenWorldP2OverrideLocal = outerDeckOpenWorldWorldPlayerOverrides?.P2
+    ? clampLocalOuterDeckPosition(
+        currentMap,
+        outerDeckWorldPixelToLocal(
+          currentMap,
+          outerDeckOpenWorldWorldPlayerOverrides.P2.x,
+          outerDeckOpenWorldWorldPlayerOverrides.P2.y,
+        ),
+      )
+    : null;
   const shouldUsePendingOuterDeckCoopRespawn = outerDeckOpenWorldState
     ? consumePendingOuterDeckOpenWorldCoopRespawn(outerDeckOpenWorldState)
     : false;
@@ -6277,7 +6467,9 @@ export function renderFieldScreen(
   const fieldReturnFromInteraction = pendingFieldReturnFromInteraction?.mapId === String(mapId)
     ? pendingFieldReturnFromInteraction
     : null;
-  let playerFacing: PlayerAvatar["facing"] | undefined = fieldSpawnOverride?.facing ?? outerDeckOpenWorldSpawn?.facing;
+  let playerFacing: PlayerAvatar["facing"] | undefined = fieldSpawnOverride?.facing
+    ?? outerDeckOpenWorldWorldPlayerOverrides?.P1?.facing
+    ?? outerDeckOpenWorldSpawn?.facing;
 
   // Detect spawn source (FCP = key room entry, normal = everything else)
   const spawnSource: SpawnSource = (typeof mapId === "string" && mapId.startsWith("keyroom_")) ? "FCP" : "normal";
@@ -6318,6 +6510,15 @@ export function renderFieldScreen(
     playerFacing = exitPosition.facing ?? fieldState?.player.facing ?? "south";
     suppressedAutoInteractionZoneKey = fieldReturnFromInteraction.interactionKey;
     activeAutoInteractionZoneKey = null;
+  } else if (outerDeckOpenWorldP1OverrideLocal) {
+    const spawnResult = resolvePlayerSpawn(
+      spawnSource,
+      currentMap,
+      { x: outerDeckOpenWorldP1OverrideLocal.x, y: outerDeckOpenWorldP1OverrideLocal.y },
+    );
+    playerX = spawnResult.x;
+    playerY = spawnResult.y;
+    playerFacing = outerDeckOpenWorldWorldPlayerOverrides?.P1?.facing ?? playerFacing;
   } else if (outerDeckOpenWorldSpawn) {
     const spawnResult = resolvePlayerSpawn(
       spawnSource,
@@ -6342,23 +6543,18 @@ export function renderFieldScreen(
     playerX = spawnResult.x;
     playerY = spawnResult.y;
   } else if (isResuming && mapId !== "quarters") {
-    // Restore from fieldState if available, but revalidate maps whose walkable layout can change.
-    if (mapId === "network_lobby" || mapId === "base_camp") {
-      const fallbackSpawn = getPreferredFieldSpawnPosition(mapId, tileSize);
-      const spawnResult = resolvePlayerSpawn(
-        spawnSource,
-        currentMap,
-        {
-          x: fieldState!.player.x || fallbackSpawn?.x || tileSize * 2,
-          y: fieldState!.player.y || fallbackSpawn?.y || tileSize * 2,
-        },
-      );
-      playerX = spawnResult.x;
-      playerY = spawnResult.y;
-    } else {
-      playerX = fieldState!.player.x;
-      playerY = fieldState!.player.y;
-    }
+    // Restore from fieldState, but always revalidate the saved position against the current field map.
+    const fallbackSpawn = getPreferredFieldSpawnPosition(mapId, tileSize);
+    const spawnResult = resolvePlayerSpawn(
+      spawnSource,
+      currentMap,
+      {
+        x: fieldState!.player.x || fallbackSpawn?.x || tileSize * 2,
+        y: fieldState!.player.y || fallbackSpawn?.y || tileSize * 2,
+      },
+    );
+    playerX = spawnResult.x;
+    playerY = spawnResult.y;
   } else {
     // Determine requested spawn position
     let requestedX: number;
@@ -6448,13 +6644,13 @@ export function renderFieldScreen(
       },
     };
 
-    // Always update position for quarters, FCP maps (keyroom_*), or initialize if missing
+    // Keep the persisted player avatar aligned with the resolved field spawn across the 3D field runtime.
     const isFCPMap = typeof mapId === "string" && mapId.startsWith("keyroom_");
     const shouldUpdatePosition = Boolean(fieldSpawnOverride || fieldReturnFromInteraction)
+      || isResuming
       || isOuterDeckOpenWorldMap(currentMap)
-      || mapId === "quarters"
-      || mapId === "network_lobby"
       || isFCPMap
+      || shouldUseHaven3DFieldRuntime(mapId, options)
       || !players.P1.avatar;
 
     return {
@@ -6527,6 +6723,12 @@ export function renderFieldScreen(
     fieldRuntimeP2Avatar = null;
   } else if (fieldPlayerSpawnOverrides?.P2) {
     fieldRuntimeP2Avatar = { ...fieldPlayerSpawnOverrides.P2 };
+  } else if (outerDeckOpenWorldP2OverrideLocal) {
+    fieldRuntimeP2Avatar = {
+      x: outerDeckOpenWorldP2OverrideLocal.x,
+      y: outerDeckOpenWorldP2OverrideLocal.y,
+      facing: outerDeckOpenWorldWorldPlayerOverrides?.P2?.facing ?? persistedPlayers.P2.avatar?.facing ?? "south",
+    };
   } else if (isOuterDeckOpenWorldMap(currentMap)) {
     if (fieldSpawnOverride || shouldUsePendingOuterDeckCoopRespawn) {
       fieldRuntimeP2Avatar = resolveNearbyCoopSpawnAvatar(

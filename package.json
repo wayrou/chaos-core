@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:haven3d-smoke": "node scripts/haven3d-smoke.mjs",
+    "test:field-3d-parity-smoke": "node scripts/field-3d-parity-smoke.mjs",
     "test:apron-coop-smoke": "node scripts/apron-coop-smoke.mjs",
     "test:multiplayer-return-smoke": "node scripts/multiplayer-return-smoke.mjs",
     "preview": "vite preview",

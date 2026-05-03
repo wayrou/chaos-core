@@ -500,6 +500,18 @@ export type LobbyReturnFieldCameraState = {
   split: Record<PlayerId, LobbyReturnFieldCameraViewState>;
 };
 
+export type LobbyReturnOuterDeckOpenWorldState = {
+  seed: number;
+  generationVersion: number;
+  floorOrdinal: number;
+  playerWorldX: number;
+  playerWorldY: number;
+  playerFacing: "north" | "south" | "east" | "west";
+  streamCenterWorldX: number;
+  streamCenterWorldY: number;
+  streamRadiusChunks: number;
+};
+
 export type LobbyReturnContext =
   | { kind: "menu" }
   | { kind: "esc" }
@@ -511,6 +523,8 @@ export type LobbyReturnContext =
       y?: number;
       facing?: "north" | "south" | "east" | "west";
       players?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckWorldPlayers?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckOpenWorldState?: LobbyReturnOuterDeckOpenWorldState | null;
       cameraState?: LobbyReturnFieldCameraState | null;
     };
 

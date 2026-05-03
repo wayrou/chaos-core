@@ -9034,6 +9034,24 @@ for (const importedMap of getAllImportedFieldMaps()) {
   maps.set(importedMap.id, importedMap);
 }
 
+export function hasFieldMap(mapId: FieldMap["id"] | string | null | undefined): boolean {
+  if (!mapId) {
+    return false;
+  }
+  if (typeof mapId === "string") {
+    if (mapId.startsWith("keyroom_")) {
+      return true;
+    }
+    if (mapId === OUTER_DECK_OVERWORLD_MAP_ID || mapId.startsWith("outerdeck_")) {
+      return true;
+    }
+    if (mapId === COUNTERWEIGHT_WORKSHOP_MAP_ID) {
+      return true;
+    }
+  }
+  return maps.has(mapId as FieldMap["id"]) || Boolean(getImportedFieldMap(mapId as FieldMap["id"]));
+}
+
 export function getFieldMap(mapId: FieldMap["id"]): FieldMap {
   // Handle dynamic key room maps
   if (typeof mapId === "string" && mapId.startsWith("keyroom_")) {

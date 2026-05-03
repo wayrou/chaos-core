@@ -166,6 +166,19 @@
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.72);
 }
 
+.haven3d-top-left-ui {
+  position: absolute;
+  left: clamp(18px, 2.5vw, 34px);
+  top: clamp(18px, 2.5vw, 34px);
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(360px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
 .haven3d-shared-ui {
   position: absolute;
   inset: 0;
@@ -206,17 +219,17 @@
 }
 
 .haven3d-coop-controls {
-  position: absolute;
-  left: clamp(18px, 2.5vw, 34px);
-  top: clamp(18px, 2.5vw, 34px);
-  z-index: 32;
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 8px;
+  width: 100%;
   pointer-events: auto;
 }
 
 .haven3d-coop-control {
+  flex: 1 1 132px;
   min-width: 104px;
   border: 1px solid rgba(245, 234, 210, 0.28);
   border-radius: 8px;
@@ -424,14 +437,13 @@
 .haven3d-apron-nav {
   --apron-bearing: 0rad;
   --apron-interior-bearing: 0rad;
-  position: absolute;
-  top: 18px;
-  left: 18px;
+  position: relative;
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  width: min(360px, calc(100vw - 36px));
+  width: 100%;
+  max-width: 100%;
   padding: 9px 11px;
   border: 1px solid rgba(100, 219, 223, 0.36);
   border-radius: 8px;
