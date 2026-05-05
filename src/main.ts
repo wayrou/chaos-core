@@ -1,7 +1,12 @@
-import { initializeFpsCounter } from "./ui/fpsCounter";
+import {
+  getAppScreenSignature,
+  maybeRestoreAppScrollSnapshot,
+  readAppScrollSnapshot,
+} from "./ui/domUtils";
 
 const STARTUP_TIMEOUT_MS = 2500;
 let startupBootRendered = false;
+let pendingAppClickScrollGuardToken = 0;
 
 type BootMonitorState = {
   progress?: string;
@@ -71,6 +76,38 @@ function renderStartupRecovery(error: unknown): void {
   document.getElementById("startupRecoveryRetryBtn")?.addEventListener("click", () => {
     window.location.reload();
   });
+}
+
+function installAppClickScrollGuard(): void {
+  const root = document.getElementById("app");
+  if (!root || root.dataset.scrollGuardInstalled === "true") {
+    return;
+  }
+  root.dataset.scrollGuardInstalled = "true";
+  root.addEventListener("click", () => {
+    const activeRoot = document.getElementById("app");
+    if (!activeRoot) {
+      return;
+    }
+    const screenSignature = getAppScreenSignature(activeRoot);
+    if (!screenSignature) {
+      return;
+    }
+    const snapshot = readAppScrollSnapshot(activeRoot);
+    const guardToken = ++pendingAppClickScrollGuardToken;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (guardToken !== pendingAppClickScrollGuardToken) {
+          return;
+        }
+        const latestRoot = document.getElementById("app");
+        if (!latestRoot || getAppScreenSignature(latestRoot) !== screenSignature) {
+          return;
+        }
+        maybeRestoreAppScrollSnapshot(latestRoot, snapshot);
+      });
+    });
+  }, true);
 }
 
 async function withStartupTimeout<T>(label: string, task: () => Promise<T>, fallback: T): Promise<T> {
@@ -143,7 +180,7 @@ markBootProgress("module-loaded");
 
 async function startApplication(): Promise<void> {
   markBootProgress("dom-ready");
-  initializeFpsCounter();
+  installAppClickScrollGuard();
   try {
     await renderInitialSplash();
     startupBootRendered = true;

@@ -661,12 +661,14 @@ export interface UILayoutState {
     y: number;
     width: number;
     height: number;
+    minimized?: boolean;
   };
   opsTerminalAtlasCoreWindowFrame?: {
     x: number;
     y: number;
     width: number;
     height: number;
+    minimized?: boolean;
   };
   opsTerminalAtlasNotesWindowFrame?: {
     x: number;

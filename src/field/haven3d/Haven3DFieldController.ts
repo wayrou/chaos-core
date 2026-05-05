@@ -2212,7 +2212,7 @@ export class Haven3DFieldController implements Haven3DModeController {
       ? "P2"
       : "P1";
     this.setGearbladeMode(playerId, mode);
-    this.renderer.domElement.focus();
+    this.renderer.domElement.focus({ preventScroll: true });
   };
   private readonly handleKeyDown = (event: KeyboardEvent) => {
     if (!this.isMounted() || isEditableTarget(event.target) || document.getElementById("dialoguePanel")) {
@@ -3113,7 +3113,7 @@ export class Haven3DFieldController implements Haven3DModeController {
   private bindEvents(): void {
     this.renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
     this.renderer.domElement.addEventListener("mousedown", (event) => {
-      this.renderer.domElement.focus();
+      this.renderer.domElement.focus({ preventScroll: true });
       if (event.button === 0) {
         const lockRequest = this.renderer.domElement.requestPointerLock?.() as Promise<void> | void;
         if (lockRequest && typeof lockRequest.catch === "function") {

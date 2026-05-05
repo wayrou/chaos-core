@@ -44,9 +44,9 @@ import { setMusicCue } from "../../core/audioSystem";
 import { attachNotesWidgetHandlers, attachStuckNoteHandlers, renderNotesWidget, renderStuckNotesLayer } from "../components/notesWidget";
 import {
   enhanceTerminalUiButtons,
-  startTerminalTypingByIds,
 } from "../components/terminalFeedback";
 import { showTutorialCallout } from "../components/tutorialCallout";
+import { focusElementWithoutScroll } from "../domUtils";
 import { renderLoadoutScreen } from "./LoadoutScreen";
 import {
   clearControllerContext,
@@ -80,6 +80,8 @@ type AtlasWindowFrame = {
   width: number;
   height: number;
 };
+
+type AtlasMinimizableWindowKey = Exclude<AtlasFloatingWindowKey, "operations">;
 
 type AtlasDragSession = {
   mode: "drag" | "resize" | "map-pan";
@@ -159,6 +161,7 @@ const MAP_DRAG_THRESHOLD_PX = 6;
 const ATLAS_STICKY_NOTE_WIDTH = 248;
 const ATLAS_STICKY_NOTE_HEIGHT = 220;
 const OPS_TERMINAL_ATLAS_LAYOUT_VERSION = 2;
+const OPS_ATLAS_OPERATIONS_GRID_MIN_WIDTH = 760;
 const SECTOR_COLORS = [
   { color: "#ffbf63", glow: "rgba(255, 191, 99, 0.24)" },
   { color: "#d5c0ff", glow: "rgba(213, 192, 255, 0.22)" },
@@ -327,12 +330,14 @@ let atlasEconomyWindowFrame: AtlasWindowFrame = {
   width: 380,
   height: 340,
 };
+let atlasEconomyWindowMinimized = false;
 let atlasCoreWindowFrame: AtlasWindowFrame = {
   x: 0,
   y: 0,
   width: 420,
   height: 360,
 };
+let atlasCoreWindowMinimized = false;
 let atlasNotesWindowFrame: AtlasWindowFrame = {
   x: 0,
   y: 0,
@@ -411,25 +416,44 @@ function getAtlasRegionThemeStyle(regionPresentation: ResolvedCampaignRegionPres
   ].join(";");
 }
 
-function renderRegionActiveBanner(regionPresentation: ResolvedCampaignRegionPresentation): string {
+function renderRegionActiveBanner(
+  regionPresentation: ResolvedCampaignRegionPresentation,
+  floorOrdinal: number,
+  canMoveToNextFloor: boolean,
+): string {
   return `
     <section class="opsatlas-region-banner" aria-label="Active campaign region">
       <div class="opsatlas-region-banner__kicker">REGION ACTIVE // ${escapeHtml(regionPresentation.regionName.toUpperCase())}</div>
       <div class="opsatlas-region-banner__header">
         <div>
           <h2>${escapeHtml(regionPresentation.regionName)} Region</h2>
-          <div class="opsatlas-region-banner__meta">
-            <span>Floor ${String(regionPresentation.floorOrdinal).padStart(2, "0")}</span>
-            <span>${escapeHtml(regionPresentation.variantLabel)}</span>
-            <span>${escapeHtml(regionPresentation.factionTag)}</span>
+        </div>
+        <div class="opsatlas-region-banner__aside">
+          <div class="opsatlas-region-banner__badge">${escapeHtml(regionPresentation.mechanicLabel)}</div>
+          <div class="opsatlas-floor-switcher opsatlas-floor-switcher--compact" aria-label="Floor transit controls">
+            <div class="opsatlas-floor-switcher__controls">
+              <button
+                class="opsatlas-floor-switcher__btn opsatlas-floor-switcher__btn--compact"
+                type="button"
+                data-atlas-floor-nav="prev"
+                aria-label="Previous floor"
+                ${floorOrdinal > 1 ? "" : "disabled"}
+              >
+                &larr;
+              </button>
+              <div class="opsatlas-floor-switcher__value opsatlas-floor-switcher__value--compact">FLOOR ${String(floorOrdinal).padStart(2, "0")}</div>
+              <button
+                class="opsatlas-floor-switcher__btn opsatlas-floor-switcher__btn--compact"
+                type="button"
+                data-atlas-floor-nav="next"
+                aria-label="Next floor"
+                ${canMoveToNextFloor ? "" : "disabled"}
+              >
+                &rarr;
+              </button>
+            </div>
           </div>
         </div>
-        <div class="opsatlas-region-banner__badge">${escapeHtml(regionPresentation.mechanicLabel)}</div>
-      </div>
-      <p class="opsatlas-region-banner__copy">${escapeHtml(regionPresentation.ruleSummary)}</p>
-      <div class="opsatlas-region-banner__rewards">
-        <span>Region Drops</span>
-        <strong>${escapeHtml(regionPresentation.rewardPreview.join(" / "))}</strong>
       </div>
     </section>
   `;
@@ -820,6 +844,39 @@ function getAtlasWindowElement(key: AtlasFloatingWindowKey): HTMLElement | null 
   return document.getElementById("opsAtlasWindow") as HTMLElement | null;
 }
 
+function isAtlasMinimizableWindowKey(value: string | null): value is AtlasMinimizableWindowKey {
+  return value === "economy" || value === "cores" || value === "notes";
+}
+
+function isAtlasWindowMinimized(key: AtlasFloatingWindowKey): boolean {
+  if (key === "economy") {
+    return atlasEconomyWindowMinimized;
+  }
+  if (key === "cores") {
+    return atlasCoreWindowMinimized;
+  }
+  if (key === "notes") {
+    return atlasNotesWindowMinimized;
+  }
+  return false;
+}
+
+function setAtlasWindowMinimized(key: AtlasMinimizableWindowKey, minimized: boolean): void {
+  if (key === "economy") {
+    atlasEconomyWindowMinimized = minimized;
+    return;
+  }
+  if (key === "cores") {
+    atlasCoreWindowMinimized = minimized;
+    return;
+  }
+  atlasNotesWindowMinimized = minimized;
+}
+
+function getAtlasWindowRestoreSelector(key: AtlasMinimizableWindowKey): string {
+  return `[data-atlas-window-restore="${key}"]`;
+}
+
 function applyAtlasViewportToDom(): void {
   const surface = document.getElementById("opsAtlasSurface") as HTMLElement | null;
   const world = document.getElementById("opsAtlasWorld") as HTMLElement | null;
@@ -827,10 +884,6 @@ function applyAtlasViewportToDom(): void {
     return;
   }
   applyMapTransform(surface, world);
-  const root = document.getElementById("app");
-  if (root) {
-    updateZoomDisplay(root);
-  }
 }
 
 function setAtlasZoom(nextZoom: number): void {
@@ -922,15 +975,15 @@ function moveAtlasSectorSelectionByDirection(
 function focusAtlasControllerWindow(key: AtlasFloatingWindowKey): void {
   atlasControllerActiveWindowKey = key;
   requestAnimationFrame(() => {
-    if (key === "notes" && atlasNotesWindowMinimized) {
-      document.querySelector<HTMLElement>("[data-atlas-notes-restore]")?.focus();
+    if (key !== "operations" && isAtlasWindowMinimized(key)) {
+      focusElementWithoutScroll(document.querySelector<HTMLElement>(getAtlasWindowRestoreSelector(key)));
       updateFocusableElements();
       return;
     }
 
     const windowEl = getAtlasWindowElement(key);
     const focusTarget = windowEl?.querySelector<HTMLElement>("button, input, textarea, [tabindex]");
-    focusTarget?.focus();
+    focusElementWithoutScroll(focusTarget);
     updateFocusableElements();
   });
 }
@@ -946,7 +999,7 @@ function moveAtlasWindowFrameByController(
   key: AtlasFloatingWindowKey,
   delta: { x?: number; y?: number; width?: number; height?: number },
 ): void {
-  if (key === "notes" && atlasNotesWindowMinimized) {
+  if (isAtlasWindowMinimized(key)) {
     return;
   }
 
@@ -1090,8 +1143,11 @@ function handleAtlasControllerAction(
         focusAtlasControllerWindow(atlasControllerActiveWindowKey);
         return true;
       case "windowPrimary":
-        if (atlasControllerActiveWindowKey === "notes") {
-          atlasNotesWindowMinimized = !atlasNotesWindowMinimized;
+        if (atlasControllerActiveWindowKey !== "operations") {
+          setAtlasWindowMinimized(
+            atlasControllerActiveWindowKey,
+            !isAtlasWindowMinimized(atlasControllerActiveWindowKey),
+          );
           persistUiLayout();
           renderOperationSelectScreen(currentReturnTo);
           return true;
@@ -1269,6 +1325,8 @@ function hydrateUiLayout(floor: OpsTerminalAtlasFloorState): void {
   atlasEconomyWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasEconomyWindowFrame ?? getDefaultEconomyWindowFrame(), "economy");
   atlasCoreWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasCoreWindowFrame ?? getDefaultCoreWindowFrame(), "cores");
   atlasNotesWindowFrame = clampWindowFrame(layout?.opsTerminalAtlasNotesWindowFrame ?? getDefaultNotesWindowFrame(), "notes");
+  atlasEconomyWindowMinimized = layout?.opsTerminalAtlasEconomyWindowFrame?.minimized ?? false;
+  atlasCoreWindowMinimized = layout?.opsTerminalAtlasCoreWindowFrame?.minimized ?? false;
   atlasNotesWindowMinimized = layout?.opsTerminalAtlasNotesWindowFrame?.minimized ?? true;
   const savedNotesColor = layout?.opsTerminalAtlasNotesWindowColor as AtlasNotesWindowColorKey | undefined;
   atlasNotesWindowColor = savedNotesColor && ATLAS_NOTES_WINDOW_COLOR_THEME_MAP.has(savedNotesColor)
@@ -1301,12 +1359,14 @@ function persistUiLayout(): void {
         y: atlasEconomyWindowFrame.y,
         width: atlasEconomyWindowFrame.width,
         height: atlasEconomyWindowFrame.height,
+        minimized: atlasEconomyWindowMinimized,
       },
       opsTerminalAtlasCoreWindowFrame: {
         x: atlasCoreWindowFrame.x,
         y: atlasCoreWindowFrame.y,
         width: atlasCoreWindowFrame.width,
         height: atlasCoreWindowFrame.height,
+        minimized: atlasCoreWindowMinimized,
       },
       opsTerminalAtlasNotesWindowFrame: {
         x: atlasNotesWindowFrame.x,
@@ -1436,12 +1496,8 @@ function applyWindowFrame(windowEl: HTMLElement, key: AtlasFloatingWindowKey): v
   windowEl.style.top = `${nextFrame.y}px`;
   windowEl.style.width = `${nextFrame.width}px`;
   windowEl.style.height = `${nextFrame.height}px`;
-}
-
-function updateZoomDisplay(root: HTMLElement): void {
-  const label = root.querySelector<HTMLElement>("#opsAtlasZoomValue");
-  if (label) {
-    label.textContent = `${Math.round(atlasViewport.zoom * 100)}%`;
+  if (key === "operations") {
+    windowEl.setAttribute("data-opsatlas-operations-layout", getAtlasOperationsWindowLayout(nextFrame.width));
   }
 }
 
@@ -1495,6 +1551,10 @@ function startAtlasSectorOperation(theaterId: string): void {
 
   teardownOperationSelectScreen();
   renderLoadoutScreen();
+}
+
+function getAtlasOperationsWindowLayout(width: number): "list" | "grid" {
+  return width >= OPS_ATLAS_OPERATIONS_GRID_MIN_WIDTH ? "grid" : "list";
 }
 
 function renderSectorCard(view: AtlasSectorView): string {
@@ -1870,6 +1930,111 @@ function getAtlasNotesStickyTarget(
   };
 }
 
+function renderAtlasWindowDockButton(
+  key: AtlasMinimizableWindowKey,
+  kicker: string,
+  label: string,
+  ariaLabel: string,
+  style = "",
+): string {
+  if (!isAtlasWindowMinimized(key)) {
+    return "";
+  }
+
+  const styleAttribute = style.length > 0 ? ` style="${style}"` : "";
+  return `
+    <button
+      class="opsatlas-window-dock${key === "notes" ? " opsatlas-window-dock--notes" : ""}"
+      type="button"
+      data-atlas-window-restore="${key}"
+      aria-label="${escapeHtml(ariaLabel)}"${styleAttribute}
+    >
+      <span class="opsatlas-window-dock__kicker">${escapeHtml(kicker)}</span>
+      <span class="opsatlas-window-dock__label">${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
+function renderAtlasWindowDockStack(): string {
+  const buttons = [
+    renderAtlasWindowDockButton("economy", "ECONOMY", "Upkeep and Income", "Restore upkeep and income"),
+    renderAtlasWindowDockButton("cores", "C.O.R.E.S", "Built C.O.R.E.s", "Restore built cores"),
+    renderAtlasWindowDockButton(
+      "notes",
+      "NOTES",
+      "Field Memos",
+      "Restore field memos",
+      getAtlasNotesWindowThemeStyle(),
+    ),
+  ].filter((button) => button.length > 0);
+
+  if (buttons.length <= 0) {
+    return "";
+  }
+
+  return `
+    <div class="opsatlas-window-dock-stack">
+      ${buttons.join("")}
+    </div>
+  `;
+}
+
+function renderAtlasEconomyWindow(warmEconomySummaries: OpsTerminalAtlasEconomySummary[]): string {
+  if (atlasEconomyWindowMinimized) {
+    return "";
+  }
+
+  return `
+    <section class="opsatlas-window opsatlas-window--economy" id="opsAtlasEconomyWindow" data-opsatlas-window-root="economy">
+      <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="economy">
+        <div class="opsatlas-window__title-block">
+          <div class="opsatlas-window__kicker">THEATER ECONOMY // ACTIVE + WARM SECTORS</div>
+          <h2>Upkeep and Income</h2>
+        </div>
+        <div class="opsatlas-window__hint">DRAG // RESIZE</div>
+        <div class="opsatlas-window__actions">
+          <div class="opsatlas-window__grip" aria-hidden="true">::</div>
+          <button class="opsatlas-window__minimize" type="button" data-atlas-window-minimize="economy" aria-label="Minimize upkeep and income">_</button>
+        </div>
+      </header>
+
+      <div class="opsatlas-window__body opsatlas-window__body--economy">
+        ${renderEconomyWindowRows(warmEconomySummaries)}
+      </div>
+
+      <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="economy" aria-hidden="true"></div>
+    </section>
+  `;
+}
+
+function renderAtlasCoreWindow(coreSummaries: OpsTerminalAtlasCoreSummary[]): string {
+  if (atlasCoreWindowMinimized) {
+    return "";
+  }
+
+  return `
+    <section class="opsatlas-window opsatlas-window--cores" id="opsAtlasCoreWindow" data-opsatlas-window-root="cores">
+      <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="cores">
+        <div class="opsatlas-window__title-block">
+          <div class="opsatlas-window__kicker">FLOOR FACILITIES // ALL C.O.R.E.S</div>
+          <h2>Built C.O.R.E.s</h2>
+        </div>
+        <div class="opsatlas-window__hint">DRAG // RESIZE</div>
+        <div class="opsatlas-window__actions">
+          <div class="opsatlas-window__grip" aria-hidden="true">::</div>
+          <button class="opsatlas-window__minimize" type="button" data-atlas-window-minimize="cores" aria-label="Minimize built cores">_</button>
+        </div>
+      </header>
+
+      <div class="opsatlas-window__body opsatlas-window__body--cores">
+        ${renderCoreWindowRows(coreSummaries)}
+      </div>
+
+      <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="cores" aria-hidden="true"></div>
+    </section>
+  `;
+}
+
 function renderAtlasNotesWindow(): string {
   if (atlasNotesWindowMinimized) {
     return "";
@@ -1884,13 +2049,13 @@ function renderAtlasNotesWindow(): string {
       style="${getAtlasNotesWindowThemeStyle()}"
     >
       <header class="opsatlas-window__header opsatlas-window__header--notes" data-opsatlas-drag-handle="true" data-opsatlas-window-key="notes">
-        <div class="opsatlas-window__hint">Drag to move // Resize from corner</div>
+        <div class="opsatlas-window__hint">DRAG // RESIZE</div>
         <div class="opsatlas-window__actions">
           <div class="opsatlas-window__grip" aria-hidden="true">::</div>
           <button class="opsatlas-window__color" type="button" data-atlas-notes-color="true" aria-label="Change notes window color">
             <span class="opsatlas-window__color-dot" aria-hidden="true"></span>
           </button>
-          <button class="opsatlas-window__minimize" type="button" data-atlas-notes-minimize="true" aria-label="Minimize field memos">_</button>
+          <button class="opsatlas-window__minimize" type="button" data-atlas-window-minimize="notes" aria-label="Minimize field memos">_</button>
         </div>
       </header>
 
@@ -1899,8 +2064,8 @@ function renderAtlasNotesWindow(): string {
           <div class="all-nodes-notes-panel__title">FIELD MEMOS</div>
           ${renderNotesWidget("atlas-notes", {
             className: "notes-widget--esc",
-            placeholder: "Record reminders, squad plans, build routes, or anything else you want to keep pinned to E.S.C.",
-            statusLabel: "AUTO-SAVE ACTIVE // AVAILABLE IN ATLAS + THEATER",
+            placeholder: "Notes, routes, reminders.",
+            statusLabel: "AUTO-SAVE",
             titleLabel: "Tab Name",
             stickyTarget: currentAtlasNotesStickyTarget,
           })}
@@ -1909,25 +2074,6 @@ function renderAtlasNotesWindow(): string {
 
       <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="notes" aria-hidden="true"></div>
     </section>
-  `;
-}
-
-function renderAtlasNotesDockButton(): string {
-  if (!atlasNotesWindowMinimized) {
-    return "";
-  }
-
-  return `
-    <button
-      class="opsatlas-notes-dock"
-      type="button"
-      data-atlas-notes-restore="true"
-      style="${getAtlasNotesWindowThemeStyle()}"
-      aria-label="Restore field memos"
-    >
-      <span class="opsatlas-notes-dock__kicker">NOTES</span>
-      <span class="opsatlas-notes-dock__label">Field Memos</span>
-    </button>
   `;
 }
 
@@ -1995,21 +2141,6 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   const nextFloorAlreadyGenerated = highestGeneratedFloorOrdinal > floor.floorOrdinal;
   const finalFloorReached = floor.floorOrdinal >= CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL;
   const canMoveToNextFloor = !finalFloorReached && (floorComplete || nextFloorAlreadyGenerated || atlasDebugFloorBypassEnabled);
-  const floorTransitStatus = finalFloorReached
-    ? floorComplete
-      ? `Campaign Complete // Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} cleared, postgame redeploy available`
-      : `Final Floor // Clear every sector objective on Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} to finish the campaign`
-    : nextFloorAlreadyGenerated
-    ? `Archive Transit // Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")} already charted`
-    : floorComplete
-      ? `Descent Cleared // Generate Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")}`
-      : atlasDebugFloorBypassEnabled
-        ? `Debug Override // Generate Floor ${String(floor.floorOrdinal + 1).padStart(2, "0")} without clearing sectors`
-        : "Descent Locked // Clear every sector objective on this floor";
-  const finalResetUnlocked = isFinalResetUnlocked();
-  const floorResetStatus = finalResetUnlocked
-    ? "Postgame protocol online // regenerate cleared floors or restart the full atlas at will"
-    : `Postgame protocol locked // clear Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} to unlock manual floor regeneration`;
 
   const sectorViews = floor.sectors.map((sector, index) => (
     buildSectorView(sector, sector.theaterId === selectedTheaterId, index)
@@ -2023,53 +2154,7 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
         <div class="opsatlas-hud">
           <div class="opsatlas-hud__title">
             <div class="opsatlas-hud__kicker">A.T.L.A.S. // ADAPTIVE THEATER LOGISTICS AND SURVEY</div>
-            ${renderRegionActiveBanner(regionPresentation)}
-            <div class="opsatlas-floor-switcher opsatlas-floor-switcher--title" aria-label="Floor transit controls">
-              <div class="opsatlas-floor-switcher__label">Floor Transit</div>
-              <div class="opsatlas-floor-switcher__controls">
-                <button
-                  class="opsatlas-floor-switcher__btn"
-                  type="button"
-                  data-atlas-floor-nav="prev"
-                  ${floor.floorOrdinal > 1 ? "" : "disabled"}
-                >
-                  PREV
-                </button>
-                <div class="opsatlas-floor-switcher__value">FLOOR ${String(floor.floorOrdinal).padStart(2, "0")}</div>
-                <button
-                  class="opsatlas-floor-switcher__btn"
-                  type="button"
-                  data-atlas-floor-nav="next"
-                  ${canMoveToNextFloor ? "" : "disabled"}
-                >
-                  NEXT
-                </button>
-              </div>
-              <div class="opsatlas-floor-switcher__status" id="opsAtlasTransitStatusBody">
-                <div id="opsAtlasTransitStatusOutput"></div>
-              </div>
-              <div class="opsatlas-floor-switcher__reset-controls">
-                <button
-                  class="opsatlas-floor-switcher__btn opsatlas-floor-switcher__btn--danger"
-                  type="button"
-                  data-atlas-floor-regen="current"
-                  ${finalResetUnlocked ? "" : "disabled"}
-                >
-                  REGEN FLOOR
-                </button>
-                <button
-                  class="opsatlas-floor-switcher__btn opsatlas-floor-switcher__btn--danger"
-                  type="button"
-                  data-atlas-reset-all="all"
-                  ${finalResetUnlocked ? "" : "disabled"}
-                >
-                  RESET ATLAS
-                </button>
-              </div>
-              <div class="opsatlas-floor-switcher__status opsatlas-floor-switcher__status--secondary" id="opsAtlasResetStatusBody">
-                <div id="opsAtlasResetStatusOutput"></div>
-              </div>
-            </div>
+            ${renderRegionActiveBanner(regionPresentation, floor.floorOrdinal, canMoveToNextFloor)}
           </div>
 
           <div class="opsatlas-hud__controls">
@@ -2086,9 +2171,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
             </div>
 
             <div class="opsatlas-zoom">
-              <button class="opsatlas-zoom__btn" type="button" id="opsAtlasZoomOutBtn">-</button>
-              <div class="opsatlas-zoom__value" id="opsAtlasZoomValue">${Math.round(atlasViewport.zoom * 100)}%</div>
-              <button class="opsatlas-zoom__btn" type="button" id="opsAtlasZoomInBtn">+</button>
+              <button class="opsatlas-zoom__btn" type="button" id="opsAtlasZoomOutBtn" aria-label="Zoom out">-</button>
+              <button class="opsatlas-zoom__btn" type="button" id="opsAtlasZoomInBtn" aria-label="Zoom in">+</button>
             </div>
 
             <button class="opsatlas-hold-btn ${atlasHoldActive ? "opsatlas-hold-btn--active" : ""}" type="button" id="opsAtlasHoldBtn">
@@ -2187,62 +2271,39 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
           </div>
         </div>
 
-        <section class="opsatlas-window" id="opsAtlasWindow" data-opsatlas-window-root="operations">
+        <section
+          class="opsatlas-window"
+          id="opsAtlasWindow"
+          data-opsatlas-window-root="operations"
+          data-opsatlas-operations-layout="${getAtlasOperationsWindowLayout(atlasWindowFrame.width)}"
+        >
           <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="operations">
             <div class="opsatlas-window__title-block">
               <div class="opsatlas-window__kicker">OPS TERMINAL // REGION ACTIVE OPERATIONS</div>
               <h2>${escapeHtml(regionPresentation.regionName)} Sector Operations</h2>
             </div>
-            <div class="opsatlas-window__hint">Drag to move // Resize from corner</div>
+            <div class="opsatlas-window__hint">DRAG // RESIZE</div>
           </header>
 
-          <div class="opsatlas-window__body">
+          <div class="opsatlas-window__body opsatlas-window__body--operations">
             ${sectorViews.map(renderSectorCard).join("")}
           </div>
 
           <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="operations" aria-hidden="true"></div>
         </section>
 
-        <section class="opsatlas-window opsatlas-window--economy" id="opsAtlasEconomyWindow" data-opsatlas-window-root="economy">
-          <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="economy">
-            <div class="opsatlas-window__title-block">
-              <div class="opsatlas-window__kicker">THEATER ECONOMY // ACTIVE + WARM SECTORS</div>
-              <h2>Upkeep and Income</h2>
-            </div>
-            <div class="opsatlas-window__hint">Drag to move // Resize from corner</div>
-          </header>
+        ${renderAtlasEconomyWindow(warmEconomySummaries)}
 
-          <div class="opsatlas-window__body opsatlas-window__body--economy">
-            ${renderEconomyWindowRows(warmEconomySummaries)}
-          </div>
-
-          <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="economy" aria-hidden="true"></div>
-        </section>
-
-        <section class="opsatlas-window opsatlas-window--cores" id="opsAtlasCoreWindow" data-opsatlas-window-root="cores">
-          <header class="opsatlas-window__header" data-opsatlas-drag-handle="true" data-opsatlas-window-key="cores">
-            <div class="opsatlas-window__title-block">
-              <div class="opsatlas-window__kicker">FLOOR FACILITIES // ALL C.O.R.E.S</div>
-              <h2>Built C.O.R.E.s</h2>
-            </div>
-            <div class="opsatlas-window__hint">Drag to move // Resize from corner</div>
-          </header>
-
-          <div class="opsatlas-window__body opsatlas-window__body--cores">
-            ${renderCoreWindowRows(coreSummaries)}
-          </div>
-
-          <div class="opsatlas-window__resize" data-opsatlas-resize="true" data-opsatlas-window-key="cores" aria-hidden="true"></div>
-        </section>
+        ${renderAtlasCoreWindow(coreSummaries)}
 
         ${renderAtlasNotesWindow()}
 
         <div class="opsatlas-pan-hint" aria-hidden="true">
-          <div class="opsatlas-pan-hint__title">WASD or arrow keys to pan</div>
-          <div class="opsatlas-pan-hint__subtitle">${atlasHoldActive ? "Atlas waiting // 1 tick every 5 seconds" : "Hold SHIFT to pan faster"}</div>
+          <div class="opsatlas-pan-hint__title">PAN: WASD / ARROWS</div>
+          <div class="opsatlas-pan-hint__subtitle">${atlasHoldActive ? "WAITING // 5S TICKS" : "SHIFT FASTER"}</div>
         </div>
 
-        ${renderAtlasNotesDockButton()}
+        ${renderAtlasWindowDockStack()}
       </div>
       ${renderAtlasConfirmModal()}
     </div>
@@ -2251,59 +2312,27 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   if (opsRoot) {
     enhanceTerminalUiButtons(opsRoot);
   }
-  startTerminalTypingByIds("opsAtlasTransitStatusBody", "opsAtlasTransitStatusOutput", [floorTransitStatus], {
-    showCursor: false,
-    loop: false,
-    baseCharDelayMs: 16,
-    minCharDelayMs: 6,
-    accelerationPerCharMs: 0.7,
-    pauseAfterLineMs: 90,
-    maxLines: 1,
-    scrollBehavior: "auto",
-    lineClassName: "opsatlas-status-line",
-    promptClassName: "opsatlas-status-prompt",
-    textClassName: "opsatlas-status-text",
-    promptParser: (line) => ({
-      prompt: "ATLAS>",
-      text: ` ${line}`,
-    }),
-  });
-  startTerminalTypingByIds("opsAtlasResetStatusBody", "opsAtlasResetStatusOutput", [floorResetStatus], {
-    showCursor: false,
-    loop: false,
-    baseCharDelayMs: 16,
-    minCharDelayMs: 6,
-    accelerationPerCharMs: 0.7,
-    pauseAfterLineMs: 90,
-    maxLines: 1,
-    scrollBehavior: "auto",
-    lineClassName: "opsatlas-status-line",
-    promptClassName: "opsatlas-status-prompt",
-    textClassName: "opsatlas-status-text",
-    promptParser: (line) => ({
-      prompt: "RESET>",
-      text: ` ${line}`,
-    }),
-  });
-
   const surface = document.getElementById("opsAtlasSurface") as HTMLElement | null;
   const world = document.getElementById("opsAtlasWorld") as HTMLElement | null;
   const windowEl = document.getElementById("opsAtlasWindow") as HTMLElement | null;
   const economyWindowEl = document.getElementById("opsAtlasEconomyWindow") as HTMLElement | null;
   const coreWindowEl = document.getElementById("opsAtlasCoreWindow") as HTMLElement | null;
   const notesWindowEl = document.getElementById("opsAtlasNotesWindow") as HTMLElement | null;
-  if (!surface || !world || !windowEl || !economyWindowEl || !coreWindowEl) {
+  if (!surface || !world || !windowEl) {
     return;
   }
 
   applyWindowFrame(windowEl, "operations");
-  applyWindowFrame(economyWindowEl, "economy");
-  applyWindowFrame(coreWindowEl, "cores");
+  if (economyWindowEl) {
+    applyWindowFrame(economyWindowEl, "economy");
+  }
+  if (coreWindowEl) {
+    applyWindowFrame(coreWindowEl, "cores");
+  }
   if (notesWindowEl) {
     applyWindowFrame(notesWindowEl, "notes");
   }
   applyMapTransform(surface, world);
-  updateZoomDisplay(root);
 
   requestAnimationFrame(() => {
     root.querySelector<HTMLElement>(`.opsatlas-sector-card[data-atlas-select-sector="${selectedTheaterId}"]`)?.scrollIntoView({
@@ -2315,7 +2344,6 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   const setZoom = (nextZoom: number) => {
     atlasViewport.zoom = clampNumber(nextZoom, MAP_MIN_ZOOM, MAP_MAX_ZOOM);
     applyMapTransform(surface, world);
-    updateZoomDisplay(root);
   };
 
   const panBy = (dx: number, dy: number) => {
@@ -2406,21 +2434,29 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
       return;
     }
 
-    const notesRestoreButton = target.closest<HTMLElement>("[data-atlas-notes-restore]");
-    if (notesRestoreButton) {
+    const restoreButton = target.closest<HTMLElement>("[data-atlas-window-restore]");
+    if (restoreButton) {
+      const key = restoreButton.getAttribute("data-atlas-window-restore");
+      if (!isAtlasMinimizableWindowKey(key)) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      atlasNotesWindowMinimized = false;
+      setAtlasWindowMinimized(key, false);
       persistUiLayout();
       renderOperationSelectScreen(currentReturnTo);
       return;
     }
 
-    const notesMinimizeButton = target.closest<HTMLElement>("[data-atlas-notes-minimize]");
-    if (notesMinimizeButton) {
+    const minimizeButton = target.closest<HTMLElement>("[data-atlas-window-minimize]");
+    if (minimizeButton) {
+      const key = minimizeButton.getAttribute("data-atlas-window-minimize");
+      if (!isAtlasMinimizableWindowKey(key)) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      atlasNotesWindowMinimized = true;
+      setAtlasWindowMinimized(key, true);
       persistUiLayout();
       renderOperationSelectScreen(currentReturnTo);
       return;
@@ -2783,8 +2819,12 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
     atlasCoreWindowFrame = clampWindowFrame(atlasCoreWindowFrame, "cores");
     atlasNotesWindowFrame = clampWindowFrame(atlasNotesWindowFrame, "notes");
     applyWindowFrame(windowEl, "operations");
-    applyWindowFrame(economyWindowEl, "economy");
-    applyWindowFrame(coreWindowEl, "cores");
+    if (economyWindowEl) {
+      applyWindowFrame(economyWindowEl, "economy");
+    }
+    if (coreWindowEl) {
+      applyWindowFrame(coreWindowEl, "cores");
+    }
     if (notesWindowEl) {
       applyWindowFrame(notesWindowEl, "notes");
     }
@@ -2912,8 +2952,8 @@ export function renderOperationSelectScreen(returnTo: BaseCampReturnTo = "baseca
   showTutorialCallout({
     id: "tutorial_atlas_regions_and_floors",
     title: "Regions And Floors",
-    message: "A.T.L.A.S. is the theater survey layer for the region/floor campaign structure.",
-    detail: `Choose a sector operation on the current floor, complete its objective, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} completes the current campaign and unlocks postgame floor regeneration.`,
+    message: "A.T.L.A.S. tracks the current floor.",
+    detail: `Choose a sector, clear it, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} ends the campaign and unlocks floor regen.`,
     durationMs: 9000,
     channel: "tutorial-atlas",
   });

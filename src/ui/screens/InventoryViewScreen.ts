@@ -22,6 +22,8 @@ import {
   unregisterBaseCampReturnHotkey,
 } from "./baseCampReturn";
 import { clearControllerContext } from "../../core/controllerSupport";
+import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
+import { focusElementWithoutScroll } from "../domUtils";
 
 let selectedCategory: InventoryCategory | "all" = "all";
 let searchQuery = "";
@@ -284,7 +286,12 @@ function getCategoryLabel(category: InventoryCategory): string {
   return labels[category] ?? category.toUpperCase();
 }
 
+function canInspectInventoryEntry(entry: InventoryEntryVM): boolean {
+  return entry.category === "equipment";
+}
+
 function renderInventoryEntryNode(entry: InventoryEntryVM, layout: WorkspaceLayout): string {
+  const inspectable = canInspectInventoryEntry(entry);
   const categoryClass = `inventory-workspace-node--${entry.category}`;
   const nodeClass = entry.category === "equipment"
     ? `inventory-workspace-node inventory-workspace-node--gear ${categoryClass}`
@@ -295,6 +302,9 @@ function renderInventoryEntryNode(entry: InventoryEntryVM, layout: WorkspaceLayo
       class="${nodeClass} inventory-workspace-draggable"
       data-node-kind="entry"
       data-node-key="${entry.key}"
+      data-entry-id="${entry.id}"
+      data-entry-category="${entry.category}"
+      data-inspectable="${inspectable ? "true" : "false"}"
       style="grid-column:${layout.gridX} / span ${layout.colSpan};grid-row:${layout.gridY} / span ${layout.rowSpan};"
     >
       <div class="inventory-workspace-node-toolbar">
@@ -308,6 +318,7 @@ function renderInventoryEntryNode(entry: InventoryEntryVM, layout: WorkspaceLayo
       </div>
       <div class="inventory-workspace-node-footer">
         ${entry.equipped ? `<span class="inventory-workspace-node-badge inventory-workspace-node-badge--equipped">EQUIPPED</span>` : ""}
+        ${inspectable ? `<span class="inventory-workspace-node-badge inventory-workspace-node-badge--inspect">DETAIL</span>` : ""}
         <span class="inventory-workspace-node-badge">x${entry.owned}</span>
       </div>
     </article>
@@ -642,6 +653,12 @@ function attachWorkspaceDragging(root: HTMLElement, returnTo: BaseCampReturnTo):
           return;
         }
 
+        if (draggedNode.kind === "entry" && canInspectInventoryEntry(draggedNode.entry)) {
+          cleanup();
+          showEquipmentDetailModalById(draggedNode.entry.id);
+          return;
+        }
+
         cleanup();
       };
 
@@ -689,7 +706,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
       requestAnimationFrame(() => {
         const nextInput = document.querySelector<HTMLInputElement>("#searchInput");
         if (nextInput) {
-          nextInput.focus();
+          focusElementWithoutScroll(nextInput);
           nextInput.setSelectionRange(cursorPosition, cursorPosition);
         }
       });
@@ -822,7 +839,7 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
       <div class="inventory-view-header town-screen__header">
         <div class="inventory-view-header-left town-screen__titleblock">
           <h1 class="inventory-view-title">INVENTORY WORKSPACE</h1>
-          <div class="inventory-view-subtitle">S/COM_OS // ASSETS_REGISTRY // OPEN_TRAY</div>
+          <div class="inventory-view-subtitle">ASSET REGISTRY</div>
         </div>
         <div class="inventory-view-header-right town-screen__header-right">
           <div class="inventory-view-wad">
@@ -878,7 +895,7 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
 
           <section class="inventory-workspace-panel inventory-workspace-panel--guide">
             <div class="inventory-workspace-panel-title">WORKSPACE</div>
-            <p class="inventory-workspace-guide">Each owned asset can be moved and organized into folders that can be easily brought on operations.</p>
+            <p class="inventory-workspace-guide">Move assets into folders for operation prep.</p>
           </section>
         </aside>
 
@@ -886,7 +903,7 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
           <div class="inventory-workspace-main-header">
             <div>
               <div class="inventory-workspace-main-title">ASSET NODE TRAY</div>
-              <div class="inventory-workspace-main-subtitle">Drag nodes together to create reusable folders for operation prep.</div>
+              <div class="inventory-workspace-main-subtitle">Drag nodes together to build folders.</div>
             </div>
             <div class="inventory-workspace-main-count">${nodes.length} NODES</div>
           </div>

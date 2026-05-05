@@ -25,6 +25,7 @@ import { APP_VERSION, SCROLLINK_VERSION_LABEL } from "../../core/appVersion";
 import { hydrateGeneratedTechnicaRegistry } from "../../content/technica";
 import { initializeTechnicaContentLibrary } from "../../content/technica/library";
 import { setMusicCue } from "../../core/audioSystem";
+import { focusElementWithoutScroll } from "../domUtils";
 import { renderImportContentScreen } from "./ImportContentScreen";
 import chaosCoreLogo from "../../assets/cc logo.png";
 import { createDefaultCampaignProgress, saveCampaignProgress } from "../../core/campaign";
@@ -621,7 +622,7 @@ function showMainMenuModal(modalId: string, focusSelector?: string): void {
       ? modal.querySelector<HTMLElement>(focusSelector)
       : null)
       ?? modal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
-    focusTarget?.focus();
+    focusElementWithoutScroll(focusTarget);
   });
 }
 
@@ -639,13 +640,13 @@ function hideMainMenuModal(modalId: string, restoreFocusSelector: string = 'butt
   requestAnimationFrame(() => {
     if (stillOpenModal) {
       const modalFocus = stillOpenModal.querySelector<HTMLElement>("[data-controller-default-focus='true'], button:not([disabled]), [href], input:not([disabled])");
-      modalFocus?.focus();
+      focusElementWithoutScroll(modalFocus);
       return;
     }
 
     const focusTarget = document.querySelector<HTMLElement>(restoreFocusSelector)
       ?? document.querySelector<HTMLElement>(".mainmenu-btn");
-    focusTarget?.focus();
+    focusElementWithoutScroll(focusTarget);
   });
 }
 

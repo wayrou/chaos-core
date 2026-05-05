@@ -1307,6 +1307,20 @@ fn load_settings() -> Result<String, String> {
 }
 
 #[command]
+fn set_window_resolution(
+    window: tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let _ = window.unmaximize();
+    window
+        .set_size(tauri::LogicalSize::new(width as f64, height as f64))
+        .map_err(|error| format!("Failed to resize window: {}", error))?;
+    println!("[SETTINGS] Window resized to {}x{}", width, height);
+    Ok(())
+}
+
+#[command]
 fn read_generated_technica_version() -> Result<String, String> {
     read_text_file(
         get_generated_technica_root()?.join("version.json"),
@@ -1934,6 +1948,7 @@ fn main() {
             get_save_info,
             save_settings,
             load_settings,
+            set_window_resolution,
             read_generated_technica_version,
             read_generated_technica_registry,
             read_generated_technica_entry,

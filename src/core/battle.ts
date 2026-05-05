@@ -66,6 +66,11 @@ import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
 import { getCoverDamageReduction } from "./coverGenerator";
 import {
+  applyTavernMealBuffToTarget,
+  getActiveRunTavernMealBuff,
+  getTavernMealBuffSummary,
+} from "./tavernMeals";
+import {
   getEchoAttackBonus,
   getEchoAccuracyBonus,
   getEchoIncomingAccuracyPenalty,
@@ -245,8 +250,16 @@ export interface BattleState {
     supplyOnline: boolean;
     commsOnline: boolean;
     powerTurretCount: number;
+    powerRelayVolleyCount?: number;
+    automatedTurretCount?: number;
+    openingVolleyDamage?: number;
     enemyPreview: string[];
     detailedEnemyIntel: boolean;
+    squadModifierSummary?: string[];
+    supportSystemSummary?: string[];
+    recoverySummary?: string[];
+    activeMealName?: string;
+    activeMealSummary?: string;
     overheating?: boolean;
     overheatSeverity?: 0 | 1 | 2;
     combatInstability?: boolean;
@@ -3112,6 +3125,7 @@ export function createTestBattleForCurrentParty(
 
   // Get equipment data from state (or use defaults)
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+  const activeRunMealBuff = getActiveRunTavernMealBuff(state);
 
   const units: Record<UnitId, BattleUnitState> = {};
 
@@ -3131,6 +3145,10 @@ export function createTestBattleForCurrentParty(
       },
       equipmentById
     );
+
+    if (activeRunMealBuff) {
+      applyTavernMealBuffToTarget(units[id], activeRunMealBuff);
+    }
   });
 
   // Don't compute turn order yet - wait until placement is confirmed
@@ -3191,6 +3209,17 @@ export function createTestBattleForCurrentParty(
         ],
       };
     }
+  }
+
+  if (activeRunMealBuff) {
+    const mealSummary = getTavernMealBuffSummary(activeRunMealBuff);
+    battle = {
+      ...battle,
+      log: [
+        ...battle.log,
+        `SLK//MESS  :: ${activeRunMealBuff.name.toUpperCase()} ACTIVE${mealSummary ? ` (${mealSummary.toUpperCase()})` : ""}.`,
+      ],
+    };
   }
 
   // Place enemies automatically on the right edge

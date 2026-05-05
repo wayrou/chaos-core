@@ -278,19 +278,7 @@ export async function handleInteraction(
       break;
 
     case "ops_terminal":
-      import("../ui/screens/CommsArrayScreen").then(async ({ openSharedCoopOperationsEntry }) => {
-        try {
-          const handledByCoop = await openSharedCoopOperationsEntry(beforeScreenOpen);
-          if (handledByCoop) {
-            return;
-          }
-          openScreenAsync(renderFieldOperationSelectScreen);
-        } catch (error) {
-          console.error("[FIELD] Ops Terminal failed to open:", error);
-          await showFieldInteractionAlert("Ops Terminal failed to initialize. The atlas state may need to be regenerated.");
-          onResume();
-        }
-      });
+      openScreenAsync(renderFieldOperationSelectScreen);
       break;
 
     case "quest_board":

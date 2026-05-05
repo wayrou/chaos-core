@@ -14,6 +14,7 @@ import {
 } from "../../core/notesSystem";
 import type { PlayerNoteStickySurface, PlayerNoteTab } from "../../core/types";
 import { getGameState, updateGameState } from "../../state/gameStore";
+import { focusElementWithoutScroll } from "../domUtils";
 
 type NotesStickyTarget = {
   surfaceType: PlayerNoteStickySurface;
@@ -490,7 +491,7 @@ export function attachNotesWidgetHandlers(root: ParentNode = document, options: 
         flushNotesDraft(widget);
         updateGameState((state) => addNotesTab(state));
         rerenderNotesWidget(widget);
-        widget.querySelector<HTMLTextAreaElement>("[data-notes-body-input]")?.focus();
+        focusElementWithoutScroll(widget.querySelector<HTMLTextAreaElement>("[data-notes-body-input]"));
         return;
       }
 

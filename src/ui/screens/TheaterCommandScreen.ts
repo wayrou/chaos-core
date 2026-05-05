@@ -321,7 +321,7 @@ const HOLD_POSITION_TICK_MS = 5000;
 const THEATER_MARGIN_X = 14;
 const THEATER_TOP_SAFE = 36;
 const THEATER_BOTTOM_SAFE = 20;
-const THEATER_COMMAND_LAYOUT_VERSION = 8;
+const THEATER_COMMAND_LAYOUT_VERSION = 9;
 const THEATER_ENTRY_FOCUS_ZOOM = 0.72;
 const THEATER_MAP_PAN_MARGIN_X = 140;
 const THEATER_MAP_PAN_MARGIN_Y = 120;
@@ -342,7 +342,6 @@ const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
   "automation",
   "fortify",
   "core",
-  "upkeep",
   "resources",
   "consumables",
   "notes",
@@ -351,10 +350,8 @@ const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
 const THEATER_MAP_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>();
 const THEATER_PANEL_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>([
   "ops",
-  "feed",
   "room",
   "core",
-  "upkeep",
   "resources",
 ]);
 
@@ -368,7 +365,7 @@ const THEATER_WINDOW_DEFS: Record<TheaterWindowKey, TheaterWindowDefinition> = {
   automation: { title: "MODULE LOGIC", kicker: "AUTOMATION CONTROL // LIVE CONFIG", minWidth: 420, minHeight: 300, restoreLabel: "LOGIC" },
   fortify: { title: "FORTIFICATIONS", kicker: "ROOM HARDENING", minWidth: 320, minHeight: 220, restoreLabel: "FORT" },
   core: { title: "ALL C.O.R.E.S", kicker: "FACILITY LEDGER // THEATER SUPPORT", minWidth: 360, minHeight: 260, restoreLabel: "CORES" },
-  resources: { title: "CURRENT RESOURCES", kicker: "BASE CAMP SUPPLY LEDGER", minWidth: 280, minHeight: 180, restoreLabel: "SUPPLY" },
+  resources: { title: "LEDGER", kicker: "BASE CAMP SUPPLY LEDGER", minWidth: 280, minHeight: 180, restoreLabel: "LEDGER" },
   consumables: { title: "CONSUMABLES", kicker: "FIELD STOCK // FREE USE", minWidth: 320, minHeight: 220, restoreLabel: "ITEMS" },
   upkeep: { title: "CURRENT UPKEEP COSTS", kicker: "PER-TICK FACILITY MAINTENANCE", minWidth: 320, minHeight: 220, restoreLabel: "UPKEEP" },
   notes: { title: "OPERATOR NOTES", kicker: "FIELD MEMOS // AUTO-SAVE", minWidth: 340, minHeight: 260, restoreLabel: "NOTES" },
@@ -1261,9 +1258,9 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
     THEATER_TOP_SAFE,
     Math.max(THEATER_TOP_SAFE, viewportHeight - roomHeight - THEATER_BOTTOM_SAFE),
   );
-  const opsY = Math.max(THEATER_TOP_SAFE, viewportHeight - opsHeight);
+  const opsY = topY;
   const resourcesY = clampNumber(
-    topY + upkeepHeight + 12,
+    topY,
     THEATER_TOP_SAFE,
     Math.max(THEATER_TOP_SAFE, viewportHeight - resourcesHeight - THEATER_BOTTOM_SAFE),
   );
@@ -1325,7 +1322,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: topY,
       width: feedWidth,
       height: feedHeight,
-      minimized: false,
+      minimized: true,
       zIndex: 23,
     },
     room: {
@@ -1349,7 +1346,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: coreY,
       width: coreWidth,
       height: coreHeight,
-      minimized: true,
+      minimized: false,
       zIndex: 26,
     },
     fortify: {
@@ -1373,7 +1370,7 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
       y: resourcesY,
       width: resourcesWidth,
       height: resourcesHeight,
-      minimized: true,
+      minimized: false,
       zIndex: 27,
     },
     consumables: {
@@ -2154,6 +2151,9 @@ function setTheaterWindowMinimized(key: TheaterWindowKey, minimized: boolean): v
 
 function isTheaterWindowAvailable(key: TheaterWindowKey, _theater: TheaterNetworkState): boolean {
   if (key === "fortify") {
+    return false;
+  }
+  if (key === "upkeep") {
     return false;
   }
   if (key === "automation" && !isAutomationWindowOpen()) {
@@ -3606,11 +3606,6 @@ function renderSquadsWindow(theater: TheaterNetworkState): string {
 }
 
 function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): string {
-  const campaignScopeCopy = theater.definition.floorOrdinal < CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL
-    ? `Campaign progression active // Final floor is ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`
-    : theater.objectiveComplete
-      ? "Final floor complete // postgame floor regeneration is available when you return to A.T.L.A.S."
-      : `Final floor reached // clear this sector objective to finish the campaign on Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")}.`;
   const actionBlock = theater.objectiveComplete
     ? `
       <div class="theater-copy theater-copy--muted">
@@ -3630,7 +3625,6 @@ function renderOpsWindow(theater: TheaterNetworkState, totalFloors: number): str
 
   const body = `
     <div class="theater-copy"><strong>Objective:</strong> ${theater.definition.objective}</div>
-    <div class="theater-beta-scope">${campaignScopeCopy}</div>
     <div class="theater-info-grid theater-info-grid--two">
       <div class="theater-stat-card"><span>Operation</span><strong>${theater.definition.operationId.toUpperCase()}</strong></div>
       <div class="theater-stat-card"><span>Theater</span><strong>${theater.definition.name}</strong></div>
@@ -5063,12 +5057,6 @@ function focusTheaterFeedCliInput(options: { select?: boolean } = {}): void {
   }
 }
 
-function requestTheaterFeedCliFocus(options: { select?: boolean } = {}): void {
-  window.requestAnimationFrame(() => {
-    focusTheaterFeedCliInput(options);
-  });
-}
-
 function syncTheaterFeedWindowToLatest(): void {
   const feedLog = document.getElementById("theaterFeedLog");
   if (feedLog) {
@@ -5086,12 +5074,18 @@ function formatAtlasEconomyIncome(summary: OpsTerminalAtlasEconomySummary): stri
 
 function renderResourcesWindow(state: GameState, theater: TheaterNetworkState): string {
   const resourcePool = getTheaterSessionResourceSummary(state);
+  const economy = getTheaterUpkeepPerTick(theater);
+  const resourceIncomeSummary = getResourceEntries(economy.incomePerTick)
+    .map((entry) => `${entry.abbreviation} +${entry.amount} per tick`)
+    .join(" / ") || "No passive income";
   const body = `
     <div class="theater-resource-grid">
       <div class="theater-resource-card"><span>Wad</span><strong>${resourcePool.wad ?? 0}</strong></div>
       ${getResourceEntries(resourcePool.resources, { includeZero: true }).map((entry) => `
         <div class="theater-resource-card"><span>${entry.label}</span><strong>${entry.amount}</strong></div>
       `).join("")}
+      <div class="theater-resource-card"><span>Wad Upkeep Per Tick</span><strong>${economy.wadUpkeep}</strong></div>
+      <div class="theater-resource-card theater-resource-card--wide"><span>Resource Income Per Tick</span><strong>${resourceIncomeSummary}</strong></div>
     </div>
   `;
   return renderWindowShell("resources", THEATER_WINDOW_DEFS.resources.title, THEATER_WINDOW_DEFS.resources.kicker, body, theater);
@@ -5208,8 +5202,8 @@ function renderNotesWindow(theater: TheaterNetworkState): string {
       <div class="all-nodes-notes-panel__title">FIELD MEMOS</div>
       ${renderNotesWidget("theater-notes", {
         className: "notes-widget--esc",
-        placeholder: "Record reminders, squad plans, build routes, or anything else you want to keep pinned to E.S.C.",
-        statusLabel: "AUTO-SAVE ACTIVE // AVAILABLE IN ATLAS + THEATER",
+        placeholder: "Notes, routes, reminders.",
+        statusLabel: "AUTO-SAVE",
         titleLabel: "Tab Name",
         stickyTarget,
       })}
@@ -9299,21 +9293,9 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
   attachWindowHandlers();
   ensureTheaterMapControls();
 
-  const theaterFeedPanel = document.querySelector<HTMLElement>("[data-theater-window='feed'] .theater-feed-panel");
   const theaterFeedCliForm = document.getElementById("theaterFeedCliForm") as HTMLFormElement | null;
   const theaterFeedCliInput = document.getElementById("theaterFeedCliInput") as HTMLInputElement | null;
   const theaterFeedCliStatus = document.getElementById("theaterFeedCliStatus");
-
-  if (theaterFeedPanel && theaterFeedCliInput) {
-    theaterFeedPanel.addEventListener("pointerdown", (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("#theaterFeedCliInput")) {
-        return;
-      }
-      requestTheaterFeedCliFocus();
-    });
-    requestTheaterFeedCliFocus();
-  }
 
   if (theaterFeedCliForm && theaterFeedCliInput instanceof HTMLInputElement && theaterFeedCliStatus instanceof HTMLElement) {
     theaterFeedCliForm.addEventListener("submit", (event) => {
@@ -9328,7 +9310,7 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
         theaterFeedCliFeedbackHasError = true;
         theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
         theaterFeedCliStatus.classList.add("theater-feed-cli-status--error");
-        theaterFeedCliInput.select();
+        focusTheaterFeedCliInput({ select: true });
         return;
       }
 
@@ -9345,7 +9327,7 @@ function attachTheaterHandlers(theater: TheaterNetworkState): void {
       } else {
         theaterFeedCliStatus.textContent = theaterFeedCliFeedback;
         theaterFeedCliStatus.classList.add("theater-feed-cli-status--error");
-        theaterFeedCliInput.select();
+        focusTheaterFeedCliInput({ select: true });
       }
     });
 
@@ -10503,7 +10485,6 @@ export function renderTheaterCommandScreen(): void {
       ${renderFeedWindow(theater)}
       ${renderResourcesWindow(state, theater)}
       ${renderConsumablesWindow(state, theater)}
-      ${renderUpkeepWindow(theater)}
       ${renderNotesWindow(theater)}
       ${renderTheaterWindowDock(theater)}
       ${renderTheaterExitConfirmModal()}
@@ -10526,8 +10507,8 @@ export function renderTheaterCommandScreen(): void {
   showTutorialCallout({
     id: "tutorial_theater_command",
     title: "Theater Command",
-    message: "Each theater is one live operation space inside the current floor of the campaign.",
-    detail: `Secure the objective, stabilize your routes and squads, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} is the current campaign ending point and unlocks postgame regeneration.`,
+    message: "Each theater is one live sector on the current floor.",
+    detail: `Secure it, stabilize your routes, then descend. Floor ${String(CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL).padStart(2, "0")} ends the campaign and unlocks floor regen.`,
     durationMs: 9000,
     channel: "tutorial-theater",
   });

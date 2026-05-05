@@ -118,6 +118,10 @@ import {
   spendSessionCost,
 } from "./session";
 import {
+  getActiveRunTavernMealBuff,
+  getTavernMealBuffSummary,
+} from "./tavernMeals";
+import {
   applyShakenStatusToUnitIds,
   expireShakenStatusesForTheater,
 } from "./operationStatuses";
@@ -6921,7 +6925,17 @@ function buildTheaterBattleStateForSquad(
   const supplyOnline = room.supplied;
   const commsOnline = room.commsLinked && room.commsFlow >= Math.max(SQUAD_CONTROL_BW_PER_UNIT, deployedUnitIds.length * SQUAD_CONTROL_BW_PER_UNIT);
   const detailedEnemyIntel = signalPosture !== "masked" && room.commsLinked && room.commsFlow >= 100;
-  const powerTurretCount = Math.max(0, Math.floor(room.powerFlow / 100)) + getAutomatedTurretCountForRoom(theater, room.id);
+  const automatedTurretCount = getAutomatedTurretCountForRoom(theater, room.id);
+  const {
+    powerRelayVolleyCount,
+    powerTurretCount,
+    openingVolleyDamage,
+  } = getTheaterPowerOpeningVolley(room.powerFlow, automatedTurretCount);
+  const activeRunMealBuff = getActiveRunTavernMealBuff(state);
+  const activeRunMealSummary = getTavernMealBuffSummary(activeRunMealBuff);
+  const squadModifierSummary: string[] = [];
+  const supportSystemSummary: string[] = [];
+  const recoverySummary: string[] = [];
   const smokeSeverity = clampSandboxLevel(room.sandboxSmokeValue ?? 0, 2) as 0 | 1 | 2;
   const smokeObscured = smokeSeverity > 0;
   const regionPresentation = getActiveRegionPresentation(theater.definition.floorOrdinal ?? 1);
@@ -7004,10 +7018,35 @@ function buildTheaterBattleStateForSquad(
   const enemyUnits = Object.values(units).filter((unit) => unit.isEnemy);
   const combinedDetailedEnemyIntel = detailedEnemyIntel && !enemyIntelScrambled;
   const enemyPreview = combinedDetailedEnemyIntel ? enemyUnits.map((unit) => unit.name) : [];
-  if (powerTurretCount > 0 && enemyUnits.length > 0) {
-    for (let index = 0; index < powerTurretCount; index += 1) {
+  if (supplyOnline) {
+    squadModifierSummary.push("Supply Line (+2 max HP / +2 HP)");
+  }
+  if (commsOnline) {
+    squadModifierSummary.push("Comms Uplink (+2 AGI)");
+  }
+  if (activeRunMealBuff) {
+    squadModifierSummary.push(`Mess Hall: ${activeRunMealBuff.name} (${activeRunMealSummary ?? activeRunMealBuff.description})`);
+  }
+  if (hasCommandSupport) {
+    supportSystemSummary.push("Command Center (+1 DEF)");
+  }
+  if (hasArmorySupport) {
+    supportSystemSummary.push("Armory (+1 ATK)");
+  }
+  if (hasMedicalSupport) {
+    supportSystemSummary.push("Medical Ward (+1 max HP / +1 HP)");
+  }
+  if (hasMineSupport) {
+    recoverySummary.push("Mine recovery boost");
+  }
+  if (hasRefinerySupport) {
+    recoverySummary.push("Refinery recovery boost");
+  }
+
+  if (openingVolleyDamage > 0 && enemyUnits.length > 0) {
+    for (let index = 0; index < openingVolleyDamage; index += 1) {
       const target = enemyUnits[index % enemyUnits.length];
-      target.hp = Math.max(1, target.hp - 2);
+      target.hp = Math.max(1, target.hp - 1);
     }
   }
 
@@ -7033,30 +7072,28 @@ function buildTheaterBattleStateForSquad(
     theaterBattleLog.push("THEATER//PRESSURE :: Active theater instability is strengthening the hostile response.");
   }
 
-  if (hasCommandSupport || hasArmorySupport || hasMedicalSupport) {
+  if (supportSystemSummary.length > 0) {
     theaterBattleLog.push(
-      `THEATER//SUPPORT :: ${[
-        hasCommandSupport ? "Command Center" : null,
-        hasArmorySupport ? "Armory" : null,
-        hasMedicalSupport ? "Medical Ward" : null,
-      ].filter(Boolean).join(", ")} support is affecting the squad.`,
+      `THEATER//SUPPORT :: ${supportSystemSummary.join("; ")}.`,
     );
   }
-  if (hasMineSupport || hasRefinerySupport) {
+  if (recoverySummary.length > 0) {
     theaterBattleLog.push(
-      `THEATER//INDUSTRY :: ${[
-        hasMineSupport ? "Mine" : null,
-        hasRefinerySupport ? "Refinery" : null,
-      ].filter(Boolean).join(", ")} support will improve recovered resources after this fight.`,
+      `THEATER//INDUSTRY :: ${recoverySummary.join("; ")} after this fight.`,
     );
   }
   if (supplyOnline) {
     console.log("[THEATER] tactical battle receives supply bonus", room.id, squad.squadId);
-    theaterBattleLog.push("THEATER//SUPPLY BONUS :: Supply line online. Squad enters with reinforced medical and ordnance support.");
+    theaterBattleLog.push("THEATER//SUPPLY BONUS :: Supply line online. Allies deploy with +2 max HP / +2 HP.");
   }
   if (commsOnline) {
     console.log("[THEATER] tactical battle receives comms bonus", room.id, squad.squadId);
-    theaterBattleLog.push("THEATER//COMMS BONUS :: Comms uplink stable. Enemy presence preview and initiative advantage granted.");
+    theaterBattleLog.push("THEATER//COMMS BONUS :: Comms uplink stable. Allies deploy with +2 AGI and enemy telemetry improves.");
+  }
+  if (activeRunMealBuff) {
+    theaterBattleLog.push(
+      `THEATER//MESS :: ${activeRunMealBuff.name.toUpperCase()} ACTIVE${activeRunMealSummary ? ` (${activeRunMealSummary.toUpperCase()})` : ""}.`,
+    );
   }
   if (combinedDetailedEnemyIntel) {
     theaterBattleLog.push("THEATER//INTEL :: Full enemy telemetry resolved. Detailed combat dossiers available.");
@@ -7102,9 +7139,13 @@ function buildTheaterBattleStateForSquad(
   if (room.sandboxSignalBloom) {
     theaterBattleLog.push(`THEATER//BLOOM :: Signal bloom is leaking false intel into local telemetry.`);
   }
-  if (powerTurretCount > 0) {
-    console.log("[THEATER] tactical battle receives power bonus", room.id, squad.squadId, powerTurretCount);
-    theaterBattleLog.push(`THEATER//POWER BONUS :: ${powerTurretCount} auto-turret emplacement(s) opened fire before contact.`);
+  if (openingVolleyDamage > 0) {
+    const openingVolleySources = [
+      automatedTurretCount > 0 ? `turret controller x${automatedTurretCount}` : null,
+      powerRelayVolleyCount > 0 ? `power relay x${powerRelayVolleyCount}` : null,
+    ].filter(Boolean).join(", ");
+    console.log("[THEATER] tactical battle receives power bonus", room.id, squad.squadId, openingVolleyDamage);
+    theaterBattleLog.push(`THEATER//POWER BONUS :: Opening volley inflicts ${openingVolleyDamage} pre-contact damage (${openingVolleySources}).`);
   }
 
   return {
@@ -7121,8 +7162,16 @@ function buildTheaterBattleStateForSquad(
       supplyOnline,
       commsOnline,
       powerTurretCount,
+      powerRelayVolleyCount,
+      automatedTurretCount,
+      openingVolleyDamage,
       enemyPreview,
       detailedEnemyIntel: combinedDetailedEnemyIntel,
+      squadModifierSummary,
+      supportSystemSummary,
+      recoverySummary,
+      activeMealName: activeRunMealBuff?.name,
+      activeMealSummary: activeRunMealSummary ?? undefined,
       overheating: room.sandboxOverheating ?? false,
       overheatSeverity: combinedOverheatSeverity,
       combatInstability: combinedCombatInstability,
@@ -7477,6 +7526,22 @@ function scaleBattleRewards(
     chaosShards: Math.max(0, Math.floor((rewards.chaosShards ?? 0) * multiplier)),
     steamComponents: Math.max(0, Math.floor((rewards.steamComponents ?? 0) * multiplier)),
     squadXp: Math.max(0, Math.floor((rewards.squadXp ?? 0) * multiplier)),
+  };
+}
+
+export function getTheaterPowerOpeningVolley(
+  powerFlow: number,
+  automatedTurretCount: number,
+): {
+  powerRelayVolleyCount: number;
+  powerTurretCount: number;
+  openingVolleyDamage: number;
+} {
+  const powerRelayVolleyCount = Math.min(2, Math.max(0, Math.floor(powerFlow / 200)));
+  return {
+    powerRelayVolleyCount,
+    powerTurretCount: automatedTurretCount + powerRelayVolleyCount,
+    openingVolleyDamage: (automatedTurretCount * 2) + powerRelayVolleyCount,
   };
 }
 

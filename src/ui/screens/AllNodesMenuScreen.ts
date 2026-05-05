@@ -61,6 +61,7 @@ import {
   updateFocusableElements,
 } from "../../core/controllerSupport";
 import { showSystemPing } from "../components/systemPing";
+import { focusElementWithoutScroll } from "../domUtils";
 import {
   OUTER_DECK_HAVEN_EXIT_SPAWN_TILE,
   abortOuterDeckExpedition,
@@ -155,25 +156,25 @@ const MATERIALS_REFINERY_RESOURCE_SHORT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_NODE_LAYOUT: NodeDefinition[] = [
-  { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy on operations", variant: "all-nodes-node-btn--primary" },
-  { action: "roster", icon: "RST", label: "UNIT ROSTER", desc: "Manage your units" },
-  { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Equipment & inventory" },
-  { action: "inventory", icon: "INV", label: "INVENTORY", desc: "View all owned items" },
-  { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft, upgrade & tinker" },
-  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine advanced field materials" },
-  { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy items & PAKs" },
-  { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit new units" },
-  { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "View active quests" },
-  { action: "port", icon: "PRT", label: "PORT", desc: "Trade resources" },
-  { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest & heal units" },
-  { action: "stable", icon: "STB", label: "STABLE", desc: "Manage mounts", variant: "all-nodes-node-btn--stable" },
-  { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Acquire illicit field mods" },
-  { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Authorize future C.O.R.E. build types", variant: "all-nodes-node-btn--utility" },
-  { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Unlock module logic and partition authorizations", variant: "all-nodes-node-btn--utility" },
-  { action: THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Advance active theaters in the background", variant: "all-nodes-node-btn--utility" },
-  { action: "codex", icon: "CDX", label: "CODEX", desc: "Archives & bestiary", variant: "all-nodes-node-btn--utility" },
-  { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Game options", variant: "all-nodes-node-btn--utility" },
-  { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Training & multiplayer", variant: "all-nodes-node-btn--utility" },
+  { action: "ops-terminal", icon: "OPS", label: "OPS TERMINAL", desc: "Deploy", variant: "all-nodes-node-btn--primary" },
+  { action: "roster", icon: "RST", label: "UNIT ROSTER", desc: "Units" },
+  { action: "loadout", icon: "LDT", label: "LOADOUT", desc: "Gear" },
+  { action: "inventory", icon: "INV", label: "INVENTORY", desc: "Storage" },
+  { action: "gear-workbench", icon: "WKS", label: "WORKSHOP", desc: "Craft" },
+  { action: "materials-refinery", icon: "CRF", label: "LIGHT CRAFTING", desc: "Refine" },
+  { action: "shop", icon: "SHP", label: "SHOP", desc: "Buy" },
+  { action: "tavern", icon: "TAV", label: "TAVERN", desc: "Recruit" },
+  { action: "quest-board", icon: "QST", label: "QUEST BOARD", desc: "Quests" },
+  { action: "port", icon: "PRT", label: "PORT", desc: "Trade" },
+  { action: "quarters", icon: "QTR", label: "QUARTERS", desc: "Rest" },
+  { action: "stable", icon: "STB", label: "STABLE", desc: "Mounts", variant: "all-nodes-node-btn--stable" },
+  { action: "black-market", icon: "BLK", label: "BLACK MARKET", desc: "Mods" },
+  { action: "schema", icon: "SCH", label: "S.C.H.E.M.A.", desc: "Unlocks", variant: "all-nodes-node-btn--utility" },
+  { action: "foundry-annex", icon: "FND", label: "FOUNDRY + ANNEX", desc: "Modules", variant: "all-nodes-node-btn--utility" },
+  { action: THEATER_AUTO_TICK_LAYOUT_ID, icon: "TCK", label: "THEATER CLOCK", desc: "Auto-tick", variant: "all-nodes-node-btn--utility" },
+  { action: "codex", icon: "CDX", label: "CODEX", desc: "Archive", variant: "all-nodes-node-btn--utility" },
+  { action: "settings", icon: "CFG", label: "SETTINGS", desc: "Options", variant: "all-nodes-node-btn--utility" },
+  { action: "comms-array", icon: "COM", label: "COMMS ARRAY", desc: "Co-op", variant: "all-nodes-node-btn--utility" },
 ];
 
 const DEFAULT_LAYOUT_ORDER = [RESOURCE_LAYOUT_ID, ...DEFAULT_NODE_LAYOUT.map((node) => node.action), QUAC_LAYOUT_ID, MINIMAP_LAYOUT_ID, NOTES_LAYOUT_ID, QUEST_TRACKER_LAYOUT_ID];
@@ -2088,8 +2089,8 @@ function renderNotesContent(isPinned: boolean): string {
         <div class="all-nodes-notes-panel__title">FIELD MEMOS</div>
         ${renderNotesWidget("esc-notes", {
           className: "notes-widget--esc",
-          placeholder: "Record reminders, squad plans, build routes, or anything else you want to keep pinned to E.S.C.",
-          statusLabel: "AUTO-SAVE ACTIVE // AVAILABLE IN ATLAS + THEATER",
+          placeholder: "Notes, routes, reminders.",
+          statusLabel: "AUTO-SAVE",
           titleLabel: "Tab Name",
           stickyTarget: {
             surfaceType: "field",
@@ -2188,7 +2189,7 @@ function focusEscControllerItem(itemId: string): void {
   const minimized = new Set(readMinimizedItems());
   requestAnimationFrame(() => {
     if (minimized.has(itemId)) {
-      document.querySelector<HTMLElement>(`[data-restore-id="${itemId}"]`)?.focus();
+      focusElementWithoutScroll(document.querySelector<HTMLElement>(`[data-restore-id="${itemId}"]`));
       updateFocusableElements();
       return;
     }

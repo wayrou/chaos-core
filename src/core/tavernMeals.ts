@@ -18,6 +18,14 @@ export interface TavernMealBuff {
   icon: string;
 }
 
+export interface TavernMealBuffTarget {
+  hp: number;
+  maxHp: number;
+  atk: number;
+  def: number;
+  agi: number;
+}
+
 export const TAVERN_MEAL_DEFINITIONS: TavernMealBuff[] = [
   {
     id: "meal_iron_stew",
@@ -67,6 +75,51 @@ export function getQueuedTavernMealBuff(state: GameState): TavernMealBuff | null
 
 export function getActiveRunTavernMealBuff(state: GameState): TavernMealBuff | null {
   return state.tavern?.activeRunMealBuff ?? null;
+}
+
+export function getTavernMealBuffSummary(meal: TavernMealBuff | null | undefined): string | null {
+  if (!meal) {
+    return null;
+  }
+  switch (meal.effect) {
+    case "hp":
+      return `+${meal.amount} max HP / +${meal.amount} HP`;
+    case "atk":
+      return `+${meal.amount} ATK`;
+    case "def":
+      return `+${meal.amount} DEF`;
+    case "agi":
+      return `+${meal.amount} AGI`;
+    default:
+      return null;
+  }
+}
+
+export function applyTavernMealBuffToTarget<T extends TavernMealBuffTarget>(
+  target: T,
+  meal: TavernMealBuff | null | undefined,
+): T {
+  if (!meal) {
+    return target;
+  }
+
+  switch (meal.effect) {
+    case "hp":
+      target.maxHp += meal.amount;
+      target.hp += meal.amount;
+      break;
+    case "atk":
+      target.atk += meal.amount;
+      break;
+    case "def":
+      target.def += meal.amount;
+      break;
+    case "agi":
+      target.agi += meal.amount;
+      break;
+  }
+
+  return target;
 }
 
 export function canQueueTavernMeal(state: GameState): boolean {

@@ -228,6 +228,10 @@
   pointer-events: auto;
 }
 
+.haven3d-coop-controls[hidden] {
+  display: none !important;
+}
+
 .haven3d-coop-control {
   flex: 1 1 132px;
   min-width: 104px;

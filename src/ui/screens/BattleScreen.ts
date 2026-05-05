@@ -118,6 +118,16 @@ import {
   serializeSquadMatchSnapshot,
 } from "../../core/squadOnline";
 import {
+  areBattleAuthorityPlacementsReady,
+  type BattleAuthorityPlacementSummary,
+  doesBattleUnitMatchAuthorityPlayer,
+  filterBattleUnitsByAuthorityPlayer,
+  getNextUnplacedBattleUnitForAuthorityPlayer,
+  hasBattlePlacementUnitForAuthorityPlayer,
+  normalizeBattleAuthorityPlayerId,
+  summarizeBattleAuthorityPlacements,
+} from "../../core/battleAuthority";
+import {
   saveLobbyState,
   setLobbySkirmishIntermission,
   updateLobbySkirmishSnapshot,
@@ -942,10 +952,222 @@ function getLocalPlacementTiles(battle: BattleState): Vec2[] {
 }
 
 function getLocalPlacementUnits(battle: BattleState): BattleUnitState[] {
-  if (isSquadBattle(battle)) {
-    return Object.values(battle.units).filter((unit) => canLocalControlBattleUnit(battle, unit));
+  return Object.values(battle.units).filter((unit) => canLocalControlBattleUnit(battle, unit));
+}
+
+function getPlacementUnitsForAuthorityPlayer(
+  battle: BattleState,
+  playerId?: PlayerId | null,
+): BattleUnitState[] {
+  return filterBattleUnitsByAuthorityPlayer(getLocalPlacementUnits(battle), playerId);
+}
+
+function getActiveLocalBattleAuthorityPlayers(): PlayerId[] {
+  return (["P1", "P2"] as const).filter((playerId) => Boolean(getGameState().players[playerId]?.active));
+}
+
+function shouldShowBattleAuthorityUi(battle: BattleState | null | undefined): boolean {
+  if (isSquadBattle(battle) || isCoopOperationsBattle(battle)) {
+    return true;
   }
-  return Object.values(battle.units).filter((unit) => !unit.isEnemy);
+  return getActiveLocalBattleAuthorityPlayers().length > 1;
+}
+
+function getBattleAuthorityAccent(playerId: PlayerId): string {
+  return getGameState().players[playerId]?.color ?? (playerId === "P1" ? "#ff8a00" : "#6849c2");
+}
+
+function getBattleTurnAuthorityDisplay(
+  activeUnit: BattleUnitState | undefined,
+): {
+  ownerId: string;
+  kicker: string;
+  label: string;
+  accent: string;
+} {
+  if (!activeUnit) {
+    return {
+      ownerId: "none",
+      kicker: "TACTICAL AUTHORITY",
+      label: "NO ACTIVE UNIT",
+      accent: "#7c8aa8",
+    };
+  }
+  if (activeUnit.isEnemy) {
+    return {
+      ownerId: "enemy",
+      kicker: "TACTICAL AUTHORITY",
+      label: "HOSTILE TURN",
+      accent: "#d35f5f",
+    };
+  }
+
+  const playerId = normalizeBattleAuthorityPlayerId(activeUnit.controller ?? "P1") ?? "P1";
+  return {
+    ownerId: playerId,
+    kicker: "TACTICAL AUTHORITY",
+    label: getPlayerControllerLabel(playerId),
+    accent: getBattleAuthorityAccent(playerId),
+  };
+}
+
+function getBattlePlacementAuthoritySummaries(
+  battle: BattleState,
+): BattleAuthorityPlacementSummary[] {
+  if (!battle.placementState) {
+    return [];
+  }
+
+  const placementUnits = getLocalPlacementUnits(battle);
+  const placementCapacity = Math.min(battle.placementState.maxUnitsPerSide, placementUnits.length);
+  return summarizeBattleAuthorityPlacements(
+    placementUnits,
+    getEffectivePlacedUnitIds(battle),
+    placementCapacity,
+    getActiveLocalBattleAuthorityPlayers(),
+  );
+}
+
+function getBattlePlacementQuickPlaceOwner(
+  battle: BattleState,
+): PlayerId | undefined {
+  const selectedUnitId = battle.placementState?.selectedUnitId ?? null;
+  if (selectedUnitId) {
+    const selectedUnit = battle.units[selectedUnitId] ?? null;
+    const selectedOwner = normalizeBattleAuthorityPlayerId(selectedUnit?.controller ?? "P1");
+    if (selectedUnit && selectedOwner && canLocalControlBattleUnit(battle, selectedUnit)) {
+      return selectedOwner;
+    }
+  }
+
+  const summaries = getBattlePlacementAuthoritySummaries(battle);
+  const waitingSummary = summaries.find((summary) => summary.remainingUnits > 0 && summary.placedUnits === 0);
+  if (waitingSummary) {
+    return waitingSummary.playerId;
+  }
+
+  const remainingSummary = summaries.find((summary) => summary.remainingUnits > 0);
+  return remainingSummary?.playerId;
+}
+
+function getBattlePlacementConfirmState(battle: BattleState): {
+  canConfirm: boolean;
+  label: string;
+  detail: string | null;
+  summaries: BattleAuthorityPlacementSummary[];
+} {
+  const placementState = battle.placementState;
+  if (!placementState) {
+    return {
+      canConfirm: false,
+      label: "CONFIRM",
+      detail: null,
+      summaries: [],
+    };
+  }
+
+  const echoContext = getEchoContext(battle);
+  const isEchoFieldMode = echoContext?.placementMode === "fields";
+  const placementUnits = getLocalPlacementUnits(battle);
+  const placementCapacity = Math.min(placementState.maxUnitsPerSide, placementUnits.length);
+  const placedUnitIdSet = new Set(getEffectivePlacedUnitIds(battle));
+  const placedCount = placementUnits.filter((unit) => placedUnitIdSet.has(unit.id)).length;
+  const summaries = summarizeBattleAuthorityPlacements(
+    placementUnits,
+    Array.from(placedUnitIdSet),
+    placementCapacity,
+    getActiveLocalBattleAuthorityPlayers(),
+  );
+
+  if (isEchoFieldMode) {
+    const pendingFields = getUnplacedEchoFields(battle);
+    return {
+      canConfirm: placedCount > 0 && pendingFields.length === 0,
+      label: pendingFields.length > 0 ? "PLACE FIELDS" : "DEPLOY",
+      detail: pendingFields.length > 0 ? `${pendingFields.length} drafted field${pendingFields.length === 1 ? "" : "s"} still need placement.` : null,
+      summaries,
+    };
+  }
+
+  if (isSquadBattle(battle)) {
+    const placementCounts = getSkirmishPlacementCounts(battle);
+    const isClientSkirmishView = getGameState().session.authorityRole === "client";
+    return {
+      canConfirm: !isClientSkirmishView && placementCounts.friendly > 0 && placementCounts.enemy > 0,
+      label: isClientSkirmishView ? "HOST DEPLOYS" : "CONFIRM",
+      detail: isClientSkirmishView
+        ? "Wait for the host to finalize skirmish deployment."
+        : placementCounts.enemy <= 0
+          ? "The opposing skirmish line still needs a deployed unit."
+          : null,
+      summaries,
+    };
+  }
+
+  if (placedCount <= 0) {
+    return {
+      canConfirm: false,
+      label: "PLACE A UNIT",
+      detail: "Deploy at least one unit before confirming the engagement.",
+      summaries,
+    };
+  }
+
+  if (summaries.length > 1 && !areBattleAuthorityPlacementsReady(summaries)) {
+    const waitingPlayers = summaries
+      .filter((summary) => !summary.ready)
+      .map((summary) => getPlayerControllerLabel(summary.playerId));
+    const waitingLabel = waitingPlayers.join(" / ");
+    return {
+      canConfirm: false,
+      label: `WAITING ON ${waitingLabel}`,
+      detail: `${waitingLabel} still needs a deployed unit before the battle can begin.`,
+      summaries,
+    };
+  }
+
+  return {
+    canConfirm: true,
+    label: "CONFIRM",
+    detail: summaries.length > 1 ? "Both local players are deployment ready." : null,
+    summaries,
+  };
+}
+
+function isBattleAuthorityPlayerActive(playerId?: PlayerId | null): boolean {
+  const normalizedPlayerId = normalizeBattleAuthorityPlayerId(playerId);
+  if (!normalizedPlayerId) {
+    return true;
+  }
+  return Boolean(getGameState().players[normalizedPlayerId]?.active);
+}
+
+function canBattleAuthorityPlayerAct(
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  playerId: PlayerId | undefined,
+  isPlacementPhase: boolean,
+): boolean {
+  const normalizedPlayerId = normalizeBattleAuthorityPlayerId(playerId);
+  if (!normalizedPlayerId) {
+    return true;
+  }
+  if (!isBattleAuthorityPlayerActive(normalizedPlayerId)) {
+    return false;
+  }
+  if (battle.phase === "victory" || battle.phase === "defeat") {
+    return true;
+  }
+  if (isPlacementPhase && battle.placementState) {
+    const echoContext = getEchoContext(battle);
+    if (echoContext?.placementMode === "fields") {
+      return true;
+    }
+    const playerPlacementUnits = getPlacementUnitsForAuthorityPlayer(battle, normalizedPlayerId);
+    return playerPlacementUnits.some((unit) => unit.pos || battle.placementState!.placedUnitIds.includes(unit.id))
+      || hasBattlePlacementUnitForAuthorityPlayer(playerPlacementUnits, battle.placementState!.placedUnitIds, normalizedPlayerId);
+  }
+  return doesBattleUnitMatchAuthorityPlayer(activeUnit, normalizedPlayerId);
 }
 
 function getSkirmishPlacementCounts(battle: BattleState): { friendly: number; enemy: number } {
@@ -1183,6 +1405,7 @@ const CARD_DATABASE: Record<string, Card> = {
   "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
   "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "enemy", strainCost: 6, range: 5, description: "Stun an enemy for one turn.", effects: [{ type: "stun", duration: 1 }] },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
+  "core_chaos_call": { id: "core_chaos_call", name: "Chaos Call", type: "core", target: "self", strainCost: 6, range: 0, description: "Create 2 Chaos Cards.", chaosCardsToCreate: ["chaos_placeholder_card", "chaos_placeholder_card"] },
   "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 2." },
 
   // ELM RECURVE BOW (Range 3-6)
@@ -1440,9 +1663,61 @@ let cleanupBattleControllerContext: (() => void) | null = null;
 let battleControllerActiveNodeId: BattleHudNodeId = "hand";
 let selectedManageUnitId: string | null = null;
 let battleExitConfirmState: BattleExitConfirmState = null;
+const BATTLE_START_PRESENTATION_DURATION_MS = 950;
+let battleStartPresentationState: { battleId: string; endsAtMs: number } | null = null;
+let battleStartPresentationTimerId: number | null = null;
 
 function isBattleRootMounted(): boolean {
   return Boolean(document.querySelector(".battle-root"));
+}
+
+function getBattlePresentationId(battle: BattleState | null | undefined): string {
+  return String(battle?.id ?? battle?.roomId ?? "battle");
+}
+
+function clearBattleStartPresentation(): void {
+  if (battleStartPresentationTimerId !== null) {
+    window.clearTimeout(battleStartPresentationTimerId);
+    battleStartPresentationTimerId = null;
+  }
+  battleStartPresentationState = null;
+}
+
+function isBattleStartPresentationActive(battle: BattleState | null | undefined): boolean {
+  if (!battleStartPresentationState || !battle) {
+    return false;
+  }
+  if (battleStartPresentationState.battleId !== getBattlePresentationId(battle)) {
+    return false;
+  }
+  if (performance.now() >= battleStartPresentationState.endsAtMs) {
+    clearBattleStartPresentation();
+    return false;
+  }
+  return true;
+}
+
+function beginBattleStartPresentation(
+  battle: BattleState,
+  onComplete?: () => void,
+): void {
+  clearBattleStartPresentation();
+  battleStartPresentationState = {
+    battleId: getBattlePresentationId(battle),
+    endsAtMs: performance.now() + BATTLE_START_PRESENTATION_DURATION_MS,
+  };
+  battleStartPresentationTimerId = window.setTimeout(() => {
+    const activeBattle = localBattleState;
+    const isSameBattle = Boolean(activeBattle && getBattlePresentationId(activeBattle) === getBattlePresentationId(battle));
+    clearBattleStartPresentation();
+    if (!isSameBattle) {
+      return;
+    }
+    if (isBattleRootMounted()) {
+      renderBattleScreen();
+    }
+    onComplete?.();
+  }, BATTLE_START_PRESENTATION_DURATION_MS);
 }
 
 async function broadcastSquadBattleState(battle: BattleState): Promise<void> {
@@ -1510,7 +1785,7 @@ export function applyExternalBattleState(
     return;
   }
 
-  updateGameState((state) => mountBattleState(state, battle));
+  updateGameState((state) => replaceBattleStateById(mountBattleState(state, battle), battle.id, battle));
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
   localBattleState = battle;
@@ -1525,6 +1800,10 @@ export function applyExternalBattleState(
   if (renderMode === "always" || isBattleRootMounted()) {
     renderBattleScreen();
   }
+}
+
+export function getCurrentRenderedBattleState(): BattleState | null {
+  return localBattleState;
 }
 
 // Zoom state for the battle grid
@@ -2020,7 +2299,6 @@ const BATTLE_HUD_TOP_SAFE = 94;
 const BATTLE_HUD_BOTTOM_SAFE = 22;
 const BATTLE_HUD_DRAG_THRESHOLD_PX = 6;
 const BATTLE_HAND_GRID_MIN_WIDTH = 720;
-const BATTLE_HAND_GRID_MIN_HEIGHT = 500;
 const BATTLE_HUD_NODE_ORDER: BattleHudNodeId[] = ["console", "intel", "placement", "unit", "weapon", "manage", "consumables", "hand"];
 const BATTLE_HUD_COLOR_THEMES: BattleHudColorTheme[] = [
   {
@@ -2451,6 +2729,7 @@ function resetBattlePan(): void {
 
 function resetBattleUiSessionState(): void {
   clearPendingAutoBattleStep();
+  clearBattleStartPresentation();
   battleExitConfirmState = null;
   localBattleState = null;
   lastBattleStatPingKey = null;
@@ -2901,7 +3180,7 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
     unit: { x: BATTLE_HUD_MARGIN_X, y: topY, width: unitWidth, height: sideHeight, minimized: false, zIndex: 43 },
     weapon: { x: weaponX, y: topY, width: weaponWidth, height: sideHeight, minimized: false, zIndex: 44 },
     manage: { x: manageX, y: manageY, width: manageWidth, height: manageHeight, minimized: true, zIndex: 45 },
-    consumables: { x: consumablesX, y: consumablesY, width: consumablesWidth, height: consumablesHeight, minimized: false, zIndex: 46 },
+    consumables: { x: consumablesX, y: consumablesY, width: consumablesWidth, height: consumablesHeight, minimized: true, zIndex: 46 },
     hand: { x: handX, y: topY, width: handWidth, height: handHeight, minimized: false, zIndex: 47 },
   };
 }
@@ -3017,7 +3296,7 @@ function getBattleHudThemeStyle(nodeId: BattleHudNodeId): string {
 }
 
 function getBattleHandLayoutMode(layout = ensureBattleHudLayouts().hand): "fan" | "grid" {
-  return layout.width >= BATTLE_HAND_GRID_MIN_WIDTH && layout.height >= BATTLE_HAND_GRID_MIN_HEIGHT
+  return layout.width >= BATTLE_HAND_GRID_MIN_WIDTH
     ? "grid"
     : "fan";
 }
@@ -3249,7 +3528,12 @@ function moveBattleControllerCursor(
   activeUnit: BattleUnitState | undefined,
   direction: "up" | "down" | "left" | "right",
   isPlacementPhase: boolean,
+  playerId?: PlayerId,
 ): void {
+  if (!canBattleAuthorityPlayerAct(battle, activeUnit, playerId, isPlacementPhase)) {
+    return;
+  }
+
   if (turnState.isFacingSelection && activeUnit?.pos) {
     const nextFacingTile =
       direction === "up"
@@ -3259,7 +3543,13 @@ function moveBattleControllerCursor(
           : direction === "left"
             ? { x: Math.max(0, activeUnit.pos.x - 1), y: activeUnit.pos.y }
             : { x: Math.min(battle.gridWidth - 1, activeUnit.pos.x + 1), y: activeUnit.pos.y };
-    handleBattleBoardActionPick(nextFacingTile, battle, activeUnit, Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)));
+    handleBattleBoardActionPick(
+      nextFacingTile,
+      battle,
+      activeUnit,
+      Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)),
+      playerId,
+    );
     return;
   }
 
@@ -3274,7 +3564,7 @@ function moveBattleControllerCursor(
   renderBattleScreen();
 }
 
-function clickBattleControllerCursorTile(): void {
+function clickBattleControllerCursorTile(playerId?: PlayerId): void {
   if (!battleControllerCursor || !localBattleState) {
     return;
   }
@@ -3285,7 +3575,7 @@ function clickBattleControllerCursorTile(): void {
       (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState))
       && getGameState().session.authorityRole === "client",
     );
-    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement);
+    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement, playerId);
     return;
   }
   handleBattleBoardActionPick(
@@ -3293,11 +3583,19 @@ function clickBattleControllerCursorTile(): void {
     localBattleState,
     activeUnit,
     Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit)),
+    playerId,
   );
 }
 
-function cycleBattleControllerSelectedCard(step: 1 | -1, activeUnit: BattleUnitState | undefined): boolean {
+function cycleBattleControllerSelectedCard(
+  step: 1 | -1,
+  activeUnit: BattleUnitState | undefined,
+  playerId?: PlayerId,
+): boolean {
   if (!activeUnit || activeUnit.hand.length <= 0) {
+    return false;
+  }
+  if (!doesBattleUnitMatchAuthorityPlayer(activeUnit, playerId)) {
     return false;
   }
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) {
@@ -3427,7 +3725,24 @@ function handleBattleControllerCursorAction(
   battle: BattleState,
   activeUnit: BattleUnitState | undefined,
   isPlacementPhase: boolean,
+  playerId?: PlayerId,
 ): boolean {
+  const requiresBattleAuthority = new Set([
+    "moveUp",
+    "moveDown",
+    "moveLeft",
+    "moveRight",
+    "confirm",
+    "endTurn",
+    "tabPrev",
+    "tabNext",
+    "prevUnit",
+    "nextUnit",
+  ]);
+  if (requiresBattleAuthority.has(action) && !canBattleAuthorityPlayerAct(battle, activeUnit, playerId, isPlacementPhase)) {
+    return false;
+  }
+
   if (battle.phase === "victory" || battle.phase === "defeat") {
     if (action === "confirm") {
       getBattlePrimaryResultButton()?.click();
@@ -3442,19 +3757,19 @@ function handleBattleControllerCursorAction(
 
   switch (action) {
     case "moveUp":
-      moveBattleControllerCursor(battle, activeUnit, "up", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "up", isPlacementPhase, playerId);
       return true;
     case "moveDown":
-      moveBattleControllerCursor(battle, activeUnit, "down", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "down", isPlacementPhase, playerId);
       return true;
     case "moveLeft":
-      moveBattleControllerCursor(battle, activeUnit, "left", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "left", isPlacementPhase, playerId);
       return true;
     case "moveRight":
-      moveBattleControllerCursor(battle, activeUnit, "right", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "right", isPlacementPhase, playerId);
       return true;
     case "confirm":
-      clickBattleControllerCursorTile();
+      clickBattleControllerCursorTile(playerId);
       return true;
     case "zoomIn":
       zoomIn();
@@ -3470,10 +3785,10 @@ function handleBattleControllerCursorAction(
       return false;
     case "tabPrev":
     case "prevUnit":
-      return cycleBattleControllerSelectedCard(-1, activeUnit);
+      return cycleBattleControllerSelectedCard(-1, activeUnit, playerId);
     case "tabNext":
     case "nextUnit":
-      return cycleBattleControllerSelectedCard(1, activeUnit);
+      return cycleBattleControllerSelectedCard(1, activeUnit, playerId);
     case "cancel":
       if (selectedCardIndex !== null) {
         selectedCardIndex = null;
@@ -4396,16 +4711,13 @@ function getDistance(x1: number, y1: number, x2: number, y2: number): number {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
 
-function isStrainLockedCard(card: Card, activeUnit: BattleUnitState | undefined): boolean {
-  return Boolean(activeUnit && card.type === "core" && isOverStrainThreshold(activeUnit));
+function isStrainLockedCard(_card: Card, _activeUnit: BattleUnitState | undefined): boolean {
+  return false;
 }
 
 function getBattleCardDisabledReason(card: Card, activeUnit: BattleUnitState | undefined): string | null {
   if (!activeUnit) {
     return null;
-  }
-  if (isStrainLockedCard(card, activeUnit)) {
-    return "Strain lock";
   }
 
   const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
@@ -5672,6 +5984,7 @@ export function renderBattleScreen() {
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit));
   const isPlacementPhase = battle.phase === "placement";
+  const showAuthorityUi = shouldShowBattleAuthorityUi(battle);
   const visibleBattleHudNodeIds = getVisibleBattleHudNodeIdsForController(battle, isPlacementPhase);
   if (!visibleBattleHudNodeIds.includes(battleControllerActiveNodeId)) {
     battleControllerActiveNodeId = visibleBattleHudNodeIds[0] ?? "console";
@@ -5702,6 +6015,7 @@ export function renderBattleScreen() {
     && !isSquadBattle(battle)
     && !isCoopOperationsBattle(battle);
   const activeBattleViewIndex = getActiveBattleViewIndex(state);
+  const activeTurnAuthority = getBattleTurnAuthorityDisplay(activeUnit);
 
   app.innerHTML = `
     <div class="battle-root battle-root--${phase}">
@@ -5724,6 +6038,16 @@ export function renderBattleScreen() {
             <div class="battle-active-info">
               <div class="battle-active-label">ACTIVE UNIT</div>
               <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
+              ${showAuthorityUi ? `
+                <div
+                  class="battle-active-owner"
+                  data-battle-turn-owner="${activeTurnAuthority.ownerId}"
+                  style="--battle-owner-accent: ${activeTurnAuthority.accent};"
+                >
+                  <span class="battle-active-owner-label">${activeTurnAuthority.kicker}</span>
+                  <span class="battle-active-owner-chip">${activeTurnAuthority.label}</span>
+                </div>
+              ` : ""}
             </div>
           ` : ""}
           <div class="battle-header-top-controls">
@@ -5751,6 +6075,7 @@ export function renderBattleScreen() {
           </div>
         </div>
       </div>
+      ${renderBattleStartOverlay(battle)}
       ${renderBattleResultOverlay(battle)}
       ${renderBattleExitConfirmModal(battle)}
     </div>
@@ -5838,7 +6163,9 @@ export function renderBattleScreen() {
         focusRoot: () => document.querySelector(".battle-root"),
         focusSelector: battleExitConfirmState ? "#battleExitConfirmModal button:not([disabled])" : undefined,
         defaultFocusSelector: battleExitConfirmState ? "#battleExitConfirmAcceptBtn" : "#exitBattleBtn",
-        onCursorAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
+        onCursorAction: battleExitConfirmState
+          ? undefined
+          : (action, playerId) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase, playerId),
         onLayoutAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
         onFocusAction: (action) => {
           if (battleExitConfirmState && action === "cancel") {
@@ -5988,7 +6315,7 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
             <div class="unit-panel-label">ACTIVE UNIT</div>
             <div class="unit-panel-name">${activeUnit.name}</div>
             <div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.6;">${(activeUnit as any).classId?.toUpperCase() || "UNIT"}</div>
-            <div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.82;">${getPlayerControllerLabel((activeUnit.controller ?? "P1") as PlayerId)}</div>
+            ${shouldShowBattleAuthorityUi(localBattleState) ? `<div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.82;">${getPlayerControllerLabel((activeUnit.controller ?? "P1") as PlayerId)}</div>` : ""}
           </div>
         </div>
         ${renderStrainMeter(currentStrain, maxStrain)}
@@ -6062,6 +6389,8 @@ function renderHandPanel(
     const isFacingSelectionActive = turnState.isFacingSelection;
     const canUndoMove = Boolean(isPlayerTurn && !autoControlled && !isFacingSelectionActive && turnState.hasCommittedMove && !turnState.hasActed);
     const interactable = localBattleState && activeUnit ? getUnitInteractionObject(localBattleState, activeUnit) : null;
+    const turnAuthority = getBattleTurnAuthorityDisplay(activeUnit);
+    const showAuthorityUi = shouldShowBattleAuthorityUi(localBattleState);
     return `
       <div class="hand-header-floating">
         <div class="hand-info">
@@ -6078,13 +6407,23 @@ function renderHandPanel(
             <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
           </div>
         </div>
+        ${showAuthorityUi ? `
+          <div
+            class="hand-turn-authority"
+            data-battle-hand-owner="${turnAuthority.ownerId}"
+            style="--battle-owner-accent: ${turnAuthority.accent};"
+          >
+            <span class="hand-turn-authority__label">${turnAuthority.kicker}</span>
+            <span class="hand-turn-authority__value">${turnAuthority.label}</span>
+          </div>
+        ` : ""}
         <div class="hand-actions">
           <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
-          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || isFacingSelectionActive || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
-          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
+          <button class="battle-endturn-btn" id="interactBtn" data-battle-endturn-owner="${turnAuthority.ownerId}" ${!isPlayerTurn || autoControlled || isFacingSelectionActive || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
+          <button class="battle-endturn-btn" id="endTurnBtn" data-battle-endturn-owner="${turnAuthority.ownerId}" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
         </div>
       </div>
-      <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
+      <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit, layoutMode)}</div>
     `;
   } catch (err) {
     console.error(`[RENDER] Error in renderHandPanel:`, err);
@@ -6092,7 +6431,12 @@ function renderHandPanel(
   }
 }
 
-function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, activeUnit: BattleUnitState | undefined): string {
+function renderHandCards(
+  hand: Card[],
+  isPlayerTurn: boolean | undefined,
+  activeUnit: BattleUnitState | undefined,
+  layoutMode: "fan" | "grid" = getBattleHandLayoutMode(),
+): string {
   if (hand.length === 0) return `<div class="hand-empty">No cards in hand</div>`;
 
   const total = hand.length;
@@ -6101,10 +6445,9 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
   return hand.map((card, i) => {
     const sel = selectedCardIndex === i;
     const step = total > 1 ? maxAngle / (total - 1) : 0;
-    const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
-    const yOff = Math.abs(angle) * 0.5;
+    const angle = layoutMode === "grid" ? 0 : total > 1 ? -maxAngle / 2 + step * i : 0;
+    const yOff = layoutMode === "grid" ? 0 : Math.abs(angle) * 0.5;
     const disabledReason = getBattleCardDisabledReason(card, activeUnit);
-    const strainLocked = disabledReason === "Strain lock";
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
     const disabledClass = !isPlayerTurn || Boolean(disabledReason) || autoControlled ? "battle-cardui--disabled" : "";
     const chaosClass = card.isChaosCard ? "battle-cardui--chaos" : "";
@@ -6153,7 +6496,7 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
 
     return `
       <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
-        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
+        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass}" data-card-index="${i}">
           <!-- Strain Cost Circle - Top Left -->
           <div class="hs-card-cost">${card.strainCost}</div>
           
@@ -6264,7 +6607,11 @@ function renderManageUnitsPanel(battle: BattleState): string {
               <div class="battle-manage-detail-name">${selectedUnit.name}</div>
               <div class="battle-manage-detail-class">${((selectedUnit as any).classId ?? "unit").toString().toUpperCase()}</div>
               <div class="battle-manage-detail-note">
-                ${battle.activeUnitId === selectedUnit.id ? "Currently taking the active turn." : `${getPlayerControllerLabel((selectedUnit.controller ?? "P1") as PlayerId)} controls this unit.`}
+                ${battle.activeUnitId === selectedUnit.id
+                  ? "Currently taking the active turn."
+                  : shouldShowBattleAuthorityUi(battle)
+                    ? `${getPlayerControllerLabel((selectedUnit.controller ?? "P1") as PlayerId)} controls this unit.`
+                    : "Standing by for tactical orders."}
               </div>
             </div>
           </div>
@@ -6332,6 +6679,8 @@ function renderPlacementUI(battle: BattleState): string {
     (unit) => !placedUnitIdSet.has(unit.id)
   );
   const placedCount = placementUnits.filter((unit) => placedUnitIdSet.has(unit.id)).length;
+  const placementConfirmState = getBattlePlacementConfirmState(battle);
+  const placementAuthoritySummaries = placementConfirmState.summaries;
   const unplacedFields = getUnplacedEchoFields(battle);
   const isSkirmishBattle = isSquadBattle(battle);
   const isClientSkirmishView = isSkirmishBattle && getGameState().session.authorityRole === "client";
@@ -6339,13 +6688,39 @@ function renderPlacementUI(battle: BattleState): string {
   const placementTiles = getLocalPlacementTiles(battle);
   const placementEdgeLabel = placementColumn === 0 ? "left" : "right";
   const placementCounts = getSkirmishPlacementCounts(battle);
-  const canConfirm = isEchoFieldMode
-    ? placedCount > 0 && unplacedFields.length === 0
-    : isSkirmishBattle
-      ? !isClientSkirmishView
-        && placementCounts.friendly > 0
-        && placementCounts.enemy > 0
-      : placedCount > 0;
+  const showAuthorityUi = shouldShowBattleAuthorityUi(battle);
+  const canConfirm = placementConfirmState.canConfirm;
+  const placementQuickPlaceOwner = !isEchoFieldMode && !isClientSkirmishView
+    ? getBattlePlacementQuickPlaceOwner(battle)
+    : undefined;
+  const placementQuickPlaceLabel = showAuthorityUi && placementQuickPlaceOwner
+    ? `QUICK PLACE ${getPlayerControllerLabel(placementQuickPlaceOwner)}`
+    : "QUICK PLACE";
+  const placementAuthorityBlock = showAuthorityUi && placementAuthoritySummaries.length > 0
+    ? `
+        <div class="placement-authority-row">
+          ${placementAuthoritySummaries.map((summary) => `
+            <div
+              class="placement-authority-chip ${summary.ready ? "placement-authority-chip--ready" : "placement-authority-chip--waiting"}"
+              data-placement-player="${summary.playerId}"
+              data-placement-ready="${summary.ready ? "true" : "false"}"
+              style="--battle-owner-accent: ${getBattleAuthorityAccent(summary.playerId)};"
+            >
+              <span class="placement-authority-chip__label">${getPlayerControllerLabel(summary.playerId)}</span>
+              <span class="placement-authority-chip__meta">${summary.placedUnits}/${summary.totalUnits} deployed</span>
+              <span class="placement-authority-chip__state">${summary.ready ? (summary.blockedByCapacity ? "LOCKED" : "READY") : "WAITING"}</span>
+            </div>
+          `).join("")}
+        </div>
+      `
+    : "";
+  const placementConfirmDetail = placementConfirmState.detail
+    ? `
+        <div class="placement-confirm-detail" data-placement-confirm-detail="${canConfirm ? "ready" : "blocked"}">
+          ${placementConfirmState.detail}
+        </div>
+      `
+    : "";
   const theaterBonuses = battle.theaterBonuses;
   const obscurationActive = Boolean(theaterBonuses?.obscurationActive ?? theaterBonuses?.smokeObscured);
   const obscurationSeverity = theaterBonuses?.obscurationSeverity
@@ -6364,6 +6739,17 @@ function renderPlacementUI(battle: BattleState): string {
   const enemyStartStatusType = theaterBonuses?.enemyStartStatusType?.toUpperCase() ?? null;
   const enemyStartStatusDuration = theaterBonuses?.enemyStartStatusDuration ?? 0;
   const enemyStartStatusLabel = (theaterBonuses?.enemyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "HOSTILES").toUpperCase();
+  const squadModifierSummary = theaterBonuses?.squadModifierSummary ?? [];
+  const supportSystemSummary = theaterBonuses?.supportSystemSummary ?? [];
+  const recoverySummary = theaterBonuses?.recoverySummary ?? [];
+  const openingVolleyParts = [
+    (theaterBonuses?.automatedTurretCount ?? 0) > 0
+      ? `Turret x${theaterBonuses!.automatedTurretCount}`
+      : null,
+    (theaterBonuses?.powerRelayVolleyCount ?? 0) > 0
+      ? `Relay x${theaterBonuses!.powerRelayVolleyCount}`
+      : null,
+  ].filter(Boolean);
   const theaterBonusBlock = theaterBonuses
     ? `
         <div class="placement-theater-briefing">
@@ -6375,6 +6761,22 @@ function renderPlacementUI(battle: BattleState): string {
           ${theaterBonuses.factionTag ? `<div class="placement-theater-briefing__row">
             <span>Faction</span>
             <strong>${theaterBonuses.factionTag.toUpperCase()}</strong>
+          </div>` : ""}
+          ${squadModifierSummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Squad Mods</span>
+            <strong>${squadModifierSummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${supportSystemSummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Support</span>
+            <strong>${supportSystemSummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${recoverySummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Recovery</span>
+            <strong>${recoverySummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${(theaterBonuses.openingVolleyDamage ?? 0) > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Opening Volley</span>
+            <strong>${theaterBonuses.openingVolleyDamage} damage pre-contact${openingVolleyParts.length > 0 ? ` // ${openingVolleyParts.join(" / ")}` : ""}</strong>
           </div>` : ""}
           <div class="placement-theater-briefing__row">
             <span>Hostiles</span>
@@ -6418,6 +6820,7 @@ function renderPlacementUI(battle: BattleState): string {
             <span>Placed Units: ${placedCount}/${placementCapacity}</span>
             <span>Fields Remaining: ${unplacedFields.length}</span>
           </div>
+          ${placementAuthorityBlock}
           <div class="placement-units-list">
             <div class="placement-units-label">Drafted Echo Fields:</div>
             ${echoContext.availableFields.map((field) => {
@@ -6433,9 +6836,10 @@ function renderPlacementUI(battle: BattleState): string {
             }).join("")}
           </div>
         </div>
+        ${placementConfirmDetail}
         <div class="placement-actions">
           <button class="battle-quick-place-btn" id="editUnitPlacementBtn">EDIT UNITS</button>
-          <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" ${!canConfirm ? "disabled" : ""}>DEPLOY</button>
+          <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" data-battle-placement-confirm-state="${canConfirm ? "ready" : "blocked"}" ${!canConfirm ? "disabled" : ""}>${placementConfirmState.label}</button>
         </div>
       </div>
     `;
@@ -6457,8 +6861,9 @@ function renderPlacementUI(battle: BattleState): string {
         <div class="placement-stats">
           <span>Placed: ${placedCount}/${placementCapacity}</span>
           <span>Unplaced: ${unplacedUnits.length}</span>
-          ${isSkirmishBattle ? `<span>Host / Remote: ${placementCounts.friendly} / ${placementCounts.enemy}</span>` : ""}
+          ${showAuthorityUi && isSkirmishBattle ? `<span>Host / Remote: ${placementCounts.friendly} / ${placementCounts.enemy}</span>` : ""}
         </div>
+        ${placementAuthorityBlock}
         <div class="placement-units-list">
           <div class="placement-units-label">${isSkirmishBattle ? "Assigned Units (click to select, then place on your edge):" : "Party Units (click to select, then place on grid):"}</div>
           ${placementUnits.map((u) => {
@@ -6469,7 +6874,7 @@ function renderPlacementUI(battle: BattleState): string {
                    data-unit-id="${u.id}" 
                    data-placed="${isPlaced}">
                 <span>${u.name}</span>
-                <span class="placement-field-meta">${(u.controller ?? "P1").toString().toUpperCase()}</span>
+                ${showAuthorityUi ? `<span class="placement-field-meta">${(u.controller ?? "P1").toString().toUpperCase()}</span>` : ""}
                 ${isPlaced ? '<span class="placement-status">✓ PLACED</span>' : '<span class="placement-status">AVAILABLE</span>'}
                 ${isSelected ? '<span class="placement-selected-indicator">→ SELECTED</span>' : ''}
               </div>
@@ -6477,9 +6882,10 @@ function renderPlacementUI(battle: BattleState): string {
           }).join("")}
         </div>
       </div>
+      ${placementConfirmDetail}
       <div class="placement-actions">
-        <button class="battle-quick-place-btn" id="quickPlaceBtn">QUICK PLACE</button>
-        <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" ${!canConfirm ? "disabled" : ""}>${isClientSkirmishView ? "HOST DEPLOYS" : "CONFIRM"}</button>
+        <button class="battle-quick-place-btn" id="quickPlaceBtn">${placementQuickPlaceLabel}</button>
+        <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" data-battle-placement-confirm-state="${canConfirm ? "ready" : "blocked"}" ${!canConfirm ? "disabled" : ""}>${placementConfirmState.label}</button>
       </div>
     </div>
   `;
@@ -6768,6 +7174,21 @@ function renderEchoChallengeHeader(echoContext: EchoBattleContext | null): strin
       <div class="battle-echo-challenge__label">ECHO CHALLENGE</div>
       <div class="battle-echo-challenge__title">${echoContext.activeChallenge.title}</div>
       <div class="battle-echo-challenge__copy">${echoContext.activeChallenge.description}</div>
+    </div>
+  `;
+}
+
+function renderBattleStartOverlay(battle: BattleState): string {
+  if (battle.phase === "placement" || !isBattleStartPresentationActive(battle)) {
+    return "";
+  }
+
+  return `
+    <div class="battle-start-overlay" aria-hidden="true">
+      <div class="battle-start-overlay__card">
+        <div class="battle-start-overlay__kicker">S/COM_OS // ENGAGEMENT LIVE</div>
+        <div class="battle-start-overlay__title">BATTLE START</div>
+      </div>
     </div>
   `;
 }
@@ -7232,6 +7653,7 @@ function animatePlayedCard(cardIndex: number | null, onComplete: () => void): vo
 
 function handleBattleHudCardSelection(cardIndex: number): void {
   if (!localBattleState) return;
+  if (isBattleStartPresentationActive(localBattleState)) return;
   if (turnState.hasActed) return;
   const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit));
@@ -7243,12 +7665,30 @@ function handleBattleHudCardSelection(cardIndex: number): void {
     renderBattleScreen();
     return;
   }
+  if (activeUnit && card?.target === "self" && activeUnit.pos) {
+    selectedCardIndex = null;
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
+        type: "play_card",
+        unitId: activeUnit.id,
+        cardIndex,
+        targetUnitId: activeUnit.id,
+      });
+      renderBattleScreen();
+      return;
+    }
+    executeLocalBattleCardPlay(activeUnit.id, cardIndex, activeUnit.id, 40);
+    return;
+  }
 
   selectedCardIndex = selectedCardIndex === cardIndex ? null : cardIndex;
   renderBattleScreen();
 }
 
 function handleBattleHudUndoMove(): void {
+  if (isBattleStartPresentationActive(localBattleState)) {
+    return;
+  }
   if (
     localBattleState &&
     (localBattleState.phase === "victory" || localBattleState.phase === "defeat")
@@ -7353,6 +7793,9 @@ function beginBattleHudFacingSelection(): void {
 }
 
 function handleBattleHudEndTurn(): void {
+  if (isBattleStartPresentationActive(localBattleState)) {
+    return;
+  }
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
     return;
   }
@@ -7678,8 +8121,12 @@ function handleBattleBoardPlacementPick(
   pick: BattleBoardPick,
   battle: BattleState,
   isClientNetworkPlacement: boolean,
+  playerId?: PlayerId,
 ): void {
   if (!localBattleState || !localBattleState.placementState) {
+    return;
+  }
+  if (!canBattleAuthorityPlayerAct(battle, battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined, playerId, true)) {
     return;
   }
 
@@ -7688,7 +8135,12 @@ function handleBattleBoardPlacementPick(
     ?? null;
   if (occupiedUnitId) {
     const unit = localBattleState.units[occupiedUnitId];
-    if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)) {
+    if (
+      unit
+      && canLocalControlBattleUnit(localBattleState, unit)
+      && doesBattleUnitMatchAuthorityPlayer(unit, playerId)
+      && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)
+    ) {
       if (isClientNetworkPlacement) {
         void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId: occupiedUnitId });
         return;
@@ -7732,15 +8184,20 @@ function handleBattleBoardPlacementPick(
   let unitToPlace: BattleUnitState | undefined | null = null;
   if (selectedUnitId) {
     const selectedUnit = localBattleState.units[selectedUnitId];
-    if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit)
+    if (
+      selectedUnit
+      && canLocalControlBattleUnit(localBattleState, selectedUnit)
+      && doesBattleUnitMatchAuthorityPlayer(selectedUnit, playerId)
       && !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
       unitToPlace = selectedUnit;
     }
   }
 
   if (!unitToPlace) {
-    unitToPlace = getLocalPlacementUnits(localBattleState).find(
-      (unit) => !localBattleState!.placementState!.placedUnitIds.includes(unit.id) && !unit.pos,
+    unitToPlace = getNextUnplacedBattleUnitForAuthorityPlayer(
+      getLocalPlacementUnits(localBattleState),
+      localBattleState.placementState.placedUnitIds,
+      playerId,
     );
   }
 
@@ -7768,12 +8225,15 @@ function handleBattleBoardActionPick(
   battle: BattleState,
   activeUnit: BattleUnitState | undefined,
   isPlayerTurn: boolean,
+  playerId?: PlayerId,
 ): void {
   if (isBattleHudPointerInteraction) return;
   if (isAnimatingEnemyTurn) return;
+  if (isBattleStartPresentationActive(battle)) return;
   if (hasActiveBattleAnimation()) return;
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) return;
   if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
+  if (!doesBattleUnitMatchAuthorityPlayer(activeUnit, playerId)) return;
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
   if (!currentBattleBoardRenderState) return;
 
@@ -8065,14 +8525,8 @@ function attachBattleListeners() {
           await sendLocalNetworkPlacementCommand({ type: "quick_place" });
           return;
         }
-        const selectedUnitId = localBattleState.placementState?.selectedUnitId ?? null;
-        const selectedController = selectedUnitId
-          && canLocalControlBattleUnit(localBattleState, localBattleState.units[selectedUnitId] ?? null)
-            ? (localBattleState.units[selectedUnitId]?.controller ?? "P1")
-            : isSquadBattle(localBattleState)
-              ? getLocalSquadSlot(localBattleState)
-              : undefined;
-        let newState = quickPlaceUnits(localBattleState, toLocalUnitOwnership(selectedController));
+        const quickPlaceOwner = getBattlePlacementQuickPlaceOwner(localBattleState);
+        let newState = quickPlaceUnits(localBattleState, toLocalUnitOwnership(quickPlaceOwner));
         setBattleState(newState);
         renderBattleScreen();
       });
@@ -8100,6 +8554,19 @@ function attachBattleListeners() {
           });
           return;
         }
+        const placementConfirmState = getBattlePlacementConfirmState(localBattleState);
+        if (!placementConfirmState.canConfirm) {
+          showSystemPing({
+            type: "info",
+            title: "DEPLOYMENT NOT READY",
+            message: placementConfirmState.detail ?? "The squad still needs more placement work before deployment can be confirmed.",
+            durationMs: 2400,
+            channel: "battle-placement-confirm-blocked",
+            replaceChannel: true,
+          });
+          renderBattleScreen();
+          return;
+        }
         let newState = localBattleState;
         const currentEchoContext = getEchoContext(localBattleState);
         if (currentEchoContext?.placementMode === "units" && currentEchoContext.availableFields.length > 0) {
@@ -8124,14 +8591,15 @@ function attachBattleListeners() {
           const firstUnit = newState.units[newState.activeUnitId];
           resetTurnStateForUnit(firstUnit, newState);
         }
-        // Run enemy turns if starting unit is enemy
-        if (shouldAutoResolveBattleState(newState)) {
-          console.log("[BATTLE] Starting enemy turn sequence after placement");
-          runEnemyTurnsAnimated(newState);
-          return;
-        }
-
+        selectedCardIndex = null;
+        beginBattleStartPresentation(newState, () => {
+          if (shouldAutoResolveBattleState(newState)) {
+            console.log("[BATTLE] Starting enemy turn sequence after placement");
+            runEnemyTurnsAnimated(newState);
+          }
+        });
         renderBattleScreen();
+        return;
       });
     } else {
       console.warn("[BATTLE] Confirm button NOT found");

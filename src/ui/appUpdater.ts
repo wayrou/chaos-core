@@ -3,6 +3,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { APP_VERSION } from "../core/appVersion";
 import { getControllerMode, setControllerMode, updateFocusableElements } from "../core/controllerSupport";
 import { showAlertDialog, showConfirmDialog } from "./components/confirmDialog";
+import { focusElementWithoutScroll } from "./domUtils";
 
 const UPDATE_CHECK_STORAGE_KEY = "chaoscore_updater_last_check_at";
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -204,7 +205,7 @@ function createUpdateProgressOverlay(targetVersion: string): UpdateProgressOverl
   const focusGuard = overlay.querySelector<HTMLElement>(".game-update-progress__focus-guard");
 
   requestAnimationFrame(() => {
-    focusGuard?.focus();
+    focusElementWithoutScroll(focusGuard);
     updateFocusableElements();
   });
 
@@ -228,7 +229,7 @@ function createUpdateProgressOverlay(targetVersion: string): UpdateProgressOverl
       setControllerMode(previousMode);
       updateFocusableElements();
       requestAnimationFrame(() => {
-        previousActiveElement?.focus();
+        focusElementWithoutScroll(previousActiveElement);
       });
     },
     setStatus: (message: string) => {

@@ -3,6 +3,7 @@ import {
   registerControllerContext,
   updateFocusableElements,
 } from "../../core/controllerSupport";
+import { focusElementWithoutScroll } from "../domUtils";
 
 export type StoryPlaceholderKind = "opening" | "ending";
 
@@ -265,7 +266,7 @@ export function renderStoryPlaceholderScreen(config: StoryPlaceholderConfig): vo
     suppressGameplayInput: true,
   });
   updateFocusableElements();
-  (continueButton as HTMLButtonElement | null)?.focus();
+  focusElementWithoutScroll(continueButton as HTMLButtonElement | null);
 
   cleanupStoryPlaceholderScreen = () => {
     continueButton?.removeEventListener("click", finish);

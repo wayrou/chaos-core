@@ -1233,7 +1233,7 @@ function activateFocusedElement(): void {
   }
 
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    element.focus();
+    element.focus({ preventScroll: true });
   }
   vibrate(50, 0.3);
 }

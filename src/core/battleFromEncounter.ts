@@ -10,7 +10,10 @@ import { getEnemyDefinition } from "./enemies";
 import { createBattleUnitState } from "./battle";
 import { generateCover } from "./coverGenerator";
 import { generateStructuredBoardLayout } from "./terrainGeneration";
-import { getActiveRunTavernMealBuff } from "./tavernMeals";
+import {
+  applyTavernMealBuffToTarget,
+  getActiveRunTavernMealBuff,
+} from "./tavernMeals";
 import { getImportedUnit } from "../content/technica";
 
 function createImportedEnemyBaseUnit(
@@ -90,22 +93,7 @@ export function createBattleFromEncounter(
       );
 
       if (activeRunMealBuff) {
-        const battleUnit = units[unitId];
-        switch (activeRunMealBuff.effect) {
-          case "hp":
-            battleUnit.maxHp += activeRunMealBuff.amount;
-            battleUnit.hp += activeRunMealBuff.amount;
-            break;
-          case "atk":
-            battleUnit.atk += activeRunMealBuff.amount;
-            break;
-          case "def":
-            battleUnit.def += activeRunMealBuff.amount;
-            break;
-          case "agi":
-            battleUnit.agi += activeRunMealBuff.amount;
-            break;
-        }
+        applyTavernMealBuffToTarget(units[unitId], activeRunMealBuff);
       }
     }
   });
