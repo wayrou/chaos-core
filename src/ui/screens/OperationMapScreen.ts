@@ -28,11 +28,11 @@ import {
   clearNode,
   prepareBattleForNode,
   advanceToNextFloor,
-  completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { renderOperationClearScreen } from "./OperationClearScreen";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
 import {
   hasTheaterOperation,
@@ -1969,9 +1969,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 
   // Complete operation button (if using old ID, handled above)
   root.querySelector("#completeOpBtn")?.addEventListener("click", () => {
-    completeOperationRun();
-    syncCampaignToGameState();
-    renderActiveOperationSurface();
+    renderOperationClearScreen();
   });
 
   // Key room action buttons
@@ -2475,9 +2473,7 @@ function enterRestRoom(room: RoomNode): void {
     root.querySelector("#continueBtn")?.addEventListener("click", () => {
       if (isCustomExitNode && activeRun) {
         if (isLastCustomFloor) {
-          completeOperationRun();
-          syncCampaignToGameState();
-          renderActiveOperationSurface();
+          renderOperationClearScreen();
           return;
         }
 

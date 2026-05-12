@@ -2,8 +2,8 @@ import { getGameState, updateGameState } from "../../state/gameStore";
 import { getActiveQuests, initializeQuestState } from "../../quests/questManager";
 import {
   advanceToNextFloor as advanceCampaignToNextFloor,
-  completeOperationRun,
 } from "../../core/campaignManager";
+import { renderOperationClearScreen } from "./OperationClearScreen";
 import {
   CURRENT_CAMPAIGN_FINAL_FLOOR_ORDINAL,
   hasSeenEndingCutscene,
@@ -8927,11 +8927,8 @@ function completeTheaterOperationAndReturn(): void {
   }
 
   if (!isOpsTerminalAtlasOperation(operation)) {
-    try {
-      completeOperationRun();
-    } catch (error) {
-      console.warn("[THEATER] complete run without campaign record", error);
-    }
+    renderOperationClearScreen();
+    return;
   }
   returnToBaseCamp(true);
 }

@@ -1,9 +1,9 @@
 // ============================================================================
 // OPERATION CLEAR SCREEN
-// Shows operation completion summary and rewards
+// Shows operation completion summary and routes the player back to Base Camp.
 // ============================================================================
 
-import { renderOperationSelectScreen } from "./OperationSelectScreen";
+import { renderAllNodesMenuScreen } from "./AllNodesMenuScreen";
 import { getActiveRun, completeOperationRun } from "../../core/campaignManager";
 import { OPERATION_DEFINITIONS } from "../../core/campaign";
 import { getGameState, updateGameState } from "../../state/gameStore";
@@ -16,6 +16,7 @@ import {
   type GrantedGearReward,
 } from "../../core/gearRewards";
 import { grantSessionResources } from "../../core/session";
+import { showSystemPing } from "../components/systemPing";
 
 interface OperationClearRewards {
   cards: Array<{ id: string; name: string; description: string }>;
@@ -30,98 +31,112 @@ export function renderOperationClearScreen(): void {
 
   const activeRun = getActiveRun();
   if (!activeRun) {
-    renderOperationSelectScreen();
+    renderAllNodesMenuScreen();
     return;
   }
 
   const opDef = OPERATION_DEFINITIONS[activeRun.operationId];
+  const state = getGameState();
   const stats = {
     battlesWon: activeRun.battlesWon,
     battlesLost: activeRun.battlesLost,
     retries: activeRun.retries,
     nodesCleared: activeRun.nodesCleared,
   };
-
   const rewards = generateOperationRewards(activeRun);
+  const projectedTotals = {
+    wad: state.wad + rewards.wad,
+    resources: createEmptyResourceWallet({
+      metalScrap: state.resources.metalScrap + rewards.resources.metalScrap,
+      wood: state.resources.wood + rewards.resources.wood,
+      chaosShards: state.resources.chaosShards + rewards.resources.chaosShards,
+      steamComponents: state.resources.steamComponents + rewards.resources.steamComponents,
+    }),
+  };
+  const operationName = opDef?.name ?? activeRun.operationId;
+  const floorLabel = `${activeRun.floorsTotal} floor${activeRun.floorsTotal === 1 ? "" : "s"}`;
+  const selectableCardCount = rewards.cards.length;
+  const selectableGearCount = rewards.gearChoices.length;
 
   root.innerHTML = `
     <div class="opclear-root">
       <div class="opclear-card">
         <div class="opclear-header">
-          <div class="opclear-title">ðŸŽ‰ OPERATION CLEAR</div>
-          <div class="opclear-subtitle">${opDef.name}</div>
+          <div class="opclear-kicker">SCROLLLINK // OPERATION DEBRIEF</div>
+          <div class="opclear-title">OPERATION CLEAR</div>
+          <div class="opclear-subtitle">${escapeOperationClearText(operationName)} secured. Rewards are ready for Base Camp transfer.</div>
         </div>
 
         <div class="opclear-body">
-          <div class="opclear-summary">
-            <div class="opclear-summary-title">OPERATION SUMMARY</div>
+          <section class="opclear-summary">
+            <div class="opclear-summary-title">Operation Summary</div>
             <div class="opclear-summary-stats">
-              <div class="opclear-stat">
-                <span class="opclear-stat-label">Battles Won:</span>
-                <span class="opclear-stat-value">${stats.battlesWon}</span>
-              </div>
-              <div class="opclear-stat">
-                <span class="opclear-stat-label">Battles Lost:</span>
-                <span class="opclear-stat-value">${stats.battlesLost}</span>
-              </div>
-              <div class="opclear-stat">
-                <span class="opclear-stat-label">Retries:</span>
-                <span class="opclear-stat-value">${stats.retries}</span>
-              </div>
-              <div class="opclear-stat">
-                <span class="opclear-stat-label">Nodes Cleared:</span>
-                <span class="opclear-stat-value">${stats.nodesCleared}</span>
-              </div>
+              ${renderSummaryStat("Battles Won", String(stats.battlesWon))}
+              ${renderSummaryStat("Battles Lost", String(stats.battlesLost))}
+              ${renderSummaryStat("Retries", String(stats.retries))}
+              ${renderSummaryStat("Nodes Cleared", String(stats.nodesCleared))}
+              ${renderSummaryStat("Route", floorLabel)}
             </div>
-          </div>
+          </section>
 
-          <div class="opclear-rewards">
-            <div class="opclear-rewards-title">REWARDS</div>
+          <section class="opclear-rewards">
+            <div class="opclear-rewards-title">Base Camp Transfer</div>
 
             <div class="opclear-reward-section">
-              <div class="opclear-reward-label">Choose 1 Card:</div>
+              <div class="opclear-reward-label">Choose 1 Card</div>
               <div class="opclear-card-choices" id="cardChoices">
                 ${rewards.cards.map((card, index) => `
-                  <div class="opclear-card-choice" data-card-id="${card.id}" data-index="${index}">
-                    <div class="opclear-card-name">${card.name}</div>
-                    <div class="opclear-card-desc">${card.description}</div>
-                  </div>
+                  <button class="opclear-card-choice" type="button" data-card-id="${card.id}" data-index="${index}">
+                    <span class="opclear-card-name">${escapeOperationClearText(card.name)}</span>
+                    <span class="opclear-card-desc">${escapeOperationClearText(card.description)}</span>
+                  </button>
                 `).join("")}
               </div>
             </div>
 
             <div class="opclear-reward-section">
-              <div class="opclear-reward-label">Resource Bundle:</div>
+              <div class="opclear-reward-label">Resource Bundle</div>
               <div class="opclear-resources">
                 <div class="opclear-resource-item">
-                  <span class="opclear-resource-label">WAD:</span>
+                  <span class="opclear-resource-label">WAD</span>
                   <span class="opclear-resource-value">+${rewards.wad}</span>
+                  <span class="opclear-resource-total">${projectedTotals.wad} total</span>
                 </div>
                 ${getResourceEntries(rewards.resources).map((entry) => `
                   <div class="opclear-resource-item">
-                    <span class="opclear-resource-label">${entry.label}:</span>
+                    <span class="opclear-resource-label">${escapeOperationClearText(entry.label)}</span>
                     <span class="opclear-resource-value">+${entry.amount}</span>
+                    <span class="opclear-resource-total">${projectedTotals.resources[entry.key]} total</span>
                   </div>
                 `).join("")}
               </div>
             </div>
 
             <div class="opclear-reward-section">
-              <div class="opclear-reward-label">Choose 1 Gear Item:</div>
+              <div class="opclear-reward-label">Choose 1 Gear Item</div>
               <div class="opclear-gear-choices" id="gearChoices">
                 ${rewards.gearChoices.map((gear, index) => `
-                  <div class="opclear-gear-choice" data-gear-reward-id="${gear.rewardId}" data-index="${index}">
-                    <div class="opclear-gear-name">${gear.name}</div>
-                    <div class="opclear-gear-desc">${gear.description}</div>
-                  </div>
+                  <button class="opclear-gear-choice" type="button" data-gear-reward-id="${gear.rewardId}" data-index="${index}">
+                    <span class="opclear-gear-name">${escapeOperationClearText(gear.name)}</span>
+                    <span class="opclear-gear-desc">${escapeOperationClearText(gear.description)}</span>
+                  </button>
                 `).join("")}
               </div>
             </div>
-          </div>
+
+            <div class="opclear-next-actions">
+              <div class="opclear-next-title">Recommended Base Camp follow-up</div>
+              <div class="opclear-next-grid">
+                ${renderNextAction("Workshop", "Tune the new gear before the next deployment.")}
+                ${renderNextAction("Loadout", "Check mass, bulk, power, and deck changes.")}
+                ${renderNextAction("Roster", "Review injured units and new card options.")}
+              </div>
+            </div>
+          </section>
 
           <div class="opclear-actions">
             <button class="opclear-continue-btn" id="continueBtn" disabled>
-              CONTINUE â†’
+              TRANSFER TO BASE CAMP
             </button>
           </div>
         </div>
@@ -153,22 +168,24 @@ export function renderOperationClearScreen(): void {
   function syncContinueEnabled(): void {
     const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
     if (continueBtn) {
-      continueBtn.disabled = !(selectedCardId && selectedGearRewardId);
+      continueBtn.disabled = !(
+        (selectableCardCount <= 0 || selectedCardId)
+        && (selectableGearCount <= 0 || selectedGearRewardId)
+      );
     }
   }
 
   const continueBtn = document.getElementById("continueBtn") as HTMLButtonElement | null;
   if (continueBtn) {
     continueBtn.addEventListener("click", () => {
-      if (!selectedCardId || !selectedGearRewardId) {
+      if ((selectableCardCount > 0 && !selectedCardId) || (selectableGearCount > 0 && !selectedGearRewardId)) {
         return;
       }
 
-      const resolvedSelectedCardId = selectedCardId;
-      const resolvedSelectedGearRewardId = selectedGearRewardId;
       const selectedGearReward = rewards.gearChoices.find(
-        (reward) => reward.rewardId === resolvedSelectedGearRewardId,
+        (reward) => reward.rewardId === selectedGearRewardId,
       ) ?? null;
+
       updateGameState((prev) => {
         let nextState = grantSessionResources(prev, {
           wad: rewards.wad,
@@ -177,7 +194,9 @@ export function renderOperationClearScreen(): void {
 
         nextState = {
           ...nextState,
-          cardLibrary: addCardsToLibrary(nextState.cardLibrary || {}, [resolvedSelectedCardId]),
+          cardLibrary: selectedCardId
+            ? addCardsToLibrary(nextState.cardLibrary || {}, [selectedCardId])
+            : nextState.cardLibrary,
         };
 
         return selectedGearReward
@@ -191,9 +210,16 @@ export function renderOperationClearScreen(): void {
         triggerMailOnOperationComplete(true);
       });
 
-      renderOperationSelectScreen();
+      renderAllNodesMenuScreen();
+      showSystemPing({
+        title: "Operation rewards stowed",
+        message: "Base Camp inventory, resources, and card library are updated.",
+        type: "success",
+      });
     });
   }
+
+  syncContinueEnabled();
 }
 
 function generateOperationRewards(activeRun: import("../../core/campaign").ActiveRunState): OperationClearRewards {
@@ -234,4 +260,31 @@ function generateOperationRewards(activeRun: import("../../core/campaign").Activ
       state,
     ),
   };
+}
+
+function renderSummaryStat(label: string, value: string): string {
+  return `
+    <div class="opclear-stat">
+      <span class="opclear-stat-label">${escapeOperationClearText(label)}</span>
+      <span class="opclear-stat-value">${escapeOperationClearText(value)}</span>
+    </div>
+  `;
+}
+
+function renderNextAction(label: string, description: string): string {
+  return `
+    <div class="opclear-next-item">
+      <span>${escapeOperationClearText(label)}</span>
+      ${escapeOperationClearText(description)}
+    </div>
+  `;
+}
+
+function escapeOperationClearText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
