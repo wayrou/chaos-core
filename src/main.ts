@@ -104,7 +104,7 @@ function installAppClickScrollGuard(): void {
         if (!latestRoot || getAppScreenSignature(latestRoot) !== screenSignature) {
           return;
         }
-        maybeRestoreAppScrollSnapshot(latestRoot, snapshot);
+        maybeRestoreAppScrollSnapshot(latestRoot, snapshot, 0);
       });
     });
   }, true);

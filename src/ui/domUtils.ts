@@ -7,6 +7,8 @@ export type AppScrollSnapshot = {
   appTop: number;
   documentLeft: number;
   documentTop: number;
+  screenLeft: number;
+  screenTop: number;
   windowX: number;
   windowY: number;
 };
@@ -43,11 +45,14 @@ export function getAppScreenSignature(root: HTMLElement | null): string {
 
 export function readAppScrollSnapshot(root: HTMLElement | null): AppScrollSnapshot {
   const scrollingElement = document.scrollingElement;
+  const screenRoot = root?.firstElementChild as HTMLElement | null;
   return {
     appLeft: root?.scrollLeft ?? 0,
     appTop: root?.scrollTop ?? 0,
     documentLeft: scrollingElement?.scrollLeft ?? window.scrollX ?? 0,
     documentTop: scrollingElement?.scrollTop ?? window.scrollY ?? 0,
+    screenLeft: screenRoot?.scrollLeft ?? 0,
+    screenTop: screenRoot?.scrollTop ?? 0,
     windowX: window.scrollX ?? 0,
     windowY: window.scrollY ?? 0,
   };
@@ -59,11 +64,14 @@ export function maybeRestoreAppScrollSnapshot(
   threshold = 24,
 ): boolean {
   const scrollingElement = document.scrollingElement;
+  const screenRoot = root?.firstElementChild as HTMLElement | null;
   const currentAppTop = root?.scrollTop ?? 0;
   const currentDocumentTop = scrollingElement?.scrollTop ?? window.scrollY ?? 0;
+  const currentScreenTop = screenRoot?.scrollTop ?? 0;
   const currentWindowY = window.scrollY ?? 0;
   const verticalSnapDetected = (snapshot.appTop - currentAppTop) > threshold
     || (snapshot.documentTop - currentDocumentTop) > threshold
+    || (snapshot.screenTop - currentScreenTop) > threshold
     || (snapshot.windowY - currentWindowY) > threshold;
 
   if (!verticalSnapDetected) {
@@ -73,6 +81,11 @@ export function maybeRestoreAppScrollSnapshot(
   if (root) {
     root.scrollLeft = clampScrollOffset(snapshot.appLeft, root.scrollWidth - root.clientWidth);
     root.scrollTop = clampScrollOffset(snapshot.appTop, root.scrollHeight - root.clientHeight);
+  }
+
+  if (screenRoot) {
+    screenRoot.scrollLeft = clampScrollOffset(snapshot.screenLeft, screenRoot.scrollWidth - screenRoot.clientWidth);
+    screenRoot.scrollTop = clampScrollOffset(snapshot.screenTop, screenRoot.scrollHeight - screenRoot.clientHeight);
   }
 
   if (scrollingElement) {

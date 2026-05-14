@@ -256,6 +256,7 @@ let cleanupCoopOperationsStateSync: (() => void) | null = null;
 let lastCoopOperationsSyncSignature = "";
 let lastCommsArrayScrollTop = 0;
 let lastCommsArrayWindowScrollY = 0;
+let lastCommsArrayScrollSurfaceKey: "comms" | "skirmish" | null = null;
 let selectedSharedCampaignSlot: SharedCampaignSlot = SHARED_CAMPAIGN_SLOTS.CAMPAIGN_1;
 let sharedCampaignSaveInfos: SharedCampaignSaveInfo[] = [];
 let sharedCampaignSavesHydrated = false;
@@ -768,26 +769,46 @@ async function openNetworkLobbyField(): Promise<void> {
 }
 
 function getCommsArrayScrollContainer(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(".comms-array-content");
+  return document.querySelector<HTMLElement>(".comms-array-root, .skirmish-staging-root");
+}
+
+function getCommsArrayScrollSurfaceKey(scrollContainer: HTMLElement | null): "comms" | "skirmish" | null {
+  if (scrollContainer?.classList.contains("comms-array-root")) {
+    return "comms";
+  }
+  if (scrollContainer?.classList.contains("skirmish-staging-root")) {
+    return "skirmish";
+  }
+  return null;
 }
 
 function captureCommsArrayScrollPosition(): void {
   const scrollContainer = getCommsArrayScrollContainer();
   lastCommsArrayScrollTop = scrollContainer?.scrollTop ?? 0;
   lastCommsArrayWindowScrollY = window.scrollY ?? 0;
+  lastCommsArrayScrollSurfaceKey = getCommsArrayScrollSurfaceKey(scrollContainer);
 }
 
 function restoreCommsArrayScrollPosition(): void {
-  requestAnimationFrame(() => {
-    if (window.scrollY !== lastCommsArrayWindowScrollY) {
-      window.scrollTo(0, lastCommsArrayWindowScrollY);
-    }
+  const applyStoredScrollPosition = () => {
     const scrollContainer = getCommsArrayScrollContainer();
     if (!scrollContainer) {
       return;
     }
+    if (getCommsArrayScrollSurfaceKey(scrollContainer) !== lastCommsArrayScrollSurfaceKey) {
+      return;
+    }
+    if (window.scrollY !== lastCommsArrayWindowScrollY) {
+      window.scrollTo(0, lastCommsArrayWindowScrollY);
+    }
     const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
     scrollContainer.scrollTop = Math.min(lastCommsArrayScrollTop, maxScrollTop);
+  };
+
+  applyStoredScrollPosition();
+  requestAnimationFrame(() => {
+    applyStoredScrollPosition();
+    requestAnimationFrame(applyStoredScrollPosition);
   });
 }
 
@@ -3964,6 +3985,7 @@ function renderSkirmishStagingScreen(returnTo: CommsReturnTo = activeCommsReturn
     return;
   }
 
+  captureCommsArrayScrollPosition();
   ensureSquadTransportIntegration(returnTo);
   const match = getSquadMatchState();
   if (!match || match.phase === "lobby") {
@@ -4017,6 +4039,7 @@ function renderSkirmishStagingScreen(returnTo: CommsReturnTo = activeCommsReturn
   `;
 
   attachCommsArrayListeners(returnTo);
+  restoreCommsArrayScrollPosition();
 }
 
 function getChallengeableLobbySlots(lobby: LobbyState | null | undefined): NetworkPlayerSlot[] {

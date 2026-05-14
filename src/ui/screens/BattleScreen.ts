@@ -72,7 +72,6 @@ import {
 } from "../../core/quacDevCommands";
 import {
   clearControllerContext,
-  getControllerActionLabel,
   registerControllerContext,
   setControllerMode,
   updateFocusableElements,
@@ -2532,9 +2531,6 @@ let battlePanAnimationFrame: number | null = null;
 let battleKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
 let battleKeyupHandler: ((e: KeyboardEvent) => void) | null = null;
 
-// UI panel visibility state
-let uiPanelsMinimized = false;
-
 // Endless battle mode state
 let isEndlessBattleMode = false;
 let endlessBattleCount = 0;
@@ -2738,7 +2734,6 @@ function resetBattleUiSessionState(): void {
   selectedManageUnitId = null;
   resetTurnStateForUnit(null);
   resetBattlePan();
-  uiPanelsMinimized = false;
   battleBoardSyncRequestId += 1;
   pendingBattleSceneInteractionHandlers = {};
   setBattleSceneViewChangeHandler(null);
@@ -2816,59 +2811,6 @@ function syncBattleConsumableUsageToGameState(
       currentBattle: nextBattle,
     };
   });
-}
-
-function toggleUiPanels(): void {
-  uiPanelsMinimized = !uiPanelsMinimized;
-
-  const unitPanel = document.querySelector(".battle-unit-panel") as HTMLElement;
-  const weaponPanel = document.querySelector(".battle-weapon-panel") as HTMLElement;
-  const handFloating = document.querySelector(".battle-hand-floating") as HTMLElement;
-  const consoleOverlay = document.querySelector(".scrollink-console-overlay") as HTMLElement;
-  const battleNodes = document.querySelectorAll<HTMLElement>(".battle-node");
-  const dock = document.querySelector(".battle-node-dock") as HTMLElement | null;
-  const toggleBtn = document.getElementById("toggleUiBtn");
-
-  if (unitPanel) {
-    unitPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    unitPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
-    unitPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (weaponPanel) {
-    weaponPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    weaponPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
-    weaponPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (handFloating) {
-    handFloating.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    handFloating.style.opacity = uiPanelsMinimized ? "0" : "1";
-    handFloating.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (consoleOverlay) {
-    consoleOverlay.style.transform = uiPanelsMinimized ? "translateX(-100%)" : "translateX(0)";
-    consoleOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
-    consoleOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  battleNodes.forEach((node) => {
-    node.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    node.style.opacity = uiPanelsMinimized ? "0" : "1";
-    node.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  });
-
-  if (dock) {
-    dock.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    dock.style.opacity = uiPanelsMinimized ? "0" : "1";
-    dock.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (toggleBtn) {
-    toggleBtn.textContent = uiPanelsMinimized ? "👁 SHOW UI" : "👁 HIDE UI";
-    toggleBtn.classList.toggle("battle-toggle-btn--active", uiPanelsMinimized);
-  }
 }
 
 function triggerScreenShake(intensity = 1): void {
@@ -3412,7 +3354,7 @@ function renderBattleHudNode(nodeId: BattleHudNodeId, bodyHtml: string, extraCla
       class="${nodeClass}"
       data-battle-node-id="${nodeId}"
       data-color-key="${colorKey}"
-      style="left:${layout.x}px; top:${layout.y}px; width:${layout.width}px; height:${layout.height}px; z-index:${layout.zIndex}; ${themeStyle}; ${uiPanelsMinimized ? "transform: translateY(100%); opacity: 0; pointer-events: none;" : ""}"
+      style="left:${layout.x}px; top:${layout.y}px; width:${layout.width}px; height:${layout.height}px; z-index:${layout.zIndex}; ${themeStyle};"
     >
       <header class="battle-node__header" data-battle-node-grip="${nodeId}">
         <div class="battle-node__header-copy">
@@ -3442,7 +3384,7 @@ function renderBattleHudDock(visibleNodeIds: BattleHudNodeId[] = BATTLE_HUD_NODE
   }
 
   return `
-    <div class="battle-node-dock" style="${uiPanelsMinimized ? "transform: translateY(100%); opacity: 0; pointer-events: none;" : ""}">
+    <div class="battle-node-dock">
       ${minimizedIds.map((nodeId) => `
         <button class="battle-node-dock__item" type="button" data-battle-node-restore="${nodeId}" aria-label="Restore ${BATTLE_HUD_NODE_DEFS[nodeId].title}">
           <span class="battle-node-dock__kicker">${BATTLE_HUD_NODE_DEFS[nodeId].restoreLabel}</span>
@@ -5993,8 +5935,6 @@ export function renderBattleScreen() {
   }
   const phase = battle.phase;
   syncBattleControllerCursor(battle, activeUnit, isPlacementPhase);
-  const battleControllerPanHint = `${getControllerActionLabel("moveUp")} / ${getControllerActionLabel("moveLeft")}`;
-  const battleControllerZoomHint = `${getControllerActionLabel("zoomOut")} / ${getControllerActionLabel("zoomIn")}`;
   const echoContext = getEchoContext(battle);
   if (battleExitConfirmState && !echoContext) {
     battleExitConfirmState = null;
@@ -6053,11 +5993,6 @@ export function renderBattleScreen() {
             </div>
           ` : ""}
           <div class="battle-header-top-controls">
-            <div class="battle-pan-controls">
-              <div class="battle-pan-hint">
-                <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
-              </div>
-            </div>
             <div class="battle-view-switcher" aria-label="Battle camera view switcher">
               <span class="battle-view-switcher-label">VIEW</span>
               <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
@@ -6066,10 +6001,6 @@ export function renderBattleScreen() {
             </div>
           </div>
           <div class="battle-header-command-row">
-            <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
-            <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
-              ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
-            </button>
             <div class="battle-header-actions">
               ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
               <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
@@ -8455,21 +8386,6 @@ function attachBattleListeners() {
     if (event.target === event.currentTarget) {
       closeBattleExitConfirm();
     }
-  });
-
-  // Toggle UI panels button
-  const toggleUiBtn = document.getElementById("toggleUiBtn");
-  if (toggleUiBtn) {
-    toggleUiBtn.onclick = () => {
-      toggleUiPanels();
-    };
-  }
-
-  // Reset pan button
-  document.querySelectorAll<HTMLElement>("#resetBattlePanBtn").forEach((resetPanBtn) => {
-    resetPanBtn.onclick = () => {
-      resetBattlePan();
-    };
   });
 
   document.querySelectorAll<HTMLElement>("[data-battle-view-index]").forEach((viewBtn) => {
