@@ -6879,6 +6879,20 @@ function renderFieldObjectContents(obj: FieldMap["objects"][number]): string {
     return `<div class="field-object-placeholder field-object-placeholder--grind-rail">RAIL</div>`;
   }
 
+  if (obj.metadata?.havenNoticeboard === true) {
+    const header = obj.metadata?.noticeboardHeader === "KIT" ? "KIT" : "JOBS";
+    return `
+      <div class="field-object-noticeboard" aria-hidden="true">
+        <span class="field-object-noticeboard__header">${header}</span>
+        <span class="field-object-noticeboard__paper field-object-noticeboard__paper--one"></span>
+        <span class="field-object-noticeboard__paper field-object-noticeboard__paper--two"></span>
+        <span class="field-object-noticeboard__paper field-object-noticeboard__paper--three"></span>
+        <span class="field-object-noticeboard__post field-object-noticeboard__post--left"></span>
+        <span class="field-object-noticeboard__post field-object-noticeboard__post--right"></span>
+      </div>
+    `;
+  }
+
   if (obj.type === "decoration") {
     if (obj.metadata?.grappleAnchor === true) {
       return `

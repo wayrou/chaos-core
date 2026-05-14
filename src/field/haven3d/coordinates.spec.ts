@@ -143,6 +143,59 @@ describe("HAVEN 3D field adapter", () => {
     expect(zone).toMatchObject({ x: 11, y: 13, width: 3, height: 1 });
   });
 
+  it("keeps the quest board as a noticeboard instead of a HAVEN building", () => {
+    const map = getFieldMap("base_camp");
+    const questBoard = map.objects.find((object) => object.id === "quest_board");
+    const zone = map.interactionZones.find((entry) => entry.id === "interact_quest_board");
+
+    expect(questBoard).toMatchObject({
+      x: 7,
+      y: 20,
+      width: 4,
+      height: 2,
+      sprite: "quest_board",
+    });
+    expect(questBoard?.metadata?.havenBuilding).not.toBe(true);
+    expect(questBoard?.metadata?.havenNoticeboard).toBe(true);
+    expect(questBoard?.metadata?.nonBlockingFootprint).toBe(true);
+    expect(zone).toMatchObject({ x: 7, y: 22, width: 4, height: 1 });
+    expect(zone?.metadata?.autoTrigger).toBe(true);
+    for (let y = questBoard!.y; y < questBoard!.y + questBoard!.height; y += 1) {
+      for (let x = questBoard!.x; x < questBoard!.x + questBoard!.width; x += 1) {
+        expect(map.tiles[y][x].walkable).toBe(true);
+        expect(map.tiles[y][x].type).toBe("floor");
+      }
+    }
+  });
+
+  it("keeps the loadout node as a noticeboard beside the ops terminal", () => {
+    const map = getFieldMap("base_camp");
+    const loadout = map.objects.find((object) => object.id === "loadout_station");
+    const opsTerminal = map.objects.find((object) => object.id === "ops_terminal");
+    const zone = map.interactionZones.find((entry) => entry.id === "interact_loadout");
+
+    expect(loadout).toMatchObject({
+      x: 52,
+      y: 9,
+      width: 4,
+      height: 2,
+      sprite: "loadout",
+    });
+    expect(opsTerminal).toMatchObject({ x: 58, y: 7, width: 8, height: 5 });
+    expect(loadout?.metadata?.havenBuilding).not.toBe(true);
+    expect(loadout?.metadata?.havenNoticeboard).toBe(true);
+    expect(loadout?.metadata?.noticeboardHeader).toBe("KIT");
+    expect(loadout?.metadata?.nonBlockingFootprint).toBe(true);
+    expect(zone).toMatchObject({ x: 52, y: 11, width: 4, height: 1 });
+    expect(zone?.metadata?.autoTrigger).toBe(true);
+    for (let y = loadout!.y; y < loadout!.y + loadout!.height; y += 1) {
+      for (let x = loadout!.x; x < loadout!.x + loadout!.width; x += 1) {
+        expect(map.tiles[y][x].walkable).toBe(true);
+        expect(map.tiles[y][x].type).toBe("floor");
+      }
+    }
+  });
+
   it("round-trips saved Build Mode node positions through the 3D scene layout", () => {
     setGameState({
       ...createNewGameState(),

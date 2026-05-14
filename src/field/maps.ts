@@ -52,10 +52,8 @@ const HAVEN_BUILDING_SPECS: HavenBuildingSpec[] = [
   { nodeId: "shop", objectId: "shop_station", zoneId: "interact_shop", x: 6, y: 6, width: 7, height: 5 },
   { nodeId: "quarters", objectId: "quarters_station", zoneId: "interact_quarters", x: 17, y: 6, width: 7, height: 5 },
   { nodeId: "roster", objectId: "roster_station", zoneId: "interact_roster", x: 28, y: 6, width: 8, height: 5 },
-  { nodeId: "quest-board", objectId: "quest_board", zoneId: "interact_quest_board", x: 6, y: 18, width: 7, height: 5 },
   { nodeId: "tavern", objectId: "tavern_station", zoneId: "interact_tavern", x: 17, y: 18, width: 7, height: 5 },
   { nodeId: "gear-workbench", objectId: "gear_workbench_station", zoneId: "interact_gear_workbench", x: 28, y: 18, width: 8, height: 5 },
-  { nodeId: "loadout", objectId: "loadout_station", zoneId: "interact_loadout", x: 46, y: 7, width: 8, height: 5 },
   { nodeId: "ops-terminal", objectId: "ops_terminal", zoneId: "interact_ops", x: 58, y: 7, width: 8, height: 5 },
   { nodeId: "comms-array", objectId: "comms_array_station", zoneId: "interact_comms_array", x: 70, y: 7, width: 8, height: 5 },
   { nodeId: "schema", objectId: "schema_station", zoneId: "interact_schema", x: 46, y: 25, width: 8, height: 5 },
@@ -67,6 +65,42 @@ const HAVEN_BUILDING_SPECS: HavenBuildingSpec[] = [
 ];
 
 const HAVEN_BUILDING_BY_NODE_ID = new Map(HAVEN_BUILDING_SPECS.map((spec) => [spec.nodeId, spec]));
+
+type HavenNoticeboardSpec = {
+  objectId: string;
+  zoneId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name: string;
+  sprite: string;
+  header: string;
+};
+
+const HAVEN_LOADOUT_NOTICEBOARD: HavenNoticeboardSpec = {
+  objectId: "loadout_station",
+  zoneId: "interact_loadout",
+  x: 52,
+  y: 9,
+  width: 4,
+  height: 2,
+  name: "Loadout Noticeboard",
+  sprite: "loadout",
+  header: "KIT",
+};
+
+const HAVEN_QUEST_NOTICEBOARD = {
+  objectId: "quest_board",
+  zoneId: "interact_quest_board",
+  x: 7,
+  y: 20,
+  width: 4,
+  height: 2,
+  name: "Quest Noticeboard",
+  sprite: "quest_board",
+  header: "JOBS",
+};
 
 const HAVEN_OUTER_DECK_GATE = {
   x: 40,
@@ -211,6 +245,10 @@ function setMapAreaBlocked(map: FieldMap, left: number, top: number, width: numb
 }
 
 function isBlockingStationFootprint(map: FieldMap, object: FieldObject): boolean {
+  if (object.metadata?.nonBlockingFootprint === true) {
+    return false;
+  }
+
   return object.type === "station" && (
     map.id === "base_camp"
     || object.metadata?.havenCargoElevatorExterior === true
@@ -343,8 +381,47 @@ function placeHavenBuilding(
   placeInteractionDoor(map, spec.zoneId, door, spec.objectId);
 }
 
+function placeHavenNoticeboard(map: FieldMap, spec: HavenNoticeboardSpec, x: number, y: number): void {
+  placeObjectFootprint(
+    map,
+    spec.objectId,
+    x,
+    y,
+    spec.width,
+    spec.height,
+    {
+      name: spec.name,
+      havenNoticeboard: true,
+      noticeboardHeader: spec.header,
+      nonBlockingFootprint: true,
+    },
+  );
+
+  const object = map.objects.find((entry) => entry.id === spec.objectId);
+  if (object) {
+    object.sprite = spec.sprite;
+  }
+
+  const zone = map.interactionZones.find((entry) => entry.id === spec.zoneId);
+  if (!zone) {
+    return;
+  }
+
+  zone.x = x;
+  zone.y = y + spec.height;
+  zone.width = spec.width;
+  zone.height = 1;
+  zone.metadata = {
+    ...(zone.metadata ?? {}),
+    autoTrigger: true,
+    noticeboardForObjectId: spec.objectId,
+  };
+}
+
 function applyDefaultHavenBuildingLayout(map: FieldMap): void {
   HAVEN_BUILDING_SPECS.forEach((spec) => placeHavenBuilding(map, spec, spec.x, spec.y));
+  placeHavenNoticeboard(map, HAVEN_LOADOUT_NOTICEBOARD, HAVEN_LOADOUT_NOTICEBOARD.x, HAVEN_LOADOUT_NOTICEBOARD.y);
+  placeHavenNoticeboard(map, HAVEN_QUEST_NOTICEBOARD, HAVEN_QUEST_NOTICEBOARD.x, HAVEN_QUEST_NOTICEBOARD.y);
 }
 
 function addHavenZiplineRoute(map: FieldMap): void {
@@ -8447,6 +8524,10 @@ function applyBaseCampBuildLayout(map: FieldMap): void {
     const buildingSpec = HAVEN_BUILDING_BY_NODE_ID.get(definition.id);
     if (buildingSpec) {
       placeHavenBuilding(map, buildingSpec, layout.x, layout.y);
+    } else if (definition.id === "loadout") {
+      placeHavenNoticeboard(map, HAVEN_LOADOUT_NOTICEBOARD, layout.x, layout.y);
+    } else if (definition.id === "quest-board") {
+      placeHavenNoticeboard(map, HAVEN_QUEST_NOTICEBOARD, layout.x, layout.y);
     } else {
       moveObject(map.objects, definition.objectId, layout.x, layout.y);
       moveInteractionZone(map.interactionZones, definition.zoneId, layout.x, layout.y);

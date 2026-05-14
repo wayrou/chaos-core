@@ -725,7 +725,7 @@ export function getStrainThreshold(): number {
 }
 
 export function isOverStrainThreshold(unit: BattleUnitState): boolean {
-  return unit.strain >= getStrainThreshold();
+  return unit.strain > getStrainThreshold();
 }
 
 export function applyStrain(
@@ -750,8 +750,8 @@ export function applyStrain(
     },
   };
 
-  const wasOver = oldStrain >= getStrainThreshold();
-  const nowOver = newStrain >= getStrainThreshold();
+  const wasOver = oldStrain > getStrainThreshold();
+  const nowOver = newStrain > getStrainThreshold();
 
   if (!wasOver && nowOver) {
     next = appendBattleLog(
@@ -871,8 +871,8 @@ export function advanceTurn(state: BattleState): BattleState {
       strain: cooledStrain,
     };
 
-    const wasOver = oldStrain >= getStrainThreshold();
-    const nowOver = cooledStrain >= getStrainThreshold();
+    const wasOver = oldStrain > getStrainThreshold();
+    const nowOver = cooledStrain > getStrainThreshold();
 
     let cooledState: BattleState = {
       ...newState,

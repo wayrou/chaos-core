@@ -153,6 +153,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "SD",
     category: "logistics",
     description: "Logistics anchor that converts a live 100-watt power feed into a 100-crate supply relay for connected rooms.",
+    battlePerks: [
+      "Helps keep supply online; supplied battle rooms deploy allies with +2 max HP and +2 HP.",
+    ],
     operationalRequirements: {
       powerWatts: 100,
       commsBw: 0,
@@ -173,6 +176,10 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "CC",
     category: "command",
     description: "Local control hub that relays a live uplink into a 100 BW comms lattice for connected rooms.",
+    battlePerks: [
+      "Linked operational support grants allied units +1 DEF.",
+      "Stable comms into a battle room can also grant +2 AGI and improve enemy telemetry.",
+    ],
     operationalRequirements: {
       powerWatts: 100,
       commsBw: 1,
@@ -193,6 +200,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "MW",
     category: "support",
     description: "Casualty control and stabilization wing that keeps sustained pushes from collapsing.",
+    battlePerks: [
+      "Linked operational support grants allied units +1 max HP and +1 HP on deployment.",
+    ],
     operationalRequirements: {
       powerWatts: 50,
       commsBw: 0,
@@ -212,6 +222,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "AR",
     category: "combat",
     description: "Munitions support core that keeps connected squads battle-ready and aggressive.",
+    battlePerks: [
+      "Linked operational support grants allied units +1 ATK.",
+    ],
     operationalRequirements: {
       powerWatts: 25,
       commsBw: 0,
@@ -230,6 +243,10 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "MN",
     category: "industry",
     description: "Extraction core that turns secured sectors into a steady Metal Scrap and Timber stream.",
+    battlePerks: [
+      "With at least 50 comms flow, operational mines add post-battle Metal Scrap and Wood recovery.",
+      "Metal-rich or timber-rich battle rooms increase that recovery.",
+    ],
     operationalRequirements: {
       powerWatts: 50,
       commsBw: 0,
@@ -253,6 +270,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "GN",
     category: "command",
     description: "Strategic power relay that passes through incoming room power and adds +100 watts on top for connected rooms.",
+    battlePerks: [
+      "Keeps power-fed support systems online; high room power contributes to pre-contact opening volleys when turret or relay support is installed.",
+    ],
     operationalRequirements: {
       powerWatts: 1,
       commsBw: 0,
@@ -421,6 +441,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "WK",
     category: "industry",
     description: "Forward workshop C.O.R.E. that mirrors the HAVEN workshop node for gear building, customization, and crafting inside the theater.",
+    battlePerks: [
+      "No direct battle stat bonus; provides forward gear services and theater sustain utility.",
+    ],
     buildCost: { metalScrap: 5, steamComponents: 2, wood: 1 },
     upkeep: {},
     wadUpkeepPerTick: 9,
@@ -504,6 +527,9 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "TV",
     category: "civic",
     description: "Forward tavern C.O.R.E. that mirrors HAVEN's recruitment hub, keeping contracts and mess-hall services online during an operation.",
+    battlePerks: [
+      "No direct room stat bonus; mess-hall meal buffs can apply squad-wide battle modifiers before deployment.",
+    ],
     buildCost: { wood: 4, chaosShards: 1 },
     upkeep: {},
     wadUpkeepPerTick: 6,
@@ -521,6 +547,10 @@ export const SCHEMA_CORE_DEFINITIONS: Record<CoreType, CoreBuildDefinition> = {
     shortCode: "RF",
     category: "industry",
     description: "Processing core that distills theater throughput into a steady Steam Components stream.",
+    battlePerks: [
+      "With at least 50 comms flow, operational refineries add post-battle Steam Components recovery.",
+      "Steam-vent battle rooms increase that recovery.",
+    ],
     operationalRequirements: {
       powerWatts: 50,
       commsBw: 0,
@@ -986,6 +1016,19 @@ export function getCoreSynergyLinesForRoom(coreType: CoreType, roomOrTags: Theat
       const note = modifier.note ?? formatResourceWalletInline(modifier.output);
       return `${formatRoomTagLabel(modifier.tag)}: ${note}`;
     });
+}
+
+export function getCoreBattlePerkLines(coreType: CoreType): string[] {
+  const definition = SCHEMA_CORE_DEFINITIONS[coreType];
+  if (definition?.battlePerks?.length) {
+    return [...definition.battlePerks];
+  }
+
+  return ["No implemented direct battle perk yet."];
+}
+
+export function formatCoreBattlePerks(coreType: CoreType): string {
+  return getCoreBattlePerkLines(coreType).join(" // ");
 }
 
 export function formatResourceWalletInline(delta: Partial<ResourceWallet>): string {

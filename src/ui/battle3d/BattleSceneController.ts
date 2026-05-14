@@ -33,6 +33,8 @@ type UnitActor = {
   spriteMaterial: THREE.SpriteMaterial;
   statusGroup: THREE.Group;
   hpFill: THREE.Mesh;
+  focusArrow: THREE.Sprite;
+  focusArrowMaterial: THREE.SpriteMaterial;
   unitId: string;
   spriteRequestKey: string | null;
 };
@@ -222,7 +224,60 @@ function createPlaceholderBillboardTexture(): THREE.Texture {
   return texture;
 }
 
+function createFocusArrowTexture(): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 96;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    const data = new Uint8Array([255, 228, 143, 255]);
+    const texture = new THREE.DataTexture(data, 1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.shadowColor = "rgba(255, 204, 92, 0.82)";
+  context.shadowBlur = 16;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+
+  context.beginPath();
+  context.moveTo(48, 76);
+  context.lineTo(22, 30);
+  context.lineTo(40, 30);
+  context.lineTo(48, 44);
+  context.lineTo(56, 30);
+  context.lineTo(74, 30);
+  context.closePath();
+  context.fillStyle = "#ffe48f";
+  context.strokeStyle = "rgba(20, 12, 4, 0.92)";
+  context.lineWidth = 6;
+  context.fill();
+  context.stroke();
+
+  context.shadowBlur = 0;
+  context.beginPath();
+  context.moveTo(48, 67);
+  context.lineTo(34, 40);
+  context.lineTo(42, 40);
+  context.lineTo(48, 51);
+  context.lineTo(54, 40);
+  context.lineTo(62, 40);
+  context.closePath();
+  context.fillStyle = "rgba(255, 255, 255, 0.38)";
+  context.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
 const PLACEHOLDER_BILLBOARD_TEXTURE = createPlaceholderBillboardTexture();
+const FOCUS_ARROW_TEXTURE = createFocusArrowTexture();
 const BILLBOARD_BASE_HEIGHT = 1.22;
 const UNIT_TILE_CLEARANCE_Y = 0.002;
 
@@ -768,6 +823,8 @@ export class BattleSceneController {
       ringMaterial.opacity = unit.active ? 0.95 : 0.72;
 
       actor.spriteMaterial.color.set(unit.active ? "#ffe7b8" : unit.isEnemy ? "#ff9d8f" : "#a8dcff");
+      actor.focusArrow.visible = unit.active;
+      actor.focusArrowMaterial.opacity = unit.active ? 0.96 : 0;
 
       const hpRatio = Math.max(0, Math.min(1, unit.maxHp > 0 ? unit.hp / unit.maxHp : 0));
       actor.hpFill.scale.x = Math.max(0.12, hpRatio);
@@ -1121,6 +1178,20 @@ export class BattleSceneController {
     hpFill.position.set(0, 0, 0.001);
     statusGroup.add(hpFill);
 
+    const focusArrowMaterial = new THREE.SpriteMaterial({
+      map: FOCUS_ARROW_TEXTURE,
+      color: "#ffffff",
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const focusArrow = new THREE.Sprite(focusArrowMaterial);
+    focusArrow.position.set(0, 0.32, 0.006);
+    focusArrow.scale.set(0.38, 0.38, 1);
+    focusArrow.visible = false;
+    statusGroup.add(focusArrow);
+
     return {
       group,
       ring,
@@ -1128,6 +1199,8 @@ export class BattleSceneController {
       spriteMaterial,
       statusGroup,
       hpFill,
+      focusArrow,
+      focusArrowMaterial,
       unitId,
       spriteRequestKey: null,
     };
@@ -1141,6 +1214,12 @@ export class BattleSceneController {
     actor.statusGroup.children.forEach((child) => {
       if (child instanceof THREE.Mesh) {
         child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((material) => material.dispose());
+        } else {
+          child.material.dispose();
+        }
+      } else if (child instanceof THREE.Sprite) {
         if (Array.isArray(child.material)) {
           child.material.forEach((material) => material.dispose());
         } else {
@@ -1205,6 +1284,16 @@ export class BattleSceneController {
   }
 
   private updateAnimations(now: number): void {
+    this.unitActors.forEach((actor) => {
+      if (!actor.focusArrow.visible) {
+        return;
+      }
+      const pulse = Math.sin(now * 0.006);
+      actor.focusArrow.position.y = 0.32 + pulse * 0.035;
+      const scale = 0.38 + Math.max(0, pulse) * 0.035;
+      actor.focusArrow.scale.set(scale, scale, 1);
+    });
+
     if (this.movementAnim && this.snapshot) {
       const progress = Math.max(0, Math.min(1, (now - this.movementAnim.startTime) / this.movementAnim.durationMs));
       const scaled = progress * (this.movementAnim.path.length - 1);

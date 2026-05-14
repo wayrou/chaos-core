@@ -7731,6 +7731,85 @@ export function hasCompletedTheaterObjective(theater: TheaterNetworkState): bool
   return theater.objectiveComplete && theater.completion !== null;
 }
 
+export function forceCompleteActiveTheaterOperation(state: GameState): TheaterActionOutcome {
+  const operation = getPreparedTheaterOperation(state);
+  const theater = operation?.theater;
+  if (!operation || !theater) {
+    return { state, success: false, message: "No active theater operation." };
+  }
+
+  if (hasCompletedTheaterObjective(theater)) {
+    return { state, success: true, message: "Theater objective is already complete." };
+  }
+
+  const nextTheater = cloneTheater(theater);
+  Object.values(nextTheater.rooms).forEach((room) => {
+    room.status = "secured";
+    room.secured = true;
+    room.underThreat = false;
+    room.damaged = false;
+    room.abandoned = false;
+    room.fortified = getInstalledFortificationCount(room) > 0;
+  });
+  nextTheater.activeThreats = [];
+
+  const objectiveRoomId =
+    nextTheater.objectiveDefinition?.targetRoomId
+    ?? getObjectiveRoom(nextTheater)?.id
+    ?? nextTheater.currentRoomId;
+  const objectiveRoom = nextTheater.rooms[objectiveRoomId] ?? Object.values(nextTheater.rooms)[0] ?? null;
+  if (!objectiveRoom) {
+    return { state, success: false, message: "Theater has no room to complete." };
+  }
+
+  if (nextTheater.objectiveDefinition) {
+    nextTheater.objectiveDefinition.progress = {
+      ...nextTheater.objectiveDefinition.progress,
+      cratesDelivered: Math.max(nextTheater.objectiveDefinition.progress.cratesDelivered, objectiveRoom.supplyFlow),
+      powerRouted: Math.max(nextTheater.objectiveDefinition.progress.powerRouted, objectiveRoom.powerFlow),
+      bwEstablished: Math.max(nextTheater.objectiveDefinition.progress.bwEstablished, objectiveRoom.commsFlow),
+      builtCoreType: getRoomPrimaryCoreAssignment(objectiveRoom)?.type ?? nextTheater.objectiveDefinition.progress.builtCoreType,
+      completed: true,
+    };
+  }
+
+  nextTheater.currentRoomId = objectiveRoom.id;
+  nextTheater.selectedRoomId = objectiveRoom.id;
+  nextTheater.currentNodeId = objectiveRoom.id;
+  nextTheater.selectedNodeId = objectiveRoom.id;
+  nextTheater.objectiveComplete = true;
+  nextTheater.completion = createCompletionSummary(nextTheater, objectiveRoom);
+
+  const completedTheater = addTheaterEvent(
+    recomputeTheaterNetwork(nextTheater),
+    `DEBUG :: Q.U.A.C. forced ${nextTheater.definition.name} objective completion.`,
+  );
+  const nextOperation = resolveOperationFields(operation, completedTheater);
+  const completionReward = completedTheater.completion?.reward;
+  const completedState: GameState = {
+    ...state,
+    phase: "operation",
+    operation: nextOperation,
+    session: {
+      ...state.session,
+      pendingTheaterBattleConfirmation: null,
+    },
+    currentBattle: null,
+  };
+  const rewardedState = completionReward
+    ? grantSessionResources(completedState, {
+      wad: completionReward.wad ?? 0,
+      resources: completionReward,
+    })
+    : completedState;
+
+  return {
+    state: rewardedState,
+    success: true,
+    message: `Forced completion for ${completedTheater.definition.name}.`,
+  };
+}
+
 export function recomputeTheaterNetwork(theater: TheaterNetworkState): TheaterNetworkState {
   return applySandboxSlice(recomputeSupplyAndPower(theater));
 }

@@ -1053,9 +1053,10 @@ export interface CoreBuildDefinition {
   id: CoreType;
   displayName: string;
   shortCode?: string;
-  category: CoreBuildCategory;
-  description: string;
-  operationalRequirements?: {
+    category: CoreBuildCategory;
+    description: string;
+    battlePerks?: string[];
+    operationalRequirements?: {
     powerWatts?: number;
     commsBw?: number;
     supplyCrates?: number;

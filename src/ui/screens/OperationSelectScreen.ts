@@ -36,6 +36,7 @@ import {
   getActiveRegionPresentation,
   type ResolvedCampaignRegionPresentation,
 } from "../../core/campaignRegions";
+import { formatCoreBattlePerks } from "../../core/schemaSystem";
 import { getNotesState, getStuckNotesForSurface } from "../../core/notesSystem";
 import { CoreType, TheaterMapMode, TheaterRoom, TheaterSprawlDirection } from "../../core/types";
 import { getGameState, updateGameState } from "../../state/gameStore";
@@ -1694,6 +1695,7 @@ function renderCoreWindowRows(summaries: OpsTerminalAtlasCoreSummary[]): string 
           </div>
         </div>
         <div class="opsatlas-core-row__copy">${escapeHtml(blueprint?.description ?? "No description available.")}</div>
+        <div class="opsatlas-core-row__copy">Battle Perk: ${escapeHtml(formatCoreBattlePerks(summary.coreType))}</div>
         <div class="opsatlas-core-row__stats">
           <span>${summary.supplyFlow} CR</span>
           <span>${summary.powerFlow} W</span>

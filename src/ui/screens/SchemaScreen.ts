@@ -5,6 +5,7 @@
 
 import {
   formatResourceWalletInline,
+  formatCoreBattlePerks,
   formatRoomTagLabel,
   getOrderedSchemaCoreTypes,
   getOrderedSchemaFieldAssetTypes,
@@ -203,6 +204,7 @@ function renderCoreAuthorizationCards(): string {
     ].filter((entry): entry is string => Boolean(entry));
     const canAfford = canAffordUnlock(state, definition.unlockWadCost, definition.unlockCost);
     const preferredTags = (definition.preferredRoomTags ?? []).map((tag) => formatRoomTagLabel(tag)).join(" // ");
+    const battlePerks = formatCoreBattlePerks(coreType);
 
     return `
       <article class="schema-screen__auth-card ${unlocked ? "schema-screen__auth-card--unlocked" : "schema-screen__auth-card--locked"}">
@@ -221,6 +223,7 @@ function renderCoreAuthorizationCards(): string {
           <span>Wad Upkeep: ${definition.wadUpkeepPerTick}/tick</span>
           <span>${buildIncome === "No resource output" ? "No passive income" : `Income: ${buildIncome}`}</span>
           ${networkOutputs.map((line) => `<span>${line}</span>`).join("")}
+          <span>Battle Perk: ${battlePerks}</span>
           <span>${preferredTags ? `Preferred Tags: ${preferredTags}` : "No room affinity preference"}</span>
           ${definition.placeholder ? `<span>Placeholder runtime effect</span>` : ""}
         </div>

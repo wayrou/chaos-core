@@ -20,6 +20,7 @@ import {
   Vec2,
   getEquippedWeapon,
   getTileAt,
+  isOverStrainThreshold,
   updateUnitWeaponState,
 } from "./battle";
 import { Card, EchoFieldPlacement } from "./types";
@@ -238,6 +239,10 @@ function getWeaponBlockReasonForCard(user: BattleUnitState, card: Card): string 
     return null;
   }
   return getWeaponCardBlockReason(user.weaponState, weapon, card.weaponRules);
+}
+
+function isCoreCard(card: Card): boolean {
+  return card.id.startsWith("core_");
 }
 
 function addStatModifierBuff(
@@ -539,6 +544,10 @@ export function handleCardPlay(
 ): BattleState | null {
 
   if (!user.pos) return null;
+
+  if (isCoreCard(card) && isOverStrainThreshold(user)) {
+    return appendBattleLog(battle, `SLK//STRAIN :: ${user.name} is overstrained. C.O.R.E. cards are locked.`);
+  }
 
   const weaponBlockReason = getWeaponBlockReasonForCard(user, card);
   if (weaponBlockReason) {

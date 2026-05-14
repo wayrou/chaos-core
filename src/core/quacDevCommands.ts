@@ -12,12 +12,15 @@ import {
   createEmptyResourceWallet,
 } from "./resources";
 import { replaceBattleStateById, grantSessionResources } from "./session";
-import { setActiveTheaterResourceDecayEnabled } from "./theaterSystem";
+import {
+  forceCompleteActiveTheaterOperation,
+  setActiveTheaterResourceDecayEnabled,
+} from "./theaterSystem";
 import type { GameState } from "./types";
 
 export const QUAC_DEBUG_INPUT_HINT = 'Use /dev for debug commands. Example: "/give 5 healing kit".';
 export const QUAC_DEBUG_HELP_TEXT =
-  "Dev commands: /decay on|off, /auto win battles on|off, /give <amount> <name>, /heal squad.";
+  "Dev commands: /decay on|off, /auto win battles on|off, /autowin theater, /give <amount> <name>, /heal squad.";
 
 export type QuacDebugCommandPing = {
   type: "success" | "info" | "error";
@@ -78,6 +81,17 @@ const AUTO_WIN_OFF_COMMANDS = new Set([
   "/auto win battles off",
   "/auto win off",
   "/autowin off",
+]);
+
+const THEATER_AUTO_WIN_COMMANDS = new Set([
+  "/autowin theater",
+  "/autowin operation",
+  "/auto win theater",
+  "/auto win operation",
+  "/clear theater",
+  "/clear operation",
+  "/win theater",
+  "/win operation",
 ]);
 
 function normalizeCommand(rawCommand: string): string {
@@ -589,6 +603,27 @@ export function runQuacDebugCommand(
             title: "DEBUG // BATTLE WON",
             message: "Active battle forced to victory.",
             channel: "quac-debug-battle",
+            replaceChannel: true,
+          }
+        : undefined,
+    };
+  }
+
+  if (THEATER_AUTO_WIN_COMMANDS.has(normalized)) {
+    const outcome = forceCompleteActiveTheaterOperation(state);
+    return {
+      handled: true,
+      success: outcome.success,
+      state: outcome.state,
+      statusText: outcome.success
+        ? `THEATER :: ${outcome.message}`
+        : `THEATER :: ${outcome.message}`,
+      ping: outcome.success
+        ? {
+            type: "success",
+            title: "DEBUG // THEATER CLEARED",
+            message: outcome.message,
+            channel: "quac-debug-theater",
             replaceChannel: true,
           }
         : undefined,

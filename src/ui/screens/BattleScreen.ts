@@ -2025,7 +2025,7 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   if (request.type === "weapon_heat") {
     const zone = String(request.meta?.["zone"] ?? "warning");
     pulseBattleElement(
-      ".battle-weapon-panel .weapon-stat-bar-fill--heat",
+      ".battle-unit-weapon-link .weapon-stat-bar-fill--heat",
       zone === "critical" ? "weapon-stat-bar-fill--pulse-critical" : "weapon-stat-bar-fill--pulse-warning",
       zone === "critical" ? 860 : 680,
     );
@@ -2033,8 +2033,8 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   }
 
   if (request.type === "weapon_overheat") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--overheat-spike", 880);
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-window", "weapon-window--overheat-spike", 880);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
     return;
   }
 
@@ -2042,7 +2042,7 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
     const nodeId = String(request.meta?.["nodeId"] ?? "");
     if (nodeId) {
       pulseBattleElement(
-        `.battle-weapon-panel .weapon-node[data-node="${nodeId}"]`,
+        `.battle-unit-weapon-link .weapon-node[data-node="${nodeId}"]`,
         "weapon-node--feedback-hit",
         780,
       );
@@ -2051,29 +2051,29 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   }
 
   if (effectKind === "ammo-tick") {
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
     return;
   }
 
   if (effectKind === "clutch-toggle") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--clutch-pulse", 580);
-    pulseBattleElement(".battle-weapon-panel .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-window", "weapon-window--clutch-pulse", 580);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
     return;
   }
 
   if (effectKind === "reload") {
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-window", "weapon-window--feedback-confirm", 420);
     return;
   }
 
   if (effectKind === "patch") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-window", "weapon-window--feedback-confirm", 420);
     return;
   }
 
   if (effectKind === "vent") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-warning", 680);
+    pulseBattleElement(".battle-unit-weapon-link .weapon-window", "weapon-window--feedback-warning", 680);
   }
 }
 
@@ -2249,7 +2249,7 @@ function zoomOut() {
 interface TurnState {
   hasMoved: boolean;
   hasCommittedMove: boolean; // True after clicking a tile - hides green until undo
-  hasActed: boolean; // True after playing a card - ends the turn for this unit
+  hasActed: boolean; // True after playing a card; used for movement/undo limits, not card limits
   movementOnlyAfterAttack: boolean;
   movementRemaining: number;
   originalPosition: { x: number; y: number } | null;
@@ -2299,7 +2299,7 @@ const BATTLE_HUD_TOP_SAFE = 94;
 const BATTLE_HUD_BOTTOM_SAFE = 22;
 const BATTLE_HUD_DRAG_THRESHOLD_PX = 6;
 const BATTLE_HAND_GRID_MIN_WIDTH = 720;
-const BATTLE_HUD_NODE_ORDER: BattleHudNodeId[] = ["console", "intel", "placement", "unit", "weapon", "manage", "consumables", "hand"];
+const BATTLE_HUD_NODE_ORDER: BattleHudNodeId[] = ["console", "intel", "placement", "unit", "manage", "consumables", "hand"];
 const BATTLE_HUD_COLOR_THEMES: BattleHudColorTheme[] = [
   {
     key: "amber",
@@ -2481,7 +2481,7 @@ const BATTLE_HUD_NODE_DEFS: Record<BattleHudNodeId, BattleHudNodeDefinition> = {
     restoreLabel: "ITEMS",
   },
   hand: {
-    title: "Hand Console",
+    title: "Hand window",
     kicker: "TACTICAL HAND",
     minWidth: 480,
     minHeight: 392,
@@ -3110,7 +3110,7 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   const consoleHeight = clamp(Math.round(viewportHeight * 0.18), 148, 220);
   const intelWidth = clamp(Math.round(viewportWidth * 0.26), 320, 420);
   const intelHeight = clamp(Math.round(viewportHeight * 0.28), 220, 320);
-  const unitWidth = clamp(Math.round(viewportWidth * 0.21), 292, 340);
+  const unitWidth = clamp(Math.round(viewportWidth * 0.23), 320, 390);
   const weaponWidth = clamp(Math.round(viewportWidth * 0.19), 272, 320);
   const consumablesWidth = clamp(Math.round(viewportWidth * 0.22), 320, 420);
   const consumablesHeight = clamp(Math.round(viewportHeight * 0.3), 250, 360);
@@ -3118,19 +3118,14 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   const placementHeight = clamp(Math.round(viewportHeight * 0.52), 360, 620);
   const manageWidth = clamp(Math.round(viewportWidth * 0.34), 460, 640);
   const manageHeight = clamp(Math.round(viewportHeight * 0.44), 320, 560);
-  const handWidth = clamp(viewportWidth - unitWidth - weaponWidth - 112, 520, 860);
+  const handWidth = clamp(viewportWidth - unitWidth - 88, 520, 920);
   const handHeight = clamp(Math.round(viewportHeight * 0.4), 392, 440);
   const topY = Math.max(viewportHeight - handHeight - BATTLE_HUD_BOTTOM_SAFE, BATTLE_HUD_TOP_SAFE);
-  const sideHeight = clamp(handHeight - 112, 236, 290);
+  const sideHeight = handHeight;
   const handX = clamp(
     Math.round((viewportWidth - handWidth) / 2),
     BATTLE_HUD_MARGIN_X,
     Math.max(BATTLE_HUD_MARGIN_X, viewportWidth - handWidth - BATTLE_HUD_MARGIN_X),
-  );
-  const weaponX = clamp(
-    viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X,
-    BATTLE_HUD_MARGIN_X,
-    Math.max(BATTLE_HUD_MARGIN_X, viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X),
   );
   const manageX = clamp(
     viewportWidth - manageWidth - BATTLE_HUD_MARGIN_X,
@@ -3174,11 +3169,11 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   );
 
   return {
-    console: { x: BATTLE_HUD_MARGIN_X, y: BATTLE_HUD_TOP_SAFE, width: consoleWidth, height: consoleHeight, minimized: false, zIndex: 40 },
+    console: { x: BATTLE_HUD_MARGIN_X, y: BATTLE_HUD_TOP_SAFE, width: consoleWidth, height: consoleHeight, minimized: true, zIndex: 40 },
     intel: { x: intelX, y: intelY, width: intelWidth, height: intelHeight, minimized: false, zIndex: 41 },
     placement: { x: placementX, y: placementY, width: placementWidth, height: placementHeight, minimized: false, zIndex: 42 },
     unit: { x: BATTLE_HUD_MARGIN_X, y: topY, width: unitWidth, height: sideHeight, minimized: false, zIndex: 43 },
-    weapon: { x: weaponX, y: topY, width: weaponWidth, height: sideHeight, minimized: false, zIndex: 44 },
+    weapon: { x: viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X, y: topY, width: weaponWidth, height: sideHeight, minimized: true, zIndex: 44 },
     manage: { x: manageX, y: manageY, width: manageWidth, height: manageHeight, minimized: true, zIndex: 45 },
     consumables: { x: consumablesX, y: consumablesY, width: consumablesWidth, height: consumablesHeight, minimized: true, zIndex: 46 },
     hand: { x: handX, y: topY, width: handWidth, height: handHeight, minimized: false, zIndex: 47 },
@@ -3469,7 +3464,7 @@ function getVisibleBattleHudNodeIdsForController(
   if (isPlacementPhase) {
     visibleNodeIds.push("placement");
   } else {
-    visibleNodeIds.push("unit", "weapon", "consumables", "hand");
+    visibleNodeIds.push("unit", "consumables", "hand");
   }
   return visibleNodeIds;
 }
@@ -3948,7 +3943,7 @@ function renderBattleHud(
     visibleNodeIds.push("placement");
   }
   if (!isPlacementPhase) {
-    visibleNodeIds.push("unit", "weapon", "consumables", "hand");
+    visibleNodeIds.push("unit", "consumables", "hand");
   }
 
   return `
@@ -3956,7 +3951,6 @@ function renderBattleHud(
     ${battle.theaterBonuses?.detailedEnemyIntel ? renderBattleHudNode("intel", renderBattleEnemyIntelNode(battle)) : ""}
     ${isPlacementPhase ? renderBattleHudNode("placement", renderPlacementUI(battle)) : ""}
     ${!isPlacementPhase ? renderBattleHudNode("unit", renderUnitPanel(activeUnit)) : ""}
-    ${!isPlacementPhase ? renderBattleHudNode("weapon", renderWeaponWindow(activeUnit)) : ""}
     ${renderBattleHudNode("manage", renderManageUnitsPanel(battle))}
     ${!isPlacementPhase ? renderBattleHudNode("consumables", renderBattleConsumablesNode(battle, isPlayerTurn)) : ""}
     ${!isPlacementPhase ? renderBattleHudNode(
@@ -4711,13 +4705,21 @@ function getDistance(x1: number, y1: number, x2: number, y2: number): number {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
 
-function isStrainLockedCard(_card: Card, _activeUnit: BattleUnitState | undefined): boolean {
-  return false;
+function isCoreBattleCard(card: Card): boolean {
+  return card.type === "core" || card.id.startsWith("core_");
+}
+
+function isStrainLockedCard(card: Card, activeUnit: BattleUnitState | undefined): boolean {
+  return Boolean(activeUnit && isOverStrainThreshold(activeUnit) && isCoreBattleCard(card));
 }
 
 function getBattleCardDisabledReason(card: Card, activeUnit: BattleUnitState | undefined): string | null {
   if (!activeUnit) {
     return null;
+  }
+
+  if (isStrainLockedCard(card, activeUnit)) {
+    return "C.O.R.E. cards locked while overstrained";
   }
 
   const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
@@ -5774,7 +5776,7 @@ function applyRemoteBattleCommandToCurrentBattle(
   }
 
   if (command.type === "play_card") {
-    if (turnState.hasActed) {
+    if (turnState.isFacingSelection) {
       return;
     }
     const targetUnit = battle.units[command.targetUnitId] ?? null;
@@ -6371,6 +6373,10 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
         </div>
         ` : ""}
       </div>
+      <div class="battle-unit-weapon-link">
+        <div class="battle-unit-weapon-link__label">WEAPON LINK</div>
+        ${renderWeaponWindow(activeUnit)}
+      </div>
     `;
   } catch (err) {
     console.error(`[RENDER] Error in renderUnitPanel:`, err);
@@ -6445,8 +6451,8 @@ function renderHandCards(
   return hand.map((card, i) => {
     const sel = selectedCardIndex === i;
     const step = total > 1 ? maxAngle / (total - 1) : 0;
-    const angle = layoutMode === "grid" ? 0 : total > 1 ? -maxAngle / 2 + step * i : 0;
-    const yOff = layoutMode === "grid" ? 0 : Math.abs(angle) * 0.5;
+    const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
+    const yOff = Math.abs(angle) * 0.5;
     const disabledReason = getBattleCardDisabledReason(card, activeUnit);
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
     const disabledClass = !isPlayerTurn || Boolean(disabledReason) || autoControlled ? "battle-cardui--disabled" : "";
@@ -7654,7 +7660,7 @@ function animatePlayedCard(cardIndex: number | null, onComplete: () => void): vo
 function handleBattleHudCardSelection(cardIndex: number): void {
   if (!localBattleState) return;
   if (isBattleStartPresentationActive(localBattleState)) return;
-  if (turnState.hasActed) return;
+  if (turnState.isFacingSelection) return;
   const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit));
   if (!isPlayerTurn) return;
@@ -8270,6 +8276,10 @@ function handleBattleBoardActionPick(
     return;
   }
 
+  if (turnState.isFacingSelection) {
+    return;
+  }
+
   if (battleBoardSetHas(currentBattleBoardRenderState.moveTiles, pick)) {
     if (!turnState.hasMoved && activeUnit.pos) {
       turnState.originalPosition = { x: activeUnit.pos.x, y: activeUnit.pos.y };
@@ -8314,10 +8324,6 @@ function handleBattleBoardActionPick(
   const units = getUnitsArray(localBattleState);
   const targetUnit = units.find((unit) => unit.pos?.x === x && unit.pos?.y === y && unit.hp > 0);
   if (targetUnit) {
-    if (turnState.hasActed) {
-      return;
-    }
-
     const ux = activeUnit.pos?.x ?? 0;
     const uy = activeUnit.pos?.y ?? 0;
     const dist = getDistance(ux, uy, x, y);

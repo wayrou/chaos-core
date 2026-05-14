@@ -13095,6 +13095,35 @@ button {
     0 0 15px rgba(255, 215, 0, 0.6);
 }
 
+.battle-unit--active .battle-unit-portrait-wrapper::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -28px;
+  z-index: 5;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 20px solid rgba(255, 228, 143, 0.96);
+  filter:
+    drop-shadow(0 0 6px rgba(255, 204, 92, 0.78))
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.75));
+  pointer-events: none;
+  animation: battleActiveUnitFocusArrow 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes battleActiveUnitFocusArrow {
+  from {
+    transform: translate(-50%, -2px);
+  }
+
+  to {
+    transform: translate(-50%, 3px);
+  }
+}
+
 /* Ensure active units maintain proper positioning - styling applied to portrait */
 /* BUT: Do NOT override positioning for isometric units - they use isoProject positioning */
 .battle-unit--active:not(.iso-unit) {
@@ -28520,17 +28549,22 @@ body {
    ============================================================================ */
 
 .loadout-screen-root {
-  min-height: 100vh;
+  min-height: 0;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--bg-world, #1a1917);
   padding: var(--space-4, 1rem);
   font-family: var(--font-ui, "Inter", sans-serif);
   color: var(--ink, #e8e4dc);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .loadout-screen-card {
+  flex: 0 0 auto;
   width: 100%;
   max-width: 1400px;
   margin: 0 auto;
@@ -30761,8 +30795,9 @@ body {
   border-radius: 14px;
   border: 1px solid var(--all-nodes-border, rgba(122, 92, 214, 0.46));
   background:
-    linear-gradient(180deg, var(--all-nodes-accent-soft, rgba(192, 179, 255, 0.12)), rgba(11, 14, 28, 0)),
-    linear-gradient(160deg, var(--all-nodes-surface-bg, rgba(10, 14, 28, 0.96)), var(--all-nodes-panel-bg, rgba(20, 18, 40, 0.94)));
+    linear-gradient(180deg, rgba(192, 179, 255, 0.035), rgba(11, 14, 28, 0)),
+    linear-gradient(160deg, rgba(10, 14, 28, 0.10), rgba(20, 18, 40, 0.10));
+  backdrop-filter: blur(2px);
   box-shadow:
     0 18px 42px rgba(0, 0, 0, 0.42),
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
@@ -30778,6 +30813,7 @@ body {
   background:
     linear-gradient(135deg, var(--all-nodes-accent-soft, rgba(149, 118, 255, 0.08)), transparent 40%),
     linear-gradient(0deg, rgba(255, 255, 255, 0.02), transparent 55%);
+  opacity: 0.28;
   pointer-events: none;
 }
 
@@ -30808,7 +30844,7 @@ body {
   user-select: none;
   border-bottom: 1px solid var(--all-nodes-surface-border, rgba(122, 92, 214, 0.22));
   background:
-    linear-gradient(180deg, var(--all-nodes-panel-hover-bg, rgba(28, 20, 56, 0.92)), var(--all-nodes-surface-bg, rgba(18, 16, 38, 0.84)));
+    linear-gradient(180deg, rgba(28, 20, 56, 0.16), rgba(18, 16, 38, 0.10));
   touch-action: none;
 }
 
@@ -31049,7 +31085,7 @@ body {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid rgba(122, 92, 214, 0.28);
-  background: rgba(9, 11, 23, 0.88);
+  background: rgba(9, 11, 23, 0.22);
 }
 
 .battle-node__body--hand .hand-actions {
@@ -31069,6 +31105,37 @@ body {
   overflow: visible;
 }
 
+.battle-hand-node--fan .hand-cards-row-floating {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  align-content: end;
+  min-width: 0;
+  padding: 18px 10px 8px;
+  overflow: visible;
+  isolation: isolate;
+}
+
+.battle-hand-node--fan .battle-card-slot {
+  flex: 0 0 180px;
+  margin-inline: clamp(-76px, -9vw, -26px);
+  transform-origin: 50% 108%;
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(var(--fan-translateY, 0px));
+}
+
+.battle-hand-node--fan .battle-card-slot:first-child {
+  margin-left: 0;
+}
+
+.battle-hand-node--fan .battle-card-slot:last-child {
+  margin-right: 0;
+}
+
+.battle-hand-node--fan .battle-card-slot:hover {
+  transform: rotate(0deg) translateY(-24px) scale(1.06) !important;
+  z-index: 100 !important;
+}
+
 .battle-hand-node--grid .hand-cards-row-floating {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
@@ -31079,6 +31146,10 @@ body {
   min-height: 0;
   padding: 8px 4px 4px;
   overflow: auto;
+}
+
+.battle-hand-node--grid .battle-cardui {
+  width: 180px;
 }
 
 .battle-hand-node--grid .battle-card-slot {
@@ -31213,6 +31284,84 @@ body {
   background: linear-gradient(180deg, rgba(165, 122, 56, 0.96), rgba(104, 70, 24, 0.96));
   color: #fff7e7;
   box-shadow: 0 0 0 1px rgba(255, 232, 180, 0.18), inset 0 0 18px rgba(255, 220, 128, 0.12);
+}
+
+.battle-unit-weapon-link {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(182, 153, 110, 0.28);
+}
+
+.battle-unit-weapon-link__label {
+  margin-bottom: 8px;
+  color: rgba(226, 209, 177, 0.82);
+  font-size: calc(8px * var(--battle-unit-scale, 1));
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.battle-unit-weapon-link .weapon-window--battle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.battle-unit-weapon-link .weapon-window-header {
+  margin-bottom: 0;
+  padding: 0 0 8px;
+  border-bottom-color: rgba(182, 153, 110, 0.24);
+}
+
+.battle-unit-weapon-link .weapon-window-title {
+  font-size: 11px;
+}
+
+.battle-unit-weapon-link .weapon-window-type {
+  font-size: 8px;
+}
+
+.battle-unit-weapon-link .weapon-window-body {
+  gap: 6px;
+  padding: 0;
+  overflow: visible;
+}
+
+.battle-unit-weapon-link .weapon-node-scroll {
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.battle-unit-weapon-link .weapon-stat-label {
+  width: 34px;
+}
+
+.battle-unit-weapon-link .weapon-clutch-btn,
+.battle-unit-weapon-link .weapon-action-btn {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 9px;
+}
+
+.battle-unit-weapon-link .weapon-window--empty {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+}
+
+.battle-unit-weapon-link .weapon-window-empty-copy {
+  text-align: center;
+  opacity: 0.44;
+  font-size: 10px;
+  letter-spacing: 0.1em;
 }
 
 .battle-strain-focus {

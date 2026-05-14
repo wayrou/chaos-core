@@ -159,6 +159,7 @@ import {
 } from "../../core/session";
 import {
   formatResourceWalletInline,
+  formatCoreBattlePerks,
   formatRoomTagLabel,
   getCoreIncomeForRoom,
   getFieldAssetBuildCost,
@@ -341,7 +342,6 @@ const THEATER_WINDOW_ORDER: TheaterWindowKey[] = [
   "room",
   "automation",
   "fortify",
-  "core",
   "resources",
   "consumables",
   "notes",
@@ -351,7 +351,6 @@ const THEATER_MAP_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>();
 const THEATER_PANEL_VIEW_OPEN_WINDOWS = new Set<TheaterWindowKey>([
   "ops",
   "room",
-  "core",
   "resources",
 ]);
 
@@ -365,7 +364,7 @@ const THEATER_WINDOW_DEFS: Record<TheaterWindowKey, TheaterWindowDefinition> = {
   automation: { title: "MODULE LOGIC", kicker: "AUTOMATION CONTROL // LIVE CONFIG", minWidth: 420, minHeight: 300, restoreLabel: "LOGIC" },
   fortify: { title: "FORTIFICATIONS", kicker: "ROOM HARDENING", minWidth: 320, minHeight: 220, restoreLabel: "FORT" },
   core: { title: "ALL C.O.R.E.S", kicker: "FACILITY LEDGER // THEATER SUPPORT", minWidth: 360, minHeight: 260, restoreLabel: "CORES" },
-  resources: { title: "LEDGER", kicker: "BASE CAMP SUPPLY LEDGER", minWidth: 280, minHeight: 180, restoreLabel: "LEDGER" },
+  resources: { title: "LEDGER", kicker: "FACILITY LEDGER // THEATER SUPPORT", minWidth: 360, minHeight: 260, restoreLabel: "LEDGER" },
   consumables: { title: "CONSUMABLES", kicker: "FIELD STOCK // FREE USE", minWidth: 320, minHeight: 220, restoreLabel: "ITEMS" },
   upkeep: { title: "CURRENT UPKEEP COSTS", kicker: "PER-TICK FACILITY MAINTENANCE", minWidth: 320, minHeight: 220, restoreLabel: "UPKEEP" },
   notes: { title: "OPERATOR NOTES", kicker: "FIELD MEMOS // AUTO-SAVE", minWidth: 340, minHeight: 260, restoreLabel: "NOTES" },
@@ -611,7 +610,8 @@ function getCoreDescription(coreType: CoreType | null): string {
   if (!coreType) {
     return "No facility assigned to this room.";
   }
-  return THEATER_CORE_BLUEPRINTS[coreType]?.description ?? "No facility description available.";
+  const description = THEATER_CORE_BLUEPRINTS[coreType]?.description ?? "No facility description available.";
+  return `${description} Battle Perk: ${formatCoreBattlePerks(coreType)}`;
 }
 
 function formatCoreOfflineReason(reason: ReturnType<typeof getTheaterCoreOfflineReason>): string {
@@ -1233,8 +1233,8 @@ function createDefaultTheaterWindowFrames(): Record<TheaterWindowKey, TheaterWin
   const automationHeight = clampNumber(Math.round(viewportHeight * 0.45), 340, 620);
   const upkeepWidth = clampNumber(Math.round(viewportWidth * 0.145), 360, 500);
   const upkeepHeight = clampNumber(Math.round(viewportHeight * 0.264), 280, 390);
-  const resourcesWidth = clampNumber(Math.round(viewportWidth * 0.116), 320, 410);
-  const resourcesHeight = clampNumber(Math.round(viewportHeight * 0.258), 250, 360);
+  const resourcesWidth = clampNumber(Math.round(viewportWidth * 0.28), 460, 680);
+  const resourcesHeight = clampNumber(Math.round(viewportHeight * 0.48), 380, 640);
   const coreWidth = clampNumber(Math.round(viewportWidth * 0.169), 420, 590);
   const coreHeight = clampNumber(Math.round(viewportHeight * 0.188), 240, 290);
   const opsX = 0;
@@ -3887,12 +3887,32 @@ function getSelectedTheaterTacticalTile(tacticalMap: TacticalMapDefinition | nul
   return fallbackTile ? { x: fallbackTile.x, y: fallbackTile.y } : null;
 }
 
-function getTheaterSessionResourceSummary(state: GameState) {
-  return getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
-}
-
 function canAffordTheaterCost(state: GameState, cost: Partial<GameState["resources"]>): boolean {
   return canSessionAffordCost(state, { resources: cost });
+}
+
+function renderTheaterResourceLedgerSummary(state: GameState, theater: TheaterNetworkState): string {
+  const resourcePool = getSessionResourcePool(state, getLocalSessionPlayerSlot(state));
+  const economy = getTheaterUpkeepPerTick(theater);
+  const resourceIncomeSummary = getResourceEntries(economy.incomePerTick)
+    .map((entry) => `${entry.abbreviation} +${entry.amount} per tick`)
+    .join(" / ") || "No passive income";
+
+  return `
+    <section class="theater-ledger-resource-summary">
+      <div class="theater-copy">
+        <strong>SUPPLY LEDGER</strong>
+      </div>
+      <div class="theater-resource-grid theater-resource-grid--compact">
+        <div class="theater-resource-card"><span>Wad</span><strong>${resourcePool.wad ?? 0}</strong></div>
+        ${getResourceEntries(resourcePool.resources, { includeZero: true }).map((entry) => `
+          <div class="theater-resource-card"><span>${entry.label}</span><strong>${entry.amount}</strong></div>
+        `).join("")}
+        <div class="theater-resource-card"><span>Wad Upkeep Per Tick</span><strong>${economy.wadUpkeep}</strong></div>
+        <div class="theater-resource-card theater-resource-card--wide"><span>Resource Income Per Tick</span><strong>${resourceIncomeSummary}</strong></div>
+      </div>
+    </section>
+  `;
 }
 
 function captureTheaterWindowBodyScroll(key: TheaterWindowKey): { top: number; left: number } | null {
@@ -4313,6 +4333,7 @@ function renderSelectedRoomWindow(theater: TheaterNetworkState): string {
         >
           ${locked ? "Locked" : "Build"} ${blueprint.displayName}
           <small>${blueprint.description}</small>
+          <small>Battle Perk: ${formatCoreBattlePerks(coreType)}</small>
           <small>Build Cost: ${formatResourceCost(blueprint.buildCost)} // Wad Upkeep Per Tick: ${blueprint.wadUpkeepPerTick} Wad${incomeLabel !== "No resource output" ? ` // Income Per Tick: ${incomeLabel}` : ""}</small>
           ${renderCoreRequirementPreview(coreType)}
           ${locked ? `<small>Unlock In S.C.H.E.M.A.: ${unlockCost || "Authorization required"}</small>` : blueprint.placeholder ? `<small>Placeholder facility effect // buildable runtime stub</small>` : ""}
@@ -4936,64 +4957,71 @@ function renderCoreLedgerRows(theater: TheaterNetworkState): string {
   }).join("");
 }
 
-function renderCoreWindow(theater: TheaterNetworkState): string {
+function renderResourcesWindow(state: GameState, theater: TheaterNetworkState): string {
   const annexes = Object.values(theater.annexesById ?? {});
   const activeSignals = (theater.automation?.activeSignalSnapshots ?? [])
     .filter((snapshot) => snapshot.active)
     .slice(0, 4);
   const body = `
-    <div class="theater-copy">
-      <strong>ANNEX & AUTOMATION</strong>
-    </div>
-    <div class="theater-core-ledger">
-      ${annexes.length > 0
-        ? annexes.slice(0, 4).map((annex) => `
+    ${renderTheaterResourceLedgerSummary(state, theater)}
+    <section class="theater-core-window-section theater-core-window-section--cores">
+      <div class="theater-copy">
+        <strong>C.O.R.E.s</strong>
+      </div>
+      <div class="theater-copy">
+        Built facilities continue affecting the theater as supply, power, and comms flow through the secured network. Inspect any C.O.R.E. here or enter its linked field map directly.
+      </div>
+      <div class="theater-core-ledger theater-core-ledger--cores">
+        ${renderCoreLedgerRows(theater)}
+      </div>
+    </section>
+    <section class="theater-core-window-section theater-core-window-section--annex">
+      <div class="theater-copy">
+        <strong>ANNEX & AUTOMATION</strong>
+      </div>
+      <div class="theater-core-ledger theater-core-ledger--annex">
+        ${annexes.length > 0
+          ? annexes.slice(0, 4).map((annex) => `
+            <article class="theater-core-ledger-row">
+              <div class="theater-core-ledger-row__header">
+                <div>
+                  <div class="theater-core-ledger-row__title">${ANNEX_FRAME_DEFINITIONS[annex.frameType].displayName}</div>
+                  <div class="theater-core-ledger-row__meta">${annex.annexId} // parent ${resolveTheaterNode(theater, annex.parentNodeId)?.label ?? annex.parentNodeId}</div>
+                </div>
+                <div class="theater-core-ledger-row__tags">
+                  <span class="theater-core-ledger-row__tag theater-core-ledger-row__tag--${annex.inheritedControl ? "online" : "offline"}">
+                    ${annex.inheritedControl ? "ONLINE" : "OFFLINE"}
+                  </span>
+                </div>
+              </div>
+              <div class="theater-core-ledger-row__requirements">
+                Slots ${annex.moduleSlots.filter((slot) => slot !== null).length}/${annex.moduleSlotCapacity} // Integrity ${annex.integrity} // ${annex.inheritedSupply} CR / ${annex.inheritedPower} W / ${annex.inheritedComms} BW
+              </div>
+            </article>
+          `).join("")
+          : `<div class="theater-feed-line">No annex frames are built in this theater yet.</div>`}
+        ${activeSignals.length > 0 ? activeSignals.map((snapshot) => `
           <article class="theater-core-ledger-row">
             <div class="theater-core-ledger-row__header">
               <div>
-                <div class="theater-core-ledger-row__title">${ANNEX_FRAME_DEFINITIONS[annex.frameType].displayName}</div>
-                <div class="theater-core-ledger-row__meta">${annex.annexId} // parent ${resolveTheaterNode(theater, annex.parentNodeId)?.label ?? annex.parentNodeId}</div>
+                <div class="theater-core-ledger-row__title">${snapshot.label}</div>
+                <div class="theater-core-ledger-row__meta">${snapshot.moduleId}</div>
               </div>
               <div class="theater-core-ledger-row__tags">
-                <span class="theater-core-ledger-row__tag theater-core-ledger-row__tag--${annex.inheritedControl ? "online" : "offline"}">
-                  ${annex.inheritedControl ? "ONLINE" : "OFFLINE"}
-                </span>
+                <span class="theater-core-ledger-row__tag theater-core-ledger-row__tag--online">ACTIVE</span>
               </div>
             </div>
             <div class="theater-core-ledger-row__requirements">
-              Slots ${annex.moduleSlots.filter((slot) => slot !== null).length}/${annex.moduleSlotCapacity} // Integrity ${annex.integrity} // ${annex.inheritedSupply} CR / ${annex.inheritedPower} W / ${annex.inheritedComms} BW
+              Signal Output: ${snapshot.output.kind === "empty" ? "0" : snapshot.output.value}
             </div>
           </article>
-        `).join("")
-        : `<div class="theater-feed-line">No annex frames are built in this theater yet.</div>`}
-      ${activeSignals.length > 0 ? activeSignals.map((snapshot) => `
-        <article class="theater-core-ledger-row">
-          <div class="theater-core-ledger-row__header">
-            <div>
-              <div class="theater-core-ledger-row__title">${snapshot.label}</div>
-              <div class="theater-core-ledger-row__meta">${snapshot.moduleId}</div>
-            </div>
-            <div class="theater-core-ledger-row__tags">
-              <span class="theater-core-ledger-row__tag theater-core-ledger-row__tag--online">ACTIVE</span>
-            </div>
-          </div>
-          <div class="theater-core-ledger-row__requirements">
-            Signal Output: ${snapshot.output.kind === "empty" ? "0" : snapshot.output.value}
-          </div>
-        </article>
-      `).join("") : `<div class="theater-feed-line">No automation chains are firing on this tick.</div>`}
-    </div>
-    <div class="theater-copy">
-      <strong>C.O.R.E.s</strong>
-    </div>
-    <div class="theater-copy">
-      Built facilities continue affecting the theater as supply, power, and comms flow through the secured network. Inspect any C.O.R.E. here or enter its linked field map directly.
-    </div>
-    <div class="theater-core-ledger">
-      ${renderCoreLedgerRows(theater)}
-    </div>
+        `).join("") : `<div class="theater-feed-line">No automation chains are firing on this tick.</div>`}
+      </div>
+    </section>
   `;
-  return renderWindowShell("core", THEATER_WINDOW_DEFS.core.title, THEATER_WINDOW_DEFS.core.kicker, body, theater);
+  return renderWindowShell("resources", THEATER_WINDOW_DEFS.resources.title, THEATER_WINDOW_DEFS.resources.kicker, body, theater, {
+    bodyClassName: "theater-window-body--core-ledger",
+  });
 }
 
 function renderFeedWindow(theater: TheaterNetworkState): string {
@@ -5070,25 +5098,6 @@ function formatAtlasEconomyIncome(summary: OpsTerminalAtlasEconomySummary): stri
   const parts = getResourceEntries(summary.incomePerTick).map((entry) => `${entry.abbreviation} +${entry.amount}`);
 
   return parts.length > 0 ? parts.join(" / ") : "No passive income";
-}
-
-function renderResourcesWindow(state: GameState, theater: TheaterNetworkState): string {
-  const resourcePool = getTheaterSessionResourceSummary(state);
-  const economy = getTheaterUpkeepPerTick(theater);
-  const resourceIncomeSummary = getResourceEntries(economy.incomePerTick)
-    .map((entry) => `${entry.abbreviation} +${entry.amount} per tick`)
-    .join(" / ") || "No passive income";
-  const body = `
-    <div class="theater-resource-grid">
-      <div class="theater-resource-card"><span>Wad</span><strong>${resourcePool.wad ?? 0}</strong></div>
-      ${getResourceEntries(resourcePool.resources, { includeZero: true }).map((entry) => `
-        <div class="theater-resource-card"><span>${entry.label}</span><strong>${entry.amount}</strong></div>
-      `).join("")}
-      <div class="theater-resource-card"><span>Wad Upkeep Per Tick</span><strong>${economy.wadUpkeep}</strong></div>
-      <div class="theater-resource-card theater-resource-card--wide"><span>Resource Income Per Tick</span><strong>${resourceIncomeSummary}</strong></div>
-    </div>
-  `;
-  return renderWindowShell("resources", THEATER_WINDOW_DEFS.resources.title, THEATER_WINDOW_DEFS.resources.kicker, body, theater);
 }
 
 function renderConsumablesWindow(state: GameState, theater: TheaterNetworkState): string {
@@ -6368,6 +6377,19 @@ function renderTheaterStyles(): string {
         overflow: hidden;
       }
 
+      .theater-window-body--core-ledger {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
+      .theater-ledger-resource-summary {
+        flex: 0 0 auto;
+        min-height: 0;
+      }
+
       .theater-window[data-theater-window="quests"] .theater-quest-tracker-window {
         border: 0;
         border-radius: 0;
@@ -6414,6 +6436,12 @@ function renderTheaterStyles(): string {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
         margin-top: 12px;
+      }
+
+      .theater-resource-grid--compact {
+        grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
       }
 
       .theater-info-grid--two {
@@ -6745,6 +6773,39 @@ function renderTheaterStyles(): string {
         display: grid;
         gap: 10px;
         margin-top: 12px;
+      }
+
+      .theater-core-window-section {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .theater-core-window-section--cores {
+        flex: 0 0 auto;
+        order: 1;
+      }
+
+      .theater-core-window-section--annex {
+        flex: 0 0 auto;
+        order: 2;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .theater-core-ledger--cores,
+      .theater-core-ledger--annex {
+        min-height: 0;
+        overflow: visible;
+        align-content: start;
+      }
+
+      .theater-core-ledger--cores {
+        flex: 0 0 auto;
+      }
+
+      .theater-core-ledger--annex {
+        flex: 0 0 auto;
       }
 
       .theater-core-ledger-row {
@@ -10478,7 +10539,6 @@ export function renderTheaterCommandScreen(): void {
       ${renderQuestTrackerWindow(theater)}
       ${renderSelectedRoomWindow(theater)}
       ${renderAutomationWindow(theater)}
-      ${renderCoreWindow(theater)}
       ${renderFeedWindow(theater)}
       ${renderResourcesWindow(state, theater)}
       ${renderConsumablesWindow(state, theater)}

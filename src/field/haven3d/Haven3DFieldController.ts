@@ -4147,6 +4147,48 @@ export class Haven3DFieldController implements Haven3DModeController {
     return group;
   }
 
+  private createHavenNoticeboardGroup(
+    placement: Haven3DSceneObjectPlacement,
+    sourceObject: FieldObject | undefined,
+  ): THREE.Group | null {
+    if (placement.type !== "station" || sourceObject?.metadata?.havenNoticeboard !== true) {
+      return null;
+    }
+
+    const width = Math.max(2.35, placement.worldSize.width * 0.76);
+    const depth = Math.max(0.22, Math.min(0.52, placement.worldSize.depth * 0.24));
+    const panelHeight = Math.max(1.35, Math.min(1.75, placement.worldSize.height * 0.7));
+    const postHeight = panelHeight + 0.72;
+    const boardY = 1.18;
+    const frontZ = depth / 2 + 0.025;
+    const group = new THREE.Group();
+
+    group.add(
+      this.createFieldObjectBox([0.16, postHeight, 0.18], [-width * 0.42, postHeight / 2, 0], 0x3d2619),
+      this.createFieldObjectBox([0.16, postHeight, 0.18], [width * 0.42, postHeight / 2, 0], 0x3d2619),
+      this.createFieldObjectBox([width, panelHeight, depth], [0, boardY, 0], 0x6e482b),
+      this.createFieldObjectBox([width + 0.18, 0.12, depth + 0.08], [0, boardY + panelHeight / 2 + 0.06, 0], 0x3d2619),
+      this.createFieldObjectBox([width + 0.18, 0.12, depth + 0.08], [0, boardY - panelHeight / 2 - 0.06, 0], 0x3d2619),
+      this.createFieldObjectBox([width * 0.82, 0.28, 0.05], [0, boardY + panelHeight * 0.27, frontZ], 0x2a1a12),
+      this.createFieldObjectBox([width * 0.18, panelHeight * 0.36, 0.06], [-width * 0.27, boardY - panelHeight * 0.12, frontZ + 0.02], 0xdcc79b, {
+        rotation: [0, 0, -0.08],
+      }),
+      this.createFieldObjectBox([width * 0.2, panelHeight * 0.42, 0.06], [0, boardY - panelHeight * 0.14, frontZ + 0.025], 0xefe0b6, {
+        rotation: [0, 0, 0.04],
+      }),
+      this.createFieldObjectBox([width * 0.17, panelHeight * 0.32, 0.06], [width * 0.28, boardY - panelHeight * 0.13, frontZ + 0.02], 0xc8b17d, {
+        rotation: [0, 0, 0.1],
+      }),
+      this.createFieldObjectBox([width * 0.74, 0.035, 0.065], [0, boardY + panelHeight * 0.28, frontZ + 0.04], 0xd0aa55, {
+        emissive: 0x6b4517,
+        emissiveIntensity: 0.12,
+      }),
+    );
+
+    addInvertedHullOutlines(group, ARDYCIA_TOON_OUTLINE_SCALE.prop);
+    return group;
+  }
+
   private createHavenReturnBeacon(baseHeight: number): THREE.Group {
     const group = new THREE.Group();
     group.name = "HavenReturnBeacon";
@@ -4889,6 +4931,7 @@ export class Haven3DFieldController implements Haven3DModeController {
     sourceObject: FieldObject | undefined,
   ): THREE.Group {
     const group = this.createRouteFieldObjectGroup(placement, sourceObject)
+      ?? this.createHavenNoticeboardGroup(placement, sourceObject)
       ?? this.createSimpleDoorwayGroup(placement, sourceObject)
       ?? this.createHavenBuildingGroup(placement, sourceObject)
       ?? (usesOuterDeck3DSetDressing(this.options.map)
