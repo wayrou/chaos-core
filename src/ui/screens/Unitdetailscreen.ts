@@ -166,9 +166,6 @@ function drawNextUnitDetailSampleHand(unitId: string, deck: string[]): UnitSampl
 }
 
 function getUnitDetailSampleCardStrainDelta(card: EquipmentCard): number {
-  if (card.id === "core_wait") {
-    return -2;
-  }
   return Number(card.strainCost ?? 0);
 }
 

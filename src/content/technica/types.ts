@@ -183,6 +183,7 @@ export interface ImportedCard {
   targetType: "enemy" | "ally" | "self" | "tile";
   range: number;
   damage?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   effects: CardEffect[];
   effectFlow?: EffectFlowDocument;
   sourceClassId?: string;

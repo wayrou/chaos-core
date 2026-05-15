@@ -32,7 +32,12 @@ type UnitActor = {
   sprite: THREE.Sprite;
   spriteMaterial: THREE.SpriteMaterial;
   statusGroup: THREE.Group;
+  effectChipGroup: THREE.Group;
+  effectChipSignature: string;
   hpFill: THREE.Mesh;
+  hpText: THREE.Sprite;
+  hpTextMaterial: THREE.SpriteMaterial;
+  hpTextSignature: string;
   focusArrow: THREE.Sprite;
   focusArrowMaterial: THREE.SpriteMaterial;
   unitId: string;
@@ -144,6 +149,71 @@ function getHighlightColor(tile: BattleBoardSnapshot["tiles"][number]): string |
   if (tile.echoField) return "#ff9c4d";
   if (tile.hovered) return "#ffffff";
   return null;
+}
+
+function getFacingArrowRotation(direction: NonNullable<BattleBoardSnapshot["tiles"][number]["facingDirection"]>): number {
+  switch (direction) {
+    case "east":
+      return -Math.PI / 2;
+    case "south":
+      return Math.PI;
+    case "west":
+      return Math.PI / 2;
+    case "north":
+    default:
+      return 0;
+  }
+}
+
+function createFacingArrowShape(): THREE.Shape {
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0.4);
+  shape.lineTo(-0.26, 0.1);
+  shape.lineTo(-0.11, 0.1);
+  shape.lineTo(-0.11, -0.34);
+  shape.lineTo(0.11, -0.34);
+  shape.lineTo(0.11, 0.1);
+  shape.lineTo(0.26, 0.1);
+  shape.lineTo(0, 0.4);
+  return shape;
+}
+
+function createFacingArrowMarker(
+  direction: NonNullable<BattleBoardSnapshot["tiles"][number]["facingDirection"]>,
+  hovered: boolean,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.rotation.y = getFacingArrowRotation(direction);
+
+  const geometry = new THREE.ShapeGeometry(createFacingArrowShape());
+  const outline = new THREE.Mesh(
+    geometry.clone(),
+    new THREE.MeshBasicMaterial({
+      color: "#171006",
+      transparent: true,
+      opacity: hovered ? 0.78 : 0.62,
+      side: THREE.DoubleSide,
+    }),
+  );
+  outline.rotation.x = -Math.PI / 2;
+  outline.position.z = -0.002;
+  outline.scale.setScalar(1.22);
+  group.add(outline);
+
+  const fill = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      color: "#ffe08a",
+      transparent: true,
+      opacity: hovered ? 0.96 : 0.82,
+      side: THREE.DoubleSide,
+    }),
+  );
+  fill.rotation.x = -Math.PI / 2;
+  fill.position.z = 0.004;
+  group.add(fill);
+
+  return group;
 }
 
 function createPlaceholderBillboardTexture(): THREE.Texture {
@@ -280,6 +350,116 @@ const PLACEHOLDER_BILLBOARD_TEXTURE = createPlaceholderBillboardTexture();
 const FOCUS_ARROW_TEXTURE = createFocusArrowTexture();
 const BILLBOARD_BASE_HEIGHT = 1.22;
 const UNIT_TILE_CLEARANCE_Y = 0.002;
+
+function getUnitEffectChipColors(tone: BattleBoardSnapshot["units"][number]["effectChips"][number]["tone"]): {
+  background: string;
+  border: string;
+  text: string;
+} {
+  switch (tone) {
+    case "buff":
+      return { background: "rgba(18, 72, 47, 0.94)", border: "#75f0a4", text: "#dcffe8" };
+    case "control":
+      return { background: "rgba(56, 34, 94, 0.95)", border: "#c9a7ff", text: "#f0e5ff" };
+    case "guard":
+      return { background: "rgba(40, 64, 88, 0.95)", border: "#8ce6ff", text: "#e4fbff" };
+    case "hazard":
+      return { background: "rgba(91, 32, 18, 0.96)", border: "#ff9a5f", text: "#ffe7d8" };
+    case "strain":
+      return { background: "rgba(89, 24, 59, 0.96)", border: "#ff7cc6", text: "#ffe0f2" };
+    case "debuff":
+    default:
+      return { background: "rgba(86, 18, 24, 0.96)", border: "#ff8585", text: "#ffe1e1" };
+  }
+}
+
+function createUnitEffectChipTexture(chip: BattleBoardSnapshot["units"][number]["effectChips"][number]): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 180;
+  canvas.height = 56;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    const data = new Uint8Array([255, 255, 255, 255]);
+    const texture = new THREE.DataTexture(data, 1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  const colors = getUnitEffectChipColors(chip.tone);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.shadowColor = colors.border;
+  context.shadowBlur = 10;
+  context.lineWidth = 4;
+  context.strokeStyle = colors.border;
+  context.fillStyle = colors.background;
+  context.beginPath();
+  context.roundRect(5, 8, 170, 40, 14);
+  context.fill();
+  context.stroke();
+
+  context.shadowBlur = 0;
+  context.font = "800 20px JetBrains Mono, Consolas, monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = colors.text;
+  const hasDuration = typeof chip.duration === "number";
+  context.fillText(chip.label, hasDuration ? 76 : 90, 28);
+
+  if (hasDuration) {
+    context.fillStyle = "rgba(8, 10, 14, 0.74)";
+    context.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.roundRect(123, 16, 32, 24, 8);
+    context.fill();
+    context.stroke();
+    context.fillStyle = colors.text;
+    context.font = "800 16px JetBrains Mono, Consolas, monospace";
+    context.fillText(String(chip.duration), 139, 28);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function createUnitHpTextTexture(text: string, isEnemy: boolean): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 160;
+  canvas.height = 48;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    const data = new Uint8Array([255, 255, 255, 255]);
+    const texture = new THREE.DataTexture(data, 1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "rgba(8, 12, 18, 0.82)";
+  context.strokeStyle = isEnemy ? "rgba(255, 128, 128, 0.82)" : "rgba(130, 240, 167, 0.82)";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.roundRect(6, 8, 148, 32, 10);
+  context.fill();
+  context.stroke();
+
+  context.font = "800 20px JetBrains Mono, Consolas, monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "#f4f7ec";
+  context.fillText(text, 80, 24);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
 
 function getUnitAnchorY(tileTopY: number): number {
   return tileTopY + BOARD_TILE_TOP_THICKNESS + UNIT_TILE_CLEARANCE_Y;
@@ -787,6 +967,15 @@ export class BattleSceneController {
       if (!world) {
         return;
       }
+
+      if (tile.facingOption && tile.facingDirection) {
+        const arrow = createFacingArrowMarker(tile.facingDirection, Boolean(tile.hovered));
+        arrow.position.copy(world);
+        arrow.position.y += 0.105;
+        this.highlightGroup.add(arrow);
+        return;
+      }
+
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.2, tile.hovered ? 0.48 : 0.42, 30),
         new THREE.MeshBasicMaterial({
@@ -829,6 +1018,8 @@ export class BattleSceneController {
       const hpRatio = Math.max(0, Math.min(1, unit.maxHp > 0 ? unit.hp / unit.maxHp : 0));
       actor.hpFill.scale.x = Math.max(0.12, hpRatio);
       actor.hpFill.position.x = -0.22 + actor.hpFill.scale.x * 0.22;
+      this.syncUnitHpText(actor, unit);
+      this.syncUnitEffectChips(actor, unit.effectChips);
 
       if (!this.movementAnim || this.movementAnim.actor.unitId !== unit.id) {
         const world = tileToWorld(unit.x, unit.y, unit.elevation, snapshot.width, snapshot.height);
@@ -844,6 +1035,73 @@ export class BattleSceneController {
         this.unitActors.delete(unitId);
       }
     });
+  }
+
+  private syncUnitEffectChips(
+    actor: UnitActor,
+    chips: BattleBoardSnapshot["units"][number]["effectChips"],
+  ): void {
+    const signature = JSON.stringify(chips);
+    if (actor.effectChipSignature === signature) {
+      return;
+    }
+
+    this.clearUnitEffectChips(actor);
+    actor.effectChipSignature = signature;
+    const visibleChips = chips.slice(0, 4);
+    const columns = Math.min(2, Math.max(1, visibleChips.length));
+    visibleChips.forEach((chip, index) => {
+      const row = Math.floor(index / columns);
+      const col = index % columns;
+      const texture = createUnitEffectChipTexture(chip);
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.98,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.54, 0.17), material);
+      mesh.position.set((col - (columns - 1) / 2) * 0.58, 0.16 + row * 0.19, 0.006 + row * 0.002);
+      actor.effectChipGroup.add(mesh);
+    });
+  }
+
+  private syncUnitHpText(actor: UnitActor, unit: BattleBoardSnapshot["units"][number]): void {
+    const signature = `${unit.hp}/${unit.maxHp}/${unit.isEnemy ? "enemy" : "ally"}`;
+    if (actor.hpTextSignature === signature) {
+      return;
+    }
+
+    const previousTexture = actor.hpTextMaterial.map;
+    actor.hpTextMaterial.map = createUnitHpTextTexture(`${unit.hp}/${unit.maxHp}`, unit.isEnemy);
+    actor.hpTextMaterial.needsUpdate = true;
+    previousTexture?.dispose();
+    actor.hpTextSignature = signature;
+  }
+
+  private clearUnitEffectChips(actor: UnitActor): void {
+    while (actor.effectChipGroup.children.length > 0) {
+      const child = actor.effectChipGroup.children.pop();
+      if (!child) {
+        continue;
+      }
+      actor.effectChipGroup.remove(child);
+      child.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) {
+          return;
+        }
+        node.geometry.dispose();
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => {
+          if (material instanceof THREE.MeshBasicMaterial && material.map) {
+            material.map.dispose();
+          }
+          material.dispose();
+        });
+      });
+    }
   }
 
   private syncFocus(snapshot: BattleBoardSnapshot): void {
@@ -1178,6 +1436,22 @@ export class BattleSceneController {
     hpFill.position.set(0, 0, 0.001);
     statusGroup.add(hpFill);
 
+    const hpTextMaterial = new THREE.SpriteMaterial({
+      map: createUnitHpTextTexture("0/0", false),
+      transparent: true,
+      opacity: 0.96,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const hpText = new THREE.Sprite(hpTextMaterial);
+    hpText.position.set(0.52, 0.006, 0.004);
+    hpText.scale.set(0.42, 0.126, 1);
+    statusGroup.add(hpText);
+
+    const effectChipGroup = new THREE.Group();
+    effectChipGroup.position.set(0, 0.1, 0.004);
+    statusGroup.add(effectChipGroup);
+
     const focusArrowMaterial = new THREE.SpriteMaterial({
       map: FOCUS_ARROW_TEXTURE,
       color: "#ffffff",
@@ -1187,7 +1461,7 @@ export class BattleSceneController {
       depthWrite: false,
     });
     const focusArrow = new THREE.Sprite(focusArrowMaterial);
-    focusArrow.position.set(0, 0.32, 0.006);
+    focusArrow.position.set(0, 0.54, 0.008);
     focusArrow.scale.set(0.38, 0.38, 1);
     focusArrow.visible = false;
     statusGroup.add(focusArrow);
@@ -1198,7 +1472,12 @@ export class BattleSceneController {
       sprite,
       spriteMaterial,
       statusGroup,
+      effectChipGroup,
+      effectChipSignature: "",
       hpFill,
+      hpText,
+      hpTextMaterial,
+      hpTextSignature: "",
       focusArrow,
       focusArrowMaterial,
       unitId,
@@ -1207,10 +1486,12 @@ export class BattleSceneController {
   }
 
   private disposeUnitActor(actor: UnitActor): void {
+    this.clearUnitEffectChips(actor);
     actor.ring.geometry.dispose();
     (actor.ring.material as THREE.Material).dispose();
     actor.sprite.geometry.dispose();
     actor.spriteMaterial.dispose();
+    actor.hpTextMaterial.map?.dispose();
     actor.statusGroup.children.forEach((child) => {
       if (child instanceof THREE.Mesh) {
         child.geometry.dispose();
@@ -1289,7 +1570,7 @@ export class BattleSceneController {
         return;
       }
       const pulse = Math.sin(now * 0.006);
-      actor.focusArrow.position.y = 0.32 + pulse * 0.035;
+      actor.focusArrow.position.y = 0.54 + pulse * 0.035;
       const scale = 0.38 + Math.max(0, pulse) * 0.035;
       actor.focusArrow.scale.set(scale, scale, 1);
     });

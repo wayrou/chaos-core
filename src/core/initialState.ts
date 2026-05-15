@@ -169,8 +169,8 @@ function equipmentCardToGameCard(eqCard: EquipmentCard): Card {
     effects.push({ type: "push", amount: parseInt(pushMatch[1], 10) });
   }
 
-  // End turn (for Wait card)
-  if (eqCard.id === "core_wait" || eqCard.name.toLowerCase() === "wait") {
+  // Legacy end-turn cards only; Resolve keeps the historical id but no longer ends the turn.
+  if (eqCard.name.toLowerCase() === "wait") {
     effects.push({ type: "end_turn" });
   }
 
@@ -196,20 +196,20 @@ function createAllCards(): Record<CardId, Card> {
     {
       id: "strike",
       name: "Strike",
-      description: "Deal 5 damage to an adjacent enemy.",
+      description: "Deal high damage to an adjacent enemy.",
       strainCost: 2,
       targetType: "enemy",
       range: 1,
-      effects: [{ type: "damage", amount: 5 } as CardEffect],
+      effects: [{ type: "damage", amount: 5, damageBand: "high" } as CardEffect],
     },
     {
       id: "lunge",
       name: "Lunge",
-      description: "Deal 4 damage to an enemy up to 2 tiles away.",
+      description: "Deal damage to an enemy up to 2 tiles away.",
       strainCost: 2,
       targetType: "enemy",
       range: 2,
-      effects: [{ type: "damage", amount: 4 } as CardEffect],
+      effects: [{ type: "damage", amount: 4, damageBand: "normal" } as CardEffect],
     },
     {
       id: "brace",

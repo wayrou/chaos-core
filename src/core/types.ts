@@ -67,6 +67,7 @@ export type WeaponType =
 export interface CardEffect {
   type: string;
   amount?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   duration?: number;
   stat?: string;
   tiles?: number;
@@ -79,6 +80,8 @@ export interface Card {
   strainCost: number;
   targetType: "enemy" | "self" | "tile" | "ally";
   range?: number;
+  damage?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   effects: CardEffect[];
   effectFlow?: EffectFlowDocument;
   artPath?: string;
@@ -1431,6 +1434,8 @@ export interface EchoUnitDraftOption {
     accessory1: string | null;
     accessory2: string | null;
   };
+  equipmentById?: Record<string, import("./equipment").Equipment>;
+  equipmentPool?: string[];
   loadoutPreview: string[];
 }
 
@@ -1625,6 +1630,8 @@ export interface EchoRunState {
   encounterNumber: number;
   unitsById: Record<UnitId, Unit>;
   squadUnitIds: UnitId[];
+  equipmentById?: Record<string, import("./equipment").Equipment>;
+  equipmentPool?: string[];
   fields: EchoFieldDefinition[];
   tacticalModifiers: import("./fieldMods").FieldModInstance[];
   rerolls: number;

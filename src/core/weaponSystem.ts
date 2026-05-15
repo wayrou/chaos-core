@@ -650,7 +650,7 @@ export function getWeaponActionDisabledReason(
     const patchable = ([1, 2, 3, 4, 5, 6] as WeaponNodeId[]).some(
       (nodeId) => state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken",
     );
-    return patchable ? null : "No patchable damage";
+    return patchable || state.wear > 0 ? null : "No patchable wear or damage";
   }
 
   return null;
@@ -762,19 +762,29 @@ export function fullReload(
 
 export function fieldPatch(
   state: WeaponRuntimeState,
-): { state: WeaponRuntimeState; strainCost: number; repairedNodeId: WeaponNodeId | null } {
+): { state: WeaponRuntimeState; strainCost: number; repairedNodeId: WeaponNodeId | null; reducedWear: boolean } {
   const targetNode = ([1, 2, 3, 4, 5, 6] as WeaponNodeId[]).find(
     (nodeId) => state.nodes[nodeId] === "damaged" || state.nodes[nodeId] === "broken",
   );
+  const canReduceWear = state.wear > 0;
 
-  if (!targetNode) {
-    return { state, strainCost: 0, repairedNodeId: null };
+  if (!targetNode && !canReduceWear) {
+    return { state, strainCost: 0, repairedNodeId: null, reducedWear: false };
+  }
+
+  let nextState = targetNode ? repairNode(state, targetNode) : cloneState(state);
+  if (canReduceWear) {
+    nextState = {
+      ...nextState,
+      wear: Math.max(0, nextState.wear - 1),
+    };
   }
 
   return {
-    state: repairNode(state, targetNode),
+    state: nextState,
     strainCost: 1,
-    repairedNodeId: targetNode,
+    repairedNodeId: targetNode ?? null,
+    reducedWear: canReduceWear,
   };
 }
 

@@ -5,8 +5,8 @@ export const CORE_CARDS: EquipmentCard[] = [
     "id": "core_move_plus",
     "name": "Move+",
     "type": "core",
-    "strainCost": 1,
-    "description": "Move 2 extra tiles this turn.",
+    "strainCost": 3,
+    "description": "Gain a second movement phase this turn.",
     "range": "R(Self)",
   },
     {
@@ -28,7 +28,7 @@ export const CORE_CARDS: EquipmentCard[] = [
     },
     {
     "id": "core_overwatch",
-    "name": "Overwatch",
+    "name": "Vector",
     "type": "core",
     "strainCost": 6,
     "description": "Stun an enemy for one turn.",
@@ -53,10 +53,10 @@ export const CORE_CARDS: EquipmentCard[] = [
     },
     {
         id: "core_wait",
-        name: "Wait",
+        name: "Resolve",
         type: "core",
-        strainCost: 6,
-        description: "End turn without acting. Reduce strain by 2.",
+        strainCost: 0,
+        description: "If you have 3 cards or fewer in hand, reduce strain to 2.",
         range: "R(0-0)",
     },
 ];

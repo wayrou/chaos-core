@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { enableAutosave, triggerAutosave } from "./saveSystem";
 import { buildEchoFieldDefinition, getEchoFieldCatalog } from "./echoFieldEffects";
-import { getAllStarterEquipment, canEquipWeapon, type Equipment, type UnitLoadout } from "./equipment";
+import { getAllStarterEquipment, canEquipWeapon, type Equipment, type UnitLoadout, type WeaponEquipment } from "./equipment";
 import { getClassDefinition, type ClassId } from "./classes";
 import { calculatePWR, getPWRBand } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
@@ -54,6 +54,47 @@ const CLASS_TRAIT_POOLS: Record<EchoDraftClass, string[]> = {
   thief: ["Ghost Step", "Knife Drift", "Slipstream"],
   academic: ["Signal Analyst", "Directive Memory", "Measured Volley"],
   freelancer: ["Open Manual", "Loose Doctrine", "Adaptive Frame"],
+};
+
+const ECHO_GEAR_PREFIXES = [
+  "Abyssal",
+  "Blueglass",
+  "Deepwave",
+  "Duskline",
+  "Ghostlit",
+  "Lowtide",
+  "Night Relay",
+  "Signal",
+  "Voidblue",
+  "Wakebound",
+];
+
+const ECHO_GEAR_SUFFIXES = [
+  "Array",
+  "Cipher",
+  "Drift",
+  "Echo",
+  "Frame",
+  "Index",
+  "Lattice",
+  "Relay",
+  "Trace",
+  "Vector",
+];
+
+const ECHO_LOADOUT_SLOT_ORDER: Array<keyof UnitLoadout> = [
+  "primaryWeapon",
+  "secondaryWeapon",
+  "helmet",
+  "chestpiece",
+  "accessory1",
+  "accessory2",
+];
+
+type EchoGeneratedLoadout = {
+  loadout: UnitLoadout;
+  equipmentById: Record<string, Equipment>;
+  equipmentPool: string[];
 };
 
 const ECHO_RECOVERY_OPTIONS: EchoRecoveryOption[] = [
@@ -348,32 +389,173 @@ function getEquipmentPools(): {
   };
 }
 
-function rollEchoLoadout(unitClass: EchoDraftClass, encounterDepth: number, rng: () => number): UnitLoadout {
+function formatEchoSlotLabel(slot: keyof UnitLoadout): string {
+  switch (slot) {
+    case "primaryWeapon":
+      return "Primary";
+    case "secondaryWeapon":
+      return "Secondary";
+    case "helmet":
+      return "Head";
+    case "chestpiece":
+      return "Chest";
+    case "accessory1":
+      return "Relay";
+    case "accessory2":
+      return "Charm";
+    default:
+      return "Gear";
+  }
+}
+
+function adjustEchoGearStat(
+  rng: () => number,
+  baseValue: number,
+  stat: keyof Equipment["stats"],
+  encounterDepth: number,
+): number {
+  const depthBonus = Math.floor(Math.max(0, encounterDepth - 1) / 2);
+  const swing = stat === "hp"
+    ? randomInt(rng, -1, 2 + depthBonus)
+    : randomInt(rng, -1, 1 + depthBonus);
+  const occasionalSpark = rng() > 0.72 ? 1 : 0;
+  const nextValue = baseValue + swing + occasionalSpark;
+  if (stat === "acc") {
+    return Math.max(-2, Math.min(9, nextValue));
+  }
+  if (stat === "hp") {
+    return Math.max(-2, Math.min(8, nextValue));
+  }
+  return Math.max(-1, Math.min(7, nextValue));
+}
+
+function createEchoGearInstance(
+  template: Equipment,
+  slot: keyof UnitLoadout,
+  seedKey: string,
+  unitClass: EchoDraftClass,
+  encounterDepth: number,
+  rng: () => number,
+): Equipment {
+  const signature = hashSeed(`${seedKey}:${unitClass}:${slot}:${template.id}:${rng().toFixed(8)}`).toString(36);
+  const prefix = pickOne(rng, ECHO_GEAR_PREFIXES);
+  const suffix = pickOne(rng, ECHO_GEAR_SUFFIXES);
+  const id = `echo_gear_${signature}_${slot.toLowerCase()}`;
+  const stats = {
+    atk: adjustEchoGearStat(rng, template.stats.atk, "atk", encounterDepth),
+    def: adjustEchoGearStat(rng, template.stats.def, "def", encounterDepth),
+    agi: adjustEchoGearStat(rng, template.stats.agi, "agi", encounterDepth),
+    acc: adjustEchoGearStat(rng, template.stats.acc, "acc", encounterDepth),
+    hp: adjustEchoGearStat(rng, template.stats.hp, "hp", encounterDepth),
+  };
+  const metadata = {
+    ...(template.metadata ?? {}),
+    echoRunOnly: true,
+    sourceTemplateId: template.id,
+    echoSlot: slot,
+    echoDepth: encounterDepth,
+  };
+  const description = `Echo-run ${formatEchoSlotLabel(slot).toLowerCase()} gear forked from ${template.name}. Rolled for this run only.`;
+
+  if (template.slot === "weapon") {
+    const weapon = template as WeaponEquipment;
+    return {
+      ...weapon,
+      id,
+      name: `${prefix} ${weapon.name} ${suffix}`,
+      description,
+      stats,
+      wear: randomInt(rng, 0, 2),
+      inventory: {
+        massKg: Math.max(1, Math.round((weapon.inventory?.massKg ?? 2) + randomInt(rng, -1, 1))),
+        bulkBu: Math.max(1, Math.round((weapon.inventory?.bulkBu ?? 1) + randomInt(rng, -1, 1))),
+        powerW: Math.max(0, Math.round((weapon.inventory?.powerW ?? (weapon.isMechanical ? 2 : 0)) + randomInt(rng, 0, 1))),
+        startingOwned: false,
+      },
+      metadata,
+    };
+  }
+
+  return {
+    ...template,
+    id,
+    name: `${prefix} ${template.name} ${suffix}`,
+    description,
+    stats,
+    inventory: {
+      massKg: Math.max(1, Math.round((template.inventory?.massKg ?? 1) + randomInt(rng, -1, 1))),
+      bulkBu: Math.max(1, Math.round((template.inventory?.bulkBu ?? 1) + randomInt(rng, -1, 1))),
+      powerW: Math.max(0, Math.round((template.inventory?.powerW ?? 0) + randomInt(rng, 0, 1))),
+      startingOwned: false,
+    },
+    metadata,
+  } as Equipment;
+}
+
+function pickEchoTemplate(
+  rng: () => number,
+  templates: Equipment[],
+  usedTemplateIds: Set<string>,
+): Equipment {
+  const unused = templates.filter((template) => !usedTemplateIds.has(template.id));
+  const picked = pickOne(rng, unused.length > 0 ? unused : templates);
+  if (picked) {
+    usedTemplateIds.add(picked.id);
+  }
+  return picked;
+}
+
+function rollEchoLoadout(unitClass: EchoDraftClass, encounterDepth: number, seedKey: string, rng: () => number): EchoGeneratedLoadout {
   const equipmentPools = getEquipmentPools();
   const allowedWeapons = equipmentPools.weapons.filter((equipment) => (
     equipment.slot === "weapon" && canEquipWeapon(unitClass as ClassId, equipment.weaponType)
   ));
 
-  const primaryWeapon = pickOne(rng, allowedWeapons.length > 0 ? allowedWeapons : equipmentPools.weapons)?.id ?? null;
-  const includeHelmet = encounterDepth >= 2 || rng() > 0.45;
-  const includeChest = encounterDepth >= 3 || rng() > 0.42;
-  const accessorySlots = encounterDepth >= 6 ? 2 : encounterDepth >= 3 ? 1 : 0;
+  const gearById: Record<string, Equipment> = {};
+  const equipmentPool: string[] = [];
+  const loadout: UnitLoadout = {
+    primaryWeapon: null,
+    secondaryWeapon: null,
+    helmet: null,
+    chestpiece: null,
+    accessory1: null,
+    accessory2: null,
+  };
+  const usedTemplatesBySlot = new Map<keyof UnitLoadout, Set<string>>();
+  const getUsedTemplates = (slot: keyof UnitLoadout) => {
+    const normalizedSlot = slot === "secondaryWeapon" ? "primaryWeapon" : slot === "accessory2" ? "accessory1" : slot;
+    const existing = usedTemplatesBySlot.get(normalizedSlot);
+    if (existing) {
+      return existing;
+    }
+    const next = new Set<string>();
+    usedTemplatesBySlot.set(normalizedSlot, next);
+    return next;
+  };
 
-  const accessoryPool = [...equipmentPools.accessories];
-  const accessory1 = accessorySlots >= 1 && accessoryPool.length > 0
-    ? accessoryPool.splice(randomInt(rng, 0, accessoryPool.length - 1), 1)[0]?.id ?? null
-    : null;
-  const accessory2 = accessorySlots >= 2 && accessoryPool.length > 0
-    ? accessoryPool.splice(randomInt(rng, 0, accessoryPool.length - 1), 1)[0]?.id ?? null
-    : null;
+  const createForSlot = (slot: keyof UnitLoadout, templates: Equipment[]) => {
+    if (templates.length === 0) {
+      return;
+    }
+    const template = pickEchoTemplate(rng, templates, getUsedTemplates(slot));
+    const gear = createEchoGearInstance(template, slot, seedKey, unitClass, encounterDepth, rng);
+    gearById[gear.id] = gear;
+    equipmentPool.push(gear.id);
+    loadout[slot] = gear.id;
+  };
+
+  const weaponTemplates = allowedWeapons.length > 0 ? allowedWeapons : equipmentPools.weapons;
+  createForSlot("primaryWeapon", weaponTemplates);
+  createForSlot("secondaryWeapon", weaponTemplates);
+  createForSlot("helmet", equipmentPools.helmets);
+  createForSlot("chestpiece", equipmentPools.chestpieces);
+  createForSlot("accessory1", equipmentPools.accessories);
+  createForSlot("accessory2", equipmentPools.accessories);
 
   return {
-    primaryWeapon,
-    secondaryWeapon: null,
-    helmet: includeHelmet ? pickOne(rng, equipmentPools.helmets)?.id ?? null : null,
-    chestpiece: includeChest ? pickOne(rng, equipmentPools.chestpieces)?.id ?? null : null,
-    accessory1,
-    accessory2,
+    loadout,
+    equipmentById: gearById,
+    equipmentPool,
   };
 }
 
@@ -402,7 +584,8 @@ function createEchoUnitDraftOption(run: EchoRunState | null, optionIndex: number
   const namePool = CLASS_NAME_POOLS[unitClass];
   const stats = createEchoStats(unitClass, encounterDepth, rng);
   const affinities = createAffinityBiasForClass(unitClass, encounterDepth, rng);
-  const loadout = rollEchoLoadout(unitClass, encounterDepth, rng);
+  const gearRoll = rollEchoLoadout(unitClass, encounterDepth, seedKey, rng);
+  const loadout = gearRoll.loadout;
   const previewEquipment = Object.values(loadout).filter(Boolean) as string[];
 
   const runtimeUnit = {
@@ -423,7 +606,13 @@ function createEchoUnitDraftOption(run: EchoRunState | null, optionIndex: number
     stats,
   } as Unit;
 
-  const pwr = calculatePWR({ unit: runtimeUnit });
+  const pwr = calculatePWR({
+    unit: runtimeUnit,
+    equipmentById: {
+      ...getAllStarterEquipment(),
+      ...gearRoll.equipmentById,
+    },
+  });
 
   return {
     id: `echo_unit_option_${seedKey}_${optionIndex}`,
@@ -437,6 +626,8 @@ function createEchoUnitDraftOption(run: EchoRunState | null, optionIndex: number
     traitLabel: pickOne(rng, CLASS_TRAIT_POOLS[unitClass]),
     stats,
     loadout,
+    equipmentById: gearRoll.equipmentById,
+    equipmentPool: gearRoll.equipmentPool,
     loadoutPreview: previewEquipment,
   };
 }
@@ -931,6 +1122,27 @@ function getNode(run: EchoRunState, nodeId: string | null | undefined): EchoRunN
     return null;
   }
   return run.nodesById[nodeId] ?? null;
+}
+
+export function getEchoRunEquipmentById(run: EchoRunState | null | undefined): Record<string, Equipment> {
+  return {
+    ...getAllStarterEquipment(),
+    ...(run?.equipmentById ?? {}),
+  };
+}
+
+export function getEchoRunEquipmentPool(run: EchoRunState | null | undefined): string[] {
+  if (!run) {
+    return [];
+  }
+  const equippedIds = Object.values(run.unitsById ?? {}).flatMap((unit) => (
+    Object.values((unit as Unit & { loadout?: UnitLoadout }).loadout ?? {}).filter((value): value is string => typeof value === "string" && value.length > 0)
+  ));
+  return uniqueIds([
+    ...(run.equipmentPool ?? []),
+    ...Object.keys(run.equipmentById ?? {}),
+    ...equippedIds,
+  ]);
 }
 
 function readEchoRun(): EchoRunState | null {
@@ -1441,6 +1653,8 @@ export function startEchoRunSession(): EchoRunState {
     encounterNumber: 1,
     unitsById: {},
     squadUnitIds: [],
+    equipmentById: {},
+    equipmentPool: [],
     fields: [],
     tacticalModifiers: [],
     rerolls: 0,
@@ -1487,6 +1701,8 @@ export function rerollActiveEchoChoices(): EchoRunState | null {
 function applyDraftChoiceToRun(run: EchoRunState, choice: EchoRewardChoice): EchoRunState {
   if (choice.optionType === "unit_draft" && choice.unitOption) {
     const newUnit = createRuntimeEchoUnit(run, choice.unitOption);
+    const draftedEquipmentById = choice.unitOption.equipmentById ?? {};
+    const draftedEquipmentPool = choice.unitOption.equipmentPool ?? Object.keys(draftedEquipmentById);
     const nextRun = {
       ...run,
       unitsById: {
@@ -1494,6 +1710,14 @@ function applyDraftChoiceToRun(run: EchoRunState, choice: EchoRewardChoice): Ech
         [newUnit.id]: newUnit,
       },
       squadUnitIds: [...run.squadUnitIds, newUnit.id],
+      equipmentById: {
+        ...(run.equipmentById ?? {}),
+        ...draftedEquipmentById,
+      },
+      equipmentPool: uniqueIds([
+        ...(run.equipmentPool ?? []),
+        ...draftedEquipmentPool,
+      ]),
       unitsDrafted: run.unitsDrafted + 1,
     };
 
@@ -1679,6 +1903,7 @@ export function launchActiveEchoEncounterBattle(): BattleState | null {
 
   const encounter = createEchoEncounter(run, node);
   const state = getGameState();
+  const echoEquipmentById = getEchoRunEquipmentById(run);
   const unitIds = run.squadUnitIds.filter((unitId) => run.unitsById[unitId] && run.unitsById[unitId].hp > 0);
   const unitsById = Object.fromEntries(
     unitIds.map((unitId) => {
@@ -1694,6 +1919,7 @@ export function launchActiveEchoEncounterBattle(): BattleState | null {
     {
       partyUnitIds: unitIds,
       unitsById,
+      equipmentById: echoEquipmentById,
       maxUnitsPerSide: unitIds.length,
       modeContext: buildEchoBattleModeContext(run, node),
     },

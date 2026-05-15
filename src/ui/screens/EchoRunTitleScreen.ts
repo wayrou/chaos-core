@@ -67,10 +67,6 @@ export function renderEchoRunTitleScreen(): void {
             <div class="echo-run-title-screen__lead">
               <div class="echo-run-title-screen__signal">S/COM_OS // ECHO RUNS</div>
               <h1 class="echo-run-title-screen__title">ECHO RUN</h1>
-              <p class="echo-run-title-screen__copy">
-                Enter a draft-only simulation run built around temporary operators, branching strata,
-                escalating boss chains, and endlessly climbing route maps.
-              </p>
               ${hasResumeRun ? `
                 <div class="echo-run-title-screen__resume-note">
                   ACTIVE RUN DETECTED // STRATUM ${activeRun.currentStratum} // ENCOUNTER ${activeRun.encounterNumber} // ${activeRunStageLabel.toUpperCase()}
@@ -85,40 +81,6 @@ export function renderEchoRunTitleScreen(): void {
                 </button>
                 <button class="echo-run-secondary-btn echo-run-title-screen__action" type="button" id="echoRunTitleBackBtn">RETURN TO MAIN MENU</button>
               </div>
-            </div>
-
-            <div class="echo-run-title-screen__side">
-              <section class="echo-run-title-screen__panel echo-run-title-screen__panel--route">
-                <div class="echo-run-title-screen__panel-kicker">Route Preview</div>
-                <div class="echo-run-title-screen__route">
-                  <div class="echo-run-title-screen__route-row echo-run-title-screen__route-row--single">
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--milestone">Milestone</span>
-                  </div>
-                  <div class="echo-run-title-screen__route-links">
-                    <span></span><span></span><span></span>
-                  </div>
-                  <div class="echo-run-title-screen__route-row">
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--boss">Boss</span>
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--boss">Boss Chain</span>
-                  </div>
-                  <div class="echo-run-title-screen__route-links">
-                    <span></span><span></span><span></span>
-                  </div>
-                  <div class="echo-run-title-screen__route-row">
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--support">Support</span>
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--elite">Elite</span>
-                    <span class="echo-run-title-screen__route-chip echo-run-title-screen__route-chip--support">Support</span>
-                  </div>
-                  <div class="echo-run-title-screen__route-links">
-                    <span></span><span></span><span></span>
-                  </div>
-                  <div class="echo-run-title-screen__route-row">
-                    <span class="echo-run-title-screen__route-chip">Encounter</span>
-                    <span class="echo-run-title-screen__route-chip">Encounter</span>
-                    <span class="echo-run-title-screen__route-chip">Encounter</span>
-                  </div>
-                </div>
-              </section>
             </div>
           </div>
 

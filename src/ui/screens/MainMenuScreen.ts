@@ -107,6 +107,8 @@ const MAIN_MENU_MIN_WIDTH = 112;
 const MAIN_MENU_MIN_HEIGHT = 44;
 const MAIN_MENU_MINIMIZED_HEIGHT = 58;
 const MAIN_MENU_MINIMIZED_WIDTH = 58;
+const MAIN_MENU_NON_BETA_UNLOCK_SESSION_KEY = "chaoscore_nonbeta_access_unlocked";
+const MAIN_MENU_NON_BETA_ACCESS_CODE = "9555";
 const MAIN_MENU_THEMES = [
   "mainmenu-action-tile--theme-ember",
   "mainmenu-action-tile--theme-violet",
@@ -199,6 +201,61 @@ const MAIN_MENU_BACKGROUND_THEMES: MainMenuBackgroundTheme[] = [
     },
   },
 ];
+
+function isMainMenuNonBetaUnlocked(): boolean {
+  try {
+    return sessionStorage.getItem(MAIN_MENU_NON_BETA_UNLOCK_SESSION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setMainMenuNonBetaUnlocked(): void {
+  try {
+    sessionStorage.setItem(MAIN_MENU_NON_BETA_UNLOCK_SESSION_KEY, "true");
+  } catch {
+    // Session storage can be unavailable in constrained webviews; the current click still proceeds.
+  }
+}
+
+function getMainMenuNonBetaLockClass(): string {
+  return isMainMenuNonBetaUnlocked() ? "" : " mainmenu-btn--locked";
+}
+
+function getMainMenuNonBetaLockAttrs(): string {
+  return isMainMenuNonBetaUnlocked() ? "" : ' aria-disabled="true" data-nonbeta-locked="true"';
+}
+
+function renderMainMenuNonBetaLockTag(): string {
+  return isMainMenuNonBetaUnlocked() ? "" : '<span class="mainmenu-feature-lock">LOCKED</span>';
+}
+
+function unlockVisibleMainMenuNonBetaButtons(): void {
+  document.querySelectorAll<HTMLElement>(".mainmenu-btn--locked").forEach((button) => {
+    button.classList.remove("mainmenu-btn--locked");
+    button.removeAttribute("aria-disabled");
+    button.removeAttribute("data-nonbeta-locked");
+  });
+  document.querySelectorAll<HTMLElement>(".mainmenu-feature-lock").forEach((tag) => tag.remove());
+}
+
+function requestMainMenuNonBetaAccess(actionLabel: string): boolean {
+  if (isMainMenuNonBetaUnlocked()) {
+    return true;
+  }
+
+  const entered = window.prompt(`${actionLabel} is locked for now. Enter access code to unlock non-beta features.`);
+  if (entered?.trim() === MAIN_MENU_NON_BETA_ACCESS_CODE) {
+    setMainMenuNonBetaUnlocked();
+    unlockVisibleMainMenuNonBetaButtons();
+    return true;
+  }
+
+  if (entered !== null) {
+    window.alert("Access code rejected.");
+  }
+  return false;
+}
 
 function getStoredMainMenuBackgroundThemeKey(): string {
   try {
@@ -331,6 +388,10 @@ export async function renderMainMenu(): Promise<void> {
   const hasContinue = await canContinue();
   const saves = await listSaves();
   const mostRecentSave = saves.length > 0 ? saves[0] : null;
+  const nonBetaFeatureTag = '<span class="mainmenu-feature-status mainmenu-feature-status--nonbeta">NON-BETA</span>';
+  const nonBetaLockClass = getMainMenuNonBetaLockClass();
+  const nonBetaLockAttrs = getMainMenuNonBetaLockAttrs();
+  const nonBetaLockTag = renderMainMenuNonBetaLockTag();
   
   // Flavor text for the terminal - will be output continuously
   const flavorLines = [
@@ -368,10 +429,6 @@ export async function renderMainMenu(): Promise<void> {
         <div class="mainmenu-vignette"></div>
         <div class="mainmenu-particles"></div>
       </div>
-      <div class="mainmenu-experimental-tag" aria-label="Experimental build">
-        EXPERIMENTAL BUILD
-      </div>
-      
       <!-- Two-column layout: Logo/Menu on left, Terminal on right -->
       <div class="mainmenu-content">
         <!-- Left column: Logo and Menu -->
@@ -394,24 +451,30 @@ export async function renderMainMenu(): Promise<void> {
           <div class="mainmenu-menu-section">
             <div class="mainmenu-buttons">
               ${hasContinue ? `
-                <button class="mainmenu-btn mainmenu-btn-primary" data-action="continue">
+                <button class="mainmenu-btn mainmenu-btn-primary${nonBetaLockClass}" data-action="continue"${nonBetaLockAttrs}>
                   <span class="btn-icon">▶</span>
                   <span class="btn-text">CONTINUE</span>
                   ${mostRecentSave ? `
                     <span class="btn-subtitle">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>
                   ` : ''}
+                  ${nonBetaFeatureTag}
+                  ${nonBetaLockTag}
                 </button>
               ` : ''}
 
-              <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}" data-action="new-op">
+              <button class="mainmenu-btn ${hasContinue ? 'mainmenu-btn-secondary' : 'mainmenu-btn-primary'}${nonBetaLockClass}" data-action="new-op"${nonBetaLockAttrs}>
                 <span class="btn-icon">⚔</span>
                 <span class="btn-text">NEW GAME</span>
+                ${nonBetaFeatureTag}
+                ${nonBetaLockTag}
               </button>
 
               ${saves.length > 0 ? `
-                <button class="mainmenu-btn mainmenu-btn-secondary" data-action="load">
+                <button class="mainmenu-btn mainmenu-btn-secondary${nonBetaLockClass}" data-action="load"${nonBetaLockAttrs}>
                   <span class="btn-icon">📂</span>
                   <span class="btn-text">LOAD GAME</span>
+                  ${nonBetaFeatureTag}
+                  ${nonBetaLockTag}
                 </button>
               ` : ''}
 
@@ -770,6 +833,10 @@ function buildMainMenuButtonTiles(
 ): string {
   const tiles: string[] = [];
   const nonBetaFeatureTag = '<span class="mainmenu-feature-status mainmenu-feature-status--nonbeta">NON-BETA</span>';
+  const betaFeatureTag = '<span class="mainmenu-feature-status mainmenu-feature-status--beta">BETA</span>';
+  const nonBetaLockClass = getMainMenuNonBetaLockClass();
+  const nonBetaLockAttrs = getMainMenuNonBetaLockAttrs();
+  const nonBetaLockTag = renderMainMenuNonBetaLockTag();
 
   if (hasContinue) {
     tiles.push(`
@@ -779,10 +846,12 @@ function buildMainMenuButtonTiles(
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="continue" aria-label="Cycle continue color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="continue" aria-label="Minimize continue">_</button>
         </div>
-        <button class="mainmenu-btn mainmenu-btn-primary all-nodes-node-btn all-nodes-node-btn--primary" data-action="continue" type="button">
+        <button class="mainmenu-btn mainmenu-btn-primary all-nodes-node-btn all-nodes-node-btn--primary${nonBetaLockClass}" data-action="continue" type="button"${nonBetaLockAttrs}>
           <span class="btn-icon node-icon">▶</span>
           <span class="btn-text node-label">CONTINUE</span>
           ${mostRecentSave ? `<span class="btn-subtitle node-desc">${formatSaveTimestamp(mostRecentSave.timestamp)}</span>` : ""}
+          ${nonBetaFeatureTag}
+          ${nonBetaLockTag}
         </button>
         <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="continue" aria-label="Resize continue"></button>
       </div>
@@ -796,9 +865,11 @@ function buildMainMenuButtonTiles(
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="new-op" aria-label="Cycle new operation color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="new-op" aria-label="Minimize new operation">_</button>
       </div>
-      <button class="mainmenu-btn ${hasContinue ? "mainmenu-btn-secondary" : "mainmenu-btn-primary"} all-nodes-node-btn all-nodes-node-btn--primary" data-action="new-op" type="button">
+      <button class="mainmenu-btn ${hasContinue ? "mainmenu-btn-secondary" : "mainmenu-btn-primary"} all-nodes-node-btn all-nodes-node-btn--primary${nonBetaLockClass}" data-action="new-op" type="button"${nonBetaLockAttrs}>
         <span class="btn-icon node-icon">⚔</span>
         <span class="btn-text node-label">NEW GAME</span>
+        ${nonBetaFeatureTag}
+        ${nonBetaLockTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="new-op" aria-label="Resize new operation"></button>
     </div>
@@ -815,7 +886,7 @@ function buildMainMenuButtonTiles(
         <span class="btn-icon node-icon">◈</span>
         <span class="btn-text node-label">ECHO RUNS</span>
         <span class="btn-subtitle node-desc">Draft-only simulation mode</span>
-        ${nonBetaFeatureTag}
+        ${betaFeatureTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="echo-runs" aria-label="Resize echo runs"></button>
     </div>
@@ -828,11 +899,12 @@ function buildMainMenuButtonTiles(
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="multiplayer" aria-label="Cycle multiplayer color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="multiplayer" aria-label="Minimize multiplayer">_</button>
       </div>
-      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility" data-action="multiplayer" type="button">
+      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility${nonBetaLockClass}" data-action="multiplayer" type="button"${nonBetaLockAttrs}>
         <span class="btn-icon node-icon">COM</span>
         <span class="btn-text node-label">MULTIPLAYER</span>
         <span class="btn-subtitle node-desc">Lobby, Skirmish, Co-Op Ops</span>
         ${nonBetaFeatureTag}
+        ${nonBetaLockTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="multiplayer" aria-label="Resize multiplayer"></button>
     </div>
@@ -845,11 +917,12 @@ function buildMainMenuButtonTiles(
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="map-builder" aria-label="Cycle map builder color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
         <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="map-builder" aria-label="Minimize map builder">_</button>
       </div>
-      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility" data-action="map-builder" type="button">
+      <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--utility${nonBetaLockClass}" data-action="map-builder" type="button"${nonBetaLockAttrs}>
         <span class="btn-icon node-icon">MAP</span>
         <span class="btn-text node-label">MAP BUILDER</span>
         <span class="btn-subtitle node-desc">Custom Skirmish Maps & Quick Tests</span>
         ${nonBetaFeatureTag}
+        ${nonBetaLockTag}
       </button>
       <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="map-builder" aria-label="Resize map builder"></button>
     </div>
@@ -863,9 +936,11 @@ function buildMainMenuButtonTiles(
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--color all-nodes-item-color" type="button" data-mainmenu-color="load" aria-label="Cycle load game color"><span class="all-nodes-item-color-dot" aria-hidden="true"></span></button>
           <button class="mainmenu-action-tile__control mainmenu-action-tile__control--minimize all-nodes-item-minimize" type="button" data-mainmenu-minimize="load" aria-label="Minimize load game">_</button>
         </div>
-        <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--stable" data-action="load" type="button">
+        <button class="mainmenu-btn mainmenu-btn-secondary all-nodes-node-btn all-nodes-node-btn--stable${nonBetaLockClass}" data-action="load" type="button"${nonBetaLockAttrs}>
           <span class="btn-icon node-icon">📂</span>
           <span class="btn-text node-label">LOAD GAME</span>
+          ${nonBetaFeatureTag}
+          ${nonBetaLockTag}
         </button>
         <button class="mainmenu-action-tile__resize all-nodes-item-resize" type="button" data-mainmenu-resize="load" aria-label="Resize load game"></button>
       </div>
@@ -1559,6 +1634,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const continueBtn = root.querySelector<HTMLButtonElement>('button[data-action="continue"]');
   if (continueBtn) {
     continueBtn.addEventListener("click", async () => {
+      if (!requestMainMenuNonBetaAccess("Continue")) {
+        return;
+      }
       continueBtn.disabled = true;
       const originalHtml = continueBtn.innerHTML;
       continueBtn.innerHTML = `<span class="btn-text">Loading...</span>`;
@@ -1582,6 +1660,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const newOpBtn = root.querySelector<HTMLButtonElement>('button[data-action="new-op"]');
   if (newOpBtn) {
     newOpBtn.addEventListener("click", async () => {
+      if (!requestMainMenuNonBetaAccess("New Game")) {
+        return;
+      }
       if (saves.length > 0) {
         if (!(await confirmNewOperationStart())) {
           return;
@@ -1629,6 +1710,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const multiplayerBtn = root.querySelector<HTMLButtonElement>('button[data-action="multiplayer"]');
   if (multiplayerBtn) {
     multiplayerBtn.addEventListener("click", async () => {
+      if (!requestMainMenuNonBetaAccess("Multiplayer")) {
+        return;
+      }
       const { renderCommsArrayScreen } = await import("./CommsArrayScreen");
       teardownMainMenuWorkspace();
       renderCommsArrayScreen("menu");
@@ -1638,6 +1722,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const mapBuilderBtn = root.querySelector<HTMLButtonElement>('button[data-action="map-builder"]');
   if (mapBuilderBtn) {
     mapBuilderBtn.addEventListener("click", async () => {
+      if (!requestMainMenuNonBetaAccess("Map Builder")) {
+        return;
+      }
       const { renderMapBuilderScreen } = await import("./MapBuilderScreen");
       teardownMainMenuWorkspace();
       renderMapBuilderScreen();
@@ -1648,6 +1735,9 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const loadBtn = root.querySelector<HTMLButtonElement>('button[data-action="load"]');
   if (loadBtn) {
     loadBtn.addEventListener("click", () => {
+      if (!requestMainMenuNonBetaAccess("Load Game")) {
+        return;
+      }
       openLoadModal(saves);
     });
   }

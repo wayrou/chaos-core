@@ -60,7 +60,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Strike",
     rarity: "common",
     category: "attack",
-    description: "Deal 3 damage to adjacent enemy.",
+    description: "Deal low damage to adjacent enemy.",
     strainCost: 1,
   },
   card_guard: {
@@ -76,8 +76,8 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Move+",
     rarity: "common",
     category: "mobility",
-    description: "Move 2 extra tiles this turn.",
-    strainCost: 1,
+    description: "Gain a second movement phase this turn.",
+    strainCost: 3,
   },
   card_focus: {
     id: "card_focus",
@@ -94,7 +94,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Power Strike",
     rarity: "uncommon",
     category: "attack",
-    description: "Deal 5 damage. High strain cost.",
+    description: "Deal high damage. High strain cost.",
     strainCost: 2,
   },
   card_cleave: {
@@ -102,7 +102,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Cleave",
     rarity: "uncommon",
     category: "attack",
-    description: "Deal 3 damage to up to 3 adjacent enemies.",
+    description: "Deal low damage to up to 3 adjacent enemies.",
     strainCost: 2,
   },
   card_lunge: {
@@ -110,7 +110,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Lunge",
     rarity: "uncommon",
     category: "attack",
-    description: "Move 2 tiles and attack. Deal 4 damage.",
+    description: "Move 2 tiles and attack. Deal damage.",
     strainCost: 2,
   },
   card_piercing_shot: {
@@ -126,7 +126,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Execute",
     rarity: "rare",
     category: "attack",
-    description: "Deal 8 damage to enemies below 30% HP.",
+    description: "Deal massive damage to enemies below 30% HP.",
     strainCost: 3,
   },
   card_whirlwind: {
@@ -134,7 +134,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Whirlwind",
     rarity: "rare",
     category: "attack",
-    description: "Deal 4 damage to ALL adjacent enemies.",
+    description: "Deal damage to ALL adjacent enemies.",
     strainCost: 3,
   },
 
@@ -152,7 +152,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Parry",
     rarity: "uncommon",
     category: "defense",
-    description: "If attacked, counter for 2 damage.",
+    description: "If attacked, counter for low damage.",
     strainCost: 1,
   },
   card_shield_wall: {
@@ -264,7 +264,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Steam Burst",
     rarity: "uncommon",
     category: "steam",
-    description: "Deal 4 damage. Adds +2 heat to weapon.",
+    description: "Deal damage. Adds +2 heat to weapon.",
     strainCost: 1,
   },
   card_vent: {
@@ -280,7 +280,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Pressure Valve",
     rarity: "uncommon",
     category: "steam",
-    description: "Convert 2 heat into +2 damage on next attack.",
+    description: "Convert 2 heat into bonus damage on next attack.",
     strainCost: 1,
   },
   card_overheat: {
@@ -288,7 +288,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Overheat",
     rarity: "rare",
     category: "steam",
-    description: "Deal 6 damage. Weapon gains max heat.",
+    description: "Deal massive damage. Weapon gains max heat.",
     strainCost: 2,
   },
   card_thermal_shield: {
@@ -306,7 +306,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Chaos Bolt",
     rarity: "uncommon",
     category: "chaos",
-    description: "Deal 2-6 random damage to target.",
+    description: "Deal random damage to target.",
     strainCost: 1,
   },
   card_entropy: {
@@ -322,7 +322,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Void Touch",
     rarity: "rare",
     category: "chaos",
-    description: "Deal 3 damage. Heal for damage dealt.",
+    description: "Deal low damage. Heal for damage dealt.",
     strainCost: 2,
   },
   card_reality_tear: {
@@ -338,7 +338,7 @@ export const LIBRARY_CARD_DATABASE: Record<string, LibraryCard> = {
     name: "Chaos Storm",
     rarity: "epic",
     category: "chaos",
-    description: "Deal 3 damage to ALL units (including allies).",
+    description: "Deal low damage to ALL units (including allies).",
     strainCost: 4,
   },
 };

@@ -336,6 +336,62 @@
     inset 0 0 8px rgba(255, 204, 110, 0.2);
 }
 
+.battle-tile-facing-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+  filter:
+    drop-shadow(0 0 3px rgba(0, 0, 0, 0.88))
+    drop-shadow(0 0 8px rgba(255, 204, 110, 0.48));
+  pointer-events: none;
+}
+
+.battle-tile-facing-arrow::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 16px solid transparent;
+  border-right: 16px solid transparent;
+  border-bottom: 18px solid #ffe08a;
+}
+
+.battle-tile-facing-arrow::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 17px;
+  width: 12px;
+  height: 23px;
+  transform: translateX(-50%);
+  border-radius: 2px 2px 5px 5px;
+  background: #ffe08a;
+}
+
+.battle-tile-facing-arrow--east {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.battle-tile-facing-arrow--south {
+  transform: translate(-50%, -50%) rotate(180deg);
+}
+
+.battle-tile-facing-arrow--west {
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+
+.battle-tile--facing-option:hover .battle-tile-facing-arrow {
+  filter:
+    drop-shadow(0 0 4px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 0 12px rgba(255, 224, 138, 0.74));
+}
+
 @keyframes tile-pulse-move {
 
   0%,

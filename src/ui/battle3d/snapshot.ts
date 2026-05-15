@@ -1,4 +1,4 @@
-import type { BattleState, BattleUnitState } from "../../core/battle";
+import { isOverStrainThreshold, type BattleState, type BattleUnitState } from "../../core/battle";
 import { getBattleUnitPortraitPath, getUnitManagementStandIconPath } from "../../core/portraits";
 import type { EchoFieldPlacement } from "../../core/types";
 import type { TacticalMapDefinition } from "../../core/tacticalMaps";
@@ -7,6 +7,94 @@ import type {
   BattleBoardSnapshot,
   BattleBoardTileVisual,
 } from "./types";
+
+type UnitEffectChip = BattleBoardSnapshot["units"][number]["effectChips"][number];
+
+const STATUS_CHIP_PRESENTATION: Record<string, { label: string; tone: UnitEffectChip["tone"] }> = {
+  stunned: { label: "STUN", tone: "control" },
+  dazed: { label: "DAZE", tone: "debuff" },
+  immobilized: { label: "IMMOB", tone: "control" },
+  rooted: { label: "ROOT", tone: "control" },
+  suppressed: { label: "SUPP", tone: "debuff" },
+  weakened: { label: "WEAK", tone: "debuff" },
+  vulnerable: { label: "VULN", tone: "debuff" },
+  guarded: { label: "GUARD", tone: "guard" },
+  marked: { label: "MARK", tone: "debuff" },
+  burning: { label: "BURN", tone: "hazard" },
+  poisoned: { label: "POIS", tone: "hazard" },
+};
+
+function formatBuffLabel(buffType: string, amount: number): { label: string; tone: UnitEffectChip["tone"] } {
+  const normalized = buffType.toLowerCase();
+  const stat = normalized.includes("atk")
+    ? "ATK"
+    : normalized.includes("def")
+      ? "DEF"
+      : normalized.includes("agi")
+        ? "AGI"
+        : normalized.includes("acc")
+          ? "ACC"
+          : normalized.includes("move")
+            ? "MOV"
+            : normalized.replace(/_/g, " ").slice(0, 4).toUpperCase();
+  const sign = amount >= 0 ? "+" : "-";
+  return {
+    label: `${stat}${sign}${Math.abs(amount)}`,
+    tone: amount >= 0 ? "buff" : "debuff",
+  };
+}
+
+function buildUnitEffectChips(unit: BattleUnitState): UnitEffectChip[] {
+  const chips: UnitEffectChip[] = [];
+  (unit.statuses ?? []).forEach((status, index) => {
+    const presentation = STATUS_CHIP_PRESENTATION[status.type] ?? {
+      label: status.type.replace(/_/g, " ").slice(0, 5).toUpperCase(),
+      tone: "debuff" as const,
+    };
+    chips.push({
+      id: `status:${status.type}:${index}`,
+      label: presentation.label,
+      tone: presentation.tone,
+      duration: Number.isFinite(status.duration) && status.duration > 0 ? status.duration : undefined,
+    });
+  });
+
+  (unit.buffs ?? []).forEach((buff, index) => {
+    const presentation = formatBuffLabel(buff.type, buff.amount);
+    chips.push({
+      id: `buff:${buff.type}:${index}`,
+      label: presentation.label,
+      tone: presentation.tone,
+      duration: Number.isFinite(buff.duration) && buff.duration > 0 ? buff.duration : undefined,
+    });
+  });
+
+  if (isOverStrainThreshold(unit)) {
+    chips.push({
+      id: "state:overstrain",
+      label: "OVR",
+      tone: "strain",
+    });
+  }
+
+  if ((unit.nextTurnDrawPenalty ?? 0) > 0) {
+    chips.push({
+      id: "state:draw_penalty",
+      label: `DRW-${unit.nextTurnDrawPenalty}`,
+      tone: "strain",
+    });
+  }
+
+  if (unit.weaponState?.isJammed) {
+    chips.push({
+      id: "weapon:jammed",
+      label: "JAM",
+      tone: "debuff",
+    });
+  }
+
+  return chips.slice(0, 4);
+}
 
 export interface BattleBoardSyncOptions {
   moveTiles?: Set<string>;
@@ -37,6 +125,22 @@ export function createBattleBoardSnapshot(
   const facingTiles = options.facingTiles ?? new Set<string>();
   const hiddenUnitIds = options.hiddenUnitIds ?? new Set<string>();
   const echoFieldPlacements = options.echoFieldPlacements ?? [];
+  const activeFacingUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] ?? null : null;
+
+  const getFacingDirectionForTile = (x: number, y: number): "north" | "south" | "east" | "west" | undefined => {
+    if (!activeFacingUnit?.pos) {
+      return undefined;
+    }
+    const dx = x - activeFacingUnit.pos.x;
+    const dy = y - activeFacingUnit.pos.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      if (dx > 0) return "east";
+      if (dx < 0) return "west";
+    }
+    if (dy > 0) return "south";
+    if (dy < 0) return "north";
+    return undefined;
+  };
 
   const boardKey = JSON.stringify({
     id: battle.id,
@@ -90,6 +194,7 @@ export function createBattleBoardSnapshot(
       attackOption: attackTiles.has(key),
       placementOption: placementTiles.has(key),
       facingOption: facingTiles.has(key),
+      facingDirection: facingTiles.has(key) ? getFacingDirectionForTile(x, y) : undefined,
       hovered: Boolean(options.hoveredTile && options.hoveredTile.x === x && options.hoveredTile.y === y),
       relayZone: isRelay,
       extractionZone: isExtraction,
@@ -122,6 +227,7 @@ export function createBattleBoardSnapshot(
       facing: unit.facing,
       controller: unit.controller?.toString(),
       elevation: getUnitElevation(battle, unit),
+      effectChips: buildUnitEffectChips(unit),
     }));
 
   return {

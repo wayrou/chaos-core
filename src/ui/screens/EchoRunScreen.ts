@@ -4,6 +4,8 @@ import {
   applyEchoDraftChoice,
   clearActiveEchoRun,
   getActiveEchoRun,
+  getEchoRunEquipmentById,
+  getEchoRunEquipmentPool,
   getEchoModifierDef,
   getEchoResultsSummary,
   launchActiveEchoEncounterBattle,
@@ -11,14 +13,39 @@ import {
   rerollActiveEchoChoices,
   startEchoRunSession,
 } from "../../core/echoRuns";
-import { getAllStarterEquipment } from "../../core/equipment";
+import {
+  buildDeckFromLoadout,
+  calculateEquipmentStats,
+  canEquipWeapon,
+  getAllEquipmentCards,
+  getAllStarterEquipment,
+  sanitizeLoadoutForUnitClass,
+  type EquipmentCard,
+  type Equipment,
+  type UnitClass,
+  type UnitLoadout,
+} from "../../core/equipment";
 import { enableAutosave, triggerAutosave } from "../../core/saveSystem";
-import type { EchoRewardChoice, EchoRunNode, EchoUnitDraftOption } from "../../core/types";
+import type { EchoRewardChoice, EchoRunNode, EchoUnitDraftOption, Unit } from "../../core/types";
 import { showConfirmDialog } from "../components/confirmDialog";
+import { showEquipmentDetailModal } from "../components/equipmentDetailModal";
 
 const echoDraftPreviewByStage = new Map<string, string>();
 const echoMapSelectionByStratum = new Map<string, string>();
 const echoMapViewportByStratum = new Map<string, { x: number; y: number; zoom: number }>();
+
+type EchoMapWindowId = "command" | "squad" | "detail";
+
+interface EchoMapWindowFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+}
+
+const echoMapWindowFramesByStratum = new Map<string, Record<EchoMapWindowId, EchoMapWindowFrame>>();
+let echoMapWindowZCounter = 24;
 
 const ECHO_MAP_MIN_ZOOM = 0.7;
 const ECHO_MAP_MAX_ZOOM = 1.65;
@@ -32,9 +59,31 @@ let echoMapWheelHandler: ((event: WheelEvent) => void) | null = null;
 let echoRunEscapeHandler: ((event: KeyboardEvent) => void) | null = null;
 let echoMapPressedKeys = new Set<string>();
 let echoMapShiftHeld = false;
+let echoManageUnitsOpen = false;
+let selectedEchoManageUnitId: string | null = null;
+
+const ECHO_LOADOUT_SLOTS: Array<{ slot: keyof UnitLoadout; label: string }> = [
+  { slot: "primaryWeapon", label: "Primary Weapon" },
+  { slot: "secondaryWeapon", label: "Secondary Weapon" },
+  { slot: "helmet", label: "Helmet" },
+  { slot: "chestpiece", label: "Chestpiece" },
+  { slot: "accessory1", label: "Accessory I" },
+  { slot: "accessory2", label: "Accessory II" },
+];
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function escapeEchoHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeEchoAttr(value: unknown): string {
+  return escapeEchoHtml(value).replace(/"/g, "&quot;");
 }
 
 function getEchoPreviewStageKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
@@ -47,6 +96,89 @@ function getEchoMapSelectionKey(run: NonNullable<ReturnType<typeof getActiveEcho
 
 function getEchoMapViewportKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
   return `${run.id}:viewport:${run.currentStratum}`;
+}
+
+function getEchoMapWindowFrameKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  return `${run.id}:windows:${run.currentStratum}`;
+}
+
+function createDefaultEchoMapWindowFrames(): Record<EchoMapWindowId, EchoMapWindowFrame> {
+  const viewportWidth = window.innerWidth || 1440;
+  const viewportHeight = window.innerHeight || 900;
+  const inset = 16;
+  const commandWidth = clampNumber(Math.round(viewportWidth * 0.31), 360, 460);
+  const commandHeight = clampNumber(Math.round(viewportHeight * 0.24), 170, 220);
+  const squadWidth = clampNumber(Math.round(viewportWidth * 0.22), 260, 340);
+  const squadHeight = clampNumber(Math.round(viewportHeight * 0.44), 270, 420);
+  const detailWidth = clampNumber(Math.round(viewportWidth * 0.39), 420, 580);
+  const detailHeight = clampNumber(Math.round(viewportHeight * 0.25), 190, 260);
+  const squadY = clampNumber(
+    commandHeight + inset * 2,
+    inset,
+    Math.max(inset, viewportHeight - squadHeight - inset),
+  );
+
+  return {
+    command: {
+      x: inset,
+      y: inset,
+      width: commandWidth,
+      height: commandHeight,
+      zIndex: 20,
+    },
+    squad: {
+      x: inset,
+      y: squadY,
+      width: squadWidth,
+      height: squadHeight,
+      zIndex: 21,
+    },
+    detail: {
+      x: Math.max(inset, viewportWidth - detailWidth - inset),
+      y: Math.max(inset, viewportHeight - detailHeight - inset),
+      width: detailWidth,
+      height: detailHeight,
+      zIndex: 22,
+    },
+  };
+}
+
+function normalizeEchoMapWindowFrame(id: EchoMapWindowId, frame: EchoMapWindowFrame): EchoMapWindowFrame {
+  const viewportWidth = window.innerWidth || 1440;
+  const viewportHeight = window.innerHeight || 900;
+  const minWidth = id === "detail" ? 340 : id === "command" ? 300 : 230;
+  const minHeight = id === "detail" ? 170 : id === "command" ? 150 : 190;
+  const maxWidth = Math.max(minWidth, viewportWidth - 24);
+  const maxHeight = Math.max(minHeight, viewportHeight - 24);
+  const width = clampNumber(Math.round(frame.width), minWidth, maxWidth);
+  const height = clampNumber(Math.round(frame.height), minHeight, maxHeight);
+
+  return {
+    x: clampNumber(Math.round(frame.x), 12, Math.max(12, viewportWidth - width - 12)),
+    y: clampNumber(Math.round(frame.y), 12, Math.max(12, viewportHeight - height - 12)),
+    width,
+    height,
+    zIndex: frame.zIndex || 20,
+  };
+}
+
+function ensureEchoMapWindowFrames(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): Record<EchoMapWindowId, EchoMapWindowFrame> {
+  const key = getEchoMapWindowFrameKey(run);
+  const defaults = createDefaultEchoMapWindowFrames();
+  const saved = echoMapWindowFramesByStratum.get(key);
+  const frames: Record<EchoMapWindowId, EchoMapWindowFrame> = {
+    command: normalizeEchoMapWindowFrame("command", saved?.command ?? defaults.command),
+    squad: normalizeEchoMapWindowFrame("squad", saved?.squad ?? defaults.squad),
+    detail: normalizeEchoMapWindowFrame("detail", saved?.detail ?? defaults.detail),
+  };
+  echoMapWindowFramesByStratum.set(key, frames);
+  echoMapWindowZCounter = Math.max(echoMapWindowZCounter, ...Object.values(frames).map((frame) => frame.zIndex));
+  return frames;
+}
+
+function getEchoMapWindowStyle(run: NonNullable<ReturnType<typeof getActiveEchoRun>>, id: EchoMapWindowId): string {
+  const frame = ensureEchoMapWindowFrames(run)[id];
+  return `left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px;z-index:${frame.zIndex};max-height:none;`;
 }
 
 function getEchoMapViewportState(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): { x: number; y: number; zoom: number } {
@@ -239,6 +371,80 @@ function setupEchoMapInteractions(run: NonNullable<ReturnType<typeof getActiveEc
   echoMapAnimationFrame = window.requestAnimationFrame(updateLoop);
 }
 
+function applyEchoMapWindowFrame(id: EchoMapWindowId, frame: EchoMapWindowFrame): void {
+  const element = document.querySelector<HTMLElement>(`[data-echo-map-window="${id}"]`);
+  if (!element) {
+    return;
+  }
+  element.style.left = `${frame.x}px`;
+  element.style.top = `${frame.y}px`;
+  element.style.width = `${frame.width}px`;
+  element.style.height = `${frame.height}px`;
+  element.style.zIndex = `${frame.zIndex}`;
+  element.style.maxHeight = "none";
+}
+
+function setupEchoMapWindowInteractions(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): void {
+  const root = document.querySelector<HTMLElement>(".echo-run-map-scene");
+  if (!root) {
+    return;
+  }
+
+  root.querySelectorAll<HTMLElement>("[data-echo-map-window-grip], [data-echo-map-window-resize]").forEach((handle) => {
+    handle.onpointerdown = (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const id = (
+        handle.dataset.echoMapWindowGrip
+        ?? handle.dataset.echoMapWindowResize
+      ) as EchoMapWindowId | undefined;
+      if (!id) {
+        return;
+      }
+
+      const mode: "drag" | "resize" = handle.dataset.echoMapWindowResize ? "resize" : "drag";
+      const frames = ensureEchoMapWindowFrames(run);
+      const startFrame = { ...frames[id], zIndex: ++echoMapWindowZCounter };
+      frames[id] = startFrame;
+      applyEchoMapWindowFrame(id, startFrame);
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.userSelect = "none";
+      handle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+
+      const onMove = (moveEvent: PointerEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        const nextFrame = normalizeEchoMapWindowFrame(id, {
+          ...startFrame,
+          x: mode === "drag" ? startFrame.x + dx : startFrame.x,
+          y: mode === "drag" ? startFrame.y + dy : startFrame.y,
+          width: mode === "resize" ? startFrame.width + dx : startFrame.width,
+          height: mode === "resize" ? startFrame.height + dy : startFrame.height,
+        });
+        frames[id] = nextFrame;
+        applyEchoMapWindowFrame(id, nextFrame);
+      };
+
+      const onUp = () => {
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    };
+  });
+}
+
 function getSelectedEchoPreviewChoice(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoRewardChoice | null {
   const unitChoices = run.draftChoices.filter((choice) => choice.unitOption);
   if (unitChoices.length === 0) {
@@ -404,15 +610,490 @@ function getEchoLayerLabel(layer: number, totalLayers: number, layerNodes: EchoR
   return `Layer ${layer.toString().padStart(2, "0")}`;
 }
 
-function formatEchoEquipmentLabel(equipmentId: string | null, slotLabel: string): string {
+function formatEchoEquipmentLabel(equipmentId: string | null, slotLabel: string, equipmentById: Record<string, Equipment> = getAllStarterEquipment()): string {
   if (!equipmentId) {
     return `${slotLabel}: None`;
   }
-  const equipment = getAllStarterEquipment()[equipmentId];
+  const equipment = equipmentById[equipmentId];
   return `${slotLabel}: ${equipment?.name ?? equipmentId}`;
 }
 
+function getEchoUnitClass(unit: Unit | null | undefined): UnitClass {
+  return ((unit as any)?.unitClass ?? (unit as any)?.classId ?? "squire") as UnitClass;
+}
+
+function getEchoUnitLoadout(unit: Unit | null | undefined): UnitLoadout {
+  const loadout = (unit as any)?.loadout ?? {};
+  return {
+    primaryWeapon: loadout.primaryWeapon ?? loadout.weapon ?? null,
+    secondaryWeapon: loadout.secondaryWeapon ?? null,
+    helmet: loadout.helmet ?? null,
+    chestpiece: loadout.chestpiece ?? null,
+    accessory1: loadout.accessory1 ?? null,
+    accessory2: loadout.accessory2 ?? null,
+  };
+}
+
+function getEchoUnitBaseStats(unit: Unit | null | undefined): { maxHp: number; atk: number; def: number; agi: number; acc: number } {
+  return {
+    maxHp: Number((unit as any)?.stats?.maxHp ?? unit?.maxHp ?? 0),
+    atk: Number((unit as any)?.stats?.atk ?? (unit as any)?.atk ?? 0),
+    def: Number((unit as any)?.stats?.def ?? (unit as any)?.def ?? 0),
+    agi: Number((unit as any)?.stats?.agi ?? unit?.agi ?? 0),
+    acc: Number((unit as any)?.stats?.acc ?? (unit as any)?.acc ?? 0),
+  };
+}
+
+function formatEchoClassName(unitClass: UnitClass): string {
+  return String(unitClass)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatEchoStatWithSign(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value}`;
+}
+
+function formatEchoEquipmentStats(equipment: Equipment | null | undefined): string {
+  if (!equipment) {
+    return "";
+  }
+  const statParts: string[] = [];
+  const stats = equipment.stats;
+  if (stats.atk !== 0) statParts.push(`ATK ${formatEchoStatWithSign(stats.atk)}`);
+  if (stats.def !== 0) statParts.push(`DEF ${formatEchoStatWithSign(stats.def)}`);
+  if (stats.agi !== 0) statParts.push(`AGI ${formatEchoStatWithSign(stats.agi)}`);
+  if (stats.acc !== 0) statParts.push(`ACC ${formatEchoStatWithSign(stats.acc)}`);
+  if (stats.hp !== 0) statParts.push(`HP ${formatEchoStatWithSign(stats.hp)}`);
+  return statParts.join(" / ");
+}
+
+function getEchoDeckCardGlyph(type: EquipmentCard["type"]): string {
+  switch (type) {
+    case "core":
+      return "CORE";
+    case "class":
+      return "CLS";
+    case "gambit":
+      return "GMB";
+    case "equipment":
+    default:
+      return "GEAR";
+  }
+}
+
+function renderEchoDeckCard(card: EquipmentCard): string {
+  const footerBits = [
+    card.range,
+    typeof card.damage === "number" ? `${card.damage} DMG` : null,
+    "DECK",
+  ].filter(Boolean).map((value) => `<span class="deck-card-stat">${escapeEchoHtml(value)}</span>`).join("");
+
+  return `
+    <div class="deck-card deck-card--${escapeEchoAttr(card.type)} deck-card--compiled">
+      <div class="deck-card-cost">${card.strainCost}</div>
+      <div class="deck-card-type">${escapeEchoHtml(card.type.toUpperCase())}</div>
+      <div class="deck-card-art">
+        <span class="deck-card-glyph">${getEchoDeckCardGlyph(card.type)}</span>
+      </div>
+      <div class="deck-card-name-banner">
+        <span class="deck-card-name">${escapeEchoHtml(card.name)}</span>
+      </div>
+      <div class="deck-card-desc">${escapeEchoHtml(card.description)}</div>
+      <div class="deck-card-footer">
+        ${footerBits || `<span class="deck-card-stat">DECK</span>`}
+      </div>
+    </div>
+  `;
+}
+
+function getEchoLoadoutEquipmentIds(loadout: UnitLoadout): string[] {
+  return ECHO_LOADOUT_SLOTS
+    .map(({ slot }) => loadout[slot])
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function isEchoEquipmentValidForSlot(unitClass: UnitClass, slot: keyof UnitLoadout, equipment: Equipment): boolean {
+  switch (slot) {
+    case "primaryWeapon":
+    case "secondaryWeapon":
+      return equipment.slot === "weapon" && canEquipWeapon(unitClass, equipment.weaponType);
+    case "helmet":
+      return equipment.slot === "helmet";
+    case "chestpiece":
+      return equipment.slot === "chestpiece";
+    case "accessory1":
+    case "accessory2":
+      return equipment.slot === "accessory";
+    default:
+      return false;
+  }
+}
+
+function findEchoEquipmentOwner(
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+  equipmentId: string | null | undefined,
+): { unitId: string; slot: keyof UnitLoadout; unitName: string } | null {
+  if (!equipmentId) {
+    return null;
+  }
+  for (const unitId of run.squadUnitIds) {
+    const unit = run.unitsById[unitId];
+    if (!unit) continue;
+    const loadout = getEchoUnitLoadout(unit);
+    for (const { slot } of ECHO_LOADOUT_SLOTS) {
+      if (loadout[slot] === equipmentId) {
+        return { unitId, slot, unitName: unit.name };
+      }
+    }
+  }
+  return null;
+}
+
+function getEchoEquipmentOptions(
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+  unit: Unit,
+  slot: keyof UnitLoadout,
+  equipmentById: Record<string, Equipment>,
+): Equipment[] {
+  const unitClass = getEchoUnitClass(unit);
+  const loadout = getEchoUnitLoadout(unit);
+  const selectedUnitOtherIds = new Set(
+    ECHO_LOADOUT_SLOTS
+      .filter((entry) => entry.slot !== slot)
+      .map((entry) => loadout[entry.slot])
+      .filter((value): value is string => Boolean(value)),
+  );
+  const pool = getEchoRunEquipmentPool(run);
+  const currentId = loadout[slot];
+  return Array.from(new Set([...pool, ...(currentId ? [currentId] : [])]))
+    .map((equipmentId) => equipmentById[equipmentId])
+    .filter((equipment): equipment is Equipment => Boolean(equipment) && isEchoEquipmentValidForSlot(unitClass, slot, equipment))
+    .filter((equipment) => !selectedUnitOtherIds.has(equipment.id))
+    .sort((left, right) => {
+      const leftOwner = findEchoEquipmentOwner(run, left.id);
+      const rightOwner = findEchoEquipmentOwner(run, right.id);
+      if (leftOwner?.unitId === unit.id && rightOwner?.unitId !== unit.id) return -1;
+      if (rightOwner?.unitId === unit.id && leftOwner?.unitId !== unit.id) return 1;
+      return left.name.localeCompare(right.name);
+    });
+}
+
+function renderEchoEquipSlot(
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+  unit: Unit,
+  slot: keyof UnitLoadout,
+  label: string,
+  equipmentById: Record<string, Equipment>,
+): string {
+  const loadout = getEchoUnitLoadout(unit);
+  const currentId = loadout[slot];
+  const equipment = currentId ? equipmentById[currentId] ?? null : null;
+  const stats = formatEchoEquipmentStats(equipment);
+  const owner = findEchoEquipmentOwner(run, currentId);
+  const ownerLabel = owner && owner.unitId !== unit.id ? `EQUIPPED BY ${owner.unitName.toUpperCase()}` : "";
+
+  return `
+    <div class="equip-slot echo-equip-slot" data-echo-slot="${slot}">
+      <div class="equip-slot-header">
+        <span class="equip-slot-label">${escapeEchoHtml(label)}</span>
+        <div class="equip-slot-actions">
+          ${currentId ? `<button class="equip-unequip-btn" type="button" data-echo-unequip-slot="${slot}" data-echo-loadout-unit-id="${escapeEchoAttr(unit.id)}">UNEQUIP</button>` : ""}
+        </div>
+      </div>
+      <div class="equip-slot-body ${equipment ? "" : "equip-slot-body--empty"}">
+        <div class="equip-slot-name">${escapeEchoHtml(equipment?.name ?? "Empty")}</div>
+        ${stats ? `<div class="equip-slot-stats">${escapeEchoHtml(stats)}</div>` : ""}
+        ${equipment ? `<div class="equip-slot-cards">${equipment.cardsGranted.length} cards${ownerLabel ? ` // ${escapeEchoHtml(ownerLabel)}` : ""}</div>` : ""}
+      </div>
+      <div class="equip-slot-buttons">
+        <button class="equip-change-btn" type="button" data-echo-equip-change="${slot}" data-echo-loadout-unit-id="${escapeEchoAttr(unit.id)}">
+          ${equipment ? "CHANGE" : "EQUIP"}
+        </button>
+        ${equipment ? `<button class="equip-view-gear-btn" type="button" data-echo-view-equipment-id="${escapeEchoAttr(equipment.id)}">VIEW</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderEchoManageUnitsPanel(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const equipmentById = getEchoRunEquipmentById(run);
+  const unitIds = run.squadUnitIds.filter((unitId) => run.unitsById[unitId]);
+  if (!selectedEchoManageUnitId || !unitIds.includes(selectedEchoManageUnitId)) {
+    selectedEchoManageUnitId = unitIds[0] ?? null;
+  }
+
+  const selectedUnit = selectedEchoManageUnitId ? run.unitsById[selectedEchoManageUnitId] ?? null : null;
+  const selectedLoadout = getEchoUnitLoadout(selectedUnit ?? undefined);
+  const selectedClass = getEchoUnitClass(selectedUnit ?? undefined);
+  const baseStats = getEchoUnitBaseStats(selectedUnit);
+  const equipmentStats = selectedUnit ? calculateEquipmentStats(selectedLoadout, equipmentById) : { hp: 0, atk: 0, def: 0, agi: 0, acc: 0 };
+  const deck = selectedUnit ? buildDeckFromLoadout(selectedClass, selectedLoadout, equipmentById, {}) : [];
+  const cardsById = getAllEquipmentCards();
+  const uniqueCardCount = new Set(deck).size;
+  const deckCardsHtml = deck.map((cardId) => {
+    const card = cardsById[cardId];
+    return card ? renderEchoDeckCard(card) : "";
+  }).join("");
+  const totalStats = {
+    maxHp: baseStats.maxHp + equipmentStats.hp,
+    atk: baseStats.atk + equipmentStats.atk,
+    def: baseStats.def + equipmentStats.def,
+    agi: baseStats.agi + equipmentStats.agi,
+    acc: baseStats.acc + equipmentStats.acc,
+  };
+
+  return `
+    <section class="echo-run-manage-overlay echo-run-manage-overlay--unitdetail" aria-label="Echo run unit management">
+      <div class="unitdetail-root echo-unitdetail-root">
+        <div class="unitdetail-card echo-unitdetail-card">
+          ${selectedUnit ? `
+            <div class="unitdetail-header">
+              <div class="unitdetail-header-left">
+                <div class="unitdetail-portrait">
+                  <img src="${escapeEchoAttr((selectedUnit as any).portraitPath ?? "/assets/portraits/units/core/Test_Portrait.png")}" alt="${escapeEchoAttr(selectedUnit.name)}" class="unitdetail-portrait-img" onerror="this.src='/assets/portraits/units/core/Unit_Stand_Test.png';" />
+                </div>
+                <div class="unitdetail-header-text">
+                  <div class="unitdetail-name">${escapeEchoHtml(selectedUnit.name)}</div>
+                  <div class="unitdetail-class">${escapeEchoHtml(formatEchoClassName(selectedClass))} // CLASS LOCKED</div>
+                  <div class="unitdetail-pwr">
+                    <span class="unitdetail-pwr-label">ECHO PWR:</span>
+                    <span class="unitdetail-pwr-value">${escapeEchoHtml((selectedUnit as any).pwr ?? "?")}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="unitdetail-header-right">
+                <button class="unitdetail-class-btn" type="button" disabled>CLASS LOCKED</button>
+                <button class="unitdetail-back-btn" type="button" id="echoRunManageCloseBtn">BACK TO ROUTE</button>
+              </div>
+            </div>
+          ` : `
+            <div class="unitdetail-header">
+              <div class="unitdetail-header-left">
+                <div class="unitdetail-header-text">
+                  <div class="unitdetail-name">Manage Units</div>
+                  <div class="unitdetail-class">ECHO RUN // UNIT MANAGEMENT</div>
+                </div>
+              </div>
+              <div class="unitdetail-header-right">
+                <button class="unitdetail-back-btn" type="button" id="echoRunManageCloseBtn">BACK TO ROUTE</button>
+              </div>
+            </div>
+          `}
+          <div class="echo-unitdetail-roster-strip">
+            ${unitIds.length > 0 ? unitIds.map((unitId) => {
+              const unit = run.unitsById[unitId];
+              const isSelected = unitId === selectedEchoManageUnitId;
+              return `
+                <button class="echo-run-manage-unit ${isSelected ? "echo-run-manage-unit--selected" : ""}" type="button" data-echo-manage-unit-id="${escapeEchoAttr(unitId)}">
+                  <span>${escapeEchoHtml(unit.name)}</span>
+                  <small>${escapeEchoHtml(String(getEchoUnitClass(unit)).toUpperCase())} // HP ${unit.hp}/${unit.maxHp}</small>
+                </button>
+              `;
+            }).join("") : `<div class="echo-run-empty">No drafted units available.</div>`}
+          </div>
+          <div class="unitdetail-body echo-unitdetail-body">
+            ${selectedUnit ? `
+              <div class="unitdetail-stats-section">
+                <div class="unitdetail-section">
+                  <div class="unitdetail-section-title">STATS</div>
+                  <div class="unitdetail-stats-grid">
+                    <div class="unitdetail-stat"><span class="unitdetail-stat-label">HP</span><span class="unitdetail-stat-base">${baseStats.maxHp}</span><span class="unitdetail-stat-equip ${equipmentStats.hp >= 0 ? "stat-bonus" : "stat-penalty"}">${formatEchoStatWithSign(equipmentStats.hp)}</span><span class="unitdetail-stat-total">= ${totalStats.maxHp}</span></div>
+                    <div class="unitdetail-stat"><span class="unitdetail-stat-label">ATK</span><span class="unitdetail-stat-base">${baseStats.atk}</span><span class="unitdetail-stat-equip ${equipmentStats.atk >= 0 ? "stat-bonus" : "stat-penalty"}">${formatEchoStatWithSign(equipmentStats.atk)}</span><span class="unitdetail-stat-total">= ${totalStats.atk}</span></div>
+                    <div class="unitdetail-stat"><span class="unitdetail-stat-label">DEF</span><span class="unitdetail-stat-base">${baseStats.def}</span><span class="unitdetail-stat-equip ${equipmentStats.def >= 0 ? "stat-bonus" : "stat-penalty"}">${formatEchoStatWithSign(equipmentStats.def)}</span><span class="unitdetail-stat-total">= ${totalStats.def}</span></div>
+                    <div class="unitdetail-stat"><span class="unitdetail-stat-label">AGI</span><span class="unitdetail-stat-base">${baseStats.agi}</span><span class="unitdetail-stat-equip ${equipmentStats.agi >= 0 ? "stat-bonus" : "stat-penalty"}">${formatEchoStatWithSign(equipmentStats.agi)}</span><span class="unitdetail-stat-total">= ${totalStats.agi}</span></div>
+                    <div class="unitdetail-stat"><span class="unitdetail-stat-label">ACC</span><span class="unitdetail-stat-base">${baseStats.acc}</span><span class="unitdetail-stat-equip ${equipmentStats.acc >= 0 ? "stat-bonus" : "stat-penalty"}">${formatEchoStatWithSign(equipmentStats.acc)}</span><span class="unitdetail-stat-total">= ${totalStats.acc}</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="unitdetail-columns unitdetail-columns--management">
+                <div class="unitdetail-column">
+                  <div class="unitdetail-section">
+                    <div class="unitdetail-section-title">EQUIPMENT (6 SLOTS)</div>
+                    <div class="equip-slots-grid">
+                      ${ECHO_LOADOUT_SLOTS.map(({ slot, label }) => renderEchoEquipSlot(run, selectedUnit, slot, label, equipmentById)).join("")}
+                    </div>
+                  </div>
+                </div>
+                <div class="unitdetail-column">
+                  <div class="unitdetail-section echo-unitdetail-locker">
+                    <div class="unitdetail-section-title">ECHO LOCKER</div>
+                    <div class="echo-unitdetail-locker__grid">
+                      <div><span>Run Gear</span><strong>${getEchoRunEquipmentPool(run).length}</strong></div>
+                      <div><span>Equipped</span><strong>${getEchoLoadoutEquipmentIds(selectedLoadout).length}/6</strong></div>
+                      <div><span>Deck</span><strong>${deck.length}</strong></div>
+                      <div><span>Unique</span><strong>${uniqueCardCount}</strong></div>
+                    </div>
+                    <div class="echo-unitdetail-locker__copy">Gear can move between drafted units. Choosing gear held by another unit swaps it with this slot when possible.</div>
+                  </div>
+                </div>
+              </div>
+              <div class="unitdetail-section unitdetail-section--deck">
+                <div class="unitdetail-deck-toolbar">
+                  <div class="unitdetail-deck-heading">
+                    <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
+                    <div class="unitdetail-deck-summary">
+                      <span class="unitdetail-deck-chip">UNIQUE ${uniqueCardCount}</span>
+                      <span class="unitdetail-deck-chip">ECHO GEAR ${getEchoLoadoutEquipmentIds(selectedLoadout).length}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="deck-grid deck-grid--compiled">
+                  ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
+                </div>
+              </div>
+            ` : `<div class="echo-run-empty">Select a drafted unit to edit their loadout.</div>`}
+          </div>
+          <div class="equip-modal echo-equip-modal" id="echoEquipModal" style="display: none;">
+            <div class="equip-modal-content">
+              <div class="equip-modal-header">
+                <span class="equip-modal-title">SELECT ECHO GEAR</span>
+                <button class="equip-modal-close" type="button" id="echoEquipModalCloseBtn">&times;</button>
+              </div>
+              <div class="equip-modal-body" id="echoEquipModalBody"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function equipEchoRunItem(unitId: string, slot: keyof UnitLoadout, equipmentId: string | null): void {
+  updateGameState((prev) => {
+    const run = prev.echoRun;
+    const unit = run?.unitsById[unitId];
+    if (!run || !unit) {
+      return prev;
+    }
+
+    const equipmentById = getEchoRunEquipmentById(run);
+    const unitClass = getEchoUnitClass(unit);
+    const currentLoadout = getEchoUnitLoadout(unit);
+    const targetPreviousId = currentLoadout[slot];
+    const source = findEchoEquipmentOwner(run, equipmentId);
+    let nextUnitsById = { ...run.unitsById };
+
+    if (source && source.unitId !== unitId) {
+      const sourceUnit = run.unitsById[source.unitId];
+      const sourceLoadout = getEchoUnitLoadout(sourceUnit);
+      const sourceClass = getEchoUnitClass(sourceUnit);
+      const canReceivePrevious = Boolean(
+        targetPreviousId &&
+        equipmentById[targetPreviousId] &&
+        isEchoEquipmentValidForSlot(sourceClass, source.slot, equipmentById[targetPreviousId]),
+      );
+      nextUnitsById[source.unitId] = {
+        ...sourceUnit,
+        loadout: sanitizeLoadoutForUnitClass(
+          sourceClass,
+          {
+            ...sourceLoadout,
+            [source.slot]: canReceivePrevious ? targetPreviousId : null,
+          },
+          equipmentById,
+        ),
+      };
+    }
+
+    const nextLoadout = sanitizeLoadoutForUnitClass(unitClass, {
+      ...currentLoadout,
+      [slot]: equipmentId,
+    }, equipmentById);
+    nextUnitsById[unitId] = {
+      ...unit,
+      loadout: nextLoadout,
+    };
+
+    return {
+      ...prev,
+      echoRun: {
+        ...run,
+        unitsById: nextUnitsById,
+      },
+    };
+  });
+  void triggerAutosave(getGameState());
+}
+
+function unequipEchoRunItem(unitId: string, slot: keyof UnitLoadout): void {
+  equipEchoRunItem(unitId, slot, null);
+}
+
+function closeEchoEquipModal(): void {
+  const modal = document.getElementById("echoEquipModal");
+  if (modal) {
+    modal.style.display = "none";
+  }
+}
+
+function openEchoEquipModal(unitId: string, slot: keyof UnitLoadout): void {
+  const modal = document.getElementById("echoEquipModal");
+  const modalBody = document.getElementById("echoEquipModalBody");
+  const run = getActiveEchoRun();
+  const unit = run?.unitsById[unitId];
+  if (!modal || !modalBody || !run || !unit) {
+    return;
+  }
+
+  const equipmentById = getEchoRunEquipmentById(run);
+  const loadout = getEchoUnitLoadout(unit);
+  const options = getEchoEquipmentOptions(run, unit, slot, equipmentById);
+  const slotLabel = ECHO_LOADOUT_SLOTS.find((entry) => entry.slot === slot)?.label ?? String(slot);
+
+  if (options.length === 0) {
+    modalBody.innerHTML = `
+      <div class="equip-modal-empty">
+        No compatible echo gear is available for ${escapeEchoHtml(slotLabel)}.
+      </div>
+    `;
+  } else {
+    modalBody.innerHTML = `
+      <div class="equip-modal-slot-label">Selecting for: ${escapeEchoHtml(unit.name)} // ${escapeEchoHtml(slotLabel)}</div>
+      <div class="equip-options-list">
+        ${options.map((equipment) => {
+          const stats = formatEchoEquipmentStats(equipment) || "No stat bonuses";
+          const owner = findEchoEquipmentOwner(run, equipment.id);
+          const isCurrent = equipment.id === loadout[slot];
+          const ownerLabel = owner
+            ? owner.unitId === unitId
+              ? "EQUIPPED HERE"
+              : `HELD BY ${owner.unitName.toUpperCase()}`
+            : "IN LOCKER";
+          return `
+            <div class="equip-option ${isCurrent ? "equip-option--current" : ""}" data-echo-equip-option="${escapeEchoAttr(equipment.id)}">
+              <div class="equip-option-name">${escapeEchoHtml(equipment.name)}</div>
+              <div class="equip-option-stats">${escapeEchoHtml(stats)}</div>
+              <div class="equip-option-cards">${equipment.cardsGranted.length} cards granted // ${escapeEchoHtml(ownerLabel)}</div>
+              ${isCurrent ? '<div class="equip-option-badge">EQUIPPED</div>' : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+
+    modalBody.querySelectorAll<HTMLElement>("[data-echo-equip-option]").forEach((option) => {
+      option.onclick = () => {
+        const equipmentId = option.getAttribute("data-echo-equip-option");
+        if (!equipmentId) {
+          return;
+        }
+        equipEchoRunItem(unitId, slot, equipmentId);
+        closeEchoEquipModal();
+        renderEchoRunScreen();
+      };
+    });
+  }
+
+  modal.style.display = "flex";
+}
+
 function renderEchoUnitDraftPreview(unit: EchoUnitDraftOption): string {
+  const previewEquipmentById = {
+    ...getAllStarterEquipment(),
+    ...(unit.equipmentById ?? {}),
+  };
   const affinityLines = Object.entries(unit.affinities ?? {})
     .sort((left, right) => Number(right[1]) - Number(left[1]))
     .map(([key, value]) => `
@@ -424,12 +1105,12 @@ function renderEchoUnitDraftPreview(unit: EchoUnitDraftOption): string {
     .join("");
 
   const loadoutLines = [
-    formatEchoEquipmentLabel(unit.loadout.primaryWeapon, "Primary"),
-    formatEchoEquipmentLabel(unit.loadout.secondaryWeapon, "Secondary"),
-    formatEchoEquipmentLabel(unit.loadout.helmet, "Helmet"),
-    formatEchoEquipmentLabel(unit.loadout.chestpiece, "Chest"),
-    formatEchoEquipmentLabel(unit.loadout.accessory1, "Accessory I"),
-    formatEchoEquipmentLabel(unit.loadout.accessory2, "Accessory II"),
+    formatEchoEquipmentLabel(unit.loadout.primaryWeapon, "Primary", previewEquipmentById),
+    formatEchoEquipmentLabel(unit.loadout.secondaryWeapon, "Secondary", previewEquipmentById),
+    formatEchoEquipmentLabel(unit.loadout.helmet, "Helmet", previewEquipmentById),
+    formatEchoEquipmentLabel(unit.loadout.chestpiece, "Chest", previewEquipmentById),
+    formatEchoEquipmentLabel(unit.loadout.accessory1, "Accessory I", previewEquipmentById),
+    formatEchoEquipmentLabel(unit.loadout.accessory2, "Accessory II", previewEquipmentById),
   ];
 
   return `
@@ -519,6 +1200,7 @@ function returnToEchoRunTitleScreen(): void {
 
 function exitEchoRunToTitleScreen(): void {
   cleanupEchoMapInteractions();
+  echoManageUnitsOpen = false;
   returnToEchoRunTitleScreen();
 }
 
@@ -675,7 +1357,6 @@ function renderChoiceCard(
       <div class="echo-run-choice-card__lane">${choice.lane.replace(/_/g, " ").toUpperCase()}</div>
       <div class="echo-run-choice-card__title">${choice.title}</div>
       <div class="echo-run-choice-card__subtitle">${choice.subtitle}</div>
-      <div class="echo-run-choice-card__copy">${choice.description}</div>
       ${detailBlock}
       ${unit ? `<button class="echo-run-choice-card__inspect" type="button" data-echo-preview-id="${choice.id}">UNIT INFO</button>` : ""}
       <button class="echo-run-choice-card__button" type="button" data-echo-choice-id="${choice.id}">SELECT</button>
@@ -777,6 +1458,12 @@ function renderMapStage(
     : selectedNodeState?.isObscured
       ? "UNKNOWN CONTACT"
       : selectedNode.nodeType.replace(/_/g, " ").toUpperCase();
+  const selectedNodeCanAct = Boolean(selectedNode && selectedNodeState?.isAvailable && !selectedNodeState?.isCompleted);
+  const selectedNodeActionLabel = !selectedNode
+    ? ""
+    : selectedNodeState?.isCompleted
+      ? "NODE COMPLETED"
+      : getEchoMapNodeActionLabel(selectedNode);
 
   const connectionSvg = run.edges
     .filter((edge) => {
@@ -867,39 +1554,31 @@ function renderMapStage(
         </div>
       </div>
 
-      <section class="echo-run-map-window echo-run-map-window--command">
-        <div class="echo-run-map-window__kicker">S/COM_OS // ECHO ROUTE</div>
-        <h2 class="echo-run-map-window__title">${stageTitle}</h2>
-        <p class="echo-run-map-window__copy">${stageCopy}</p>
-        <div class="echo-run-map-window__actions">
-          <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">ECHO TITLE</button>
-          <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+      <section class="echo-run-map-window echo-run-map-window--command echo-run-map-window--movable" data-echo-map-window="command" style="${getEchoMapWindowStyle(run, "command")}">
+        <div class="echo-run-map-window__dragbar" data-echo-map-window-grip="command">Route Command</div>
+        <div class="echo-run-map-window__content">
+          <div class="echo-run-map-window__kicker">S/COM_OS // ECHO ROUTE</div>
+          <h2 class="echo-run-map-window__title">${stageTitle}</h2>
+          <p class="echo-run-map-window__copy">${stageCopy}</p>
+          <div class="echo-run-map-window__actions">
+            <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
+            <button class="echo-run-secondary-btn" type="button" id="echoRunManageUnitsBtn">MANAGE UNITS</button>
+            <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+          </div>
         </div>
+        <button class="echo-run-map-window__resize" type="button" data-echo-map-window-resize="command" aria-label="Resize route command"></button>
       </section>
 
-      <aside class="echo-run-map-window-stack echo-run-map-window-stack--left">
-        ${renderEchoSidebarPanels(run)}
+      <aside class="echo-run-map-window-stack echo-run-map-window-stack--left echo-run-map-window-stack--movable" data-echo-map-window="squad" style="${getEchoMapWindowStyle(run, "squad")}">
+        <div class="echo-run-map-window__dragbar" data-echo-map-window-grip="squad">Draft Squad</div>
+        <div class="echo-run-map-window-stack__body">
+          ${renderEchoSidebarPanels(run)}
+        </div>
+        <button class="echo-run-map-window__resize" type="button" data-echo-map-window-resize="squad" aria-label="Resize draft squad"></button>
       </aside>
 
-      <section class="echo-run-map-window echo-run-map-window--status">
-        <div class="echo-run-map-window__kicker">Route State</div>
-        <div class="echo-run-map-window__actions echo-run-map-window__actions--tight">
-          <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
-        </div>
-        <div class="echo-run-map-stage__summary">
-          <div class="echo-run-meta-chip"><span>Boss Chains</span><strong>${run.bossChainsCleared}</strong></div>
-          <div class="echo-run-meta-chip"><span>Milestones</span><strong>${run.milestonesReached}</strong></div>
-          <div class="echo-run-meta-chip"><span>Reachable Nodes</span><strong>${run.availableNodeIds.length}</strong></div>
-        </div>
-        <div class="echo-run-map-zoom-controls">
-          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__btn" type="button" id="echoRunMapZoomOutBtn">-</button>
-          <div class="echo-run-map-zoom-controls__label" id="echoRunMapZoomLabel">100%</div>
-          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__btn" type="button" id="echoRunMapZoomInBtn">+</button>
-          <button class="echo-run-secondary-btn echo-run-map-zoom-controls__reset" type="button" id="echoRunMapResetBtn">RESET VIEW</button>
-        </div>
-      </section>
-
-      <section class="echo-run-map-window echo-run-map-window--detail echo-run-map-detail${selectedNodeState?.isObscured ? " echo-run-map-detail--obscured" : ""}">
+      <section class="echo-run-map-window echo-run-map-window--detail echo-run-map-window--movable echo-run-map-detail${selectedNodeState?.isObscured ? " echo-run-map-detail--obscured" : ""}" data-echo-map-window="detail" style="${getEchoMapWindowStyle(run, "detail")}">
+        <div class="echo-run-map-window__dragbar echo-run-map-window__dragbar--detail" data-echo-map-window-grip="detail">Route Detail</div>
         <div class="echo-run-map-detail__copy">
           <div class="echo-run-map-detail__kicker">${selectedNodeState?.stateLabel ?? "No Route"} // ${selectedNodeTypeLabel}</div>
           <h3 class="echo-run-map-detail__title">${selectedNodeTitle}</h3>
@@ -910,24 +1589,29 @@ function renderMapStage(
         <div class="echo-run-map-detail__actions">
           ${selectedNode ? `
             <button
-              class="echo-run-choice-card__button echo-run-map-detail__button"
+              class="echo-run-choice-card__button echo-run-map-detail__button${selectedNodeState?.isCompleted ? " echo-run-map-detail__button--completed" : ""}"
               type="button"
               data-echo-node-id="${selectedNode.id}"
-              ${selectedNodeState?.isAvailable ? "" : "disabled"}
+              ${selectedNodeCanAct ? "" : "disabled"}
             >
-              ${getEchoMapNodeActionLabel(selectedNode)}
+              ${selectedNodeActionLabel}
             </button>
           ` : ""}
-          ${selectedNode && !selectedNodeState?.isAvailable ? `
+          ${selectedNode && (selectedNodeState?.isCompleted || !selectedNodeState?.isAvailable) ? `
             <div class="echo-run-map-detail__hint">
-              ${selectedNodeState?.isObscured ? "Clear a reachable route to resolve this contact." : "This route is not unlocked yet."}
+              ${selectedNodeState?.isCompleted
+                ? "Node completed."
+                : selectedNodeState?.isObscured
+                  ? "Clear a reachable route to resolve this contact."
+                  : "This route is not unlocked yet."}
             </div>
           ` : ""}
         </div>
+        <button class="echo-run-map-window__resize" type="button" data-echo-map-window-resize="detail" aria-label="Resize route detail"></button>
       </section>
 
       <div class="echo-run-map-hud-hint">
-        WASD / ARROW KEYS TO PAN<br />MOUSE WHEEL OR +/- TO ZOOM
+        WASD / ARROW KEYS TO PAN
       </div>
     </section>
   `;
@@ -972,6 +1656,12 @@ function renderEchoResults(run: NonNullable<ReturnType<typeof getActiveEchoRun>>
       </div>
     </section>
   `;
+}
+
+function resetEchoRunPageScroll(): void {
+  window.scrollTo(0, 0);
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
 }
 
 export function renderEchoRunScreen(): void {
@@ -1023,12 +1713,25 @@ export function renderEchoRunScreen(): void {
     `
     : "";
   if (run.stage === "map") {
-    app.innerHTML = `
-      <div class="echo-run-root echo-run-root--map">
-        ${renderMapStage(run, stageTitle, stageCopy)}
-      </div>
-    `;
-    setupEchoMapInteractions(run);
+    app.innerHTML = echoManageUnitsOpen
+      ? `
+        <div class="echo-run-root echo-run-root--map echo-run-root--manage-units">
+          <div class="echo-run-map-scene echo-run-map-scene--manage-units">
+            ${renderEchoManageUnitsPanel(run)}
+          </div>
+        </div>
+      `
+      : `
+        <div class="echo-run-root echo-run-root--map">
+          ${renderMapStage(run, stageTitle, stageCopy)}
+        </div>
+      `;
+    if (echoManageUnitsOpen) {
+      resetEchoRunPageScroll();
+    } else {
+      setupEchoMapInteractions(run);
+      setupEchoMapWindowInteractions(run);
+    }
   } else {
   const mainContent = run.stage === "results"
     ? renderEchoResults(run)
@@ -1142,6 +1845,80 @@ export function renderEchoRunScreen(): void {
       exitEchoRunToTitleScreen();
     };
   });
+
+  const manageUnitsBtn = document.getElementById("echoRunManageUnitsBtn");
+  if (manageUnitsBtn) {
+    manageUnitsBtn.onclick = () => {
+      echoManageUnitsOpen = true;
+      renderEchoRunScreen();
+    };
+  }
+
+  const manageCloseBtn = document.getElementById("echoRunManageCloseBtn");
+  if (manageCloseBtn) {
+    manageCloseBtn.onclick = () => {
+      echoManageUnitsOpen = false;
+      renderEchoRunScreen();
+    };
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-echo-manage-unit-id]").forEach((button) => {
+    button.onclick = () => {
+      const unitId = button.getAttribute("data-echo-manage-unit-id");
+      if (!unitId) {
+        return;
+      }
+      selectedEchoManageUnitId = unitId;
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-equip-change]").forEach((button) => {
+    button.onclick = () => {
+      const unitId = button.getAttribute("data-echo-loadout-unit-id");
+      const slot = button.getAttribute("data-echo-equip-change") as keyof UnitLoadout | null;
+      if (!unitId || !slot) {
+        return;
+      }
+      openEchoEquipModal(unitId, slot);
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-unequip-slot]").forEach((button) => {
+    button.onclick = () => {
+      const unitId = button.getAttribute("data-echo-loadout-unit-id");
+      const slot = button.getAttribute("data-echo-unequip-slot") as keyof UnitLoadout | null;
+      if (!unitId || !slot) {
+        return;
+      }
+      unequipEchoRunItem(unitId, slot);
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-view-equipment-id]").forEach((button) => {
+    button.onclick = () => {
+      const equipmentId = button.getAttribute("data-echo-view-equipment-id");
+      const run = getActiveEchoRun();
+      const equipment = equipmentId && run ? getEchoRunEquipmentById(run)[equipmentId] : null;
+      if (equipment) {
+        showEquipmentDetailModal(equipment);
+      }
+    };
+  });
+
+  const echoEquipModalCloseBtn = document.getElementById("echoEquipModalCloseBtn");
+  if (echoEquipModalCloseBtn) {
+    echoEquipModalCloseBtn.onclick = () => closeEchoEquipModal();
+  }
+  const echoEquipModal = document.getElementById("echoEquipModal");
+  if (echoEquipModal) {
+    echoEquipModal.onclick = (event) => {
+      if ((event.target as HTMLElement).id === "echoEquipModal") {
+        closeEchoEquipModal();
+      }
+    };
+  }
 
   const rerollBtn = document.getElementById("echoRunRerollBtn");
   if (rerollBtn) {

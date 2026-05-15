@@ -296,6 +296,7 @@ export function applyBattleConsumable(
       const currentHeat = getCurrentWeaponHeat(target);
       const reducedHeat = Math.max(0, currentHeat - 3);
       let repairedNodeCount = 0;
+      let reducedWearCount = 0;
       let nextWeaponState = target.weaponState;
       if (nextWeaponState) {
         for (let index = 0; index < consumable.value; index += 1) {
@@ -304,13 +305,16 @@ export function applyBattleConsumable(
           if (patched.repairedNodeId !== null) {
             repairedNodeCount += 1;
           }
+          if (patched.reducedWear) {
+            reducedWearCount += 1;
+          }
         }
         nextWeaponState = {
           ...nextWeaponState,
           currentHeat: reducedHeat,
         };
       }
-      if (repairedNodeCount <= 0 && reducedHeat === currentHeat) {
+      if (repairedNodeCount <= 0 && reducedWearCount <= 0 && reducedHeat === currentHeat) {
         return {
           battle,
           consumables: cloneConsumables(consumables),
@@ -324,13 +328,19 @@ export function applyBattleConsumable(
         ...target,
         weaponState: nextWeaponState,
         weaponHeat: reducedHeat,
+        weaponWear: nextWeaponState?.wear ?? target.weaponWear,
       };
+      const serviceSummary = [
+        repairedNodeCount > 0 ? `repairs ${repairedNodeCount} node${repairedNodeCount === 1 ? "" : "s"}` : "",
+        reducedWearCount > 0 ? `reduces ${reducedWearCount} wear` : "",
+        reducedHeat < currentHeat ? `cools heat` : "",
+      ].filter(Boolean).join(", ");
       message = buildConsumableItemMessage(
         consumable,
         target.name,
-        `repairs ${repairedNodeCount} node${repairedNodeCount === 1 ? "" : "s"} and cools heat.`,
+        serviceSummary || `services the weapon.`,
       );
-      logMessage = `SLK//ITEM   :: ${target.name} applies ${consumable.name.toUpperCase()} (${repairedNodeCount} node${repairedNodeCount === 1 ? "" : "s"} repaired, HEAT ${currentHeat} -> ${reducedHeat}).`;
+      logMessage = `SLK//ITEM   :: ${target.name} applies ${consumable.name.toUpperCase()} (${serviceSummary || "weapon serviced"}, HEAT ${currentHeat} -> ${reducedHeat}).`;
       break;
     }
     default:

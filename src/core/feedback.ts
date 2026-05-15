@@ -387,7 +387,7 @@ function deriveLogFeedback(
         source: "battle",
         intensity: 1,
         position: targetPosition ?? actorPosition,
-        text: "MISS",
+        text: "MISSED",
         audioHook: null,
         haptic: null,
         meta: {

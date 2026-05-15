@@ -2,7 +2,7 @@
   "schemaVersion": "1.0.0",
   "sourceApp": "Technica",
   "id": "core_overwatch",
-  "name": "Overwatch",
+  "name": "Vector",
   "description": "Stun an enemy for one turn.",
   "cardType": "core",
   "rarity": "common",
