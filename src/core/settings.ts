@@ -5,10 +5,12 @@
 // ============================================================================
 
 import type { PlayerSlot } from "./types";
-import { applyTheme, ThemeId } from "./themes";
+import { applyTheme, normalizeThemeId, type ThemeId } from "./themes";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ControllerBindingKind = "button" | "axis";
 export type ControllerAxisDirection = "positive" | "negative";
+export type WindowResolutionPreset = "800x600" | "1280x720" | "1600x900" | "1920x1080";
 
 export interface ControllerBindingDescriptor {
   kind: ControllerBindingKind;
@@ -34,8 +36,9 @@ export interface GameSettings {
   screenShake: boolean;
   showDamageNumbers: boolean;
   showGridCoordinates: boolean;
+  windowResolution: WindowResolutionPreset;
   animationSpeed: "slow" | "normal" | "fast";
-  uiTheme: "ardycia" | "cyberpunk" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
+  uiTheme: ThemeId;
   cardTheme: "light" | "dark";
 
   // Gameplay
@@ -66,6 +69,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   screenShake: true,
   showDamageNumbers: true,
   showGridCoordinates: false,
+  windowResolution: "800x600",
   animationSpeed: "normal",
   uiTheme: "ardycia",
   cardTheme: "dark",
@@ -134,6 +138,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
 let currentSettings: GameSettings = { ...DEFAULT_SETTINGS };
 type SettingsListener = (settings: GameSettings) => void;
 const settingsListeners = new Set<SettingsListener>();
+let appliedWindowResolution: WindowResolutionPreset | null = null;
 
 // ----------------------------------------------------------------------------
 // TAURI INTEGRATION
@@ -144,11 +149,19 @@ interface TauriInvoke {
 }
 
 function getTauriInvoke(): TauriInvoke | null {
-  const anyWindow = window as any;
-  if (anyWindow.__TAURI__?.invoke) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const anyWindow = window as {
+    __TAURI__?: { invoke?: TauriInvoke };
+    __TAURI_INTERNALS__?: unknown;
+  };
+  if (typeof anyWindow.__TAURI__?.invoke === "function") {
     return anyWindow.__TAURI__.invoke;
   }
-  return null;
+
+  return anyWindow.__TAURI__ || anyWindow.__TAURI_INTERNALS__ ? invoke : null;
 }
 
 function isTauriAvailable(): boolean {
@@ -233,7 +246,7 @@ export async function initializeSettings(): Promise<void> {
   const loaded = await loadSettingsFromDisk();
 
   if (loaded) {
-    currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
+    currentSettings = { ...DEFAULT_SETTINGS, ...loaded, uiTheme: normalizeThemeId(loaded.uiTheme) };
   } else {
     currentSettings = { ...DEFAULT_SETTINGS };
   }
@@ -253,7 +266,11 @@ export function getSettings(): GameSettings {
  * Update one or more settings
  */
 export async function updateSettings(updates: Partial<GameSettings>): Promise<void> {
-  currentSettings = { ...currentSettings, ...updates };
+  currentSettings = {
+    ...currentSettings,
+    ...updates,
+    uiTheme: updates.uiTheme ? normalizeThemeId(updates.uiTheme) : currentSettings.uiTheme,
+  };
   await saveSettingsToDisk();
   applySettings(currentSettings);
   notifyListeners();
@@ -286,6 +303,52 @@ function notifyListeners(): void {
 // ----------------------------------------------------------------------------
 // APPLY SETTINGS
 // ----------------------------------------------------------------------------
+
+const WINDOW_RESOLUTION_PRESETS: Record<WindowResolutionPreset, { width: number; height: number }> = {
+  "800x600": { width: 800, height: 600 },
+  "1280x720": { width: 1280, height: 720 },
+  "1600x900": { width: 1600, height: 900 },
+  "1920x1080": { width: 1920, height: 1080 },
+};
+
+async function applyWindowResolution(resolution: WindowResolutionPreset): Promise<void> {
+  if (appliedWindowResolution === resolution || !isTauriAvailable()) {
+    return;
+  }
+
+  const preset = WINDOW_RESOLUTION_PRESETS[resolution];
+  const invokeTauri = getTauriInvoke();
+
+  try {
+    if (invokeTauri) {
+      await invokeTauri("set_window_resolution", {
+        width: preset.width,
+        height: preset.height,
+      });
+      appliedWindowResolution = resolution;
+      return;
+    }
+
+    const [{ LogicalSize }, { getCurrentWindow }] = await Promise.all([
+      import("@tauri-apps/api/dpi"),
+      import("@tauri-apps/api/window"),
+    ]);
+    await getCurrentWindow().setSize(new LogicalSize(preset.width, preset.height));
+    appliedWindowResolution = resolution;
+  } catch (error) {
+    console.warn("[SETTINGS] Failed to apply window resolution through Tauri command, trying window API:", error);
+    try {
+      const [{ LogicalSize }, { getCurrentWindow }] = await Promise.all([
+        import("@tauri-apps/api/dpi"),
+        import("@tauri-apps/api/window"),
+      ]);
+      await getCurrentWindow().setSize(new LogicalSize(preset.width, preset.height));
+      appliedWindowResolution = resolution;
+    } catch (fallbackError) {
+      console.warn("[SETTINGS] Failed to apply window resolution:", fallbackError);
+    }
+  }
+}
 
 function applySettings(settings: GameSettings): void {
   const root = document.documentElement;
@@ -329,6 +392,9 @@ function applySettings(settings: GameSettings): void {
   // Card Theme
   root.classList.remove("card-theme-light", "card-theme-dark");
   root.classList.add(`card-theme-${settings.cardTheme}`);
+
+  // Window resolution
+  void applyWindowResolution(settings.windowResolution);
 }
 
 // ----------------------------------------------------------------------------
@@ -403,6 +469,19 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     category: "display",
   },
   {
+    key: "windowResolution",
+    label: "Resolution",
+    description: "Resize the game window",
+    type: "select",
+    category: "display",
+    options: [
+      { value: "800x600", label: "800 x 600" },
+      { value: "1280x720", label: "1280 x 720" },
+      { value: "1600x900", label: "1600 x 900" },
+      { value: "1920x1080", label: "1920 x 1080" },
+    ],
+  },
+  {
     key: "animationSpeed",
     label: "Animation Speed",
     description: "Speed of battle animations",
@@ -422,7 +501,7 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     category: "display",
     options: [
       { value: "ardycia", label: "Ardycia (Default)" },
-      { value: "cyberpunk", label: "Cyberpunk" },
+      { value: "voidweaver", label: "Voidweaver" },
       { value: "monochrome", label: "Monochrome" },
       { value: "warm", label: "Warm" },
       { value: "cool", label: "Cool" },

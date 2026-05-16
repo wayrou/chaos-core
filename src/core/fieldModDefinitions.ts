@@ -224,6 +224,7 @@ export function getAllFieldModDefs(): FieldModDef[] {
     maxStacks: fieldMod.maxStacks,
     cost: fieldMod.cost,
     unlockAfterOperationFloor: fieldMod.unlockAfterOperationFloor,
+    merchant: fieldMod.merchant,
   }));
 
   const merged = new Map<string, FieldModDef>(Object.values(FIELD_MOD_DEFINITIONS).map((entry) => [entry.id, entry]));

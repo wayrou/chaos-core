@@ -6,11 +6,16 @@
 import { BattleState, BattleUnitState } from "./battle";
 import { BattleModeContext, GameState } from "./types";
 import { EncounterDefinition } from "./campaign";
+import type { Equipment } from "./equipment";
+import type { GearSlotData } from "./gearWorkbench";
 import { getEnemyDefinition } from "./enemies";
 import { createBattleUnitState } from "./battle";
 import { generateCover } from "./coverGenerator";
 import { generateStructuredBoardLayout } from "./terrainGeneration";
-import { getActiveRunTavernMealBuff } from "./tavernMeals";
+import {
+  applyTavernMealBuffToTarget,
+  getActiveRunTavernMealBuff,
+} from "./tavernMeals";
 import { getImportedUnit } from "../content/technica";
 
 function createImportedEnemyBaseUnit(
@@ -61,6 +66,8 @@ export interface BattleCreationOptions {
   unitsById?: Record<string, any>;
   maxUnitsPerSide?: number;
   modeContext?: BattleModeContext;
+  equipmentById?: Record<string, Equipment>;
+  gearSlots?: Record<string, GearSlotData>;
 }
 
 export function createBattleFromEncounter(
@@ -72,6 +79,8 @@ export function createBattleFromEncounter(
   // Get party units
   const partyUnitIds = options.partyUnitIds ?? gameState.partyUnitIds ?? [];
   const sourceUnitsById = options.unitsById ?? gameState.unitsById;
+  const equipmentById = options.equipmentById ?? (gameState as any).equipmentById;
+  const gearSlots = options.gearSlots ?? (gameState as any).gearSlots ?? {};
   const units: Record<string, BattleUnitState> = {};
   const activeRunMealBuff = getActiveRunTavernMealBuff(gameState);
 
@@ -84,28 +93,13 @@ export function createBattleFromEncounter(
         {
           isEnemy: false,
           pos: null, // Will be placed in placement phase
-          gearSlots: (gameState as any).gearSlots ?? {},
+          gearSlots,
         },
-        (gameState as any).equipmentById
+        equipmentById
       );
 
       if (activeRunMealBuff) {
-        const battleUnit = units[unitId];
-        switch (activeRunMealBuff.effect) {
-          case "hp":
-            battleUnit.maxHp += activeRunMealBuff.amount;
-            battleUnit.hp += activeRunMealBuff.amount;
-            break;
-          case "atk":
-            battleUnit.atk += activeRunMealBuff.amount;
-            break;
-          case "def":
-            battleUnit.def += activeRunMealBuff.amount;
-            break;
-          case "agi":
-            battleUnit.agi += activeRunMealBuff.amount;
-            break;
-        }
+        applyTavernMealBuffToTarget(units[unitId], activeRunMealBuff);
       }
     }
   });
@@ -154,7 +148,7 @@ export function createBattleFromEncounter(
             isEnemy: true,
             pos,
           },
-          (gameState as any).equipmentById
+          equipmentById
         );
       }
       return;
@@ -199,12 +193,12 @@ export function createBattleFromEncounter(
 
       units[instanceId] = createBattleUnitState(
         baseUnit as any,
-        {
-          isEnemy: true,
-          pos: pos,
-        },
-        (gameState as any).equipmentById
-      );
+          {
+            isEnemy: true,
+            pos: pos,
+          },
+          equipmentById
+        );
     }
   });
 
@@ -252,6 +246,7 @@ export function createBattleFromEncounter(
     gridWidth: encounter.gridWidth,
     gridHeight: encounter.gridHeight,
     tiles: tilesWithCover,
+    equipmentById,
     units,
     turnOrder: [], // Will be computed after placement
     activeUnitId: null,

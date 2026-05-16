@@ -1,5 +1,11 @@
 import { getAllEquipmentCards, getAllStarterEquipment, EquipmentCard } from "./equipment";
 import { Card, CardEffect } from "./types";
+import {
+  getDamageBandLabel,
+  inferDamageBandFromAmount,
+  resolveDamageBand,
+  type DamageBand,
+} from "./damageBands";
 import { getImportedCard, isTechnicaContentDisabled } from "../content/technica";
 import type { ImportedCard } from "../content/technica/types";
 import { createEffectFlowFromLegacyCardEffects } from "./effectFlow";
@@ -17,6 +23,7 @@ export interface ResolvedBattleCard {
   range: number;
   description: string;
   damage?: number;
+  damageBand?: DamageBand;
   healing?: number;
   defBuff?: number;
   atkBuff?: number;
@@ -150,10 +157,10 @@ function inferWeaponRules(card: EquipmentCard, target: BattleCardTarget, descrip
   }
 
   const explicitHeatDelta = parseHeatDelta(description);
-  const isMechanical = Boolean(sourceWeapon?.isMechanical);
+  const hasHeatTrack = Boolean(sourceWeapon?.heatProfile || sourceWeapon?.heatCapacity);
   const heatDelta =
     explicitHeatDelta ??
-    ((isMechanical || isCoreWeaponCard) && tags.includes("attack") ? 1 : 0);
+    (hasHeatTrack && tags.includes("attack") ? 1 : 0);
 
   const ammoProfile = sourceWeapon?.ammoProfile;
   const defaultAmmoCost = ammoProfile?.defaultAttackAmmoCost ?? (sourceWeapon?.ammoMax ? 1 : 0);
@@ -214,11 +221,10 @@ function inferTarget(card: EquipmentCard, description: string): BattleCardTarget
 }
 
 function buildGeneratedDescription(card: EquipmentCard, target: BattleCardTarget): string {
-  const damage = card.damage;
-
   if (target === "enemy") {
-    if (damage && damage > 0) {
-      return `Deal ${damage} damage.`;
+    const damageBand = resolveDamageBand(card.damageBand, card.damage, card.description);
+    if (damageBand) {
+      return `Deal ${getDamageBandLabel(damageBand)}.`;
     }
     return "Disrupt an enemy unit.";
   }
@@ -243,6 +249,7 @@ function addEffect(effects: CardEffect[], effect: CardEffect): void {
   const exists = effects.some(existing =>
     existing.type === effect.type &&
     existing.amount === effect.amount &&
+    existing.damageBand === effect.damageBand &&
     existing.duration === effect.duration &&
     existing.stat === effect.stat &&
     existing.tiles === effect.tiles
@@ -250,16 +257,27 @@ function addEffect(effects: CardEffect[], effect: CardEffect): void {
   if (!exists) effects.push(effect);
 }
 
-function parseEffectsFromDescription(description: string, target: BattleCardTarget, damage?: number): CardEffect[] {
+function parseEffectsFromDescription(
+  description: string,
+  target: BattleCardTarget,
+  damage?: number,
+  damageBand?: DamageBand,
+): CardEffect[] {
   const effects: CardEffect[] = [];
   const lower = description.toLowerCase();
+  const resolvedDamageBand = target === "enemy"
+    ? resolveDamageBand(damageBand, damage, description)
+    : null;
 
-  if (damage && damage > 0 && target === "enemy") {
-    addEffect(effects, { type: "damage", amount: damage });
+  if (resolvedDamageBand && target === "enemy") {
+    addEffect(effects, { type: "damage", damageBand: resolvedDamageBand });
   } else if (target === "enemy") {
     const damageMatch = lower.match(/deal\s+(\d+)\s+damage/);
     if (damageMatch) {
-      addEffect(effects, { type: "damage", amount: parseInt(damageMatch[1], 10) });
+      const inferredBand = inferDamageBandFromAmount(parseInt(damageMatch[1], 10));
+      addEffect(effects, inferredBand
+        ? { type: "damage", damageBand: inferredBand }
+        : { type: "damage", amount: parseInt(damageMatch[1], 10) });
     }
   }
 
@@ -340,9 +358,12 @@ function parseEffectsFromDescription(description: string, target: BattleCardTarg
 function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
   const description = normalizeDescription(card);
   const target = inferTarget(card, description);
+  const damageBand = target === "enemy"
+    ? resolveDamageBand(card.damageBand, card.damage, description)
+    : null;
   const effects = card.chaosCardsToCreate?.length
     ? []
-    : parseEffectsFromDescription(description, target, card.damage);
+    : parseEffectsFromDescription(description, target, card.damage, damageBand ?? undefined);
   const weaponRules = card.weaponRules
     ? {
         sourceWeaponId: card.weaponRules.sourceWeaponId ?? card.sourceEquipmentId ?? EQUIPPED_WEAPON_SOURCE_ID,
@@ -361,6 +382,7 @@ function toResolvedBattleCard(card: EquipmentCard): ResolvedBattleCard {
     strainCost: card.strainCost,
     range: parseRange(card.range),
     description,
+    damageBand: damageBand ?? undefined,
     effects,
     effectFlow: effects.length > 0 ? createEffectFlowFromLegacyCardEffects(effects, target === "ally" ? "ally" : target) : undefined,
     sourceEquipmentId: card.sourceEquipmentId,
@@ -401,6 +423,12 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
     sourceClassId: (card as ImportedCard & { sourceClassId?: string }).sourceClassId,
     artPath: card.artPath,
   };
+  const damageBand = card.targetType === "enemy"
+    ? resolveDamageBand(card.damageBand, card.damage, card.description)
+    : null;
+  const effects = card.effects.map((effect) => effect.type === "damage" && !effect.damageBand
+    ? { ...effect, damageBand: damageBand ?? inferDamageBandFromAmount(effect.amount) ?? undefined }
+    : effect);
 
   const resolved: ResolvedBattleCard = {
     id: card.id,
@@ -410,8 +438,9 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
     strainCost: card.strainCost,
     range: card.range,
     description: card.description,
-    effects: [...card.effects],
-    effectFlow: card.effectFlow ?? (card.effects.length > 0 ? createEffectFlowFromLegacyCardEffects(card.effects, card.targetType) : undefined),
+    damageBand: damageBand ?? undefined,
+    effects,
+    effectFlow: card.effectFlow ?? (effects.length > 0 ? createEffectFlowFromLegacyCardEffects(effects, card.targetType) : undefined),
     sourceEquipmentId,
     isChaosCard,
     chaosCardsToCreate: chaosCardsToCreate ? [...chaosCardsToCreate] : undefined,
@@ -421,13 +450,13 @@ function toResolvedImportedCard(card: ImportedCard): ResolvedBattleCard {
   if (card.damage !== undefined) resolved.damage = card.damage;
   if (card.artPath) resolved.artPath = card.artPath;
 
-  const healEffect = card.effects.find(effect => effect.type === "heal");
+  const healEffect = effects.find(effect => effect.type === "heal");
   if (healEffect?.amount) resolved.healing = healEffect.amount;
 
-  const defEffect = card.effects.find(effect => effect.type === "def_up");
+  const defEffect = effects.find(effect => effect.type === "def_up");
   if (defEffect?.amount) resolved.defBuff = defEffect.amount;
 
-  const atkEffect = card.effects.find(effect => effect.type === "atk_up");
+  const atkEffect = effects.find(effect => effect.type === "atk_up");
   if (atkEffect?.amount) resolved.atkBuff = atkEffect.amount;
 
   return resolved;
@@ -475,6 +504,8 @@ export function toCoreCard(card: ResolvedBattleCard): Card {
     strainCost: card.strainCost,
     targetType: card.target === "ally" ? "ally" : card.target,
     range: card.range,
+    damage: card.damage,
+    damageBand: card.damageBand,
     effects: [...card.effects],
     effectFlow: card.effectFlow,
     artPath: card.artPath,

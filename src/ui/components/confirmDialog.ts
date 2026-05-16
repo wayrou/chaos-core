@@ -1,4 +1,5 @@
 import { getControllerMode, setControllerMode, updateFocusableElements } from "../../core/controllerSupport";
+import { focusElementWithoutScroll } from "../domUtils";
 
 type DialogMountTarget = HTMLElement | null | (() => HTMLElement | null);
 
@@ -101,7 +102,7 @@ export function showConfirmDialog(options: ConfirmDialogOptions): Promise<boolea
   const cancelBtn = overlay.querySelector<HTMLButtonElement>('[data-confirm-dialog-action="cancel"]');
 
   requestAnimationFrame(() => {
-    confirmBtn?.focus();
+    focusElementWithoutScroll(confirmBtn);
     updateFocusableElements();
   });
 
@@ -123,7 +124,7 @@ export function showConfirmDialog(options: ConfirmDialogOptions): Promise<boolea
         const restoreTarget = options.restoreFocusSelector
           ? document.querySelector<HTMLElement>(options.restoreFocusSelector)
           : previousActiveElement;
-        restoreTarget?.focus();
+        focusElementWithoutScroll(restoreTarget);
       });
     };
 
@@ -210,7 +211,7 @@ export function showAlertDialog(options: AlertDialogOptions): Promise<void> {
 
   const dismissBtn = overlay.querySelector<HTMLButtonElement>('[data-alert-dialog-action="dismiss"]');
   requestAnimationFrame(() => {
-    dismissBtn?.focus();
+    focusElementWithoutScroll(dismissBtn);
     updateFocusableElements();
   });
 
@@ -232,7 +233,7 @@ export function showAlertDialog(options: AlertDialogOptions): Promise<void> {
         const restoreTarget = options.restoreFocusSelector
           ? document.querySelector<HTMLElement>(options.restoreFocusSelector)
           : previousActiveElement;
-        restoreTarget?.focus();
+        focusElementWithoutScroll(restoreTarget);
       });
     };
 

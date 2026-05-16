@@ -2,6 +2,7 @@
 import type { EffectFlowDocument } from "./effectFlow";
 import type { WeaponCardRules } from "./weaponData";
 import type { ResourceWallet } from "./resources";
+import type { UnitAppearance } from "./unitAppearance";
 
 import type { BattleState as RuntimeBattleState } from "./battle";
 export type { ResourceKey, ResourceWallet } from "./resources";
@@ -66,6 +67,7 @@ export type WeaponType =
 export interface CardEffect {
   type: string;
   amount?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   duration?: number;
   stat?: string;
   tiles?: number;
@@ -78,6 +80,8 @@ export interface Card {
   strainCost: number;
   targetType: "enemy" | "self" | "tile" | "ally";
   range?: number;
+  damage?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   effects: CardEffect[];
   effectFlow?: EffectFlowDocument;
   artPath?: string;
@@ -90,6 +94,8 @@ export interface Card {
 export interface Unit {
   id: UnitId;
   name: string;
+  appearance?: UnitAppearance;
+  notes?: string;
   isEnemy: boolean;
   hp: number;
   maxHp: number;
@@ -220,6 +226,7 @@ export interface OperationRun {
   sprawlDirection?: TheaterSprawlDirection;
   theater?: TheaterNetworkState;
   theaterFloors?: Record<number, TheaterNetworkState>;
+  theaterResourceDecayEnabled?: boolean;
 }
 
 export interface PlayerProfile {
@@ -483,6 +490,31 @@ export interface LobbyState {
   updatedAt: number;
 }
 
+export type LobbyReturnFieldCameraViewState = {
+  yaw: number;
+  pitch: number;
+  distance: number;
+};
+
+export type LobbyReturnFieldCameraState = {
+  mode: "shared" | "split";
+  behavior: "shared" | "hybrid";
+  shared: LobbyReturnFieldCameraViewState;
+  split: Record<PlayerId, LobbyReturnFieldCameraViewState>;
+};
+
+export type LobbyReturnOuterDeckOpenWorldState = {
+  seed: number;
+  generationVersion: number;
+  floorOrdinal: number;
+  playerWorldX: number;
+  playerWorldY: number;
+  playerFacing: "north" | "south" | "east" | "west";
+  streamCenterWorldX: number;
+  streamCenterWorldY: number;
+  streamRadiusChunks: number;
+};
+
 export type LobbyReturnContext =
   | { kind: "menu" }
   | { kind: "esc" }
@@ -493,6 +525,10 @@ export type LobbyReturnContext =
       x?: number;
       y?: number;
       facing?: "north" | "south" | "east" | "west";
+      players?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckWorldPlayers?: Partial<Record<PlayerId, FieldAvatar>>;
+      outerDeckOpenWorldState?: LobbyReturnOuterDeckOpenWorldState | null;
+      cameraState?: LobbyReturnFieldCameraState | null;
     };
 
 export interface BaseCampItemSize {
@@ -628,12 +664,14 @@ export interface UILayoutState {
     y: number;
     width: number;
     height: number;
+    minimized?: boolean;
   };
   opsTerminalAtlasCoreWindowFrame?: {
     x: number;
     y: number;
     width: number;
     height: number;
+    minimized?: boolean;
   };
   opsTerminalAtlasNotesWindowFrame?: {
     x: number;
@@ -645,6 +683,7 @@ export interface UILayoutState {
   opsTerminalAtlasNotesWindowColor?: string;
   opsTerminalAtlasDebugFloorBypass?: boolean;
   escDebugPortStableUnlock?: boolean;
+  quacDebugAutoWinBattles?: boolean;
   theaterDebugDisableEnemyRoomAttacks?: boolean;
   notesState?: PlayerNotesState;
 }
@@ -1017,9 +1056,10 @@ export interface CoreBuildDefinition {
   id: CoreType;
   displayName: string;
   shortCode?: string;
-  category: CoreBuildCategory;
-  description: string;
-  operationalRequirements?: {
+    category: CoreBuildCategory;
+    description: string;
+    battlePerks?: string[];
+    operationalRequirements?: {
     powerWatts?: number;
     commsBw?: number;
     supplyCrates?: number;
@@ -1287,6 +1327,7 @@ export interface TheaterNetworkState {
   rooms: Record<RoomId, TheaterRoom>;
   currentRoomId: RoomId;
   selectedRoomId: RoomId;
+  resourceDecayEnabled?: boolean;
   currentNodeId?: string;
   selectedNodeId?: string;
   annexesById?: Record<string, AnnexInstance>;
@@ -1356,7 +1397,7 @@ export type EchoFieldId =
   | "null_zone"
   | "overdrive_zone";
 export type EchoEncounterType = "standard" | "elite" | "checkpoint" | "boss" | "boss_chain_a" | "boss_chain_b";
-export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "results";
+export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "shop" | "workshop" | "results";
 export type EchoChallengeType = "no_losses" | "turn_limit" | "field_triggers";
 export type EchoRewardLane = "unit" | "field" | "modifier" | "recovery" | "training";
 export type EchoRewardOptionType =
@@ -1393,6 +1434,8 @@ export interface EchoUnitDraftOption {
     accessory1: string | null;
     accessory2: string | null;
   };
+  equipmentById?: Record<string, import("./equipment").Equipment>;
+  equipmentPool?: string[];
   loadoutPreview: string[];
 }
 
@@ -1447,6 +1490,21 @@ export interface EchoTrainingPackageOption {
   description: string;
   stat: "atk" | "def" | "agi" | "acc";
   amount: number;
+}
+
+export interface EchoShopListing {
+  id: string;
+  equipment: import("./equipment").Equipment;
+  cost: number;
+  rarityLabel: "common" | "uncommon" | "rare";
+  purchased: boolean;
+}
+
+export interface EchoEconomyReward {
+  wad: number;
+  resources: ResourceWallet;
+  sourceNodeId?: string | null;
+  sourceLabel?: string | null;
 }
 
 export interface EchoChallenge {
@@ -1587,10 +1645,24 @@ export interface EchoRunState {
   encounterNumber: number;
   unitsById: Record<UnitId, Unit>;
   squadUnitIds: UnitId[];
+  equipmentById?: Record<string, import("./equipment").Equipment>;
+  equipmentPool?: string[];
+  cardLibrary?: Record<string, number>;
+  gearSlots?: Record<string, import("./gearWorkbench").GearSlotData>;
+  unlockedChassisIds?: string[];
+  unlockedDoctrineIds?: string[];
+  inventoryFolders?: Record<string, InventoryFolder>;
+  inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
   fields: EchoFieldDefinition[];
   tacticalModifiers: import("./fieldMods").FieldModInstance[];
   rerolls: number;
+  wad: number;
+  resources: ResourceWallet;
+  knownRecipeIds: string[];
+  consumables: Record<string, number>;
   draftChoices: EchoRewardChoice[];
+  shopListings: EchoShopListing[];
+  lastEconomyReward?: EchoEconomyReward | null;
   currentChallenge?: EchoChallenge | null;
   lastEncounterSummary?: EchoEncounterSummary | null;
   resultsSummary?: EchoScoreSummary | null;

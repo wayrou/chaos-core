@@ -18,6 +18,7 @@ import {
   isTechnicaContentDisabled,
 } from "../content/technica";
 import type { ImportedCard, ImportedGear } from "../content/technica/types";
+import type { MerchantListingSource } from "./merchant";
 import { getLibraryCardDatabase, type GearSlotData, type LibraryCard } from "./gearWorkbench";
 
 // ----------------------------------------------------------------------------
@@ -131,6 +132,7 @@ export interface EquipmentCard {
   description: string;
   range?: string;
   damage?: number;
+  damageBand?: "low" | "normal" | "high" | "massive";
   effects?: string[];
   sourceEquipmentId?: string;
   sourceClassId?: string;
@@ -170,6 +172,7 @@ export interface EquipmentVictoryRewardSource {
 
 export interface EquipmentAcquisition {
   shop?: EquipmentShopSource;
+  merchant?: MerchantListingSource;
   enemyDrop?: EquipmentEnemyDropSource;
   victoryReward?: EquipmentVictoryRewardSource;
   otherSourcesNotes?: string;
@@ -501,6 +504,20 @@ export function getAllEquipmentCards(): Record<string, EquipmentCard> {
   return all;
 }
 
+const MAGICIAN_CLASS_LINE = new Set<UnitClass>([
+  "magician",
+  "cleric",
+  "wizard",
+  "chaosmancer",
+]);
+
+function shouldIncludeCoreCardForUnitClass(card: EquipmentCard, unitClass: UnitClass): boolean {
+  if (card.id !== "core_chaos_call") {
+    return true;
+  }
+  return MAGICIAN_CLASS_LINE.has(unitClass);
+}
+
 function getClassCardsForUnitClass(unitClass: UnitClass): EquipmentCard[] {
   const builtInCards = CLASS_CARDS[unitClass as BuiltInUnitClass] || [];
   const importedCards = getAllImportedCards()
@@ -538,6 +555,7 @@ export function buildDeckFromLoadout(
   // 1. Add core cards (always available)
   for (const card of CORE_CARDS) {
     if (isTechnicaContentDisabled("card", card.id)) continue;
+    if (!shouldIncludeCoreCardForUnitClass(card, unitClass)) continue;
     deck.push(card.id);
     deck.push(card.id); // Add 2 copies of each core card
   }

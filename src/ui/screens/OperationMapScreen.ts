@@ -6,7 +6,6 @@
 
 import { getGameState, updateGameState } from "../../state/gameStore";
 import { getCurrentOperation, getCurrentFloor } from "../../core/ops";
-import { renderBattleScreen } from "./BattleScreen";
 import { renderFieldScreen } from "../../field/FieldScreen";
 import { renderEventRoomScreen } from "./EventRoomScreen";
 import { renderShopScreen } from "./ShopScreen";
@@ -14,6 +13,7 @@ import { renderFieldNodeRoomScreen } from "./FieldNodeRoomScreen";
 import { renderOperationSelectScreen } from "./OperationSelectScreen";
 import { renderFieldModRewardScreen } from "./FieldModRewardScreen";
 import { renderTheaterCommandScreen } from "./TheaterCommandScreen";
+import { renderBattleScreenDeferred } from "./battleScreenLoader";
 import {
   markCurrentOperationRoomVisited,
   markOperationRoomVisited,
@@ -28,11 +28,11 @@ import {
   clearNode,
   prepareBattleForNode,
   advanceToNextFloor,
-  completeOperationRun,
   abandonRun,
   getActiveRun,
 } from "../../core/campaignManager";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
+import { renderOperationClearScreen } from "./OperationClearScreen";
 import { getKeyRoomsForFloor, FACILITY_CONFIG } from "../../core/keyRoomSystem";
 import {
   hasTheaterOperation,
@@ -1969,9 +1969,7 @@ function attachEventListeners(_nodes: RoomNode[], _currentRoomIndex: number): vo
 
   // Complete operation button (if using old ID, handled above)
   root.querySelector("#completeOpBtn")?.addEventListener("click", () => {
-    completeOperationRun();
-    syncCampaignToGameState();
-    renderActiveOperationSurface();
+    renderOperationClearScreen();
   });
 
   // Key room action buttons
@@ -2260,7 +2258,7 @@ function enterBattleRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering battle room:", error);
     // Return to operation map on error
@@ -2328,7 +2326,7 @@ function enterKeyRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering key room:", error);
     // Return to operation map on error
@@ -2382,7 +2380,7 @@ function enterEliteRoom(room: RoomNode): void {
       phase: "battle",
     }));
 
-    renderBattleScreen();
+    renderBattleScreenDeferred();
   } catch (error) {
     console.error("[OPMAP] Error entering elite room:", error);
     renderOperationMapScreen();
@@ -2475,9 +2473,7 @@ function enterRestRoom(room: RoomNode): void {
     root.querySelector("#continueBtn")?.addEventListener("click", () => {
       if (isCustomExitNode && activeRun) {
         if (isLastCustomFloor) {
-          completeOperationRun();
-          syncCampaignToGameState();
-          renderActiveOperationSurface();
+          renderOperationClearScreen();
           return;
         }
 

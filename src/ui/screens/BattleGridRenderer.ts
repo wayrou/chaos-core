@@ -16,6 +16,103 @@ import { EchoFieldPlacement, PlayerId } from "../../core/types";
  */
 export class BattleGridRenderer {
   private static readonly TILE_SIZE = 75; // pixels per tile
+  private static readonly STATUS_CHIP_PRESENTATION: Record<string, { label: string; tone: string; title: string }> = {
+    stunned: { label: "STUN", tone: "control", title: "Stunned" },
+    dazed: { label: "DAZE", tone: "debuff", title: "Dazed" },
+    immobilized: { label: "IMMOB", tone: "control", title: "Immobilized" },
+    rooted: { label: "ROOT", tone: "control", title: "Rooted" },
+    suppressed: { label: "SUPP", tone: "debuff", title: "Suppressed" },
+    weakened: { label: "WEAK", tone: "debuff", title: "Weakened" },
+    vulnerable: { label: "VULN", tone: "debuff", title: "Vulnerable" },
+    guarded: { label: "GUARD", tone: "guard", title: "Guarded" },
+    marked: { label: "MARK", tone: "debuff", title: "Marked" },
+    burning: { label: "BURN", tone: "hazard", title: "Burning" },
+    poisoned: { label: "POIS", tone: "hazard", title: "Poisoned" },
+  };
+
+  private static getFacingDirectionForTile(
+    activeUnit: BattleUnitState | undefined,
+    x: number,
+    y: number,
+  ): "north" | "south" | "east" | "west" | null {
+    if (!activeUnit?.pos) {
+      return null;
+    }
+
+    const dx = x - activeUnit.pos.x;
+    const dy = y - activeUnit.pos.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      if (dx > 0) return "east";
+      if (dx < 0) return "west";
+    }
+    if (dy > 0) return "south";
+    if (dy < 0) return "north";
+    return null;
+  }
+
+  private static getBuffChipLabel(buffType: string, amount: number): { label: string; tone: string; title: string } {
+    const normalized = buffType.toLowerCase();
+    const stat = normalized.includes("atk")
+      ? "ATK"
+      : normalized.includes("def")
+        ? "DEF"
+        : normalized.includes("agi")
+          ? "AGI"
+          : normalized.includes("acc")
+            ? "ACC"
+            : normalized.includes("move")
+              ? "MOV"
+              : normalized.replace(/_/g, " ").slice(0, 4).toUpperCase();
+    const sign = amount >= 0 ? "+" : "-";
+    return {
+      label: `${stat}${sign}${Math.abs(amount)}`,
+      tone: amount >= 0 ? "buff" : "debuff",
+      title: buffType.replace(/_/g, " "),
+    };
+  }
+
+  private static renderUnitEffectChips(unit: BattleUnitState): string {
+    const chips: Array<{ label: string; tone: string; title: string; duration?: number }> = [];
+    (unit.statuses ?? []).forEach((status) => {
+      const presentation = this.STATUS_CHIP_PRESENTATION[status.type] ?? {
+        label: status.type.replace(/_/g, " ").slice(0, 5).toUpperCase(),
+        tone: "debuff",
+        title: status.type.replace(/_/g, " "),
+      };
+      chips.push({
+        ...presentation,
+        duration: Number.isFinite(status.duration) && status.duration > 0 ? status.duration : undefined,
+      });
+    });
+    (unit.buffs ?? []).forEach((buff) => {
+      chips.push({
+        ...this.getBuffChipLabel(buff.type, buff.amount),
+        duration: Number.isFinite(buff.duration) && buff.duration > 0 ? buff.duration : undefined,
+      });
+    });
+    if (isOverStrainThreshold(unit)) {
+      chips.push({ label: "OVR", tone: "strain", title: "Over-strained" });
+    }
+    if ((unit.nextTurnDrawPenalty ?? 0) > 0) {
+      chips.push({ label: `DRW-${unit.nextTurnDrawPenalty}`, tone: "strain", title: "Next turn draw penalty" });
+    }
+    if (unit.weaponState?.isJammed) {
+      chips.push({ label: "JAM", tone: "debuff", title: "Weapon jammed" });
+    }
+
+    const visibleChips = chips.slice(0, 4);
+    return visibleChips.length > 0
+      ? `
+        <div class="battle-unit-effect-chips" aria-label="Unit effects">
+          ${visibleChips.map((chip) => `
+            <span class="battle-unit-effect-chip battle-unit-effect-chip--${chip.tone}" title="${chip.title}">
+              ${chip.label}${typeof chip.duration === "number" ? `<b>${chip.duration}</b>` : ""}
+            </span>
+          `).join("")}
+        </div>
+      `
+      : "";
+  }
 
   /**
    * Render the entire battle grid
@@ -254,6 +351,10 @@ export class BattleGridRenderer {
         const fieldMarker = centerEchoField
           ? `<span class="battle-tile-echo-marker battle-tile-echo-marker--${centerEchoField.fieldId.replace(/_/g, "-")}">${centerEchoField.fieldId === "ember_zone" ? "E" : centerEchoField.fieldId === "bastion_zone" ? "B" : "F"}</span>`
           : "";
+        const facingDirection = facingTileSet.has(key) ? this.getFacingDirectionForTile(activeUnit, x, y) : null;
+        const facingMarker = facingDirection
+          ? `<span class="battle-tile-facing-arrow battle-tile-facing-arrow--${facingDirection}" aria-hidden="true"></span>`
+          : "";
         tilesHtml += `
           <div class="${classes}" 
                data-x="${x}" 
@@ -264,6 +365,7 @@ export class BattleGridRenderer {
             ${extractionMarker}
             ${objectMarker}
             ${fieldMarker}
+            ${facingMarker}
           </div>
         `;
 
@@ -301,6 +403,7 @@ export class BattleGridRenderer {
           const strained = !unit.isEnemy && isOverStrainThreshold(unit) ? "battle-unit--strained" : "";
           const truncName = unit.name.length > 8 ? unit.name.slice(0, 8) + "…" : unit.name;
           const facing = unit.facing ?? (unit.isEnemy ? "west" : "east");
+          const effectChips = this.renderUnitEffectChips(unit);
 
           // Get controller info for player units
           let controllerBadge = "";
@@ -342,6 +445,7 @@ export class BattleGridRenderer {
                    data-facing="${facing}"
                    style="position: absolute !important; left: ${unitX}px !important; top: ${unitY}px !important; transform: translate(-50%, -50%) !important; width: auto !important; height: auto !important; min-width: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important; background: none !important; border: none !important; padding: 0 !important; z-index: 1000;">
                 <div class="battle-unit-portrait-wrapper">
+                  ${effectChips}
                   <div class="battle-unit-portrait">
                     <img src="${getBattleUnitPortraitPath(unit.id, unit.baseUnitId)}" alt="${unit.name}" class="battle-unit-portrait-img" onerror="this.src='/assets/portraits/units/core/Test_Portrait.png';" />
                   </div>

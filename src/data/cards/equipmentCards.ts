@@ -1,4 +1,5 @@
 import { EquipmentCard } from "../../core/equipment";
+import { getDamageBandLabel, resolveDamageBand } from "../../core/damageBands";
 
 function sanitizeEquipmentCard(card: EquipmentCard): EquipmentCard {
     const description = card.description.trim();
@@ -23,7 +24,7 @@ function sanitizeEquipmentCard(card: EquipmentCard): EquipmentCard {
     if (isSelfCard) {
         nextDescription = "Gain +2 DEF until next turn.";
     } else if (typeof card.damage === "number" && card.damage > 0) {
-        nextDescription = `Deal ${card.damage} damage.`;
+        nextDescription = `Deal ${getDamageBandLabel(resolveDamageBand(card.damageBand, card.damage, description) ?? "normal")}.`;
     } else {
         nextDescription = "Apply a tactical effect to the target.";
     }
@@ -41,7 +42,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Cleave",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage to up to 3 adjacent enemies.",
+        description: "Deal low damage to up to 3 adjacent enemies.",
         range: "R(1)",
         damage: 3,
         sourceEquipmentId: "weapon_iron_longsword",
@@ -70,7 +71,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Pinpoint Shot",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 4 damage; +1 ACC for this attack.",
+        description: "Deal damage; +1 ACC for this attack.",
         range: "R(3-6)",
         damage: 4,
         sourceEquipmentId: "weapon_elm_recurve_bow",
@@ -99,7 +100,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Blunt Sweep",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage to all enemies in a 90 arc.",
+        description: "Deal low damage to all enemies in a 90 arc.",
         range: "R(1-2)",
         damage: 3,
         sourceEquipmentId: "weapon_oak_battlestaff",
@@ -128,7 +129,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Throat Jab",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage and reduce target ACC by 2 next turn.",
+        description: "Deal low damage and reduce target ACC by 2 next turn.",
         range: "R(1)",
         damage: 3,
         sourceEquipmentId: "weapon_steel_dagger",
@@ -196,7 +197,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Molten Mark",
         type: "equipment",
         strainCost: 6,
-        description: "Mark target; next attack from any ally deals +2 damage. Gain +1 heat.",
+        description: "Mark target; next attack from any ally deals bonus damage. Gain +1 heat.",
         range: "R(1)",
         sourceEquipmentId: "weapon_blazefang_saber",
     },
@@ -215,7 +216,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Headbutt",
         type: "equipment",
         strainCost: 6,
-        description: "Deal 2 damage and stun for 1 turn.",
+        description: "Deal low damage and stun for 1 turn.",
         range: "R(1)",
         damage: 2,
         sourceEquipmentId: "armor_ironguard_helm",
@@ -243,7 +244,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Aimed Strike",
         type: "equipment",
         strainCost: 6,
-        description: "Deal 3 damage with +1 ACC.",
+        description: "Deal low damage with +1 ACC.",
         range: "R(2-4)",
         damage: 3,
         sourceEquipmentId: "armor_rangers_hood",
@@ -253,7 +254,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Hunter's Mark",
         type: "equipment",
         strainCost: 6,
-        description: "Mark target; next ranged attack deals +2 damage.",
+        description: "Mark target; next ranged attack deals bonus damage.",
         range: "R(3-5)",
         sourceEquipmentId: "armor_rangers_hood",
     },
@@ -300,7 +301,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Shoulder Charge",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage; push target 1 tile.",
+        description: "Deal low damage; push target 1 tile.",
         range: "R(1)",
         damage: 3,
         sourceEquipmentId: "armor_steelplate_cuirass",
@@ -328,7 +329,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Knife Toss",
         type: "equipment",
         strainCost: 6,
-        description: "Deal 2 damage; +1 AGI next turn.",
+        description: "Deal low damage; +1 AGI next turn.",
         range: "R(2-3)",
         damage: 2,
         sourceEquipmentId: "armor_leather_jerkin",
@@ -385,7 +386,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Knuckle Jab",
         type: "equipment",
         strainCost: 6,
-        description: "Deal 2 damage and push target 1 tile.",
+        description: "Deal low damage and push target 1 tile.",
         range: "R(1)",
         damage: 2,
         sourceEquipmentId: "accessory_steel_signet_ring",
@@ -413,7 +414,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Spotter's Shot",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 4 damage; target marked for +1 damage from all sources.",
+        description: "Deal damage; target marked for bonus damage from all sources.",
         range: "R(3-6)",
         damage: 4,
         sourceEquipmentId: "accessory_eagle_eye_lens",
@@ -423,7 +424,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Target Paint",
         type: "equipment",
         strainCost: 6,
-        description: "Allies gain +1 damage to target this turn.",
+        description: "Allies gain bonus damage to target this turn.",
         range: "R(3-6)",
         sourceEquipmentId: "accessory_eagle_eye_lens",
     },
@@ -441,7 +442,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Flying Kick",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage; move through target's tile.",
+        description: "Deal low damage; move through target's tile.",
         range: "R(1-2)",
         damage: 3,
         sourceEquipmentId: "accessory_fleetfoot_anklet",
@@ -469,7 +470,7 @@ const RAW_EQUIPMENT_CARDS: EquipmentCard[] = [
         name: "Bulwark Bash",
         type: "equipment",
         strainCost: 2,
-        description: "Deal 3 damage; gain +1 HP.",
+        description: "Deal low damage; gain +1 HP.",
         range: "R(1)",
         damage: 3,
         sourceEquipmentId: "accessory_vitality_charm",

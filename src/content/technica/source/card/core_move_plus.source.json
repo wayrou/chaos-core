@@ -5,17 +5,16 @@
   "updatedAt": "2026-04-04T05:31:44.941Z",
   "id": "core_move_plus",
   "name": "Move+",
-  "description": "Move 2 extra tiles this turn.",
+  "description": "Gain a second movement phase this turn.",
   "cardType": "core",
   "rarity": "common",
   "category": "utility",
-  "strainCost": 1,
-  "targetType": "tile",
+  "strainCost": 3,
+  "targetType": "self",
   "range": 0,
   "effects": [
     {
-      "type": "move",
-      "tiles": 2
+      "type": "second_movement_phase"
     }
   ],
   "metadata": {},

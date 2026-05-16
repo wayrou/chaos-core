@@ -34,7 +34,6 @@ import {
   performEnemyTurn,
   BASE_STRAIN_THRESHOLD,
   BattleUnitState,
-  isOverStrainThreshold,
   placeUnit,
   quickPlaceUnits,
   confirmPlacement,
@@ -47,7 +46,6 @@ import {
   getUnitMovementRange,
   Vec2,
 } from "../../core/battle";
-import { hasLineOfSight } from "../../core/lineOfSight";
 import { createBattleFromEncounter } from "../../core/battleFromEncounter";
 import { createTrainingBattle } from "../../core/trainingBattle";
 import { getAllStarterEquipment } from "../../core/equipment";
@@ -56,6 +54,12 @@ import {
   resolveGearRewardSpecs,
 } from "../../core/gearRewards";
 import { getResolvedBattleCard, toCoreCard } from "../../core/cardCatalog";
+import {
+  calculateDamageBandAmount,
+  inferDamageBandFromAmount,
+  resolveDamageBand,
+  type DamageBand,
+} from "../../core/damageBands";
 import { getBattleUnitPortraitPath } from "../../core/portraits";
 import { renderWeaponWindow as renderSharedWeaponWindow } from "../components/weaponWindow";
 import { updateQuestProgress } from "../../quests/questManager";
@@ -67,8 +71,11 @@ import {
   hasTheaterOperation,
 } from "../../core/theaterSystem";
 import {
+  forceBattleVictory,
+  isQuacDebugAutoWinBattlesEnabled,
+} from "../../core/quacDevCommands";
+import {
   clearControllerContext,
-  getControllerActionLabel,
   registerControllerContext,
   setControllerMode,
   updateFocusableElements,
@@ -86,9 +93,12 @@ import {
   type FeedbackPosition,
   type FeedbackRequest,
 } from "../../core/feedback";
-import { BattleSceneController } from "../battle3d/BattleSceneController";
-import { createBattleBoardSnapshot } from "../battle3d/snapshot";
-import type { BattleBoardPick, BattleBoardPoint } from "../battle3d/types";
+import type { BattleSceneController } from "../battle3d/BattleSceneController";
+import type {
+  BattleBoardPick,
+  BattleBoardPoint,
+  BattleSceneInteractionHandlers,
+} from "../battle3d/types";
 // Mount system imports
 import { isUnitMounted } from "../../core/battle";
 import { getMountById as getMountDefinition } from "../../core/mounts";
@@ -102,6 +112,7 @@ import {
   abandonActiveEchoRun,
   commitEchoEncounterVictory,
   finalizeEchoRunFromBattleDefeat,
+  getActiveEchoRun,
   summarizeEchoEncounter,
 } from "../../core/echoRuns";
 import {
@@ -110,6 +121,16 @@ import {
   saveSquadMatchState,
   serializeSquadMatchSnapshot,
 } from "../../core/squadOnline";
+import {
+  areBattleAuthorityPlacementsReady,
+  type BattleAuthorityPlacementSummary,
+  doesBattleUnitMatchAuthorityPlayer,
+  filterBattleUnitsByAuthorityPlayer,
+  getNextUnplacedBattleUnitForAuthorityPlayer,
+  hasBattlePlacementUnitForAuthorityPlayer,
+  normalizeBattleAuthorityPlayerId,
+  summarizeBattleAuthorityPlacements,
+} from "../../core/battleAuthority";
 import {
   saveLobbyState,
   setLobbySkirmishIntermission,
@@ -132,9 +153,11 @@ import {
 import {
   fieldPatch,
   fullReload,
+  getWeaponAmmoProfile,
   getWeaponCardBlockReason,
   getWeaponCardModifierSnapshot,
   getWeaponClutches,
+  getWeaponHeatProfile,
   quickReload,
   toggleWeaponClutch,
   ventWeapon,
@@ -151,6 +174,10 @@ let cleanupBattleFeedbackListener: (() => void) | null = null;
 let battleHitStopUntilMs = 0;
 let battleHitStopTimerId: number | null = null;
 let battleSceneController: BattleSceneController | null = null;
+let battle3dModulesPromise: Promise<Battle3dModules> | null = null;
+let pendingBattleSceneInteractionHandlers: BattleSceneInteractionHandlers = {};
+let pendingBattleSceneViewChangeHandler: ((view: BattleCameraViewPreset) => void) | null = null;
+let battleBoardSyncRequestId = 0;
 const BATTLE_VIEW_SLOT_COUNT = 2;
 const DEFAULT_BATTLE_VIEW_PRESETS: BattleCameraViewPreset[] = [
   {
@@ -180,6 +207,63 @@ let battleViewPersistTimerId: number | null = null;
 let battleLastAppliedViewSignature: string | null = null;
 
 type BattleAutoMode = "manual" | "undaring" | "daring";
+type Battle3dModules = {
+  BattleSceneController: typeof import("../battle3d/BattleSceneController").BattleSceneController;
+  createBattleBoardSnapshot: typeof import("../battle3d/snapshot").createBattleBoardSnapshot;
+};
+
+type BattleSceneTools = {
+  scene: BattleSceneController;
+  createBattleBoardSnapshot: Battle3dModules["createBattleBoardSnapshot"];
+};
+
+function reportBattle3dLoadError(error: unknown): void {
+  console.error("[BATTLE] Failed to load the 3D battle scene.", error);
+}
+
+function loadBattle3dModules(): Promise<Battle3dModules> {
+  if (!battle3dModulesPromise) {
+    battle3dModulesPromise = Promise.all([
+      import("../battle3d/BattleSceneController"),
+      import("../battle3d/snapshot"),
+    ]).then(([controllerModule, snapshotModule]) => ({
+      BattleSceneController: controllerModule.BattleSceneController,
+      createBattleBoardSnapshot: snapshotModule.createBattleBoardSnapshot,
+    })).catch((error) => {
+      battle3dModulesPromise = null;
+      throw error;
+    });
+  }
+  return battle3dModulesPromise;
+}
+
+function preloadBattle3dModules(): void {
+  void loadBattle3dModules().catch(reportBattle3dLoadError);
+}
+
+async function getBattleSceneTools(): Promise<BattleSceneTools> {
+  const modules = await loadBattle3dModules();
+  if (!battleSceneController) {
+    battleSceneController = new modules.BattleSceneController();
+    battleSceneController.setInteractionHandlers(pendingBattleSceneInteractionHandlers);
+    battleSceneController.setViewChangeHandler(pendingBattleSceneViewChangeHandler);
+    battleSceneController.setZoomFactor(battleZoom);
+  }
+  return {
+    scene: battleSceneController,
+    createBattleBoardSnapshot: modules.createBattleBoardSnapshot,
+  };
+}
+
+function setBattleSceneInteractionHandlers(handlers: BattleSceneInteractionHandlers): void {
+  pendingBattleSceneInteractionHandlers = handlers;
+  battleSceneController?.setInteractionHandlers(handlers);
+}
+
+function setBattleSceneViewChangeHandler(handler: ((view: BattleCameraViewPreset) => void) | null): void {
+  pendingBattleSceneViewChangeHandler = handler;
+  battleSceneController?.setViewChangeHandler(handler);
+}
 
 function clampBattleViewIndex(index: number): number {
   return Math.max(0, Math.min(BATTLE_VIEW_SLOT_COUNT - 1, index));
@@ -874,10 +958,222 @@ function getLocalPlacementTiles(battle: BattleState): Vec2[] {
 }
 
 function getLocalPlacementUnits(battle: BattleState): BattleUnitState[] {
-  if (isSquadBattle(battle)) {
-    return Object.values(battle.units).filter((unit) => canLocalControlBattleUnit(battle, unit));
+  return Object.values(battle.units).filter((unit) => canLocalControlBattleUnit(battle, unit));
+}
+
+function getPlacementUnitsForAuthorityPlayer(
+  battle: BattleState,
+  playerId?: PlayerId | null,
+): BattleUnitState[] {
+  return filterBattleUnitsByAuthorityPlayer(getLocalPlacementUnits(battle), playerId);
+}
+
+function getActiveLocalBattleAuthorityPlayers(): PlayerId[] {
+  return (["P1", "P2"] as const).filter((playerId) => Boolean(getGameState().players[playerId]?.active));
+}
+
+function shouldShowBattleAuthorityUi(battle: BattleState | null | undefined): boolean {
+  if (isSquadBattle(battle) || isCoopOperationsBattle(battle)) {
+    return true;
   }
-  return Object.values(battle.units).filter((unit) => !unit.isEnemy);
+  return getActiveLocalBattleAuthorityPlayers().length > 1;
+}
+
+function getBattleAuthorityAccent(playerId: PlayerId): string {
+  return getGameState().players[playerId]?.color ?? (playerId === "P1" ? "#ff8a00" : "#6849c2");
+}
+
+function getBattleTurnAuthorityDisplay(
+  activeUnit: BattleUnitState | undefined,
+): {
+  ownerId: string;
+  kicker: string;
+  label: string;
+  accent: string;
+} {
+  if (!activeUnit) {
+    return {
+      ownerId: "none",
+      kicker: "TACTICAL AUTHORITY",
+      label: "NO ACTIVE UNIT",
+      accent: "#7c8aa8",
+    };
+  }
+  if (activeUnit.isEnemy) {
+    return {
+      ownerId: "enemy",
+      kicker: "TACTICAL AUTHORITY",
+      label: "HOSTILE TURN",
+      accent: "#d35f5f",
+    };
+  }
+
+  const playerId = normalizeBattleAuthorityPlayerId(activeUnit.controller ?? "P1") ?? "P1";
+  return {
+    ownerId: playerId,
+    kicker: "TACTICAL AUTHORITY",
+    label: getPlayerControllerLabel(playerId),
+    accent: getBattleAuthorityAccent(playerId),
+  };
+}
+
+function getBattlePlacementAuthoritySummaries(
+  battle: BattleState,
+): BattleAuthorityPlacementSummary[] {
+  if (!battle.placementState) {
+    return [];
+  }
+
+  const placementUnits = getLocalPlacementUnits(battle);
+  const placementCapacity = Math.min(battle.placementState.maxUnitsPerSide, placementUnits.length);
+  return summarizeBattleAuthorityPlacements(
+    placementUnits,
+    getEffectivePlacedUnitIds(battle),
+    placementCapacity,
+    getActiveLocalBattleAuthorityPlayers(),
+  );
+}
+
+function getBattlePlacementQuickPlaceOwner(
+  battle: BattleState,
+): PlayerId | undefined {
+  const selectedUnitId = battle.placementState?.selectedUnitId ?? null;
+  if (selectedUnitId) {
+    const selectedUnit = battle.units[selectedUnitId] ?? null;
+    const selectedOwner = normalizeBattleAuthorityPlayerId(selectedUnit?.controller ?? "P1");
+    if (selectedUnit && selectedOwner && canLocalControlBattleUnit(battle, selectedUnit)) {
+      return selectedOwner;
+    }
+  }
+
+  const summaries = getBattlePlacementAuthoritySummaries(battle);
+  const waitingSummary = summaries.find((summary) => summary.remainingUnits > 0 && summary.placedUnits === 0);
+  if (waitingSummary) {
+    return waitingSummary.playerId;
+  }
+
+  const remainingSummary = summaries.find((summary) => summary.remainingUnits > 0);
+  return remainingSummary?.playerId;
+}
+
+function getBattlePlacementConfirmState(battle: BattleState): {
+  canConfirm: boolean;
+  label: string;
+  detail: string | null;
+  summaries: BattleAuthorityPlacementSummary[];
+} {
+  const placementState = battle.placementState;
+  if (!placementState) {
+    return {
+      canConfirm: false,
+      label: "CONFIRM",
+      detail: null,
+      summaries: [],
+    };
+  }
+
+  const echoContext = getEchoContext(battle);
+  const isEchoFieldMode = echoContext?.placementMode === "fields";
+  const placementUnits = getLocalPlacementUnits(battle);
+  const placementCapacity = Math.min(placementState.maxUnitsPerSide, placementUnits.length);
+  const placedUnitIdSet = new Set(getEffectivePlacedUnitIds(battle));
+  const placedCount = placementUnits.filter((unit) => placedUnitIdSet.has(unit.id)).length;
+  const summaries = summarizeBattleAuthorityPlacements(
+    placementUnits,
+    Array.from(placedUnitIdSet),
+    placementCapacity,
+    getActiveLocalBattleAuthorityPlayers(),
+  );
+
+  if (isEchoFieldMode) {
+    const pendingFields = getUnplacedEchoFields(battle);
+    return {
+      canConfirm: placedCount > 0 && pendingFields.length === 0,
+      label: pendingFields.length > 0 ? "PLACE FIELDS" : "DEPLOY",
+      detail: pendingFields.length > 0 ? `${pendingFields.length} drafted field${pendingFields.length === 1 ? "" : "s"} still need placement.` : null,
+      summaries,
+    };
+  }
+
+  if (isSquadBattle(battle)) {
+    const placementCounts = getSkirmishPlacementCounts(battle);
+    const isClientSkirmishView = getGameState().session.authorityRole === "client";
+    return {
+      canConfirm: !isClientSkirmishView && placementCounts.friendly > 0 && placementCounts.enemy > 0,
+      label: isClientSkirmishView ? "HOST DEPLOYS" : "CONFIRM",
+      detail: isClientSkirmishView
+        ? "Wait for the host to finalize skirmish deployment."
+        : placementCounts.enemy <= 0
+          ? "The opposing skirmish line still needs a deployed unit."
+          : null,
+      summaries,
+    };
+  }
+
+  if (placedCount <= 0) {
+    return {
+      canConfirm: false,
+      label: "PLACE A UNIT",
+      detail: "Deploy at least one unit before confirming the engagement.",
+      summaries,
+    };
+  }
+
+  if (summaries.length > 1 && !areBattleAuthorityPlacementsReady(summaries)) {
+    const waitingPlayers = summaries
+      .filter((summary) => !summary.ready)
+      .map((summary) => getPlayerControllerLabel(summary.playerId));
+    const waitingLabel = waitingPlayers.join(" / ");
+    return {
+      canConfirm: false,
+      label: `WAITING ON ${waitingLabel}`,
+      detail: `${waitingLabel} still needs a deployed unit before the battle can begin.`,
+      summaries,
+    };
+  }
+
+  return {
+    canConfirm: true,
+    label: "CONFIRM",
+    detail: summaries.length > 1 ? "Both local players are deployment ready." : null,
+    summaries,
+  };
+}
+
+function isBattleAuthorityPlayerActive(playerId?: PlayerId | null): boolean {
+  const normalizedPlayerId = normalizeBattleAuthorityPlayerId(playerId);
+  if (!normalizedPlayerId) {
+    return true;
+  }
+  return Boolean(getGameState().players[normalizedPlayerId]?.active);
+}
+
+function canBattleAuthorityPlayerAct(
+  battle: BattleState,
+  activeUnit: BattleUnitState | undefined,
+  playerId: PlayerId | undefined,
+  isPlacementPhase: boolean,
+): boolean {
+  const normalizedPlayerId = normalizeBattleAuthorityPlayerId(playerId);
+  if (!normalizedPlayerId) {
+    return true;
+  }
+  if (!isBattleAuthorityPlayerActive(normalizedPlayerId)) {
+    return false;
+  }
+  if (battle.phase === "victory" || battle.phase === "defeat") {
+    return true;
+  }
+  if (isPlacementPhase && battle.placementState) {
+    const echoContext = getEchoContext(battle);
+    if (echoContext?.placementMode === "fields") {
+      return true;
+    }
+    const playerPlacementUnits = getPlacementUnitsForAuthorityPlayer(battle, normalizedPlayerId);
+    return playerPlacementUnits.some((unit) => unit.pos || battle.placementState!.placedUnitIds.includes(unit.id))
+      || hasBattlePlacementUnitForAuthorityPlayer(playerPlacementUnits, battle.placementState!.placedUnitIds, normalizedPlayerId);
+  }
+  return doesBattleUnitMatchAuthorityPlayer(activeUnit, normalizedPlayerId);
 }
 
 function getSkirmishPlacementCounts(battle: BattleState): { friendly: number; enemy: number } {
@@ -1097,6 +1393,7 @@ interface Card {
   range: number;
   description: string;
   damage?: number;
+  damageBand?: DamageBand;
   healing?: number;
   defBuff?: number;
   atkBuff?: number;
@@ -1110,85 +1407,86 @@ interface Card {
 // CARD DATABASE - Based on GDD
 const CARD_DATABASE: Record<string, Card> = {
   // CORE CARDS
-  "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 1, range: 0, description: "Move 2 extra tiles this turn." },
+  "core_move_plus": { id: "core_move_plus", name: "Move+", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain a second movement phase this turn." },
   "core_basic_attack": { id: "core_basic_attack", name: "Basic Attack", type: "core", target: "enemy", strainCost: 2, range: 1, description: "Deal weapon damage to adjacent enemy.", damage: 0 },
   "core_aid": { id: "core_aid", name: "Aid", type: "core", target: "ally", strainCost: 3, range: 2, description: "Restore 3 HP to nearby ally.", healing: 3 },
-  "core_overwatch": { id: "core_overwatch", name: "Overwatch", type: "core", target: "enemy", strainCost: 6, range: 5, description: "Stun an enemy for one turn.", effects: [{ type: "stun", duration: 1 }] },
+  "core_overwatch": { id: "core_overwatch", name: "Vector", type: "core", target: "enemy", strainCost: 6, range: 5, description: "Stun an enemy for one turn.", effects: [{ type: "stun", duration: 1 }] },
   "core_guard": { id: "core_guard", name: "Guard", type: "core", target: "self", strainCost: 3, range: 0, description: "Gain +2 DEF until next turn.", defBuff: 2 },
-  "core_wait": { id: "core_wait", name: "Wait", type: "core", target: "self", strainCost: 3, range: 0, description: "End turn. Reduce strain by 2." },
+  "core_chaos_call": { id: "core_chaos_call", name: "Chaos Call", type: "core", target: "self", strainCost: 6, range: 0, description: "Create 2 Chaos Cards.", chaosCardsToCreate: ["chaos_placeholder_card", "chaos_placeholder_card"] },
+  "core_wait": { id: "core_wait", name: "Resolve", type: "core", target: "self", strainCost: 0, range: 0, description: "If you have 3 cards or fewer in hand, reduce strain to 2." },
 
   // ELM RECURVE BOW (Range 3-6)
-  "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; +1 ACC.", damage: 4 },
+  "card_pinpoint_shot": { id: "card_pinpoint_shot", name: "Pinpoint Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal damage; +1 ACC.", damage: 4 },
   "card_warning_shot": { id: "card_warning_shot", name: "Warning Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Target suffers -2 ACC for 1 turn.", damage: 1 },
   "card_defensive_draw": { id: "card_defensive_draw", name: "Defensive Draw", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 ACC until next attack.", defBuff: 1 },
 
   // HUNTER'S COIF
-  "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Deal 3 damage.", damage: 3 },
+  "card_quick_shot": { id: "card_quick_shot", name: "Quick Shot", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Deal low damage.", damage: 3 },
   "card_tracking_shot": { id: "card_tracking_shot", name: "Tracking Shot", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target movement for 1 turn.", damage: 2 },
   "card_predators_brace": { id: "card_predators_brace", name: "Predator's Brace", type: "equipment", target: "self", strainCost: 3, range: 0, description: "First attacker loses 1 DEF.", defBuff: 1 },
 
   // HUNTER'S VEST
-  "card_quiver_barrage": { id: "card_quiver_barrage", name: "Quiver Barrage", type: "equipment", target: "enemy", strainCost: 2, range: 4, description: "Three attacks, 2 damage each.", damage: 6 },
+  "card_quiver_barrage": { id: "card_quiver_barrage", name: "Quiver Barrage", type: "equipment", target: "enemy", strainCost: 2, range: 4, description: "Three attacks, low damage each.", damage: 6 },
   "card_camouflage": { id: "card_camouflage", name: "Camouflage", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+3 ACC on next ranged attack." },
   "card_camouflage_guard": { id: "card_camouflage_guard", name: "Camouflage Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF if attacked at range.", defBuff: 2 },
 
   // HUNTER'S TALISMAN
-  "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 4 damage if target moved this turn.", damage: 4 },
+  "card_hunters_pounce": { id: "card_hunters_pounce", name: "Hunter's Pounce", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal damage if target moved this turn.", damage: 4 },
   "card_scent_mark": { id: "card_scent_mark", name: "Scent Mark", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Reveal target location for 2 turns.", damage: 1 },
   "card_trackers_guard": { id: "card_trackers_guard", name: "Tracker's Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Reveal first attacker on map.", defBuff: 1 },
 
   // EAGLE EYE LENS
-  "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal 4 damage; mark for +1 damage.", damage: 4 },
-  "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Allies deal +1 damage to target this turn.", damage: 1 },
+  "card_spotters_shot": { id: "card_spotters_shot", name: "Spotter's Shot", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Deal damage; mark for bonus damage.", damage: 4 },
+  "card_target_paint": { id: "card_target_paint", name: "Target Paint", type: "equipment", target: "enemy", strainCost: 3, range: 6, description: "Allies deal bonus damage to target this turn.", damage: 1 },
   "card_farsight_guard": { id: "card_farsight_guard", name: "Farsight Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore overwatch this turn." },
 
   // FLEETFOOT ANKLET
-  "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal 3 damage; pass through target tile.", damage: 3 },
+  "card_flying_kick": { id: "card_flying_kick", name: "Flying Kick", type: "equipment", target: "enemy", strainCost: 3, range: 2, description: "Deal low damage; pass through target tile.", damage: 3 },
   "card_speed_burst": { id: "card_speed_burst", name: "Speed Burst", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement this turn." },
   "card_swift_guard": { id: "card_swift_guard", name: "Swift Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 movement and +1 DEF this turn.", defBuff: 1 },
 
   // RANGER'S HOOD
-  "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Deal 3 damage with +1 ACC.", damage: 3 },
-  "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Mark target; next ranged attack deals +2 damage.", damage: 1 },
+  "card_aimed_strike": { id: "card_aimed_strike", name: "Aimed Strike", type: "equipment", target: "enemy", strainCost: 3, range: 4, description: "Deal low damage with +1 ACC.", damage: 3 },
+  "card_hunters_mark": { id: "card_hunters_mark", name: "Hunter's Mark", type: "equipment", target: "enemy", strainCost: 3, range: 5, description: "Mark target; next ranged attack deals bonus damage.", damage: 1 },
   "card_hide_in_shadows": { id: "card_hide_in_shadows", name: "Hide in Shadows", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 AGI, untargetable at range for 1 turn." },
 
   // LEATHER JERKIN
-  "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 3, range: 3, description: "Deal 2 damage; +1 AGI next turn.", damage: 2 },
+  "card_knife_toss": { id: "card_knife_toss", name: "Knife Toss", type: "equipment", target: "enemy", strainCost: 3, range: 3, description: "Deal low damage; +1 AGI next turn.", damage: 2 },
   "card_quick_roll": { id: "card_quick_roll", name: "Quick Roll", type: "equipment", target: "self", strainCost: 2, range: 0, description: "Move 1 tile as free action." },
   "card_light_guard": { id: "card_light_guard", name: "Light Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 AGI until next turn.", defBuff: 1 },
 
   // SHADOW CLOAK
-  "card_ambush_slash": { id: "card_ambush_slash", name: "Ambush Slash", type: "equipment", target: "enemy", strainCost: 2, range: 1, description: "Deal 5 damage if undetected at turn start.", damage: 5 },
+  "card_ambush_slash": { id: "card_ambush_slash", name: "Ambush Slash", type: "equipment", target: "enemy", strainCost: 2, range: 1, description: "Deal high damage if undetected at turn start.", damage: 5 },
   "card_fade": { id: "card_fade", name: "Fade", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable by ranged attacks until next turn." },
   "card_shade_guard": { id: "card_shade_guard", name: "Shade Guard", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Untargetable if you don't move this turn." },
 
   // CLASS - RANGER
   "class_pinning_shot": { id: "class_pinning_shot", name: "Pinning Shot", type: "class", target: "enemy", strainCost: 2, range: 5, description: "Immobilize enemy for 1 turn.", damage: 2 },
-  "class_volley": { id: "class_volley", name: "Volley", type: "class", target: "enemy", strainCost: 3, range: 6, description: "Deal light damage to all enemies in range.", damage: 3 },
+  "class_volley": { id: "class_volley", name: "Volley", type: "class", target: "enemy", strainCost: 3, range: 6, description: "Deal low damage to all enemies in range.", damage: 3 },
   "class_scouts_mark": { id: "class_scouts_mark", name: "Scout's Mark", type: "class", target: "self", strainCost: 3, range: 0, description: "Reveal all enemies and traps in range." },
 
   // CLASS - SQUIRE
-  "class_power_slash": { id: "class_power_slash", name: "Power Slash", type: "class", target: "enemy", strainCost: 2, range: 1, description: "Deal heavy melee damage.", damage: 6 },
+  "class_power_slash": { id: "class_power_slash", name: "Power Slash", type: "class", target: "enemy", strainCost: 2, range: 1, description: "Deal massive damage.", damage: 6 },
   "class_shield_wall": { id: "class_shield_wall", name: "Shield Wall", type: "class", target: "self", strainCost: 3, range: 0, description: "All allies gain +2 DEF for 1 turn.", defBuff: 2 },
   "class_rally_cry": { id: "class_rally_cry", name: "Rally Cry", type: "class", target: "self", strainCost: 2, range: 0, description: "All allies gain +2 ATK for 2 turns.", atkBuff: 2 },
 
   // IRON LONGSWORD
-  "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage to up to 3 adjacent enemies.", damage: 3 },
+  "card_cleave": { id: "card_cleave", name: "Cleave", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal low damage to up to 3 adjacent enemies.", damage: 3 },
   "card_parry_readiness": { id: "card_parry_readiness", name: "Parry Readiness", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Cancel next attack against you.", defBuff: 3 },
   "card_guarded_stance": { id: "card_guarded_stance", name: "Guarded Stance", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+2 DEF until your next turn.", defBuff: 2 },
 
   // STEEL SIGNET RING
-  "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and push target 1 tile.", damage: 2 },
+  "card_knuckle_jab": { id: "card_knuckle_jab", name: "Knuckle Jab", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal low damage and push target 1 tile.", damage: 2 },
   "card_mark_of_command": { id: "card_mark_of_command", name: "Mark of Command", type: "equipment", target: "self", strainCost: 3, range: 0, description: "All allies gain +1 ACC next turn." },
   "card_signet_shield": { id: "card_signet_shield", name: "Signet Shield", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+1 DEF and +1 LUK until next turn.", defBuff: 1 },
 
   // IRONGUARD HELM
-  "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 2 damage and stun for 1 turn.", damage: 2 },
+  "card_headbutt": { id: "card_headbutt", name: "Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal low damage and stun for 1 turn.", damage: 2 },
   "card_shield_sight": { id: "card_shield_sight", name: "Shield Sight", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Ignore flanking penalties until next turn." },
   "card_shield_headbutt": { id: "card_shield_headbutt", name: "Shield Headbutt", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Stun target for 1 turn.", damage: 1 },
 
   // STEELPLATE CUIRASS
-  "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal 3 damage; push target 1 tile.", damage: 3 },
+  "card_shoulder_charge": { id: "card_shoulder_charge", name: "Shoulder Charge", type: "equipment", target: "enemy", strainCost: 3, range: 1, description: "Deal low damage; push target 1 tile.", damage: 3 },
   "card_fortify": { id: "card_fortify", name: "Fortify", type: "equipment", target: "self", strainCost: 3, range: 0, description: "Immunity to knockback until next turn.", defBuff: 1 },
   "card_fortress_form": { id: "card_fortress_form", name: "Fortress Form", type: "equipment", target: "self", strainCost: 3, range: 0, description: "+3 DEF but -1 movement this turn.", defBuff: 3 },
 };
@@ -1203,7 +1501,11 @@ function getCardById(id: string): Card | null {
   if (resolvedCatalogCard && dbCard) {
     const mergedEffects = [...(resolvedCatalogCard.effects || [])];
     if (typeof dbCard.damage === "number" && dbCard.damage > 0 && !mergedEffects.some((effect: any) => effect.type === "damage")) {
-      mergedEffects.push({ type: "damage", amount: dbCard.damage });
+      mergedEffects.push({
+        type: "damage",
+        amount: dbCard.damage,
+        damageBand: dbCard.damageBand ?? inferDamageBandFromAmount(dbCard.damage) ?? undefined,
+      });
     }
     if (typeof dbCard.healing === "number" && dbCard.healing > 0 && !mergedEffects.some((effect: any) => effect.type === "heal")) {
       mergedEffects.push({ type: "heal", amount: dbCard.healing });
@@ -1264,14 +1566,78 @@ function fallbackGetCardById(id: string): Card {
   return { id, name, type, target, strainCost: 3, range, damage, description };
 }
 
+function getBattleScreenEquipmentById(battle: BattleState | null | undefined = localBattleState): Record<string, any> {
+  const state = getGameState();
+  return {
+    ...getAllStarterEquipment(),
+    ...((state as any).equipmentById ?? {}),
+    ...((battle as (BattleState & { equipmentById?: Record<string, any> }) | null | undefined)?.equipmentById ?? {}),
+  };
+}
+
+function doesBattleWeaponMatchCardSource(
+  weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>,
+  sourceWeaponId: string,
+): boolean {
+  const sourceTemplateId = (weapon.metadata as { sourceTemplateId?: unknown } | undefined)?.sourceTemplateId;
+  return sourceWeaponId === "__equipped_weapon__"
+    || sourceWeaponId === weapon.id
+    || sourceWeaponId === sourceTemplateId;
+}
+
+function createDefaultBattleWeaponRules(card: Card, weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): NonNullable<Card["weaponRules"]> | null {
+  if (!isAttackBattleCard(card)) {
+    return null;
+  }
+
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!ammoProfile && !heatProfile) {
+    return null;
+  }
+
+  return {
+    sourceWeaponId: "__equipped_weapon__",
+    heatDelta: heatProfile ? 1 : 0,
+    ammoCost: ammoProfile?.defaultAttackAmmoCost ?? 0,
+    tags: ["weapon_card", "attack", "direct"],
+    clutchCompatible: true,
+  };
+}
+
+function normalizeBattleWeaponRules(
+  cardRules: NonNullable<Card["weaponRules"]>,
+  weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>,
+): NonNullable<Card["weaponRules"]> {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+  const isGenericEquippedAttack = cardRules.sourceWeaponId === "__equipped_weapon__"
+    && cardRules.tags.includes("attack");
+  return {
+    ...cardRules,
+    ammoCost: ammoProfile
+      ? cardRules.ammoCost || (isGenericEquippedAttack ? ammoProfile.defaultAttackAmmoCost : 0)
+      : 0,
+    heatDelta: heatProfile
+      ? cardRules.heatDelta || (isGenericEquippedAttack ? 1 : 0)
+      : 0,
+  };
+}
+
+function getBattleWeaponRulesForCard(card: Card, weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): NonNullable<Card["weaponRules"]> | null {
+  if (card.weaponRules && doesBattleWeaponMatchCardSource(weapon, card.weaponRules.sourceWeaponId)) {
+    return normalizeBattleWeaponRules(card.weaponRules, weapon);
+  }
+  return createDefaultBattleWeaponRules(card, weapon);
+}
+
 function renderWeaponWindow(unit: BattleUnitState | undefined): string {
   try {
     if (!unit) {
       return `<div class="weapon-window weapon-window--empty"><div class="weapon-window-title">NO WEAPON</div></div>`;
     }
     const resolvedWeaponId = getBattleUnitEquippedWeaponId(unit);
-    const state = getGameState();
-    const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+    const equipmentById = getBattleScreenEquipmentById();
     const weapon = getEquippedWeapon(unit, equipmentById);
 
     if (!weapon) {
@@ -1322,9 +1688,10 @@ function renderWeaponWindow(unit: BattleUnitState | undefined): string {
       selectedCardIndex !== null && unit.hand[selectedCardIndex]
         ? resolveCard(unit.hand[selectedCardIndex])
         : null;
+    const selectedCardRules = selectedCard ? getBattleWeaponRulesForCard(selectedCard, weapon) : null;
     const selectedCardHint =
-      selectedCard && unit.weaponState
-        ? getWeaponCardBlockReason(unit.weaponState, weapon, selectedCard.weaponRules ?? null)
+      selectedCardRules && unit.weaponState
+        ? getWeaponCardBlockReason(unit.weaponState, weapon, selectedCardRules)
         : null;
 
     return renderSharedWeaponWindow(
@@ -1372,9 +1739,61 @@ let cleanupBattleControllerContext: (() => void) | null = null;
 let battleControllerActiveNodeId: BattleHudNodeId = "hand";
 let selectedManageUnitId: string | null = null;
 let battleExitConfirmState: BattleExitConfirmState = null;
+const BATTLE_START_PRESENTATION_DURATION_MS = 950;
+let battleStartPresentationState: { battleId: string; endsAtMs: number } | null = null;
+let battleStartPresentationTimerId: number | null = null;
 
 function isBattleRootMounted(): boolean {
   return Boolean(document.querySelector(".battle-root"));
+}
+
+function getBattlePresentationId(battle: BattleState | null | undefined): string {
+  return String(battle?.id ?? battle?.roomId ?? "battle");
+}
+
+function clearBattleStartPresentation(): void {
+  if (battleStartPresentationTimerId !== null) {
+    window.clearTimeout(battleStartPresentationTimerId);
+    battleStartPresentationTimerId = null;
+  }
+  battleStartPresentationState = null;
+}
+
+function isBattleStartPresentationActive(battle: BattleState | null | undefined): boolean {
+  if (!battleStartPresentationState || !battle) {
+    return false;
+  }
+  if (battleStartPresentationState.battleId !== getBattlePresentationId(battle)) {
+    return false;
+  }
+  if (performance.now() >= battleStartPresentationState.endsAtMs) {
+    clearBattleStartPresentation();
+    return false;
+  }
+  return true;
+}
+
+function beginBattleStartPresentation(
+  battle: BattleState,
+  onComplete?: () => void,
+): void {
+  clearBattleStartPresentation();
+  battleStartPresentationState = {
+    battleId: getBattlePresentationId(battle),
+    endsAtMs: performance.now() + BATTLE_START_PRESENTATION_DURATION_MS,
+  };
+  battleStartPresentationTimerId = window.setTimeout(() => {
+    const activeBattle = localBattleState;
+    const isSameBattle = Boolean(activeBattle && getBattlePresentationId(activeBattle) === getBattlePresentationId(battle));
+    clearBattleStartPresentation();
+    if (!isSameBattle) {
+      return;
+    }
+    if (isBattleRootMounted()) {
+      renderBattleScreen();
+    }
+    onComplete?.();
+  }, BATTLE_START_PRESENTATION_DURATION_MS);
 }
 
 async function broadcastSquadBattleState(battle: BattleState): Promise<void> {
@@ -1442,7 +1861,7 @@ export function applyExternalBattleState(
     return;
   }
 
-  updateGameState((state) => mountBattleState(state, battle));
+  updateGameState((state) => replaceBattleStateById(mountBattleState(state, battle), battle.id, battle));
   const previousActiveUnitId = localBattleState?.activeUnitId ?? null;
   const previousTurnCount = localBattleState?.turnCount ?? null;
   localBattleState = battle;
@@ -1457,6 +1876,10 @@ export function applyExternalBattleState(
   if (renderMode === "always" || isBattleRootMounted()) {
     renderBattleScreen();
   }
+}
+
+export function getCurrentRenderedBattleState(): BattleState | null {
+  return localBattleState;
 }
 
 // Zoom state for the battle grid
@@ -1576,13 +1999,6 @@ function getBattleBoardHost(): HTMLElement | null {
   return document.getElementById("battleBoard3dHost") as HTMLElement | null;
 }
 
-function getBattleSceneControllerInstance(): BattleSceneController {
-  if (!battleSceneController) {
-    battleSceneController = new BattleSceneController();
-  }
-  return battleSceneController;
-}
-
 function getOriginalBattleUnitElement(unitId: string): HTMLElement | null {
   void unitId;
   return null;
@@ -1685,7 +2101,7 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   if (request.type === "weapon_heat") {
     const zone = String(request.meta?.["zone"] ?? "warning");
     pulseBattleElement(
-      ".battle-weapon-panel .weapon-stat-bar-fill--heat",
+      ".battle-node__body--weapon .weapon-stat-bar-fill--heat",
       zone === "critical" ? "weapon-stat-bar-fill--pulse-critical" : "weapon-stat-bar-fill--pulse-warning",
       zone === "critical" ? 860 : 680,
     );
@@ -1693,8 +2109,8 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   }
 
   if (request.type === "weapon_overheat") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--overheat-spike", 880);
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
+    pulseBattleElement(".battle-node__body--weapon .weapon-window", "weapon-window--overheat-spike", 880);
+    pulseBattleElement(".battle-node__body--weapon .weapon-stat-bar-fill--heat", "weapon-stat-bar-fill--pulse-critical", 920);
     return;
   }
 
@@ -1702,7 +2118,7 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
     const nodeId = String(request.meta?.["nodeId"] ?? "");
     if (nodeId) {
       pulseBattleElement(
-        `.battle-weapon-panel .weapon-node[data-node="${nodeId}"]`,
+        `.battle-node__body--weapon .weapon-node[data-node="${nodeId}"]`,
         "weapon-node--feedback-hit",
         780,
       );
@@ -1711,29 +2127,29 @@ function applyBattleWeaponFeedback(request: FeedbackRequest): void {
   }
 
   if (effectKind === "ammo-tick") {
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
+    pulseBattleElement(".battle-node__body--weapon .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 420);
     return;
   }
 
   if (effectKind === "clutch-toggle") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--clutch-pulse", 580);
-    pulseBattleElement(".battle-weapon-panel .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
+    pulseBattleElement(".battle-node__body--weapon .weapon-window", "weapon-window--clutch-pulse", 580);
+    pulseBattleElement(".battle-node__body--weapon .weapon-clutch-btn--active", "weapon-clutch-btn--feedback-active", 520);
     return;
   }
 
   if (effectKind === "reload") {
-    pulseBattleElement(".battle-weapon-panel .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    pulseBattleElement(".battle-node__body--weapon .weapon-stat-bar-fill--ammo", "weapon-stat-bar-fill--pulse-ammo", 540);
+    pulseBattleElement(".battle-node__body--weapon .weapon-window", "weapon-window--feedback-confirm", 420);
     return;
   }
 
   if (effectKind === "patch") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-confirm", 420);
+    pulseBattleElement(".battle-node__body--weapon .weapon-window", "weapon-window--feedback-confirm", 420);
     return;
   }
 
   if (effectKind === "vent") {
-    pulseBattleElement(".battle-weapon-panel .weapon-window", "weapon-window--feedback-warning", 680);
+    pulseBattleElement(".battle-node__body--weapon .weapon-window", "weapon-window--feedback-warning", 680);
   }
 }
 
@@ -1909,11 +2325,11 @@ function zoomOut() {
 interface TurnState {
   hasMoved: boolean;
   hasCommittedMove: boolean; // True after clicking a tile - hides green until undo
-  hasActed: boolean; // True after playing a card - ends the turn for this unit
+  hasActed: boolean; // True after playing a card; used for movement/undo limits, not card limits
   movementOnlyAfterAttack: boolean;
   movementRemaining: number;
   originalPosition: { x: number; y: number } | null;
-  isFacingSelection: boolean; // True when selecting final facing before ending turn
+  isFacingSelection: boolean; // Legacy network/render snapshot flag; player turns no longer enter facing selection.
 }
 let turnState: TurnState = { hasMoved: false, hasCommittedMove: false, hasActed: false, movementOnlyAfterAttack: false, movementRemaining: 0, originalPosition: null, isFacingSelection: false };
 
@@ -1959,7 +2375,6 @@ const BATTLE_HUD_TOP_SAFE = 94;
 const BATTLE_HUD_BOTTOM_SAFE = 22;
 const BATTLE_HUD_DRAG_THRESHOLD_PX = 6;
 const BATTLE_HAND_GRID_MIN_WIDTH = 720;
-const BATTLE_HAND_GRID_MIN_HEIGHT = 500;
 const BATTLE_HUD_NODE_ORDER: BattleHudNodeId[] = ["console", "intel", "placement", "unit", "weapon", "manage", "consumables", "hand"];
 const BATTLE_HUD_COLOR_THEMES: BattleHudColorTheme[] = [
   {
@@ -2105,7 +2520,7 @@ const BATTLE_HUD_NODE_DEFS: Record<BattleHudNodeId, BattleHudNodeDefinition> = {
     title: "Unit Placement",
     kicker: "DEPLOYMENT // STAGING",
     minWidth: 340,
-    minHeight: 340,
+    minHeight: 500,
     resizable: true,
     restoreLabel: "DEPLOY",
   },
@@ -2142,10 +2557,10 @@ const BATTLE_HUD_NODE_DEFS: Record<BattleHudNodeId, BattleHudNodeDefinition> = {
     restoreLabel: "ITEMS",
   },
   hand: {
-    title: "Hand Console",
+    title: "Hand window",
     kicker: "TACTICAL HAND",
-    minWidth: 480,
-    minHeight: 392,
+    minWidth: 420,
+    minHeight: 280,
     resizable: true,
     restoreLabel: "HAND",
   },
@@ -2192,9 +2607,6 @@ let battlePanState: BattlePanState = {
 let battlePanAnimationFrame: number | null = null;
 let battleKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
 let battleKeyupHandler: ((e: KeyboardEvent) => void) | null = null;
-
-// UI panel visibility state
-let uiPanelsMinimized = false;
 
 // Endless battle mode state
 let isEndlessBattleMode = false;
@@ -2390,6 +2802,7 @@ function resetBattlePan(): void {
 
 function resetBattleUiSessionState(): void {
   clearPendingAutoBattleStep();
+  clearBattleStartPresentation();
   battleExitConfirmState = null;
   localBattleState = null;
   lastBattleStatPingKey = null;
@@ -2398,9 +2811,11 @@ function resetBattleUiSessionState(): void {
   selectedManageUnitId = null;
   resetTurnStateForUnit(null);
   resetBattlePan();
-  uiPanelsMinimized = false;
-  battleSceneController?.setViewChangeHandler(null);
+  battleBoardSyncRequestId += 1;
+  pendingBattleSceneInteractionHandlers = {};
+  setBattleSceneViewChangeHandler(null);
   resetBattleViewPresetSessionState();
+  currentBattleBoardRenderState = null;
   battleSceneController?.dispose();
   battleSceneController = null;
 }
@@ -2453,6 +2868,19 @@ function syncBattleConsumableUsageToGameState(
   healedAmount: number,
 ): void {
   updateGameState((state) => {
+    if (isEchoBattle(nextBattle)) {
+      return {
+        ...state,
+        echoRun: state.echoRun
+          ? {
+              ...state.echoRun,
+              consumables: nextConsumables,
+            }
+          : state.echoRun,
+        currentBattle: nextBattle,
+      };
+    }
+
     const nextUnitsById = { ...state.unitsById };
     if (targetId && healedAmount > 0) {
       const battleUnit = nextBattle.units[targetId];
@@ -2475,57 +2903,11 @@ function syncBattleConsumableUsageToGameState(
   });
 }
 
-function toggleUiPanels(): void {
-  uiPanelsMinimized = !uiPanelsMinimized;
-
-  const unitPanel = document.querySelector(".battle-unit-panel") as HTMLElement;
-  const weaponPanel = document.querySelector(".battle-weapon-panel") as HTMLElement;
-  const handFloating = document.querySelector(".battle-hand-floating") as HTMLElement;
-  const consoleOverlay = document.querySelector(".scrollink-console-overlay") as HTMLElement;
-  const battleNodes = document.querySelectorAll<HTMLElement>(".battle-node");
-  const dock = document.querySelector(".battle-node-dock") as HTMLElement | null;
-  const toggleBtn = document.getElementById("toggleUiBtn");
-
-  if (unitPanel) {
-    unitPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    unitPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
-    unitPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
+function getBattleConsumablesForScreen(battle: BattleState | null | undefined): Record<string, number> {
+  if (isEchoBattle(battle)) {
+    return getActiveEchoRun()?.consumables ?? {};
   }
-
-  if (weaponPanel) {
-    weaponPanel.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    weaponPanel.style.opacity = uiPanelsMinimized ? "0" : "1";
-    weaponPanel.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (handFloating) {
-    handFloating.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    handFloating.style.opacity = uiPanelsMinimized ? "0" : "1";
-    handFloating.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (consoleOverlay) {
-    consoleOverlay.style.transform = uiPanelsMinimized ? "translateX(-100%)" : "translateX(0)";
-    consoleOverlay.style.opacity = uiPanelsMinimized ? "0" : "1";
-    consoleOverlay.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  battleNodes.forEach((node) => {
-    node.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    node.style.opacity = uiPanelsMinimized ? "0" : "1";
-    node.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  });
-
-  if (dock) {
-    dock.style.transform = uiPanelsMinimized ? "translateY(100%)" : "translateY(0)";
-    dock.style.opacity = uiPanelsMinimized ? "0" : "1";
-    dock.style.pointerEvents = uiPanelsMinimized ? "none" : "auto";
-  }
-
-  if (toggleBtn) {
-    toggleBtn.textContent = uiPanelsMinimized ? "👁 SHOW UI" : "👁 HIDE UI";
-    toggleBtn.classList.toggle("battle-toggle-btn--active", uiPanelsMinimized);
-  }
+  return getGameState().consumables;
 }
 
 function triggerScreenShake(intensity = 1): void {
@@ -2767,27 +3149,26 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   const consoleHeight = clamp(Math.round(viewportHeight * 0.18), 148, 220);
   const intelWidth = clamp(Math.round(viewportWidth * 0.26), 320, 420);
   const intelHeight = clamp(Math.round(viewportHeight * 0.28), 220, 320);
-  const unitWidth = clamp(Math.round(viewportWidth * 0.21), 292, 340);
+  const unitWidth = clamp(Math.round(viewportWidth * 0.23), 320, 390);
   const weaponWidth = clamp(Math.round(viewportWidth * 0.19), 272, 320);
   const consumablesWidth = clamp(Math.round(viewportWidth * 0.22), 320, 420);
   const consumablesHeight = clamp(Math.round(viewportHeight * 0.3), 250, 360);
   const placementWidth = clamp(Math.round(viewportWidth * 0.24), 340, 420);
-  const placementHeight = clamp(Math.round(viewportHeight * 0.52), 360, 620);
+  const placementHeight = clamp(Math.round(viewportHeight * 0.78), 560, 760);
   const manageWidth = clamp(Math.round(viewportWidth * 0.34), 460, 640);
   const manageHeight = clamp(Math.round(viewportHeight * 0.44), 320, 560);
-  const handWidth = clamp(viewportWidth - unitWidth - weaponWidth - 112, 520, 860);
-  const handHeight = clamp(Math.round(viewportHeight * 0.4), 392, 440);
+  const handWidth = clamp(
+    viewportWidth - unitWidth - weaponWidth - (BATTLE_HUD_MARGIN_X * 6),
+    420,
+    780,
+  );
+  const handHeight = clamp(Math.round(viewportHeight * 0.32), 292, 360);
   const topY = Math.max(viewportHeight - handHeight - BATTLE_HUD_BOTTOM_SAFE, BATTLE_HUD_TOP_SAFE);
-  const sideHeight = clamp(handHeight - 112, 236, 290);
+  const sideHeight = handHeight;
   const handX = clamp(
     Math.round((viewportWidth - handWidth) / 2),
     BATTLE_HUD_MARGIN_X,
     Math.max(BATTLE_HUD_MARGIN_X, viewportWidth - handWidth - BATTLE_HUD_MARGIN_X),
-  );
-  const weaponX = clamp(
-    viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X,
-    BATTLE_HUD_MARGIN_X,
-    Math.max(BATTLE_HUD_MARGIN_X, viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X),
   );
   const manageX = clamp(
     viewportWidth - manageWidth - BATTLE_HUD_MARGIN_X,
@@ -2831,13 +3212,13 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   );
 
   return {
-    console: { x: BATTLE_HUD_MARGIN_X, y: BATTLE_HUD_TOP_SAFE, width: consoleWidth, height: consoleHeight, minimized: false, zIndex: 40 },
+    console: { x: BATTLE_HUD_MARGIN_X, y: BATTLE_HUD_TOP_SAFE, width: consoleWidth, height: consoleHeight, minimized: true, zIndex: 40 },
     intel: { x: intelX, y: intelY, width: intelWidth, height: intelHeight, minimized: false, zIndex: 41 },
     placement: { x: placementX, y: placementY, width: placementWidth, height: placementHeight, minimized: false, zIndex: 42 },
     unit: { x: BATTLE_HUD_MARGIN_X, y: topY, width: unitWidth, height: sideHeight, minimized: false, zIndex: 43 },
-    weapon: { x: weaponX, y: topY, width: weaponWidth, height: sideHeight, minimized: false, zIndex: 44 },
+    weapon: { x: viewportWidth - weaponWidth - BATTLE_HUD_MARGIN_X, y: topY, width: weaponWidth, height: sideHeight, minimized: false, zIndex: 44 },
     manage: { x: manageX, y: manageY, width: manageWidth, height: manageHeight, minimized: true, zIndex: 45 },
-    consumables: { x: consumablesX, y: consumablesY, width: consumablesWidth, height: consumablesHeight, minimized: false, zIndex: 46 },
+    consumables: { x: consumablesX, y: consumablesY, width: consumablesWidth, height: consumablesHeight, minimized: true, zIndex: 46 },
     hand: { x: handX, y: topY, width: handWidth, height: handHeight, minimized: false, zIndex: 47 },
   };
 }
@@ -2953,7 +3334,7 @@ function getBattleHudThemeStyle(nodeId: BattleHudNodeId): string {
 }
 
 function getBattleHandLayoutMode(layout = ensureBattleHudLayouts().hand): "fan" | "grid" {
-  return layout.width >= BATTLE_HAND_GRID_MIN_WIDTH && layout.height >= BATTLE_HAND_GRID_MIN_HEIGHT
+  return layout.width >= BATTLE_HAND_GRID_MIN_WIDTH
     ? "grid"
     : "fan";
 }
@@ -3059,7 +3440,7 @@ function handleBattleHudRestore(nodeId: BattleHudNodeId): void {
   renderBattleScreen();
 }
 
-function renderBattleHudNode(nodeId: BattleHudNodeId, bodyHtml: string, extraClasses = ""): string {
+function renderBattleHudNode(nodeId: BattleHudNodeId, bodyHtml: string, extraClasses = "", headerExtraHtml = ""): string {
   const layout = ensureBattleHudLayouts()[nodeId];
   if (layout.minimized) {
     return "";
@@ -3074,13 +3455,14 @@ function renderBattleHudNode(nodeId: BattleHudNodeId, bodyHtml: string, extraCla
       class="${nodeClass}"
       data-battle-node-id="${nodeId}"
       data-color-key="${colorKey}"
-      style="left:${layout.x}px; top:${layout.y}px; width:${layout.width}px; height:${layout.height}px; z-index:${layout.zIndex}; ${themeStyle}; ${uiPanelsMinimized ? "transform: translateY(100%); opacity: 0; pointer-events: none;" : ""}"
+      style="left:${layout.x}px; top:${layout.y}px; width:${layout.width}px; height:${layout.height}px; z-index:${layout.zIndex}; ${themeStyle};"
     >
       <header class="battle-node__header" data-battle-node-grip="${nodeId}">
         <div class="battle-node__header-copy">
           <div class="battle-node__kicker">${definition.kicker}</div>
           <div class="battle-node__title">${definition.title}</div>
         </div>
+        ${headerExtraHtml ? `<div class="battle-node__header-extra battle-node__header-extra--${nodeId}">${headerExtraHtml}</div>` : ""}
         <div class="battle-node__actions">
           <button class="battle-node__color" type="button" data-battle-node-color="${nodeId}" aria-label="Change color for ${definition.title}">
             <span class="battle-node__color-dot" aria-hidden="true"></span>
@@ -3104,7 +3486,7 @@ function renderBattleHudDock(visibleNodeIds: BattleHudNodeId[] = BATTLE_HUD_NODE
   }
 
   return `
-    <div class="battle-node-dock" style="${uiPanelsMinimized ? "transform: translateY(100%); opacity: 0; pointer-events: none;" : ""}">
+    <div class="battle-node-dock">
       ${minimizedIds.map((nodeId) => `
         <button class="battle-node-dock__item" type="button" data-battle-node-restore="${nodeId}" aria-label="Restore ${BATTLE_HUD_NODE_DEFS[nodeId].title}">
           <span class="battle-node-dock__kicker">${BATTLE_HUD_NODE_DEFS[nodeId].restoreLabel}</span>
@@ -3185,7 +3567,12 @@ function moveBattleControllerCursor(
   activeUnit: BattleUnitState | undefined,
   direction: "up" | "down" | "left" | "right",
   isPlacementPhase: boolean,
+  playerId?: PlayerId,
 ): void {
+  if (!canBattleAuthorityPlayerAct(battle, activeUnit, playerId, isPlacementPhase)) {
+    return;
+  }
+
   if (turnState.isFacingSelection && activeUnit?.pos) {
     const nextFacingTile =
       direction === "up"
@@ -3195,7 +3582,13 @@ function moveBattleControllerCursor(
           : direction === "left"
             ? { x: Math.max(0, activeUnit.pos.x - 1), y: activeUnit.pos.y }
             : { x: Math.min(battle.gridWidth - 1, activeUnit.pos.x + 1), y: activeUnit.pos.y };
-    handleBattleBoardActionPick(nextFacingTile, battle, activeUnit, Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)));
+    handleBattleBoardActionPick(
+      nextFacingTile,
+      battle,
+      activeUnit,
+      Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit)),
+      playerId,
+    );
     return;
   }
 
@@ -3210,7 +3603,7 @@ function moveBattleControllerCursor(
   renderBattleScreen();
 }
 
-function clickBattleControllerCursorTile(): void {
+function clickBattleControllerCursorTile(playerId?: PlayerId): void {
   if (!battleControllerCursor || !localBattleState) {
     return;
   }
@@ -3221,7 +3614,7 @@ function clickBattleControllerCursorTile(): void {
       (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState))
       && getGameState().session.authorityRole === "client",
     );
-    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement);
+    handleBattleBoardPlacementPick(battleControllerCursor, localBattleState, isClientNetworkPlacement, playerId);
     return;
   }
   handleBattleBoardActionPick(
@@ -3229,11 +3622,19 @@ function clickBattleControllerCursorTile(): void {
     localBattleState,
     activeUnit,
     Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit)),
+    playerId,
   );
 }
 
-function cycleBattleControllerSelectedCard(step: 1 | -1, activeUnit: BattleUnitState | undefined): boolean {
+function cycleBattleControllerSelectedCard(
+  step: 1 | -1,
+  activeUnit: BattleUnitState | undefined,
+  playerId?: PlayerId,
+): boolean {
   if (!activeUnit || activeUnit.hand.length <= 0) {
+    return false;
+  }
+  if (!doesBattleUnitMatchAuthorityPlayer(activeUnit, playerId)) {
     return false;
   }
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) {
@@ -3363,7 +3764,24 @@ function handleBattleControllerCursorAction(
   battle: BattleState,
   activeUnit: BattleUnitState | undefined,
   isPlacementPhase: boolean,
+  playerId?: PlayerId,
 ): boolean {
+  const requiresBattleAuthority = new Set([
+    "moveUp",
+    "moveDown",
+    "moveLeft",
+    "moveRight",
+    "confirm",
+    "endTurn",
+    "tabPrev",
+    "tabNext",
+    "prevUnit",
+    "nextUnit",
+  ]);
+  if (requiresBattleAuthority.has(action) && !canBattleAuthorityPlayerAct(battle, activeUnit, playerId, isPlacementPhase)) {
+    return false;
+  }
+
   if (battle.phase === "victory" || battle.phase === "defeat") {
     if (action === "confirm") {
       getBattlePrimaryResultButton()?.click();
@@ -3378,19 +3796,19 @@ function handleBattleControllerCursorAction(
 
   switch (action) {
     case "moveUp":
-      moveBattleControllerCursor(battle, activeUnit, "up", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "up", isPlacementPhase, playerId);
       return true;
     case "moveDown":
-      moveBattleControllerCursor(battle, activeUnit, "down", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "down", isPlacementPhase, playerId);
       return true;
     case "moveLeft":
-      moveBattleControllerCursor(battle, activeUnit, "left", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "left", isPlacementPhase, playerId);
       return true;
     case "moveRight":
-      moveBattleControllerCursor(battle, activeUnit, "right", isPlacementPhase);
+      moveBattleControllerCursor(battle, activeUnit, "right", isPlacementPhase, playerId);
       return true;
     case "confirm":
-      clickBattleControllerCursorTile();
+      clickBattleControllerCursorTile(playerId);
       return true;
     case "zoomIn":
       zoomIn();
@@ -3406,10 +3824,10 @@ function handleBattleControllerCursorAction(
       return false;
     case "tabPrev":
     case "prevUnit":
-      return cycleBattleControllerSelectedCard(-1, activeUnit);
+      return cycleBattleControllerSelectedCard(-1, activeUnit, playerId);
     case "tabNext":
     case "nextUnit":
-      return cycleBattleControllerSelectedCard(1, activeUnit);
+      return cycleBattleControllerSelectedCard(1, activeUnit, playerId);
     case "cancel":
       if (selectedCardIndex !== null) {
         selectedCardIndex = null;
@@ -3475,7 +3893,7 @@ function renderBattleEnemyIntelNode(battle: BattleState): string {
             </div>
             <div class="battle-intel-card__meta">
               <span>${formatBattlePosition(unit)}</span>
-              <span>${formatBattleEquipmentName(getBattleUnitEquippedWeaponId(unit), ((getGameState() as any).equipmentById || getAllStarterEquipment()) as Record<string, any>)}</span>
+              <span>${formatBattleEquipmentName(getBattleUnitEquippedWeaponId(unit), getBattleScreenEquipmentById())}</span>
             </div>
           </article>
         `).join("")}
@@ -3485,7 +3903,7 @@ function renderBattleEnemyIntelNode(battle: BattleState): string {
 }
 
 function renderBattleConsumablesNode(battle: BattleState, isPlayerTurn: boolean | undefined): string {
-  const entries = getOwnedConsumableEntries(getGameState().consumables);
+  const entries = getOwnedConsumableEntries(getBattleConsumablesForScreen(battle));
   if (entries.length <= 0) {
     return `
       <div class="battle-consumables-node battle-consumables-node--empty">
@@ -3584,6 +4002,7 @@ function renderBattleHud(
       "hand",
       `<div class="battle-hand-node battle-hand-node--${handLayoutMode} ${activeUnit && activeUnit.strain > BASE_STRAIN_THRESHOLD ? "battle-hand-node--strained" : ""}" id="battleHandContainer">${renderHandPanel(activeUnit, isPlayerTurn, handLayoutMode)}</div>`,
       handClasses,
+      renderHandWindowHeaderControls(activeUnit, isPlayerTurn),
     ) : ""}
     ${renderBattleHudDock(visibleNodeIds)}
   `;
@@ -4286,36 +4705,69 @@ function resolveHandCards(hand: (string | Card)[]): Card[] {
   return hand.map(resolveCard);
 }
 
+function isAttackBattleCard(card: Card): boolean {
+  const name = card.name.toLowerCase();
+  return card.target === "enemy"
+    || (card as any).targetType === "enemy"
+    || card.id === "core_basic_attack"
+    || name.includes("attack")
+    || name.includes("shot")
+    || name.includes("strike")
+    || name.includes("bolt");
+}
+
+function getWeaponFallbackAttackRange(weaponType: string): number {
+  switch (weaponType) {
+    case "greatbow":
+      return 6;
+    case "bow":
+    case "gun":
+      return 5;
+    case "staff":
+    case "greatstaff":
+      return 4;
+    default:
+      return 1;
+  }
+}
+
+function getWeaponIntrinsicAttackRange(weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): number {
+  const grantedAttackRanges = (weapon.cardsGranted ?? [])
+    .map((cardId) => getResolvedBattleCard(cardId))
+    .filter((resolvedCard) => resolvedCard && isAttackBattleCard(resolvedCard as any))
+    .map((resolvedCard) => Number(resolvedCard?.range ?? 0))
+    .filter((range) => Number.isFinite(range) && range > 0);
+
+  return Math.max(
+    getWeaponFallbackAttackRange(weapon.weaponType),
+    ...grantedAttackRanges,
+  );
+}
+
 /**
  * Calculate effective range for a card, applying class abilities like Far Shot
  */
 function getEffectiveCardRange(card: Card, unit: BattleUnitState): number {
   let range = card.range ?? 1;
+  const equipmentById = getBattleScreenEquipmentById();
+  const weapon = getEquippedWeapon(unit, equipmentById);
+  const attackCard = isAttackBattleCard(card);
 
-  // Apply Far Shot ability: Rangers get +1 range on bow attack cards
-  // Check both target (from BattleScreen Card type) and targetType (from core Card type) for compatibility
-  // Also check card name/ID to catch basic attack and other attack cards
-  const isAttackCard =
-    card.target === "enemy" ||
-    (card as any).targetType === "enemy" ||
-    card.id === "core_basic_attack" ||
-    card.name.toLowerCase().includes("attack") ||
-    card.name.toLowerCase().includes("shot") ||
-    card.name.toLowerCase().includes("strike");
+  if (attackCard && weapon) {
+    range = Math.max(range, getWeaponIntrinsicAttackRange(weapon));
+  }
 
-  if (unit && unit.classId === "ranger" && isAttackCard) {
-    const equipmentById = getAllStarterEquipment();
-    const weapon = getEquippedWeapon(unit, equipmentById);
-    if (weapon && weapon.weaponType === "bow") {
+  // Apply Far Shot ability: Rangers get +1 range on bow attack cards.
+  if (unit && unit.classId === "ranger" && attackCard) {
+    if (weapon && (weapon.weaponType === "bow" || weapon.weaponType === "greatbow")) {
       range += 1;
     }
   }
 
-  if (unit.weaponState) {
-    const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
-    const weapon = getEquippedWeapon(unit, equipmentById);
-    if (weapon && card.weaponRules) {
-      const modifiers = getWeaponCardModifierSnapshot(unit.weaponState, weapon, card.weaponRules);
+  if (unit.weaponState && weapon) {
+    const cardRules = getBattleWeaponRulesForCard(card, weapon);
+    if (cardRules) {
+      const modifiers = getWeaponCardModifierSnapshot(unit.weaponState, weapon, cardRules);
       if (modifiers.rangeOverride !== null) {
         range = modifiers.rangeOverride;
       } else {
@@ -4332,32 +4784,23 @@ function getDistance(x1: number, y1: number, x2: number, y2: number): number {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
 
-function isStrainLockedCard(card: Card, activeUnit: BattleUnitState | undefined): boolean {
-  return Boolean(activeUnit && card.type === "core" && isOverStrainThreshold(activeUnit));
-}
-
 function getBattleCardDisabledReason(card: Card, activeUnit: BattleUnitState | undefined): string | null {
   if (!activeUnit) {
     return null;
   }
-  if (isStrainLockedCard(card, activeUnit)) {
-    return "Strain lock";
-  }
 
-  const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
+  const equipmentById = getBattleScreenEquipmentById();
   const weapon = getEquippedWeapon(activeUnit, equipmentById);
-  if (!activeUnit.weaponState || !weapon || !card.weaponRules) {
+  if (!activeUnit.weaponState || !weapon) {
     return null;
   }
 
-  if (
-    card.weaponRules.sourceWeaponId !== "__equipped_weapon__" &&
-    card.weaponRules.sourceWeaponId !== weapon.id
-  ) {
+  const cardRules = getBattleWeaponRulesForCard(card, weapon);
+  if (!cardRules) {
     return null;
   }
 
-  return getWeaponCardBlockReason(activeUnit.weaponState, weapon, card.weaponRules ?? null);
+  return getWeaponCardBlockReason(activeUnit.weaponState, weapon, cardRules);
 }
 
 function canCardTargetUnit(card: Card, activeUnit: BattleUnitState, targetUnit: BattleUnitState, distance: number): boolean {
@@ -4365,15 +4808,11 @@ function canCardTargetUnit(card: Card, activeUnit: BattleUnitState, targetUnit: 
     return false;
   }
   const effectiveRange = getEffectiveCardRange(card, activeUnit);
-  const requiresLineOfSight = effectiveRange > 1 && Boolean(activeUnit.pos && targetUnit.pos);
-  const hasTargetLineOfSight = !requiresLineOfSight || !localBattleState || !activeUnit.pos || !targetUnit.pos
-    ? true
-    : hasLineOfSight(activeUnit.pos, targetUnit.pos, localBattleState);
   if (card.target === "enemy") {
-    return isHostileBattleUnit(activeUnit, targetUnit) && distance <= effectiveRange && hasTargetLineOfSight;
+    return isHostileBattleUnit(activeUnit, targetUnit) && distance <= effectiveRange;
   }
   if (card.target === "ally") {
-    return isAlliedBattleUnit(activeUnit, targetUnit) && (distance <= effectiveRange || effectiveRange === 0) && hasTargetLineOfSight;
+    return isAlliedBattleUnit(activeUnit, targetUnit) && (distance <= effectiveRange || effectiveRange === 0);
   }
   if (card.target === "self") {
     return targetUnit.id === activeUnit.id;
@@ -4469,14 +4908,17 @@ function scoreAutoBattleCardOption(
 ): number {
   const name = card.name.toLowerCase();
   const description = (card.description ?? "").toLowerCase();
-  const damage = Math.max(0, Number(card.damage ?? 0));
+  const damageBand = resolveDamageBand(card.damageBand, card.damage, card.description);
+  const damage = damageBand
+    ? calculateDamageBandAmount(simulatedUnit, damageBand)
+    : Math.max(0, Number(card.damage ?? 0));
   const healing = Math.max(0, Number(card.healing ?? 0));
   const defBuff = Math.max(0, Number(card.defBuff ?? 0));
   const atkBuff = Math.max(0, Number(card.atkBuff ?? 0));
   const missingHp = Math.max(0, (targetUnit.maxHp ?? 0) - (targetUnit.hp ?? 0));
   const missingSelfHp = Math.max(0, (unit.maxHp ?? 0) - (unit.hp ?? 0));
   const adjacentHostiles = countAdjacentHostiles(battle, simulatedUnit, simulatedUnit.pos);
-  const isWaitCard = card.id === "core_wait" || name.includes("wait");
+  const isWaitCard = name.includes("wait");
   const isEnemyCard = card.target === "enemy";
   const isHealingCard = healing > 0 || name.includes("aid") || name.includes("heal") || name.includes("restore");
   const isDefensiveCard =
@@ -4586,9 +5028,6 @@ function getAutoBattleCardOptionsForPosition(
   for (let cardIndex = 0; cardIndex < unit.hand.length; cardIndex += 1) {
     const card = resolveCard(unit.hand[cardIndex]);
     if (enemyOnly && card.target !== "enemy") {
-      continue;
-    }
-    if (isStrainLockedCard(card, simulatedUnit)) {
       continue;
     }
 
@@ -4734,9 +5173,6 @@ function playCardFromScreen(
   }
 
   const card = resolveCard(cardIdOrObj);
-  if (isStrainLockedCard(card, unit)) {
-    return { ...state, log: [...state.log, `SLK//STRAIN :: ${unit.name} is over the strain threshold. Core cards are locked.`] };
-  }
   const coreCard = toCoreCard({
     ...card,
     effects: card.effects || [],
@@ -4792,6 +5228,13 @@ function isMovementBoostCard(card: Card | null | undefined): boolean {
     && (card.effects || []).some((effect: any) => effect.type === "move" && Number(effect.tiles ?? effect.amount ?? 0) > 0);
 }
 
+function isSecondMovementPhaseCard(card: Card | null | undefined): boolean {
+  if (!card) {
+    return false;
+  }
+  return normalizeBattleCardToken(card.id) === "core_move_plus";
+}
+
 function updateTurnStateAfterCardPlay(
   previousState: BattleState,
   nextState: BattleState,
@@ -4807,7 +5250,14 @@ function updateTurnStateAfterCardPlay(
     resetTurnStateForUnit(nextUnit, nextState);
   } else {
     const nextUnit = nextState.units[unitId] ?? null;
-    if (nextUnit && isMovementBoostCard(playedCard) && nextUnit.pos) {
+    if (nextUnit && isSecondMovementPhaseCard(playedCard) && nextUnit.pos) {
+      turnState.hasActed = true;
+      turnState.movementOnlyAfterAttack = true;
+      turnState.hasCommittedMove = false;
+      turnState.hasMoved = false;
+      turnState.originalPosition = { ...nextUnit.pos };
+      turnState.movementRemaining = getUnitMovementRange(nextUnit, nextState);
+    } else if (nextUnit && isMovementBoostCard(playedCard) && nextUnit.pos) {
       const origin = turnState.originalPosition ?? nextUnit.pos;
       const totalCost = getDistance(origin.x, origin.y, nextUnit.pos.x, nextUnit.pos.y);
       turnState.hasActed = true;
@@ -5398,7 +5848,7 @@ function applyRemoteBattleCommandToCurrentBattle(
   }
 
   if (command.type === "play_card") {
-    if (turnState.hasActed) {
+    if (turnState.isFacingSelection) {
       return;
     }
     const targetUnit = battle.units[command.targetUnitId] ?? null;
@@ -5475,7 +5925,10 @@ function applyRemoteBattleCommandToCurrentBattle(
       };
     }
 
-    const nextState = advanceTurn(stateToAdvance);
+    const nextState = advanceTurn(stateToAdvance, {
+      endedUnitPlayedCard: turnState.hasActed,
+      endedUnitMoved: turnState.hasMoved,
+    });
     if (shouldAutoResolveBattleState(nextState)) {
       if (shouldRender) {
         runEnemyTurnsAnimated(nextState);
@@ -5579,8 +6032,27 @@ export function renderBattleScreen() {
     }
   }
 
+  if (
+    localBattleState
+    && isQuacDebugAutoWinBattlesEnabled(state)
+    && localBattleState.phase !== "victory"
+    && localBattleState.phase !== "defeat"
+  ) {
+    setBattleState(forceBattleVictory(localBattleState));
+    showSystemPing({
+      type: "info",
+      title: "QUAC AUTO WIN",
+      message: "Battle resolved immediately for dev testing.",
+      channel: "quac-auto-win-battle",
+      replaceChannel: true,
+    });
+    renderBattleScreen();
+    return;
+  }
+
   if (localBattleState) {
     syncBattleAudioState(localBattleState);
+    preloadBattle3dModules();
   }
 
   const battle = localBattleState as BattleState;
@@ -5589,14 +6061,13 @@ export function renderBattleScreen() {
   const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(battle, activeUnit));
   const isPlacementPhase = battle.phase === "placement";
+  const showAuthorityUi = shouldShowBattleAuthorityUi(battle);
   const visibleBattleHudNodeIds = getVisibleBattleHudNodeIdsForController(battle, isPlacementPhase);
   if (!visibleBattleHudNodeIds.includes(battleControllerActiveNodeId)) {
     battleControllerActiveNodeId = visibleBattleHudNodeIds[0] ?? "console";
   }
   const phase = battle.phase;
   syncBattleControllerCursor(battle, activeUnit, isPlacementPhase);
-  const battleControllerPanHint = `${getControllerActionLabel("moveUp")} / ${getControllerActionLabel("moveLeft")}`;
-  const battleControllerZoomHint = `${getControllerActionLabel("zoomOut")} / ${getControllerActionLabel("zoomIn")}`;
   const echoContext = getEchoContext(battle);
   if (battleExitConfirmState && !echoContext) {
     battleExitConfirmState = null;
@@ -5618,7 +6089,7 @@ export function renderBattleScreen() {
     && battle.phase !== "defeat"
     && !isSquadBattle(battle)
     && !isCoopOperationsBattle(battle);
-  const activeBattleViewIndex = getActiveBattleViewIndex(state);
+  const activeTurnAuthority = getBattleTurnAuthorityDisplay(activeUnit);
 
   app.innerHTML = `
     <div class="battle-root battle-root--${phase}">
@@ -5634,33 +6105,26 @@ export function renderBattleScreen() {
           <div class="battle-subtitle">${isPlacementPhase ? "PLACEMENT PHASE" : `TURN ${battle.turnCount}`} • GRID ${battle.gridWidth}×${battle.gridHeight}</div>
           ${battle.defenseObjective ? renderDefenseObjectiveHeader(battle.defenseObjective) : ""}
           ${squadObjective ? renderSkirmishObjectiveHeader(battle) : ""}
-          ${renderEchoChallengeHeader(echoContext)}
+          ${renderEchoChallengeHeader(echoContext, battle)}
         </div>
         <div class="battle-header-right">
           ${!isPlacementPhase ? `
             <div class="battle-active-info">
               <div class="battle-active-label">ACTIVE UNIT</div>
               <div class="battle-active-value">${activeUnit?.name ?? "—"}</div>
+              ${showAuthorityUi ? `
+                <div
+                  class="battle-active-owner"
+                  data-battle-turn-owner="${activeTurnAuthority.ownerId}"
+                  style="--battle-owner-accent: ${activeTurnAuthority.accent};"
+                >
+                  <span class="battle-active-owner-label">${activeTurnAuthority.kicker}</span>
+                  <span class="battle-active-owner-chip">${activeTurnAuthority.label}</span>
+                </div>
+              ` : ""}
             </div>
           ` : ""}
-          <div class="battle-header-top-controls">
-            <div class="battle-pan-controls">
-              <div class="battle-pan-hint">
-                <span class="battle-pan-keys">WASD / ARROWS / ${battleControllerPanHint}</span> to pan • <span class="battle-pan-keys">${battleControllerZoomHint}</span> to zoom • <span class="battle-pan-keys">Q / E</span> orbit • <span class="battle-pan-keys">R / F</span> tilt
-              </div>
-            </div>
-            <div class="battle-view-switcher" aria-label="Battle camera view switcher">
-              <span class="battle-view-switcher-label">VIEW</span>
-              <button class="battle-view-switcher-btn${activeBattleViewIndex === 0 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="0">1</button>
-              <span class="battle-view-switcher-separator">|</span>
-              <button class="battle-view-switcher-btn${activeBattleViewIndex === 1 ? " battle-view-switcher-btn--active" : ""}" type="button" data-battle-view-index="1">2</button>
-            </div>
-          </div>
           <div class="battle-header-command-row">
-            <button class="battle-pan-reset" id="resetBattlePanBtn">⟳ CENTER</button>
-            <button class="battle-toggle-btn ${uiPanelsMinimized ? 'battle-toggle-btn--active' : ''}" id="toggleUiBtn">
-              ${uiPanelsMinimized ? '👁 SHOW UI' : '👁 HIDE UI'}
-            </button>
             <div class="battle-header-actions">
               ${showDebugAutoWinButton ? `<button class="battle-debug-autowin-btn" id="debugAutoWinBtn">DEBUG AUTO-WIN</button>` : ""}
               <button class="battle-back-btn" id="exitBattleBtn">${exitButtonLabel}</button>
@@ -5668,6 +6132,7 @@ export function renderBattleScreen() {
           </div>
         </div>
       </div>
+      ${renderBattleStartOverlay(battle)}
       ${renderBattleResultOverlay(battle)}
       ${renderBattleExitConfirmModal(battle)}
     </div>
@@ -5755,7 +6220,9 @@ export function renderBattleScreen() {
         focusRoot: () => document.querySelector(".battle-root"),
         focusSelector: battleExitConfirmState ? "#battleExitConfirmModal button:not([disabled])" : undefined,
         defaultFocusSelector: battleExitConfirmState ? "#battleExitConfirmAcceptBtn" : "#exitBattleBtn",
-        onCursorAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase),
+        onCursorAction: battleExitConfirmState
+          ? undefined
+          : (action, playerId) => handleBattleControllerCursorAction(action, battle, activeUnit, isPlacementPhase, playerId),
         onLayoutAction: battleExitConfirmState ? undefined : (action) => handleBattleControllerLayoutAction(action, battle, isPlacementPhase),
         onFocusAction: (action) => {
           if (battleExitConfirmState && action === "cancel") {
@@ -5905,7 +6372,7 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
             <div class="unit-panel-label">ACTIVE UNIT</div>
             <div class="unit-panel-name">${activeUnit.name}</div>
             <div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.6;">${(activeUnit as any).classId?.toUpperCase() || "UNIT"}</div>
-            <div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.82;">${getPlayerControllerLabel((activeUnit.controller ?? "P1") as PlayerId)}</div>
+            ${shouldShowBattleAuthorityUi(localBattleState) ? `<div class="unit-panel-class" style="font-size: 0.55rem; color: var(--bronze); opacity: 0.82;">${getPlayerControllerLabel((activeUnit.controller ?? "P1") as PlayerId)}</div>` : ""}
           </div>
         </div>
         ${renderStrainMeter(currentStrain, maxStrain)}
@@ -5968,10 +6435,9 @@ function renderUnitPanel(activeUnit: BattleUnitState | undefined): string {
   }
 }
 
-function renderHandPanel(
+function renderHandWindowHeaderControls(
   activeUnit: BattleUnitState | undefined,
   isPlayerTurn: boolean | undefined,
-  layoutMode: "fan" | "grid" = getBattleHandLayoutMode(),
 ): string {
   try {
     const hand = resolveHandCards(activeUnit?.hand ?? []);
@@ -5979,29 +6445,55 @@ function renderHandPanel(
     const isFacingSelectionActive = turnState.isFacingSelection;
     const canUndoMove = Boolean(isPlayerTurn && !autoControlled && !isFacingSelectionActive && turnState.hasCommittedMove && !turnState.hasActed);
     const interactable = localBattleState && activeUnit ? getUnitInteractionObject(localBattleState, activeUnit) : null;
+    const turnAuthority = getBattleTurnAuthorityDisplay(activeUnit);
+    const showAuthorityUi = shouldShowBattleAuthorityUi(localBattleState);
+    const showInteractButton = Boolean(interactable && isPlayerTurn && !autoControlled && !isFacingSelectionActive);
     return `
-      <div class="hand-header-floating">
-        <div class="hand-info">
-          <span class="hand-label">HAND</span>
-          <span class="hand-count">${hand.length} CARDS</span>
+      <div class="hand-meters">
+        <div class="hand-counter">
+          <span class="hand-counter-label">Hand</span>
+          <span class="hand-counter-value">${hand.length}</span>
         </div>
-        <div class="hand-meters">
-          <div class="hand-counter">
-            <span class="hand-counter-label">Deck:</span>
-            <span class="hand-counter-value">${activeUnit?.drawPile?.length ?? 0}</span>
-          </div>
-          <div class="hand-counter">
-            <span class="hand-counter-label">Discard:</span>
-            <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
-          </div>
+        <div class="hand-counter">
+          <span class="hand-counter-label">Deck</span>
+          <span class="hand-counter-value">${activeUnit?.drawPile?.length ?? 0}</span>
         </div>
-        <div class="hand-actions">
-          <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
-          <button class="battle-endturn-btn" id="interactBtn" ${!isPlayerTurn || autoControlled || isFacingSelectionActive || !interactable ? "disabled" : ""}>${interactable ? `INTERACT // ${interactable.type.replace(/_/g, " ").toUpperCase()}` : "INTERACT"}</button>
-          <button class="battle-endturn-btn" id="endTurnBtn" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
+        <div class="hand-counter">
+          <span class="hand-counter-label">Discard</span>
+          <span class="hand-counter-value">${activeUnit?.discardPile?.length ?? 0}</span>
         </div>
       </div>
-      <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit)}</div>
+      ${showAuthorityUi ? `
+        <div
+          class="hand-turn-authority"
+          data-battle-hand-owner="${turnAuthority.ownerId}"
+          style="--battle-owner-accent: ${turnAuthority.accent};"
+        >
+          <span class="hand-turn-authority__label">${turnAuthority.kicker}</span>
+          <span class="hand-turn-authority__value">${turnAuthority.label}</span>
+        </div>
+      ` : ""}
+      <div class="hand-actions">
+        <button class="battle-undo-btn" id="undoMoveBtn" ${canUndoMove ? "" : "disabled"}>UNDO MOVE</button>
+        ${showInteractButton ? `<button class="battle-endturn-btn" id="interactBtn" data-battle-endturn-owner="${turnAuthority.ownerId}">INTERACT // ${interactable!.type.replace(/_/g, " ").toUpperCase()}</button>` : ""}
+        <button class="battle-endturn-btn" id="endTurnBtn" data-battle-endturn-owner="${turnAuthority.ownerId}" ${!isPlayerTurn || autoControlled ? "disabled" : ""}>${isFacingSelectionActive ? "CONFIRM FACING" : "END TURN"}</button>
+      </div>
+    `;
+  } catch (err) {
+    console.error(`[RENDER] Error in renderHandWindowHeaderControls:`, err);
+    return "";
+  }
+}
+
+function renderHandPanel(
+  activeUnit: BattleUnitState | undefined,
+  isPlayerTurn: boolean | undefined,
+  layoutMode: "fan" | "grid" = getBattleHandLayoutMode(),
+): string {
+  try {
+    const hand = resolveHandCards(activeUnit?.hand ?? []);
+    return `
+      <div class="hand-cards-row-floating hand-cards-row-floating--${layoutMode}">${renderHandCards(hand, isPlayerTurn, activeUnit, layoutMode)}</div>
     `;
   } catch (err) {
     console.error(`[RENDER] Error in renderHandPanel:`, err);
@@ -6009,7 +6501,12 @@ function renderHandPanel(
   }
 }
 
-function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, activeUnit: BattleUnitState | undefined): string {
+function renderHandCards(
+  hand: Card[],
+  isPlayerTurn: boolean | undefined,
+  activeUnit: BattleUnitState | undefined,
+  layoutMode: "fan" | "grid" = getBattleHandLayoutMode(),
+): string {
   if (hand.length === 0) return `<div class="hand-empty">No cards in hand</div>`;
 
   const total = hand.length;
@@ -6021,7 +6518,6 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
     const angle = total > 1 ? -maxAngle / 2 + step * i : 0;
     const yOff = Math.abs(angle) * 0.5;
     const disabledReason = getBattleCardDisabledReason(card, activeUnit);
-    const strainLocked = disabledReason === "Strain lock";
     const autoControlled = Boolean(activeUnit && isBattleUnitAutoControlled(localBattleState, activeUnit));
     const disabledClass = !isPlayerTurn || Boolean(disabledReason) || autoControlled ? "battle-cardui--disabled" : "";
     const chaosClass = card.isChaosCard ? "battle-cardui--chaos" : "";
@@ -6034,22 +6530,20 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
 
     // Calculate effective range for display (includes Far Shot bonus)
     const effectiveRange = activeUnit ? getEffectiveCardRange(card, activeUnit) : card.range ?? 1;
-    const equipmentById = (getGameState() as any).equipmentById || getAllStarterEquipment();
+    const equipmentById = getBattleScreenEquipmentById();
     const weapon = activeUnit ? getEquippedWeapon(activeUnit, equipmentById) : null;
     const weaponMeta: string[] = [];
-    if (weapon && activeUnit?.weaponState && card.weaponRules) {
-      if (
-        card.weaponRules.sourceWeaponId === "__equipped_weapon__" ||
-        card.weaponRules.sourceWeaponId === weapon.id
-      ) {
-        const modifiers = getWeaponCardModifierSnapshot(activeUnit.weaponState, weapon, card.weaponRules);
-        if (card.weaponRules.ammoCost > 0) {
-          weaponMeta.push(`AM ${card.weaponRules.ammoCost}`);
+    if (weapon && activeUnit?.weaponState) {
+      const cardRules = getBattleWeaponRulesForCard(card, weapon);
+      if (cardRules) {
+        const modifiers = getWeaponCardModifierSnapshot(activeUnit.weaponState, weapon, cardRules);
+        if (cardRules.ammoCost > 0) {
+          weaponMeta.push(`AM ${cardRules.ammoCost}`);
         }
-        if (card.weaponRules.heatDelta > 0) {
-          weaponMeta.push(`HEAT +${card.weaponRules.heatDelta}`);
-        } else if (card.weaponRules.heatDelta < 0) {
-          weaponMeta.push(`COOL ${Math.abs(card.weaponRules.heatDelta)}`);
+        if (cardRules.heatDelta > 0) {
+          weaponMeta.push(`HEAT +${cardRules.heatDelta}`);
+        } else if (cardRules.heatDelta < 0) {
+          weaponMeta.push(`COOL ${Math.abs(cardRules.heatDelta)}`);
         }
         if (activeUnit.weaponState.activeClutchIds.length > 0) {
           const clutchMap = new Map(getWeaponClutches(weapon).map((clutch) => [clutch.id, clutch.label]));
@@ -6069,8 +6563,8 @@ function renderHandCards(hand: Card[], isPlayerTurn: boolean | undefined, active
     }
 
     return `
-      <div class="battle-card-slot" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
-        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass} ${strainLocked ? "battle-cardui--strain-locked" : ""}" data-card-index="${i}">
+      <div class="battle-card-slot${sel ? " battle-card-slot--selected" : ""}" style="--fan-rotate:${angle}deg;--fan-translateY:${yOff}px;z-index:${i + 1};" data-card-index="${i}">
+        <div class="battle-cardui ${sel ? "battle-cardui--selected" : ""} ${disabledClass} ${chaosClass}" data-card-index="${i}">
           <!-- Strain Cost Circle - Top Left -->
           <div class="hs-card-cost">${card.strainCost}</div>
           
@@ -6107,7 +6601,7 @@ function renderManageUnitsPanel(battle: BattleState): string {
   const partyUnits = getBattlePartyUnits(battle);
   const selectedUnit = getSelectedManageUnit(battle);
   const state = getGameState();
-  const equipmentById = ((state as any).equipmentById || getAllStarterEquipment()) as Record<string, any>;
+  const equipmentById = getBattleScreenEquipmentById(battle);
 
   if (!selectedUnit) {
     return `
@@ -6181,7 +6675,11 @@ function renderManageUnitsPanel(battle: BattleState): string {
               <div class="battle-manage-detail-name">${selectedUnit.name}</div>
               <div class="battle-manage-detail-class">${((selectedUnit as any).classId ?? "unit").toString().toUpperCase()}</div>
               <div class="battle-manage-detail-note">
-                ${battle.activeUnitId === selectedUnit.id ? "Currently taking the active turn." : `${getPlayerControllerLabel((selectedUnit.controller ?? "P1") as PlayerId)} controls this unit.`}
+                ${battle.activeUnitId === selectedUnit.id
+                  ? "Currently taking the active turn."
+                  : shouldShowBattleAuthorityUi(battle)
+                    ? `${getPlayerControllerLabel((selectedUnit.controller ?? "P1") as PlayerId)} controls this unit.`
+                    : "Standing by for tactical orders."}
               </div>
             </div>
           </div>
@@ -6249,6 +6747,8 @@ function renderPlacementUI(battle: BattleState): string {
     (unit) => !placedUnitIdSet.has(unit.id)
   );
   const placedCount = placementUnits.filter((unit) => placedUnitIdSet.has(unit.id)).length;
+  const placementConfirmState = getBattlePlacementConfirmState(battle);
+  const placementAuthoritySummaries = placementConfirmState.summaries;
   const unplacedFields = getUnplacedEchoFields(battle);
   const isSkirmishBattle = isSquadBattle(battle);
   const isClientSkirmishView = isSkirmishBattle && getGameState().session.authorityRole === "client";
@@ -6256,13 +6756,39 @@ function renderPlacementUI(battle: BattleState): string {
   const placementTiles = getLocalPlacementTiles(battle);
   const placementEdgeLabel = placementColumn === 0 ? "left" : "right";
   const placementCounts = getSkirmishPlacementCounts(battle);
-  const canConfirm = isEchoFieldMode
-    ? placedCount > 0 && unplacedFields.length === 0
-    : isSkirmishBattle
-      ? !isClientSkirmishView
-        && placementCounts.friendly > 0
-        && placementCounts.enemy > 0
-      : placedCount > 0;
+  const showAuthorityUi = shouldShowBattleAuthorityUi(battle);
+  const canConfirm = placementConfirmState.canConfirm;
+  const placementQuickPlaceOwner = !isEchoFieldMode && !isClientSkirmishView
+    ? getBattlePlacementQuickPlaceOwner(battle)
+    : undefined;
+  const placementQuickPlaceLabel = showAuthorityUi && placementQuickPlaceOwner
+    ? `QUICK PLACE ${getPlayerControllerLabel(placementQuickPlaceOwner)}`
+    : "QUICK PLACE";
+  const placementAuthorityBlock = showAuthorityUi && placementAuthoritySummaries.length > 0
+    ? `
+        <div class="placement-authority-row">
+          ${placementAuthoritySummaries.map((summary) => `
+            <div
+              class="placement-authority-chip ${summary.ready ? "placement-authority-chip--ready" : "placement-authority-chip--waiting"}"
+              data-placement-player="${summary.playerId}"
+              data-placement-ready="${summary.ready ? "true" : "false"}"
+              style="--battle-owner-accent: ${getBattleAuthorityAccent(summary.playerId)};"
+            >
+              <span class="placement-authority-chip__label">${getPlayerControllerLabel(summary.playerId)}</span>
+              <span class="placement-authority-chip__meta">${summary.placedUnits}/${summary.totalUnits} deployed</span>
+              <span class="placement-authority-chip__state">${summary.ready ? (summary.blockedByCapacity ? "LOCKED" : "READY") : "WAITING"}</span>
+            </div>
+          `).join("")}
+        </div>
+      `
+    : "";
+  const placementConfirmDetail = placementConfirmState.detail
+    ? `
+        <div class="placement-confirm-detail" data-placement-confirm-detail="${canConfirm ? "ready" : "blocked"}">
+          ${placementConfirmState.detail}
+        </div>
+      `
+    : "";
   const theaterBonuses = battle.theaterBonuses;
   const obscurationActive = Boolean(theaterBonuses?.obscurationActive ?? theaterBonuses?.smokeObscured);
   const obscurationSeverity = theaterBonuses?.obscurationSeverity
@@ -6281,6 +6807,17 @@ function renderPlacementUI(battle: BattleState): string {
   const enemyStartStatusType = theaterBonuses?.enemyStartStatusType?.toUpperCase() ?? null;
   const enemyStartStatusDuration = theaterBonuses?.enemyStartStatusDuration ?? 0;
   const enemyStartStatusLabel = (theaterBonuses?.enemyStartStatusLabel ?? theaterBonuses?.regionMechanicLabel ?? "HOSTILES").toUpperCase();
+  const squadModifierSummary = theaterBonuses?.squadModifierSummary ?? [];
+  const supportSystemSummary = theaterBonuses?.supportSystemSummary ?? [];
+  const recoverySummary = theaterBonuses?.recoverySummary ?? [];
+  const openingVolleyParts = [
+    (theaterBonuses?.automatedTurretCount ?? 0) > 0
+      ? `Turret x${theaterBonuses!.automatedTurretCount}`
+      : null,
+    (theaterBonuses?.powerRelayVolleyCount ?? 0) > 0
+      ? `Relay x${theaterBonuses!.powerRelayVolleyCount}`
+      : null,
+  ].filter(Boolean);
   const theaterBonusBlock = theaterBonuses
     ? `
         <div class="placement-theater-briefing">
@@ -6292,6 +6829,22 @@ function renderPlacementUI(battle: BattleState): string {
           ${theaterBonuses.factionTag ? `<div class="placement-theater-briefing__row">
             <span>Faction</span>
             <strong>${theaterBonuses.factionTag.toUpperCase()}</strong>
+          </div>` : ""}
+          ${squadModifierSummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Squad Mods</span>
+            <strong>${squadModifierSummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${supportSystemSummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Support</span>
+            <strong>${supportSystemSummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${recoverySummary.length > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Recovery</span>
+            <strong>${recoverySummary.join(" / ")}</strong>
+          </div>` : ""}
+          ${(theaterBonuses.openingVolleyDamage ?? 0) > 0 ? `<div class="placement-theater-briefing__row">
+            <span>Opening Volley</span>
+            <strong>${theaterBonuses.openingVolleyDamage} damage pre-contact${openingVolleyParts.length > 0 ? ` // ${openingVolleyParts.join(" / ")}` : ""}</strong>
           </div>` : ""}
           <div class="placement-theater-briefing__row">
             <span>Hostiles</span>
@@ -6335,6 +6888,7 @@ function renderPlacementUI(battle: BattleState): string {
             <span>Placed Units: ${placedCount}/${placementCapacity}</span>
             <span>Fields Remaining: ${unplacedFields.length}</span>
           </div>
+          ${placementAuthorityBlock}
           <div class="placement-units-list">
             <div class="placement-units-label">Drafted Echo Fields:</div>
             ${echoContext.availableFields.map((field) => {
@@ -6342,7 +6896,11 @@ function renderPlacementUI(battle: BattleState): string {
               const isSelected = echoContext.selectedFieldDraftId === field.draftId;
               return `
                 <div class="placement-field-item ${isPlaced ? "placement-field-item--placed" : ""} ${isSelected ? "placement-field-item--selected" : ""}" data-echo-field-draft-id="${field.draftId}">
-                  <span>${field.name}</span>
+                  <span class="placement-field-main">
+                    <strong>${field.name}</strong>
+                    <small>${field.effectLabel}</small>
+                    <small>${field.description}</small>
+                  </span>
                   <span class="placement-field-meta">LV ${field.level} • R${field.radius}</span>
                   ${isPlaced ? '<span class="placement-status">PLACED</span>' : '<span class="placement-status">READY</span>'}
                 </div>
@@ -6350,9 +6908,10 @@ function renderPlacementUI(battle: BattleState): string {
             }).join("")}
           </div>
         </div>
+        ${placementConfirmDetail}
         <div class="placement-actions">
           <button class="battle-quick-place-btn" id="editUnitPlacementBtn">EDIT UNITS</button>
-          <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" ${!canConfirm ? "disabled" : ""}>DEPLOY</button>
+          <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" data-battle-placement-confirm-state="${canConfirm ? "ready" : "blocked"}" ${!canConfirm ? "disabled" : ""}>${placementConfirmState.label}</button>
         </div>
       </div>
     `;
@@ -6374,8 +6933,9 @@ function renderPlacementUI(battle: BattleState): string {
         <div class="placement-stats">
           <span>Placed: ${placedCount}/${placementCapacity}</span>
           <span>Unplaced: ${unplacedUnits.length}</span>
-          ${isSkirmishBattle ? `<span>Host / Remote: ${placementCounts.friendly} / ${placementCounts.enemy}</span>` : ""}
+          ${showAuthorityUi && isSkirmishBattle ? `<span>Host / Remote: ${placementCounts.friendly} / ${placementCounts.enemy}</span>` : ""}
         </div>
+        ${placementAuthorityBlock}
         <div class="placement-units-list">
           <div class="placement-units-label">${isSkirmishBattle ? "Assigned Units (click to select, then place on your edge):" : "Party Units (click to select, then place on grid):"}</div>
           ${placementUnits.map((u) => {
@@ -6386,7 +6946,7 @@ function renderPlacementUI(battle: BattleState): string {
                    data-unit-id="${u.id}" 
                    data-placed="${isPlaced}">
                 <span>${u.name}</span>
-                <span class="placement-field-meta">${(u.controller ?? "P1").toString().toUpperCase()}</span>
+                ${showAuthorityUi ? `<span class="placement-field-meta">${(u.controller ?? "P1").toString().toUpperCase()}</span>` : ""}
                 ${isPlaced ? '<span class="placement-status">✓ PLACED</span>' : '<span class="placement-status">AVAILABLE</span>'}
                 ${isSelected ? '<span class="placement-selected-indicator">→ SELECTED</span>' : ''}
               </div>
@@ -6394,9 +6954,10 @@ function renderPlacementUI(battle: BattleState): string {
           }).join("")}
         </div>
       </div>
+      ${placementConfirmDetail}
       <div class="placement-actions">
-        <button class="battle-quick-place-btn" id="quickPlaceBtn">QUICK PLACE</button>
-        <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" ${!canConfirm ? "disabled" : ""}>${isClientSkirmishView ? "HOST DEPLOYS" : "CONFIRM"}</button>
+        <button class="battle-quick-place-btn" id="quickPlaceBtn">${placementQuickPlaceLabel}</button>
+        <button class="battle-confirm-btn ${canConfirm ? "" : "battle-confirm-btn--disabled"}" id="confirmPlacementBtn" data-battle-placement-confirm-state="${canConfirm ? "ready" : "blocked"}" ${!canConfirm ? "disabled" : ""}>${placementConfirmState.label}</button>
       </div>
     </div>
   `;
@@ -6675,16 +7236,42 @@ function renderSkirmishObjectiveHeader(battle: BattleState): string {
   `;
 }
 
-function renderEchoChallengeHeader(echoContext: EchoBattleContext | null): string {
+function renderEchoChallengeHeader(echoContext: EchoBattleContext | null, battle: BattleState): string {
   if (!echoContext?.activeChallenge) {
     return "";
   }
 
+  const challenge = echoContext.activeChallenge;
+  const fastBreakTurnsRemaining = challenge.type === "turn_limit"
+    ? Math.max(0, challenge.target - Math.max(1, battle.turnCount) + 1)
+    : null;
+
   return `
     <div class="battle-echo-challenge">
       <div class="battle-echo-challenge__label">ECHO CHALLENGE</div>
-      <div class="battle-echo-challenge__title">${echoContext.activeChallenge.title}</div>
-      <div class="battle-echo-challenge__copy">${echoContext.activeChallenge.description}</div>
+      <div class="battle-echo-challenge__title">${challenge.title}</div>
+      <div class="battle-echo-challenge__copy">${challenge.description}</div>
+      ${fastBreakTurnsRemaining !== null ? `
+        <div class="battle-echo-challenge__timer">
+          <span>TURN LIMIT</span>
+          <strong>${fastBreakTurnsRemaining}/${challenge.target}</strong>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderBattleStartOverlay(battle: BattleState): string {
+  if (battle.phase === "placement" || !isBattleStartPresentationActive(battle)) {
+    return "";
+  }
+
+  return `
+    <div class="battle-start-overlay" aria-hidden="true">
+      <div class="battle-start-overlay__card">
+        <div class="battle-start-overlay__kicker">S/COM_OS // ENGAGEMENT LIVE</div>
+        <div class="battle-start-overlay__title">BATTLE START</div>
+      </div>
     </div>
   `;
 }
@@ -6886,6 +7473,17 @@ function renderBattleResultOverlay(battle: BattleState): string {
       : isTheaterOperationBattle
         ? "ROOM SECURED"
         : "HOSTILES BROKEN";
+    const battleChannelLabel = isDefenseBattle
+      ? "DEFENSE GRID"
+      : isTheaterOperationBattle
+        ? "THEATER LINK"
+        : "TACTICAL LINK";
+    const rewardChannelLabel = `${rewardPacketTypes} CHANNEL${rewardPacketTypes === 1 ? "" : "S"}`;
+    const victoryFooterNote = isDefenseBattle
+      ? "Perimeter stabilized. Recovery and reward transfer channels are standing by."
+      : isTheaterOperationBattle
+        ? "Room secured. Claim the packet and continue the operation route."
+        : "The route is clear. Claim the packet and continue the tactical push.";
 
     // Load unlockable name if present
     const unlockableId = (r as any).unlockable;
@@ -6901,69 +7499,104 @@ function renderBattleResultOverlay(battle: BattleState): string {
 
     return `
       <div class="battle-result-overlay">
-        <div class="battle-result-card">
-          <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
-          <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
-          ${isDefenseBattle ? `
-            <div class="battle-defense-success">
-              Facility perimeter held. Defensive line remains intact.
+        <div class="battle-result-card battle-result-card--victory">
+          <div class="battle-result-victory-header">
+            <div class="battle-result-victory-header-main">
+              <div class="battle-result-kicker">SCROLLLINK // ENGAGEMENT RESOLVED</div>
+              <div class="battle-result-title">${isDefenseBattle ? "FACILITY DEFENDED" : "VICTORY"}</div>
+              ${isDefenseBattle ? `
+                <div class="battle-defense-success">
+                  Facility perimeter held. Defensive line remains intact.
+                </div>
+              ` : `
+                <div class="battle-result-copy">
+                  Hostile resistance broken. Claim the reward package and continue the operation.
+                </div>
+              `}
             </div>
-          ` : `
-            <div class="battle-result-copy">
-              Hostile resistance broken. Claim the reward package and continue the operation.
+            <div class="battle-result-victory-status-strip">
+              <div class="battle-result-victory-badge">${victoryStatusLabel}</div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Link</div>
+                <div class="battle-result-victory-strip-value">${battleChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item">
+                <div class="battle-result-victory-strip-label">Packet</div>
+                <div class="battle-result-victory-strip-value">${rewardChannelLabel}</div>
+              </div>
+              <div class="battle-result-victory-strip-item battle-result-victory-strip-item--wide">
+                <div class="battle-result-victory-strip-label">Combat Note</div>
+                <div class="battle-result-victory-strip-value battle-result-victory-strip-value--note">${escapeBattleText(latestBattleNote)}</div>
+              </div>
             </div>
-          `}
-          <div class="battle-result-message">${escapeBattleText(latestBattleNote)}</div>
-          <div class="battle-result-summary">
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">SURVIVORS</div>
-              <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
-              <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">INTEGRITY</div>
-              <div class="battle-result-summary-card__value">${integrityPercent}%</div>
-              <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">TURN COUNT</div>
-              <div class="battle-result-summary-card__value">${battle.turnCount}</div>
-              <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
-            </article>
-            <article class="battle-result-summary-card">
-              <div class="battle-result-summary-card__label">STATUS</div>
-              <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
-              <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
-            </article>
           </div>
-          <div class="battle-result-section-title">Reward Packet</div>
-          <div class="battle-reward-grid">
-            <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
-            <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
-            <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
-            ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
-            ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
-            ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
-            ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
-            ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
-            ${resolvedGearRewards.map((reward) => `
-              <div class="battle-reward-item battle-reward-item--gear">
-                <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
-                <div class="reward-value">${escapeBattleText(reward.name)}</div>
-                <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+          <div class="battle-result-dashboard">
+            <section class="battle-result-panel battle-result-panel--summary">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Squad Debrief</div>
+                <div class="battle-result-panel-meta">ENGAGEMENT DATA</div>
               </div>
-            `).join("")}
-            ${unlockableId && unlockableId !== "pending" && unlockableName ? `
-              <div class="battle-reward-item battle-reward-item--unlockable">
-                <div class="reward-label">NEW UNLOCK</div>
-                <div class="reward-value">${unlockableName}</div>
+              <div class="battle-result-summary">
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">SURVIVORS</div>
+                  <div class="battle-result-summary-card__value">${survivingFriendlies.length}</div>
+                  <div class="battle-result-summary-card__meta">${survivingFriendlies.length === 1 ? "Unit remains standing" : "Units remain standing"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">INTEGRITY</div>
+                  <div class="battle-result-summary-card__value">${integrityPercent}%</div>
+                  <div class="battle-result-summary-card__meta">${totalFriendlyHp}/${totalFriendlyMaxHp} HP across the squad</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">TURN COUNT</div>
+                  <div class="battle-result-summary-card__value">${battle.turnCount}</div>
+                  <div class="battle-result-summary-card__meta">${battle.turnCount === 1 ? "turn elapsed" : "turns elapsed"}</div>
+                </article>
+                <article class="battle-result-summary-card">
+                  <div class="battle-result-summary-card__label">STATUS</div>
+                  <div class="battle-result-summary-card__value">${victoryStatusLabel}</div>
+                  <div class="battle-result-summary-card__meta">${rewardPacketTypes} reward channel${rewardPacketTypes === 1 ? "" : "s"} primed</div>
+                </article>
               </div>
-            ` : ""}
+            </section>
+            <section class="battle-result-panel battle-result-panel--rewards">
+              <div class="battle-result-panel-header">
+                <div class="battle-result-section-title">Reward Packet</div>
+                <div class="battle-result-panel-meta">TRANSFER READY</div>
+              </div>
+              <div class="battle-reward-grid">
+                <div class="battle-reward-item"><div class="reward-label">WAD</div><div class="reward-value">+${r.wad}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">METAL SCRAP</div><div class="reward-value">+${r.metalScrap}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">WOOD</div><div class="reward-value">+${r.wood}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">CHAOS SHARDS</div><div class="reward-value">+${r.chaosShards}</div></div>
+                <div class="battle-reward-item"><div class="reward-label">STEAM COMPONENTS</div><div class="reward-value">+${r.steamComponents}</div></div>
+                <div class="battle-reward-item battle-reward-item--stat"><div class="reward-label">${STAT_SHORT_LABEL}</div><div class="reward-value">+${r.squadXp ?? 0}</div></div>
+                ${advancedRewards.alloy > 0 ? `<div class="battle-reward-item"><div class="reward-label">ALLOY</div><div class="reward-value">+${advancedRewards.alloy}</div></div>` : ""}
+                ${advancedRewards.drawcord > 0 ? `<div class="battle-reward-item"><div class="reward-label">DRAWCORD</div><div class="reward-value">+${advancedRewards.drawcord}</div></div>` : ""}
+                ${advancedRewards.fittings > 0 ? `<div class="battle-reward-item"><div class="reward-label">FITTINGS</div><div class="reward-value">+${advancedRewards.fittings}</div></div>` : ""}
+                ${advancedRewards.resin > 0 ? `<div class="battle-reward-item"><div class="reward-label">RESIN</div><div class="reward-value">+${advancedRewards.resin}</div></div>` : ""}
+                ${advancedRewards.chargeCells > 0 ? `<div class="battle-reward-item"><div class="reward-label">CHARGE CELLS</div><div class="reward-value">+${advancedRewards.chargeCells}</div></div>` : ""}
+                ${resolvedGearRewards.map((reward) => `
+                  <div class="battle-reward-item battle-reward-item--gear">
+                    <div class="reward-label">${reward.source === "generated" ? "PROC GEAR" : "GEAR DROP"}</div>
+                    <div class="reward-value">${escapeBattleText(reward.name)}</div>
+                    <div class="reward-meta">${escapeBattleText(reward.description)}</div>
+                  </div>
+                `).join("")}
+                ${unlockableId && unlockableId !== "pending" && unlockableName ? `
+                  <div class="battle-reward-item battle-reward-item--unlockable">
+                    <div class="reward-label">NEW UNLOCK</div>
+                    <div class="reward-value">${unlockableName}</div>
+                  </div>
+                ` : ""}
+              </div>
+            </section>
           </div>
           <div class="battle-result-footer">
+            <div class="battle-result-footer-copy">
+              <div class="battle-result-footer-label">Transfer Channel</div>
+              <div class="battle-result-footer-note">${victoryFooterNote}</div>
+            </div>
             <button class="battle-result-btn battle-result-btn--claim" id="claimRewardsBtn">CLAIM REWARDS AND CONTINUE</button>
           </div>
         </div>
@@ -7101,9 +7734,42 @@ function animatePlayedCard(cardIndex: number | null, onComplete: () => void): vo
   }, 340);
 }
 
+function attachBattleHandFanPeeking(): void {
+  const row = document.querySelector<HTMLElement>(".hand-cards-row-floating--fan");
+  if (!row) {
+    return;
+  }
+
+  const slots = Array.from(row.querySelectorAll<HTMLElement>(".battle-card-slot"));
+  if (slots.length <= 0) {
+    return;
+  }
+
+  const setPeekIndex = (index: number | null) => {
+    slots.forEach((slot, slotIndex) => {
+      slot.classList.toggle("battle-card-slot--fan-peek", index === slotIndex);
+    });
+  };
+
+  row.addEventListener("mousemove", (event) => {
+    const rect = row.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return;
+    }
+    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const index = Math.max(0, Math.min(slots.length - 1, Math.round(ratio * (slots.length - 1))));
+    setPeekIndex(index);
+  });
+
+  row.addEventListener("mouseleave", () => {
+    setPeekIndex(null);
+  });
+}
+
 function handleBattleHudCardSelection(cardIndex: number): void {
   if (!localBattleState) return;
-  if (turnState.hasActed) return;
+  if (isBattleStartPresentationActive(localBattleState)) return;
+  if (turnState.isFacingSelection) return;
   const activeUnit = localBattleState.activeUnitId ? localBattleState.units[localBattleState.activeUnitId] : undefined;
   const isPlayerTurn = Boolean(activeUnit && isLocalBattleTurn(localBattleState, activeUnit));
   if (!isPlayerTurn) return;
@@ -7114,12 +7780,30 @@ function handleBattleHudCardSelection(cardIndex: number): void {
     renderBattleScreen();
     return;
   }
+  if (activeUnit && card?.target === "self" && activeUnit.pos) {
+    selectedCardIndex = null;
+    if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
+      void sendLocalNetworkBattleCommand({
+        type: "play_card",
+        unitId: activeUnit.id,
+        cardIndex,
+        targetUnitId: activeUnit.id,
+      });
+      renderBattleScreen();
+      return;
+    }
+    executeLocalBattleCardPlay(activeUnit.id, cardIndex, activeUnit.id, 40);
+    return;
+  }
 
   selectedCardIndex = selectedCardIndex === cardIndex ? null : cardIndex;
   renderBattleScreen();
 }
 
 function handleBattleHudUndoMove(): void {
+  if (isBattleStartPresentationActive(localBattleState)) {
+    return;
+  }
   if (
     localBattleState &&
     (localBattleState.phase === "victory" || localBattleState.phase === "defeat")
@@ -7171,7 +7855,10 @@ function finalizeBattleHudEndTurn(stateToAdvance: BattleState): void {
   selectedCardIndex = null;
 
   const completeAdvance = () => {
-    const nextState = advanceTurn(stateToAdvance);
+    const nextState = advanceTurn(stateToAdvance, {
+      endedUnitPlayedCard: turnState.hasActed,
+      endedUnitMoved: turnState.hasMoved,
+    });
 
     requestAnimationFrame(() => {
       const nextHandContainer = document.getElementById("battleHandContainer");
@@ -7201,29 +7888,10 @@ function finalizeBattleHudEndTurn(stateToAdvance: BattleState): void {
   completeAdvance();
 }
 
-function beginBattleHudFacingSelection(): void {
-  if (!localBattleState?.activeUnitId) {
-    return;
-  }
-
-  const activeUnit = localBattleState.units[localBattleState.activeUnitId];
-  if (!activeUnit?.pos) {
-    finalizeBattleHudEndTurn(localBattleState);
-    return;
-  }
-
-  turnState.isFacingSelection = true;
-  selectedCardIndex = null;
-  hoveredTile = null;
-
-  if (isSquadBattle(localBattleState) || isCoopOperationsBattle(localBattleState)) {
-    setBattleState(withBattleTurnStateSnapshot(localBattleState));
-  }
-
-  renderBattleScreen();
-}
-
 function handleBattleHudEndTurn(): void {
+  if (isBattleStartPresentationActive(localBattleState)) {
+    return;
+  }
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) {
     return;
   }
@@ -7249,11 +7917,14 @@ function handleBattleHudEndTurn(): void {
 
   if (isRemoteNetworkClientTurn(localBattleState, activeUnit)) {
     selectedCardIndex = null;
-    beginBattleHudFacingSelection();
+    void sendLocalNetworkBattleCommand({
+      type: "end_turn",
+      unitId: activeUnit.id,
+    });
     return;
   }
 
-  beginBattleHudFacingSelection();
+  finalizeBattleHudEndTurn(localBattleState);
 }
 
 function handleBattleHudDebugAutoWin(): void {
@@ -7303,8 +7974,7 @@ function getBattleHudWeaponContext(): { activeUnit: BattleUnitState; weapon: Non
   const activeUnit = localBattleState.units[localBattleState.activeUnitId];
   if (!activeUnit) return null;
 
-  const state = getGameState();
-  const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+  const equipmentById = getBattleScreenEquipmentById();
   const weapon = getEquippedWeapon(activeUnit, equipmentById);
   if (!weapon) return null;
   return { activeUnit, weapon };
@@ -7388,13 +8058,17 @@ function handleBattleHudFieldPatch(): void {
   if (refreshedUser && outcome.strainCost > 0) {
     nextState = applyStrain(nextState, refreshedUser, outcome.strainCost);
   }
+  const patchEffects = [
+    outcome.repairedNodeId ? `patches node ${outcome.repairedNodeId}` : "",
+    outcome.reducedWear ? "reduces weapon wear" : "",
+  ].filter(Boolean);
   nextState = {
     ...nextState,
     log: [
       ...nextState.log,
-      outcome.repairedNodeId
-        ? `SLK//PATCH :: ${context.activeUnit.name} patches node ${outcome.repairedNodeId}.`
-        : `SLK//PATCH :: ${context.activeUnit.name} finds no patchable damage.`,
+      patchEffects.length > 0
+        ? `SLK//PATCH :: ${context.activeUnit.name} ${patchEffects.join(" and ")}.`
+        : `SLK//PATCH :: ${context.activeUnit.name} finds no patchable wear or damage.`,
     ],
   };
   setBattleState(nextState);
@@ -7451,8 +8125,7 @@ function handleBattleHudConsumableUse(consumableId: string, targetId: string): v
     return;
   }
 
-  const state = getGameState();
-  const outcome = applyBattleConsumable(localBattleState, state.consumables, consumableId, targetId);
+  const outcome = applyBattleConsumable(localBattleState, getBattleConsumablesForScreen(localBattleState), consumableId, targetId);
   if (!outcome.success) {
     showSystemPing({
       type: "error",
@@ -7491,32 +8164,39 @@ function syncBattleBoardScene(
     isPlacementPhase,
   );
   currentBattleBoardRenderState = renderState;
-
-  const scene = getBattleSceneControllerInstance();
-  scene.mount(host);
-  scene.setViewChangeHandler((view) => {
+  const syncRequestId = ++battleBoardSyncRequestId;
+  setBattleSceneViewChangeHandler((view) => {
     captureActiveBattleViewPreset(view);
   });
-  scene.sync(createBattleBoardSnapshot(battle, {
-    moveTiles: renderState.moveTiles,
-    attackTiles: renderState.attackTiles,
-    placementTiles: renderState.placementTiles,
-    facingTiles: renderState.facingTiles,
-    hoveredTile,
-    hiddenUnitIds: renderState.hiddenUnitIds,
-    echoFieldPlacements: renderState.echoPlacements,
-    selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
-    focusTile: renderState.focusTile,
-  }));
 
-  const activeViewIndex = getActiveBattleViewIndex();
-  const activeViewSignature = `${battle.id}:${activeViewIndex}`;
-  if (battleLastAppliedViewSignature !== activeViewSignature) {
-    const activeViewPreset = getActiveBattleViewPreset();
-    battleZoom = activeViewPreset.zoomFactor;
-    scene.applyViewState(activeViewPreset, false);
-    battleLastAppliedViewSignature = activeViewSignature;
-  }
+  void getBattleSceneTools().then(({ scene, createBattleBoardSnapshot }) => {
+    const activeHost = getBattleBoardHost();
+    if (!activeHost || syncRequestId !== battleBoardSyncRequestId) {
+      return;
+    }
+
+    scene.mount(activeHost);
+    scene.sync(createBattleBoardSnapshot(battle, {
+      moveTiles: renderState.moveTiles,
+      attackTiles: renderState.attackTiles,
+      placementTiles: renderState.placementTiles,
+      facingTiles: renderState.facingTiles,
+      hoveredTile,
+      hiddenUnitIds: renderState.hiddenUnitIds,
+      echoFieldPlacements: renderState.echoPlacements,
+      selectedEchoFieldDraftId: renderState.selectedEchoFieldDraftId,
+      focusTile: renderState.focusTile,
+    }));
+
+    const activeViewIndex = getActiveBattleViewIndex();
+    const activeViewSignature = `${battle.id}:${activeViewIndex}`;
+    if (battleLastAppliedViewSignature !== activeViewSignature) {
+      const activeViewPreset = getActiveBattleViewPreset();
+      battleZoom = activeViewPreset.zoomFactor;
+      scene.applyViewState(activeViewPreset, false);
+      battleLastAppliedViewSignature = activeViewSignature;
+    }
+  }).catch(reportBattle3dLoadError);
 }
 
 function updateHoveredBattleTile(nextTile: BattleBoardPoint | null): void {
@@ -7542,8 +8222,12 @@ function handleBattleBoardPlacementPick(
   pick: BattleBoardPick,
   battle: BattleState,
   isClientNetworkPlacement: boolean,
+  playerId?: PlayerId,
 ): void {
   if (!localBattleState || !localBattleState.placementState) {
+    return;
+  }
+  if (!canBattleAuthorityPlayerAct(battle, battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined, playerId, true)) {
     return;
   }
 
@@ -7552,7 +8236,12 @@ function handleBattleBoardPlacementPick(
     ?? null;
   if (occupiedUnitId) {
     const unit = localBattleState.units[occupiedUnitId];
-    if (unit && canLocalControlBattleUnit(localBattleState, unit) && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)) {
+    if (
+      unit
+      && canLocalControlBattleUnit(localBattleState, unit)
+      && doesBattleUnitMatchAuthorityPlayer(unit, playerId)
+      && localBattleState.placementState.placedUnitIds.includes(occupiedUnitId)
+    ) {
       if (isClientNetworkPlacement) {
         void sendLocalNetworkPlacementCommand({ type: "remove_placed_unit", unitId: occupiedUnitId });
         return;
@@ -7596,15 +8285,20 @@ function handleBattleBoardPlacementPick(
   let unitToPlace: BattleUnitState | undefined | null = null;
   if (selectedUnitId) {
     const selectedUnit = localBattleState.units[selectedUnitId];
-    if (selectedUnit && canLocalControlBattleUnit(localBattleState, selectedUnit)
+    if (
+      selectedUnit
+      && canLocalControlBattleUnit(localBattleState, selectedUnit)
+      && doesBattleUnitMatchAuthorityPlayer(selectedUnit, playerId)
       && !localBattleState.placementState.placedUnitIds.includes(selectedUnitId)) {
       unitToPlace = selectedUnit;
     }
   }
 
   if (!unitToPlace) {
-    unitToPlace = getLocalPlacementUnits(localBattleState).find(
-      (unit) => !localBattleState!.placementState!.placedUnitIds.includes(unit.id) && !unit.pos,
+    unitToPlace = getNextUnplacedBattleUnitForAuthorityPlayer(
+      getLocalPlacementUnits(localBattleState),
+      localBattleState.placementState.placedUnitIds,
+      playerId,
     );
   }
 
@@ -7632,12 +8326,15 @@ function handleBattleBoardActionPick(
   battle: BattleState,
   activeUnit: BattleUnitState | undefined,
   isPlayerTurn: boolean,
+  playerId?: PlayerId,
 ): void {
   if (isBattleHudPointerInteraction) return;
   if (isAnimatingEnemyTurn) return;
+  if (isBattleStartPresentationActive(battle)) return;
   if (hasActiveBattleAnimation()) return;
   if (localBattleState && (localBattleState.phase === "victory" || localBattleState.phase === "defeat")) return;
   if (!isPlayerTurn || !activeUnit || !localBattleState || !canLocalControlBattleUnit(localBattleState, activeUnit)) return;
+  if (!doesBattleUnitMatchAuthorityPlayer(activeUnit, playerId)) return;
   if (isBattleUnitAutoControlled(localBattleState, activeUnit)) return;
   if (!currentBattleBoardRenderState) return;
 
@@ -7671,6 +8368,10 @@ function handleBattleBoardActionPick(
     const newState = { ...localBattleState, units: newUnits };
     setBattleState(newState);
     finalizeBattleHudEndTurn(newState);
+    return;
+  }
+
+  if (turnState.isFacingSelection) {
     return;
   }
 
@@ -7718,10 +8419,6 @@ function handleBattleBoardActionPick(
   const units = getUnitsArray(localBattleState);
   const targetUnit = units.find((unit) => unit.pos?.x === x && unit.pos?.y === y && unit.hp > 0);
   if (targetUnit) {
-    if (turnState.hasActed) {
-      return;
-    }
-
     const ux = activeUnit.pos?.x ?? 0;
     const uy = activeUnit.pos?.y ?? 0;
     const dist = getDistance(ux, uy, x, y);
@@ -7855,21 +8552,6 @@ function attachBattleListeners() {
     }
   });
 
-  // Toggle UI panels button
-  const toggleUiBtn = document.getElementById("toggleUiBtn");
-  if (toggleUiBtn) {
-    toggleUiBtn.onclick = () => {
-      toggleUiPanels();
-    };
-  }
-
-  // Reset pan button
-  document.querySelectorAll<HTMLElement>("#resetBattlePanBtn").forEach((resetPanBtn) => {
-    resetPanBtn.onclick = () => {
-      resetBattlePan();
-    };
-  });
-
   document.querySelectorAll<HTMLElement>("[data-battle-view-index]").forEach((viewBtn) => {
     viewBtn.onclick = (event) => {
       event.preventDefault();
@@ -7905,6 +8587,7 @@ function attachBattleListeners() {
       }
     };
   });
+  attachBattleHandFanPeeking();
 
   // Placement phase handlers
   if (isPlacementPhase) {
@@ -7929,14 +8612,8 @@ function attachBattleListeners() {
           await sendLocalNetworkPlacementCommand({ type: "quick_place" });
           return;
         }
-        const selectedUnitId = localBattleState.placementState?.selectedUnitId ?? null;
-        const selectedController = selectedUnitId
-          && canLocalControlBattleUnit(localBattleState, localBattleState.units[selectedUnitId] ?? null)
-            ? (localBattleState.units[selectedUnitId]?.controller ?? "P1")
-            : isSquadBattle(localBattleState)
-              ? getLocalSquadSlot(localBattleState)
-              : undefined;
-        let newState = quickPlaceUnits(localBattleState, toLocalUnitOwnership(selectedController));
+        const quickPlaceOwner = getBattlePlacementQuickPlaceOwner(localBattleState);
+        let newState = quickPlaceUnits(localBattleState, toLocalUnitOwnership(quickPlaceOwner));
         setBattleState(newState);
         renderBattleScreen();
       });
@@ -7964,6 +8641,19 @@ function attachBattleListeners() {
           });
           return;
         }
+        const placementConfirmState = getBattlePlacementConfirmState(localBattleState);
+        if (!placementConfirmState.canConfirm) {
+          showSystemPing({
+            type: "info",
+            title: "DEPLOYMENT NOT READY",
+            message: placementConfirmState.detail ?? "The squad still needs more placement work before deployment can be confirmed.",
+            durationMs: 2400,
+            channel: "battle-placement-confirm-blocked",
+            replaceChannel: true,
+          });
+          renderBattleScreen();
+          return;
+        }
         let newState = localBattleState;
         const currentEchoContext = getEchoContext(localBattleState);
         if (currentEchoContext?.placementMode === "units" && currentEchoContext.availableFields.length > 0) {
@@ -7988,14 +8678,15 @@ function attachBattleListeners() {
           const firstUnit = newState.units[newState.activeUnitId];
           resetTurnStateForUnit(firstUnit, newState);
         }
-        // Run enemy turns if starting unit is enemy
-        if (shouldAutoResolveBattleState(newState)) {
-          console.log("[BATTLE] Starting enemy turn sequence after placement");
-          runEnemyTurnsAnimated(newState);
-          return;
-        }
-
+        selectedCardIndex = null;
+        beginBattleStartPresentation(newState, () => {
+          if (shouldAutoResolveBattleState(newState)) {
+            console.log("[BATTLE] Starting enemy turn sequence after placement");
+            runEnemyTurnsAnimated(newState);
+          }
+        });
         renderBattleScreen();
+        return;
       });
     } else {
       console.warn("[BATTLE] Confirm button NOT found");
@@ -8067,7 +8758,7 @@ function attachBattleListeners() {
       placementPanel.addEventListener("click", placementPanelHandler);
     }
 
-    getBattleSceneControllerInstance().setInteractionHandlers({
+    setBattleSceneInteractionHandlers({
       onPrimaryPick: (pick) => handleBattleBoardPlacementPick(pick, battle, isClientNetworkPlacement),
       onHoverTile: (tile) => updateHoveredBattleTile(tile),
     });
@@ -8076,7 +8767,7 @@ function attachBattleListeners() {
     return;
   }
 
-  getBattleSceneControllerInstance().setInteractionHandlers({
+  setBattleSceneInteractionHandlers({
     onPrimaryPick: (pick) => handleBattleBoardActionPick(pick, battle, activeUnit, isPlayerTurn),
     onHoverTile: (tile) => updateHoveredBattleTile(tile),
   });

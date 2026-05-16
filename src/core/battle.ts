@@ -44,6 +44,7 @@ import {
 } from "./weaponSystem";
 import type { WeaponOverheatEffect } from "./weaponData";
 import { getResolvedBattleCard } from "./cardCatalog";
+import { getMinimumHitDamage, scalePreMitigationDamage } from "./damageBands";
 
 // STEP 6 & 7: Import gear workbench functions
 import {
@@ -66,6 +67,11 @@ import { trackMeleeAttackInBattle } from "./affinityBattle";
 import { triggerBattleStart, triggerHit, triggerKill, triggerTurnStart, triggerCardPlayed } from "./fieldModBattleIntegration";
 import { getCoverDamageReduction } from "./coverGenerator";
 import {
+  applyTavernMealBuffToTarget,
+  getActiveRunTavernMealBuff,
+  getTavernMealBuffSummary,
+} from "./tavernMeals";
+import {
   getEchoAttackBonus,
   getEchoAccuracyBonus,
   getEchoIncomingAccuracyPenalty,
@@ -86,6 +92,7 @@ import {
 import { getUnownedUnlockables } from "./unlockables";
 import { getAllOwnedUnlockableIdList } from "./unlockableOwnership";
 import { getEnemyDefinition, pickEnemyIdsForCampaignFloor } from "./enemies";
+import { normalizeUnitAppearance, type UnitAppearance } from "./unitAppearance";
 import type {
   TacticalMapObjectDefinition,
   TacticalMapSurface,
@@ -141,6 +148,7 @@ export interface BattleUnitState {
   id: UnitId;
   baseUnitId: UnitId;
   name: string;
+  appearance?: UnitAppearance;
   classId: string;
   loadout?: UnitLoadout & { weapon?: string | null };
   isEnemy: boolean;
@@ -178,6 +186,7 @@ export interface BattleUnitState {
   // Tactical per-unit auto-battle mode
   autoBattleMode?: "manual" | "undaring" | "daring";
   turnCardsPlayed?: number;
+  nextTurnDrawPenalty?: number;
   // Field Mods System - Hardpoints (run-scoped, passed from ActiveRunState)
   // Mount System
   mountId?: string;                       // ID of the mount definition (if mounted)
@@ -204,6 +213,7 @@ export interface BattleState {
   spawnZones?: Pick<TacticalMapZoneSet, "friendlySpawn" | "enemySpawn">;
   objectiveZones?: Pick<TacticalMapZoneSet, "relay" | "friendlyBreach" | "enemyBreach" | "extraction">;
   traversalLinks?: TacticalTraversalLinkDefinition[];
+  equipmentById?: Record<string, Equipment>;
   units: Record<UnitId, BattleUnitState>;
   turnOrder: UnitId[];
   activeUnitId: UnitId | null;
@@ -243,8 +253,16 @@ export interface BattleState {
     supplyOnline: boolean;
     commsOnline: boolean;
     powerTurretCount: number;
+    powerRelayVolleyCount?: number;
+    automatedTurretCount?: number;
+    openingVolleyDamage?: number;
     enemyPreview: string[];
     detailedEnemyIntel: boolean;
+    squadModifierSummary?: string[];
+    supportSystemSummary?: string[];
+    recoverySummary?: string[];
+    activeMealName?: string;
+    activeMealSummary?: string;
     overheating?: boolean;
     overheatSeverity?: 0 | 1 | 2;
     combatInstability?: boolean;
@@ -637,6 +655,7 @@ export function createBattleUnitState(
     id: base.id,
     baseUnitId: base.id,
     name: base.name,
+    appearance: normalizeUnitAppearance((base as { appearance?: UnitAppearance | null }).appearance, base.unitClass),
     classId: base.unitClass ?? "squire",
     loadout: { ...loadout, weapon: loadout.primaryWeapon ?? null },
     isEnemy: opts.isEnemy,
@@ -703,13 +722,14 @@ export function computeTurnOrder(
 // ----------------------------------------------------------------------------
 
 export const BASE_STRAIN_THRESHOLD = 6;
+export const OVERSTRAIN_NEXT_TURN_DRAW_PENALTY = 2;
 
 export function getStrainThreshold(): number {
   return BASE_STRAIN_THRESHOLD;
 }
 
 export function isOverStrainThreshold(unit: BattleUnitState): boolean {
-  return unit.strain >= getStrainThreshold();
+  return unit.strain > getStrainThreshold();
 }
 
 export function applyStrain(
@@ -734,8 +754,8 @@ export function applyStrain(
     },
   };
 
-  const wasOver = oldStrain >= getStrainThreshold();
-  const nowOver = newStrain >= getStrainThreshold();
+  const wasOver = oldStrain > getStrainThreshold();
+  const nowOver = newStrain > getStrainThreshold();
 
   if (!wasOver && nowOver) {
     next = appendBattleLog(
@@ -751,7 +771,18 @@ export function applyStrain(
 // TURN ADVANCEMENT
 // ----------------------------------------------------------------------------
 
-export function advanceTurn(state: BattleState): BattleState {
+export interface AdvanceTurnOptions {
+  endedUnitPlayedCard?: boolean;
+  endedUnitMoved?: boolean;
+}
+
+function getTurnEndStrainCooldown(unit: BattleUnitState, options: AdvanceTurnOptions = {}): number {
+  const playedCard = options.endedUnitPlayedCard ?? ((unit.turnCardsPlayed ?? 0) > 0);
+  const moved = options.endedUnitMoved ?? false;
+  return 2 + (playedCard ? 0 : 1) + (moved ? 0 : 1);
+}
+
+export function advanceTurn(state: BattleState, options: AdvanceTurnOptions = {}): BattleState {
   if (state.turnOrder.length === 0) {
     return state;
   }
@@ -781,6 +812,47 @@ export function advanceTurn(state: BattleState): BattleState {
         units: newUnits,
       };
     }
+  }
+
+  // --- STRAIN COOLDOWN ON UNIT ENDING ITS TURN ---
+  if (newState.activeUnitId && newState.units[newState.activeUnitId]) {
+    const endingUnit = newState.units[newState.activeUnitId];
+    const oldStrain = endingUnit.strain;
+    const strainCooldown = getTurnEndStrainCooldown(endingUnit, options);
+    const cooledStrain = Math.max(0, oldStrain - strainCooldown);
+    const wasOver = oldStrain > getStrainThreshold();
+    const nowOver = cooledStrain > getStrainThreshold();
+    const nextTurnDrawPenalty = wasOver
+      ? OVERSTRAIN_NEXT_TURN_DRAW_PENALTY
+      : endingUnit.nextTurnDrawPenalty;
+
+    let cooledState: BattleState = {
+      ...newState,
+      units: {
+        ...newState.units,
+        [endingUnit.id]: {
+          ...endingUnit,
+          strain: cooledStrain,
+          nextTurnDrawPenalty,
+        },
+      },
+    };
+
+    if (wasOver && !endingUnit.isEnemy) {
+      cooledState = appendBattleLog(
+        cooledState,
+        `SLK//STRAIN :: ${endingUnit.name}'s overstrain disrupts their next draw (-${OVERSTRAIN_NEXT_TURN_DRAW_PENALTY} cards).`
+      );
+    }
+
+    if (wasOver && !nowOver) {
+      cooledState = appendBattleLog(
+        cooledState,
+        `${endingUnit.name}'s vitals normalize - strain cooling.`
+      );
+    }
+
+    newState = cooledState;
   }
 
   const recomputedTurnOrder = computeTurnOrder(newState.units);
@@ -842,38 +914,6 @@ export function advanceTurn(state: BattleState): BattleState {
     if (newState.phase === "victory" || newState.phase === "defeat") {
       return newState;
     }
-  }
-
-  // --- STRAIN COOLDOWN ON NEW ACTIVE UNIT ---
-  if (nextActiveId && newState.units[nextActiveId]) {
-    const u = newState.units[nextActiveId];
-    const oldStrain = u.strain;
-    const cooledStrain = Math.max(0, oldStrain - 1);
-
-    let cooledUnit: BattleUnitState = {
-      ...u,
-      strain: cooledStrain,
-    };
-
-    const wasOver = oldStrain >= getStrainThreshold();
-    const nowOver = cooledStrain >= getStrainThreshold();
-
-    let cooledState: BattleState = {
-      ...newState,
-      units: {
-        ...newState.units,
-        [nextActiveId]: cooledUnit,
-      },
-    };
-
-    if (wasOver && !nowOver) {
-      cooledState = appendBattleLog(
-        cooledState,
-        `${u.name}'s vitals normalize - strain cooling.`
-      );
-    }
-
-    newState = cooledState;
   }
 
   // --- BUFF TICK / DESPAWN ON NEW ACTIVE UNIT ---
@@ -2397,8 +2437,11 @@ export function attackUnit(
     rawDamage += 1;
   }
 
-  // Let's use standard calculation but ensure it plays nice with the new statuses
-  const finalDamage = Math.max((rawDamage <= 0 && !hasStatus(attacker, "weakened") ? 1 : rawDamage), 0);
+  const scaledDamage = scalePreMitigationDamage(rawDamage, attacker);
+  const minimumDamage = rawDamage <= 0 && hasStatus(attacker, "weakened")
+    ? 0
+    : getMinimumHitDamage(attacker);
+  const finalDamage = Math.max(scaledDamage, minimumDamage);
 
   const newHp = defender.hp - finalDamage;
   const isKill = newHp <= 0;
@@ -2507,12 +2550,12 @@ export function attackUnit(
 export function performEnemyTurn(state: BattleState): BattleState {
   const active = getActiveUnit(state);
   if (!active || !active.isEnemy || !active.pos) {
-    return advanceTurn(state);
+    return advanceTurn(state, { endedUnitPlayedCard: false, endedUnitMoved: false });
   }
 
   const players = Object.values(state.units).filter(isPlayerUnit);
   if (players.length === 0) {
-    return advanceTurn(state);
+    return advanceTurn(state, { endedUnitPlayedCard: false, endedUnitMoved: false });
   }
 
   let target = players[0];
@@ -2559,7 +2602,7 @@ export function performEnemyTurn(state: BattleState): BattleState {
       next = updateFacing(next, active.id, target.pos);
     }
     next = attackUnit(next, active.id, target.id);
-    next = advanceTurn(next);
+    next = advanceTurn(next, { endedUnitPlayedCard: true, endedUnitMoved: false });
     return next;
   }
 
@@ -2581,7 +2624,14 @@ export function performEnemyTurn(state: BattleState): BattleState {
     movedState = updateFacing(movedState, active.id, candidate2);
   }
 
-  movedState = advanceTurn(movedState);
+  const moved = Boolean(
+    movedState.units[active.id]?.pos
+    && (
+      movedState.units[active.id].pos!.x !== active.pos.x
+      || movedState.units[active.id].pos!.y !== active.pos.y
+    ),
+  );
+  movedState = advanceTurn(movedState, { endedUnitPlayedCard: false, endedUnitMoved: moved });
   return movedState;
 }
 
@@ -2611,7 +2661,7 @@ export function performAutoBattleTurn(
   const enemies = Object.values(state.units).filter(u => u.isEnemy && u.hp > 0 && u.pos);
   if (enemies.length === 0) {
     // No enemies, end turn
-    return advanceTurn(state);
+    return advanceTurn(state, { endedUnitPlayedCard: false, endedUnitMoved: false });
   }
 
   // Find nearest enemy
@@ -2632,12 +2682,12 @@ export function performAutoBattleTurn(
 
   for (let i = 0; i < unit.hand.length; i++) {
     const cardId = unit.hand[i];
-    // Simple scoring: prefer attack cards, avoid wait cards
+    // Simple scoring: prefer attack cards, avoid legacy wait cards
     let score = 0;
     const cardName = cardId.toLowerCase();
 
     // Check if it's a wait/end turn card
-    if (cardName.includes("wait") || cardName === "core_wait") {
+    if (cardName.includes("wait")) {
       score = -100;
     } else {
       // Base score for playable cards
@@ -2685,7 +2735,7 @@ export function performAutoBattleTurn(
 
       // Try to play card on nearest enemy
       // Use playCard function which handles card resolution
-      if (cardName.includes("wait") || cardName === "core_wait") {
+      if (cardName.includes("wait")) {
         // Wait card - play on self
         return playCard(state, unitId, index, unitId);
       } else if (cardName.includes("attack") || cardName.includes("strike") || cardName.includes("shot") ||
@@ -2719,7 +2769,7 @@ export function performAutoBattleTurn(
     }
 
     // Can't move, end turn
-    return advanceTurn(state);
+    return advanceTurn(state, { endedUnitPlayedCard: false, endedUnitMoved: false });
   }
 
   // If we have a good card but couldn't play it (range/other issues), move toward target
@@ -2741,7 +2791,7 @@ export function performAutoBattleTurn(
   }
 
   // Default: end turn
-  return advanceTurn(state);
+  return advanceTurn(state, { endedUnitPlayedCard: false, endedUnitMoved: false });
 }
 
 // ----------------------------------------------------------------------------
@@ -3023,7 +3073,8 @@ export function drawCardsForTurn(
   handSize: number = 5
 ): BattleState {
   const drawBonus = getEchoTurnStartDrawBonus(state, unit);
-  const targetHandSize = handSize + drawBonus.amount;
+  const drawPenalty = Math.max(0, unit.nextTurnDrawPenalty ?? 0);
+  const targetHandSize = Math.max(0, handSize + drawBonus.amount - drawPenalty);
   let u = unit;
 
   // 15c: Reshuffle if deck has fewer than handSize cards remaining
@@ -3050,6 +3101,7 @@ export function drawCardsForTurn(
     ...u,
     hand: newHand,
     drawPile: newDraw,
+    nextTurnDrawPenalty: undefined,
   };
 
   let nextState = {
@@ -3065,6 +3117,13 @@ export function drawCardsForTurn(
       nextState,
       drawBonus.triggeredPlacements,
       `SLK//ECHO  :: ${unit.name} draws +${drawBonus.amount} from Relay Zone.`,
+    );
+  }
+
+  if (drawPenalty > 0) {
+    nextState = appendBattleLog(
+      nextState,
+      `SLK//STRAIN :: ${unit.name}'s overstrain cuts this draw by ${drawPenalty}.`,
     );
   }
 
@@ -3109,6 +3168,7 @@ export function createTestBattleForCurrentParty(
 
   // Get equipment data from state (or use defaults)
   const equipmentById = (state as any).equipmentById || getAllStarterEquipment();
+  const activeRunMealBuff = getActiveRunTavernMealBuff(state);
 
   const units: Record<UnitId, BattleUnitState> = {};
 
@@ -3128,6 +3188,10 @@ export function createTestBattleForCurrentParty(
       },
       equipmentById
     );
+
+    if (activeRunMealBuff) {
+      applyTavernMealBuffToTarget(units[id], activeRunMealBuff);
+    }
   });
 
   // Don't compute turn order yet - wait until placement is confirmed
@@ -3188,6 +3252,17 @@ export function createTestBattleForCurrentParty(
         ],
       };
     }
+  }
+
+  if (activeRunMealBuff) {
+    const mealSummary = getTavernMealBuffSummary(activeRunMealBuff);
+    battle = {
+      ...battle,
+      log: [
+        ...battle.log,
+        `SLK//MESS  :: ${activeRunMealBuff.name.toUpperCase()} ACTIVE${mealSummary ? ` (${mealSummary.toUpperCase()})` : ""}.`,
+      ],
+    };
   }
 
   // Place enemies automatically on the right edge

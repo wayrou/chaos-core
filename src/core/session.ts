@@ -930,13 +930,7 @@ export function canPlayerUseFieldAction(
   playerId: PlayerSlot,
   action: string,
 ): boolean {
-  if (playerId === "P1") {
-    return true;
-  }
-  if (!isLocalCoopActive(state)) {
-    return true;
-  }
-  return !LOCAL_COOP_RESTRICTED_FIELD_ACTIONS.has(action);
+  return true;
 }
 
 export function getFieldActionRestrictionMessage(actionLabel: string): string {

@@ -66,10 +66,10 @@ export function isEscActionVisible(
 
 export function getEscExpeditionRestrictionMessage(action?: string): string {
   if (action === "materials-refinery") {
-    return "Light Crafting remains available during Outer Deck expeditions.";
+    return "Light Crafting remains available during Apron surveys.";
   }
 
-  return "Unavailable during Outer Deck expedition.";
+  return "Unavailable during Apron survey.";
 }
 
 export function getExpeditionEnabledEscActions(): EscNodeAction[] {

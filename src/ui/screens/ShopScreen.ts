@@ -20,9 +20,16 @@ import {
 } from "../../core/gearWorkbench";
 import { type Equipment, getAllStarterEquipment } from "../../core/equipment";
 import { computeGearBalanceScore, getGearBalanceReference } from "../../core/gearBalanceValidation";
-import { getUnlockableById, getUnownedUnlockables, type UnlockableType } from "../../core/unlockables";
+import { getMerchantEligibleUnlockables, getShopEligibleUnlockables, getUnlockableById, type UnlockableType } from "../../core/unlockables";
 import { getAllOwnedUnlockableIdList } from "../../core/unlockableOwnership";
-import { getSellableEntries, sellToShop, SellLine, SellableEntry } from "../../core/shopSell";
+import {
+  getResourceSellPrice,
+  getSellPrice,
+  getSellableEntries,
+  sellToShop,
+  SellLine,
+  SellableEntry,
+} from "../../core/shopSell";
 import { showSystemPing } from "../components/systemPing";
 import { clearControllerContext, updateFocusableElements } from "../../core/controllerSupport";
 import { getInventoryIconPath } from "../../core/inventoryIcons";
@@ -34,6 +41,11 @@ import {
   spendSessionCost,
 } from "../../core/session";
 import { getHighestReachedFloorOrdinal, loadCampaignProgress } from "../../core/campaign";
+import { getAllImportedItems } from "../../content/technica";
+import type { ImportedItem } from "../../content/technica/types";
+import { isMerchantListingAvailable } from "../../core/merchant";
+import { createEchoServiceGameState, updateEchoServiceGameState } from "./echoRunServiceState";
+import { CONSUMABLE_DATABASE } from "../../core/crafting";
 
 // ----------------------------------------------------------------------------
 // SHOP DATA
@@ -226,7 +238,12 @@ const RECIPE_ITEMS: ShopItem[] = [
 // RENDER
 // ----------------------------------------------------------------------------
 
-let currentTab: "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell" = "paks";
+type ShopTab = "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell";
+type ShopMode = { kind: "haven" } | { kind: "merchant"; floorOrdinal: number } | { kind: "echo" };
+type ShopReturnDestination = BaseCampReturnTo | "operation" | "echo-run";
+
+let currentTab: ShopTab = "paks";
+let currentShopMode: ShopMode = { kind: "haven" };
 
 const SHOP_RESOURCE_PRICE_WEIGHTS: Record<ResourceKey, number> = {
   metalScrap: 5,
@@ -318,7 +335,7 @@ function summarizeEquipmentStats(equipment: Equipment): string {
 function buildEquipmentShopDescription(equipment: Equipment, legacyItem?: ShopItem): string {
   const descriptionParts = [
     equipment.description?.trim() || legacyItem?.description?.trim() || summarizeEquipmentStats(equipment),
-    equipment.acquisition?.shop?.notes?.trim(),
+    isMerchantShopMode() ? equipment.acquisition?.merchant?.notes?.trim() : equipment.acquisition?.shop?.notes?.trim(),
   ].filter((entry, index, entries) => Boolean(entry) && entries.indexOf(entry) === index);
 
   return descriptionParts.join(" ");
@@ -337,28 +354,38 @@ function buildDynamicEquipmentShopItem(equipment: Equipment, legacyItem?: ShopIt
   };
 }
 
-function getEquipmentShopItems(state: any): ShopItem[] {
-  const highestReachedFloorOrdinal = getHighestReachedFloorOrdinal(loadCampaignProgress());
+function getEquipmentShopItems(state: any, mode = currentShopMode): ShopItem[] {
+  const highestReachedFloorOrdinal = isEchoShopMode(mode)
+    ? Math.max(1, Math.floor(Number(state.echoRun?.currentStratum ?? 1)))
+    : getHighestReachedFloorOrdinal(loadCampaignProgress());
   const equipmentById = getAllStarterEquipment();
   const items = new Map<string, ShopItem>();
   const legacyItemsById = new Map(EQUIPMENT_ITEMS.map((item) => [item.id, item]));
 
-  EQUIPMENT_ITEMS.forEach((item) => {
-    items.set(item.id, item);
-  });
+  if (!isMerchantShopMode(mode)) {
+    EQUIPMENT_ITEMS.forEach((item) => {
+      items.set(item.id, item);
+    });
+  }
 
   Object.values(equipmentById).forEach((equipment) => {
-    const shopSource = equipment.acquisition?.shop;
+    const shopSource = isMerchantShopMode(mode)
+      ? equipment.acquisition?.merchant
+      : equipment.acquisition?.shop;
     const legacyItem = legacyItemsById.get(equipment.id);
-    const isLegacyShopItem = Boolean(legacyItem);
+    const isLegacyShopItem = !isMerchantShopMode(mode) && Boolean(legacyItem);
     const isExplicitlyShopEligible = Boolean(shopSource);
 
     if (!isLegacyShopItem && !isExplicitlyShopEligible) {
       return;
     }
 
-    const unlockFloor = Math.max(0, Number(shopSource?.unlockFloor ?? 0));
-    if (isExplicitlyShopEligible && highestReachedFloorOrdinal < unlockFloor) {
+    if (isMerchantShopMode(mode) && !isMerchantListingAvailable(shopSource, mode.floorOrdinal)) {
+      return;
+    }
+
+    const unlockFloor = Math.max(0, Number(equipment.acquisition?.shop?.unlockFloor ?? 0));
+    if (!isMerchantShopMode(mode) && isExplicitlyShopEligible && highestReachedFloorOrdinal < unlockFloor) {
       return;
     }
 
@@ -399,25 +426,137 @@ function formatUnlockableTypeLabel(type: UnlockableType): string {
   }
 }
 
-export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
+function isMerchantShopMode(mode = currentShopMode): mode is { kind: "merchant"; floorOrdinal: number } {
+  return mode.kind === "merchant";
+}
+
+function isEchoShopMode(mode = currentShopMode): mode is { kind: "echo" } {
+  return mode.kind === "echo";
+}
+
+function getShopState(): any {
+  const state = getGameState();
+  return isEchoShopMode() ? createEchoServiceGameState(state) : state;
+}
+
+function updateShopState(updater: (state: any) => any): any {
+  return updateGameState((state) => (
+    isEchoShopMode() ? updateEchoServiceGameState(state, updater) : updater(state)
+  ));
+}
+
+function estimateImportedConsumablePrice(item: ImportedItem): number {
+  const explicitPrice = Number(item.metadata?.merchantPriceWad ?? item.metadata?.priceWad);
+  if (Number.isFinite(explicitPrice) && explicitPrice > 0) {
+    return roundShopPrice(explicitPrice);
+  }
+
+  const footprintValue = ((item.massKg ?? 0) * 4) + ((item.bulkBu ?? 0) * 4) + ((item.powerW ?? 0) * 0.35);
+  return roundShopPrice(24 + footprintValue);
+}
+
+function getConsumableShopItems(_state: any, mode = currentShopMode): ShopItem[] {
+  if (!isMerchantShopMode(mode)) {
+    return CONSUMABLE_ITEMS;
+  }
+
+  return getAllImportedItems()
+    .filter((item) => (
+      item.kind === "consumable"
+      && isMerchantListingAvailable(item.acquisition?.merchant, mode.floorOrdinal)
+    ))
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      description: item.description?.trim() || "Field-ready support item.",
+      price: estimateImportedConsumablePrice(item),
+      category: "consumable" as const,
+      displayCategory: "ITEM",
+      rarity: "common" as const,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function getRecipeShopItems(state: any, mode = currentShopMode): ShopItem[] {
+  if (isMerchantShopMode(mode)) {
+    return [];
+  }
+
+  const knownRecipeIds = state.knownRecipeIds || [];
+  return RECIPE_ITEMS.filter(item => !knownRecipeIds.includes(item.id));
+}
+
+function getUnlockableShopItems(state: any, mode = currentShopMode): ShopItem[] {
+  const ownedIds = isEchoShopMode(mode)
+    ? [
+        ...(state.unlockedChassisIds ?? []),
+        ...(state.unlockedDoctrineIds ?? []),
+      ]
+    : getAllOwnedUnlockableIdList();
+  const ownedSet = new Set(ownedIds);
+  const unlockables = isMerchantShopMode(mode)
+    ? getMerchantEligibleUnlockables(mode.floorOrdinal, state)
+    : getShopEligibleUnlockables(state);
+
+  return unlockables
+    .filter((unlock) => !isEchoShopMode(mode) || unlock.type === "chassis" || unlock.type === "doctrine")
+    .filter((unlock) => !ownedSet.has(unlock.id))
+    .map(unlock => ({
+      id: unlock.id,
+      name: unlock.displayName,
+      description: unlock.description,
+      price: estimateUnlockablePrice(unlock.cost),
+      category: "unlockable" as const,
+      displayCategory: formatUnlockableTypeLabel(unlock.type),
+      rarity: unlock.rarity,
+    }));
+}
+
+function getPurchasableItemsForCurrentShop(state: any): ShopItem[] {
+  return [
+    ...(isMerchantShopMode() ? [] : PAK_ITEMS),
+    ...getEquipmentShopItems(state),
+    ...getConsumableShopItems(state),
+    ...getRecipeShopItems(state),
+    ...getUnlockableShopItems(state),
+  ];
+}
+
+export function renderMerchantShopScreen(returnTo: BaseCampReturnTo | "operation" = "field", floorOrdinal = 1): void {
+  if (currentTab === "paks") {
+    currentTab = "equipment";
+  }
+  renderShopScreen(returnTo, { kind: "merchant", floorOrdinal: Math.max(1, Math.floor(Number(floorOrdinal) || 1)) });
+}
+
+export function renderShopScreen(returnTo: ShopReturnDestination = "basecamp", mode: ShopMode = { kind: "haven" }): void {
+  currentShopMode = mode;
   const app = document.getElementById("app");
   if (!app) return;
   document.body.setAttribute("data-screen", "shop");
   clearControllerContext();
   
-  const state = getGameState();
+  const state = getShopState();
   const wallet = getQuartermasterWallet(state);
   const resources = wallet.resources;
   const fallbackInventoryIcon = getInventoryIconPath();
-  const backButtonText = returnTo === "operation" ? "ACTIVE OPERATION" : getBaseCampReturnLabel(returnTo);
+  const backButtonText = returnTo === "operation"
+    ? "ACTIVE OPERATION"
+    : returnTo === "echo-run"
+      ? "ROUTE COMMAND"
+      : getBaseCampReturnLabel(returnTo);
+  const title = currentShopMode.kind === "merchant" ? "TRAVELING MERCHANT" : "SHOP";
+  const subtitle = currentShopMode.kind === "merchant"
+    ? `APRON FLOOR ${String(currentShopMode.floorOrdinal).padStart(2, "0")} FIELD STOCK`
+    : "S/COM_OS SUPPLY TERMINAL";
   
   app.innerHTML = `
     <div class="shop-root town-screen town-screen--shop">
       <!-- Header -->
         <div class="shop-header town-screen__header">
         <div class="shop-header-left town-screen__titleblock">
-          <h1 class="shop-title">SHOP</h1>
-          <div class="shop-subtitle">S/COM_OS SUPPLY TERMINAL</div>
+          <h1 class="shop-title">${title}</h1>
+          <div class="shop-subtitle">${subtitle}</div>
         </div>
         <div class="shop-header-right town-screen__header-right">
           <div class="shop-wallet">
@@ -505,7 +644,7 @@ export function renderShopScreen(returnTo: BaseCampReturnTo | "operation" = "bas
     </div>
   `;
   
-  attachShopListeners(returnTo);
+  attachShopListeners(returnTo, currentShopMode);
   updateFocusableElements();
 }
 
@@ -516,45 +655,43 @@ function renderShopContent(state: any): string {
   
   switch (currentTab) {
     case "paks":
-      items = PAK_ITEMS;
-      sectionTitle = "DATA PACKS (.PAK)";
-      sectionDesc = "Decompress tactical data to add cards to your library.";
+      items = isMerchantShopMode() ? [] : PAK_ITEMS;
+      sectionTitle = isMerchantShopMode() ? "FIELD STOCK" : "DATA PACKS (.PAK)";
+      sectionDesc = isMerchantShopMode()
+        ? "This merchant is not carrying PAK data."
+        : "Decompress tactical data to add cards to your library.";
       break;
     case "equipment":
       items = getEquipmentShopItems(state);
       sectionTitle = "EQUIPMENT";
-      sectionDesc = "Weapons and armor for your squad.";
+      sectionDesc = isMerchantShopMode()
+        ? `Gear sold by this floor ${currentShopMode.kind === "merchant" ? currentShopMode.floorOrdinal : ""} traveling merchant.`
+        : "Weapons and armor for your squad.";
       break;
     case "consumables":
-      items = CONSUMABLE_ITEMS;
+      items = getConsumableShopItems(state);
       sectionTitle = "CONSUMABLES";
-      sectionDesc = "Single-use items for battle support.";
+      sectionDesc = isMerchantShopMode()
+        ? "Imported field supplies assigned to this traveling merchant."
+        : "Single-use items for battle support.";
       break;
     case "recipes":
-      // Filter out recipes that are already known
-      const knownRecipeIds = state.knownRecipeIds || [];
-      items = RECIPE_ITEMS.filter(item => !knownRecipeIds.includes(item.id));
+      items = getRecipeShopItems(state);
       sectionTitle = "CRAFTING RECIPES";
-      sectionDesc = "Learn new schematics and blueprints for the workshop.";
+      sectionDesc = isMerchantShopMode()
+        ? "No traveling-merchant recipe runtime is available yet."
+        : "Learn new schematics and blueprints for the workshop.";
       break;
     case "unlockables":
       // Generate unlockable items dynamically
       try {
-        const unowned = getUnownedUnlockables(getAllOwnedUnlockableIdList(), undefined, state);
-        
-        // Convert to ShopItem format
-        items = unowned.map(unlock => ({
-          id: unlock.id,
-          name: unlock.displayName,
-          description: unlock.description,
-          price: estimateUnlockablePrice(unlock.cost),
-          category: "unlockable",
-          displayCategory: formatUnlockableTypeLabel(unlock.type),
-          rarity: unlock.rarity,
-        }));
-        
+        items = getUnlockableShopItems(state);
         sectionTitle = "OTHER";
-        sectionDesc = "Permanent unlocks including chassis, doctrines, tactical mods, and Haven decor pieces.";
+        sectionDesc = isMerchantShopMode()
+          ? "Floor-specific unlocks assigned in Technica."
+          : isEchoShopMode()
+            ? "Run-scoped chassis and doctrine unlocks for this route."
+            : "Permanent unlocks including chassis, doctrines, tactical mods, and Haven decor pieces.";
       } catch (err) {
         console.warn("[SHOP] Could not load unlockables:", err);
         items = [];
@@ -629,7 +766,7 @@ function renderShopItem(item: ShopItem, state: any): string {
 // EVENT HANDLERS
 // ----------------------------------------------------------------------------
 
-function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecamp"): void {
+function attachShopListeners(returnTo: ShopReturnDestination = "basecamp", mode = currentShopMode): void {
   // Back button
   const backBtn = document.getElementById("backBtn");
   if (backBtn) {
@@ -637,7 +774,14 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
     const returnDestination = (backBtn as HTMLElement).getAttribute("data-return-to") || returnTo;
     backBtn.onclick = () => {
       unregisterBaseCampReturnHotkey("shop-screen");
-      if (returnDestination === "operation") {
+      if (returnDestination === "echo-run") {
+        import("../../core/echoRuns").then(({ leaveEchoServiceNode }) => {
+          leaveEchoServiceNode();
+          return import("./EchoRunScreen");
+        }).then(({ renderEchoRunScreen }) => {
+          renderEchoRunScreen();
+        });
+      } else if (returnDestination === "operation") {
         // Mark the current room as visited when leaving the shop (uses campaign system)
         const state = getGameState();
         if (state.operation?.currentRoomId) {
@@ -655,10 +799,10 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
     tab.addEventListener("click", (e) => {
       const tabName = (e.currentTarget as HTMLElement).getAttribute("data-tab");
       if (tabName) {
-        currentTab = tabName as "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell";
+        currentTab = tabName as ShopTab;
         // Get current return destination from button
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
+        renderShopScreen(currentReturnTo as ShopReturnDestination, mode);
       }
     });
   });
@@ -676,17 +820,17 @@ function attachShopListeners(returnTo: BaseCampReturnTo | "operation" = "basecam
   
   // Sell tab handlers (only attach if sell tab is active)
   if (currentTab === "sell") {
-    attachSellListeners(returnTo);
+    attachSellListeners(returnTo, mode);
   }
 
-  if (returnTo !== "operation") {
+  if (returnTo !== "operation" && returnTo !== "echo-run") {
     registerBaseCampReturnHotkey("shop-screen", returnTo, { allowFieldEKey: true, activeSelector: ".shop-root" });
   }
 }
 
 function purchaseItem(itemId: string, category: ShopItem["category"]): void {
-  const state = getGameState();
-  const allItems = [...PAK_ITEMS, ...getEquipmentShopItems(state), ...CONSUMABLE_ITEMS, ...RECIPE_ITEMS];
+  const state = getShopState();
+  const allItems = getPurchasableItemsForCurrentShop(state);
   let item = allItems.find(i => i.id === itemId);
   
   // If not found in static items, check if it's an unlockable
@@ -730,7 +874,7 @@ function purchaseItem(itemId: string, category: ShopItem["category"]): void {
 }
 
 function purchaseRecipe(itemId: string, item: ShopItem): void {
-  const state = getGameState();
+  const state = getShopState();
   
   // Check if already known
   if (state.knownRecipeIds && state.knownRecipeIds.includes(itemId)) {
@@ -746,7 +890,7 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
       return;
     }
     
-    updateGameState((s) => {
+    updateShopState((s) => {
       const spendResult = spendSessionCost(s, { wad: item.price });
       if (!spendResult.success) {
         return s;
@@ -759,7 +903,7 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
     });
     
     showNotification(`LEARNED: ${recipe.name}`, "success");
-    renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp");
+    renderShopScreen((document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as ShopReturnDestination || "basecamp", currentShopMode);
   }).catch((err: any) => {
     console.error("[SHOP] Failed to purchase recipe:", err);
     showNotification("PURCHASE FAILED", "error");
@@ -767,6 +911,45 @@ function purchaseRecipe(itemId: string, item: ShopItem): void {
 }
 
 function purchaseUnlockable(itemId: string, item: ShopItem): void {
+  if (isEchoShopMode()) {
+    const state = getShopState();
+    const unlock = getUnlockableById(itemId);
+    if (!unlock) {
+      showNotification("INVALID UNLOCK", "error");
+      return;
+    }
+    const owned = new Set([...(state.unlockedChassisIds ?? []), ...(state.unlockedDoctrineIds ?? [])]);
+    if (owned.has(itemId)) {
+      showNotification("ALREADY OWNED", "error");
+      return;
+    }
+
+    updateShopState((s) => {
+      const spendResult = spendSessionCost(s, { wad: item.price });
+      if (!spendResult.success) {
+        return s;
+      }
+      if (unlock.type === "chassis") {
+        return {
+          ...spendResult.state,
+          unlockedChassisIds: [...(spendResult.state.unlockedChassisIds ?? []), itemId],
+        };
+      }
+      if (unlock.type === "doctrine") {
+        return {
+          ...spendResult.state,
+          unlockedDoctrineIds: [...(spendResult.state.unlockedDoctrineIds ?? []), itemId],
+        };
+      }
+      return spendResult.state;
+    });
+
+    showNotification(`UNLOCKED: ${item.name}`, "success");
+    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as ShopReturnDestination || "basecamp";
+    renderShopScreen(returnTo, currentShopMode);
+    return;
+  }
+
   // Check if already owned
   import("../../core/unlockableOwnership").then(({ hasUnlock, grantUnlock }) => {
     if (hasUnlock(itemId)) {
@@ -775,7 +958,7 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
     }
     
     // Deduct WAD and grant unlock
-    updateGameState((s) => {
+    updateShopState((s) => {
       const spendResult = spendSessionCost(s, { wad: item.price });
       return spendResult.success ? spendResult.state : s;
     });
@@ -784,8 +967,8 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
     showNotification(`UNLOCKED: ${item.name}`, "success");
     
     // Refresh shop screen
-    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as BaseCampReturnTo | "operation" || "basecamp";
-    renderShopScreen(returnTo);
+    const returnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") as ShopReturnDestination || "basecamp";
+    renderShopScreen(returnTo, currentShopMode);
   }).catch((err: any) => {
     console.error("[SHOP] Failed to purchase unlockable:", err);
     showNotification("PURCHASE FAILED", "error");
@@ -794,13 +977,13 @@ function purchaseUnlockable(itemId: string, item: ShopItem): void {
 
 function purchasePAK(pakId: string, item: ShopItem): void {
   const backBtn = document.getElementById("backBtn");
-  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
+  const returnTo = (backBtn?.getAttribute("data-return-to") as ShopReturnDestination) || "basecamp";
 
   // Open the PAK and get cards
   const cards = openPAK(pakId);
   
   // Update state
-  updateGameState((draft) => {
+  updateShopState((draft) => {
     const spendResult = spendSessionCost(draft, { wad: item.price });
     if (!spendResult.success) {
       return draft;
@@ -815,11 +998,11 @@ function purchasePAK(pakId: string, item: ShopItem): void {
   showPurchaseModal(item.name, cards, "Recovered card set:");
   
   // Re-render shop
-  renderShopScreen(returnTo);
+  renderShopScreen(returnTo, currentShopMode);
 }
 
 function purchaseEquipment(itemId: string, item: ShopItem): void {
-  const state = getGameState();
+  const state = getShopState();
   if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
@@ -827,12 +1010,12 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
 
   // Get return destination from button
   const backBtn = document.getElementById("backBtn");
-  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
+  const returnTo = (backBtn?.getAttribute("data-return-to") as ShopReturnDestination) || "basecamp";
 
   // Create equipment entry (basic structure - will need proper equipment data)
   const equipmentData = createEquipmentFromShopItem(itemId, item);
   
-  updateGameState((draft) => {
+  updateShopState((draft) => {
     const spendResult = spendSessionCost(draft, { wad: item.price });
     if (!spendResult.success) {
       return draft;
@@ -884,11 +1067,11 @@ function purchaseEquipment(itemId: string, item: ShopItem): void {
   });
   
   showNotification(`${item.name} added to inventory!`, "success");
-  renderShopScreen(returnTo);
+  renderShopScreen(returnTo, currentShopMode);
 }
 
 function purchaseConsumable(itemId: string, item: ShopItem): void {
-  const state = getGameState();
+  const state = getShopState();
   if (!canSessionAffordCost(state, { wad: item.price })) {
     showNotification("INSUFFICIENT WAD", "error");
     return;
@@ -896,9 +1079,9 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
 
   // Get return destination from button
   const backBtn = document.getElementById("backBtn");
-  const returnTo = (backBtn?.getAttribute("data-return-to") as BaseCampReturnTo | "operation") || "basecamp";
+  const returnTo = (backBtn?.getAttribute("data-return-to") as ShopReturnDestination) || "basecamp";
 
-  updateGameState((draft) => {
+  updateShopState((draft) => {
     const spendResult = spendSessionCost(draft, { wad: item.price });
     if (!spendResult.success) {
       return draft;
@@ -944,7 +1127,7 @@ function purchaseConsumable(itemId: string, item: ShopItem): void {
   });
   
   showNotification(`${item.name} added to supplies!`, "success");
-  renderShopScreen(returnTo);
+  renderShopScreen(returnTo, currentShopMode);
 }
 
 // ----------------------------------------------------------------------------
@@ -1384,8 +1567,141 @@ function getConsumablePower(_itemId: string): number {
 let sellCategoryFilter: "all" | "equipment" | "consumable" | "weaponPart" | "resource" = "all";
 let sellSelectedLines: Map<string, number> = new Map(); // key -> quantity
 
+function isShopEquipmentEquipped(equipmentId: string, state: any): boolean {
+  return Object.values(state.unitsById ?? {}).some((unit: any) => (
+    unit?.loadout
+    && (
+      unit.loadout.primaryWeapon === equipmentId
+      || unit.loadout.secondaryWeapon === equipmentId
+      || unit.loadout.helmet === equipmentId
+      || unit.loadout.chestpiece === equipmentId
+      || unit.loadout.accessory1 === equipmentId
+      || unit.loadout.accessory2 === equipmentId
+    )
+  ));
+}
+
+function getEchoSellableEntries(state: any): SellableEntry[] {
+  const entries: SellableEntry[] = [];
+  const equipmentById = state.equipmentById ?? {};
+  const equipmentPool = Array.from(new Set(state.equipmentPool ?? [])) as string[];
+
+  equipmentPool.forEach((equipmentId) => {
+    const equipment = equipmentById[equipmentId] as Equipment | undefined;
+    if (!equipment) return;
+    entries.push({
+      key: `equipment:${equipmentId}`,
+      kind: "equipment",
+      id: equipmentId,
+      name: equipment.name || equipmentId,
+      owned: 1,
+      equipped: isShopEquipmentEquipped(equipmentId, state),
+      unitSellPrice: getSellPrice("equipment", equipmentId),
+      stackable: false,
+    });
+  });
+
+  Object.entries(state.consumables ?? {}).forEach(([itemId, quantity]) => {
+    const owned = Math.max(0, Math.floor(Number(quantity) || 0));
+    if (owned <= 0) return;
+    entries.push({
+      key: `consumable:${itemId}`,
+      kind: "consumable",
+      id: itemId,
+      name: CONSUMABLE_DATABASE[itemId]?.name || itemId,
+      owned,
+      unitSellPrice: getSellPrice("consumable", itemId),
+      stackable: true,
+    });
+  });
+
+  [...(state.unlockedChassisIds ?? []), ...(state.unlockedDoctrineIds ?? [])].forEach((unlockId) => {
+    const unlock = getUnlockableById(unlockId);
+    entries.push({
+      key: `weaponPart:${unlockId}`,
+      kind: "weaponPart",
+      id: unlockId,
+      name: unlock?.displayName || unlockId,
+      owned: 1,
+      unitSellPrice: getSellPrice("weaponPart", unlockId),
+      stackable: false,
+    });
+  });
+
+  getResourceEntries(state.resources, { includeZero: false }).forEach((entry) => {
+    entries.push({
+      key: `resource:${entry.key}`,
+      kind: "resource",
+      id: entry.key,
+      name: entry.label,
+      owned: entry.amount,
+      unitSellPrice: getResourceSellPrice(entry.key),
+      stackable: true,
+    });
+  });
+
+  return entries;
+}
+
+function getShopSellableEntries(state: any): SellableEntry[] {
+  return isEchoShopMode() ? getEchoSellableEntries(state) : getSellableEntries(state);
+}
+
+function sellEchoEntries(state: any, lines: SellLine[]): { next: any; wadGained: number } | { error: string } {
+  const entries = getEchoSellableEntries(state);
+  let wadGained = 0;
+  const next = {
+    ...state,
+    resources: { ...(state.resources ?? {}) },
+    consumables: { ...(state.consumables ?? {}) },
+    equipmentById: { ...(state.equipmentById ?? {}) },
+    equipmentPool: [...(state.equipmentPool ?? [])],
+    gearSlots: { ...(state.gearSlots ?? {}) },
+    unlockedChassisIds: [...(state.unlockedChassisIds ?? [])],
+    unlockedDoctrineIds: [...(state.unlockedDoctrineIds ?? [])],
+  };
+
+  for (const line of lines) {
+    const entry = entries.find((candidate) => candidate.kind === line.kind && candidate.id === line.id);
+    if (!entry || entry.locked || entry.equipped) {
+      return { error: "Selected item is not available to sell." };
+    }
+    const quantity = Math.max(0, Math.floor(Number(line.quantity) || 0));
+    if (quantity <= 0 || quantity > entry.owned) {
+      return { error: `Only ${entry.owned} available.` };
+    }
+    wadGained += entry.unitSellPrice * quantity;
+
+    if (line.kind === "equipment") {
+      delete next.equipmentById[line.id];
+      delete next.gearSlots[line.id];
+      next.equipmentPool = next.equipmentPool.filter((equipmentId: string) => equipmentId !== line.id);
+    } else if (line.kind === "consumable") {
+      const remaining = Math.max(0, Number(next.consumables[line.id] ?? 0) - quantity);
+      if (remaining > 0) {
+        next.consumables[line.id] = remaining;
+      } else {
+        delete next.consumables[line.id];
+      }
+    } else if (line.kind === "weaponPart") {
+      next.unlockedChassisIds = next.unlockedChassisIds.filter((unlockId: string) => unlockId !== line.id);
+      next.unlockedDoctrineIds = next.unlockedDoctrineIds.filter((unlockId: string) => unlockId !== line.id);
+    } else if (line.kind === "resource") {
+      next.resources[line.id] = Math.max(0, Number(next.resources[line.id] ?? 0) - quantity);
+    }
+  }
+
+  return {
+    next: {
+      ...next,
+      wad: Math.max(0, Math.floor(Number(next.wad ?? 0))) + wadGained,
+    },
+    wadGained,
+  };
+}
+
 function renderSellTab(state: any): string {
-  const entries = getSellableEntries(state);
+  const entries = getShopSellableEntries(state);
   
   // Filter by category
   const filteredEntries = sellCategoryFilter === "all"
@@ -1521,7 +1837,7 @@ function renderSellItem(entry: SellableEntry): string {
   `;
 }
 
-function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
+function attachSellListeners(returnTo: ShopReturnDestination, mode = currentShopMode): void {
   // Category filter buttons
   document.querySelectorAll(".sell-category-btn").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -1529,7 +1845,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
       if (category) {
         sellCategoryFilter = category as typeof sellCategoryFilter;
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
+        renderShopScreen(currentReturnTo as ShopReturnDestination, mode);
       }
     });
   });
@@ -1547,7 +1863,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
           sellSelectedLines.delete(key);
         }
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
+        renderShopScreen(currentReturnTo as ShopReturnDestination, mode);
       }
     });
   });
@@ -1564,7 +1880,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
           sellSelectedLines.set(key, 1);
         }
         const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-        renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
+        renderShopScreen(currentReturnTo as ShopReturnDestination, mode);
       }
     });
   });
@@ -1573,8 +1889,8 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
   const confirmBtn = document.getElementById("sellConfirmBtn");
   if (confirmBtn) {
     confirmBtn.addEventListener("click", () => {
-      const state = getGameState();
-      const entries = getSellableEntries(state);
+      const state = getShopState();
+      const entries = getShopSellableEntries(state);
       
       // Build sell lines
       const lines: SellLine[] = [];
@@ -1595,7 +1911,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
       }
       
       // Execute transaction
-      const result = sellToShop(state, lines);
+      const result = isEchoShopMode() ? sellEchoEntries(state, lines) : sellToShop(state, lines);
       
       if ("error" in result) {
         showNotification(result.error, "error");
@@ -1603,11 +1919,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
       }
       
       // Apply state update (merge result.next into current state)
-      updateGameState(draft => {
-        // Merge all changes from result.next
-        Object.assign(draft, result.next);
-        return draft;
-      });
+      updateShopState(() => result.next);
       
       // Clear selection
       sellSelectedLines.clear();
@@ -1616,7 +1928,7 @@ function attachSellListeners(returnTo: BaseCampReturnTo | "operation"): void {
       
       // Re-render
       const currentReturnTo = (document.getElementById("backBtn") as HTMLElement)?.getAttribute("data-return-to") || returnTo;
-      renderShopScreen(currentReturnTo as BaseCampReturnTo | "operation");
+      renderShopScreen(currentReturnTo as ShopReturnDestination, mode);
     });
   }
 }

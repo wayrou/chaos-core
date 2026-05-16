@@ -12,6 +12,7 @@ import type { GeneratedGear } from "../../core/endlessGear/types";
 import { getChassisById } from "../../data/gearChassis";
 import { getDoctrineById } from "../../data/gearDoctrines";
 import { getCraftedGearDescription } from "../../core/craftedGear";
+import { focusElementWithoutScroll } from "../domUtils";
 
 const EQUIPMENT_DETAIL_MODAL_ID = "gearDetailModalRoot";
 
@@ -393,7 +394,7 @@ export function showEquipmentDetailModal(equipment: Equipment, gearSlots?: GearS
 
   document.body.appendChild(overlay);
   window.addEventListener("keydown", handleEquipmentDetailEscape, true);
-  overlay.querySelector<HTMLButtonElement>("[data-gear-detail-action='close']")?.focus();
+  focusElementWithoutScroll(overlay.querySelector<HTMLButtonElement>("[data-gear-detail-action='close']"));
 }
 
 export function showEquipmentDetailModalById(equipmentId: string): void {

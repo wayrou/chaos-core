@@ -24,6 +24,7 @@ export interface BattleBoardTileVisual extends BattleBoardPoint {
   attackOption?: boolean;
   placementOption?: boolean;
   facingOption?: boolean;
+  facingDirection?: "north" | "south" | "east" | "west";
   hovered?: boolean;
   relayZone?: boolean;
   extractionZone?: boolean;
@@ -53,11 +54,21 @@ export interface BattleBoardTraversalVisual {
   bidirectional: boolean;
 }
 
+export type BattleBoardUnitEffectTone = "buff" | "control" | "debuff" | "guard" | "hazard" | "strain";
+
+export interface BattleBoardUnitEffectChip {
+  id: string;
+  label: string;
+  tone: BattleBoardUnitEffectTone;
+  duration?: number;
+}
+
 export interface BattleBoardUnitVisual extends BattleBoardPoint {
   id: string;
   baseUnitId?: string;
   classId?: string;
   name: string;
+  standPath: string;
   portraitPath: string;
   isEnemy: boolean;
   active: boolean;
@@ -67,6 +78,7 @@ export interface BattleBoardUnitVisual extends BattleBoardPoint {
   facing?: "north" | "south" | "east" | "west";
   controller?: string;
   elevation: number;
+  effectChips: BattleBoardUnitEffectChip[];
 }
 
 export interface BattleBoardSnapshot {

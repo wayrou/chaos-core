@@ -14,7 +14,6 @@ import {
   applyTheaterCombatInstability,
   applyWeaponHitToUnit,
   applyWeaponOverheatEffects,
-  advanceTurn,
   computeHitChance,
   evaluateBattleOutcome,
   Vec2,
@@ -34,15 +33,24 @@ import { getAllStarterEquipment } from "./equipment";
 import { getResolvedBattleCard, isChaosBattleCardId } from "./cardCatalog";
 import { applyEffectFlowToBattle } from "./effectFlow";
 import {
+  calculateDamageBandAmount,
+  getMinimumHitDamage,
+  inferDamageBandFromAmount,
+  resolveDamageBand,
+  scalePreMitigationDamage,
+} from "./damageBands";
+import {
   addHeat,
   checkWeaponJam,
   consumeQueuedModifier,
   getEffectiveMaxHeat,
   getExtraStrainCost,
+  getWeaponAmmoProfile,
   getWeaponCardAmmoCost,
   getWeaponCardBlockReason,
   getWeaponCardHeatDelta,
   getWeaponCardModifierSnapshot,
+  getWeaponHeatProfile,
   markWeaponCardPlayed,
   removeHeat,
   repairNode,
@@ -73,19 +81,74 @@ function cardMatches(card: Card, ids: string[], names: string[] = []): boolean {
     || names.some((value) => normalizeCardToken(value) === normalizedName);
 }
 
-function getCardDamageAmount(card: Card): number {
-  const explicitDamage = Number((card as any).damage ?? 0);
-  if (explicitDamage > 0) {
-    return explicitDamage;
+function isDamageBearingAttackCard(card: Card): boolean {
+  if (card.targetType !== "enemy") {
+    return false;
   }
 
+  const normalizedId = normalizeCardToken(card.id);
+  const normalizedName = normalizeCardToken(card.name);
+  const lowerDescription = (card.description ?? "").toLowerCase();
+  const weaponTags = card.weaponRules?.tags ?? [];
+  const attackTerms = [
+    "attack",
+    "shot",
+    "strike",
+    "slash",
+    "stab",
+    "jab",
+    "charge",
+    "headbutt",
+    "cleave",
+    "thrust",
+    "bolt",
+    "blast",
+    "volley",
+  ];
+
+  return weaponTags.includes("attack")
+    || cardMatches(card, ["core_basic_attack"])
+    || attackTerms.some((term) =>
+      normalizedId.includes(term) ||
+      normalizedName.includes(term) ||
+      lowerDescription.includes(term)
+    )
+    || lowerDescription.includes("weapon damage");
+}
+
+function getCardDamageAmount(card: Card, user: BattleUnitState): number {
+  const explicitDamage = Number((card as any).damage ?? 0);
   const damageEffect = (card.effects || []).find((effect: any) => effect.type === "damage") as any;
+  const damageBand = resolveDamageBand(
+    (card as any).damageBand ?? damageEffect?.damageBand,
+    explicitDamage || damageEffect?.amount,
+    card.description,
+  );
+  if (damageBand) {
+    return calculateDamageBandAmount(user, damageBand);
+  }
+
+  if (explicitDamage > 0) {
+    const inferredBand = inferDamageBandFromAmount(explicitDamage);
+    return inferredBand ? calculateDamageBandAmount(user, inferredBand) : explicitDamage;
+  }
+
   if (typeof damageEffect?.amount === "number" && damageEffect.amount > 0) {
-    return damageEffect.amount;
+    const inferredBand = inferDamageBandFromAmount(damageEffect.amount);
+    return inferredBand ? calculateDamageBandAmount(user, inferredBand) : damageEffect.amount;
   }
 
   const descriptionMatch = card.description.match(/deal\s+(\d+)\s+damage/i);
-  return descriptionMatch ? parseInt(descriptionMatch[1], 10) : 0;
+  if (descriptionMatch) {
+    const inferredBand = inferDamageBandFromAmount(parseInt(descriptionMatch[1], 10));
+    return inferredBand ? calculateDamageBandAmount(user, inferredBand) : parseInt(descriptionMatch[1], 10);
+  }
+
+  if (isDamageBearingAttackCard(card)) {
+    return calculateDamageBandAmount(user, "normal");
+  }
+
+  return 0;
 }
 
 function addTimedBuff(
@@ -186,39 +249,55 @@ type WeaponPlayContext = {
   extraStrain: number;
 };
 
+function getCardHandlerEquipmentById(battle: BattleState): Record<string, ReturnType<typeof getAllStarterEquipment>[string]> {
+  return {
+    ...getAllStarterEquipment(),
+    ...((battle as BattleState & { equipmentById?: ReturnType<typeof getAllStarterEquipment> }).equipmentById ?? {}),
+  };
+}
+
+function doesWeaponMatchCardSource(
+  weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>,
+  sourceWeaponId: string,
+): boolean {
+  const sourceTemplateId = (weapon.metadata as { sourceTemplateId?: unknown } | undefined)?.sourceTemplateId;
+  return sourceWeaponId === EQUIPPED_WEAPON_SOURCE_ID
+    || sourceWeaponId === weapon.id
+    || sourceWeaponId === sourceTemplateId;
+}
+
 function getWeaponPlayContext(
+  battle: BattleState,
   user: BattleUnitState,
   card: Card,
 ): WeaponPlayContext | null {
-  if (!card.weaponRules || !user.weaponState) {
+  if (!user.weaponState) {
     return null;
   }
 
-  const weapon = getEquippedWeapon(user, getAllStarterEquipment());
+  const weapon = getEquippedWeapon(user, getCardHandlerEquipmentById(battle));
   if (!weapon) {
     return null;
   }
 
-  if (
-    card.weaponRules.sourceWeaponId !== EQUIPPED_WEAPON_SOURCE_ID &&
-    card.weaponRules.sourceWeaponId !== weapon.id
-  ) {
+  const cardRules = getWeaponRulesForEquippedAttack(card, weapon);
+  if (!cardRules) {
     return null;
   }
 
-  const modifiers = getWeaponCardModifierSnapshot(user.weaponState, weapon, card.weaponRules);
+  const modifiers = getWeaponCardModifierSnapshot(user.weaponState, weapon, cardRules);
   const heatlessPowerCouplingStrain =
     !weapon.isMechanical &&
-    card.weaponRules.tags.includes("attack") &&
+    cardRules.tags.includes("attack") &&
     user.weaponState.nodes[4] === "broken"
       ? 1
       : 0;
   return {
     weapon,
-    cardRules: card.weaponRules,
+    cardRules,
     modifiers,
-    ammoCost: getWeaponCardAmmoCost(user.weaponState, weapon, card.weaponRules),
-    heatDelta: getWeaponCardHeatDelta(user.weaponState, weapon, card.weaponRules),
+    ammoCost: getWeaponCardAmmoCost(user.weaponState, weapon, cardRules),
+    heatDelta: getWeaponCardHeatDelta(user.weaponState, weapon, cardRules),
     extraStrain:
       getExtraStrainCost(user.weaponState, !user.weaponState.firstWeaponCardPlayedThisTurn) +
       modifiers.strainDelta +
@@ -226,18 +305,101 @@ function getWeaponPlayContext(
   };
 }
 
-function getWeaponBlockReasonForCard(user: BattleUnitState, card: Card): string | null {
-  const weapon = getEquippedWeapon(user, getAllStarterEquipment());
-  if (!user.weaponState || !weapon || !card.weaponRules) {
+function getWeaponBlockReasonForCard(battle: BattleState, user: BattleUnitState, card: Card): string | null {
+  const weapon = getEquippedWeapon(user, getCardHandlerEquipmentById(battle));
+  if (!user.weaponState || !weapon) {
     return null;
   }
-  if (
-    card.weaponRules.sourceWeaponId !== EQUIPPED_WEAPON_SOURCE_ID &&
-    card.weaponRules.sourceWeaponId !== weapon.id
-  ) {
+  const cardRules = getWeaponRulesForEquippedAttack(card, weapon);
+  if (!cardRules) {
     return null;
   }
-  return getWeaponCardBlockReason(user.weaponState, weapon, card.weaponRules);
+  return getWeaponCardBlockReason(user.weaponState, weapon, cardRules);
+}
+
+function isAttackCard(card: Card | { id?: string; name?: string; targetType?: string; target?: string }): boolean {
+  const name = (card.name ?? "").toLowerCase();
+  return card.targetType === "enemy"
+    || (card as any).target === "enemy"
+    || card.id === "core_basic_attack"
+    || name.includes("attack")
+    || name.includes("shot")
+    || name.includes("strike")
+    || name.includes("bolt");
+}
+
+function createDefaultEquippedWeaponRules(card: Card, weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): NonNullable<Card["weaponRules"]> | null {
+  if (!isAttackCard(card)) {
+    return null;
+  }
+
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+  if (!ammoProfile && !heatProfile) {
+    return null;
+  }
+
+  return {
+    sourceWeaponId: EQUIPPED_WEAPON_SOURCE_ID,
+    heatDelta: heatProfile ? 1 : 0,
+    ammoCost: ammoProfile?.defaultAttackAmmoCost ?? 0,
+    tags: ["weapon_card", "attack", "direct"],
+    clutchCompatible: true,
+  };
+}
+
+function normalizeEquippedWeaponRules(
+  cardRules: NonNullable<Card["weaponRules"]>,
+  weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>,
+): NonNullable<Card["weaponRules"]> {
+  const ammoProfile = getWeaponAmmoProfile(weapon);
+  const heatProfile = getWeaponHeatProfile(weapon);
+  const isGenericEquippedAttack = cardRules.sourceWeaponId === EQUIPPED_WEAPON_SOURCE_ID
+    && cardRules.tags.includes("attack");
+  return {
+    ...cardRules,
+    ammoCost: ammoProfile
+      ? cardRules.ammoCost || (isGenericEquippedAttack ? ammoProfile.defaultAttackAmmoCost : 0)
+      : 0,
+    heatDelta: heatProfile
+      ? cardRules.heatDelta || (isGenericEquippedAttack ? 1 : 0)
+      : 0,
+  };
+}
+
+function getWeaponRulesForEquippedAttack(card: Card, weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): NonNullable<Card["weaponRules"]> | null {
+  if (card.weaponRules && doesWeaponMatchCardSource(weapon, card.weaponRules.sourceWeaponId)) {
+    return normalizeEquippedWeaponRules(card.weaponRules, weapon);
+  }
+  return createDefaultEquippedWeaponRules(card, weapon);
+}
+
+function getWeaponFallbackAttackRange(weaponType: string): number {
+  switch (weaponType) {
+    case "greatbow":
+      return 6;
+    case "bow":
+    case "gun":
+      return 5;
+    case "staff":
+    case "greatstaff":
+      return 4;
+    default:
+      return 1;
+  }
+}
+
+function getWeaponIntrinsicAttackRange(weapon: NonNullable<ReturnType<typeof getEquippedWeapon>>): number {
+  const grantedAttackRanges = (weapon.cardsGranted ?? [])
+    .map((cardId) => getResolvedBattleCard(cardId))
+    .filter((resolvedCard) => Boolean(resolvedCard && isAttackCard(resolvedCard)))
+    .map((resolvedCard) => Number(resolvedCard?.range ?? 0))
+    .filter((range) => Number.isFinite(range) && range > 0);
+
+  return Math.max(
+    getWeaponFallbackAttackRange(weapon.weaponType),
+    ...grantedAttackRanges,
+  );
 }
 
 function addStatModifierBuff(
@@ -540,32 +702,27 @@ export function handleCardPlay(
 
   if (!user.pos) return null;
 
-  const weaponBlockReason = getWeaponBlockReasonForCard(user, card);
+  const weaponBlockReason = getWeaponBlockReasonForCard(battle, user, card);
   if (weaponBlockReason) {
     return appendBattleLog(battle, `SLK//LOCK  :: ${user.name} cannot use ${card.name}. ${weaponBlockReason}.`);
   }
 
-  const weaponContext = getWeaponPlayContext(user, card);
+  const weaponContext = getWeaponPlayContext(battle, user, card);
 
   // Calculate distance to target
   const distance = Math.abs(user.pos.x - targetPos.x) + Math.abs(user.pos.y - targetPos.y);
   let cardRange = card.range ?? 1;
+  const equipmentById = getCardHandlerEquipmentById(battle);
+  const equippedWeapon = getEquippedWeapon(user, equipmentById);
+  const attackCard = isAttackCard(card);
 
-  // Apply Far Shot ability: Rangers get +1 range on bow attack cards
-  // Check both targetType (from core Card type) and target (from BattleScreen Card type) for compatibility
-  // Also check card name/ID to catch basic attack and other attack cards
-  const isAttackCard =
-    card.targetType === "enemy" ||
-    (card as any).target === "enemy" ||
-    card.id === "core_basic_attack" ||
-    card.name.toLowerCase().includes("attack") ||
-    card.name.toLowerCase().includes("shot") ||
-    card.name.toLowerCase().includes("strike");
+  if (attackCard && equippedWeapon) {
+    cardRange = Math.max(cardRange, getWeaponIntrinsicAttackRange(equippedWeapon));
+  }
 
-  if (user.classId === "ranger" && isAttackCard) {
-    const equipmentById = getAllStarterEquipment();
-    const weapon = getEquippedWeapon(user, equipmentById);
-    if (weapon && weapon.weaponType === "bow") {
+  // Apply Far Shot ability: Rangers get +1 range on bow attack cards.
+  if (user.classId === "ranger" && attackCard) {
+    if (equippedWeapon && (equippedWeapon.weaponType === "bow" || equippedWeapon.weaponType === "greatbow")) {
       cardRange += 1;
     }
   }
@@ -583,26 +740,31 @@ export function handleCardPlay(
   if (distance > cardRange) return null;
 
   // ========================================
-  // WAIT / END TURN CARDS
+  // RESOLVE
   // ========================================
-  if (cardMatches(card, ["core_wait"], ["wait"])) {
-    let b: BattleState = discardCardFromHand(battle, user.id, card);
+  if (cardMatches(card, ["core_wait"], ["resolve"])) {
+    let b: BattleState = finalizeCardUsage(battle, user.id, card, weaponContext);
     const currentUser = b.units[user.id];
-    if (currentUser) {
+    const canResolve = Boolean(currentUser && currentUser.hand.length <= 3);
+    if (currentUser && canResolve) {
       b = {
         ...b,
         units: {
           ...b.units,
           [user.id]: {
             ...currentUser,
-            strain: Math.max(0, currentUser.strain - 2),
+            strain: Math.min(currentUser.strain, 2),
           },
         },
       };
     }
 
-    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} waits, ending their turn and reducing strain by 2.`);
-    b = advanceTurn(b);
+    b = appendBattleLog(
+      b,
+      canResolve
+        ? `SLK//UNIT   :: ${user.name} resolves pressure. Strain drops to 2 // STRAIN +${card.strainCost}.`
+        : `SLK//UNIT   :: ${user.name} tries to resolve, but needs 3 cards or fewer in hand // STRAIN +${card.strainCost}.`,
+    );
 
     return b;
   }
@@ -612,9 +774,9 @@ export function handleCardPlay(
       return null;
     }
 
-    let b = addTimedBuff(battle, user.id, "move_up", 2, 1);
+    let b = battle;
     b = finalizeCardUsage(b, user.id, card, weaponContext);
-    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} gains +2 MOV this turn // STRAIN +${card.strainCost}.`);
+    b = appendBattleLog(b, `SLK//UNIT   :: ${user.name} opens a second movement phase // STRAIN +${card.strainCost}.`);
     return b;
   }
 
@@ -682,10 +844,7 @@ export function handleCardPlay(
     const triggeredPlacements: EchoFieldPlacement[] = [];
     const equippedWeapon = getEquippedWeapon(actingUser);
     const isRangedAttack = Boolean(equippedWeapon && ["gun", "bow", "greatbow", "staff"].includes(equippedWeapon.weaponType));
-    const baseDamage = getCardDamageAmount(card);
-    const atkBuffs = (actingUser.buffs || [])
-      .filter((buff) => buff.type === "atk_up" || buff.type === "atk_down")
-      .reduce((sum, buff) => sum + buff.amount, 0);
+    const baseDamage = getCardDamageAmount(card, actingUser);
     const clutchDamageDelta = weaponContext?.modifiers.damageDelta ?? 0;
     const damageMultiplier = weaponContext?.modifiers.damageMultiplier ?? 1;
     const ignoreDef = weaponContext?.modifiers.ignoreDef ?? 0;
@@ -700,7 +859,8 @@ export function handleCardPlay(
 
       const echoAttackBonus = getEchoAttackBonus(b, currentUser);
       const echoDefenseBonus = getEchoDefenseBonus(b, currentTarget);
-      let totalDamage = Math.max(0, Math.round((baseDamage + atkBuffs + echoAttackBonus.amount + clutchDamageDelta) * damageMultiplier));
+      let totalDamage = Math.max(0, Math.round((baseDamage + echoAttackBonus.amount + clutchDamageDelta) * damageMultiplier));
+      totalDamage = scalePreMitigationDamage(totalDamage, currentUser);
       const defBuffs = (currentTarget.buffs || [])
         .filter((buff) => buff.type === "def_up" || buff.type === "def_down")
         .reduce((sum, buff) => sum + buff.amount, 0);
@@ -711,7 +871,8 @@ export function handleCardPlay(
 
       const didHit = (Math.random() * 100) <= hitChance;
       if (didHit) {
-        let finalDamage = Math.max(1, totalDamage - totalDef);
+        const minimumDamage = getMinimumHitDamage(currentUser);
+        let finalDamage = Math.max(minimumDamage, totalDamage - totalDef);
         const targetTile = getTileAt(b, currentTarget.pos.x, currentTarget.pos.y);
         if (targetTile) {
           let coverReduction = getCoverDamageReduction(targetTile);
@@ -724,7 +885,7 @@ export function handleCardPlay(
           ) {
             coverReduction = 0;
           }
-          finalDamage = Math.max(1, finalDamage - coverReduction);
+          finalDamage = Math.max(minimumDamage, finalDamage - coverReduction);
         }
 
         const newHp = currentTarget.hp - finalDamage;
@@ -768,7 +929,8 @@ export function handleCardPlay(
     return b;
   }
 
-  if ((card as any).effectFlow) {
+  const hasEnemyDamageResolution = card.targetType === "enemy" && getCardDamageAmount(card, user) > 0;
+  if ((card as any).effectFlow && !hasEnemyDamageResolution) {
     if (card.targetType === "enemy" && (!isHostileTarget(user, targetUnit) || !targetUnit?.pos)) {
       return null;
     }
@@ -1167,25 +1329,14 @@ export function handleCardPlay(
       return b;
     }
 
-    let totalDamage = (card as any).damage || 0;
-    if (totalDamage === 0) {
-      const damageEffect = (card.effects || []).find((effect: any) => effect.type === "damage") as any;
-      totalDamage = damageEffect?.amount ?? 0;
-    }
-    if (totalDamage === 0) {
-      const damageMatch = card.description.match(/deal\s+(\d+)\s+damage/i);
-      totalDamage = damageMatch ? parseInt(damageMatch[1], 10) : 0;
-    }
-
-    const atkBuffs = (actingUser.buffs || [])
-      .filter((buff) => buff.type === "atk_up" || buff.type === "atk_down")
-      .reduce((sum, buff) => sum + buff.amount, 0);
+    let totalDamage = getCardDamageAmount(card, actingUser);
     const echoAttackBonus = getEchoAttackBonus(b, actingUser);
     const echoDefenseBonus = getEchoDefenseBonus(b, actingTarget);
     const clutchDamageDelta = weaponContext?.modifiers.damageDelta ?? 0;
     const damageMultiplier = weaponContext?.modifiers.damageMultiplier ?? 1;
-    totalDamage += atkBuffs + echoAttackBonus.amount + clutchDamageDelta;
+    totalDamage += echoAttackBonus.amount + clutchDamageDelta;
     totalDamage = Math.max(0, Math.round(totalDamage * damageMultiplier));
+    totalDamage = scalePreMitigationDamage(totalDamage, actingUser);
 
     const defBuffs = (actingTarget.buffs || [])
       .filter((buff) => buff.type === "def_up" || buff.type === "def_down")
@@ -1203,7 +1354,8 @@ export function handleCardPlay(
     const didHit = hitRoll <= hitChance;
 
     if (didHit) {
-      let finalDamage = Math.max(1, totalDamage - totalDef);
+      const minimumDamage = getMinimumHitDamage(actingUser);
+      let finalDamage = Math.max(minimumDamage, totalDamage - totalDef);
       if (actingTarget.pos) {
         const targetTile = getTileAt(b, actingTarget.pos.x, actingTarget.pos.y);
         if (targetTile) {
@@ -1217,7 +1369,7 @@ export function handleCardPlay(
           ) {
             coverReduction = 0;
           }
-          finalDamage = Math.max(1, finalDamage - coverReduction);
+          finalDamage = Math.max(minimumDamage, finalDamage - coverReduction);
         }
       }
 
@@ -1294,7 +1446,7 @@ export function handleCardPlay(
         if (!repeatedTarget) {
           return;
         }
-        const extraDamage = Math.max(1, totalDamage + extraAttack.damageDelta - totalDef);
+        const extraDamage = Math.max(getMinimumHitDamage(actingUser), totalDamage + extraAttack.damageDelta - totalDef);
         const newHp = repeatedTarget.hp - extraDamage;
         if (newHp <= 0) {
           const newUnits = { ...b.units };

@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { createEmptyResourceWallet, type ResourceWallet } from "../core/resources";
+import type { MerchantListingSource } from "../core/merchant";
 
 export type IntentTag = "assault" | "skirmish" | "suppression" | "sustain" | "control" | "mobility";
 
@@ -33,6 +34,7 @@ export interface GearDoctrine {
   // Description
   description: string;
   unlockAfterFloor?: number;
+  merchant?: MerchantListingSource;
   requiredQuestIds?: string[];
 }
 

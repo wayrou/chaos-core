@@ -3,7 +3,12 @@ import {
   OUTER_DECK_OVERWORLD_HAVEN_GATE_TILE,
   OUTER_DECK_OVERWORLD_HAVEN_GATE_ZONE_ID,
   OUTER_DECK_OVERWORLD_MAP_ID,
+  buildOuterDeckInteriorMapId,
   getCurrentOuterDeckSubarea,
+  getOuterDeckInteriorLootKey,
+  getOuterDeckInteriorRoomKey,
+  getOuterDeckInteriorSpec,
+  getOuterDeckOpenWorldState,
   getOuterDeckCompletionReward,
   getOuterDeckOverworldGateTile,
   getOuterDeckSubareaByMapId,
@@ -14,9 +19,12 @@ import {
   hasOuterDeckZoneBeenReclaimed,
   hasSeenOuterDeckNpcEncounter,
   isOuterDeckMechanicResolved,
+  isOuterDeckInteriorMap,
   isOuterDeckOverworldMap,
   isOuterDeckSubareaCleared,
   isOuterDeckZoneUnlocked,
+  parseOuterDeckInteriorMapId,
+  type OuterDeckInteriorMapRef,
   type OuterDeckMechanicId,
   type OuterDeckRewardBundle,
   type OuterDeckSubareaSpec,
@@ -25,6 +33,7 @@ import {
 import { getGameState } from "../state/gameStore";
 import type { GameState } from "../core/types";
 import type { FieldMap, FieldObject, InteractionZone } from "./types";
+import { createOuterDeckOpenWorldFieldMap } from "./outerDeckWorld";
 
 const OVERWORLD_WIDTH = 140;
 const OVERWORLD_HEIGHT = 90;
@@ -35,8 +44,36 @@ const HAVEN_FOOTPRINT_TOP = Math.floor((OVERWORLD_HEIGHT - HAVEN_FOOTPRINT_HEIGH
 const HAVEN_RING_MARGIN = 8;
 const BRANCH_WIDTH = 22;
 const BRANCH_HEIGHT = 14;
+const INTERIOR_WIDTH = 22;
+const INTERIOR_HEIGHT = 16;
 
 type TileType = FieldMap["tiles"][number][number]["type"];
+
+function createStableMapSeed(...parts: Array<string | number>): number {
+  let hash = 2166136261;
+  parts.forEach((part) => {
+    const text = String(part);
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    hash ^= 97531;
+    hash = Math.imul(hash, 16777619);
+  });
+  return hash >>> 0;
+}
+
+function randomFromSeed(seed: number): () => number {
+  let current = seed >>> 0;
+  return () => {
+    current = (Math.imul(current, 1664525) + 1013904223) >>> 0;
+    return current / 0x100000000;
+  };
+}
+
+function randomIntFrom(rng: () => number, min: number, max: number): number {
+  return Math.floor(rng() * (max - min + 1)) + min;
+}
 
 function createTiles(width: number, height: number, fillType: TileType): FieldMap["tiles"] {
   const tiles: FieldMap["tiles"] = [];
@@ -777,6 +814,304 @@ function buildBranchContent(state: GameState, subarea: OuterDeckSubareaSpec): { 
   return { tiles, objects, interactionZones };
 }
 
+function getInteriorFloorType(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): TileType {
+  switch (variant) {
+    case "cave":
+      return "stone";
+    case "structure":
+      return "floor";
+    case "service_tunnel":
+      return "stone";
+    default:
+      return "stone";
+  }
+}
+
+function getInteriorWallSprite(variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"]): string {
+  switch (variant) {
+    case "cave":
+      return "shaft_column";
+    case "structure":
+      return "crate_stack";
+    case "service_tunnel":
+      return "conveyor";
+    default:
+      return "shaft_column";
+  }
+}
+
+function decorateInteriorTiles(
+  tiles: FieldMap["tiles"],
+  ref: OuterDeckInteriorMapRef,
+  seed: number,
+  variant: ReturnType<typeof getOuterDeckInteriorSpec>["variant"],
+): { enemySpawns: Array<{ x: number; y: number }>; cacheTile: { x: number; y: number } } {
+  const rng = randomFromSeed(createStableMapSeed(seed, ref.floorOrdinal, ref.chunkX, ref.chunkY, ref.depth, "interior-layout"));
+  const floorType = getInteriorFloorType(variant);
+  const bendA = randomIntFrom(rng, 4, 6);
+  const bendB = randomIntFrom(rng, 9, 12);
+  const highLane = randomIntFrom(rng, 3, 5);
+  const lowLane = randomIntFrom(rng, 10, 12);
+  const laneA = ref.depth % 2 === 0 ? highLane : lowLane;
+  const laneB = ref.depth % 2 === 0 ? lowLane : highLane;
+  const thickness = ref.depth === 1 && rng() > 0.35 ? 2 : 1;
+  const path = [
+    { x: 2, y: 8 },
+    { x: bendA, y: 8 },
+    { x: bendA, y: laneA },
+    { x: bendB, y: laneA },
+    { x: bendB, y: laneB },
+    { x: 17, y: laneB },
+    { x: 19, y: 8 },
+  ];
+
+  path.slice(0, -1).forEach((point, index) => {
+    carveLine(tiles, point, path[index + 1]!, thickness, floorType);
+  });
+
+  fillRect(tiles, 1, 7, 3, 3, true, floorType);
+  fillRect(tiles, 18, 7, 3, 3, true, floorType);
+
+  const cacheTile = ref.depth % 2 === 0
+    ? { x: 15, y: 3 }
+    : { x: 15, y: 11 };
+  const cacheRoomTop = Math.max(2, cacheTile.y - 1);
+  fillRect(tiles, cacheTile.x - 2, cacheRoomTop, 5, 3, true, floorType);
+  carveLine(tiles, { x: cacheTile.x, y: cacheRoomTop + 2 }, { x: 15, y: laneB }, 1, floorType);
+
+  const sideRoom = ref.depth % 2 === 0
+    ? { x: 6, y: 11 }
+    : { x: 6, y: 3 };
+  fillRect(tiles, sideRoom.x - 1, sideRoom.y - 1, 4, 3, true, floorType);
+  carveLine(tiles, { x: sideRoom.x, y: sideRoom.y }, { x: bendA, y: laneA }, 1, floorType);
+
+  return {
+    enemySpawns: [
+      { x: bendA + 1, y: laneA },
+      { x: bendB + 1, y: laneB },
+      { x: sideRoom.x + 1, y: sideRoom.y },
+      { x: cacheTile.x - 1, y: cacheTile.y },
+    ],
+    cacheTile,
+  };
+}
+
+function buildInteriorEnemyObjects(
+  state: GameState,
+  ref: OuterDeckInteriorMapRef,
+  enemySpawns: Array<{ x: number; y: number }>,
+): FieldObject[] {
+  const roomKey = getOuterDeckInteriorRoomKey(ref);
+  const openWorld = getOuterDeckOpenWorldState(state);
+  if (openWorld.clearedInteriorRoomKeys.includes(roomKey)) {
+    return [];
+  }
+
+  const distanceTier = Math.max(0, Math.floor(Math.hypot(ref.chunkX, ref.chunkY)));
+  const enemyKinds = ["tunnel_scavenger", "apron_crawler", "cache_guard", "collapsed_sentry"];
+  const enemyCount = Math.min(enemySpawns.length, 1 + ref.depth + (distanceTier >= 4 ? 1 : 0));
+  return enemySpawns.slice(0, enemyCount).map((spawn, index) => {
+    const enemyKind = enemyKinds[(index + ref.depth) % enemyKinds.length]!;
+    return {
+      id: `${roomKey.replace(/[^a-z0-9]/gi, "_")}_enemy_${index}`,
+      x: spawn.x,
+      y: spawn.y,
+      width: 1,
+      height: 1,
+      type: "enemy",
+      sprite: "field_enemy",
+      metadata: {
+        name: formatEnemyLabel(enemyKind),
+        enemyKind,
+        hp: 84 + (ref.depth * 18) + (distanceTier * 8),
+        speed: 82 + (ref.depth * 7),
+        aggroRange: 210,
+        attackStyle: index % 2 === 0 ? "lunge" : "slash",
+        drops: {
+          wad: 12 + (distanceTier * 3),
+          resources: {
+            metalScrap: index % 2 === 0 ? 1 : 0,
+            wood: enemyKind.includes("crawler") ? 1 : 0,
+            chaosShards: distanceTier >= 5 && index === 0 ? 1 : 0,
+            steamComponents: enemyKind.includes("sentry") ? 1 : 0,
+          },
+        },
+      },
+    };
+  });
+}
+
+function buildInteriorContent(
+  state: GameState,
+  ref: OuterDeckInteriorMapRef,
+): { tiles: FieldMap["tiles"]; objects: FieldObject[]; interactionZones: InteractionZone[]; name: string } | null {
+  const openWorld = getOuterDeckOpenWorldState(state);
+  const spec = getOuterDeckInteriorSpec(openWorld.seed, ref.floorOrdinal, ref.chunkX, ref.chunkY);
+  if (ref.depth < 0 || ref.depth >= spec.chainLength) {
+    return null;
+  }
+
+  const tiles = createTiles(INTERIOR_WIDTH, INTERIOR_HEIGHT, "wall");
+  fillRect(tiles, 0, 0, INTERIOR_WIDTH, INTERIOR_HEIGHT, false, "wall");
+  const objects: FieldObject[] = [];
+  const { enemySpawns, cacheTile } = decorateInteriorTiles(tiles, ref, openWorld.seed, spec.variant);
+  const roomKey = getOuterDeckInteriorRoomKey(ref);
+  const lootKey = getOuterDeckInteriorLootKey(ref);
+  const isFinalDepth = ref.depth === spec.chainLength - 1;
+  const cacheClaimed = openWorld.claimedInteriorLootKeys.includes(lootKey);
+
+  objects.push(
+    {
+      id: `${roomKey}_back_gate`,
+      x: 1,
+      y: 7,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "bulkhead",
+      metadata: { name: ref.depth === 0 ? "Surface Route" : "Back Route" },
+    },
+    {
+      id: `${roomKey}_deeper_gate`,
+      x: 19,
+      y: 7,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "bulkhead",
+      metadata: { name: isFinalDepth ? "Terminal Wall" : "Deeper Route" },
+    },
+  );
+
+  const wallSprite = getInteriorWallSprite(spec.variant);
+  [
+    { x: 8, y: 2, width: 2, height: 2 },
+    { x: 11, y: 6, width: 2, height: 2 },
+    { x: 4, y: 13, width: 2, height: 1 },
+  ].forEach((decor, index) => {
+    objects.push({
+      id: `${roomKey}_decor_${index}`,
+      ...decor,
+      type: "decoration",
+      sprite: wallSprite,
+      metadata: { name: spec.variant === "cave" ? "Stone Choke" : "Corridor Obstruction" },
+    });
+  });
+
+  if (isFinalDepth && !cacheClaimed) {
+    objects.push({
+      id: `${roomKey}_cache`,
+      x: cacheTile.x,
+      y: cacheTile.y,
+      width: 2,
+      height: 2,
+      type: "station",
+      sprite: "crate_stack",
+      metadata: {
+        name: spec.rewardLabel,
+        lootKey,
+      },
+    });
+  }
+
+  objects.push(...buildInteriorEnemyObjects(state, ref, enemySpawns));
+
+  const interactionZones: InteractionZone[] = [
+    {
+      id: `${roomKey}_back_zone`,
+      x: 1,
+      y: 7,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: ref.depth === 0 ? "SURFACE" : "BACK",
+      metadata: ref.depth === 0
+        ? {
+            handlerId: "outer_deck_interior_exit",
+            autoTrigger: true,
+          }
+        : {
+            handlerId: "outer_deck_interior_transition",
+            targetMapId: buildOuterDeckInteriorMapId(ref.floorOrdinal, ref.chunkX, ref.chunkY, ref.depth - 1),
+            direction: "back",
+            autoTrigger: true,
+          },
+    },
+  ];
+
+  if (!isFinalDepth) {
+    interactionZones.push({
+      id: `${roomKey}_deeper_zone`,
+      x: 19,
+      y: 7,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: "DEEPER",
+      metadata: {
+        handlerId: "outer_deck_interior_transition",
+        targetMapId: buildOuterDeckInteriorMapId(ref.floorOrdinal, ref.chunkX, ref.chunkY, ref.depth + 1),
+        direction: "deeper",
+        requiresClear: true,
+        autoTrigger: true,
+      },
+    });
+  }
+
+  if (isFinalDepth && !cacheClaimed) {
+    interactionZones.push({
+      id: `${roomKey}_cache_zone`,
+      x: cacheTile.x,
+      y: cacheTile.y,
+      width: 2,
+      height: 2,
+      action: "custom",
+      label: spec.cacheLabel,
+      metadata: {
+        handlerId: "outer_deck_interior_cache",
+        lootKey,
+        requiresClear: true,
+      },
+    });
+  }
+
+  return {
+    tiles,
+    objects,
+    interactionZones,
+    name: `${spec.title} // ${ref.depth + 1}/${spec.chainLength}`,
+  };
+}
+
+function createOuterDeckInteriorMap(mapId: string, state: GameState): FieldMap | null {
+  const ref = parseOuterDeckInteriorMapId(mapId);
+  if (!ref) {
+    return null;
+  }
+
+  const content = buildInteriorContent(state, ref);
+  if (!content) {
+    return null;
+  }
+
+  return {
+    id: mapId,
+    name: content.name,
+    width: INTERIOR_WIDTH,
+    height: INTERIOR_HEIGHT,
+    tiles: content.tiles,
+    objects: content.objects,
+    interactionZones: content.interactionZones,
+    metadata: {
+      kind: "outerDeckInterior",
+      floorOrdinal: ref.floorOrdinal,
+      chunkX: ref.chunkX,
+      chunkY: ref.chunkY,
+      depth: ref.depth,
+    },
+  };
+}
+
 function createOuterDeckBranchMap(mapId: string, state: GameState): FieldMap | null {
   const subarea = getOuterDeckSubareaByMapId(state, mapId);
   if (!subarea) {
@@ -903,8 +1238,8 @@ function createOuterDeckOverworldMap(state: GameState): FieldMap {
       width: 2,
       height: 2,
       type: "station",
-      sprite: "bulkhead",
-      metadata: { name: "HAVEN ACCESS" },
+      sprite: "doorway",
+      metadata: { name: "HAVEN Door" },
     },
     {
       id: "outer_deck_overworld_counterweight_gate",
@@ -1041,7 +1376,7 @@ function createOuterDeckOverworldMap(state: GameState): FieldMap {
 
   return {
     id: OUTER_DECK_OVERWORLD_MAP_ID,
-    name: "HAVEN Outer Decks",
+    name: "HAVEN Apron",
     width: OVERWORLD_WIDTH,
     height: OVERWORLD_HEIGHT,
     tiles,
@@ -1055,7 +1390,10 @@ export function createOuterDeckFieldMap(
   state: GameState = getGameState(),
 ): FieldMap | null {
   if (isOuterDeckOverworldMap(mapId)) {
-    return createOuterDeckOverworldMap(state);
+    return createOuterDeckOpenWorldFieldMap(state);
+  }
+  if (isOuterDeckInteriorMap(mapId)) {
+    return createOuterDeckInteriorMap(mapId, state);
   }
   return createOuterDeckBranchMap(mapId, state);
 }

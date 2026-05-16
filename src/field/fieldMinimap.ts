@@ -56,6 +56,10 @@ function tileKey(x: number, y: number): string {
   return `${x},${y}`;
 }
 
+function discoveredTileKey(localX: number, localY: number, originX: number, originY: number): string {
+  return tileKey(localX + originX, localY + originY);
+}
+
 function parseTileKey(key: string): { x: number; y: number } | null {
   const [rawX, rawY] = key.split(",");
   const x = Number.parseInt(rawX ?? "", 10);
@@ -100,10 +104,12 @@ function doesAreaOverlapDiscovered(
   width: number,
   height: number,
   discovered: Set<string>,
+  originX = 0,
+  originY = 0,
 ): boolean {
   for (let y = top; y < top + height; y += 1) {
     for (let x = left; x < left + width; x += 1) {
-      if (discovered.has(tileKey(x, y))) {
+      if (discovered.has(discoveredTileKey(x, y, originX, originY))) {
         return true;
       }
     }
@@ -124,7 +130,7 @@ export function revealFieldMinimapArea(
   centerTileX: number,
   centerTileY: number,
   radius = FIELD_MINIMAP_REVEAL_RADIUS,
-  bounds?: { width: number; height: number },
+  bounds?: { width: number; height: number; worldOriginTileX?: number; worldOriginTileY?: number },
 ): boolean {
   if (!mapId || !Number.isFinite(centerTileX) || !Number.isFinite(centerTileY)) {
     return false;
@@ -133,6 +139,8 @@ export function revealFieldMinimapArea(
   const state = getGameState();
   const currentEntries = state.uiLayout?.minimapExploredByMap?.[mapId] ?? [];
   const nextEntries = new Set(currentEntries);
+  const originX = Math.floor(Number(bounds?.worldOriginTileX ?? 0));
+  const originY = Math.floor(Number(bounds?.worldOriginTileY ?? 0));
 
   for (let y = centerTileY - radius; y <= centerTileY + radius; y += 1) {
     if (bounds && (y < 0 || y >= bounds.height)) {
@@ -142,7 +150,7 @@ export function revealFieldMinimapArea(
       if (bounds && (x < 0 || x >= bounds.width)) {
         continue;
       }
-      nextEntries.add(tileKey(x, y));
+      nextEntries.add(discoveredTileKey(x, y, originX, originY));
     }
   }
 
@@ -188,12 +196,18 @@ export function buildFieldMinimapModel(
   const state = options.state ?? getGameState();
   const runtimeFieldState = options.runtimeFieldState?.currentMap === map.id ? options.runtimeFieldState : null;
   const discovered = getExploredTileSet(String(map.id), state);
+  const originX = map.metadata?.kind === "outerDeckOpenWorld"
+    ? Math.floor(Number(map.metadata.worldOriginTileX ?? 0))
+    : 0;
+  const originY = map.metadata?.kind === "outerDeckOpenWorld"
+    ? Math.floor(Number(map.metadata.worldOriginTileY ?? 0))
+    : 0;
   const walkableCells: Array<{ x: number; y: number }> = [];
   const wallEdges: FieldMinimapWallEdge[] = [];
 
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
-      const key = tileKey(x, y);
+      const key = discoveredTileKey(x, y, originX, originY);
       const tile = map.tiles[y]?.[x];
       if (!tile || !discovered.has(key) || !tile.walkable) {
         continue;
@@ -221,7 +235,7 @@ export function buildFieldMinimapModel(
     .map((npc) => {
       const markerTile = getAvatarTilePosition(npc);
       const center = getMarkerTileCenter(npc);
-      if (!markerTile || !center || !discovered.has(tileKey(markerTile.x, markerTile.y))) {
+      if (!markerTile || !center || !discovered.has(discoveredTileKey(markerTile.x, markerTile.y, originX, originY))) {
         return null;
       }
       return {
@@ -237,7 +251,7 @@ export function buildFieldMinimapModel(
     .map((enemy) => {
       const markerTile = getAvatarTilePosition(enemy);
       const center = getMarkerTileCenter(enemy);
-      if (!markerTile || !center || !discovered.has(tileKey(markerTile.x, markerTile.y))) {
+      if (!markerTile || !center || !discovered.has(discoveredTileKey(markerTile.x, markerTile.y, originX, originY))) {
         return null;
       }
       return {
@@ -249,7 +263,7 @@ export function buildFieldMinimapModel(
     .filter((marker): marker is FieldMinimapPointMarker => Boolean(marker));
 
   const zones = map.interactionZones
-    .filter((zone) => doesAreaOverlapDiscovered(zone.x, zone.y, zone.width, zone.height, discovered))
+    .filter((zone) => doesAreaOverlapDiscovered(zone.x, zone.y, zone.width, zone.height, discovered, originX, originY))
     .map((zone) => ({
       id: zone.id,
       x: zone.x,
@@ -267,7 +281,12 @@ export function buildFieldMinimapModel(
     discoveredCount: Array.from(discovered)
       .map(parseTileKey)
       .filter((entry): entry is { x: number; y: number } => Boolean(entry))
-      .filter((entry) => entry.x >= 0 && entry.x < map.width && entry.y >= 0 && entry.y < map.height)
+      .filter((entry) => (
+        entry.x - originX >= 0
+        && entry.x - originX < map.width
+        && entry.y - originY >= 0
+        && entry.y - originY < map.height
+      ))
       .length,
     walkableCells,
     wallEdges,

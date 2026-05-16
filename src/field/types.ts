@@ -2,6 +2,8 @@
 // FIELD SYSTEM - TYPES
 // ============================================================================
 
+import type { PlayerId } from "../core/types";
+
 export type FieldMapId = "base_camp" | "free_zone_1" | "free_zone_2" | "quarters" | string; // Allow dynamic key room maps
 
 export interface FieldMap {
@@ -12,6 +14,7 @@ export interface FieldMap {
   tiles: FieldTile[][];
   objects: FieldObject[];
   interactionZones: InteractionZone[];
+  metadata?: Record<string, any>;
 }
 
 export interface FieldTile {
@@ -19,6 +22,9 @@ export interface FieldTile {
   y: number;
   walkable: boolean;
   type: "floor" | "wall" | "grass" | "dirt" | "stone";
+  elevation?: number;
+  standable3d?: boolean;
+  render3d?: boolean;
 }
 
 export interface FieldObject {
@@ -98,6 +104,28 @@ export interface FieldEnemy {
   vy: number;
   knockbackTime: number;
   aggroRange: number;
+  roamHomeX?: number;
+  roamHomeY?: number;
+  roamRadius?: number;
+  roamSpeedMultiplier?: number;
+  roamTargetX?: number;
+  roamTargetY?: number;
+  nextRoamAt?: number;
+  gearbladeDefense?: "shield" | "armor" | "none";
+  gearbladeDefenseBroken?: boolean;
+  attackStyle?: "slash" | "lunge" | "shot" | "shield_bash";
+  attackState?: "windup" | "recovery";
+  attackStartedAt?: number;
+  attackDidStrike?: boolean;
+  attackLungeProgress?: number;
+  attackOriginX?: number;
+  attackOriginY?: number;
+  attackTargetX?: number;
+  attackTargetY?: number;
+  attackTargetPlayerId?: PlayerId;
+  attackDirectionX?: number;
+  attackDirectionY?: number;
+  lastAttackAt?: number;
   sourceObjectId?: string;
   sourceDefinitionId?: string;
   spawnKey?: string;
@@ -129,6 +157,23 @@ export interface FieldProjectile {
   damage: number;
   lifetime: number;
   maxLifetime: number;
+  gearbladeMode?: "launcher";
+  hostile?: boolean;
+  sourceEnemyId?: string;
+  radius?: number;
+}
+
+export interface FieldLootOrb {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  drops?: FieldEnemy["drops"];
+  sourceEnemyId?: string;
+  sourceEnemyName?: string;
+  spawnedAt: number;
+  vx?: number;
+  vy?: number;
 }
 
 export interface FieldCombatState {
@@ -136,6 +181,18 @@ export interface FieldCombatState {
   attackCooldown: number;
   attackAnimTime: number;
   isRangedMode: boolean;
+  gearbladeMode?: "blade" | "launcher" | "grapple";
+  energyCells: number;
+  maxEnergyCells: number;
+  players?: Partial<Record<PlayerId, FieldPlayerCombatState>>;
+}
+
+export interface FieldPlayerCombatState {
+  isAttacking: boolean;
+  attackCooldown: number;
+  attackAnimTime: number;
+  isRangedMode: boolean;
+  gearbladeMode?: "blade" | "launcher" | "grapple";
   energyCells: number;
   maxEnergyCells: number;
 }
@@ -150,5 +207,6 @@ export interface FieldState {
   fieldEnemies?: FieldEnemy[];
   combat?: FieldCombatState;
   projectiles?: FieldProjectile[];
+  lootOrbs?: FieldLootOrb[];
   collectedResourceObjectIds?: string[];
 }

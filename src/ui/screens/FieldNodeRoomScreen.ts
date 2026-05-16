@@ -19,9 +19,7 @@ import {
   createCompanion,
   updateCompanionFollow,
   updateCompanionFetch,
-  updateCompanionAttack,
   findNearestResource,
-  findNearestEnemy,
   checkCompanionReachedTarget,
   type Companion,
 } from "../../field/companion";
@@ -2219,23 +2217,19 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
   const companion = roomState.companion;
   const player = roomState.player;
   const fieldMap = { width: roomState.width, height: roomState.height, tiles: roomState.tiles } as any;
+
+  if (companion.state === "attack") {
+    companion.state = "follow";
+    companion.target = undefined;
+    companion.attackCooldown = 0;
+  }
   
   // Check behavior cooldown
   if (currentTime - companion.lastBehaviorTime > companion.behaviorCooldownMs) {
     companion.lastBehaviorTime = currentTime;
     
-    // Priority: Attack > Fetch > Follow
-    // Check for enemies first (if not already attacking)
-    if (companion.state !== "attack") {
-      const nearestEnemy = findNearestEnemy(companion, player, roomState.enemies, fieldMap);
-      if (nearestEnemy) {
-        companion.state = "attack";
-        companion.target = { x: nearestEnemy.x, y: nearestEnemy.y, id: nearestEnemy.id };
-      }
-    }
-    
-    // Check for resources (if not attacking and not already fetching)
-    if (companion.state !== "attack" && companion.state !== "fetch") {
+    // Priority: Fetch > Follow. Sable hangs back during fights for now.
+    if (companion.state !== "fetch") {
       const nearestResource = findNearestResource(companion, player, roomState.sparkles, fieldMap);
       if (nearestResource) {
         companion.state = "fetch";
@@ -2245,78 +2239,7 @@ function updateCompanion(deltaTime: number, currentTime: number): void {
   }
   
   // Update based on state
-  if (companion.state === "attack" && companion.target) {
-    const targetEnemy = roomState.enemies.find(e => e.id === companion.target!.id);
-    if (!targetEnemy || targetEnemy.hp <= 0) {
-      // Enemy dead or gone, return to follow
-      companion.state = "follow";
-      companion.target = undefined;
-    } else {
-      // Update attack cooldown first
-      if (companion.attackCooldown > 0) {
-        companion.attackCooldown -= deltaTime;
-      }
-      
-      // Update attack behavior (movement toward enemy)
-      roomState.companion = updateCompanionAttack(
-        companion,
-        player,
-        { x: targetEnemy.x, y: targetEnemy.y, id: targetEnemy.id },
-        deltaTime,
-        fieldMap
-      );
-      
-      // Get updated companion reference
-      const updatedCompanion = roomState.companion;
-      
-      // Check if reached enemy and can attack (similar to player attack range)
-      const dx = targetEnemy.x - updatedCompanion.x;
-      const dy = targetEnemy.y - updatedCompanion.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      // Attack if within range (similar to player ATTACK_RANGE) and cooldown is ready
-      if (distance < ATTACK_RANGE && updatedCompanion.attackCooldown <= 0) {
-        // Deal damage (same as player attack)
-        targetEnemy.hp -= ATTACK_DAMAGE;
-        console.log(`[SABLE] Hit enemy ${targetEnemy.id}, HP: ${targetEnemy.hp}/${targetEnemy.maxHp}`);
-        
-        // Apply knockback to enemy (away from Sable, same as player attack)
-        if (distance > 0) {
-          const knockbackDirX = dx / distance;
-          const knockbackDirY = dy / distance;
-          targetEnemy.vx = knockbackDirX * ENEMY_KNOCKBACK_FORCE;
-          targetEnemy.vy = knockbackDirY * ENEMY_KNOCKBACK_FORCE;
-          targetEnemy.knockbackTime = ENEMY_KNOCKBACK_DURATION;
-        }
-        
-        // Set attack cooldown (same as player)
-        updatedCompanion.attackCooldown = ATTACK_COOLDOWN;
-        
-        // Check if enemy died
-        if (targetEnemy.hp <= 0) {
-          targetEnemy.hp = 0;
-          targetEnemy.deathAnimTime = performance.now();
-          console.log(`[SABLE] Defeated enemy ${targetEnemy.id}!`);
-          
-          // Update quest progress
-          updateQuestProgress("kill_enemies", 1, 1);
-          
-          // Small chance to drop resources (same as player kills)
-          if (Math.random() < 0.3) {
-            const types: Array<"metalScrap" | "wood" | "chaosShards" | "steamComponents"> = 
-              ["metalScrap", "wood", "chaosShards", "steamComponents"];
-            const type = types[Math.floor(Math.random() * types.length)];
-            roomState.collectedResources[type] += 1;
-            showToast(`Sable found +1 ${formatResourceName(type)}`);
-          }
-          
-          // Return to follow
-          updatedCompanion.state = "follow";
-          updatedCompanion.target = undefined;
-        }
-      }
-    }
-  } else if (companion.state === "fetch" && companion.target) {
+  if (companion.state === "fetch" && companion.target) {
     const targetSparkle = roomState.sparkles.find(s => s.id === companion.target!.id);
     if (!targetSparkle || targetSparkle.collected) {
       // Resource already collected, return to follow

@@ -11,6 +11,7 @@ import {
 } from "./battle";
 import type { FieldModEffect } from "./fieldMods";
 import type { CardEffect, UnitId } from "./types";
+import { calculateDamageBandAmount, type DamageBand } from "./damageBands";
 
 export type EffectSelectorKind =
   | "self"
@@ -116,6 +117,7 @@ export interface EffectActionNode extends EffectFlowNodeBase {
   action: EffectActionKind;
   selector?: EffectSelectorKind;
   amount?: number;
+  damageBand?: DamageBand;
   duration?: number;
   tiles?: number;
   stat?: EffectStatKey;
@@ -404,7 +406,15 @@ function actionNodeFromCardEffect(effect: CardEffect, targetType: "enemy" | "all
   const selector = selectorForCardTarget(targetType);
   switch (effect.type) {
     case "damage":
-      return { id: `legacy_card_${index + 1}`, family: "action", label: "Deal Damage", action: "deal_damage", selector, amount: effect.amount };
+      return {
+        id: `legacy_card_${index + 1}`,
+        family: "action",
+        label: "Deal Damage",
+        action: "deal_damage",
+        selector,
+        amount: effect.amount,
+        damageBand: effect.damageBand,
+      };
     case "heal":
       return { id: `legacy_card_${index + 1}`, family: "action", label: "Heal", action: "heal", selector, amount: effect.amount };
     case "def_up":
@@ -972,7 +982,11 @@ function applyActionNode(state: BattleState, node: EffectActionNode, currentSele
 
   switch (node.action) {
     case "deal_damage": {
-      const amount = scaleValue(node.amount, multiplier) ?? 0;
+      const sourceUnit = getSourceUnit(state, context);
+      const bandAmount = sourceUnit && node.damageBand
+        ? calculateDamageBandAmount(sourceUnit, node.damageBand)
+        : null;
+      const amount = scaleValue(bandAmount ?? node.amount, multiplier) ?? 0;
       selection.unitIds.forEach((unitId) => {
         next = applyDirectDamage(next, unitId, amount, sourceLabel);
       });
@@ -1091,7 +1105,7 @@ function applyActionNode(state: BattleState, node: EffectActionNode, currentSele
     case "end_turn": {
       const targetUnitId = selection.unitIds[0] ?? context.sourceUnitId ?? null;
       if (targetUnitId && next.activeUnitId === targetUnitId) {
-        return appendBattleLog(advanceTurn(next), `SLK//FLOW  :: ${sourceLabel} ends the turn.`);
+        return appendBattleLog(advanceTurn(next, { endedUnitPlayedCard: true, endedUnitMoved: false }), `SLK//FLOW  :: ${sourceLabel} ends the turn.`);
       }
       return appendBattleLog(next, `SLK//FLOW  :: ${sourceLabel} tried to end a non-active turn.`);
     }

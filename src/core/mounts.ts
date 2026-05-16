@@ -39,7 +39,7 @@ export const MOUNT_CARDS: MountCard[] = [
   {
     id: "mount_trample_strike",
     name: "Trample Strike",
-    description: "Deal 2 damage to an enemy and push them 1 tile.",
+    description: "Deal low damage to an enemy and push them 1 tile.",
     strainCost: 2,
     mountId: "mount_horse",
   },
@@ -47,7 +47,7 @@ export const MOUNT_CARDS: MountCard[] = [
   {
     id: "mount_cavalry_charge",
     name: "Cavalry Charge",
-    description: "Move in a straight line and deal 4 damage to the first enemy hit. +2 damage if moved 3+ tiles.",
+    description: "Move in a straight line and deal damage to the first enemy hit. Bonus damage if moved 3+ tiles.",
     strainCost: 3,
     mountId: "mount_warhorse",
   },
@@ -69,7 +69,7 @@ export const MOUNT_CARDS: MountCard[] = [
   {
     id: "mount_tail_sweep",
     name: "Tail Sweep",
-    description: "Deal 2 damage to all adjacent enemies.",
+    description: "Deal low damage to all adjacent enemies.",
     strainCost: 2,
     mountId: "mount_lizard",
   },
@@ -84,7 +84,7 @@ export const MOUNT_CARDS: MountCard[] = [
   {
     id: "mount_piston_kick",
     name: "Piston Kick",
-    description: "Deal 5 damage to adjacent enemy. Push them 2 tiles.",
+    description: "Deal high damage to an adjacent enemy. Push them 2 tiles.",
     strainCost: 3,
     mountId: "mount_steamrunner",
   },
@@ -99,7 +99,7 @@ export const MOUNT_CARDS: MountCard[] = [
   {
     id: "mount_savage_bite",
     name: "Savage Bite",
-    description: "Deal 4 damage. If target HP < 50%, deal +2 damage.",
+    description: "Deal damage. If target HP < 50%, deal bonus damage.",
     strainCost: 2,
     mountId: "mount_shadowbeast",
   },

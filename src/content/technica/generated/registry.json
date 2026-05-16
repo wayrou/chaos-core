@@ -28,6 +28,7 @@
       "gear_scissor_sword",
       "shield_pattern_shield",
       "weapon_iron_watchblade",
+      "weapon_iron_watchblade_2",
       "weapon_signal_staff"
     ],
     "item": [
@@ -49,5 +50,5 @@
       "unit_lucien"
     ]
   },
-  "updatedAt": 1776134872406
+  "updatedAt": 1777934784677
 }

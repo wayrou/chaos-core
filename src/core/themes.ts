@@ -4,7 +4,7 @@
 // Theme definitions and theme management
 // ============================================================================
 
-export type ThemeId = "ardycia" | "cyberpunk" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
+export type ThemeId = "ardycia" | "voidweaver" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
 
 export interface Theme {
   id: ThemeId;
@@ -199,9 +199,9 @@ export const THEMES: Record<ThemeId, Theme> = {
     }
   ),
   
-  cyberpunk: createTheme(
-    "cyberpunk",
-    "Cyberpunk",
+  voidweaver: createTheme(
+    "voidweaver",
+    "Voidweaver",
     "Neon blues and purples with high contrast - futuristic and vibrant",
     {
       white: "#ffffff",
@@ -648,15 +648,19 @@ export const THEMES: Record<ThemeId, Theme> = {
 // THEME APPLICATION
 // ============================================================================
 
+export function normalizeThemeId(themeId: string | null | undefined): ThemeId {
+  if (themeId === "cyberpunk") {
+    return "voidweaver";
+  }
+  return themeId && themeId in THEMES ? themeId as ThemeId : "ardycia";
+}
+
 /**
  * Apply a theme by updating CSS custom properties
  */
-export function applyTheme(themeId: ThemeId): void {
-  const theme = THEMES[themeId];
-  if (!theme) {
-    console.warn(`[THEME] Theme not found: ${themeId}, using default`);
-    return;
-  }
+export function applyTheme(themeId: ThemeId | string): void {
+  const normalizedThemeId = normalizeThemeId(themeId);
+  const theme = THEMES[normalizedThemeId];
   
   const root = document.documentElement;
   const c = theme.colors;
@@ -745,8 +749,8 @@ export function applyTheme(themeId: ThemeId): void {
 /**
  * Get theme by ID
  */
-export function getTheme(themeId: ThemeId): Theme {
-  return THEMES[themeId] || THEMES.ardycia;
+export function getTheme(themeId: ThemeId | string): Theme {
+  return THEMES[normalizeThemeId(themeId)];
 }
 
 /**

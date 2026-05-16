@@ -122,7 +122,7 @@ export function renderRosterScreen(returnTo: BaseCampReturnTo | "loadout" | "ope
     const loadout: UnitLoadout = (unit as any).loadout || { primaryWeapon: null, secondaryWeapon: null, helmet: null, chestpiece: null, accessory1: null, accessory2: null };
     const equipStats = calculateEquipmentStats(loadout, equipmentById);
     const unitClass: UnitClass = (unit as any).unitClass || "squire";
-    const portraitPath = getUnitManagementStandIconPath(unitClass);
+    const portraitPath = getUnitManagementStandIconPath(unitClass, unit.appearance);
     const deckSize = buildDeckFromLoadout(unitClass, loadout, equipmentById, gearSlotsById).length;
     const baseStats = (unit as any).stats || { maxHp: 20, atk: 5, def: 3, agi: 4, acc: 80 };
     const assignedSquad = presetMembership.get(unitId) ?? null;

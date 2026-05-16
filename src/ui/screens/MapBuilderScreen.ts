@@ -1,6 +1,6 @@
 import { getGameState, updateGameState } from "../../state/gameStore";
-import { renderBattleScreen } from "./BattleScreen";
 import { renderMainMenu } from "./MainMenuScreen";
+import { renderBattleScreenDeferred } from "./battleScreenLoader";
 import { createBuilderQuickTestBattle } from "../../core/tacticalBattle";
 import { BattleSceneController } from "../battle3d/BattleSceneController";
 import { createMapPreviewBoardSnapshot } from "../battle3d/snapshot";
@@ -530,7 +530,7 @@ export function relaunchMapBuilderQuickTest(): void {
     currentBattle: battle,
     phase: "battle",
   }));
-  renderBattleScreen();
+  renderBattleScreenDeferred();
 }
 
 function loadTemplate(templateId: string): void {
