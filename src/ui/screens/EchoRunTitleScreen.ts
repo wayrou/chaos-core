@@ -10,6 +10,10 @@ function getEchoRunStageLabel(stage: string): string {
       return "Initial Echo Field";
     case "map":
       return "Route Map";
+    case "shop":
+      return "Echo Shop";
+    case "workshop":
+      return "Echo Workshop";
     case "reward":
       return "Reward Draft";
     case "milestone":

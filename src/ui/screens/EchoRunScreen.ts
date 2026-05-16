@@ -3,12 +3,18 @@ import {
   abandonActiveEchoRun,
   applyEchoDraftChoice,
   clearActiveEchoRun,
+  craftEchoWorkshopRecipe,
+  enterEchoShop,
+  enterEchoWorkshop,
   getActiveEchoRun,
   getEchoRunEquipmentById,
   getEchoRunEquipmentPool,
   getEchoModifierDef,
   getEchoResultsSummary,
+  leaveEchoServiceNode,
   launchActiveEchoEncounterBattle,
+  purchaseEchoShopItem,
+  purchaseEchoShopListing,
   selectEchoMapNode,
   rerollActiveEchoChoices,
   startEchoRunSession,
@@ -25,10 +31,38 @@ import {
   type UnitClass,
   type UnitLoadout,
 } from "../../core/equipment";
+import {
+  CONSUMABLE_DATABASE,
+  RECIPE_DATABASE,
+  canAffordRecipe,
+  getKnownRecipes,
+  getRecipeCostString,
+  hasRequiredItem,
+  type Recipe,
+} from "../../core/crafting";
+import { getInventoryIconPath } from "../../core/inventoryIcons";
+import {
+  RESOURCE_KEYS,
+  formatResourceShortLabel,
+  getResourceEntries,
+  type ResourceKey,
+} from "../../core/resources";
+import { PAK_DATABASE } from "../../core/gearWorkbench";
+import {
+  drawNextUnitSampleHand,
+  ensureUnitSampleHandState,
+  playUnitSampleHandCard,
+  resetUnitSampleHandState,
+  SAMPLE_DRAW_HAND_SIZE,
+  SAMPLE_HAND_TURN_STRAIN_RELIEF,
+  type UnitSampleHandState,
+} from "../../core/unitSampleHand";
 import { enableAutosave, triggerAutosave } from "../../core/saveSystem";
 import type { EchoRewardChoice, EchoRunNode, EchoUnitDraftOption, Unit } from "../../core/types";
 import { showConfirmDialog } from "../components/confirmDialog";
 import { showEquipmentDetailModal } from "../components/equipmentDetailModal";
+import { renderGearWorkbenchScreen } from "./GearWorkbenchScreen";
+import { renderShopScreen } from "./ShopScreen";
 
 const echoDraftPreviewByStage = new Map<string, string>();
 const echoMapSelectionByStratum = new Map<string, string>();
@@ -61,6 +95,94 @@ let echoMapPressedKeys = new Set<string>();
 let echoMapShiftHeld = false;
 let echoManageUnitsOpen = false;
 let selectedEchoManageUnitId: string | null = null;
+let echoUnitSampleDrawState: UnitSampleHandState | null = null;
+type EchoShopTab = "paks" | "equipment" | "consumables" | "recipes" | "unlockables" | "sell";
+type EchoWorkshopCategory = "armor" | "accessory" | "consumable" | "upgrade";
+let echoShopTab: EchoShopTab = "paks";
+let echoWorkshopCategory: EchoWorkshopCategory = "armor";
+let echoWorkshopSelectedRecipeId: string | null = null;
+
+interface EchoShopCatalogItem {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  category: "pak" | "equipment" | "consumable" | "recipe" | "unlockable";
+  rarity: "common" | "uncommon" | "rare" | "epic";
+  displayCategory: string;
+  owned?: boolean;
+}
+
+const ECHO_PAK_ITEMS: EchoShopCatalogItem[] = [
+  {
+    id: "pak_core",
+    name: "CORE.PAK",
+    description: "Standard issue tactical data. Contains basic attack and defense cards.",
+    price: 50,
+    category: "pak",
+    rarity: "common",
+    displayCategory: "DATA PACK",
+  },
+  {
+    id: "pak_steam",
+    name: "STEAM.PAK",
+    description: "Mechanical weapon enhancements. Heat management and venting cards.",
+    price: 75,
+    category: "pak",
+    rarity: "uncommon",
+    displayCategory: "DATA PACK",
+  },
+  {
+    id: "pak_void",
+    name: "VOID.PAK",
+    description: "Chaos-infused abilities. High risk, high reward cards.",
+    price: 100,
+    category: "pak",
+    rarity: "rare",
+    displayCategory: "DATA PACK",
+  },
+  {
+    id: "pak_tech",
+    name: "TECH.PAK",
+    description: "Advanced tactical protocols. Buff and debuff oriented.",
+    price: 75,
+    category: "pak",
+    rarity: "uncommon",
+    displayCategory: "DATA PACK",
+  },
+  {
+    id: "pak_boss",
+    name: "BOSS.PAK",
+    description: "Legendary combat data extracted from fallen commanders.",
+    price: 200,
+    category: "pak",
+    rarity: "epic",
+    displayCategory: "DATA PACK",
+  },
+];
+
+const ECHO_STORY_SHOP_EQUIPMENT_IDS = [
+  "weapon_iron_longsword",
+  "weapon_elm_recurve_bow",
+  "armor_leather_jerkin",
+  "accessory_fleetfoot_anklet",
+];
+
+const ECHO_STORY_SHOP_RECIPE_IDS = [
+  "recipe_steam_valve_wristguard",
+  "recipe_coolant_flask",
+  "recipe_overcharge_cell",
+  "recipe_steelplate_cuirass_plus1",
+];
+
+const ECHO_CONSUMABLE_PRICES: Record<string, number> = {
+  consumable_field_ration: 18,
+  consumable_healing_kit: 30,
+  consumable_smoke_bomb: 35,
+  consumable_repair_kit: 35,
+  consumable_coolant_flask: 38,
+  consumable_overcharge_cell: 45,
+};
 
 const ECHO_LOADOUT_SLOTS: Array<{ slot: keyof UnitLoadout; label: string }> = [
   { slot: "primaryWeapon", label: "Primary Weapon" },
@@ -86,6 +208,16 @@ function escapeEchoAttr(value: unknown): string {
   return escapeEchoHtml(value).replace(/"/g, "&quot;");
 }
 
+function getEchoDisplayNodeTitle(title: string): string {
+  if (title === "Soft Relay") {
+    return "Staging Zone";
+  }
+  if (title === "Draft Contact") {
+    return "Contact";
+  }
+  return title;
+}
+
 function getEchoPreviewStageKey(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
   return `${run.id}:${run.stage}:${run.encounterNumber}`;
 }
@@ -106,8 +238,8 @@ function createDefaultEchoMapWindowFrames(): Record<EchoMapWindowId, EchoMapWind
   const viewportWidth = window.innerWidth || 1440;
   const viewportHeight = window.innerHeight || 900;
   const inset = 16;
-  const commandWidth = clampNumber(Math.round(viewportWidth * 0.31), 360, 460);
-  const commandHeight = clampNumber(Math.round(viewportHeight * 0.24), 170, 220);
+  const commandWidth = clampNumber(Math.round(viewportWidth * 0.62), 720, 920);
+  const commandHeight = clampNumber(Math.round(viewportHeight * 0.42), 330, 560);
   const squadWidth = clampNumber(Math.round(viewportWidth * 0.22), 260, 340);
   const squadHeight = clampNumber(Math.round(viewportHeight * 0.44), 270, 420);
   const detailWidth = clampNumber(Math.round(viewportWidth * 0.39), 420, 580);
@@ -572,7 +704,9 @@ function getEchoMapNodeShape(nodeType: EchoRunNode["nodeType"]): string {
 }
 
 function getEchoMapNodeActionLabel(node: EchoRunNode): string {
-  return node.nodeType === "support" || node.nodeType === "milestone" ? "ACCESS NODE" : "ENGAGE NODE";
+  return node.nodeType === "support" || node.nodeType === "milestone"
+    ? "ACCESS NODE"
+    : "ENGAGE NODE";
 }
 
 function getEchoMapAnchors(count: number): number[] {
@@ -683,15 +817,25 @@ function getEchoDeckCardGlyph(type: EquipmentCard["type"]): string {
   }
 }
 
-function renderEchoDeckCard(card: EquipmentCard): string {
-  const footerBits = [
+function renderEchoDeckCard(
+  card: EquipmentCard,
+  options: {
+    footerStats?: string[];
+    extraClasses?: string[];
+    attrs?: string;
+  } = {},
+): string {
+  const footerBits = (options.footerStats ?? [
     card.range,
     typeof card.damage === "number" ? `${card.damage} DMG` : null,
     "DECK",
-  ].filter(Boolean).map((value) => `<span class="deck-card-stat">${escapeEchoHtml(value)}</span>`).join("");
+  ]).filter(Boolean).map((value) => `<span class="deck-card-stat">${escapeEchoHtml(value)}</span>`).join("");
+  const stateClasses = options.extraClasses ?? ["deck-card--compiled"];
+  const extraClasses = stateClasses.length ? ` ${stateClasses.map(escapeEchoAttr).join(" ")}` : "";
+  const attrs = options.attrs ? ` ${options.attrs}` : "";
 
   return `
-    <div class="deck-card deck-card--${escapeEchoAttr(card.type)} deck-card--compiled">
+    <div class="deck-card deck-card--${escapeEchoAttr(card.type)}${extraClasses}"${attrs}>
       <div class="deck-card-cost">${card.strainCost}</div>
       <div class="deck-card-type">${escapeEchoHtml(card.type.toUpperCase())}</div>
       <div class="deck-card-art">
@@ -706,6 +850,56 @@ function renderEchoDeckCard(card: EquipmentCard): string {
       </div>
     </div>
   `;
+}
+
+function resetEchoUnitSampleDrawState(unitId: string, deck: string[]): UnitSampleHandState | null {
+  echoUnitSampleDrawState = resetUnitSampleHandState(unitId, deck);
+  return echoUnitSampleDrawState;
+}
+
+function ensureEchoUnitSampleDrawState(unitId: string, deck: string[]): UnitSampleHandState | null {
+  echoUnitSampleDrawState = ensureUnitSampleHandState(echoUnitSampleDrawState, unitId, deck);
+  return echoUnitSampleDrawState;
+}
+
+function drawNextEchoUnitSampleHand(unitId: string, deck: string[]): UnitSampleHandState | null {
+  echoUnitSampleDrawState = drawNextUnitSampleHand(echoUnitSampleDrawState, unitId, deck);
+  return echoUnitSampleDrawState;
+}
+
+function getEchoSampleCardStrainDelta(card: EquipmentCard): number {
+  return Number(card.strainCost ?? 0);
+}
+
+function playEchoUnitSampleCard(unitId: string, deck: string[], handIndex: number, card: EquipmentCard): UnitSampleHandState | null {
+  ensureEchoUnitSampleDrawState(unitId, deck);
+  echoUnitSampleDrawState = playUnitSampleHandCard(
+    echoUnitSampleDrawState,
+    handIndex,
+    getEchoSampleCardStrainDelta(card),
+  );
+  return echoUnitSampleDrawState;
+}
+
+function getSelectedEchoUnitSampleContext(): {
+  unitId: string;
+  deck: string[];
+  cardsById: Record<string, EquipmentCard>;
+} | null {
+  const run = getActiveEchoRun();
+  const unit = selectedEchoManageUnitId ? run?.unitsById[selectedEchoManageUnitId] ?? null : null;
+  if (!run || !unit) {
+    return null;
+  }
+
+  const equipmentById = getEchoRunEquipmentById(run);
+  const loadout = getEchoUnitLoadout(unit);
+  const unitClass = getEchoUnitClass(unit);
+  return {
+    unitId: unit.id,
+    deck: buildDeckFromLoadout(unitClass, loadout, equipmentById, {}),
+    cardsById: getAllEquipmentCards(),
+  };
 }
 
 function getEchoLoadoutEquipmentIds(loadout: UnitLoadout): string[] {
@@ -832,10 +1026,31 @@ function renderEchoManageUnitsPanel(run: NonNullable<ReturnType<typeof getActive
   const deck = selectedUnit ? buildDeckFromLoadout(selectedClass, selectedLoadout, equipmentById, {}) : [];
   const cardsById = getAllEquipmentCards();
   const uniqueCardCount = new Set(deck).size;
+  const sampleDrawState = selectedUnit ? ensureEchoUnitSampleDrawState(selectedUnit.id, deck) : null;
+  const sampleStrain = sampleDrawState?.strain ?? 0;
   const deckCardsHtml = deck.map((cardId) => {
     const card = cardsById[cardId];
     return card ? renderEchoDeckCard(card) : "";
   }).join("");
+  const sampleHandHtml = (sampleDrawState?.hand ?? [])
+    .map((cardId, handIndex) => {
+      const card = cardsById[cardId];
+      if (!card) {
+        return "";
+      }
+
+      const sampleStrainDelta = getEchoSampleCardStrainDelta(card);
+      const playPreviewLabel = sampleStrainDelta >= 0
+        ? `PLAY +${sampleStrainDelta} STR`
+        : `PLAY ${sampleStrainDelta} STR`;
+
+      return renderEchoDeckCard(card, {
+        footerStats: card.range ? [card.range, playPreviewLabel] : [playPreviewLabel],
+        extraClasses: ["deck-card--sample", "deck-card--sample-playable"],
+        attrs: `data-echo-sample-hand-index="${handIndex}" title="Play ${escapeEchoAttr(card.name)} in the sample hand"`,
+      });
+    })
+    .join("");
   const totalStats = {
     maxHp: baseStats.maxHp + equipmentStats.hp,
     atk: baseStats.atk + equipmentStats.atk,
@@ -935,10 +1150,50 @@ function renderEchoManageUnitsPanel(run: NonNullable<ReturnType<typeof getActive
                     <div class="unitdetail-section-title">COMPILED DECK (${deck.length} CARDS)</div>
                     <div class="unitdetail-deck-summary">
                       <span class="unitdetail-deck-chip">UNIQUE ${uniqueCardCount}</span>
-                      <span class="unitdetail-deck-chip">ECHO GEAR ${getEchoLoadoutEquipmentIds(selectedLoadout).length}</span>
+                      <span class="unitdetail-deck-chip">DRAW PILE ${sampleDrawState?.drawPile.length ?? deck.length}</span>
+                      <span class="unitdetail-deck-chip">HAND ${sampleDrawState?.hand.length ?? 0}</span>
+                      <span class="unitdetail-deck-chip">DISCARD ${sampleDrawState?.discardPile.length ?? 0}</span>
+                    </div>
+                  </div>
+                  <div class="unitdetail-deck-actions">
+                    <div class="unitdetail-deck-actions-copy">
+                      Draw ${SAMPLE_DRAW_HAND_SIZE} cards, click sample cards to test strain pressure, and cool ${SAMPLE_HAND_TURN_STRAIN_RELIEF} strain on each new hand.
+                    </div>
+                    <div class="unitdetail-deck-action-row">
+                      <button class="unitdetail-sample-draw-btn" id="echoUnitSampleDrawBtn" ${deck.length === 0 ? "disabled" : ""}>
+                        ${sampleDrawState?.drawCount ? "DRAW NEXT HAND" : "SAMPLE DRAW"}
+                      </button>
+                      <button class="unitdetail-sample-reset-btn" id="echoUnitSampleResetBtn" ${deck.length === 0 ? "disabled" : ""}>
+                        RESET SAMPLE
+                      </button>
                     </div>
                   </div>
                 </div>
+
+                <div class="unitdetail-sample-panel">
+                  <div class="unitdetail-sample-header">
+                    <div class="unitdetail-sample-heading">
+                      <div class="unitdetail-sample-title">
+                        SAMPLE HAND ${sampleDrawState?.drawCount ? `#${sampleDrawState.drawCount}` : "READY"}
+                      </div>
+                      <div class="unitdetail-sample-copy">
+                        ${sampleDrawState?.drawCount
+                          ? `Click a card to test its strain impact. DRAW NEXT HAND discards the rest and cools ${SAMPLE_HAND_TURN_STRAIN_RELIEF} strain.`
+                          : "Press SAMPLE DRAW to preview how this loadout opens before deployment."}
+                      </div>
+                    </div>
+                    <div class="unitdetail-sample-strain">
+                      <span class="unitdetail-sample-strain__label">TEST STRAIN</span>
+                      <span class="unitdetail-sample-strain__value">${sampleStrain}</span>
+                      <span class="unitdetail-sample-strain__meta">NEXT DRAW -${SAMPLE_HAND_TURN_STRAIN_RELIEF}</span>
+                    </div>
+                  </div>
+                  <div class="deck-grid deck-grid--sample">
+                    ${sampleHandHtml || `<div class="unitdetail-sample-empty">${sampleDrawState?.drawCount ? "Sample hand exhausted. Draw next hand to keep testing the deck flow." : "No sample hand yet. Draw to see five live cards from the compiled deck."}</div>`}
+                  </div>
+                </div>
+
+                <div class="unitdetail-deck-grid-heading">FULL DECK GRID</div>
                 <div class="deck-grid deck-grid--compiled">
                   ${deckCardsHtml || '<div class="deck-empty">No cards in deck. Equip gear to add cards.</div>'}
                 </div>
@@ -1364,12 +1619,632 @@ function renderChoiceCard(
   `;
 }
 
+function renderEchoRewardMaterialChips(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const entries = getResourceEntries(run.lastEconomyReward?.resources, { includeZero: false });
+  if (entries.length === 0) {
+    return `<div class="echo-run-reward-material echo-run-reward-material--empty">No material salvage</div>`;
+  }
+  return entries.map((entry) => `
+    <div class="echo-run-reward-material">
+      <span>${formatResourceShortLabel(entry.key)}</span>
+      <strong>+${entry.amount}</strong>
+    </div>
+  `).join("");
+}
+
+function renderEchoRewardStage(
+  run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
+  selectedPreviewChoice: EchoRewardChoice | null | undefined,
+): string {
+  const reward = run.lastEconomyReward;
+  const summary = run.lastEncounterSummary ?? null;
+  const sourceLabel = reward?.sourceLabel
+    ?? (summary ? `${summary.encounterType.replace(/_/g, " ").toUpperCase()} CONTACT` : "SUPPORT CACHE");
+  const wadReward = reward?.wad ?? 0;
+  const challengeLabel = summary
+    ? summary.challengeCompleted
+      ? "Challenge complete"
+      : summary.challengeFailed
+        ? "Challenge missed"
+        : "No challenge"
+    : "Support resolved";
+
+  return `
+    <section class="echo-run-choice-stage echo-run-reward-stage">
+      <div class="echo-run-choice-stage__header echo-run-reward-stage__header">
+        <div>
+          <div class="echo-run-choice-stage__title">Reward Packet</div>
+          <div class="echo-run-service-stage__copy">WAD and material salvage have already been banked. Choose one tactical reward to continue.</div>
+        </div>
+        <div class="echo-run-choice-stage__actions">
+          <button class="echo-run-secondary-btn" type="button" id="echoRunRerollBtn" ${run.rerolls <= 0 ? "disabled" : ""}>REROLL (${run.rerolls})</button>
+          <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">ECHO TITLE</button>
+          <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
+        </div>
+      </div>
+
+      <div class="echo-run-reward-stage__overview">
+        <article class="echo-run-reward-stage__hero">
+          <div class="echo-run-reward-stage__kicker">ACQUIRED // ${escapeEchoHtml(sourceLabel)}</div>
+          <h2 class="echo-run-reward-stage__title">CACHE RESOLVED</h2>
+          <p class="echo-run-reward-stage__copy">Spend this payout at the Route Command shop or workshop before taking another contact.</p>
+        </article>
+
+        <div class="echo-run-reward-stage__ledger">
+          <div class="echo-run-reward-wad">
+            <span>WAD</span>
+            <strong>+${wadReward}</strong>
+          </div>
+          <div class="echo-run-reward-materials">
+            ${renderEchoRewardMaterialChips(run)}
+          </div>
+        </div>
+
+        <div class="echo-run-reward-stage__run-totals">
+          <div><span>Wallet</span><strong>${run.wad ?? 0} WAD</strong></div>
+          <div><span>Score</span><strong>${summary ? `+${summary.scoreGained}` : run.totalScore}</strong></div>
+          <div><span>Rerolls</span><strong>${summary ? `+${summary.rerollsEarned}` : run.rerolls}</strong></div>
+          <div><span>Status</span><strong>${challengeLabel}</strong></div>
+        </div>
+      </div>
+
+      <div class="echo-run-reward-stage__draft-header">
+        <div>
+          <div class="echo-run-choice-stage__title">Choose Tactical Reward</div>
+          <p>Pick one lane. The economy packet above stays banked either way.</p>
+        </div>
+      </div>
+
+      <div class="echo-run-choice-stage__body">
+        <div class="echo-run-choice-grid">
+          ${run.draftChoices.map((choice) => renderChoiceCard(choice, {
+            isPreviewed: selectedPreviewChoice?.id === choice.id,
+          })).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function formatEchoItemName(itemId: string, run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const equipment = getEchoRunEquipmentById(run)[itemId] ?? getAllStarterEquipment()[itemId];
+  if (equipment) {
+    return equipment.name;
+  }
+  const consumable = CONSUMABLE_DATABASE[itemId];
+  if (consumable) {
+    return consumable.name;
+  }
+  return itemId
+    .replace(/^(weapon_|armor_|accessory_|consumable_)/, "")
+    .replace(/_/g, " ")
+    .replace(/plus(\d+)/, "+$1")
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function getEchoRecipeDisplayCategory(recipe: Recipe): EchoWorkshopCategory {
+  if (recipe.category === "consumable" || recipe.resultItemId.startsWith("consumable_")) {
+    return "consumable";
+  }
+  if (recipe.category === "upgrade") {
+    return "upgrade";
+  }
+  if (recipe.category === "accessory" || recipe.resultItemId.startsWith("accessory_")) {
+    return "accessory";
+  }
+  return "armor";
+}
+
+function isEchoWorkshopRecipeSupported(recipe: Recipe): boolean {
+  if (recipe.deprecated || recipe.resultItemId.startsWith("weapon_")) {
+    return false;
+  }
+  if (recipe.resultItemId.startsWith("consumable_")) {
+    return true;
+  }
+  if (getAllStarterEquipment()[recipe.resultItemId]) {
+    return true;
+  }
+  return recipe.category === "upgrade" && Boolean(recipe.requiresItemId);
+}
+
+function getEchoWorkshopRecipes(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): Recipe[] {
+  return getKnownRecipes(run.knownRecipeIds ?? [])
+    .filter(isEchoWorkshopRecipeSupported);
+}
+
+function renderEchoEconomyWallet(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const resourceKeys = RESOURCE_KEYS as readonly ResourceKey[];
+  const resources = getResourceEntries(run.resources, { includeZero: true, keys: resourceKeys });
+  return `
+    <div class="echo-run-service-stage__wallet-grid">
+      <div class="echo-run-service-stage__wallet echo-run-service-stage__wallet--wad">WAD <strong>${run.wad ?? 0}</strong></div>
+      ${resources.map((entry) => `
+        <div class="echo-run-service-stage__wallet">
+          ${formatResourceShortLabel(entry.key)} <strong>${entry.amount}</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderEchoConsumableInventory(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const entries = Object.entries(run.consumables ?? {}).filter(([, amount]) => Number(amount) > 0);
+  if (entries.length === 0) {
+    return `<div class="echo-run-service-stage__empty-small">No consumables stocked.</div>`;
+  }
+  return entries.map(([itemId, amount]) => `
+    <div class="echo-run-service-stage__inventory-row">
+      <span>${escapeEchoHtml(formatEchoItemName(itemId, run))}</span>
+      <strong>x${amount}</strong>
+    </div>
+  `).join("");
+}
+
+function getEchoEquipmentShopRarity(equipment: Equipment): EchoShopCatalogItem["rarity"] {
+  const positiveStatTotal = Object.values(equipment.stats ?? {}).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  const cardCount = Array.isArray(equipment.cardsGranted) ? equipment.cardsGranted.length : 0;
+  const score = positiveStatTotal + cardCount;
+  if (score >= 9) return "epic";
+  if (score >= 7) return "rare";
+  if (score >= 4 || (equipment.slot === "weapon" && equipment.isMechanical)) return "uncommon";
+  return "common";
+}
+
+function getEchoEquipmentShopPrice(equipment: Equipment, rarity: EchoShopCatalogItem["rarity"]): number {
+  const baseBySlot: Record<Equipment["slot"], number> = {
+    weapon: 70,
+    helmet: 55,
+    chestpiece: 60,
+    accessory: 65,
+  };
+  const rarityBonus: Record<EchoShopCatalogItem["rarity"], number> = {
+    common: 0,
+    uncommon: 20,
+    rare: 45,
+    epic: 80,
+  };
+  const positiveStatTotal = Object.values(equipment.stats ?? {}).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  const cardCount = Array.isArray(equipment.cardsGranted) ? equipment.cardsGranted.length : 0;
+  const footprintValue =
+    (equipment.inventory?.massKg ?? 0) * 1.5 +
+    (equipment.inventory?.bulkBu ?? 0) * 2 +
+    (equipment.inventory?.powerW ?? 0) * 0.4;
+  return Math.max(10, Math.round((baseBySlot[equipment.slot] + positiveStatTotal * 7 + cardCount * 5 + footprintValue + rarityBonus[rarity]) / 5) * 5);
+}
+
+function getEchoShopEquipmentItems(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoShopCatalogItem[] {
+  const equipmentById = getAllStarterEquipment();
+  const ids = new Set<string>(ECHO_STORY_SHOP_EQUIPMENT_IDS);
+  Object.values(equipmentById).forEach((equipment) => {
+    if (equipment.acquisition?.shop) {
+      ids.add(equipment.id);
+    }
+  });
+
+  return Array.from(ids)
+    .map((id) => equipmentById[id])
+    .filter((equipment): equipment is Equipment => Boolean(equipment))
+    .map((equipment) => {
+      const rarity = getEchoEquipmentShopRarity(equipment);
+      return {
+        id: equipment.id,
+        name: equipment.name,
+        description: equipment.description?.trim() || formatEchoEquipmentStats(equipment) || "Reliable baseline gear profile.",
+        price: getEchoEquipmentShopPrice(equipment, rarity),
+        category: "equipment" as const,
+        rarity,
+        displayCategory: equipment.slot.toUpperCase(),
+        owned: getEchoRunEquipmentPool(run).includes(equipment.id),
+      };
+    })
+    .sort((left, right) => left.price - right.price || left.name.localeCompare(right.name));
+}
+
+function getEchoShopConsumableItems(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoShopCatalogItem[] {
+  return Object.values(CONSUMABLE_DATABASE)
+    .map((consumable) => ({
+      id: consumable.id,
+      name: consumable.name,
+      description: consumable.description,
+      price: ECHO_CONSUMABLE_PRICES[consumable.id] ?? 35,
+      category: "consumable" as const,
+      rarity: consumable.effect === "attack_boost" || consumable.effect === "heat_reduce" ? "uncommon" as const : "common" as const,
+      displayCategory: "ITEM",
+      owned: Number(run.consumables?.[consumable.id] ?? 0) > 0,
+    }))
+    .sort((left, right) => left.price - right.price || left.name.localeCompare(right.name));
+}
+
+function getEchoRecipeShopPrice(recipe: Recipe): number {
+  const resourceValue = RESOURCE_KEYS.reduce((sum, key) => sum + Number(recipe.cost[key] ?? 0), 0);
+  const base = recipe.category === "upgrade" ? 125 : recipe.category === "consumable" ? 80 : 95;
+  return Math.max(40, Math.round((base + resourceValue * 12) / 5) * 5);
+}
+
+function getEchoShopRecipeItems(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoShopCatalogItem[] {
+  const ids = new Set<string>(ECHO_STORY_SHOP_RECIPE_IDS);
+  Object.values(RECIPE_DATABASE).forEach((recipe) => {
+    if (!recipe.deprecated && !recipe.starterRecipe) {
+      ids.add(recipe.id);
+    }
+  });
+
+  return Array.from(ids)
+    .map((id) => RECIPE_DATABASE[id])
+    .filter((recipe): recipe is Recipe => Boolean(recipe) && !recipe.deprecated && !run.knownRecipeIds.includes(recipe.id))
+    .map((recipe) => ({
+      id: recipe.id,
+      name: recipe.name,
+      description: recipe.description,
+      price: getEchoRecipeShopPrice(recipe),
+      category: "recipe" as const,
+      rarity: recipe.category === "upgrade" ? "rare" as const : recipe.category === "consumable" ? "uncommon" as const : "common" as const,
+      displayCategory: `${recipe.category.toUpperCase()} RECIPE`,
+      owned: run.knownRecipeIds.includes(recipe.id),
+    }))
+    .sort((left, right) => left.price - right.price || left.name.localeCompare(right.name));
+}
+
+function getEchoShopItemsForTab(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): EchoShopCatalogItem[] {
+  switch (echoShopTab) {
+    case "paks":
+      return ECHO_PAK_ITEMS;
+    case "consumables":
+      return getEchoShopConsumableItems(run);
+    case "recipes":
+      return getEchoShopRecipeItems(run);
+    case "unlockables":
+    case "sell":
+      return [];
+    case "equipment":
+    default:
+      return getEchoShopEquipmentItems(run);
+  }
+}
+
+function getEchoShopTabContentMeta(tab: EchoShopTab): { title: string; description: string; empty: string } {
+  switch (tab) {
+    case "paks":
+      return {
+        title: "DATA PACKS (.PAK)",
+        description: "Decompress tactical data into this Echo Run's temporary card library.",
+        empty: "No data packs available.",
+      };
+    case "equipment":
+      return {
+        title: "EQUIPMENT",
+        description: "Weapons and armor for drafted operators.",
+        empty: "No equipment listings available.",
+      };
+    case "consumables":
+      return {
+        title: "CONSUMABLES",
+        description: "Single-use battle support stocked only for this Echo Run.",
+        empty: "No consumables available.",
+      };
+    case "recipes":
+      return {
+        title: "CRAFTING RECIPES",
+        description: "Learn schematics for the Echo Workshop.",
+        empty: "No unknown recipes available.",
+      };
+    case "unlockables":
+      return {
+        title: "OTHER",
+        description: "Run-scoped chassis and doctrine unlocks for this route.",
+        empty: "No run-scoped unlocks available.",
+      };
+    case "sell":
+      return {
+        title: "SELL",
+        description: "Convert run-scoped supplies, gear, and materials back into WAD.",
+        empty: "No sellback stock available for this run.",
+      };
+  }
+}
+
+function renderEchoShopItem(item: EchoShopCatalogItem, run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const canAfford = (run.wad ?? 0) >= item.price;
+  const owned = Boolean(item.owned);
+  const isPak = item.category === "pak";
+  const pakCardCount = isPak ? (PAK_DATABASE[item.id]?.cardCount ?? "?") : null;
+  const equipment = item.category === "equipment" ? getAllStarterEquipment()[item.id] : null;
+  const stats = equipment ? formatEchoEquipmentStats(equipment) : "";
+  const disabled = owned || !canAfford;
+  const buttonLabel = owned
+    ? item.category === "recipe"
+      ? "KNOWN"
+      : item.category === "equipment"
+        ? "OWNED"
+        : "STOCKED"
+    : canAfford
+      ? "PURCHASE"
+      : "INSUFFICIENT";
+
+  return `
+    <div class="shop-item shop-item--${item.rarity} ${disabled ? "shop-item--disabled" : ""}" data-item-id="${escapeEchoAttr(item.id)}">
+      <div class="shop-item-header">
+        <span class="shop-item-name">${escapeEchoHtml(item.name)}</span>
+        <span class="shop-item-rarity">${item.rarity.toUpperCase()}</span>
+      </div>
+      <div class="shop-item-body">
+        <p class="shop-item-desc">${escapeEchoHtml(item.description)}</p>
+        ${stats ? `<div class="shop-item-meta"><span class="meta-tag">${escapeEchoHtml(stats)}</span></div>` : ""}
+        ${pakCardCount ? `<div class="shop-item-meta"><span class="meta-tag">${pakCardCount} cards</span></div>` : ""}
+        ${item.displayCategory ? `<div class="shop-item-meta"><span class="meta-tag">${escapeEchoHtml(item.displayCategory)}</span></div>` : ""}
+      </div>
+      <div class="shop-item-footer">
+        <div class="shop-item-price">
+          <span class="price-value">${item.price}</span>
+          <span class="price-label">WAD</span>
+        </div>
+        <button
+          class="shop-buy-btn ${disabled ? "shop-buy-btn--disabled" : ""}"
+          type="button"
+          data-echo-shop-item-id="${escapeEchoAttr(item.id)}"
+          data-echo-shop-category="${escapeEchoAttr(item.category)}"
+          data-echo-shop-cost="${item.price}"
+          ${disabled ? "disabled" : ""}
+        >
+          ${buttonLabel}
+        </button>
+      </div>
+      ${equipment ? `<button class="echo-run-shop-inline-inspect" type="button" data-echo-shop-inspect-item="${escapeEchoAttr(item.id)}">GEAR INFO</button>` : ""}
+    </div>
+  `;
+}
+
+function renderEchoShopContent(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const items = getEchoShopItemsForTab(run);
+  const meta = getEchoShopTabContentMeta(echoShopTab);
+  return `
+    <div class="shop-section">
+      <div class="shop-section-header">
+        <h2 class="section-title">${meta.title}</h2>
+        <p class="section-desc">${meta.description}</p>
+      </div>
+      <div class="shop-grid">
+        ${items.length > 0 ? items.map((item) => renderEchoShopItem(item, run)).join("") : `<div class="echo-run-empty">${meta.empty}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderEchoResourceFooter(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const fallbackInventoryIcon = getInventoryIconPath();
+  return `
+    <div class="shop-footer">
+      <div class="resource-display">
+        ${getResourceEntries(run.resources, { includeZero: true }).map((entry) => `
+          <div class="resource-item">
+            <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+            <span class="resource-value">${entry.amount}</span>
+            <span class="resource-label">${escapeEchoHtml(entry.label)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderEchoShopStage(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const tabs: Array<{ id: EchoShopTab; icon: string; label: string }> = [
+    { id: "paks", icon: "📦", label: "DATA PACKS" },
+    { id: "equipment", icon: "⚔️", label: "EQUIPMENT" },
+    { id: "consumables", icon: "💊", label: "CONSUMABLES" },
+    { id: "recipes", icon: "📜", label: "RECIPES" },
+    { id: "unlockables", icon: "🔓", label: "UNLOCKS" },
+    { id: "sell", icon: "💰", label: "SELL" },
+  ];
+  return `
+    <div class="shop-root town-screen town-screen--shop echo-run-town-service">
+      <div class="shop-header town-screen__header">
+        <div class="shop-header-left town-screen__titleblock">
+          <h1 class="shop-title">SHOP</h1>
+          <div class="shop-subtitle">S/COM_OS SUPPLY TERMINAL • ECHO RUN STOCK</div>
+        </div>
+        <div class="shop-header-right town-screen__header-right">
+          <div class="shop-wallet">
+            <span class="wallet-label">AVAILABLE WAD</span>
+            <span class="wallet-value">${(run.wad ?? 0).toLocaleString()}</span>
+          </div>
+          <button class="shop-back-btn town-screen__back-btn" type="button" id="echoRunLeaveServiceBtn">
+            <span class="btn-icon">←</span>
+            <span class="btn-text">ROUTE COMMAND</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="shop-tabs town-screen__subnav">
+        ${tabs.map((tab) => `
+          <button
+            class="shop-tab ${echoShopTab === tab.id ? "shop-tab--active" : ""}"
+            type="button"
+            data-echo-shop-tab="${tab.id}"
+          >
+            <span class="tab-icon">${tab.icon}</span>
+            <span class="tab-text">${tab.label}</span>
+          </button>
+        `).join("")}
+      </div>
+
+      <div class="shop-content town-screen__content-panel">
+        ${renderEchoShopContent(run)}
+      </div>
+
+      ${renderEchoResourceFooter(run)}
+    </div>
+  `;
+}
+
+function renderEchoWorkshopStage(run: NonNullable<ReturnType<typeof getActiveEchoRun>>): string {
+  const recipes = getEchoWorkshopRecipes(run);
+  const inventoryItemIds = getEchoRunEquipmentPool(run);
+  const categoryRecipes = recipes.filter((recipe) => getEchoRecipeDisplayCategory(recipe) === echoWorkshopCategory);
+  const selectedRecipe = categoryRecipes.find((recipe) => recipe.id === echoWorkshopSelectedRecipeId)
+    ?? categoryRecipes[0]
+    ?? null;
+  echoWorkshopSelectedRecipeId = selectedRecipe?.id ?? null;
+
+  const categories: Array<{ id: EchoWorkshopCategory; label: string }> = [
+    { id: "armor", label: "Armor" },
+    { id: "accessory", label: "Accessories" },
+    { id: "consumable", label: "Consumables" },
+    { id: "upgrade", label: "Upgrades" },
+  ];
+
+  const selectedCanCraft = selectedRecipe
+    ? canAffordRecipe(selectedRecipe, run.resources) && hasRequiredItem(selectedRecipe, inventoryItemIds)
+    : false;
+  const fallbackInventoryIcon = getInventoryIconPath();
+
+  return `
+    <div class="workbench-root town-screen echo-run-town-service">
+      <div class="workbench-header town-screen__header">
+        <div class="workbench-header-left town-screen__titleblock">
+          <h1 class="workbench-title">WORKSHOP</h1>
+          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • ECHO RUN STOCK</div>
+        </div>
+        <div class="workbench-header-right town-screen__header-right">
+          <button class="workbench-back-btn town-screen__back-btn" type="button" id="echoRunLeaveServiceBtn">← ROUTE COMMAND</button>
+        </div>
+      </div>
+
+      <div class="workbench-tabs town-screen__subnav">
+        <button class="workbench-tab" type="button" disabled>BUILD GEAR</button>
+        <button class="workbench-tab" type="button" disabled>CUSTOMIZE GEAR</button>
+        <button class="workbench-tab workbench-tab--active" type="button">CRAFT</button>
+      </div>
+
+      <div class="workbench-main">
+        <div class="crafting-tab-layout">
+          <div class="crafting-sidebar">
+            <div class="crafting-resources">
+              <div class="panel-section-title">MATERIALS</div>
+              <div class="resource-grid">
+                ${getResourceEntries(run.resources, { includeZero: true }).slice(0, 4).map((entry) => `
+                  <div class="resource-item">
+                    <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+                    <span class="resource-name">${escapeEchoHtml(formatResourceShortLabel(entry.key))}</span>
+                    <span class="resource-value">${entry.amount}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+
+            <div class="crafting-categories">
+              <div class="panel-section-title">CATEGORIES</div>
+              <div class="category-tabs">
+                ${categories.map((category) => `
+                  <button
+                    class="category-tab ${echoWorkshopCategory === category.id ? "category-tab--active" : ""}"
+                    type="button"
+                    data-echo-workshop-category="${category.id}"
+                  >
+                    ${category.label}
+                  </button>
+                `).join("")}
+              </div>
+              <div class="crafting-note">
+                <div class="note-text">Echo fabrication is temporary. Crafted items stay inside this run.</div>
+              </div>
+            </div>
+
+            <div class="crafting-categories">
+              <div class="panel-section-title">CONSUMABLES</div>
+              <div class="echo-run-service-stage__inventory">
+                ${renderEchoConsumableInventory(run)}
+              </div>
+            </div>
+          </div>
+
+          <div class="crafting-recipes">
+            <div class="panel-section-title">${echoWorkshopCategory.toUpperCase()} BLUEPRINTS</div>
+            <div class="recipe-list">
+              ${categoryRecipes.length > 0 ? categoryRecipes.map((recipe) => {
+                const canMake = canAffordRecipe(recipe, run.resources) && hasRequiredItem(recipe, inventoryItemIds);
+                return `
+                  <div
+                    class="recipe-item ${selectedRecipe?.id === recipe.id ? "recipe-item--selected" : ""} ${canMake ? "" : "recipe-item--disabled"}"
+                    data-echo-workshop-recipe="${escapeEchoAttr(recipe.id)}"
+                  >
+                    <div class="recipe-item-name">${escapeEchoHtml(recipe.name)}</div>
+                    <div class="recipe-item-cost">${escapeEchoHtml(getRecipeCostString(recipe) || "No material cost")}</div>
+                    ${!canAffordRecipe(recipe, run.resources) ? `<div class="recipe-item-warning">Need resources</div>` : ""}
+                    ${recipe.requiresItemId && !hasRequiredItem(recipe, inventoryItemIds) ? `<div class="recipe-item-warning">Need base item</div>` : ""}
+                  </div>
+                `;
+              }).join("") : `<div class="recipe-empty">No recipes known in this category.</div>`}
+            </div>
+          </div>
+
+          <div class="crafting-details">
+            ${selectedRecipe ? `
+              <div class="detail-panel">
+                <div class="detail-header">
+                  <h2 class="detail-title">${escapeEchoHtml(selectedRecipe.name)}</h2>
+                  <div class="detail-category">${getEchoRecipeDisplayCategory(selectedRecipe).toUpperCase()}</div>
+                </div>
+                <div class="detail-description">${escapeEchoHtml(selectedRecipe.description)}</div>
+                ${selectedRecipe.requiresItemId ? `
+                  <div class="detail-requires">
+                    <div class="detail-label">REQUIRES BASE ITEM:</div>
+                    <div class="detail-requires-item ${hasRequiredItem(selectedRecipe, inventoryItemIds) ? "detail-requires-item--have" : "detail-requires-item--missing"}">
+                      ${escapeEchoHtml(formatEchoItemName(selectedRecipe.requiresItemId, run))}
+                      ${hasRequiredItem(selectedRecipe, inventoryItemIds) ? "✓" : "✗"}
+                    </div>
+                  </div>
+                ` : ""}
+                <div class="detail-costs">
+                  <div class="detail-label">MATERIAL COST:</div>
+                  ${RESOURCE_KEYS.filter((key) => Number(selectedRecipe.cost[key] ?? 0) > 0).map((key) => {
+                    const need = Number(selectedRecipe.cost[key] ?? 0);
+                    const have = Number(run.resources[key] ?? 0);
+                    return `
+                      <div class="cost-line ${have >= need ? "cost-line--ok" : "cost-line--short"}">
+                        <span class="cost-name">${escapeEchoHtml(formatResourceShortLabel(key))}</span>
+                        <span class="cost-values">${have} / ${need}</span>
+                      </div>
+                    `;
+                  }).join("") || `<div class="cost-line cost-line--ok"><span class="cost-name">No material cost</span><span class="cost-values">OK</span></div>`}
+                </div>
+                <div class="detail-output">
+                  <div class="detail-label">PRODUCES:</div>
+                  <div class="detail-output-item">${escapeEchoHtml(formatEchoItemName(selectedRecipe.resultItemId, run))} x${selectedRecipe.resultQuantity}</div>
+                </div>
+                <button
+                  class="craft-button ${selectedCanCraft ? "" : "craft-button--disabled"}"
+                  type="button"
+                  data-echo-workshop-craft="${escapeEchoAttr(selectedRecipe.id)}"
+                  ${selectedCanCraft ? "" : "disabled"}
+                >
+                  ${selectedCanCraft ? "CRAFT" : "CANNOT CRAFT"}
+                </button>
+              </div>
+            ` : `<div class="no-selection"><div class="no-selection-icon">⚙</div><div class="no-selection-text">Select a recipe to inspect fabrication details.</div></div>`}
+          </div>
+        </div>
+      </div>
+
+      <div class="workbench-console">
+        <div class="console-header">S/COM_OS // WORKBENCH_LOG</div>
+        <div class="console-body" id="workbenchLog">
+          <div class="console-line">SLK//CRAFTING :: Echo fabrication terminal online.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderMapNodeCard(
   node: EchoRunNode,
   run: NonNullable<ReturnType<typeof getActiveEchoRun>>,
 ): string {
   const nodeState = getEchoMapNodeState(node, run);
-  const title = nodeState.isObscured ? "Unknown Contact" : node.title;
+  const title = nodeState.isObscured ? "Unknown Contact" : getEchoDisplayNodeTitle(node.title);
   const subtitle = nodeState.isObscured ? "Route signature unavailable" : node.subtitle;
   const meta = nodeState.isObscured ? "Advance deeper to resolve this node." : `Tier ${node.dangerTier} // ${node.rewardBias}`;
   const glyph = getEchoMapNodeGlyph(node.nodeType, nodeState.isObscured);
@@ -1437,7 +2312,7 @@ function renderMapStage(
     ? "No Route Selected"
     : selectedNodeState?.isObscured
       ? "Unknown Contact"
-      : selectedNode.title;
+      : getEchoDisplayNodeTitle(selectedNode.title);
   const selectedNodeSubtitle = !selectedNode
     ? "No data"
     : selectedNodeState?.isObscured
@@ -1563,6 +2438,9 @@ function renderMapStage(
           <div class="echo-run-map-window__actions">
             <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
             <button class="echo-run-secondary-btn" type="button" id="echoRunManageUnitsBtn">MANAGE UNITS</button>
+            <button class="echo-run-secondary-btn" type="button" id="echoRunInventoryBtn">INVENTORY</button>
+            <button class="echo-run-secondary-btn" type="button" id="echoRunShopBtn">SHOP</button>
+            <button class="echo-run-secondary-btn" type="button" id="echoRunWorkshopBtn">WORKSHOP</button>
             <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
           </div>
         </div>
@@ -1685,6 +2563,10 @@ export function renderEchoRunScreen(): void {
       ? "Initial Echo Field"
       : run.stage === "map"
         ? `Stratum ${run.currentStratum} Route Map`
+        : run.stage === "shop"
+          ? "Shop"
+        : run.stage === "workshop"
+          ? "Workshop"
         : run.stage === "milestone"
           ? `Milestone ${run.currentStratum}`
       : run.stage === "reward"
@@ -1696,12 +2578,16 @@ export function renderEchoRunScreen(): void {
     : run.stage === "initial_field"
       ? "Choose an initial Echo Field"
       : run.stage === "map"
-        ? "Select one reachable node. Support nodes resolve immediately, while encounter nodes launch a battle."
+        ? "Select one reachable node. Support nodes resolve without battle; encounter nodes launch combat. Inventory, shop, and workshop stay available from Route Command."
+        : run.stage === "shop"
+          ? "Buy run-scoped equipment, consumables, and recipes with WAD."
+        : run.stage === "workshop"
+          ? "Craft run-scoped gear and consumables with earned materials."
         : run.stage === "milestone"
           ? "Choose one milestone package, then continue into the next endless stratum."
       : run.stage === "reward"
         ? "Pick exactly one reward lane and keep the run moving."
-      : "The simulation is over. Nothing here carries into story progression.";
+      : "The simulation is over. Review the route summary and start another run when ready.";
 
   const selectedPreviewChoice = getSelectedEchoPreviewChoice(run);
   const shouldShowDraftStage = run.stage === "initial_units" || run.stage === "initial_field" || run.stage === "reward" || run.stage === "milestone";
@@ -1732,17 +2618,22 @@ export function renderEchoRunScreen(): void {
       setupEchoMapInteractions(run);
       setupEchoMapWindowInteractions(run);
     }
+  } else if (run.stage === "shop") {
+    renderShopScreen("echo-run", { kind: "echo" });
+    return;
+  } else if (run.stage === "workshop") {
+    renderGearWorkbenchScreen(undefined, undefined, "echo-run");
+    return;
   } else {
-  const mainContent = run.stage === "results"
-    ? renderEchoResults(run)
-    : `
+    const mainContent = run.stage === "results"
+      ? renderEchoResults(run)
+      : run.stage === "reward"
+        ? renderEchoRewardStage(run, selectedPreviewChoice)
+      : `
         <section class="echo-run-choice-stage">
           <div class="echo-run-choice-stage__header">
             <div class="echo-run-choice-stage__title">${stageTitle}</div>
             <div class="echo-run-choice-stage__actions">
-              ${run.stage === "reward" ? `
-                <button class="echo-run-secondary-btn" type="button" id="echoRunRerollBtn" ${run.rerolls <= 0 ? "disabled" : ""}>REROLL (${run.rerolls})</button>
-              ` : ""}
               <button class="echo-run-secondary-btn" type="button" data-echo-return-title="true">ECHO TITLE</button>
               <button class="echo-run-secondary-btn" type="button" id="echoRunAbandonBtn">ABANDON RUN</button>
             </div>
@@ -1757,7 +2648,7 @@ export function renderEchoRunScreen(): void {
         </section>
       `;
 
-  app.innerHTML = `
+    app.innerHTML = `
     <div class="echo-run-root">
       <div class="echo-run-shell">
         <header class="echo-run-header">
@@ -1770,6 +2661,7 @@ export function renderEchoRunScreen(): void {
             <button class="echo-run-secondary-btn echo-run-header__back-btn" type="button" data-echo-return-title="true">BACK TO ECHO TITLE</button>
             <div class="echo-run-meta-chip"><span>Encounter</span><strong>${run.encounterNumber}</strong></div>
             <div class="echo-run-meta-chip"><span>Rerolls</span><strong>${run.rerolls}</strong></div>
+            <div class="echo-run-meta-chip"><span>WAD</span><strong>${run.wad ?? 0}</strong></div>
             <div class="echo-run-meta-chip"><span>Score</span><strong>${run.totalScore}</strong></div>
           </div>
         </header>
@@ -1787,7 +2679,7 @@ export function renderEchoRunScreen(): void {
         </div>
       </div>
     </div>
-  `;
+    `;
   }
 
   if (shouldShowDraftStage) {
@@ -1840,6 +2732,104 @@ export function renderEchoRunScreen(): void {
     };
   });
 
+  document.querySelectorAll<HTMLElement>("[data-echo-shop-buy]").forEach((button) => {
+    button.onclick = () => {
+      const listingId = button.getAttribute("data-echo-shop-buy");
+      if (!listingId) {
+        return;
+      }
+      purchaseEchoShopListing(listingId);
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-shop-inspect]").forEach((button) => {
+    button.onclick = () => {
+      const listingId = button.getAttribute("data-echo-shop-inspect");
+      const runNow = getActiveEchoRun();
+      const listing = runNow?.shopListings.find((entry) => entry.id === listingId);
+      if (listing?.equipment) {
+        showEquipmentDetailModal(listing.equipment);
+      }
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-shop-tab]").forEach((button) => {
+    button.onclick = () => {
+      const tabId = button.getAttribute("data-echo-shop-tab") as EchoShopTab | null;
+      if (!tabId) {
+        return;
+      }
+      echoShopTab = tabId;
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-shop-item-id]").forEach((button) => {
+    button.onclick = () => {
+      const itemId = button.getAttribute("data-echo-shop-item-id");
+      const category = button.getAttribute("data-echo-shop-category") as "pak" | "equipment" | "consumable" | "recipe" | null;
+      const cost = Number(button.getAttribute("data-echo-shop-cost") ?? "0");
+      if (!itemId || !category) {
+        return;
+      }
+      purchaseEchoShopItem(itemId, category, cost);
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-shop-inspect-item]").forEach((button) => {
+    button.onclick = () => {
+      const equipmentId = button.getAttribute("data-echo-shop-inspect-item");
+      const equipment = equipmentId ? getAllStarterEquipment()[equipmentId] : null;
+      if (equipment) {
+        showEquipmentDetailModal(equipment);
+      }
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-workshop-category]").forEach((button) => {
+    button.onclick = () => {
+      const category = button.getAttribute("data-echo-workshop-category") as EchoWorkshopCategory | null;
+      if (!category) {
+        return;
+      }
+      echoWorkshopCategory = category;
+      echoWorkshopSelectedRecipeId = null;
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-workshop-recipe]").forEach((button) => {
+    button.onclick = () => {
+      const recipeId = button.getAttribute("data-echo-workshop-recipe");
+      if (!recipeId) {
+        return;
+      }
+      echoWorkshopSelectedRecipeId = recipeId;
+      renderEchoRunScreen();
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-echo-workshop-craft]").forEach((button) => {
+    button.onclick = () => {
+      const recipeId = button.getAttribute("data-echo-workshop-craft");
+      if (!recipeId) {
+        return;
+      }
+      craftEchoWorkshopRecipe(recipeId);
+      renderEchoRunScreen();
+    };
+  });
+
+  const leaveServiceBtn = document.getElementById("echoRunLeaveServiceBtn");
+  if (leaveServiceBtn) {
+    leaveServiceBtn.onclick = () => {
+      leaveEchoServiceNode();
+      renderEchoRunScreen();
+    };
+  }
+
   document.querySelectorAll<HTMLElement>('[data-echo-return-title="true"]').forEach((button) => {
     button.onclick = () => {
       exitEchoRunToTitleScreen();
@@ -1850,6 +2840,32 @@ export function renderEchoRunScreen(): void {
   if (manageUnitsBtn) {
     manageUnitsBtn.onclick = () => {
       echoManageUnitsOpen = true;
+      renderEchoRunScreen();
+    };
+  }
+
+  const inventoryBtn = document.getElementById("echoRunInventoryBtn");
+  if (inventoryBtn) {
+    inventoryBtn.onclick = () => {
+      cleanupEchoMapInteractions();
+      import("./InventoryViewScreen").then(({ renderInventoryViewScreen }) => {
+        renderInventoryViewScreen("echo-run");
+      });
+    };
+  }
+
+  const shopBtn = document.getElementById("echoRunShopBtn");
+  if (shopBtn) {
+    shopBtn.onclick = () => {
+      enterEchoShop();
+      renderEchoRunScreen();
+    };
+  }
+
+  const workshopBtn = document.getElementById("echoRunWorkshopBtn");
+  if (workshopBtn) {
+    workshopBtn.onclick = () => {
+      enterEchoWorkshop();
       renderEchoRunScreen();
     };
   }
@@ -1904,6 +2920,49 @@ export function renderEchoRunScreen(): void {
       if (equipment) {
         showEquipmentDetailModal(equipment);
       }
+    };
+  });
+
+  const echoSampleDrawBtn = document.getElementById("echoUnitSampleDrawBtn");
+  if (echoSampleDrawBtn) {
+    echoSampleDrawBtn.onclick = () => {
+      const context = getSelectedEchoUnitSampleContext();
+      if (!context) {
+        return;
+      }
+      drawNextEchoUnitSampleHand(context.unitId, context.deck);
+      renderEchoRunScreen();
+    };
+  }
+
+  const echoSampleResetBtn = document.getElementById("echoUnitSampleResetBtn");
+  if (echoSampleResetBtn) {
+    echoSampleResetBtn.onclick = () => {
+      const context = getSelectedEchoUnitSampleContext();
+      if (!context) {
+        return;
+      }
+      resetEchoUnitSampleDrawState(context.unitId, context.deck);
+      renderEchoRunScreen();
+    };
+  }
+
+  document.querySelectorAll<HTMLElement>(".deck-card--sample[data-echo-sample-hand-index]").forEach((cardEl) => {
+    cardEl.onclick = () => {
+      const context = getSelectedEchoUnitSampleContext();
+      if (!context) {
+        return;
+      }
+      const handIndex = Number(cardEl.getAttribute("data-echo-sample-hand-index") ?? "-1");
+      if (handIndex < 0 || !echoUnitSampleDrawState?.hand[handIndex]) {
+        return;
+      }
+      const card = context.cardsById[echoUnitSampleDrawState.hand[handIndex]];
+      if (!card) {
+        return;
+      }
+      playEchoUnitSampleCard(context.unitId, context.deck, handIndex, card);
+      renderEchoRunScreen();
     };
   });
 

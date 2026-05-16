@@ -2,12 +2,14 @@ import { getGameState, updateGameState } from "../state/gameStore";
 import {
   BattleModeContext,
   EchoChallenge,
+  EchoEconomyReward,
   EchoEncounterSummary,
   EchoEncounterType,
   EchoFieldDefinition,
   EchoRecoveryOption,
   EchoRewardChoice,
   EchoRewardLane,
+  EchoShopListing,
   EchoRunNode,
   EchoRunNodeType,
   EchoRunState,
@@ -25,6 +27,15 @@ import { calculatePWR, getPWRBand } from "./pwr";
 import { createDefaultAffinities } from "./affinity";
 import { createBattleFromEncounter } from "./battleFromEncounter";
 import { getAllFieldModDefs, getFieldModDef } from "./fieldModDefinitions";
+import { CONSUMABLE_DATABASE, RECIPE_DATABASE, craftItem, getStarterRecipeIds, learnRecipe, type Recipe } from "./crafting";
+import {
+  addResourceWallet,
+  createEmptyResourceWallet,
+  subtractResourceWallet,
+  type ResourceKey,
+  type ResourceWallet,
+} from "./resources";
+import { addCardsToLibrary, openPAK } from "./gearWorkbench";
 import type { EncounterDefinition } from "./campaign";
 import type { BattleState } from "./battle";
 import type { FieldModDef, FieldModInstance } from "./fieldMods";
@@ -33,6 +44,25 @@ const STARTING_SQUAD_SIZE = 3;
 const UNIT_DRAFT_CHOICE_COUNT = 3;
 const FIELD_DRAFT_CHOICE_COUNT = 3;
 const MAX_FIELD_LEVEL = 5;
+const ECHO_STARTING_WAD = 120;
+const ECHO_STARTING_RESOURCES: Partial<ResourceWallet> = {
+  metalScrap: 6,
+  wood: 4,
+  chaosShards: 2,
+  steamComponents: 1,
+};
+export const ECHO_STARTER_CHASSIS_IDS = [
+  "chassis_standard_rifle",
+  "chassis_standard_helmet",
+  "chassis_standard_chest",
+  "chassis_utility_module",
+];
+export const ECHO_STARTER_DOCTRINE_IDS = [
+  "doctrine_balanced",
+  "doctrine_skirmish",
+  "doctrine_sustain",
+];
+const ECHO_SHOP_LISTING_COUNT = 3;
 const DEFAULT_ECHO_PORTRAIT = "/assets/portraits/units/core/Test_Portrait.png";
 const ECHO_SQUAD_SCOPE_MODS = getAllFieldModDefs().filter((mod) => mod.scope === "squad");
 
@@ -408,6 +438,15 @@ function formatEchoSlotLabel(slot: keyof UnitLoadout): string {
   }
 }
 
+function isEchoDraftClass(value: string): value is EchoDraftClass {
+  return value === "squire"
+    || value === "ranger"
+    || value === "magician"
+    || value === "thief"
+    || value === "academic"
+    || value === "freelancer";
+}
+
 function adjustEchoGearStat(
   rng: () => number,
   baseValue: number,
@@ -557,6 +596,88 @@ function rollEchoLoadout(unitClass: EchoDraftClass, encounterDepth: number, seed
     equipmentById: gearById,
     equipmentPool,
   };
+}
+
+function getEchoRuntimeUnitClass(unit: Unit | null | undefined): ClassId {
+  return ((unit as Unit & { unitClass?: string; classId?: string } | null | undefined)?.unitClass
+    ?? (unit as Unit & { classId?: string } | null | undefined)?.classId
+    ?? "squire") as ClassId;
+}
+
+function getShopTemplatesForSlot(run: EchoRunState, slot: keyof UnitLoadout): Equipment[] {
+  const equipmentPools = getEquipmentPools();
+  switch (slot) {
+    case "primaryWeapon":
+    case "secondaryWeapon": {
+      const squadClasses = run.squadUnitIds
+        .map((unitId) => getEchoRuntimeUnitClass(run.unitsById[unitId]))
+        .filter(Boolean);
+      const compatibleWeapons = equipmentPools.weapons.filter((equipment) => (
+        equipment.slot === "weapon" && squadClasses.some((unitClass) => canEquipWeapon(unitClass, equipment.weaponType))
+      ));
+      return compatibleWeapons.length > 0 ? compatibleWeapons : equipmentPools.weapons;
+    }
+    case "helmet":
+      return equipmentPools.helmets;
+    case "chestpiece":
+      return equipmentPools.chestpieces;
+    case "accessory1":
+    case "accessory2":
+      return equipmentPools.accessories;
+    default:
+      return [...equipmentPools.weapons, ...equipmentPools.helmets, ...equipmentPools.chestpieces, ...equipmentPools.accessories];
+  }
+}
+
+function getEchoShopListingCost(equipment: Equipment, depth: number, rarityLabel: EchoShopListing["rarityLabel"]): number {
+  const statTotal = Object.values(equipment.stats).reduce((sum, value) => sum + Math.max(0, value), 0);
+  const rarityPremium = rarityLabel === "rare" ? 46 : rarityLabel === "uncommon" ? 22 : 0;
+  return 35 + depth * 9 + statTotal * 3 + rarityPremium;
+}
+
+function getEchoShopRarity(rng: () => number, depth: number): EchoShopListing["rarityLabel"] {
+  const roll = rng() + Math.min(0.18, depth * 0.018);
+  if (roll > 0.86) {
+    return "rare";
+  }
+  if (roll > 0.54) {
+    return "uncommon";
+  }
+  return "common";
+}
+
+function createEchoShopListings(run: EchoRunState, nodeId: string): EchoShopListing[] {
+  const depth = getCurrentDraftDepth(run) + 1;
+  const rng = createSeededRng(`${run.seed}:shop:${nodeId}:${run.encounterNumber}:${run.currentStratum}`);
+  const slots: Array<keyof UnitLoadout> = ["primaryWeapon", "helmet", "chestpiece", "accessory1", "secondaryWeapon", "accessory2"];
+  const usedTemplates = new Set<string>();
+
+  return Array.from({ length: ECHO_SHOP_LISTING_COUNT }, (_, index) => {
+    const slot = slots[(index + randomInt(rng, 0, slots.length - 1)) % slots.length];
+    const templates = getShopTemplatesForSlot(run, slot);
+    const template = pickEchoTemplate(rng, templates, usedTemplates);
+    const squadClasses = run.squadUnitIds
+      .map((unitId) => getEchoRuntimeUnitClass(run.unitsById[unitId]))
+      .filter((unitClass): unitClass is EchoDraftClass => isEchoDraftClass(unitClass));
+    const unitClass = pickOne(rng, squadClasses.length > 0 ? squadClasses : (["squire"] as EchoDraftClass[]));
+    const rarityLabel = getEchoShopRarity(rng, depth);
+    const equipment = createEchoGearInstance(
+      template,
+      slot,
+      `${run.seed}:shop:${nodeId}:${index}:${rarityLabel}`,
+      unitClass,
+      rarityLabel === "rare" ? depth + 2 : rarityLabel === "uncommon" ? depth + 1 : depth,
+      rng,
+    );
+
+    return {
+      id: `echo_shop_${hashSeed(`${nodeId}:${index}:${equipment.id}`).toString(36)}`,
+      equipment,
+      cost: getEchoShopListingCost(equipment, depth, rarityLabel),
+      rarityLabel,
+      purchased: false,
+    };
+  });
 }
 
 function createEchoStats(unitClass: EchoDraftClass, encounterDepth: number, rng: () => number) {
@@ -929,7 +1050,7 @@ function getNodePresentation(nodeType: EchoRunNodeType, stratum: number, layer: 
   switch (nodeType) {
     case "support":
       return {
-        title: ["Signal Cache", "Recovery Locker", "Soft Relay"][index % 3],
+        title: ["Signal Cache", "Recovery Locker", "Staging Zone"][index % 3],
         subtitle: "SUPPORT NODE",
         description: "Resolve immediately to draft support, recovery, or training rewards without entering a battle.",
         dangerTier: Math.max(1, dangerBase - 1),
@@ -978,7 +1099,7 @@ function getNodePresentation(nodeType: EchoRunNodeType, stratum: number, layer: 
     case "encounter":
     default:
       return {
-        title: ["Echo Breach", "Draft Contact", "Fracture Gate"][index % 3],
+        title: ["Echo Breach", "Contact", "Fracture Gate"][index % 3],
         subtitle: "STANDARD ENCOUNTER",
         description: "Fight through a standard proving-ground encounter and draft one reward lane afterward.",
         dangerTier: dangerBase,
@@ -1065,9 +1186,9 @@ function ensureStratumGenerated(run: EchoRunState, stratum: number): EchoRunStat
   const rng = createSeededRng(`${run.seed}:stratum:${stratum}`);
   const layerSpecs: Array<{ count: number; types: EchoRunNodeType[] }> = [
     { count: 3, types: ["encounter", "encounter", "support"] },
-    { count: randomInt(rng, 2, 3), types: ["encounter", "encounter", "support"] },
-    { count: randomInt(rng, 2, 3), types: ["elite", "support", "elite"] },
     { count: randomInt(rng, 2, 3), types: ["encounter", "support", "encounter"] },
+    { count: randomInt(rng, 2, 3), types: ["elite", "support", "elite"] },
+    { count: randomInt(rng, 2, 3), types: ["encounter", "support", "elite"] },
   ];
 
   if (stratum % 3 === 0) {
@@ -1145,8 +1266,68 @@ export function getEchoRunEquipmentPool(run: EchoRunState | null | undefined): s
   ]);
 }
 
+function normalizeEchoConsumables(consumables: Record<string, number> | null | undefined): Record<string, number> {
+  const entries: Array<[string, number]> = Object.entries(consumables ?? {})
+    .map(([itemId, amount]): [string, number] => [itemId, Math.max(0, Math.floor(Number(amount) || 0))])
+    .filter((entry) => entry[1] > 0);
+  return Object.fromEntries(entries);
+}
+
+function normalizeEchoEconomyReward(reward: EchoEconomyReward | null | undefined): EchoEconomyReward | null {
+  if (!reward) {
+    return null;
+  }
+  return {
+    wad: Number.isFinite(reward.wad) ? Math.max(0, Math.floor(reward.wad)) : 0,
+    resources: createEmptyResourceWallet(reward.resources),
+    sourceNodeId: reward.sourceNodeId ?? null,
+    sourceLabel: reward.sourceLabel ?? null,
+  };
+}
+
+function normalizeEchoRunNode(node: EchoRunNode): EchoRunNode {
+  const forcedLanes = Array.isArray(node.forcedLanes)
+    ? Array.from(new Set(node.forcedLanes))
+    : undefined;
+  return {
+    ...node,
+    encounterType: node.encounterType ?? getNodeEncounterType(node.nodeType),
+    nextNodeIds: Array.isArray(node.nextNodeIds) ? uniqueIds(node.nextNodeIds) : [],
+    forcedLanes,
+    resolved: Boolean(node.resolved),
+    unlocked: Boolean(node.unlocked),
+  };
+}
+
+function normalizeEchoRun(run: EchoRunState): EchoRunState {
+  const legacyRun = run as EchoRunState & { credits?: number };
+  return {
+    ...run,
+    wad: Number.isFinite(run.wad)
+      ? run.wad
+      : Number.isFinite(legacyRun.credits)
+        ? Number(legacyRun.credits)
+        : ECHO_STARTING_WAD,
+    resources: createEmptyResourceWallet(run.resources ?? ECHO_STARTING_RESOURCES),
+    knownRecipeIds: Array.isArray(run.knownRecipeIds) && run.knownRecipeIds.length > 0
+      ? uniqueIds(run.knownRecipeIds)
+      : getStarterRecipeIds(),
+    consumables: normalizeEchoConsumables(run.consumables),
+    cardLibrary: { ...(run.cardLibrary ?? {}) },
+    gearSlots: { ...(run.gearSlots ?? {}) },
+    unlockedChassisIds: uniqueIds(run.unlockedChassisIds ?? ECHO_STARTER_CHASSIS_IDS),
+    unlockedDoctrineIds: uniqueIds(run.unlockedDoctrineIds ?? ECHO_STARTER_DOCTRINE_IDS),
+    nodesById: Object.fromEntries(
+      Object.entries(run.nodesById ?? {}).map(([nodeId, node]) => [nodeId, normalizeEchoRunNode(node)]),
+    ),
+    shopListings: Array.isArray(run.shopListings) ? run.shopListings : [],
+    lastEconomyReward: normalizeEchoEconomyReward(run.lastEconomyReward),
+  };
+}
+
 function readEchoRun(): EchoRunState | null {
-  return getGameState().echoRun ?? null;
+  const run = getGameState().echoRun ?? null;
+  return run ? normalizeEchoRun(run) : null;
 }
 
 function persistEchoRun(
@@ -1333,6 +1514,32 @@ function enterMilestoneStage(run: EchoRunState, nodeId: string): EchoRunState {
     currentNodeId: node.id,
     pendingNodeId: null,
     draftChoices: createMilestoneChoices(run, node.id),
+    lastEconomyReward: null,
+  };
+}
+
+function getEchoServiceKey(run: EchoRunState): string {
+  return `route_${run.id}_${run.currentStratum}_${run.encounterNumber}`;
+}
+
+function enterShopStage(run: EchoRunState): EchoRunState {
+  return {
+    ...run,
+    stage: "shop",
+    pendingNodeId: null,
+    draftChoices: [],
+    shopListings: (run.shopListings ?? []).length > 0
+      ? run.shopListings
+      : createEchoShopListings(run, getEchoServiceKey(run)),
+  };
+}
+
+function enterWorkshopStage(run: EchoRunState): EchoRunState {
+  return {
+    ...run,
+    stage: "workshop",
+    pendingNodeId: null,
+    draftChoices: [],
   };
 }
 
@@ -1361,6 +1568,7 @@ function advanceToNextStratum(run: EchoRunState): EchoRunState {
     draftChoices: [],
     pendingNodeId: null,
     resultsSummary: null,
+    lastEconomyReward: null,
   };
 }
 
@@ -1655,10 +1863,20 @@ export function startEchoRunSession(): EchoRunState {
     squadUnitIds: [],
     equipmentById: {},
     equipmentPool: [],
+    cardLibrary: {},
+    gearSlots: {},
+    unlockedChassisIds: [...ECHO_STARTER_CHASSIS_IDS],
+    unlockedDoctrineIds: [...ECHO_STARTER_DOCTRINE_IDS],
     fields: [],
     tacticalModifiers: [],
     rerolls: 0,
+    wad: ECHO_STARTING_WAD,
+    resources: createEmptyResourceWallet(ECHO_STARTING_RESOURCES),
+    knownRecipeIds: getStarterRecipeIds(),
+    consumables: {},
     draftChoices: generateInitialUnitChoices(runId, 0),
+    shopListings: [],
+    lastEconomyReward: null,
     currentChallenge: null,
     lastEncounterSummary: null,
     resultsSummary: null,
@@ -1812,6 +2030,7 @@ export function applyEchoDraftChoice(choiceId: string): EchoRunState | null {
       stage: "map",
       draftChoices: [],
       currentChallenge: null,
+      lastEconomyReward: null,
       lastEncounterSummary: nextRun.lastEncounterSummary ?? null,
     };
   } else if (run.stage === "milestone") {
@@ -1830,6 +2049,310 @@ export function applyEchoDraftChoice(choiceId: string): EchoRunState | null {
   });
 }
 
+export function enterEchoShop(): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || run.stage === "results") {
+    return run;
+  }
+
+  return persistEchoRun(enterShopStage(run), {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+export function enterEchoWorkshop(): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || run.stage === "results") {
+    return run;
+  }
+
+  return persistEchoRun(enterWorkshopStage(run), {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+export function purchaseEchoShopListing(listingId: string): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || run.stage !== "shop") {
+    return run;
+  }
+
+  const listing = run.shopListings.find((entry) => entry.id === listingId);
+  if (!listing || listing.purchased || run.wad < listing.cost) {
+    return run;
+  }
+
+  const nextRun: EchoRunState = {
+    ...run,
+    wad: run.wad - listing.cost,
+    equipmentById: {
+      ...(run.equipmentById ?? {}),
+      [listing.equipment.id]: listing.equipment,
+    },
+    equipmentPool: uniqueIds([...(run.equipmentPool ?? []), listing.equipment.id]),
+    shopListings: run.shopListings.map((entry) => (
+      entry.id === listing.id ? { ...entry, purchased: true } : entry
+    )),
+  };
+
+  return persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+export function purchaseEchoShopItem(
+  itemId: string,
+  category: "pak" | "equipment" | "consumable" | "recipe",
+  cost: number,
+): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || run.stage !== "shop") {
+    return run;
+  }
+
+  const normalizedCost = Math.max(0, Math.floor(Number(cost) || 0));
+  if (run.wad < normalizedCost) {
+    return run;
+  }
+
+  let nextRun: EchoRunState | null = null;
+
+  if (category === "pak") {
+    const cards = openPAK(itemId);
+    if (cards.length <= 0) {
+      return run;
+    }
+    nextRun = {
+      ...run,
+      wad: run.wad - normalizedCost,
+      cardLibrary: addCardsToLibrary(run.cardLibrary ?? {}, cards),
+    };
+  } else if (category === "equipment") {
+    const equipment = getAllStarterEquipment()[itemId];
+    if (!equipment) {
+      return run;
+    }
+    nextRun = {
+      ...run,
+      wad: run.wad - normalizedCost,
+      equipmentById: {
+        ...(run.equipmentById ?? {}),
+        [equipment.id]: equipment,
+      },
+      equipmentPool: uniqueIds([...(run.equipmentPool ?? []), equipment.id]),
+    };
+  } else if (category === "consumable") {
+    if (!CONSUMABLE_DATABASE[itemId]) {
+      return run;
+    }
+    nextRun = {
+      ...run,
+      wad: run.wad - normalizedCost,
+      consumables: {
+        ...(run.consumables ?? {}),
+        [itemId]: Math.max(0, Math.floor(Number(run.consumables?.[itemId] ?? 0))) + 1,
+      },
+    };
+  } else if (category === "recipe") {
+    const recipe = RECIPE_DATABASE[itemId];
+    if (!recipe || recipe.deprecated || run.knownRecipeIds.includes(itemId)) {
+      return run;
+    }
+    nextRun = {
+      ...run,
+      wad: run.wad - normalizedCost,
+      knownRecipeIds: learnRecipe(run.knownRecipeIds, itemId),
+    };
+  }
+
+  return persistEchoRun(nextRun ?? run, {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+function getEchoWorkshopInventoryItemIds(run: EchoRunState): string[] {
+  return getEchoRunEquipmentPool(run);
+}
+
+function clearEchoEquipmentFromUnits(unitsById: EchoRunState["unitsById"], equipmentId: string): EchoRunState["unitsById"] {
+  return Object.fromEntries(
+    Object.entries(unitsById).map(([unitId, unit]) => {
+      const loadout = { ...((unit as Unit & { loadout?: UnitLoadout }).loadout ?? {}) } as UnitLoadout;
+      let changed = false;
+      (Object.keys(loadout) as Array<keyof UnitLoadout>).forEach((slot) => {
+        if (loadout[slot] === equipmentId) {
+          loadout[slot] = null;
+          changed = true;
+        }
+      });
+      return [unitId, changed ? { ...unit, loadout } : unit];
+    }),
+  );
+}
+
+function createEchoCraftedEquipment(run: EchoRunState, recipe: Recipe): Equipment | null {
+  const equipmentById = getEchoRunEquipmentById(run);
+  const directEquipment = equipmentById[recipe.resultItemId];
+  if (directEquipment) {
+    return directEquipment;
+  }
+
+  const baseEquipment = recipe.requiresItemId ? equipmentById[recipe.requiresItemId] : null;
+  if (!baseEquipment) {
+    return null;
+  }
+
+  return {
+    ...baseEquipment,
+    id: recipe.resultItemId,
+    name: recipe.name,
+    description: recipe.description,
+    stats: {
+      ...baseEquipment.stats,
+      def: baseEquipment.stats.def + 1,
+      hp: baseEquipment.stats.hp + 2,
+    },
+    metadata: {
+      ...(baseEquipment.metadata ?? {}),
+      echoCraftedUpgrade: true,
+      baseEquipmentId: baseEquipment.id,
+      recipeId: recipe.id,
+    },
+  } as Equipment;
+}
+
+export function craftEchoWorkshopRecipe(recipeId: string): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || run.stage !== "workshop") {
+    return run;
+  }
+
+  const recipe = RECIPE_DATABASE[recipeId];
+  if (!recipe || recipe.deprecated || recipe.resultItemId.startsWith("weapon_")) {
+    return run;
+  }
+
+  const inventoryItemIds = getEchoWorkshopInventoryItemIds(run);
+  const result = craftItem(recipe, run.resources, inventoryItemIds);
+  if (!result.success || !result.itemId) {
+    return run;
+  }
+
+  let nextEquipmentById = { ...(run.equipmentById ?? {}) };
+  let nextEquipmentPool = [...(run.equipmentPool ?? [])];
+  let nextUnitsById = run.unitsById;
+  const nextConsumables = { ...run.consumables };
+
+  if (result.consumedItemId) {
+    delete nextEquipmentById[result.consumedItemId];
+    nextEquipmentPool = nextEquipmentPool.filter((equipmentId) => equipmentId !== result.consumedItemId);
+    nextUnitsById = clearEchoEquipmentFromUnits(nextUnitsById, result.consumedItemId);
+  }
+
+  if (recipe.category === "consumable" || result.itemId.startsWith("consumable_")) {
+    nextConsumables[result.itemId] = (nextConsumables[result.itemId] ?? 0) + (result.quantity ?? 1);
+  } else {
+    const craftedEquipment = createEchoCraftedEquipment(run, recipe);
+    if (!craftedEquipment) {
+      return run;
+    }
+    nextEquipmentById[craftedEquipment.id] = craftedEquipment;
+    nextEquipmentPool = uniqueIds([...nextEquipmentPool, craftedEquipment.id]);
+  }
+
+  const nextRun: EchoRunState = {
+    ...run,
+    resources: subtractResourceWallet(run.resources, recipe.cost, true),
+    consumables: nextConsumables,
+    equipmentById: nextEquipmentById,
+    equipmentPool: uniqueIds(nextEquipmentPool),
+    unitsById: nextUnitsById,
+  };
+
+  return persistEchoRun(nextRun, {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+export function leaveEchoServiceNode(): EchoRunState | null {
+  const run = readEchoRun();
+  if (!run || (run.stage !== "shop" && run.stage !== "workshop")) {
+    return run;
+  }
+
+  return persistEchoRun({
+    ...run,
+    stage: "map",
+    draftChoices: [],
+    currentChallenge: null,
+  }, {
+    phase: "echo",
+    currentBattle: null,
+  });
+}
+
+function createEchoNodeEconomyReward(
+  run: EchoRunState,
+  node: EchoRunNode,
+  summary?: EchoEncounterSummary | null,
+): EchoEconomyReward {
+  const rng = createSeededRng(`${run.seed}:economy:${node.id}:${run.encounterNumber}:${summary?.turnCount ?? "support"}`);
+  const typeMultiplier = node.nodeType === "boss" || node.nodeType === "boss_chain_b"
+    ? 2.2
+    : node.nodeType === "boss_chain_a"
+      ? 1.8
+      : node.nodeType === "elite"
+        ? 1.45
+        : node.nodeType === "support"
+          ? 0.75
+          : 1;
+  const challengeBonus = summary?.challengeCompleted ? 14 : 0;
+  const wad = Math.round((24 + run.currentStratum * 7 + node.dangerTier * 9 + challengeBonus) * typeMultiplier);
+  const resources: Partial<ResourceWallet> = {};
+  const addResource = (key: ResourceKey, amount: number) => {
+    resources[key] = Number(resources[key] ?? 0) + Math.max(0, amount);
+  };
+  const salvageKeys: ResourceKey[] = ["metalScrap", "wood"];
+  const volatileKeys: ResourceKey[] = ["chaosShards", "steamComponents"];
+  const basicKeys: ResourceKey[] = ["metalScrap", "wood", "chaosShards", "steamComponents"];
+  const advancedKeys: ResourceKey[] = ["alloy", "drawcord", "fittings", "resin", "chargeCells"];
+
+  addResource(pickOne(rng, salvageKeys), randomInt(rng, 1, 2 + node.dangerTier));
+  addResource(pickOne(rng, basicKeys), randomInt(rng, 1, 1 + Math.ceil(node.dangerTier * typeMultiplier)));
+  if (node.nodeType === "elite" || node.nodeType === "boss" || node.nodeType === "boss_chain_a" || node.nodeType === "boss_chain_b" || node.dangerTier >= 3) {
+    addResource(pickOne(rng, volatileKeys), randomInt(rng, 1, 1 + Math.floor(typeMultiplier)));
+  }
+  if (run.currentStratum >= 2 && rng() > 0.62) {
+    addResource(pickOne(rng, advancedKeys), 1 + (node.nodeType.startsWith("boss") ? 1 : 0));
+  }
+
+  return {
+    wad,
+    resources: createEmptyResourceWallet(resources),
+    sourceNodeId: node.id,
+    sourceLabel: node.title,
+  };
+}
+
+function applyEchoNodeEconomyReward(
+  run: EchoRunState,
+  node: EchoRunNode,
+  summary?: EchoEncounterSummary | null,
+): EchoRunState {
+  const reward = createEchoNodeEconomyReward(run, node, summary);
+  return {
+    ...run,
+    wad: run.wad + reward.wad,
+    resources: addResourceWallet(run.resources, reward.resources),
+    lastEconomyReward: reward,
+  };
+}
+
 export function selectEchoMapNode(nodeId: string): "battle" | "reward" | null {
   const run = readEchoRun();
   if (!run || run.stage !== "map" || !run.availableNodeIds.includes(nodeId)) {
@@ -1842,7 +2365,8 @@ export function selectEchoMapNode(nodeId: string): "battle" | "reward" | null {
   }
 
   if (node.nodeType === "support") {
-    const completed = completeNode(run, node.id);
+    const rewarded = applyEchoNodeEconomyReward(run, node);
+    const completed = completeNode(rewarded, node.id);
     const rewardRun = enterRewardStage(completed, node.id);
     persistEchoRun(rewardRun, {
       phase: "echo",
@@ -1897,11 +2421,16 @@ export function launchActiveEchoEncounterBattle(): BattleState | null {
   }
 
   const node = getNode(run, run.pendingNodeId ?? run.currentNodeId);
-  if (!node || !node.encounterType) {
+  if (!node) {
     return null;
   }
+  const encounterType = node.encounterType ?? getNodeEncounterType(node.nodeType) ?? "standard";
+  const battleNode = {
+    ...node,
+    encounterType,
+  };
 
-  const encounter = createEchoEncounter(run, node);
+  const encounter = createEchoEncounter(run, battleNode);
   const state = getGameState();
   const echoEquipmentById = getEchoRunEquipmentById(run);
   const unitIds = run.squadUnitIds.filter((unitId) => run.unitsById[unitId] && run.unitsById[unitId].hp > 0);
@@ -1920,8 +2449,9 @@ export function launchActiveEchoEncounterBattle(): BattleState | null {
       partyUnitIds: unitIds,
       unitsById,
       equipmentById: echoEquipmentById,
+      gearSlots: run.gearSlots ?? {},
       maxUnitsPerSide: unitIds.length,
-      modeContext: buildEchoBattleModeContext(run, node),
+      modeContext: buildEchoBattleModeContext(run, battleNode),
     },
   );
 
@@ -1980,6 +2510,7 @@ export function commitEchoEncounterVictory(battle: BattleState): EchoRunState | 
   };
 
   if (node) {
+    nextRun = applyEchoNodeEconomyReward(nextRun, node, summary);
     nextRun = completeNode(nextRun, node.id);
     if (node.nodeType === "boss_chain_b") {
       nextRun = {
@@ -2044,6 +2575,7 @@ export function finalizeEchoRunFromBattleDefeat(battle: BattleState): EchoRunSta
     pendingNodeId: null,
     stage: "results" as const,
     draftChoices: [],
+    lastEconomyReward: null,
   };
 
   const resultsRun = {

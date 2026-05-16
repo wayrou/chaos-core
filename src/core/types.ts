@@ -1397,7 +1397,7 @@ export type EchoFieldId =
   | "null_zone"
   | "overdrive_zone";
 export type EchoEncounterType = "standard" | "elite" | "checkpoint" | "boss" | "boss_chain_a" | "boss_chain_b";
-export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "results";
+export type EchoRunStage = "initial_units" | "initial_field" | "map" | "reward" | "milestone" | "shop" | "workshop" | "results";
 export type EchoChallengeType = "no_losses" | "turn_limit" | "field_triggers";
 export type EchoRewardLane = "unit" | "field" | "modifier" | "recovery" | "training";
 export type EchoRewardOptionType =
@@ -1490,6 +1490,21 @@ export interface EchoTrainingPackageOption {
   description: string;
   stat: "atk" | "def" | "agi" | "acc";
   amount: number;
+}
+
+export interface EchoShopListing {
+  id: string;
+  equipment: import("./equipment").Equipment;
+  cost: number;
+  rarityLabel: "common" | "uncommon" | "rare";
+  purchased: boolean;
+}
+
+export interface EchoEconomyReward {
+  wad: number;
+  resources: ResourceWallet;
+  sourceNodeId?: string | null;
+  sourceLabel?: string | null;
 }
 
 export interface EchoChallenge {
@@ -1632,10 +1647,22 @@ export interface EchoRunState {
   squadUnitIds: UnitId[];
   equipmentById?: Record<string, import("./equipment").Equipment>;
   equipmentPool?: string[];
+  cardLibrary?: Record<string, number>;
+  gearSlots?: Record<string, import("./gearWorkbench").GearSlotData>;
+  unlockedChassisIds?: string[];
+  unlockedDoctrineIds?: string[];
+  inventoryFolders?: Record<string, InventoryFolder>;
+  inventoryViewNodeLayouts?: Record<string, BaseCampItemSize>;
   fields: EchoFieldDefinition[];
   tacticalModifiers: import("./fieldMods").FieldModInstance[];
   rerolls: number;
+  wad: number;
+  resources: ResourceWallet;
+  knownRecipeIds: string[];
+  consumables: Record<string, number>;
   draftChoices: EchoRewardChoice[];
+  shopListings: EchoShopListing[];
+  lastEconomyReward?: EchoEconomyReward | null;
   currentChallenge?: EchoChallenge | null;
   lastEncounterSummary?: EchoEncounterSummary | null;
   resultsSummary?: EchoScoreSummary | null;

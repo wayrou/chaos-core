@@ -67,6 +67,7 @@ import {
 } from "../../core/crafting";
 import { showSystemPing } from "../components/systemPing";
 import { getInventoryIconPath } from "../../core/inventoryIcons";
+import { focusElementWithoutScroll } from "../domUtils";
 import {
   getLocalSessionPlayerSlot,
   getSessionResourcePool,
@@ -79,12 +80,13 @@ import {
   formatCraftedWeaponShapeLabel,
   getDefaultCraftedWeaponShape,
 } from "../../core/craftedGear";
+import { createEchoServiceGameState, updateEchoServiceGameState } from "./echoRunServiceState";
 
 // ----------------------------------------------------------------------------
 // STATE
 // ----------------------------------------------------------------------------
 
-type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation" | "field-node";
+type ReturnDestination = BaseCampReturnTo | "unitdetail" | "unitdetail-operation" | "field-node" | "echo-run";
 
 type WorkbenchTab = "build" | "customize" | "endless" | "craft";
 type BuildDoctrineSelection = string | "__chaotic__" | null;
@@ -157,6 +159,21 @@ let workbenchState: WorkbenchState = {
 let gearWorkbenchExitKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 const GEAR_WORKBENCH_RETURN_HOTKEY_ID = "gear-workbench-screen";
 
+function isEchoWorkbench(): boolean {
+  return workbenchState.returnDestination === "echo-run";
+}
+
+function getWorkbenchGameState(): GameState {
+  const state = getGameState();
+  return isEchoWorkbench() ? createEchoServiceGameState(state) : state;
+}
+
+function updateWorkbenchGameState(updater: (state: GameState) => GameState): GameState {
+  return updateGameState((state) => (
+    isEchoWorkbench() ? updateEchoServiceGameState(state, updater) : updater(state)
+  ));
+}
+
 function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
   workbenchState = {
     activeTab,
@@ -187,6 +204,16 @@ function resetWorkbenchState(activeTab: WorkbenchTab = "build"): void {
 function returnFromWorkbenchScreen(returnTo: ReturnDestination, unitId = workbenchState.selectedUnitId): void {
   detachGearWorkbenchExitHotkey();
 
+  if (returnTo === "echo-run") {
+    import("../../core/echoRuns").then(({ leaveEchoServiceNode }) => {
+      leaveEchoServiceNode();
+      return import("./EchoRunScreen");
+    }).then(({ renderEchoRunScreen }) => {
+      renderEchoRunScreen();
+    });
+    return;
+  }
+
   if ((returnTo === "unitdetail" || returnTo === "unitdetail-operation") && unitId) {
     renderUnitDetailScreen(unitId, returnTo === "unitdetail-operation" ? "operation" : "basecamp");
     return;
@@ -212,6 +239,8 @@ function attachWorkbenchBackButton(resetTab: WorkbenchTab): void {
       ? "UNIT ROSTER"
       : workbenchState.returnDestination === "field-node"
         ? "RETURN TO C.O.R.E."
+      : workbenchState.returnDestination === "echo-run"
+        ? "ROUTE COMMAND"
       : getBaseCampReturnLabel(workbenchState.returnDestination),
   );
 
@@ -244,13 +273,13 @@ export function renderGearWorkbenchScreen(
     }
   });
 
-  const state = getGameState();
-
   // Initialize workbench state
   if (unitId) workbenchState.selectedUnitId = unitId;
   if (equipmentId) workbenchState.selectedEquipmentId = equipmentId;
   if (returnTo) workbenchState.returnDestination = returnTo;
   if (workbenchState.activeTab === "endless") workbenchState.activeTab = "build";
+
+  const state = getWorkbenchGameState();
 
   // Get card library (ensure it exists)
   const cardLibrary: CardLibrary = (state as any).cardLibrary ?? getStarterCardLibrary();
@@ -286,6 +315,8 @@ export function renderGearWorkbenchScreen(
     ? "← UNIT ROSTER"
     : workbenchState.returnDestination === "field-node"
       ? "← RETURN TO C.O.R.E."
+    : workbenchState.returnDestination === "echo-run"
+      ? "← ROUTE COMMAND"
     : workbenchState.returnDestination === "field"
       ? "← FIELD MODE"
       : "← BASE CAMP";
@@ -296,7 +327,7 @@ export function renderGearWorkbenchScreen(
       <div class="workbench-header town-screen__header">
         <div class="workbench-header-left town-screen__titleblock">
           <h1 class="workbench-title">WORKSHOP</h1>
-          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE • LIVE SLOTTING</div>
+          <div class="workbench-subtitle">S/COM://GEAR_FABRICATION_INTERFACE</div>
         </div>
         <div class="workbench-header-right town-screen__header-right">
           <button class="workbench-back-btn town-screen__back-btn" id="backBtn">${backBtnText}</button>
@@ -323,7 +354,7 @@ export function renderGearWorkbenchScreen(
       </div>
       
       <!-- Main Content -->
-      <div class="workbench-main">
+      <div class="workbench-main workbench-main--${workbenchState.activeTab}">
         ${workbenchState.activeTab === "build"
       ? renderBuildGearTab(state)
       : workbenchState.activeTab === "craft"
@@ -1374,7 +1405,7 @@ function runSelectedGearValidation(): void {
     return;
   }
 
-  const state = getGameState();
+  const state = getWorkbenchGameState();
   const equipmentById = (state as any).equipmentById ?? getAllStarterEquipment();
   const equipment = equipmentById[workbenchState.selectedEquipmentId];
   if (!equipment) {
@@ -1467,7 +1498,7 @@ export function attachEndlessCraftListeners(state: any): void {
 
       if (result.success && result.equipment) {
         const cost = getEndlessRecipeCost(recipe.materials);
-        updateGameState((prev) => {
+        updateWorkbenchGameState((prev) => {
           const spendResult = spendSessionCost(prev, { resources: cost });
           return spendResult.success ? spendResult.state : prev;
         });
@@ -1667,7 +1698,7 @@ function attachBuildGearListeners(state: any): void {
         return;
       }
 
-      updateGameState(prev => {
+      updateWorkbenchGameState(prev => {
         const spendResult = spendSessionCost(prev, { resources: cost });
         if (!spendResult.success) {
           return prev;
@@ -1784,11 +1815,20 @@ function attachWorkbenchListeners(
   if (searchInput) {
     searchInput.oninput = () => {
       workbenchState.searchFilter = searchInput.value;
+      const cursorPosition = searchInput.selectionStart ?? searchInput.value.length;
       renderGearWorkbenchScreen(
         workbenchState.selectedUnitId ?? undefined,
         workbenchState.selectedEquipmentId ?? undefined,
         workbenchState.returnDestination
       );
+      requestAnimationFrame(() => {
+        const nextInput = document.getElementById("cardSearch") as HTMLInputElement | null;
+        if (!nextInput) {
+          return;
+        }
+        focusElementWithoutScroll(nextInput);
+        nextInput.setSelectionRange(cursorPosition, cursorPosition);
+      });
     };
   }
 
@@ -1909,7 +1949,7 @@ function attachWorkbenchListeners(
       if (cardId && workbenchState.selectedEquipmentId) {
         console.log("[SLOT CLICK] Attempting to slot card:", cardId);
         // Get fresh gear state
-        const currentState = getGameState();
+        const currentState = getWorkbenchGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
         const currentEquipmentById = (currentState as any).equipmentById ?? {};
         const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
@@ -1925,7 +1965,7 @@ function attachWorkbenchListeners(
 
         if (newGear) {
           console.log("[SLOT CLICK] SUCCESS - Updating game state");
-          updateGameState(prev => {
+          updateWorkbenchGameState(prev => {
             const gearSlots = (prev as any).gearSlots || {};
             const updatedState = {
               ...prev,
@@ -1948,7 +1988,7 @@ function attachWorkbenchListeners(
           addWorkbenchLog(`SLK//SLOT :: ${LIBRARY_CARD_DATABASE[cardId]?.name ?? cardId} installed.`);
 
           // Verify state before re-render
-          const verifyState = getGameState();
+          const verifyState = getWorkbenchGameState();
           console.log("[SLOT CLICK] About to re-render. Verify gearSlots:", (verifyState as any).gearSlots);
 
           renderGearWorkbenchScreen(
@@ -1993,7 +2033,7 @@ function attachWorkbenchListeners(
       if (cardId && workbenchState.selectedEquipmentId) {
         console.log("[DROP] Attempting to slot card:", cardId);
         // Get fresh gear state
-        const currentState = getGameState();
+        const currentState = getWorkbenchGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
         const currentEquipmentById = (currentState as any).equipmentById ?? {};
         const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
@@ -2007,7 +2047,7 @@ function attachWorkbenchListeners(
 
         if (newGear) {
           console.log("[DROP] SUCCESS - Updating game state");
-          updateGameState(prev => {
+          updateWorkbenchGameState(prev => {
             const gearSlots = (prev as any).gearSlots || {};
             return {
               ...prev,
@@ -2045,7 +2085,7 @@ function attachWorkbenchListeners(
         const index = parseInt(indexStr);
 
         // Get fresh gear state
-        const currentState = getGameState();
+        const currentState = getWorkbenchGameState();
         const currentGearSlots = (currentState as any).gearSlots ?? {};
         const currentEquipmentById = (currentState as any).equipmentById ?? {};
         const currentEquipment = workbenchState.selectedEquipmentId ? currentEquipmentById[workbenchState.selectedEquipmentId] : null;
@@ -2054,7 +2094,7 @@ function attachWorkbenchListeners(
         const removedCardId = currentGear.slottedCards[index];
         const newGear = unslotCard(currentGear, index);
 
-        updateGameState(prev => {
+        updateWorkbenchGameState(prev => {
           const gearSlots = (prev as any).gearSlots || {};
           return {
             ...prev,
@@ -2178,6 +2218,7 @@ function renderCraftTab(state: GameState): string {
   const knownRecipeIds = state.knownRecipeIds ?? getStarterRecipeIds();
   const resources = getSessionResourcePool(state, getLocalSessionPlayerSlot(state)).resources;
   const fallbackInventoryIcon = getInventoryIconPath();
+  const resourceEntries = getResourceEntries(resources, { includeZero: true });
 
   const knownRecipes = getKnownRecipes(knownRecipeIds);
   const categoryRecipes = getRecipesByCategory(knownRecipes, workbenchState.craftingCategory);
@@ -2196,27 +2237,14 @@ function renderCraftTab(state: GameState): string {
         <!-- Resources Display -->
         <div class="crafting-resources">
           <div class="panel-section-title">MATERIALS</div>
-          <div class="resource-grid">
-            <div class="resource-item">
-              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
-              <span class="resource-name">Metal</span>
-              <span class="resource-value">${resources.metalScrap}</span>
-            </div>
-            <div class="resource-item">
-              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
-              <span class="resource-name">Wood</span>
-              <span class="resource-value">${resources.wood}</span>
-            </div>
-            <div class="resource-item">
-              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
-              <span class="resource-name">Shards</span>
-              <span class="resource-value">${resources.chaosShards}</span>
-            </div>
-            <div class="resource-item">
-              <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
-              <span class="resource-name">Steam</span>
-              <span class="resource-value">${resources.steamComponents}</span>
-            </div>
+          <div class="resource-grid resource-grid--all">
+            ${resourceEntries.map((entry) => `
+              <div class="resource-item">
+                <img src="${fallbackInventoryIcon}" alt="" class="resource-icon-img" aria-hidden="true" />
+                <span class="resource-name">${escapeHtml(entry.shortLabel)}</span>
+                <span class="resource-value">${entry.amount}</span>
+              </div>
+            `).join("")}
           </div>
         </div>
         
@@ -2533,7 +2561,7 @@ function attachCraftTabListeners(state: any): void {
 
       const starterEquipmentById = getAllStarterEquipment();
 
-      updateGameState(prev => {
+        updateWorkbenchGameState(prev => {
         const spendResult = spendSessionCost(prev, { resources: recipe.cost });
         if (!spendResult.success) {
           return prev;
@@ -2621,7 +2649,7 @@ function attachCraftTabListeners(state: any): void {
 function attachGearWorkbenchExitHotkey(returnTo: ReturnDestination): void {
   detachGearWorkbenchExitHotkey();
 
-  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation" && returnTo !== "field-node") {
+  if (returnTo !== "unitdetail" && returnTo !== "unitdetail-operation" && returnTo !== "field-node" && returnTo !== "echo-run") {
     registerBaseCampReturnHotkey(GEAR_WORKBENCH_RETURN_HOTKEY_ID, returnTo, {
       allowFieldEKey: true,
       activeSelector: ".workbench-root",

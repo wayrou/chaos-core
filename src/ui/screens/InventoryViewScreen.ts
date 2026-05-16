@@ -24,6 +24,9 @@ import {
 import { clearControllerContext } from "../../core/controllerSupport";
 import { showEquipmentDetailModalById } from "../components/equipmentDetailModal";
 import { focusElementWithoutScroll } from "../domUtils";
+import { createEchoServiceGameState, updateEchoServiceGameState } from "./echoRunServiceState";
+
+type InventoryReturnDestination = BaseCampReturnTo | "echo-run";
 
 let selectedCategory: InventoryCategory | "all" = "all";
 let searchQuery = "";
@@ -53,6 +56,24 @@ const WORKSPACE_COLUMNS = 12;
 const WORKSPACE_ROW_HEIGHT_PX = 24;
 const WORKSPACE_DRAG_THRESHOLD_PX = 8;
 const WORKSPACE_MIN_ROWS = 18;
+
+function isEchoInventory(returnTo: InventoryReturnDestination): returnTo is "echo-run" {
+  return returnTo === "echo-run";
+}
+
+function getInventoryViewState(returnTo: InventoryReturnDestination): ReturnType<typeof getGameState> {
+  const state = getGameState();
+  return isEchoInventory(returnTo) ? createEchoServiceGameState(state) : state;
+}
+
+function updateInventoryViewState(
+  returnTo: InventoryReturnDestination,
+  updater: (state: ReturnType<typeof getGameState>) => ReturnType<typeof getGameState>,
+): void {
+  updateGameState((prev) => (
+    isEchoInventory(returnTo) ? updateEchoServiceGameState(prev, updater) : updater(prev)
+  ));
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -150,8 +171,8 @@ function placeLayoutWithoutOverlap(requested: WorkspaceLayout, occupied: Iterabl
   return candidate;
 }
 
-function buildOwnedDeployableLookup(): Map<string, InventoryItem> {
-  const state = getGameState();
+function buildOwnedDeployableLookup(returnTo: InventoryReturnDestination): Map<string, InventoryItem> {
+  const state = getInventoryViewState(returnTo);
   const combined = new Map<string, InventoryItem>();
   const allItems = [
     ...buildOwnedBaseStorageItems(state),
@@ -228,6 +249,7 @@ function buildFolderDisplayState(
 function buildWorkspaceNodes(
   entries: InventoryEntryVM[],
   folders: Record<string, InventoryFolder>,
+  returnTo: InventoryReturnDestination,
 ): {
   nodes: WorkspaceNode[];
   visibleFolders: FolderDisplayState[];
@@ -235,7 +257,7 @@ function buildWorkspaceNodes(
   const filteredEntries = filterEntries(entries, selectedCategory, searchQuery);
   const filteredEntryKeys = new Set(filteredEntries.map((entry) => entry.key));
   const entryMap = new Map(entries.map((entry) => [entry.key, entry] as const));
-  const ownedLookup = buildOwnedDeployableLookup();
+  const ownedLookup = buildOwnedDeployableLookup(returnTo);
 
   const visibleFolders = Object.values(folders)
     .map((folder) => buildFolderDisplayState(folder, entryMap, filteredEntryKeys, ownedLookup))
@@ -271,8 +293,8 @@ function sumInventoryMetric(items: InventoryItem[], key: "massKg" | "bulkBu" | "
   return items.reduce((sum, item) => sum + (item[key] * Math.max(item.quantity || 1, 1)), 0);
 }
 
-function readSavedLayouts(): Record<string, BaseCampItemSize> {
-  return { ...(getGameState().uiLayout?.inventoryViewNodeLayouts ?? {}) };
+function readSavedLayouts(returnTo: InventoryReturnDestination): Record<string, BaseCampItemSize> {
+  return { ...(getInventoryViewState(returnTo).uiLayout?.inventoryViewNodeLayouts ?? {}) };
 }
 
 function getCategoryLabel(category: InventoryCategory): string {
@@ -414,12 +436,13 @@ function removeEntryKeysFromFolders(
 }
 
 function setFolderState(
+  returnTo: InventoryReturnDestination,
   updater: (folders: Record<string, InventoryFolder>, layouts: Record<string, BaseCampItemSize>) => {
     folders: Record<string, InventoryFolder>;
     layouts?: Record<string, BaseCampItemSize>;
   },
 ): void {
-  updateGameState((prev) => {
+  updateInventoryViewState(returnTo, (prev) => {
     const currentFolders = readInventoryFolders(prev);
     const currentLayouts = { ...(prev.uiLayout?.inventoryViewNodeLayouts ?? {}) };
     const next = updater(currentFolders, currentLayouts);
@@ -435,12 +458,13 @@ function setFolderState(
 }
 
 function combineNodesIntoFolder(
+  returnTo: InventoryReturnDestination,
   draggedNode: WorkspaceNode,
   targetNode: WorkspaceNode,
   draggedLayout: WorkspaceLayout,
   targetLayout: WorkspaceLayout,
 ): void {
-  setFolderState((folders, layouts) => {
+  setFolderState(returnTo, (folders, layouts) => {
     const nextLayouts = { ...layouts };
     let nextFolders = { ...folders };
 
@@ -498,7 +522,7 @@ function combineNodesIntoFolder(
   });
 }
 
-function attachWorkspaceDragging(root: HTMLElement, returnTo: BaseCampReturnTo): void {
+function attachWorkspaceDragging(root: HTMLElement, returnTo: InventoryReturnDestination): void {
   const grid = root.querySelector<HTMLElement>("#inventoryWorkspaceGrid");
   if (!grid) return;
 
@@ -515,11 +539,11 @@ function attachWorkspaceDragging(root: HTMLElement, returnTo: BaseCampReturnTo):
       const nodeKey = wrapper.dataset.nodeKey;
       if (!nodeKind || !nodeKey) return;
 
-      const state = getGameState();
+      const state = getInventoryViewState(returnTo);
       const vm = buildInventoryVM(state);
       const folders = readInventoryFolders(state);
-      const { nodes } = buildWorkspaceNodes(vm.entries, folders);
-      const savedLayouts = readSavedLayouts();
+      const { nodes } = buildWorkspaceNodes(vm.entries, folders, returnTo);
+      const savedLayouts = readSavedLayouts(returnTo);
       const workspaceLayouts = buildWorkspaceLayouts(nodes, savedLayouts);
       const draggedNode = nodes.find((node) => node.kind === nodeKind && node.key === nodeKey);
       const initialLayout = workspaceLayouts.get(nodeKey);
@@ -635,13 +659,13 @@ function attachWorkspaceDragging(root: HTMLElement, returnTo: BaseCampReturnTo):
 
           if (combineTarget) {
             const targetLayout = workspaceLayouts.get(combineTarget.key) ?? previewLayout;
-            combineNodesIntoFolder(draggedNode, combineTarget, previewLayout, targetLayout);
+            combineNodesIntoFolder(returnTo, draggedNode, combineTarget, previewLayout, targetLayout);
             cleanup();
             renderInventoryViewScreen(returnTo);
             return;
           }
 
-          setFolderState((folders, layouts) => ({
+          setFolderState(returnTo, (folders, layouts) => ({
             folders,
             layouts: {
               ...layouts,
@@ -669,23 +693,35 @@ function attachWorkspaceDragging(root: HTMLElement, returnTo: BaseCampReturnTo):
   });
 }
 
-function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
+function attachInventoryViewListeners(returnTo: InventoryReturnDestination): void {
   const root = document.getElementById("app");
   if (!root) return;
 
   const backBtn = root.querySelector<HTMLButtonElement>("#backBtn");
   if (backBtn) {
     backBtn.addEventListener("click", () => {
+      if (isEchoInventory(returnTo)) {
+        import("../../core/echoRuns").then(({ leaveEchoServiceNode }) => {
+          leaveEchoServiceNode();
+          return import("./EchoRunScreen");
+        }).then(({ renderEchoRunScreen }) => {
+          renderEchoRunScreen();
+        });
+        return;
+      }
+
       unregisterBaseCampReturnHotkey("inventory-view-screen");
       const returnDestination = (backBtn.getAttribute("data-return-to") as BaseCampReturnTo | null) || returnTo;
       returnFromBaseCampScreen(returnDestination);
     });
   }
 
-  registerBaseCampReturnHotkey("inventory-view-screen", returnTo, {
-    allowFieldEKey: true,
-    activeSelector: ".inventory-view-root",
-  });
+  if (!isEchoInventory(returnTo)) {
+    registerBaseCampReturnHotkey("inventory-view-screen", returnTo, {
+      allowFieldEKey: true,
+      activeSelector: ".inventory-view-root",
+    });
+  }
 
   root.querySelectorAll<HTMLButtonElement>(".inventory-workspace-filter-btn").forEach((button) => {
     button.addEventListener("click", () => {
@@ -726,7 +762,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
       const folderId = input.dataset.folderName;
       if (!folderId) return;
       const nextName = input.value.trim() || "Folder";
-      setFolderState((folders, layouts) => {
+      setFolderState(returnTo, (folders, layouts) => {
         const folder = folders[folderId];
         if (!folder) {
           return { folders, layouts };
@@ -751,7 +787,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
       const folderId = input.dataset.folderColor;
       if (!folderId) return;
       const nextColor = input.value || DEFAULT_INVENTORY_FOLDER_COLORS[0];
-      setFolderState((folders, layouts) => {
+      setFolderState(returnTo, (folders, layouts) => {
         const folder = folders[folderId];
         if (!folder) {
           return { folders, layouts };
@@ -775,7 +811,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
     button.addEventListener("click", () => {
       const folderId = button.dataset.folderUnpack;
       if (!folderId) return;
-      setFolderState((folders, layouts) => {
+      setFolderState(returnTo, (folders, layouts) => {
         const nextFolders = { ...folders };
         delete nextFolders[folderId];
         const nextLayouts = { ...layouts };
@@ -791,7 +827,7 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
       const folderId = button.dataset.folderMemberRemove;
       const entryKey = button.dataset.entryKey;
       if (!folderId || !entryKey) return;
-      setFolderState((folders, layouts) => {
+      setFolderState(returnTo, (folders, layouts) => {
         const folder = folders[folderId];
         if (!folder) {
           return { folders, layouts };
@@ -817,17 +853,21 @@ function attachInventoryViewListeners(returnTo: BaseCampReturnTo): void {
   attachWorkspaceDragging(root, returnTo);
 }
 
-export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp"): void {
+export function renderInventoryViewScreen(returnTo: InventoryReturnDestination = "basecamp"): void {
   const root = document.getElementById("app");
   if (!root) return;
   clearControllerContext();
 
-  const state = getGameState();
+  const state = getInventoryViewState(returnTo);
   const vm = buildInventoryVM(state);
   const folders = readInventoryFolders(state);
-  const { nodes } = buildWorkspaceNodes(vm.entries, folders);
-  const backButtonText = returnTo === "field" ? "FIELD MODE" : "BASE CAMP";
-  const savedLayouts = readSavedLayouts();
+  const { nodes } = buildWorkspaceNodes(vm.entries, folders, returnTo);
+  const backButtonText = returnTo === "echo-run"
+    ? "ROUTE COMMAND"
+    : returnTo === "field"
+      ? "FIELD MODE"
+      : "BASE CAMP";
+  const savedLayouts = readSavedLayouts(returnTo);
   const workspaceLayouts = buildWorkspaceLayouts(nodes, savedLayouts);
   const workspaceRows = Math.max(
     WORKSPACE_MIN_ROWS,
@@ -962,7 +1002,7 @@ export function renderInventoryViewScreen(returnTo: BaseCampReturnTo = "basecamp
     });
 
   if (changed) {
-    setFolderState((folderState) => ({
+    setFolderState(returnTo, (folderState) => ({
       folders: folderState,
       layouts: nextLayouts,
     }));

@@ -112,6 +112,7 @@ import {
   abandonActiveEchoRun,
   commitEchoEncounterVictory,
   finalizeEchoRunFromBattleDefeat,
+  getActiveEchoRun,
   summarizeEchoEncounter,
 } from "../../core/echoRuns";
 import {
@@ -2519,7 +2520,7 @@ const BATTLE_HUD_NODE_DEFS: Record<BattleHudNodeId, BattleHudNodeDefinition> = {
     title: "Unit Placement",
     kicker: "DEPLOYMENT // STAGING",
     minWidth: 340,
-    minHeight: 340,
+    minHeight: 500,
     resizable: true,
     restoreLabel: "DEPLOY",
   },
@@ -2867,6 +2868,19 @@ function syncBattleConsumableUsageToGameState(
   healedAmount: number,
 ): void {
   updateGameState((state) => {
+    if (isEchoBattle(nextBattle)) {
+      return {
+        ...state,
+        echoRun: state.echoRun
+          ? {
+              ...state.echoRun,
+              consumables: nextConsumables,
+            }
+          : state.echoRun,
+        currentBattle: nextBattle,
+      };
+    }
+
     const nextUnitsById = { ...state.unitsById };
     if (targetId && healedAmount > 0) {
       const battleUnit = nextBattle.units[targetId];
@@ -2887,6 +2901,13 @@ function syncBattleConsumableUsageToGameState(
       currentBattle: nextBattle,
     };
   });
+}
+
+function getBattleConsumablesForScreen(battle: BattleState | null | undefined): Record<string, number> {
+  if (isEchoBattle(battle)) {
+    return getActiveEchoRun()?.consumables ?? {};
+  }
+  return getGameState().consumables;
 }
 
 function triggerScreenShake(intensity = 1): void {
@@ -3133,7 +3154,7 @@ function createDefaultBattleHudLayouts(): Record<BattleHudNodeId, BattleHudNodeL
   const consumablesWidth = clamp(Math.round(viewportWidth * 0.22), 320, 420);
   const consumablesHeight = clamp(Math.round(viewportHeight * 0.3), 250, 360);
   const placementWidth = clamp(Math.round(viewportWidth * 0.24), 340, 420);
-  const placementHeight = clamp(Math.round(viewportHeight * 0.52), 360, 620);
+  const placementHeight = clamp(Math.round(viewportHeight * 0.78), 560, 760);
   const manageWidth = clamp(Math.round(viewportWidth * 0.34), 460, 640);
   const manageHeight = clamp(Math.round(viewportHeight * 0.44), 320, 560);
   const handWidth = clamp(
@@ -3882,7 +3903,7 @@ function renderBattleEnemyIntelNode(battle: BattleState): string {
 }
 
 function renderBattleConsumablesNode(battle: BattleState, isPlayerTurn: boolean | undefined): string {
-  const entries = getOwnedConsumableEntries(getGameState().consumables);
+  const entries = getOwnedConsumableEntries(getBattleConsumablesForScreen(battle));
   if (entries.length <= 0) {
     return `
       <div class="battle-consumables-node battle-consumables-node--empty">
@@ -8104,8 +8125,7 @@ function handleBattleHudConsumableUse(consumableId: string, targetId: string): v
     return;
   }
 
-  const state = getGameState();
-  const outcome = applyBattleConsumable(localBattleState, state.consumables, consumableId, targetId);
+  const outcome = applyBattleConsumable(localBattleState, getBattleConsumablesForScreen(localBattleState), consumableId, targetId);
   if (!outcome.success) {
     showSystemPing({
       type: "error",

@@ -5,7 +5,7 @@
 // ============================================================================
 
 import type { PlayerSlot } from "./types";
-import { applyTheme, ThemeId } from "./themes";
+import { applyTheme, normalizeThemeId, type ThemeId } from "./themes";
 import { invoke } from "@tauri-apps/api/core";
 
 export type ControllerBindingKind = "button" | "axis";
@@ -38,7 +38,7 @@ export interface GameSettings {
   showGridCoordinates: boolean;
   windowResolution: WindowResolutionPreset;
   animationSpeed: "slow" | "normal" | "fast";
-  uiTheme: "ardycia" | "cyberpunk" | "monochrome" | "warm" | "cool" | "neon" | "forest" | "sunset" | "ocean" | "void";
+  uiTheme: ThemeId;
   cardTheme: "light" | "dark";
 
   // Gameplay
@@ -246,7 +246,7 @@ export async function initializeSettings(): Promise<void> {
   const loaded = await loadSettingsFromDisk();
 
   if (loaded) {
-    currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
+    currentSettings = { ...DEFAULT_SETTINGS, ...loaded, uiTheme: normalizeThemeId(loaded.uiTheme) };
   } else {
     currentSettings = { ...DEFAULT_SETTINGS };
   }
@@ -266,7 +266,11 @@ export function getSettings(): GameSettings {
  * Update one or more settings
  */
 export async function updateSettings(updates: Partial<GameSettings>): Promise<void> {
-  currentSettings = { ...currentSettings, ...updates };
+  currentSettings = {
+    ...currentSettings,
+    ...updates,
+    uiTheme: updates.uiTheme ? normalizeThemeId(updates.uiTheme) : currentSettings.uiTheme,
+  };
   await saveSettingsToDisk();
   applySettings(currentSettings);
   notifyListeners();
@@ -497,7 +501,7 @@ export const SETTING_DESCRIPTORS: SettingDescriptor[] = [
     category: "display",
     options: [
       { value: "ardycia", label: "Ardycia (Default)" },
-      { value: "cyberpunk", label: "Cyberpunk" },
+      { value: "voidweaver", label: "Voidweaver" },
       { value: "monochrome", label: "Monochrome" },
       { value: "warm", label: "Warm" },
       { value: "cool", label: "Cool" },

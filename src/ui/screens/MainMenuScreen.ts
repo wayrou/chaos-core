@@ -34,7 +34,7 @@ import {
   enhanceTerminalUiButtons,
   startTerminalTypingByIds,
 } from "../components/terminalFeedback";
-import { showConfirmDialog } from "../components/confirmDialog";
+import { showAlertDialog, showConfirmDialog } from "../components/confirmDialog";
 
 const TERMINAL_PROMPT_PREFIX = "S/COM&gt;";
 const FLOATING_TERMINAL_TITLES = [
@@ -344,6 +344,44 @@ async function renderSettingsFromMainMenu(): Promise<void> {
 async function renderImportContentFromMainMenu(): Promise<void> {
   const { renderImportContentScreen } = await import("./ImportContentScreen");
   renderImportContentScreen();
+}
+
+async function renderEchoRunsFromMainMenu(): Promise<void> {
+  const { renderEchoRunTitleScreen } = await import("./EchoRunTitleScreen");
+  renderEchoRunTitleScreen();
+}
+
+function isMainMenuTauriRuntime(): boolean {
+  const anyWindow = window as typeof window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(anyWindow.__TAURI__ || anyWindow.__TAURI_INTERNALS__);
+}
+
+async function requestMainMenuExit(): Promise<void> {
+  if (isMainMenuTauriRuntime()) {
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+      return;
+    } catch (err) {
+      console.log("Exit requested (Tauri close failed):", err);
+    }
+  }
+
+  window.close();
+  window.setTimeout(() => {
+    if (document.hidden) {
+      return;
+    }
+    void showAlertDialog({
+      title: "Exit Unavailable In Browser",
+      message: "The desktop build will close the game window. In the dev browser, close the tab or browser pane to exit.",
+      acknowledgeLabel: "OK",
+      restoreFocusSelector: 'button[data-action="exit"]',
+    });
+  }, 80);
 }
 
 async function resumeLoadedGame(defaultView: "field" | "esc"): Promise<void> {
@@ -1429,7 +1467,9 @@ function upgradeMainMenuToWorkspace(
 
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
-      if ((event.target as HTMLElement).closest(".mainmenu-action-tile__control, .mainmenu-action-tile__resize")) return;
+      const pointerTarget = event.target as HTMLElement;
+      if (pointerTarget.closest(".mainmenu-action-tile__control, .mainmenu-action-tile__resize")) return;
+      if (pointerTarget.closest("button[data-action]")) return;
       const tileLayout = layout[actionId];
       if (!tileLayout) return;
       if (tileLayout.minimized) return;
@@ -1625,10 +1665,51 @@ function startTerminalAnimationByIds(bodyId: string, outputId: string, flavorLin
 // EVENT LISTENERS
 // ----------------------------------------------------------------------------
 
+type PriorityMainMenuAction = "echo-runs" | "settings" | "import-content" | "exit";
+
+function isPriorityMainMenuAction(action: string | undefined): action is PriorityMainMenuAction {
+  return action === "echo-runs"
+    || action === "settings"
+    || action === "import-content"
+    || action === "exit";
+}
+
+function attachPriorityMainMenuActionListeners(mainMenuRoot: HTMLElement): void {
+  mainMenuRoot.addEventListener("click", (event) => {
+    const target = event.target as Element | null;
+    const button = target?.closest<HTMLButtonElement>("button[data-action]");
+    if (!button || !mainMenuRoot.contains(button)) {
+      return;
+    }
+
+    const action = button.dataset.action;
+    if (!isPriorityMainMenuAction(action)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    teardownMainMenuWorkspace();
+    if (action === "echo-runs") {
+      void renderEchoRunsFromMainMenu();
+    } else if (action === "settings") {
+      void renderSettingsFromMainMenu();
+    } else if (action === "import-content") {
+      void renderImportContentFromMainMenu();
+    } else {
+      void requestMainMenuExit();
+    }
+  }, true);
+}
+
 function attachMenuListeners(saves: SaveInfo[]): void {
   const root = document.getElementById("app");
   if (!root) return;
   const mainMenuRoot = root.querySelector<HTMLElement>(".mainmenu-root");
+  if (mainMenuRoot) {
+    attachPriorityMainMenuActionListeners(mainMenuRoot);
+  }
 
   // Continue button
   const continueBtn = root.querySelector<HTMLButtonElement>('button[data-action="continue"]');
@@ -1701,9 +1782,8 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const echoRunsBtn = root.querySelector<HTMLButtonElement>('button[data-action="echo-runs"]');
   if (echoRunsBtn) {
     echoRunsBtn.addEventListener("click", async () => {
-      const { renderEchoRunTitleScreen } = await import("./EchoRunTitleScreen");
       teardownMainMenuWorkspace();
-      renderEchoRunTitleScreen();
+      await renderEchoRunsFromMainMenu();
     });
   }
 
@@ -1777,13 +1857,7 @@ function attachMenuListeners(saves: SaveInfo[]): void {
   const exitBtn = root.querySelector<HTMLButtonElement>('button[data-action="exit"]');
   if (exitBtn) {
     exitBtn.addEventListener("click", async () => {
-      try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        await getCurrentWindow().close();
-      } catch (err) {
-        console.log("Exit requested (no Tauri context):", err);
-        window.close();
-      }
+      await requestMainMenuExit();
     });
   }
   
